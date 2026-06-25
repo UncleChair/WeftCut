@@ -90,6 +90,10 @@ fn extract_ref_id(op: &str, result: &Value, cmd: &Value) -> Option<String> {
                 .and_then(|v| v.get("video_layer_id").and_then(Value::as_str).map(str::to_string))
                 .or_else(|| Some(text.to_string()))
         }
+        "begin_agent_session" => {
+            serde_json::from_str::<Value>(text).ok()
+                .and_then(|v| v.get("checkpoint_id").and_then(Value::as_str).map(str::to_string))
+        }
         "get_param_track" => {
             let idx = cmd.get("kf_index")?.as_u64()? as usize;
             let v: Value = serde_json::from_str(text).ok()?;

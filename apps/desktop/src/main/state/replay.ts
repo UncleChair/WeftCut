@@ -231,6 +231,9 @@ function mcpRefId(op: string, result: { content: Array<{ type: 'text'; text: str
   if (op === 'add_video_layer') {
     try { const v = JSON.parse(text) as { video_layer_id?: string }; return v.video_layer_id ?? text } catch { return text }
   }
+  if (op === 'begin_agent_session') {
+    try { const v = JSON.parse(text) as { checkpoint_id?: string }; return v.checkpoint_id ?? null } catch { return null }
+  }
   return null
 }
 

@@ -1,0 +1,4 @@
+{ "name": "err-begin-empty-reason", "commands": [
+  { "op": "begin_agent_session", "reason": "" },
+  { "op": "add_track", "label": "after empty-reason error" }
+]}

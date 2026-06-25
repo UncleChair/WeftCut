@@ -681,6 +681,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
           restoreCheckpoint(id) // throws CommandFailure(HistoryLocked|CheckpointNotFound) → outer catch → mapCommandError → invalid_params (no data)
           return { ok: true, result: toolEmpty() }
         }
+        case 'begin_agent_session': {
+          const reason = ((a.reason as string | undefined) ?? '').trim()
+          if (reason === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
+          const checkpointId = checkpoint(`Pre-agent: ${reason}`, MCP_ACTOR) // 1 det id; slot-flip + log are non-state side effects (3d-d)
+          return { ok: true, result: toolJson({ checkpoint_id: checkpointId, started_at: clock() }) }
+        }
         case 'set_keyframe': {
           const layer = parseUuid(a.layer_id, 'layer_id')
           const paramKey = a.param_key as string

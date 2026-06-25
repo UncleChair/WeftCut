@@ -1,0 +1,6 @@
+{ "name": "begin-agent-session", "commands": [
+  { "op": "add_color_layer", "track_id": "@A", "color": { "r": 255, "g": 0, "b": 0, "a": 255 }, "t_start_us": 0, "t_end_us": 1000000 },
+  { "op": "begin_agent_session", "reason": "cutting filler words" },
+  { "op": "list_checkpoints" },
+  { "op": "add_color_layer", "track_id": "@A", "color": { "r": 0, "g": 255, "b": 0, "a": 255 }, "t_start_us": 2000000, "t_end_us": 3000000 }
+]}

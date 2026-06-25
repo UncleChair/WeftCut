@@ -1,0 +1,4 @@
+{ "name": "err-checkpoint-empty-label", "commands": [
+  { "op": "checkpoint", "label": "" },
+  { "op": "add_track", "label": "after empty-label error" }
+]}
