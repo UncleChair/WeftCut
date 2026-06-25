@@ -51,6 +51,9 @@ function ensureAudioTrack(deps: HybridDeps): string {
     return snap.tracks[snap.tracks.length - 1].id
   }
   // No tracks at all — create a "Voiceover" track (mirrors add_track in tools.rs:129).
+  // Pathological-only branch: production projects always carry the reserved,
+  // non-removable A/B-roll tracks, so a zero-track project is unconstructable
+  // through the validated actor. Kept for parity with Rust's ensure_audio_track fallback.
   const r = deps.actor.dispatch('add_track', { label: 'Voiceover' })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   return r.value as string

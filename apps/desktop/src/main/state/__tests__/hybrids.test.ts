@@ -458,9 +458,12 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     expect(arg[0].id).toBe(AUDIO_MID)
   })
 
-  it('creates a new Voiceover track when target_track_id is omitted (ensureAudioTrack, no existing track)', async () => {
-    // Fresh project has 2 reserved tracks (A/B-roll). ensureAudioTrack must
-    // return the LAST track (Rust: snap.tracks.last()).
+  it('ensureAudioTrack returns the last existing track when target_track_id is omitted', async () => {
+    // Fresh project has 2 reserved (non-removable) A/B-roll tracks, so
+    // ensureAudioTrack returns the LAST existing track (Rust: snap.tracks.last())
+    // — it does NOT create a track here. The zero-track add_track('Voiceover')
+    // branch is unreachable through the validated actor (reserved tracks can't be
+    // removed), so it's not exercised.
     const actor = freshActor()
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
@@ -469,7 +472,7 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     // A layer must have been placed on some track.
     const layerCount = snap.tracks.flatMap((t) => t.layers).length
     expect(layerCount).toBeGreaterThanOrEqual(1)
-    // The placed layer must be on the last track (ensureAudioTrack = snap.tracks.last()).
+    // The placed layer must be on the last existing track (ensureAudioTrack = snap.tracks.last()).
     const lastTrack = snap.tracks[snap.tracks.length - 1]
     expect(lastTrack.layers).toHaveLength(1)
   })
