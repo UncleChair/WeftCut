@@ -516,3 +516,50 @@ params: `x`, `y`, `scale_x`, `scale_y`, `rotation_deg`, `opacity` (Video / Image
 Text / Motif layers) and `gain_db`, `pan` (Audio layers). Color layers have no
 animatable params. Corpus keyframe sequences therefore use VideoClip layers (not
 Color or Audio layers) to exercise `x`/`y`/`opacity`/scale/rotation paths.
+
+**Checkpoints and agent session (Phase 3d-c):**
+
+Four checkpoint / agent-session tools are added to the MCP corpus dimension and are
+differential-gated via the same `mcp.differential.test.ts`. They are DORMANT —
+`server.ts`, `mutationTools.ts`, `index.ts`, `router.ts`, and `ts-actor-host.ts` are
+untouched.
+
+| MCP tool | Sequence file(s) |
+|---|---|
+| `checkpoint` | checkpoint-list.json (+ as setup in restore / begin sequences) |
+| `list_checkpoints` | checkpoint-list.json, begin-agent-session.json |
+| `restore_checkpoint` | restore-checkpoint.json, begin-then-restore.json, err-restore-not-found.json, err-restore-history-locked.json |
+| `begin_agent_session` | begin-agent-session.json, begin-then-restore.json, err-begin-empty-reason.json |
+| (`checkpoint` empty-label reject) | err-checkpoint-empty-label.json |
+
+**id contract (revealed by each sequence's trailing `add_track`/`add_color_layer`).**
+`checkpoint` mints exactly 1 id (the checkpoint id; no history op, no broadcast).
+`restore_checkpoint` success = 2 ids (the history-entry op_id first, then the
+broadcast op_id); `CheckpointNotFound` and `HistoryLocked` mint 0 ids — the lock
+check and the checkpoint-presence peek both precede the op_id mint (so a locked
+restore of a valid checkpoint still burns nothing). `begin_agent_session` = 1 id (the
+auto-checkpoint; its log op_id is a raw `now_v7`, off the det counter).
+
+**`list_checkpoints` shape.** Mirrors Rust `NamedCheckpointSummary` =
+`{id, label, actor, created_at}` (the snapshot is dropped). MCP-created checkpoints
+store the agent actor `{kind:"Agent",client:"mcp"}` (`agent_actor()`), which surfaces
+in this result. `begin-then-restore.json` `@ref`-captures `begin_agent_session`'s
+`checkpoint_id` and restores it, proving the begin checkpoint is a valid restore
+target.
+
+**Wall-clock normalization.** `list_checkpoints`' `created_at` and
+`begin_agent_session`'s `started_at` are wall-clock on the Rust side. The `mcp_driver`
+normalizes `created_at` / `modified_at` / `started_at` to `"<TS>"` in the captured
+envelope — including inside result-content JSON text-blocks — so the oracle is
+deterministic; it re-serializes a text-block only when a timestamp was actually
+replaced, keeping every prior oracle byte-identical. This matches the TS gate's
+`canonicalize()` (`canonical.ts` `TS_FIELDS`), which the TS clock (`"<TS>"`) already
+satisfies.
+
+**Non-state agent-session seam.** The agent-session SLOT (a Rust process-global) and
+the `agent_session_end` history-unlock seam are not project state and are not
+corpus-gated. The seam is built dormant + unit-tested (`agent-session-seam.ts`,
+`agent-session-seam.test.ts`: `agentSessionEnd` clears the slot then unlocks the TS
+history, mirroring `commands/prefs.rs:209`) and is wired live only in 3d-d.
+`err-checkpoint-empty-label.json` / `err-begin-empty-reason.json` close part of the
+3d-a rejected-input-parity carry-forward (empty-string rejection, code-gated).
