@@ -367,7 +367,7 @@ impl Backend {
     /// Open the agent-session slot: installs a new session with `client = "mcp"`
     /// and the given `reason`, then emits `agent_session:changed` so the UI
     /// switches to agent mode. Called by the TS MCP host after `actor.mcpCall`
-    /// mints the auto-checkpoint (Phase 3d-c). Idempotent — a second call while
+    /// mints the auto-checkpoint. Idempotent — a second call while
     /// a session is already open replaces it (last writer wins, as per slot API).
     #[napi]
     pub fn begin_agent_session_slot(&self, reason: String) {
