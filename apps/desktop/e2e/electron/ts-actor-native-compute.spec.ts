@@ -17,17 +17,20 @@ import { fileURLToPath } from 'node:url'
 //      in the pool. The TS actor has it; the stale Rust actor stays empty, so a
 //      broken read would return an empty pool.
 //   F1/F2 (export inputs are read from the mirror): place an Audio layer that
-//      references the imported media, then assert project_summary shows that
-//      Audio layer. This proves the EXPORT INPUTS that export_project_audio_only
-//      / ensure_export_audio_conform read via snapshot_for_read() are present in
-//      the mirror under the flag. Combined with the Part-1 Rust source-scan
-//      (export.rs uses snapshot_for_read, never .project()?.snapshot()), that is
-//      the full F1/F2 chain. The export call itself is kept as a labeled SMOKE
-//      assertion (does not throw) — its boolean return value is NOT the proof.
+//      references the imported media, then (a) assert project_summary shows that
+//      Audio layer, and (b) assert ensure_export_audio_conform — the export-
+//      readiness gate that reads snapshot_for_read() — returns the layer's media
+//      id in its waiting list. Both prove the EXPORT INPUTS the export readers
+//      consult are present in the mirror under the flag. Combined with the Part-1
+//      Rust source-scan (export.rs uses snapshot_for_read, never
+//      .project()?.snapshot()), that is the full F1/F2 chain. A blank frozen actor
+//      would have no audio layer → an empty waiting list, failing assertion (b).
 //
 // The spec intentionally stays thin: the full audio-export pipeline (conform,
 // mix, ffmpeg) is exercised by audio.spec.ts and export-range-audio.spec.ts.
 // Here we prove the mirror-read INPUT path is wired; we do not re-prove ffmpeg.
+// We deliberately avoid export_project_audio_only: it (correctly) throws when the
+// conform cache is absent, which is not deterministic to assert synchronously.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MAIN = path.resolve(__dirname, '../../out/main/index.js')
@@ -61,7 +64,6 @@ test('WEFTCUT_TS_ACTOR native-compute: import_media hybrid + audio layer visible
   test.skip(!fs.existsSync(AUDIO_FIXTURE), `audio fixture not found at ${AUDIO_FIXTURE}`)
 
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-native-compute-'))
-  const outputPath = path.join(ws, 'export-gate.m4a')
 
   const app = await electron.launch({
     args: [MAIN],
@@ -131,19 +133,23 @@ test('WEFTCUT_TS_ACTOR native-compute: import_media hybrid + audio layer visible
     expect(audioLayers.length).toBeGreaterThan(0)
     expect(audioLayers.some((l) => l.params.media_id === mediaId)).toBe(true)
 
-    // ── SMOKE: the mirror-backed export readers run without throwing ──────────
-    // F1/F2's mirror-read correctness is guarded by the Part-1 Rust source-scan
-    // (export.rs uses snapshot_for_read, never .project()?.snapshot()) PLUS the
-    // audio layer being visible in the mirror-backed summary above — NOT by these
-    // return values. We only assert the readers run against the mirror without
-    // throwing (a nil/stale-actor read would reject). We do not assert a full
-    // ffmpeg export here (conform/mix timing is flaky; covered by audio.spec.ts);
-    // await alone fails the test on a rejected IPC promise.
-    await invoke<boolean>(page, 'export_project_audio_only', {
-      outputPath,
-      audio: { codec: 'aac', bitrate: 128000 },
-    })
-    await invoke<string[]>(page, 'ensure_export_audio_conform')
+    // ── F2: the export-readiness gate reads the mirror's audio layers ─────────
+    // ensure_export_audio_conform (commands/export.rs:101) reads snapshot_for_read()
+    // and returns the media ids of audible in-window audio layers whose conform
+    // cache is absent — Vec<String>, dispatch arg { startUs?, endUs? } (camelCase,
+    // ExportConformArgs); called with no window. The conform cache is NOT ready
+    // synchronously in the e2e (conform is an async ffmpeg job), so our just-placed
+    // audio layer's media id MUST appear in the waiting list. This is the proper
+    // deterministic F2 catch: the gate read the mirror's audio layer. A blank
+    // frozen actor would have NO audio layer → an empty list, failing this assert.
+    //
+    // We deliberately do NOT call export_project_audio_only here: it throws when
+    // the conform cache is absent ("...has no conform cache yet..."), which is
+    // correct product behavior but not deterministic to assert in the e2e. The
+    // full export (conform→mix→ffmpeg) is covered by audio.spec.ts.
+    const waiting = await invoke<string[]>(page, 'ensure_export_audio_conform', {})
+    expect(Array.isArray(waiting)).toBe(true)
+    expect(waiting).toContain(mediaId)
   } finally {
     await app.close()
     fs.rmSync(ws, { recursive: true, force: true })
