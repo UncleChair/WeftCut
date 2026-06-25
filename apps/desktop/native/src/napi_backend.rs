@@ -12,6 +12,8 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 use serde::Serialize;
 
+use chrono::Utc;
+
 use crate::agent_session::AgentSessionSlot;
 use crate::app_settings::AppSettingsStore;
 use crate::cache::CacheLayout;
@@ -360,6 +362,29 @@ impl Backend {
     #[cfg(feature = "jobs")]
     pub fn set_ts_derivative_authority(&self, on: bool) {
         crate::jobs::set_ts_derivative_authority(on);
+    }
+
+    /// Open the agent-session slot: installs a new session with `client = "mcp"`
+    /// and the given `reason`, then emits `agent_session:changed` so the UI
+    /// switches to agent mode. Called by the TS MCP host after `actor.mcpCall`
+    /// mints the auto-checkpoint (Phase 3d-c). Idempotent — a second call while
+    /// a session is already open replaces it (last writer wins, as per slot API).
+    #[napi]
+    pub fn begin_agent_session_slot(&self, reason: String) {
+        let session = crate::agent_session::AgentSession {
+            client: "mcp".into(),
+            reason,
+            started_at: Utc::now(),
+        };
+        crate::agent_session::begin_and_emit(self.events.as_ref(), &self.agent_session, session);
+    }
+
+    /// Close the agent-session slot and emit `agent_session:changed` (null
+    /// payload) so the UI exits agent mode. Idempotent — safe to call when no
+    /// session is active. Called by the TS MCP host at agent-session end.
+    #[napi]
+    pub fn end_agent_session_slot(&self) {
+        crate::agent_session::end_and_emit(self.events.as_ref(), &self.agent_session);
     }
 
     /// Stream one raw encoded frame to the active 10-bit video sink over native

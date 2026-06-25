@@ -96,7 +96,76 @@ pub fn end_and_emit(events: &dyn EventSink, slot: &AgentSessionSlot) -> Option<A
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    // ---------- capturing EventSink for emit-wrapper tests ----------
+
+    struct CaptureSink {
+        events: Mutex<Vec<(String, serde_json::Value)>>,
+    }
+
+    impl CaptureSink {
+        fn new() -> Self {
+            Self { events: Mutex::new(Vec::new()) }
+        }
+
+        fn drained(&self) -> Vec<(String, serde_json::Value)> {
+            self.events.lock().unwrap().drain(..).collect()
+        }
+    }
+
+    impl EventSink for CaptureSink {
+        fn emit(&self, event: &str, payload: serde_json::Value) {
+            self.events.lock().unwrap().push((event.to_owned(), payload));
+        }
+    }
+
+    // ---------- begin_and_emit / end_and_emit ----------
+
+    #[test]
+    fn begin_and_emit_sets_slot_and_emits_non_null() {
+        let sink = CaptureSink::new();
+        let slot = AgentSessionSlot::new();
+        let session = AgentSession {
+            client: "test-client".into(),
+            reason: "unit-test".into(),
+            started_at: Utc::now(),
+        };
+        let prior = begin_and_emit(&sink, &slot, session.clone());
+        assert!(prior.is_none(), "slot was empty; prior should be None");
+        assert_eq!(slot.current(), Some(session.clone()));
+        let events = sink.drained();
+        assert_eq!(events.len(), 1);
+        let (name, payload) = &events[0];
+        assert_eq!(name, EVENT_AGENT_SESSION_CHANGED);
+        assert!(!payload.is_null(), "payload should be non-null for an active session");
+    }
+
+    #[test]
+    fn end_and_emit_clears_slot_and_emits_null() {
+        let sink = CaptureSink::new();
+        let slot = AgentSessionSlot::new();
+        let session = AgentSession {
+            client: "test-client".into(),
+            reason: "unit-test".into(),
+            started_at: Utc::now(),
+        };
+        slot.begin(session.clone());
+        // drain any prior events (slot.begin doesn't call EventSink)
+        let _ = sink.drained();
+        let prior = end_and_emit(&sink, &slot);
+        assert_eq!(prior, Some(session));
+        assert!(slot.current().is_none());
+        let events = sink.drained();
+        assert_eq!(events.len(), 1);
+        let (name, payload) = &events[0];
+        assert_eq!(name, EVENT_AGENT_SESSION_CHANGED);
+        assert!(payload.is_null(), "payload should be null after session ends");
+    }
+
+    // ---------- slot unit tests ----------
 
     fn sample(reason: &str) -> AgentSession {
         AgentSession {
