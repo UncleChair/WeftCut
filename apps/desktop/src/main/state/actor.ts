@@ -676,6 +676,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolText(checkpoint(label, MCP_ACTOR)) }
         }
         case 'list_checkpoints': return { ok: true, result: toolJson(listCheckpoints()) }
+        case 'restore_checkpoint': {
+          const id = parseUuid(a.checkpoint_id, 'checkpoint_id')
+          restoreCheckpoint(id) // throws CommandFailure(HistoryLocked|CheckpointNotFound) → outer catch → mapCommandError → invalid_params (no data)
+          return { ok: true, result: toolEmpty() }
+        }
         case 'set_keyframe': {
           const layer = parseUuid(a.layer_id, 'layer_id')
           const paramKey = a.param_key as string

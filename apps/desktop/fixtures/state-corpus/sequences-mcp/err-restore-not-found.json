@@ -1,0 +1,5 @@
+{ "name": "err-restore-not-found", "commands": [
+  { "op": "add_color_layer", "track_id": "@A", "color": { "r": 255, "g": 0, "b": 0, "a": 255 }, "t_start_us": 0, "t_end_us": 1000000 },
+  { "op": "restore_checkpoint", "checkpoint_id": "00000000-0000-0000-0000-0000000000ee" },
+  { "op": "add_track", "label": "after error" }
+]}

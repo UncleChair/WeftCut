@@ -1,0 +1,8 @@
+{ "name": "err-restore-history-locked", "commands": [
+  { "op": "add_color_layer", "track_id": "@A", "color": { "r": 255, "g": 0, "b": 0, "a": 255 }, "t_start_us": 0, "t_end_us": 1000000 },
+  { "op": "checkpoint", "label": "before lock", "ref": "CP" },
+  { "op": "lock_history", "reason": "agent batch" },
+  { "op": "restore_checkpoint", "checkpoint_id": "@CP" },
+  { "op": "unlock_history" },
+  { "op": "add_track", "label": "after unlock" }
+]}
