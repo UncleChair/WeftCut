@@ -221,9 +221,6 @@ app.whenReady().then(async () => {
       pushRecent: (p: string, n: string) => backend!.pushRecent(p, n),
       setLastNewProjectParent: (p: string) => backend!.setLastNewProjectParent(p),
       enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j),
-      setProjectMirror: (pj: string, hv: string) => backend!.setProjectMirror(pj, hv),
-      beginAgentSessionSlot: (reason: string) => backend!.beginAgentSessionSlot(reason),
-      endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
     }
 
     // Workspace dir cache — seeded once at boot; refreshed after each persistence call

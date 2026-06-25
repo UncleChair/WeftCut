@@ -2,7 +2,7 @@
 // Pure MCP-tool adapter helpers: arg parsing (snake_case MCP vocab → internal
 // dispatch vocab), ToolResult shaping, and CommandError → MCP error mapping.
 // The byte-exact mcp.differential gate (vs Rust dispatch_tool) is the backstop.
-// Mirrors native/src/mcp/{tools.rs,wire.rs}. DORMANT until Phase 3d-d.
+// Mirrors native/src/mcp/{tools.rs,wire.rs}.
 import type { CommandError } from './errors'
 import type { Animated, Interpolation, Keyframe } from './model'
 import { canonicalize } from './canonical'
@@ -77,7 +77,7 @@ const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
 /** Validate an AudioRole (audio_role.rs kebab-case). Rust rejects an unknown
  *  role at the serde boundary → invalid_params; mirror that here. */
 export function parseRole(v: unknown): string {
-  if (typeof v !== 'string' || !AUDIO_ROLES.has(v)) throw new McpArgError(`invalid args for set_role_gain: unknown role '${String(v)}'`)
+  if (typeof v !== 'string' || !AUDIO_ROLES.has(v)) throw new McpArgError(`unknown audio role '${String(v)}'`)
   return v
 }
 
