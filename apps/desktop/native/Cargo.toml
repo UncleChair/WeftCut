@@ -113,6 +113,11 @@ name = "prod_driver"
 path = "src/bin/prod_driver.rs"
 required-features = ["replay"]
 
+[[bin]]
+name = "mcp_driver"
+path = "src/bin/mcp_driver.rs"
+required-features = ["replay"]
+
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 # (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).
 [profile.dev]
