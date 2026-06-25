@@ -19,7 +19,7 @@ export interface HistoryEntry {
 }
 interface NamedCheckpoint { id: Uuid; label: string; actor: Actor; created_at: string; snapshot: Project }
 export interface HistoryEntrySummary { op_id: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[] }
-export interface HistoryView { ops: HistoryEntrySummary[]; cursor: number; len: number; checkpoints: Array<{ id: Uuid; label: string; created_at: string }>; lock_reason?: string }
+export interface HistoryView { ops: HistoryEntrySummary[]; cursor: number; len: number; checkpoints: Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>; lock_reason?: string }
 export interface HistoryStatus { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
 
 const DEFAULT_CAP = 200
@@ -169,7 +169,7 @@ export class History {
     const total = this.snapshots.length
     const take = Math.min(limit, total)
     const ops = this.snapshots.slice(total - take).map((e) => ({ op_id: e.op_id, actor: e.actor, timestamp: e.timestamp, summary: e.summary, affected: e.affected }))
-    const checkpoints = this.listCheckpoints().map((c) => ({ id: c.id, label: c.label, created_at: c.created_at }))
+    const checkpoints = this.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
     const v: HistoryView = { ops, cursor: this.cursor, len: total, checkpoints }
     if (this.lockReasonStr !== null) v.lock_reason = this.lockReasonStr
     return v
