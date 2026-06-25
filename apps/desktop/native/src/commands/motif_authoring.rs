@@ -58,7 +58,7 @@ pub async fn delete_motif(b: &Backend, id: String) -> Result<(), String> {
 
 pub async fn motif_staleness_report(b: &Backend) -> Result<Vec<st::MotifStaleEntry>, String> {
     let current = st::current_versions(&b.motif_store);
-    let snap = b.project()?.snapshot().await;
+    let snap = b.snapshot_for_read().await?;
     let layers: Vec<(String, u32)> = snap.tracks.iter().flat_map(|t| t.layers.iter())
         .filter_map(|l| match &l.params {
             LayerParams::Motif(p) => Some((p.motif_id.clone(), p.motif_version)),

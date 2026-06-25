@@ -31,8 +31,7 @@ pub async fn export_project_audio_only(
     start_us: Option<i64>,
     end_us: Option<i64>,
 ) -> Result<bool, String> {
-    let handle = backend.project()?;
-    let snap = handle.snapshot().await;
+    let snap = backend.snapshot_for_read().await?;
     let project = (*snap).clone();
     let path = PathBuf::from(output_path);
     let window = match (start_us, end_us) {
@@ -104,8 +103,8 @@ pub async fn ensure_export_audio_conform(
     start_us: Option<i64>,
     end_us: Option<i64>,
 ) -> Result<Vec<String>, String> {
+    let snap = backend.snapshot_for_read().await?;
     let handle = backend.project()?;
-    let snap = handle.snapshot().await;
     let window = match (start_us, end_us) {
         (Some(s), Some(e)) => Some((s, e)),
         _ => None,

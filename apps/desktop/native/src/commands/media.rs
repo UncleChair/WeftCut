@@ -139,8 +139,7 @@ pub struct AudioMeterState(
 
 pub async fn get_media_thumbnail(backend: &Backend, media_id: String) -> Result<String, String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
-    let handle = backend.project()?;
-    let snap = handle.snapshot().await;
+    let snap = backend.snapshot_for_read().await?;
     let media = snap.media_pool.get(&id).ok_or_else(|| format!("media {media_id} not found"))?;
     let dir = media.thumbnails_dir.clone().ok_or_else(|| "not_ready".to_string())?;
     let path = dir.join("004.jpg");
@@ -151,8 +150,7 @@ pub async fn get_media_thumbnail(backend: &Backend, media_id: String) -> Result<
 
 pub async fn get_waveform_peaks(backend: &Backend, media_id: String) -> Result<WaveformPeaks, String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
-    let handle = backend.project()?;
-    let snap = handle.snapshot().await;
+    let snap = backend.snapshot_for_read().await?;
     let media = snap.media_pool.get(&id).ok_or_else(|| format!("media {media_id} not found"))?;
     let path = media.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
     let peaks = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
@@ -164,30 +162,26 @@ pub async fn get_waveform_peaks(backend: &Backend, media_id: String) -> Result<W
 
 pub async fn ensure_full_proxy(backend: &Backend, media_id: String) -> Result<(), String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
-    let handle = backend.project()?;
-    let snap = handle.snapshot().await;
+    let snap = backend.snapshot_for_read().await?;
     let Some(item) = snap.media_pool.get(&id).cloned() else {
         return Err(format!("no media {media_id}"));
     };
     if item.proxy_path.as_ref().map(|p| p.is_file()).unwrap_or(false) {
         return Ok(());
     }
-    handle
-        .set_media_derivatives(
-            Actor::Agent { client: "jobs".to_string() },
-            id,
-            state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
-        )
-        .await
-        .map_err(|e| format!("route-correct {media_id}: {e}"))?;
+    let handle = backend.project()?;
+    crate::jobs::commit_media_derivatives(
+        &backend.events, handle, id,
+        state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
+    ).await.map_err(|e| format!("route-correct {media_id}: {e}"))?;
     crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), handle.clone(), item);
     Ok(())
 }
 
 pub async fn ensure_conform(backend: &Backend, media_id: String) -> Result<(), String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let snap = backend.snapshot_for_read().await?;
     let handle = backend.project()?;
-    let snap = handle.snapshot().await;
     let Some(item) = snap.media_pool.get(&id).cloned() else {
         return Err(format!("no media {media_id}"));
     };
@@ -205,4 +199,87 @@ pub async fn report_audio_meter(backend: &Backend, report: AudioMeterReport) -> 
     *backend.audio_meter.0.lock().map_err(|_| "meter lock poisoned".to_string())? =
         Some((std::time::Instant::now(), report));
     Ok(())
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use std::sync::Arc;
+    use chrono::Utc;
+    use crate::state::{MediaItem, MediaKind, MediaMetadata};
+
+    fn mirror_only_item(id: uuid::Uuid) -> MediaItem {
+        MediaItem {
+            id,
+            label: None,
+            path_abs: std::path::PathBuf::from("/nonexistent"),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata::default(),
+            proxy_path: None,
+            proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
+            export_uses_original: false,
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: format!("test-{id}"),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    /// `get_media_thumbnail` must read from the mirror, not the frozen actor.
+    /// Without the re-point the blank actor has no such media → "media … not
+    /// found"; with it the mirror finds the item and returns "not_ready"
+    /// (thumbnails_dir is None), proving mirror resolution succeeded.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_media_thumbnail_reads_mirror_not_actor() {
+        let sink = Arc::new(crate::events::VecEventSink::new());
+        let b = crate::napi_backend::Backend::new_for_test(sink as Arc<dyn crate::events::EventSink>);
+        b.init().await.unwrap();
+        // A media item present ONLY in the mirror (actor stays blank).
+        let mut p = (*b.project().unwrap().snapshot().await).clone();
+        let id = uuid::Uuid::now_v7();
+        p.media_pool.insert(id, mirror_only_item(id));
+        b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
+        // thumbnails_dir is None → "not_ready" proves the item was FOUND via the
+        // mirror.  A blank-actor read would error "media … not found".
+        let err = b.dispatch("get_media_thumbnail", &format!("{{\"mediaId\":\"{id}\"}}")).await.unwrap_err();
+        assert_eq!(err, "not_ready", "expected not_ready from mirror item, got: {err}");
+    }
+
+    /// `ensure_full_proxy` must route the derivative write through the seam
+    /// (`commit_media_derivatives`) rather than calling `set_media_derivatives`
+    /// on the actor directly.  Under TS authority the seam emits
+    /// `media:derivatives`; under the old code `set_media_derivatives` on the
+    /// blank actor would error "media … not found" and return Err.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ensure_full_proxy_routes_through_seam() {
+        let sink = Arc::new(crate::events::VecEventSink::new());
+        let b = crate::napi_backend::Backend::new_for_test(sink.clone() as Arc<dyn crate::events::EventSink>);
+        b.init().await.unwrap();
+        // Populate mirror with an item that has no proxy yet.
+        let mut p = (*b.project().unwrap().snapshot().await).clone();
+        let id = uuid::Uuid::now_v7();
+        p.media_pool.insert(id, mirror_only_item(id));
+        b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
+        // Activate TS derivative authority so commit_media_derivatives emits
+        // the event rather than writing the actor.
+        crate::jobs::set_ts_derivative_authority(true);
+        let result = b.dispatch("ensure_full_proxy", &format!("{{\"mediaId\":\"{id}\"}}")).await;
+        // Reset authority immediately so parallel tests are not affected.
+        crate::jobs::set_ts_derivative_authority(false);
+        // The seam path returns Ok; the old direct-actor path returns Err on a
+        // mirror-only item because the blank actor has no such media.
+        result.expect("ensure_full_proxy must succeed via the seam");
+        assert!(
+            sink.names().iter().any(|n| n == "media:derivatives"),
+            "media:derivatives must be emitted via seam; got: {:?}",
+            sink.names()
+        );
+    }
 }
