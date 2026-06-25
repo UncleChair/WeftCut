@@ -29,7 +29,7 @@ import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPat
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { applyRebindMotif } from './mutations/motif'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseRgba, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -384,32 +384,32 @@ export function createActor(opts: ActorOptions): ActorHandle {
           switch (kind) {
             case 'text': params = textParamsDefault('hello'); break
             case 'color': params = colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080); break
-            case 'video': params = videoClipParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
+            case 'video': params = videoClipParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             // Optional `role` override (default 'music'): mirrors the add-layer-site
             // role stamp at actor.ts add_media_layer auto-pair (role:'dialogue') and the
             // synthesize_speech hybrid (role:'voiceover'). ADDITIVE — corpus add_layer
             // 'audio' seqs pass no role, so the default-'music' path is byte-unchanged.
             case 'audio': params = a.role
-              ? { ...audioParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number), role: a.role as AudioRole }
-              : audioParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
+              ? { ...audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')), role: a.role as AudioRole }
+              : audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             case 'image': params = imageOverlayParams(a.media as Uuid); break
             case 'Motif': params = { kind: 'Motif', motif_id: a.motif_id as string, motif_version: a.motif_version as number, props: (a.props ?? {}) as Record<string, unknown>, src_in_us: 0, transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] }, opacity: { mode: 'Static', value: 1 } }; break
             default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }
           }
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, a.t_start_us as number, a.t_end_us as number))
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
           return { ok: true, value: id }
         }
         case 'add_track': return { ok: true, value: commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null)) }
-        case 'add_marker': return { ok: true, value: commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, a.t_us as number, (a.end_t_us as number) ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 })) }
-        case 'move_layer': commit('Moved layer', [], { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, a.t_start_us as number, (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
-        case 'trim_layer': commit('Trimmed layer', [], { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), a.new_t_us as number, (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
+        case 'add_marker': return { ok: true, value: commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 })) }
+        case 'move_layer': commit('Moved layer', [], { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
+        case 'trim_layer': commit('Trimmed layer', [], { kind: 'Coarse' }, (d) => applyTrimLayer(d, a.layer as Uuid, ((a.edge as string) === 'out' ? 'Out' : 'In'), parseNum(a.new_t_us, 'new_t_us'), (a.escape_group as boolean) ?? false)); return { ok: true, value: null }
         case 'delete_layer': commit('Deleted layer', [], { kind: 'Coarse' }, (d) => applyDeleteLayer(d, a.layer as Uuid)); return { ok: true, value: null }
-        case 'duplicate_layer': return { ok: true, value: commit('Duplicated layer', [], { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, a.t_offset_us as number)) }
+        case 'duplicate_layer': return { ok: true, value: commit('Duplicated layer', [], { kind: 'Coarse' }, (d) => applyDuplicateLayer(d, idGen, a.layer as Uuid, parseNum(a.t_offset_us, 't_offset_us'))) }
         case 'set_composition': setComposition(a); return { ok: true, value: null }
         case 'undo': undo(); return { ok: true, value: null }
         case 'redo': redo(); return { ok: true, value: null }
         case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
-        case 'split_layer': return { ok: true, value: commit('Split layer', [], { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, a.at_t_us as number, (a.escape_group as boolean) ?? false)) }
+        case 'split_layer': return { ok: true, value: commit('Split layer', [], { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_group as boolean) ?? false)) }
         case 'groups_create': return { ok: true, value: commit('Created group', [], { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
         case 'groups_dissolve': commit('Dissolved group', [], { kind: 'Coarse' }, (d) => applyGroupsDissolve(d, a.group as Uuid)); return { ok: true, value: null }
         case 'groups_add_members': commit('Added group members', [], { kind: 'Coarse' }, (d) => applyGroupsAddMembers(d, a.group as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }
@@ -423,13 +423,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_marker': commit('Updated marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
         case 'remove_marker': commit('Removed marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
         case 'delete_track': commit('Deleted track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
-        case 'move_track': moveTrack(a.track as Uuid, a.new_position as number); return { ok: true, value: null }
+        case 'move_track': moveTrack(a.track as Uuid, parseNum(a.new_position, 'new_position')); return { ok: true, value: null }
         case 'update_track_flags': updateTrackFlags(a.track as Uuid, a.patch as TrackFlagsPatch); return { ok: true, value: null }
         case 'add_effect': return { ok: true, value: commit('Added effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyAddEffect(d, idGen, a.layer as Uuid, a.kind as string)) }
         case 'update_effect': commit('Updated effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateEffect(d, a.layer as Uuid, a.effect as Uuid, a.patch as EffectPatch)); return { ok: true, value: null }
-        case 'move_effect': commit('Reordered effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, a.new_index as number)); return { ok: true, value: null }
+        case 'move_effect': commit('Reordered effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, parseNum(a.new_index, 'new_index'))); return { ok: true, value: null }
         case 'remove_effect': commit('Removed effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
-        case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, a.duration_us as number, { kind: 'Crossfade' })) }
+        case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), { kind: 'Crossfade' })) }
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null, (a.with_audio as boolean | undefined) ?? false)) }
         // add_media_item — insert a FULL probed MediaItem (Phase 3d-e import_media
@@ -440,7 +440,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
-        case 'set_role_gain': setRoleGain(a.role as string, a.gain_db as number); return { ok: true, value: null }
+        case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
         case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null }); return { ok: true, value: null }
         case 'add_caption_track': return { ok: true, value: commit('Added caption track', [], { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
@@ -466,7 +466,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       }
     } catch (e) {
       if (e instanceof CommandFailure) return { ok: false, error: e.err }
-      if (e instanceof McpArgError) return { ok: false, error: { error: 'InvalidArgument', field: 'checkpoint_id', detail: e.mcpMessage } }
+      if (e instanceof McpArgError) return { ok: false, error: { error: 'InvalidArgument', field: e.field ?? 'arguments', detail: e.mcpMessage } }
       throw e
     }
   }
@@ -483,10 +483,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_color_layer': {
           // add_color_layer_impl (mutations.rs:362-388): resolve overlay track when
           // trackId absent (reverse-scan non-reserved; create "Overlay" if none free).
-          const t0 = wireArgs.tStartUs as number
-          const dur = resolveDurationUs(wireArgs.durationUs as number | undefined)
+          const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
+          const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
-          const trackId = (wireArgs.trackId as string | undefined) ?? pickFreeOverlayTrack(current(), t0, t1)
+          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(current(), t0, t1)
           if (trackId !== null) {
             const params = prodColorParams(wireArgs, current().composition)
             const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
@@ -506,10 +506,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'add_text_layer': {
           // add_text_layer_impl (mutations.rs:269-305): same overlay-track logic.
-          const t0 = wireArgs.tStartUs as number
-          const dur = resolveDurationUs(wireArgs.durationUs as number | undefined)
+          const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
+          const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
-          const trackId = (wireArgs.trackId as string | undefined) ?? pickFreeOverlayTrack(current(), t0, t1)
+          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : pickFreeOverlayTrack(current(), t0, t1)
           const params = prodTextParams(wireArgs)
           if (trackId !== null) {
             const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
@@ -528,8 +528,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // params. When auto-pair fires (Video + audio.is_some() + setting on):
           // THREE separate commits (three op_ids), mirroring Rust's three handle
           // calls — add video layer, add audio layer (role=dialogue), groups_create.
-          const trackId = wireArgs.trackId as string
-          const t0 = wireArgs.tStartUs as number
+          const trackId = parseUuid(wireArgs.trackId, 'trackId')
+          const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const { params, durationUs, autoPairAudio } = prodMediaLayer(wireArgs, current())
           const t1 = t0 + durationUs
           const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
@@ -619,6 +619,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       }
     } catch (e) {
       if (e instanceof CommandFailure) return { ok: false, error: e.err }
+      if (e instanceof McpArgError) return { ok: false, error: { error: 'InvalidArgument', field: e.field ?? 'arguments', detail: e.mcpMessage } }
       throw e
     }
   }
@@ -629,20 +630,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
     switch (kind) {
       case 'add_color_layer':
         return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
-          params: colorParams(spec.color as Rgba, (spec.width as number | undefined) ?? 1920, (spec.height as number | undefined) ?? 1080),
-          t_start_us: spec.t_start_us as number, t_end_us: spec.t_end_us as number }
+          params: colorParams(parseRgba(spec.color, 'color'), parseNumOpt(spec.width, 'width') ?? 1920, parseNumOpt(spec.height, 'height') ?? 1080),
+          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       case 'add_video_layer':
         return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
-          params: videoClipParams(parseUuid(spec.media_id, 'media_id'), spec.src_in_us as number, spec.src_out_us as number),
-          t_start_us: spec.t_start_us as number, t_end_us: spec.t_end_us as number }
+          params: videoClipParams(parseUuid(spec.media_id, 'media_id'), parseNum(spec.src_in_us, 'src_in_us'), parseNum(spec.src_out_us, 'src_out_us')),
+          t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
       case 'update_layer':
         return { kind: 'UpdateLayer', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerPatch }
       case 'update_layer_params':
         return { kind: 'UpdateLayerParams', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerParamsPatch }
       case 'move_layer':
-        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: spec.new_t_start_us as number, escape_group: (spec.escape_group as boolean) ?? false }
+        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: parseNum(spec.new_t_start_us, 'new_t_start_us'), escape_group: (spec.escape_group as boolean) ?? false }
       case 'split_layer':
-        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: spec.at_t_us as number, escape_group: (spec.escape_group as boolean) ?? false }
+        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: parseNum(spec.at_t_us, 'at_t_us'), escape_group: (spec.escape_group as boolean) ?? false }
       case 'delete_layer':
         return { kind: 'DeleteLayer', id: parseUuid(spec.layer_id, 'layer_id') }
       default:

@@ -14,14 +14,14 @@ export type McpCallResult = { ok: true; result: ToolResultJson } | { ok: false; 
 
 /** Thrown by arg parsers on bad input (e.g. malformed UUID) → invalid_params. */
 export class McpArgError extends Error {
-  constructor(public readonly mcpMessage: string) { super(mcpMessage); this.name = 'McpArgError' }
+  constructor(public readonly mcpMessage: string, public readonly field?: string) { super(mcpMessage); this.name = 'McpArgError' }
   toJson(): McpToolErrorJson { return { code: 'invalid_params', message: this.mcpMessage } }
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Mirrors tools.rs parse_uuid: validates + errors "<field> not a UUID: …". */
 export function parseUuid(s: unknown, field: string): string {
-  if (typeof s !== 'string' || !UUID_RE.test(s)) throw new McpArgError(`${field} not a UUID: ${String(s)}`)
+  if (typeof s !== 'string' || !UUID_RE.test(s)) throw new McpArgError(`${field} not a UUID: ${String(s)}`, field)
   return s
 }
 
@@ -87,13 +87,13 @@ export function parseRole(v: unknown): string {
  *  as Rgba` raw, so a string like "#fff" committed to the actor and then broke
  *  the read-mirror push. Mirror Rust's contract here so it never commits. */
 export function parseRgba(v: unknown, field: string): Rgba {
-  if (v === null || typeof v !== 'object') throw new McpArgError(`${field} must be an {r,g,b,a} color object`)
+  if (v === null || typeof v !== 'object') throw new McpArgError(`${field} must be an {r,g,b,a} color object`, field)
   const o = v as Record<string, unknown>
   const out = { r: 0, g: 0, b: 0, a: 0 }
   for (const k of ['r', 'g', 'b', 'a'] as const) {
     const n = o[k]
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 255)
-      throw new McpArgError(`${field}.${k} must be an integer 0..255`)
+      throw new McpArgError(`${field}.${k} must be an integer 0..255`, field)
     out[k] = n
   }
   return out
@@ -102,7 +102,7 @@ export function parseRgba(v: unknown, field: string): Rgba {
 /** Validate a required finite-number wire arg → invalid_params. A raw `as number`
  *  cast would let a string/undefined through as NaN into the actor. */
 export function parseNum(v: unknown, field: string): number {
-  if (typeof v !== 'number' || !Number.isFinite(v)) throw new McpArgError(`${field} must be a number`)
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw new McpArgError(`${field} must be a number`, field)
   return v
 }
 
@@ -113,13 +113,13 @@ export function parseNumOpt(v: unknown, field: string): number | undefined {
 
 /** Validate a required string wire arg → invalid_params. */
 export function parseStr(v: unknown, field: string): string {
-  if (typeof v !== 'string') throw new McpArgError(`${field} must be a string`)
+  if (typeof v !== 'string') throw new McpArgError(`${field} must be a string`, field)
   return v
 }
 
 /** Validate a required boolean wire arg → invalid_params. */
 export function parseBool(v: unknown, field: string): boolean {
-  if (typeof v !== 'boolean') throw new McpArgError(`${field} must be a boolean`)
+  if (typeof v !== 'boolean') throw new McpArgError(`${field} must be a boolean`, field)
   return v
 }
 
@@ -130,7 +130,7 @@ export function parseBoolOpt(v: unknown, field: string, dflt: boolean): boolean 
 
 /** Optional string variant: undefined/null → null, else validates string. */
 export function parseStrOpt(v: unknown, field: string): string | null {
-  return v === undefined || v === null ? null : (typeof v === 'string' ? v : (() => { throw new McpArgError(`${field} must be a string`) })())
+  return v === undefined || v === null ? null : (typeof v === 'string' ? v : (() => { throw new McpArgError(`${field} must be a string`, field) })())
 }
 
 function asArray(v: unknown, field: string): string[] {

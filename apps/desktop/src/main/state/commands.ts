@@ -62,6 +62,7 @@
 import type { LayerParams, Project, Rgba } from './model'
 import { defaultTransform } from './mutations/add'
 import { videoClipParams, audioParams, imageOverlayParams } from './mutations/media'
+import { parseRgba, parseNumOpt, parseStr, parseStrOpt } from './mcp-commands'
 
 /** demo_color palette (mutations.rs:681-688): 6-color cycle by layer index. */
 const DEMO_PALETTE: Rgba[] = [
@@ -78,12 +79,12 @@ export function demoColor(idx: number): Rgba {
 
 /** add_color_layer_impl default (mutations.rs:378-382): BLACK, composition size. */
 export function prodColorParams(a: Record<string, unknown>, comp: { width: number; height: number }): LayerParams {
-  const color = (a.color as Rgba | undefined) ?? { r: 0, g: 0, b: 0, a: 255 }
+  const color = a.color === undefined ? { r: 0, g: 0, b: 0, a: 255 } : parseRgba(a.color, 'color')
   return {
     kind: 'Color',
     color: { mode: 'Static', value: color },
-    width: (a.width as number | undefined) ?? comp.width,
-    height: (a.height as number | undefined) ?? comp.height,
+    width: parseNumOpt(a.width, 'width') ?? comp.width,
+    height: parseNumOpt(a.height, 'height') ?? comp.height,
   }
 }
 
@@ -91,7 +92,7 @@ export function prodColorParams(a: Record<string, unknown>, comp: { width: numbe
 export function prodTextParams(a: Record<string, unknown>): LayerParams {
   return {
     kind: 'Text',
-    content: (a.content as string | undefined) ?? 'Text',
+    content: parseStrOpt(a.content, 'content') ?? 'Text',
     font: { family: 'Arial', size_px: 72, weight: 400, italic: false },
     color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
     align: 'Center',
@@ -124,7 +125,7 @@ export function prodMediaLayer(
   a: Record<string, unknown>,
   project: Project,
 ): MediaLayerResult {
-  const mediaId = a.mediaId as string
+  const mediaId = parseStr(a.mediaId, 'mediaId')
   const item = project.media_pool[mediaId]
   if (!item) throw new Error(`media not found in pool: ${mediaId}`)
   const totalSrc = (item.metadata.duration_us as number | null | undefined) ?? 2_000_000
