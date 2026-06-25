@@ -563,3 +563,42 @@ corpus-gated. The seam is built dormant + unit-tested (`agent-session-seam.ts`,
 history, mirroring `commands/prefs.rs:209`) and is wired live only in 3d-d.
 `err-checkpoint-empty-label.json` / `err-begin-empty-reason.json` close part of the
 3d-a rejected-input-parity carry-forward (empty-string rejection, code-gated).
+
+### rejected-input parity seqs (3d-a / 3d-b carry-forward, closed in 3d-d)
+
+Four sequences gate the validators introduced in 3d-a (interpreter / track / role) and
+3d-b (lock-check on empty keyframe tracks); they exercise existing ops with bad args —
+no new `mcp_driver` arms are needed:
+
+| Sequence file | Tool | What it gates |
+|---|---|---|
+| `err-bad-interp.json` | `set_keyframe_easing` | invalid `interp` string → `UnknownInterpolation` (3d-a validator) |
+| `err-bad-track.json` | `get_param_track` | unknown `param_key` → `UnknownKeyframeParam` (3d-a validator) |
+| `err-bad-role.json` | `set_role_gain` | unknown `role` string → `UnknownRole` (3d-a validator) |
+| `err-lock-empty-reason.json` | `lock_history` | empty `reason` string → validation reject (3d-b validator) |
+
+These are rejected-input paths (no state mutation, no id burn); `state` is asserted
+byte-identical to the pre-call state, and `env.ok` is `false` in both engines.
+
+### live MCP flip and read-mirror (Phase 3d-d)
+
+Phase 3d-d wires the live routing flip: under `WEFTCUT_TS_ACTOR=1` all category-A MCP
+mutation tools route to the TS actor (`actor.mcpCall`) and the dormant seams from 3d-a
+through 3d-c are un-paused. **No new corpus dimension** — 3d-d adds no new oracle seqs.
+
+**Read-mirror note.** Under `WEFTCUT_TS_ACTOR` the Rust `project://` resource handlers
+and read tools (`project://current`, `project://tracks`, etc.) serve a Rust-side mirror
+that is fed by the TS actor on every mutation. The `mcp_driver` binary runs without the
+flag (mirror-free), falling through to the Rust actor directly, so the MCP oracles
+remain additive: the existing `sequences-mcp/` + `oracle-mcp/` corpus is valid under
+both the flag-off (Rust actor) and flag-on (TS actor + Rust read-mirror) paths without
+modification.
+
+**Live e2e gate.** `e2e/electron/mcp-flip.spec.ts` launches the real app under
+`WEFTCUT_TS_ACTOR=1`, parses the `[mcp] connect: {…}` log line emitted by the MCP
+host, connects a live `@modelcontextprotocol/sdk` `Client`, and asserts:
+
+- `project://tracks` (read-mirror) returns the reserved tracks from the new workspace.
+- `add_color_layer` (TS `actor.mcpCall` path) succeeds and returns a text block.
+- `project://current` (read-mirror) reflects the new layer after the mutation.
+- `import_media` (still in `MCP_BLOCKED_UNDER_FLAG`) rejects (deferred to 3d-e).
