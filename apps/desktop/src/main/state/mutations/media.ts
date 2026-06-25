@@ -1,4 +1,4 @@
-import type { LayerParams, MediaItem, Project, Track, Uuid } from '../model'
+import type { AudioParams, LayerParams, MediaItem, Project, Track, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
@@ -13,7 +13,7 @@ export function videoClipParams(media: Uuid, srcInUs: number, srcOutUs: number):
 /** commands/mutations.rs:109 — standalone Audio layer. AudioRole is
  *  #[serde(rename_all="kebab-case")] (audio_role.rs:14), so Rust AudioRole::Music
  *  serializes to the lowercase wire form "music" — the TS model's AudioRole. */
-export function audioParams(media: Uuid, srcInUs: number, srcOutUs: number): LayerParams {
+export function audioParams(media: Uuid, srcInUs: number, srcOutUs: number): AudioParams {
   return { kind: 'Audio', media, src_in_us: srcInUs, src_out_us: srcOutUs,
     gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
     fade_in_us: 0, fade_out_us: 0, mute: false, role: 'music' }
