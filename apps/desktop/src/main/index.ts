@@ -15,6 +15,7 @@ import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { tsActorHandles } from './state/shadow.js'
+import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -165,14 +166,27 @@ app.whenReady().then(async () => {
       // the derivative patch to the TS actor instead of forwarding to the renderer.
       // tsHost is module-scoped (set later); the closure captures it by reference.
       if (event === 'media:derivatives') {
-        if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyDerivativesEvent }) => applyDerivativesEvent(tsHost!.actor, payload as never)); return }
+        // Synchronous (jobs-writeback is statically imported — type-only deps, no
+        // eager actor construction) so the TSFN callback stays sync and can't race
+        // a concurrent handleInvoke via a deferred microtask. The apply fn logs (not
+        // throws) on MediaNotFound; the try/catch guards any other throw so it can't
+        // surface as an unhandled rejection.
+        if (tsHost) {
+          try { applyDerivativesEvent(tsHost.actor, payload as never) }
+          catch (e) { console.warn('[main] media:derivatives write-back threw', e) }
+          return
+        }
         // flag-off: Rust is authoritative and never emits this event — fall through is defensive
       }
       // `media:workspace_paths` write-back: the background import-copy job's
       // path/hash result. Same seam shape as media:derivatives (Phase 3d-e) —
       // apply to the TS actor under the flag instead of forwarding to the renderer.
       if (event === 'media:workspace_paths') {
-        if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyWorkspacePathsEvent }) => applyWorkspacePathsEvent(tsHost!.actor, payload as never)); return }
+        if (tsHost) {
+          try { applyWorkspacePathsEvent(tsHost.actor, payload as never) }
+          catch (e) { console.warn('[main] media:workspace_paths write-back threw', e) }
+          return
+        }
         // flag-off: Rust is authoritative and never emits this event — fall through is defensive
       }
       mainWindow?.webContents.send('evt:' + event, payload)
@@ -591,4 +605,22 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Flush the TS actor's debounced autosave before the process exits — an edit made
+// inside the 500ms autosave debounce window would otherwise be lost on quit
+// (autosave.stop() drops the pending timer rather than firing it). `project_save`
+// routes (router.ts) to autosave.forceFlush(), a no-op when no workspace is set
+// (blank-boot). Async-quit pattern: preventDefault once, flush, then re-quit; the
+// quitFlushed guard breaks the re-entrant before-quit that app.quit() raises.
+// Flag-off (tsHost null) early-returns so the Rust path's quit behavior is unchanged.
+let quitFlushed = false
+app.on('before-quit', (event) => {
+  if (quitFlushed || !tsHost) return
+  event.preventDefault()
+  quitFlushed = true
+  void tsHost
+    .handleInvoke('project_save', {})
+    .catch((e) => console.warn('[main] autosave quit-flush failed', e))
+    .finally(() => app.quit())
 })
