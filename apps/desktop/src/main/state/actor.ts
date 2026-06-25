@@ -34,6 +34,10 @@ import { readLayerTrack } from './mutations/params'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
+/** native/src/mcp/tools.rs:46 agent_actor() — the actor MCP-created checkpoints
+ *  store; surfaces in list_checkpoints' result (Rust agent_actor() = Agent{mcp}). */
+const MCP_ACTOR: Actor = { kind: 'Agent', client: 'mcp' }
+
 export type Clock = () => string
 export type DiffHint = { kind: 'Coarse' } | { kind: 'Layer'; id: Uuid } | { kind: 'Composition' }
 export interface ChangeEvent { op_id: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint }
@@ -64,9 +68,9 @@ export interface ActorHandle {
   historyStatus(): ReturnType<History['status']>
   lockHistory(reason: string): void
   unlockHistory(): void
-  checkpoint(label: string): Uuid
+  checkpoint(label: string, cpActor?: Actor): Uuid
   restoreCheckpoint(id: Uuid): void
-  listCheckpoints(): Array<{ id: Uuid; label: string; created_at: string }>
+  listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>
   dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
   mcpCall(name: string, argsJson: string): McpCallResult
 }
@@ -198,9 +202,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    history.rs:135) — used by the MCP checkpoint + begin_agent_session tools
   //    (3d-c). checkpoint mints 1 id, no op/broadcast; restore success = 2 ids
   //    (entry op_id then broadcast op_id); CheckpointNotFound/HistoryLocked = 0. ──
-  function checkpoint(label: string): Uuid {
+  function checkpoint(label: string, cpActor: Actor = actor): Uuid {
     const id = idGen() // History::checkpoint's new_id — no commit, no broadcast
-    return history.checkpoint(label, actor, id, clock())
+    return history.checkpoint(label, cpActor, id, clock())
   }
   function restoreCheckpoint(id: Uuid): void {
     const reason = history.lockReason()
@@ -210,8 +214,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const snap = history.restoreCheckpoint(id, opId, clock(), actor)!
     broadcastUnrecorded(`Restored checkpoint ${id}`, snap) // +1 broadcast id (actor.rs:3780, SECOND)
   }
-  function listCheckpoints(): Array<{ id: Uuid; label: string; created_at: string }> {
-    return history.listCheckpoints().map((c) => ({ id: c.id, label: c.label, created_at: c.created_at }))
+  function listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }> {
+    // Mirrors Rust NamedCheckpointSummary (history.rs:426 {id,label,actor,created_at};
+    // list_checkpoints serializes history_view().checkpoints, which INCLUDES actor —
+    // only the snapshot is dropped). The MCP path stores the agent actor (Fix 2).
+    return history.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
   }
 
   // ── move_track (do_move_track:3394-3426) — the cur===new no-op must skip
@@ -666,7 +673,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'checkpoint': {
           const label = ((a.label as string | undefined) ?? '').trim()
           if (label === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
-          return { ok: true, result: toolText(checkpoint(label)) }
+          return { ok: true, result: toolText(checkpoint(label, MCP_ACTOR)) }
         }
         case 'list_checkpoints': return { ok: true, result: toolJson(listCheckpoints()) }
         case 'set_keyframe': {

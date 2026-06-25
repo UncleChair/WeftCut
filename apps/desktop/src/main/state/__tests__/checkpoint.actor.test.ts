@@ -24,7 +24,7 @@ describe('actor checkpoint surface', () => {
     // technique; this test pins the return value + the {id,label,created_at} shape.)
     const { actor } = setup()
     const cp = actor.checkpoint('cp1')
-    expect(actor.listCheckpoints()).toEqual([{ id: cp, label: 'cp1', created_at: '<TS>' }])
+    expect(actor.listCheckpoints()).toEqual([{ id: cp, label: 'cp1', actor: { kind: 'User' }, created_at: '<TS>' }])
   })
 
   it('restore reverts state to the checkpoint snapshot', () => {

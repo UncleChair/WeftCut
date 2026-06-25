@@ -28,7 +28,7 @@ async fn main() {
     let mut steps = Vec::new();
     for cmd in seq["commands"].as_array().unwrap() {
         let op = cmd["op"].as_str().unwrap().to_string();
-        let (ok, env, ret) = if op == "add_media" {
+        let (ok, mut env, ret) = if op == "add_media" {
             // Pool seed (MCP import_media is jobs/3d-d). Apply via handle.
             match h.add_media_item(state::Actor::User, media_item(cmd)).await {
                 Ok(id) => (true, json!({ "ok": true, "result": { "content": [] } }), Some(id.to_string())),
@@ -45,6 +45,7 @@ async fn main() {
         if let (true, Some(id)) = (ok, &ret) {
             if let Some(rf) = cmd["ref"].as_str() { refs.insert(rf.to_string(), id.clone()); }
         }
+        normalize_ts(&mut env);
         let snap = h.snapshot().await;
         steps.push(json!({ "op": op, "ok": ok, "env": env, "state": canonical_state(&*snap) }));
     }
@@ -105,6 +106,45 @@ fn canonical_state(p: &state::Project) -> Value {
         m.insert("modified_at".into(), json!("<TS>"));
     }
     v
+}
+
+/// Normalize wall-clock fields (created_at/modified_at/started_at) to "<TS>" in
+/// the captured reply envelope so the oracle is deterministic — matching the TS
+/// gate's canonicalize() (canonical.ts TS_FIELDS) and canonical_state's metadata
+/// normalization. Result content travels as JSON-encoded strings (text blocks),
+/// so descend into a string IFF it parses as a JSON object/array, and re-serialize
+/// ONLY when a timestamp was actually replaced inside (else a timestamp-free
+/// 3d-b text-block would be re-serialized and break additivity). Returns true iff
+/// anything was normalized.
+fn normalize_ts(v: &mut Value) -> bool {
+    let mut changed = false;
+    match v {
+        Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                if matches!(k.as_str(), "created_at" | "modified_at" | "started_at") && val.is_string() {
+                    *val = json!("<TS>");
+                    changed = true;
+                } else if normalize_ts(val) {
+                    changed = true;
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for x in arr.iter_mut() {
+                if normalize_ts(x) { changed = true; }
+            }
+        }
+        Value::String(s) => {
+            if let Ok(mut inner) = serde_json::from_str::<Value>(s) {
+                if (inner.is_object() || inner.is_array()) && normalize_ts(&mut inner) {
+                    *s = serde_json::to_string(&inner).unwrap();
+                    changed = true;
+                }
+            }
+        }
+        _ => {}
+    }
+    changed
 }
 
 /// Byte-identical twin of prod_driver::media_item (see that file).
