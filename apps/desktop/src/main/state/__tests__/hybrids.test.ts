@@ -108,11 +108,11 @@ describe('runHybrid: import_media', () => {
     const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
     // Task 4 wires the subtitle hybrid: the orchestrator branches on .srt, reads
     // the file, calls parseSubtitles, and dispatches add_caption_track — NOT probeMedia.
-    const result = await runHybrid('import_media', { path: 'C:/subs.srt' }, deps) as { track_id: string }
+    // Returns a BARE track-id string (flag-off import_media parity — media.rs).
+    const result = await runHybrid('import_media', { path: 'C:/subs.srt' }, deps)
     expect(deps._probeMedia).not.toHaveBeenCalled()
-    expect(result).toHaveProperty('track_id')
-    expect(typeof result.track_id).toBe('string')
-    expect(result.track_id.length).toBeGreaterThan(0)
+    expect(typeof result).toBe('string')
+    expect((result as string).length).toBeGreaterThan(0)
   })
 
   it('throws when the actor rejects the insert (e.g. invalid item)', async () => {
@@ -135,19 +135,37 @@ describe('runHybrid: unhandled tool', () => {
 })
 
 describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
-  it('builds a caption track with 2 Text layers and returns the track id', async () => {
+  it('builds a caption track with 2 Text layers and returns the BARE track-id string', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor)
-    const result = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: null }, deps) as { track_id: string; simplified: boolean }
-    // Track id must be a non-empty string.
-    expect(typeof result.track_id).toBe('string')
-    expect(result.track_id.length).toBeGreaterThan(0)
-    expect(typeof result.simplified).toBe('boolean')
-    // The caption track must exist in the snapshot with exactly 2 layers.
+    // MCP arm returns the Rust ToolResult TEXT — the bare track id when not
+    // simplified. (server.ts stringifies this; an object would surface as
+    // "[object Object]".)
+    const result = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: null }, deps)
+    expect(typeof result).toBe('string')
+    expect((result as string).length).toBeGreaterThan(0)
+    // The returned id must name a caption track with exactly 2 layers (one per cue).
     const snap = actor.snapshot()
-    const track = snap.tracks.find((t) => t.id === result.track_id)
+    const track = snap.tracks.find((t) => t.id === result)
     expect(track).toBeTruthy()
     expect(track!.layers).toHaveLength(2)
+  })
+
+  it('appends the simplified-styling annotation when ASS styling was lossy', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    // Drive the fake parser with simplified:true → the MCP text gains the
+    // "(some ASS styling was simplified)" suffix (matching tools.rs:462-464).
+    deps.compute.parseSubtitles = vi.fn(async () => JSON.stringify({
+      cues: [{ start_us: 0, end_us: 1_000_000, text: 'hi', style: { bold: false, italic: false } }],
+      simplified: true,
+    }))
+    const result = await runHybrid('apply_subtitles', { body: TWO_CUE_SRT, format: 'ass' }, deps)
+    expect(typeof result).toBe('string')
+    expect(result).toMatch(/ \(some ASS styling was simplified\)$/)
+    // The id prefix must still resolve to a real track.
+    const id = (result as string).replace(/ \(some ASS styling was simplified\)$/, '')
+    expect(actor.snapshot().tracks.find((t) => t.id === id)).toBeTruthy()
   })
 
   it('calls compute.parseSubtitles with the body and format', async () => {
@@ -171,24 +189,35 @@ describe('runHybrid: apply_subtitles (MCP hybrid)', () => {
 })
 
 describe('runHybrid: import_media .srt (renderer subtitle branch)', () => {
-  it('reads the file, calls parseSubtitles, and returns {track_id} without probing media', async () => {
+  it('reads the file, calls parseSubtitles, and returns a BARE track-id string without probing media', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
-    const result = await runHybrid('import_media', { path: 'C:/My Subs/captions.srt' }, deps) as { track_id: string }
+    const result = await runHybrid('import_media', { path: 'C:/My Subs/captions.srt' }, deps)
     expect(deps._probeMedia).not.toHaveBeenCalled()
     expect(deps._readFile).toHaveBeenCalledWith('C:/My Subs/captions.srt')
     expect(deps._parseSubtitles).toHaveBeenCalledWith(TWO_CUE_SRT, null)
-    expect(typeof result.track_id).toBe('string')
-    expect(result.track_id.length).toBeGreaterThan(0)
+    // Flag-off import_media returns Ok(track_id) — a bare string, NOT an object.
+    expect(typeof result).toBe('string')
+    expect((result as string).length).toBeGreaterThan(0)
+  })
+
+  it('uses the full filename (with extension) as the caption label — flag-off parity', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
+    const id = await runHybrid('import_media', { path: 'C:\\My Subs\\captions.srt' }, deps) as string
+    const track = actor.snapshot().tracks.find((t) => t.id === id)
+    expect(track).toBeTruthy()
+    // media.rs uses source_buf.file_name() → "captions.srt" WITH extension.
+    expect(track!.label).toBe('captions.srt')
   })
 
   it('also branches on .ass and .vtt extensions', async () => {
     for (const ext of ['.ass', '.vtt']) {
       const actor = freshActor()
       const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
-      const result = await runHybrid('import_media', { path: `C:/subs${ext}` }, deps) as { track_id: string }
+      const result = await runHybrid('import_media', { path: `C:/subs${ext}` }, deps)
       expect(deps._probeMedia).not.toHaveBeenCalled()
-      expect(result).toHaveProperty('track_id')
+      expect(typeof result).toBe('string')
     }
   })
 })

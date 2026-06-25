@@ -46,8 +46,11 @@ export type HybridDeps = {
  *  through the TS actor. Used by both the MCP `apply_subtitles` arm and the
  *  `import_media` `.srt`/`.ass`/`.vtt` branch.
  *
- *  Returns `{ track_id, simplified }` — matching the Rust `apply_subtitles`
- *  ToolResult shape so the MCP caller can forward it verbatim. */
+ *  Returns `{ track_id, simplified }`. Both call sites UNWRAP it: the renderer
+ *  import branch returns the bare `track_id` string (flag-off parity — see
+ *  media.rs), and the MCP arm builds the `ToolResult::text` message (tools.rs).
+ *  Do NOT return this object straight out of `runHybrid` — server.ts stringifies
+ *  the hybrid result, so an object would surface as "[object Object]". */
 async function applySubtitleBody(
   body: string,
   format: string | null,
@@ -65,21 +68,26 @@ async function applySubtitleBody(
 }
 
 /** Run a hybrid tool: Rust compute then TS-actor write. Returns the tool's
- *  result (a media id for import_media, a {track_id, simplified} object for
- *  apply_subtitles and the subtitle import_media branch). Throws on a rejected
- *  actor write or an unhandled tool. */
+ *  result — a STRING in every arm: a media id (import_media), the bare caption
+ *  track id (import_media `.srt` branch, flag-off parity), or the MCP
+ *  ToolResult text (apply_subtitles). server.ts stringifies the result, so the
+ *  arms must not return objects. Throws on a rejected actor write or an
+ *  unhandled tool. */
 export async function runHybrid(tool: string, args: Record<string, unknown>, deps: HybridDeps): Promise<unknown> {
   switch (tool) {
     case 'import_media': {
       const path = args.path as string
       // Subtitles are CONSUMED into a caption track (not pooled into the media
-      // pool). Read the file, derive a label from the filename, and hand off to
-      // applySubtitleBody — format is always null (sniff from body).
+      // pool). Read the file, derive a label from the filename, hand off to
+      // applySubtitleBody (format null → sniff from body), and return the BARE
+      // track id string — flag-off import_media returns `Ok(track_id)` (media.rs)
+      // and discards `simplified`, so the hybrid path must match.
       if (/\.(srt|ass|vtt)$/i.test(path)) {
         const body = deps.readFile(path)
-        // Derive label from filename stem (e.g. "captions" from "captions.srt").
-        const stem = path.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '') ?? null
-        return applySubtitleBody(body, null, stem, deps)
+        // Full filename WITH extension as the label — flag-off uses file_name()
+        // (e.g. "captions.srt"), so match that for parity.
+        const label = path.replace(/\\/g, '/').split('/').pop() ?? null
+        return (await applySubtitleBody(body, null, label, deps)).track_id
       }
       const item = JSON.parse(await deps.compute.probeMedia(path)) as { id: string }
       const r = deps.actor.dispatch('add_media_item', { media: item })
@@ -97,12 +105,16 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
     case 'apply_subtitles': {
       // MCP-only: body + optional format tag. Label is always "Captions" to
       // match the Rust flag-off path (tools.rs apply_subtitles → "Captions").
-      return applySubtitleBody(
+      // Return the exact ToolResult text the Rust tool emits (tools.rs:462-466):
+      // the bare track id, or the id + a simplified-styling annotation. server.ts
+      // wraps this string into `{content:[{type:'text', text}]}`.
+      const { track_id, simplified } = await applySubtitleBody(
         args.body as string,
         (args.format as string | null | undefined) ?? null,
         'Captions',
         deps,
       )
+      return simplified ? `${track_id} (some ASS styling was simplified)` : track_id
     }
     // install_motif / acknowledge_motif_staleness → Task 5; synthesize_speech → Task 6.
     default:
