@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseAnimatedF64, McpArgError } from '../mcp-commands'
+import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, McpArgError } from '../mcp-commands'
 
 describe('parseInterp', () => {
   it('accepts the simple kinds', () => {
@@ -33,4 +33,11 @@ describe('parseAnimatedF64', () => {
   it('rejects a keyframe with a bad interp', () => {
     expect(() => parseAnimatedF64({ mode: 'Keyframed', value: [{ id: 'x', t_us: 0, value: 0, interp: { kind: 'no' } }] })).toThrow(McpArgError)
   })
+})
+describe('parseRole', () => {
+  it('accepts the four roles', () => {
+    for (const r of ['dialogue', 'music', 'sfx', 'voiceover']) expect(parseRole(r)).toBe(r)
+  })
+  it('rejects an unknown role', () => { expect(() => parseRole('bogus')).toThrow(McpArgError) })
+  it('rejects a non-string', () => { expect(() => parseRole(3)).toThrow(McpArgError) })
 })

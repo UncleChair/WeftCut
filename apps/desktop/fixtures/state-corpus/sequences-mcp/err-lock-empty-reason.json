@@ -1,0 +1,4 @@
+{ "name": "err-lock-empty-reason", "commands": [
+  { "op": "lock_history", "reason": "   " },
+  { "op": "add_track", "label": "after empty-reason error" }
+]}

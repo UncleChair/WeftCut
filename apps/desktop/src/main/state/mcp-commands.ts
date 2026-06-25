@@ -73,6 +73,14 @@ export function parseAnimatedF64(v: unknown): Animated<number> {
   throw new McpArgError(`invalid track: unknown mode '${String(o.mode)}'`)
 }
 
+const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
+/** Validate an AudioRole (audio_role.rs kebab-case). Rust rejects an unknown
+ *  role at the serde boundary → invalid_params; mirror that here. */
+export function parseRole(v: unknown): string {
+  if (typeof v !== 'string' || !AUDIO_ROLES.has(v)) throw new McpArgError(`invalid args for set_role_gain: unknown role '${String(v)}'`)
+  return v
+}
+
 // ── ToolResult shapers (wire.rs:81-93) ──
 export function toolText(s: string): ToolResultJson { return { content: [{ type: 'text', text: s }] } }
 export function toolEmpty(): ToolResultJson { return { content: [] } }
@@ -189,8 +197,8 @@ export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { o
   remove_media: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: (a.force as boolean) ?? false } }),
   undo: () => ({ op: 'undo', args: {} }),
   redo: () => ({ op: 'redo', args: {} }),
-  set_role_gain: (a) => ({ op: 'set_role_gain', args: { role: a.role, gain_db: a.gain_db } }),
-  set_role_flags: (a) => ({ op: 'update_role_flags', args: { role: a.role, patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }),
+  set_role_gain: (a) => ({ op: 'set_role_gain', args: { role: parseRole(a.role), gain_db: a.gain_db } }),
+  set_role_flags: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }),
 }
 
 /** MCP tool → ToolResult from the dispatch value. Tools absent here → toolEmpty. */

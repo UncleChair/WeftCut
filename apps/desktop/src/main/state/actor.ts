@@ -668,7 +668,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // mirror Rust's `ToolResult::json(&SplitLayerResult)` by returning it verbatim.
           return { ok: true, result: toolJson(r.value) }
         }
-        case 'lock_history': history.lock(a.reason as string); return { ok: true, result: toolEmpty() }
+        case 'lock_history': {
+          const reason = ((a.reason as string | undefined) ?? '').trim()
+          if (reason === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
+          history.lock(reason); return { ok: true, result: toolEmpty() }
+        }
         case 'unlock_history': history.unlock(); return { ok: true, result: toolEmpty() }
         case 'checkpoint': {
           const label = ((a.label as string | undefined) ?? '').trim()
