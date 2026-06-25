@@ -259,7 +259,7 @@ app.whenReady().then(async () => {
       parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
       computeMotifRebind: (argsJson: string) => backend!.computeMotifRebind(argsJson),
       computeAckMotifRebind: () => backend!.computeAckMotifRebind(),
-      synthesizeSpeechCompute: (_argsJson: string) => { throw new Error('synthesizeSpeechCompute: not wired until Task 6') },
+      synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
     }
 
     tsHost = createTsActorHost({

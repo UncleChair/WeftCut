@@ -340,6 +340,133 @@ describe('runHybrid: import_media .srt (renderer subtitle branch)', () => {
   })
 })
 
+// ── synthesize_speech audio MediaItem fixture ──────────────────────────────
+const AUDIO_MID = '00000000-0000-0000-0000-0000000000bb'
+const DURATION_US = 2_000_000
+
+function audioMediaItem(): import('../model').MediaItem {
+  return mediaItemTemplate(AUDIO_MID, 'Audio', DURATION_US)
+}
+
+/** Fake synthesizeSpeechCompute payload: {media_item, duration_us, cached}. */
+function fakeSpeechComputePayload(cached = false) {
+  return JSON.stringify({ media_item: audioMediaItem(), duration_us: DURATION_US, cached })
+}
+
+describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
+  it('inserts the audio media item into the pool', async () => {
+    const actor = freshActor()
+    // Give the project an Audio track so ensureAudioTrack returns it.
+    const addTrackR = actor.dispatch('add_track', { label: 'Voiceover' })
+    expect(addTrackR.ok).toBe(true)
+    if (!addTrackR.ok) throw new Error(JSON.stringify(addTrackR.error))
+    const trackId = addTrackR.value as string
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    expect(actor.snapshot().media_pool[AUDIO_MID]).toBeTruthy()
+    expect(actor.snapshot().media_pool[AUDIO_MID].kind).toBe('Audio')
+  })
+
+  it('places an Audio layer on the target track with the correct span', async () => {
+    const actor = freshActor()
+    const addTrackR = actor.dispatch('add_track', { label: 'Voiceover' })
+    expect(addTrackR.ok).toBe(true)
+    if (!addTrackR.ok) throw new Error(JSON.stringify(addTrackR.error))
+    const trackId = addTrackR.value as string
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    const snap0 = actor.snapshot()
+    const tStart = snap0.composition.duration_us
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    const snap = actor.snapshot()
+    const track = snap.tracks.find((t) => t.id === trackId)!
+    expect(track).toBeTruthy()
+    expect(track.layers).toHaveLength(1)
+    const layer = track.layers[0]
+    expect(layer.t_start_us).toBe(tStart)
+    expect(layer.t_end_us).toBe(tStart + DURATION_US)
+  })
+
+  it('places the Audio layer with Voiceover role', async () => {
+    const actor = freshActor()
+    const addTrackR = actor.dispatch('add_track', { label: 'Voiceover' })
+    expect(addTrackR.ok).toBe(true)
+    if (!addTrackR.ok) throw new Error(JSON.stringify(addTrackR.error))
+    const trackId = addTrackR.value as string
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    const snap = actor.snapshot()
+    const track = snap.tracks.find((t) => t.id === trackId)!
+    const layer = track.layers[0]
+    expect((layer.params as import('../model').AudioParams).role).toBe('voiceover')
+  })
+
+  it('returns a JSON string with layer_id, media_id, t_start_us, t_end_us, cached', async () => {
+    const actor = freshActor()
+    const addTrackR = actor.dispatch('add_track', { label: 'Voiceover' })
+    expect(addTrackR.ok).toBe(true)
+    if (!addTrackR.ok) throw new Error(JSON.stringify(addTrackR.error))
+    const trackId = addTrackR.value as string
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload(true))
+    const result = await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    // Must be a JSON STRING (not an object) — server.ts wraps with String(result).
+    expect(typeof result).toBe('string')
+    const parsed = JSON.parse(result as string) as { layer_id: string; media_id: string; t_start_us: number; t_end_us: number; cached: boolean }
+    expect(parsed.media_id).toBe(AUDIO_MID)
+    expect(typeof parsed.layer_id).toBe('string')
+    expect(parsed.layer_id.length).toBeGreaterThan(0)
+    expect(parsed.t_end_us - parsed.t_start_us).toBe(DURATION_US)
+    expect(parsed.cached).toBe(true)
+  })
+
+  it('honours an explicit t_start_us arg', async () => {
+    const actor = freshActor()
+    const addTrackR = actor.dispatch('add_track', { label: 'Voiceover' })
+    expect(addTrackR.ok).toBe(true)
+    if (!addTrackR.ok) throw new Error(JSON.stringify(addTrackR.error))
+    const trackId = addTrackR.value as string
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    const result = await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId, t_start_us: 5_000_000 }, deps)
+    const parsed = JSON.parse(result as string) as { t_start_us: number; t_end_us: number }
+    expect(parsed.t_start_us).toBe(5_000_000)
+    expect(parsed.t_end_us).toBe(5_000_000 + DURATION_US)
+  })
+
+  it('kicks enqueueDerivatives with the audio media item', async () => {
+    const actor = freshActor()
+    const addTrackR = actor.dispatch('add_track', { label: 'Voiceover' })
+    expect(addTrackR.ok).toBe(true)
+    if (!addTrackR.ok) throw new Error(JSON.stringify(addTrackR.error))
+    const trackId = addTrackR.value as string
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    expect(deps._enqueueDerivatives).toHaveBeenCalledTimes(1)
+    const arg = deps._enqueueDerivatives.mock.calls[0][0] as import('../model').MediaItem[]
+    expect(arg[0].id).toBe(AUDIO_MID)
+  })
+
+  it('creates a new Voiceover track when target_track_id is omitted (ensureAudioTrack, no existing track)', async () => {
+    // Fresh project has 2 reserved tracks (A/B-roll). ensureAudioTrack must
+    // return the LAST track (Rust: snap.tracks.last()).
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1 }, deps)
+    const snap = actor.snapshot()
+    // A layer must have been placed on some track.
+    const layerCount = snap.tracks.flatMap((t) => t.layers).length
+    expect(layerCount).toBeGreaterThanOrEqual(1)
+    // The placed layer must be on the last track (ensureAudioTrack = snap.tracks.last()).
+    const lastTrack = snap.tracks[snap.tracks.length - 1]
+    expect(lastTrack.layers).toHaveLength(1)
+  })
+})
+
 describe('applyWorkspacePathsEvent', () => {
   it('updates the media item path/rel/hash/size/mtime via the set_media_workspace_paths dispatch', () => {
     const actor = freshActor()

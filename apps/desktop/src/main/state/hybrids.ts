@@ -42,6 +42,20 @@ export type HybridDeps = {
   snapshotComposition: () => { width: number; height: number; duration_us: number }
 }
 
+/** Mirror of `ensure_audio_track` (tools.rs:123-130): return the id of the
+ *  topmost (last) track, or create a new "Voiceover" track and return its id.
+ *  "Topmost" = last in `tracks` array (matching Rust's `tracks.last()`). */
+function ensureAudioTrack(deps: HybridDeps): string {
+  const snap = deps.actor.snapshot()
+  if (snap.tracks.length > 0) {
+    return snap.tracks[snap.tracks.length - 1].id
+  }
+  // No tracks at all — create a "Voiceover" track (mirrors add_track in tools.rs:129).
+  const r = deps.actor.dispatch('add_track', { label: 'Voiceover' })
+  if (!r.ok) throw new Error(JSON.stringify(r.error))
+  return r.value as string
+}
+
 /** Parse a subtitle body via Rust (compute only) then write the caption track
  *  through the TS actor. Used by both the MCP `apply_subtitles` arm and the
  *  `import_media` `.srt`/`.ass`/`.vtt` branch.
@@ -143,7 +157,54 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       }
       return count
     }
-    // synthesize_speech → Task 6.
+    case 'synthesize_speech': {
+      // Rust: TTS compute (validate text → pick synthesizer → cache key →
+      // synthesize+write → spawn_blocking probe → build MediaItem). Returns
+      // {media_item, duration_us, cached}. The TS host applies the WRITES:
+      // add_media_item + enqueueDerivatives + resolve track + add Audio layer
+      // (Voiceover role) + update_layer_params (role patch). Mirrors
+      // synthesize_speech (tools.rs:2673) flag-off write tail.
+      const { media_item, duration_us, cached } = JSON.parse(
+        await deps.compute.synthesizeSpeechCompute(JSON.stringify(args)),
+      ) as { media_item: { id: string }; duration_us: number; cached: boolean }
+
+      const addR = deps.actor.dispatch('add_media_item', { media: media_item })
+      if (!addR.ok) throw new Error(JSON.stringify(addR.error))
+
+      await deps.enqueueDerivatives([media_item])
+
+      const tStart = (args.t_start_us as number | undefined) ?? deps.snapshotComposition().duration_us
+      const tEnd = tStart + duration_us
+
+      const trackId = (args.target_track_id as string | undefined) ?? ensureAudioTrack(deps)
+
+      // Add an Audio layer with the standard audioParams (role defaults to
+      // 'music'); then patch the role to 'voiceover' — mirrors
+      // AudioParams{role:Voiceover} in synthesize_speech (tools.rs:2813).
+      const layerR = deps.actor.dispatch('add_layer', {
+        kind: 'audio',
+        track: trackId,
+        media: media_item.id,
+        src_in_us: 0,
+        src_out_us: duration_us,
+        t_start_us: tStart,
+        t_end_us: tEnd,
+      })
+      if (!layerR.ok) throw new Error(JSON.stringify(layerR.error))
+      const layerId = layerR.value as string
+
+      // Patch role to 'voiceover' — audioParams defaults to 'music'.
+      const patchR = deps.actor.dispatch('update_layer_params', {
+        layer: layerId,
+        patch: { kind: 'Audio', role: 'voiceover' },
+      })
+      if (!patchR.ok) throw new Error(JSON.stringify(patchR.error))
+
+      // Return a JSON STRING — server.ts wraps via String(result), so returning
+      // an object would surface as "[object Object]" (the Task-4 apply_subtitles
+      // trap). Mirrors SynthesizeSpeechResult snake_case serde (tools.rs:2396).
+      return JSON.stringify({ layer_id: layerId, media_id: media_item.id, t_start_us: tStart, t_end_us: tEnd, cached })
+    }
     default:
       throw new Error(`runHybrid: unhandled tool ${tool}`)
   }

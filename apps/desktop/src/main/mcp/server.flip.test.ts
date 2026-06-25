@@ -38,10 +38,20 @@ describe('handleCallTool flip routing', () => {
     const layers = ts.actor.snapshot().tracks.reduce((n: number, t: any) => n + t.layers.length, 0)
     expect(layers).toBe(1)
   })
-  it('rejects a blocked tool with code -32600', async () => {
+  it('routes synthesize_speech through the hybrid (not blocked, Task 6)', async () => {
+    // synthesize_speech is now a hybrid (landed Task 6); it must NOT be rejected
+    // with -32600. The fake synthesizeSpeechCompute returns '{}'  (no media_item)
+    // so the arm throws an actor-write error — but NOT a -32600 blocked rejection.
     const ts = tsHostStub()
-    await expect(handleCallTool(fakeBackend(async () => '{}'), () => ts, 'synthesize_speech', { text: 'hi' }))
-      .rejects.toMatchObject({ code: -32600 })
+    const result = await handleCallTool(fakeBackend(async () => '{}'), () => ts, 'synthesize_speech', { text: 'hi' })
+      .then((v) => ({ ok: true as const, v }), (e: Error) => ({ ok: false as const, e }))
+    // Must NOT have been rejected with code -32600 (that is the blocked path).
+    if (!result.ok) {
+      expect((result.e as { code?: number }).code).not.toBe(-32600)
+    }
+    // The hybrid path was entered (compute was called even though it returned '{}'
+    // which causes a downstream throw; what matters is -32600 is not raised).
+    expect(ts.hybridDeps.compute.synthesizeSpeechCompute).toHaveBeenCalled()
   })
   it('routes import_media through the hybrid (TS-write), returning the media id as text', async () => {
     const ts = tsHostStub()

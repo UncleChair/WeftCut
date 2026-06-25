@@ -2373,7 +2373,7 @@ pub(super) struct TranscribeClipArgs {
 
 #[cfg(feature = "cloud")]
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(super) struct SynthesizeSpeechArgs {
+pub(crate) struct SynthesizeSpeechArgs {
     /// Text to synthesize. tts-1 caps at 4096 characters.
     pub text: String,
     /// Voice identifier. tts-1 accepts: alloy, echo, fable, onyx, nova, shimmer.
@@ -2669,20 +2669,22 @@ async fn transcribe_clip_inner(
     Ok(ToolResult::text(shifted))
 }
 
+/// TTS compute half of the `synthesize_speech` hybrid (Phase 3d-e).
+/// Validates the text, picks the synthesizer, checks the content-addressed
+/// cache, synthesizes+writes the audio if needed, probes it for duration,
+/// and builds the `MediaItem`. Does NOT write to the project actor — that is
+/// the TS host's job. Returns `(MediaItem, cached)`.
 #[cfg(feature = "cloud")]
-pub(super) async fn synthesize_speech(
+pub(crate) async fn synthesize_speech_audio(
     b: &Backend,
-    args: SynthesizeSpeechArgs,
-) -> Result<ToolResult, McpToolError> {
+    args: &SynthesizeSpeechArgs,
+) -> Result<(crate::state::MediaItem, bool), McpToolError> {
     use crate::cache::cached_ok;
     use crate::state::{MediaItem, MediaKind, new_id};
     use crate::io::probe;
 
     if args.text.trim().is_empty() {
-        return Err(McpToolError::invalid_params(
-            "text is empty",
-            None,
-        ));
+        return Err(McpToolError::invalid_params("text is empty", None));
     }
 
     let synthesizer = {
@@ -2775,6 +2777,16 @@ pub(super) async fn synthesize_speech(
     .await
     .map_err(|e| McpToolError::internal_error(format!("probe join: {e}"), None))?
     .map_err(|e| McpToolError::internal_error(e, None))?;
+
+    Ok((media_item, cached))
+}
+
+#[cfg(feature = "cloud")]
+pub(super) async fn synthesize_speech(
+    b: &Backend,
+    args: SynthesizeSpeechArgs,
+) -> Result<ToolResult, McpToolError> {
+    let (media_item, cached) = synthesize_speech_audio(b, &args).await?;
 
     let duration_us = media_item.metadata.duration_us.unwrap_or(0);
     let media_item_for_jobs = media_item.clone();

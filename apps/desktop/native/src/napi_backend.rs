@@ -422,6 +422,30 @@ impl Backend {
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// synthesize_speech hybrid compute (Phase 3d-e): validate text → pick
+    /// synthesizer → content-addressed cache key → synthesize+write if not cached
+    /// → spawn_blocking probe → build `MediaItem`. Returns JSON
+    /// `{ media_item: MediaItem, duration_us: i64, cached: boolean }`.
+    /// NO actor write — the TS host applies the add_media_item + add Audio layer
+    /// (Voiceover role) writes via the authoritative actor.
+    #[napi]
+    #[cfg(feature = "cloud")]
+    pub async fn synthesize_speech_compute(&self, args_json: String) -> napi::Result<String> {
+        let args: crate::mcp::tools::SynthesizeSpeechArgs =
+            serde_json::from_str(&args_json).map_err(|e| Error::from_reason(e.to_string()))?;
+        let (media_item, cached) =
+            crate::mcp::tools::synthesize_speech_audio(self, &args)
+                .await
+                .map_err(|e| Error::from_reason(e.message))?;
+        let duration_us = media_item.metadata.duration_us.unwrap_or(0);
+        serde_json::to_string(&serde_json::json!({
+            "media_item": media_item,
+            "duration_us": duration_us,
+            "cached": cached,
+        }))
+        .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     /// Queue the background workspace-copy job for an already-inserted media item
     /// (the write half of the `import_media` hybrid is the COPY's path/hash result,
     /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the
