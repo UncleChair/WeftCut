@@ -637,9 +637,13 @@ and that `ensure_full_proxy` routes through `commit_media_derivatives`.
 
 **Flag-on behavioral e2e.** `e2e/electron/ts-actor-native-compute.spec.ts` launches
 the real app under `WEFTCUT_TS_ACTOR=1`, calls `import_media` (hybrid), asserts
-`project_summary` reflects the imported media (F3), and verifies
-`export_project_audio_only` / `ensure_export_audio_conform` execute without error
-against the mirror (F1/F2).
+`project_summary` reflects the imported media (F3), places an Audio layer
+referencing that media (`add_media_layer`), and asserts the mirror-backed summary
+shows the Audio layer. It then calls `ensure_export_audio_conform` and asserts the
+imported media id appears in the returned waiting list — proving the export-readiness
+gate reads the mirror's audio layers via `snapshot_for_read()` (F1/F2). It does not
+call `export_project_audio_only`, which (correctly) throws when the conform cache is
+absent and so is not deterministic to assert synchronously.
 
 **Still blocked (Phase 4):** `add_motif` (needs motif catalog in TS) and
 `project_restore_checkpoint` (no TS command-surface create path) remain in
