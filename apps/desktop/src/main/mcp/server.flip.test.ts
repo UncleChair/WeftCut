@@ -23,7 +23,7 @@ function tsHostStub() {
     readFile: () => '',
     snapshotComposition: () => actor.snapshot().composition,
   }
-  return { actor, hybridDeps, handleInvoke: async () => null, start: () => {}, stop: () => {}, beginAgentSessionSlot: () => {} } as any
+  return { actor, mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson), hybridDeps, handleInvoke: async () => null, start: () => {}, stop: () => {}, beginAgentSessionSlot: () => {} } as any
 }
 function fakeBackend(mcpCallTool: (n: string, a: string) => Promise<string>) {
   return { mcpCallTool, mcpReadResource: async () => '{"ok":true,"result":{}}', mcpCatalog: async () => '{"tools":[]}' } as any
