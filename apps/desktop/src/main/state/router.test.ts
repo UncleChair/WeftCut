@@ -71,12 +71,21 @@ describe('router partition gate', () => {
     expect(routeChannel('totally_unknown_channel').kind).toBe('reject')
   })
 
-  it('the allowlist sets are disjoint from each other and from hybrids/blocked/production', () => {
+  it('the allowlist sets are disjoint from each other and from hybrids/blocked/production/special', () => {
+    // SPECIAL: the 7 switch-case channels (project_open, project_save, etc.) handled
+    // by dedicated Route kinds. They must never appear in any named allowlist bucket —
+    // if a future refactor accidentally adds one to e.g. PURE_NATIVE the disjointness
+    // check here will catch it before the partition gate silently hides the duplicate.
+    const SPECIAL: ReadonlySet<string> = new Set([
+      'project_open', 'project_save', 'project_save_as', 'project_new_workspace',
+      'project_summary', 'get_project_settings', 'agent_session_end',
+    ])
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
       ['MIRROR_BACKED_READS', MIRROR_BACKED_READS], ['DEBUG_ONLY', DEBUG_ONLY],
       ['HYBRID_CHANNELS', HYBRID_CHANNELS], ['BLOCKED_UNDER_FLAG', BLOCKED_UNDER_FLAG],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],
+      ['SPECIAL', SPECIAL],
     ]
     for (let i = 0; i < buckets.length; i++)
       for (let j = i + 1; j < buckets.length; j++)

@@ -19,9 +19,12 @@ export type Route =
   | { kind: 'rust' }
 
 /** Renderer-reachable category-A mutations with NO TS path — rejected under the
- *  flag (single-writer), deferred to Phase 4. add_motif needs the motif catalog;
- *  project_restore_checkpoint has no TS command-surface create path (and no
- *  checkpoint can exist during a single-writer soak). */
+ *  flag (single-writer), deferred to Phase 4. add_motif needs the motif catalog
+ *  in TS; project_restore_checkpoint has no TS command-surface create path (no
+ *  checkpoint can exist during a single-writer soak). All other previously-blocked
+ *  channels landed in Phase 3d-e: import_media, install_motif,
+ *  acknowledge_motif_staleness are hybrids (HYBRID_CHANNELS); apply_subtitles
+ *  and synthesize_speech are MCP-only hybrids (HYBRID_TOOLS in mutationTools.ts). */
 export const BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set(['add_motif', 'project_restore_checkpoint'])
 
 /** Hybrid Rust-compute → TS-write channels (Phase 3d-e). */

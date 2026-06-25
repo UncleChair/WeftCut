@@ -601,4 +601,46 @@ host, connects a live `@modelcontextprotocol/sdk` `Client`, and asserts:
 - `project://tracks` (read-mirror) returns the reserved tracks from the new workspace.
 - `add_color_layer` (TS `actor.mcpCall` path) succeeds and returns a text block.
 - `project://current` (read-mirror) reflects the new layer after the mutation.
-- `import_media` (still in `MCP_BLOCKED_UNDER_FLAG`) rejects (deferred to 3d-e).
+- `import_media` was in `MCP_BLOCKED_UNDER_FLAG` during 3d-d; un-paused in 3d-e (see below).
+
+### native-compute hybrids and read-mirror re-points (Phase 3d-e)
+
+Phase 3d-e closes F1–F7 (the seven silent-wrong-output / split-brain bugs that the
+flag-on read paths had when consulting the frozen Rust actor instead of the TS
+read-mirror). **No new corpus dimension** — 3d-e adds no oracle seqs (the hybrid
+writes route through existing TS actor dispatch arms already gated by the corpus).
+
+**What changed:**
+
+- F1/F2 (`export_project_audio_only` / `ensure_export_audio_conform`): re-pointed to
+  `snapshot_for_read()` in `commands/export.rs` (Task 1).
+- F3 (`import_media` hybrid): Rust probes the file; TS host writes the resulting
+  `MediaItem` into its actor via `add_media_item`. Un-paused from
+  `MCP_BLOCKED_UNDER_FLAG` (Task 3).
+- F4 (`ensure_full_proxy` seam): routes the derivative write through
+  `commit_media_derivatives` instead of a direct actor call (Task 1).
+- F5/F6 (`get_media_thumbnail` / `get_waveform_peaks`): re-pointed to
+  `snapshot_for_read()` in `commands/media.rs` (Task 1).
+- F7 (`motif_staleness_report` read + `acknowledge_motif_staleness` /
+  `install_motif` writes): staleness-report reads `snapshot_for_read()`
+  (Task 1); the two write hybrids Rust-compute → TS-write (Task 5).
+- `apply_subtitles` hybrid: Rust parses; TS host writes (Task 4).
+- `synthesize_speech` hybrid (MCP-only): Rust synthesizes; TS host writes (Task 6).
+- `rebind_motif` sequences: `rebind-motif-fresh.json` + `rebind-motif-stale.json`
+  added to `sequences-mcp/` (Task 2).
+
+**Durable guard.** A `#[test] fn mirror_backed_reads_do_not_touch_the_stale_actor`
+source-scan test in `napi_backend.rs` asserts that `commands/media.rs`,
+`commands/export.rs`, and `commands/motif_authoring.rs` do NOT contain
+`.project()?.snapshot()` (the stale-actor read) and DO contain `snapshot_for_read`,
+and that `ensure_full_proxy` routes through `commit_media_derivatives`.
+
+**Flag-on behavioral e2e.** `e2e/electron/ts-actor-native-compute.spec.ts` launches
+the real app under `WEFTCUT_TS_ACTOR=1`, calls `import_media` (hybrid), asserts
+`project_summary` reflects the imported media (F3), and verifies
+`export_project_audio_only` / `ensure_export_audio_conform` execute without error
+against the mirror (F1/F2).
+
+**Still blocked (Phase 4):** `add_motif` (needs motif catalog in TS) and
+`project_restore_checkpoint` (no TS command-surface create path) remain in
+`BLOCKED_UNDER_FLAG` / `MCP_BLOCKED_UNDER_FLAG`.

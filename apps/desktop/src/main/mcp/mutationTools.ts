@@ -3,12 +3,12 @@ import { MCP_TOOLS } from '../state/mcp-commands.js'
 export type McpRoute = 'ts' | 'rust' | 'blocked' | 'hybrid'
 
 /** Category-A MCP tools with NO TS path under WEFTCUT_TS_ACTOR — rejected -32600.
- *  The hybrid writes (import_media, apply_subtitles, synthesize_speech,
- *  install_motif, acknowledge_motif_staleness) move to HYBRID_TOOLS as each
- *  lands; the native-motif family and add_motif/project_restore_checkpoint ride
- *  Phase 4. (install_motif + acknowledge_motif_staleness landed in Phase 3d-e Task 5;
- *  synthesize_speech landed in Task 6.)
- *  motif_staleness_report is a mirror-backed READ (routes to 'rust') — NOT blocked. */
+ *  Phase 3d-e is now COMPLETE: import_media (Task 3), apply_subtitles (Task 4),
+ *  install_motif + acknowledge_motif_staleness (Task 5), synthesize_speech (Task 6)
+ *  have all landed in HYBRID_TOOLS. Only the two genuinely Phase-4-deferred tools
+ *  remain here: add_motif (needs motif catalog in TS) and project_restore_checkpoint
+ *  (no TS command-surface create path; no checkpoint can exist during a single-writer
+ *  soak). motif_staleness_report is a mirror-backed READ (routes to 'rust') — NOT blocked. */
 export const MCP_BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set([
   'add_motif', 'project_restore_checkpoint',
 ])

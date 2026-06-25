@@ -1572,4 +1572,77 @@ mod tests {
             "stale proxy must emit a clearing event; saw {names:?}"
         );
     }
+
+    /// Phase 3d-e durable guard: the mirror-backed read handlers must use
+    /// `snapshot_for_read()` (the TS read-mirror path) and must NOT contain the
+    /// stale-actor read `.project()?.snapshot()` that bugs F1–F7 would have
+    /// introduced.  Also asserts that `ensure_full_proxy` routes its derivative
+    /// write through the `commit_media_derivatives` seam (F4 guard) rather than
+    /// calling `handle.set_media_derivatives` directly.
+    ///
+    /// This is a MECHANICAL source-scan — no Backend is constructed, no tokio
+    /// runtime is needed.  It is the spec's #1 durable guard: any regression
+    /// that re-inserts a stale-actor read in these files will fail here before
+    /// it can break the live flag-on path.
+    #[test]
+    fn mirror_backed_reads_do_not_touch_the_stale_actor() {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let media = std::fs::read_to_string(format!("{root}/src/commands/media.rs"))
+            .expect("commands/media.rs must be readable");
+        let export = std::fs::read_to_string(format!("{root}/src/commands/export.rs"))
+            .expect("commands/export.rs must be readable");
+        let motif = std::fs::read_to_string(format!("{root}/src/commands/motif_authoring.rs"))
+            .expect("commands/motif_authoring.rs must be readable");
+
+        // F1/F2/F4/F5/F6 regression guard: the mirror-backed read handlers in
+        // media.rs + export.rs must NOT contain the stale-actor snapshot call
+        // `.project()?.snapshot()`.  motif_authoring.rs is intentionally excluded
+        // from this check: the flag-OFF wrapper `acknowledge_motif_staleness`
+        // legitimately calls `b.project()?.snapshot().await` (it applies the rebind
+        // to the live actor on the non-flagged path); that stale-actor call is EXPECTED
+        // there.  The mirror-backed read in motif_authoring (`motif_staleness_report`)
+        // uses `b.snapshot_for_read()` and is guarded by the presence check below.
+        for (name, src) in [("commands/media.rs", &media), ("commands/export.rs", &export)] {
+            assert!(
+                !src.contains(".project()?.snapshot()"),
+                "{name}: stale-actor snapshot read `.project()?.snapshot()` is present — \
+                 re-point to `snapshot_for_read()` (Phase 3d-e F1–F7)"
+            );
+        }
+
+        // Mirror-read guard: all three handler files must call `snapshot_for_read`.
+        assert!(
+            media.contains("snapshot_for_read"),
+            "commands/media.rs: mirror-backed reads must call `snapshot_for_read`"
+        );
+        assert!(
+            export.contains("snapshot_for_read"),
+            "commands/export.rs: mirror-backed reads must call `snapshot_for_read`"
+        );
+        assert!(
+            motif.contains("snapshot_for_read"),
+            "commands/motif_authoring.rs: motif_staleness_report must call `snapshot_for_read`"
+        );
+
+        // F4 seam guard: `ensure_full_proxy` must route the derivative write
+        // through `commit_media_derivatives` (the TS-authority seam), not call
+        // `handle.set_media_derivatives` directly.
+        let efp_start = media.find("fn ensure_full_proxy")
+            .expect("ensure_full_proxy must exist in commands/media.rs");
+        let efp_tail = &media[efp_start..];
+        // Slice up to the next top-level `pub` fn (or end of file) to isolate the fn body.
+        let efp_body = match efp_tail.find("\npub async fn ") {
+            Some(next) => &efp_tail[..next],
+            None => efp_tail,
+        };
+        assert!(
+            efp_body.contains("commit_media_derivatives"),
+            "ensure_full_proxy must call `commit_media_derivatives` (the TS-authority seam)"
+        );
+        assert!(
+            !efp_body.contains("handle\n        .set_media_derivatives")
+                && !efp_body.contains("handle.set_media_derivatives"),
+            "ensure_full_proxy must NOT call `handle.set_media_derivatives` directly — use the seam"
+        );
+    }
 }
