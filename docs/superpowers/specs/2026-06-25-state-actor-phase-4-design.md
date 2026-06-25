@@ -153,7 +153,9 @@ targets:
 Reuse the typed validators (`parseRgba`/`parseNum`/`parseNumOpt`/`parseStr`/`parseUuid`/`parseRole`/
 `parseInterp(Opt)`/`parseAnimatedF64`); malformed input rejects `-32602`/`InvalidArgument` **before**
 commit, never `as`-casts to `NaN`/`undefined`. Regression tests assert *no commit* on malformed
-input (the `mcp.malformed-args` pattern).
+input (the `mcp.malformed-args` pattern). **These parsers land directly in the §2.7 single-source
+table's `parseArgs` (built this slice)** — written into their final home once, not into a structure
+4b would rewrite.
 
 ### 2.6 Subscriber-starvation defense (folded in — your correction)
 `actor.ts` ≈ L113 broadcasts via a synchronous `for (const cb of subs)` — one throwing subscriber
@@ -161,11 +163,52 @@ input (the `mcp.malformed-args` pattern).
 notify). Isolate each subscriber (try/catch per callback, warn-and-continue) so one bad subscriber
 cannot starve the rest. Cross-refs: `feedback_ui_actor_bridge`, `feedback_async_block_on_in_async`.
 
-### 2.7 4a exit criteria
+### 2.7 Single-source MCP tool table + structural gate (dormant in 4a)
+The TS-executed surface is keyed by tool name across **five** hand-maintained tables today
+(`mcp-commands.ts` `MCP_ARG_PARSERS`/`MCP_RESULT_SHAPERS`/`MCP_TOOLS`; `mutationTools.ts`
+`MCP_BLOCKED_UNDER_FLAG`/`HYBRID_TOOLS`). §4.2 would add a sixth — the TS `inputSchema`. Six parallel
+name-keyed tables aligned by hand is exactly the drift surface the §6 "schema↔parser drift" risk
+names; "single-sourced **alongside**" is a placement convention, not an invariant.
+
+**Land the single table now (4a), dormant.** Define **one** record per TS-executed tool —
+`{ name, description, inputSchema, parseArgs, shapeResult }` — and make `MCP_TOOLS`,
+`MCP_ARG_PARSERS`, and `MCP_RESULT_SHAPERS` **projections** (`.map`/`.filter`) of it, not siblings.
+The advertised `inputSchema` and the actual `parseArgs` then become **two fields of one record** —
+they cannot drift by construction, which is what §4.2's "single-sourced" must mean to be real. Scope
+is the ~46 `MCP_TOOLS` entries (mutations + the TS-served reads `get_param_track`/`list_checkpoints`);
+`HYBRID_TOOLS` stays separate (their schema is Rust's, served by the hybrid compute half) — and
+**`add_motif` (a hybrid per §2.2) joins `HYBRID_TOOLS`, NOT this table**, so its MCP schema stays in
+the Rust `tool_table!`. The §2.5 parser-hardening writes straight into this table's `parseArgs`.
+
+**Dormant until 4b.** In 4a `ListTools` still sources from Rust (`backend.mcpCatalog()`), so the
+`inputSchema` field is defined-but-unadvertised. 4b's only behavioral change is flipping `ListTools`
+to the merge + deleting the Rust mutation catalog (§4.2) — no second pass over the tool definitions.
+
+**Structural gate (permanent, not differential — authored in 4a).** A pure unit test asserting the
+catalog↔handler bijection:
+1. `merge(Rust-native catalog, TS table)` is an **exact union** — no duplicate name, no dropped tool
+   (covers the §6 "drops/duplicates a tool" risk);
+2. every name in the merged catalog resolves to one execution path (`routeMcpTool` → `ts` for TS-table
+   names, `rust`/`hybrid` for the native set) — no advertised-but-unhandled;
+3. every `ts`-routed name is in the TS table (has `parseArgs` + `shapeResult`) and every `hybrid`-routed
+   name is in `HYBRID_TOOLS` — no handled-but-unadvertised.
+
+**Gate input across the flip.** The Rust catalog split is a 4b action, so in 4a there is no separate
+"Rust-native catalog" yet — the gate derives it as the live `mcpCatalog()` **filtered to non-`ts`-routed
+names** (merging the *full* live catalog, which still advertises the mutations, with the TS table would
+fail point 1 on duplicates). With that derivation point 1 holds by construction and points 2–3 carry the
+weight (clean routing partition + handler presence). In 4b the same gate re-targets the post-split merged
+catalog: the bijection property is constant, only the "advertised set" input swaps. This backfills the
+ListTools shape §4.2 notes was never corpus-gated, and unlike the differential gates it has no regen
+dependency, so it survives 4b.
+
+### 2.8 4a exit criteria
 All differential gates green (`skipped===[]`), full vitest + Rust lib + `tsc -b` clean, corpus
 **additive** (`git diff --diff-filter=M` over the oracle dirs empty), the flag-on e2es
 (`ts-actor-flip`/`mcp-flip`/`ts-actor-native-compute`) green, `BLOCKED_UNDER_FLAG` /
-`MCP_BLOCKED_UNDER_FLAG` reduced to ∅. **This is the final oracle regeneration.**
+`MCP_BLOCKED_UNDER_FLAG` reduced to ∅, the §2.7 single-source table built (dormant, with
+`MCP_TOOLS`/`MCP_ARG_PARSERS`/`MCP_RESULT_SHAPERS` as projections) and its structural bijection gate
+green. **This is the final oracle regeneration.**
 
 ---
 
@@ -189,9 +232,12 @@ Every site obtaining a `ProjectHandle` / calling `backend.project()` is classifi
 - `native/src/commands/mutations.rs` and `commands/history.rs` (the renderer dispatch fallback).
 - `native/src/io/autosave.rs` — `spawn(handle, …)` + `handle.subscribe()` (TS autosave is
   authoritative).
-- The native MCP mutation surface: the ~62 mutation handler bodies in `native/src/mcp/tools.rs` and
-  the keyframe algorithms in `native/src/mcp/keyframes.rs` (all call `b.project()?` to mutate) — see
-  §4.2 for the catalog coupling.
+- The native MCP mutation surface: of the ~62 `native/src/mcp/tools.rs` handlers, delete the
+  **TS-executed subset** — the ~46 in the §2.7 table (mutations + the TS-served reads) — plus the
+  keyframe algorithms in `native/src/mcp/keyframes.rs`; all call `b.project()?` so they are dead
+  under the flag. The read/compute/hybrid handler bodies (`list_motifs`/`get_motif_source`/
+  `detect_silences`/`transcribe_clip`/`preview_motif_draft` + the hybrid-compute halves) **stay** —
+  see §4.2 for the catalog coupling.
 - The `replay`-feature constructors `Backend::{new,init}_for_replay` (`napi_backend.rs`) and the
   three driver bins — see §4.5.
 - The dead Rust-write **`else` branches** of `jobs/mod.rs` `commit_media_derivatives`
@@ -227,18 +273,20 @@ tools share the same macro.
 - Rust `tool_table!` keeps **only** the native tools (reads/compute/hybrids: `list_motifs`,
   `get_motif_source`, `detect_silences`, `transcribe_clip`, `preview_motif_draft`, resources, the
   hybrid-write tools' compute, etc.). Their schema + `dispatch_tool` arms stay coupled and live.
-- The ~50 **TS-executed mutation tools** get their `inputSchema` + `description` defined **in TS**,
-  single-sourced alongside the `MCP_ARG_PARSERS`/`MCP_RESULT_SHAPERS` the 4a parser-hardening
-  touches (so the advertised schema and the actual validator never drift — the malformed-input
-  class is closed by construction).
-- `server.ts` `ListTools` = **merge(Rust-native catalog, TS-mutation catalog)**; `CallTool` already
-  routes mutations → `actor.mcpCall`. The Rust MCP surface becomes **compute-only**.
+- The ~46 **TS-executed tools** advertise their `inputSchema` + `description` from the
+  **single-source table built dormant in 4a (§2.7)** — schema and validator are two fields of one
+  record, so they cannot drift. This slice is the only behavioral change: no tool definitions are
+  re-touched here.
+- `server.ts` `ListTools` flips to **merge(Rust-native catalog, TS table)**; `CallTool` already
+  routes `ts` names → `actor.mcpCall`. The Rust MCP surface becomes **compute-only**.
 - Delete `mcp/tools.rs` mutation bodies + `mcp/keyframes.rs`; the `tool_table!` macro shrinks to the
   native set.
 
-Verified by the `mcp-flip` e2e (a real MCP SDK client: ListTools shows the merged set; a mutation
-tool executes against the TS actor; a native tool reads the mirror). No differential coverage of
-ListTools shape (schemas were never corpus-gated).
+Verified by the **§2.7 structural gate** (catalog↔handler bijection: merged ListTools is an exact
+union, no advertised-but-unhandled / handled-but-unadvertised) **plus** the `mcp-flip` e2e (a real
+MCP SDK client: ListTools shows the merged set; a TS tool executes against the actor; a native tool
+reads the mirror). The structural gate is what closes the ListTools shape that was never corpus-gated;
+the e2e is the end-to-end sanity check.
 
 ### 4.3 Startup-order hard constraint + test (your gap)
 `index.ts` ≈ L213 `startMcpHost(backend, () => tsHost)` runs **before** ≈ L294 `tsHost.start()` and
@@ -301,7 +349,7 @@ golden cap fixture), cloud audio extraction, the `weftcut-eval` wasm leaf, the *
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | A dangling actor consumer left after delete → broken build | Med | High | §4.1 census is the deletion backbone; `cargo build` + `napi:build` + 3-OS CI are hard gates |
-| MCP catalog split drops/duplicates a tool, or schema↔parser drift | Med | Med | TS schema single-sourced with the parsers; `mcp-flip` e2e asserts the merged ListTools + execution |
+| MCP catalog split drops/duplicates a tool, or schema↔parser drift | Low | Med | §2.7 single-source table (schema + parser = one record) **derives** the legacy name-keyed tables; the §2.7 structural bijection gate fails the build on any drop/dup/drift; `mcp-flip` e2e is the end-to-end check |
 | Compute read before first mirror push (no fallback) | Med | High | §4.3/§4.6 bring-up reorder + startup-order regression test |
 | Corpus frozen too early / not `skipped===[]` | Low | High | §4.5 preconditions; pre-4b tag makes regen recoverable |
 | `add_motif` hybrid mis-mints ids (track id from Rust) | Med | High | Contract returns a track *plan*, not an id; TS mints in two-commit order; differential-gated |
@@ -314,8 +362,9 @@ golden cap fixture), cloud audio extraction, the `weftcut-eval` wasm leaf, the *
 - §2.1 renderer-restore prod-differential seeding (debug create vs MCP-corpus + alias).
 - §4.1 `commands/query.rs project_summary` — confirm dead-under-flag (delete) vs surviving caller
   (repoint).
-- Exact final shape of the TS MCP mutation-catalog module (one table vs per-family) and how it
-  composes with `MCP_TOOLS`/`MCP_ARG_PARSERS`.
+- ~~Exact final shape of the TS MCP mutation-catalog module~~ — **decided (§2.7):** one record per
+  TS-executed tool; `MCP_TOOLS`/`MCP_ARG_PARSERS`/`MCP_RESULT_SHAPERS` become projections. Residual
+  (mechanical): file placement — extend `mcp-commands.ts` vs a new `mcpCatalog.ts`. Settle in the plan.
 - Whether 4a or 4b owns the `index.ts`/`server.ts` bring-up reorder (lands as part of flag removal,
   but the *test* could be authored in 4a against the flag-on path).
 
@@ -339,3 +388,8 @@ golden cap fixture), cloud audio extraction, the `weftcut-eval` wasm leaf, the *
    single-sourced with the parsers).
 6. **Replay drivers deleted in 4b** under the four preconditions (final regen, `skipped===[]`,
    delete feature/bins/re-exports/gen-script, README frozen-note + **pre-4b tag** for regen).
+7. **Schema/exec split closed by construction (§2.7):** one single-source record per TS-executed tool
+   (schema + parser + shaper); the legacy name-keyed tables become projections; built **dormant in
+   4a** so parser-hardening lands once and a permanent structural bijection gate is authored before
+   the irreversible delete. 4b only flips `ListTools` to the merge + deletes the Rust mutation
+   catalog. [strengthens decision 5 — "single-sourced" made an invariant, not a placement convention]
