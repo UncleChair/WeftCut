@@ -53,7 +53,7 @@ export async function handleCallTool(
       throw e
     }
     if (route === 'ts') {
-      const out = unwrapEnvelope(tsHost.actor.mcpCall(name, JSON.stringify(args)))
+      const out = unwrapEnvelope(tsHost.mcpCall(name, JSON.stringify(args)))
       if (name === 'begin_agent_session') tsHost.beginAgentSessionSlot(((args.reason as string | undefined) ?? '').trim())
       return out as ServerResult
     }

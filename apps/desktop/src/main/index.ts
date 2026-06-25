@@ -290,6 +290,7 @@ app.whenReady().then(async () => {
       setProjectMirror: (pj, hv) => backend!.setProjectMirror(pj, hv),
       beginAgentSessionSlot: (reason) => backend!.beginAgentSessionSlot(reason),
       endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
+      emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
     })
     tsHost.start()
     // Tell the jobs subsystem the TS actor is now authoritative for derivative write-back.

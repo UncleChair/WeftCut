@@ -37,6 +37,16 @@ export interface TsActorHostDeps {
   /** Flip the Rust agent-session slot ON/OFF (backend.beginAgentSessionSlot / endAgentSessionSlot). */
   beginAgentSessionSlot?: (reason: string) => void
   endAgentSessionSlot?: () => void
+  /** Emit a record-panel LogBus pin-row via the Rust log surface (Phase 4a-i §2.1 parity).
+   *  Optional → no-op when omitted (tests that do not care about logging, or flag-off path).
+   *  Must never throw — wrap call sites in try/catch; a failing emit must not abort the mutation. */
+  emitLog?: (entry: {
+    level: 'trace' | 'debug' | 'info' | 'warn' | 'error'
+    category: { kind: 'Project' | 'Mcp' | 'System' | string; name?: string }
+    source: { kind: 'User' } | { kind: 'Agent'; client: string } | { kind: 'System' }
+    message: string
+    details?: Record<string, unknown>
+  }) => void
 }
 
 interface PersistenceHandlers {
@@ -49,6 +59,11 @@ interface PersistenceHandlers {
 export interface TsActorHost {
   actor: ActorHandle
   handleInvoke: (channel: string, args: Record<string, unknown>) => Promise<unknown>
+  /** Host-level MCP call: delegates to actor.mcpCall, then emits the appropriate
+   *  LogBus pin-row for restore_checkpoint / checkpoint / begin_agent_session on success.
+   *  The emit is best-effort (try/catch) and never blocks or fails the call.
+   *  server.ts calls this instead of actor.mcpCall directly for the 'ts' route. */
+  mcpCall: (name: string, argsJson: string) => import('./mcp-commands.js').McpCallResult
   /** Hybrid deps (native-compute → TS-write). Exposed so the MCP host's hybrid
    *  branch can `runHybrid(name, args, tsHost.hybridDeps)` (server.ts). */
   hybridDeps: HybridDeps
@@ -115,6 +130,61 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   function reject(reason: string): never { throw new Error(reason) }
 
+  // ── LogBus pin-row helpers (Phase 4a-i §2.1) ────────────────────────────────
+  // Emits are best-effort: a failing emitLog must never abort the mutation.
+  // All pin-rows: level 'info', category {kind:'Project'}.
+
+  function emitRestoreLog(id: string, label: string | null, source: { kind: 'User' } | { kind: 'Agent'; client: string }): void {
+    try {
+      deps.emitLog?.({
+        level: 'info',
+        category: { kind: 'Project' },
+        source,
+        message: label != null ? `Restored to checkpoint: ${label}` : `Restored to checkpoint: ${id}`,
+        details: { kind: 'Restore', checkpoint_id: id, label: label ?? null },
+      })
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (restore)', err) }
+  }
+
+  function emitCheckpointLog(id: string, label: string, source: { kind: 'Agent'; client: string }): void {
+    try {
+      deps.emitLog?.({
+        level: 'info',
+        category: { kind: 'Project' },
+        source,
+        message: `Checkpoint: ${label}`,
+        details: { kind: 'Checkpoint', id, label },
+      })
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (checkpoint)', err) }
+  }
+
+  /** Host-level MCP wrapper. Delegates to actor.mcpCall; on a successful result
+   *  emits the pin-row LogBus entry for restore_checkpoint / checkpoint /
+   *  begin_agent_session (best-effort, try/catch). Returns the actor result unchanged. */
+  function mcpCall(name: string, argsJson: string): import('./mcp-commands.js').McpCallResult {
+    const result = actor.mcpCall(name, argsJson)
+    if (!result.ok) return result
+    try {
+      const a = JSON.parse(argsJson) as Record<string, unknown>
+      if (name === 'restore_checkpoint') {
+        const cpId = (a.checkpoint_id as string | undefined) ?? ''
+        const label = actor.listCheckpoints().find((c) => c.id === cpId)?.label ?? null
+        emitRestoreLog(cpId, label, { kind: 'Agent', client: 'mcp' })
+      } else if (name === 'checkpoint') {
+        const label = ((a.label as string | undefined) ?? '').trim()
+        const cpId = result.result.content[0]?.text ?? ''
+        emitCheckpointLog(cpId, label, { kind: 'Agent', client: 'mcp' })
+      } else if (name === 'begin_agent_session') {
+        const reason = ((a.reason as string | undefined) ?? '').trim()
+        const label = `Pre-agent: ${reason}`
+        const payload = JSON.parse(result.result.content[0]?.text ?? '{}') as { checkpoint_id?: string }
+        const cpId = payload.checkpoint_id ?? ''
+        emitCheckpointLog(cpId, label, { kind: 'Agent', client: 'mcp' })
+      }
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (mcpCall post-hook)', err) }
+    return result
+  }
+
   async function handleInvoke(channel: string, args: Record<string, unknown>): Promise<unknown> {
     const route = routeChannel(channel)
     switch (route.kind) {
@@ -126,6 +196,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         // JSON so the renderer sees a structured message — same surface as Rust's
         // Debug-format string that the existing renderer error handling catches.
         if (!r.ok) throw new Error(JSON.stringify(r.error))
+        if (channel === 'project_restore_checkpoint') {
+          // Emit the Restore pin-row (User source). The checkpoint is kept on restore,
+          // so listCheckpoints() still resolves the id → label after the call.
+          const cpId = (args.checkpointId as string | undefined) ?? ''
+          const label = actor.listCheckpoints().find((c) => c.id === cpId)?.label ?? null
+          emitRestoreLog(cpId, label, { kind: 'User' })
+        }
         return r.value
       }
       case 'summary':
@@ -151,6 +228,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   return {
     actor,
     handleInvoke,
+    mcpCall,
     hybridDeps,
     beginAgentSessionSlot(reason: string) { deps.beginAgentSessionSlot?.(reason) },
     start() {
