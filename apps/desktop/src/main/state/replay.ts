@@ -227,7 +227,7 @@ function mcpRefId(op: string, result: { content: Array<{ type: 'text'; text: str
     if (idx == null) return null
     try { const v = JSON.parse(text) as { keyframes?: Array<{ id?: string }> }; return v.keyframes?.[idx]?.id ?? null } catch { return null }
   }
-  if (['add_track', 'add_color_layer', 'duplicate_layer', 'groups_create', 'add_effect', 'add_marker'].includes(op)) return text
+  if (['add_track', 'add_color_layer', 'duplicate_layer', 'groups_create', 'add_effect', 'add_marker', 'checkpoint'].includes(op)) return text
   if (op === 'add_video_layer') {
     try { const v = JSON.parse(text) as { video_layer_id?: string }; return v.video_layer_id ?? text } catch { return text }
   }

@@ -663,6 +663,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'lock_history': history.lock(a.reason as string); return { ok: true, result: toolEmpty() }
         case 'unlock_history': history.unlock(); return { ok: true, result: toolEmpty() }
+        case 'checkpoint': {
+          const label = ((a.label as string | undefined) ?? '').trim()
+          if (label === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
+          return { ok: true, result: toolText(checkpoint(label)) }
+        }
+        case 'list_checkpoints': return { ok: true, result: toolJson(listCheckpoints()) }
         case 'set_keyframe': {
           const layer = parseUuid(a.layer_id, 'layer_id')
           const paramKey = a.param_key as string

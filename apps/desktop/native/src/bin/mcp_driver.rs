@@ -83,7 +83,7 @@ fn extract_ref_id(op: &str, result: &Value, cmd: &Value) -> Option<String> {
     let text = result.get("content")?.get(0)?.get("text")?.as_str()?;
     match op {
         "add_track" | "add_color_layer" | "duplicate_layer" | "groups_create"
-        | "add_effect" | "add_marker" => Some(text.to_string()),
+        | "add_effect" | "add_marker" | "checkpoint" => Some(text.to_string()),
         "add_video_layer" => {
             serde_json::from_str::<Value>(text).ok()
                 .and_then(|v| v.get("video_layer_id").and_then(Value::as_str).map(str::to_string))

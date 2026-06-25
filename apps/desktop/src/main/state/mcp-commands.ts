@@ -166,4 +166,6 @@ export const MCP_TOOLS: ReadonlySet<string> = new Set<string>([
   // Phase 3d-b: keyframes + dry_run
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
   'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'dry_run',
+  // Phase 3d-c: checkpoints + agent session
+  'checkpoint', 'list_checkpoints',
 ])
