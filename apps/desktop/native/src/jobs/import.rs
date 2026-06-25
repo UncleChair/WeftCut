@@ -42,7 +42,7 @@ use crate::cache::{self, CacheLayout};
 use crate::io::probe::FileFacts;
 use crate::logs;
 use crate::state::ids::MediaId;
-use crate::state::{Actor, MediaDerivativesPatch, ProjectHandle};
+use crate::state::{MediaDerivativesPatch, ProjectHandle};
 
 const MEDIA_DIR: &str = "Media";
 const COPY_BUFFER: usize = 1024 * 1024; // 1 MB
@@ -310,6 +310,7 @@ impl ImportQueue {
                         });
                     } else {
                         patch_derivative_paths_after_hash_migration(
+                            &self.events,
                             &next.handle,
                             media_id,
                             &pending_hash,
@@ -429,6 +430,7 @@ fn rewrite_hash_in_path(path: &Path, old_hash: &str, new_hash: &str) -> Option<P
 /// Derivative jobs may have committed paths containing the temporary
 /// `pending-{media_id}` cache key before the workspace copy finished hashing.
 async fn patch_derivative_paths_after_hash_migration(
+    events: &Arc<dyn EventSink>,
     handle: &ProjectHandle,
     media_id: MediaId,
     old_hash: &str,
@@ -480,10 +482,13 @@ async fn patch_derivative_paths_after_hash_migration(
         return;
     }
 
-    if let Err(e) = handle
-        .set_media_derivatives(Actor::User, media_id, patch)
-        .await
-    {
+    // Route through the shared derivative seam (same F4 fix as the workspace-paths
+    // write above): under WEFTCUT_TS_ACTOR it emits `media:derivatives` (applied to
+    // the TS actor by Electron main's existing onEvent), else writes the Rust actor
+    // as today. The Rust-mode write stamps `actor_for_jobs()` (Agent{jobs}) vs the
+    // former `Actor::User` — a broadcast-actor-kind-only difference; the media-pool
+    // state is identical (set_media_derivatives is UNRECORDED, no undo entry).
+    if let Err(e) = crate::jobs::commit_media_derivatives(events, handle, media_id, patch).await {
         warn!("import: derivative path patch failed for {media_id}: {e}");
     }
 }
