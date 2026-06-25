@@ -95,3 +95,105 @@ pub async fn acknowledge_motif_staleness(b: &Backend) -> Result<usize, String> {
     b.project()?.rebind_motif(Actor::User, updates).await.map_err(|e| e.to_string())?;
     Ok(n)
 }
+
+// ---- hybrid compute helpers (Phase 3d-e): store ops without actor write ----
+//
+// The flag-off `install_motif` / `acknowledge_motif_staleness` above remain
+// byte-identical. These compute fns are ADDITIONAL entry points used by the
+// napi hybrids: they do the same Rust compute (store publish + snapshot read +
+// build_rebind_updates / build_ack_entries) but RETURN the updates instead of
+// calling `rebind_motif` — the TS actor host applies the write.
+
+/// install_motif hybrid compute: publish the draft (store side), extract motif
+/// layers from the MIRROR snapshot, and return `(published_id, updates)`.
+/// For a New install, updates is empty (no rebind needed — id is stable).
+/// Reads `snapshot_for_read()` (the mirror) NOT the frozen Rust actor snapshot.
+pub async fn install_motif_compute(
+    store: &crate::motifs::store::UserMotifStore,
+    snap: &std::sync::Arc<crate::state::Project>,
+    args: &ac::InstallArgs,
+) -> Result<(String, Vec<crate::state::actor::MotifRebindEntry>), String> {
+    let draft = store
+        .get_draft(&args.draft_id)
+        .ok_or_else(|| format!("unknown draft '{}'", args.draft_id))?;
+    crate::motifs::authoring::validate_manifest(&draft.manifest).map_err(|e| e.to_string())?;
+
+    let mut is_update = false;
+    let (final_id, version) = match &args.mode {
+        ac::InstallMode::New => {
+            let id = draft.manifest.id.clone();
+            if store.published_ids().iter().any(|p| p == &id) {
+                return Err(format!(
+                    "a Motif '{id}' is already installed; rename the draft before installing"
+                ));
+            }
+            (id, 1)
+        }
+        ac::InstallMode::Update { target_id } => {
+            if crate::motifs::catalog::BUILTIN_IDS.contains(&target_id.as_str()) {
+                return Err(format!("cannot overwrite the built-in Motif '{target_id}'"));
+            }
+            let prev = store
+                .get_motif(target_id)
+                .ok_or_else(|| format!("update target '{target_id}' is not an installed Motif"))?;
+            is_update = true;
+            (target_id.clone(), prev.manifest.version.saturating_add(1))
+        }
+    };
+
+    let mut manifest = draft.manifest;
+    manifest.id = final_id.clone();
+    manifest.version = version;
+    let html = crate::motifs::authoring::compose_motif_html(&manifest, &draft.html);
+    store.write_draft(&args.draft_id, &html).map_err(|e| e.to_string())?;
+    store.install_draft(&args.draft_id, &final_id).map_err(|e| e.to_string())?;
+
+    let updates = if is_update {
+        let target_manifest = store
+            .get_motif(&final_id)
+            .ok_or_else(|| format!("installed target '{final_id}' not readable"))?
+            .manifest;
+        let layers: Vec<(LayerId, String, serde_json::Value)> = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .filter_map(|l| match &l.params {
+                crate::state::LayerParams::Motif(p) => Some((
+                    l.id,
+                    p.motif_id.clone(),
+                    serde_json::Value::Object(
+                        p.props.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    ),
+                )),
+                _ => None,
+            })
+            .collect();
+        ac::build_rebind_updates(&layers, &args.draft_id, &target_manifest)
+    } else {
+        vec![]
+    };
+
+    Ok((final_id, updates))
+}
+
+/// acknowledge_motif_staleness hybrid compute: extract motif layers from the
+/// MIRROR snapshot and return `(count, updates)`.
+/// Reads `snapshot_for_read()` (the mirror) NOT the frozen Rust actor snapshot.
+pub async fn acknowledge_motif_compute(
+    store: &crate::motifs::store::UserMotifStore,
+    snap: &std::sync::Arc<crate::state::Project>,
+) -> Result<(usize, Vec<crate::state::actor::MotifRebindEntry>), String> {
+    let current = st::current_versions(store);
+    let layers: Vec<(LayerId, String, u32, imbl::HashMap<String, serde_json::Value>)> = snap
+        .tracks
+        .iter()
+        .flat_map(|t| t.layers.iter())
+        .filter_map(|l| match &l.params {
+            LayerParams::Motif(p) => Some((l.id, p.motif_id.clone(), p.motif_version, p.props.clone())),
+            _ => None,
+        })
+        .collect();
+    let updates = st::build_ack_entries(&layers, &current);
+    let n = updates.len();
+    Ok((n, updates))
+}

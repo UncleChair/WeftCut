@@ -382,6 +382,46 @@ impl Backend {
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// install_motif hybrid compute (Phase 3d-e): publish the draft (store side)
+    /// + extract motif layers from the READ-MIRROR snapshot + build_rebind_updates.
+    /// Returns JSON `{ published_id: string, updates: MotifRebindEntry[] }`.
+    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
+    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
+    #[napi]
+    #[cfg(feature = "motifs")]
+    pub async fn compute_motif_rebind(&self, install_args_json: String) -> napi::Result<String> {
+        let args: crate::motifs::authoring_commands::InstallArgs =
+            serde_json::from_str(&install_args_json).map_err(|e| Error::from_reason(e.to_string()))?;
+        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
+        let (published_id, updates) =
+            crate::commands::motif_authoring::install_motif_compute(&self.motif_store, &snap, &args)
+                .await
+                .map_err(Error::from_reason)?;
+        // Emit motifs:changed — the store was just mutated (draft installed).
+        self.events.emit(
+            crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
+            serde_json::json!({}),
+        );
+        serde_json::to_string(&serde_json::json!({ "published_id": published_id, "updates": updates }))
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// acknowledge_motif_staleness hybrid compute (Phase 3d-e): read the READ-MIRROR
+    /// snapshot, build ack entries, and return JSON `{ count: number, updates: MotifRebindEntry[] }`.
+    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
+    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
+    #[napi]
+    #[cfg(feature = "motifs")]
+    pub async fn compute_ack_motif_rebind(&self) -> napi::Result<String> {
+        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
+        let (count, updates) =
+            crate::commands::motif_authoring::acknowledge_motif_compute(&self.motif_store, &snap)
+                .await
+                .map_err(Error::from_reason)?;
+        serde_json::to_string(&serde_json::json!({ "count": count, "updates": updates }))
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     /// Queue the background workspace-copy job for an already-inserted media item
     /// (the write half of the `import_media` hybrid is the COPY's path/hash result,
     /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the

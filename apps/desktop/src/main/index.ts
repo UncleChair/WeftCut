@@ -257,8 +257,8 @@ app.whenReady().then(async () => {
     const computeFacade = {
       probeMedia: (p: string) => backend!.probeMedia(p),
       parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
-      computeMotifRebind: (_argsJson: string) => { throw new Error('computeMotifRebind: not wired until Task 5') },
-      computeAckMotifRebind: () => { throw new Error('computeAckMotifRebind: not wired until Task 5') },
+      computeMotifRebind: (argsJson: string) => backend!.computeMotifRebind(argsJson),
+      computeAckMotifRebind: () => backend!.computeAckMotifRebind(),
       synthesizeSpeechCompute: (_argsJson: string) => { throw new Error('synthesizeSpeechCompute: not wired until Task 6') },
     }
 

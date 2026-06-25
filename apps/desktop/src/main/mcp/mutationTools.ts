@@ -6,17 +6,20 @@ export type McpRoute = 'ts' | 'rust' | 'blocked' | 'hybrid'
  *  The hybrid writes (import_media, apply_subtitles, synthesize_speech,
  *  install_motif, acknowledge_motif_staleness) move to HYBRID_TOOLS as each
  *  lands; the native-motif family and add_motif/project_restore_checkpoint ride
- *  Phase 4. (import_media + apply_subtitles are the first two hybrids — Phase 3d-e.) */
+ *  Phase 4. (install_motif + acknowledge_motif_staleness landed in Phase 3d-e Task 5.)
+ *  motif_staleness_report is a mirror-backed READ (routes to 'rust') — NOT blocked. */
 export const MCP_BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set([
-  'synthesize_speech', 'install_motif',
-  'acknowledge_motif_staleness', 'motif_staleness_report',
+  'synthesize_speech',
   'add_motif', 'project_restore_checkpoint',
 ])
 
 /** MCP tools served by the native-compute → TS-write hybrid orchestrator
  *  (hybrids.ts runHybrid). Grows as each hybrid lands (install_motif/
  *  acknowledge_motif_staleness Task 5, synthesize_speech Task 6). */
-export const HYBRID_TOOLS: ReadonlySet<string> = new Set(['import_media', 'apply_subtitles'])
+export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
+  'import_media', 'apply_subtitles',
+  'install_motif', 'acknowledge_motif_staleness',
+])
 
 /** Where an MCP tool runs under the flag. ts → tsHost.actor.mcpCall; hybrid →
  *  runHybrid(tsHost.hybridDeps); blocked → reject -32600; rust → backend (reads

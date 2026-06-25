@@ -116,7 +116,34 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       )
       return simplified ? `${track_id} (some ASS styling was simplified)` : track_id
     }
-    // install_motif / acknowledge_motif_staleness → Task 5; synthesize_speech → Task 6.
+    case 'install_motif': {
+      // Rust: publish the draft (store side) + read the mirror + build_rebind_updates.
+      // TS: apply the rebind write via the authoritative actor.
+      // `args` from the renderer dispatcher is `{ args: InstallArgs }` (napi_backend.rs line
+      // "struct A { args: InstallArgs }") so we unwrap `args.args ?? args` for MCP callers
+      // that may pass the fields directly.
+      const { published_id, updates } = JSON.parse(
+        await deps.compute.computeMotifRebind(JSON.stringify(args.args ?? args)),
+      ) as { published_id: string; updates: unknown[] }
+      if (updates.length) {
+        const r = deps.actor.dispatch('rebind_motif', { updates })
+        if (!r.ok) throw new Error(JSON.stringify(r.error))
+      }
+      return published_id
+    }
+    case 'acknowledge_motif_staleness': {
+      // Rust: read the mirror + build ack entries.
+      // TS: apply the rebind write via the authoritative actor.
+      const { count, updates } = JSON.parse(
+        await deps.compute.computeAckMotifRebind(),
+      ) as { count: number; updates: unknown[] }
+      if (updates.length) {
+        const r = deps.actor.dispatch('rebind_motif', { updates })
+        if (!r.ok) throw new Error(JSON.stringify(r.error))
+      }
+      return count
+    }
+    // synthesize_speech → Task 6.
     default:
       throw new Error(`runHybrid: unhandled tool ${tool}`)
   }

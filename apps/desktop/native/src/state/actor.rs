@@ -216,7 +216,7 @@ pub struct MotifPatch {
 
 /// One layer's retarget for `rebind_motif`. The caller (install_motif) precomputes
 /// the target id/version + migrated props per affected layer; the actor applies by id.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MotifRebindEntry {
     pub layer_id: LayerId,
     pub motif_id: String,
