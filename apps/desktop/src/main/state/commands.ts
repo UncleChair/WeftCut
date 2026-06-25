@@ -195,6 +195,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   update_project_settings: (a) => ({ op: 'update_project_settings', args: { patch: a.patch } }),
   project_undo: () => ({ op: 'undo', args: {} }),
   project_redo: () => ({ op: 'redo', args: {} }),
+  project_restore_checkpoint: (a) => ({ op: 'restore_checkpoint', args: { checkpoint_id: a.checkpointId } }),
 }
 
 /** All production channels this adapter handles (mechanical + rich + meta). */
@@ -210,7 +211,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'set_composition', 'fit_composition_to_layers',
   'update_track_flags', 'set_role_gain', 'update_role_flags',
   'separate_audio_to_new_track', 'restyle_caption_track',
-  'update_project_settings', 'project_undo', 'project_redo',
+  'update_project_settings', 'project_undo', 'project_redo', 'project_restore_checkpoint',
 ])
 
 export function parseMechanical(channel: string, a: Record<string, unknown>): { op: string; args: Record<string, unknown> } | null {

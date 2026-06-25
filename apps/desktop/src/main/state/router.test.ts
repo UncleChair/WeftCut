@@ -107,9 +107,11 @@ describe('routeChannel', () => {
     expect(routeChannel('project_save').kind).toBe('save')
     expect(routeChannel('agent_session_end').kind).toBe('agentSessionEnd')
   })
-  it('rejects the two deferred renderer category-A channels', () => {
+  it('rejects the deferred renderer category-A channel (Phase 4b)', () => {
     expect(routeChannel('add_motif').kind).toBe('reject')
-    expect(routeChannel('project_restore_checkpoint').kind).toBe('reject')
+  })
+  it('routes project_restore_checkpoint to command (Phase 4a-i §2.1)', () => {
+    expect(routeChannel('project_restore_checkpoint').kind).toBe('command')
   })
   it('forwards independent stores + media/jobs/export to rust', () => {
     // import_media is now a hybrid (native-compute → TS-write), not rust.

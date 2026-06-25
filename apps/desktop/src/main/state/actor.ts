@@ -408,6 +408,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_composition': setComposition(a); return { ok: true, value: null }
         case 'undo': undo(); return { ok: true, value: null }
         case 'redo': redo(); return { ok: true, value: null }
+        case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
         case 'split_layer': return { ok: true, value: commit('Split layer', [], { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, a.at_t_us as number, (a.escape_group as boolean) ?? false)) }
         case 'groups_create': return { ok: true, value: commit('Created group', [], { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
         case 'groups_dissolve': commit('Dissolved group', [], { kind: 'Coarse' }, (d) => applyGroupsDissolve(d, a.group as Uuid)); return { ok: true, value: null }
@@ -465,6 +466,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       }
     } catch (e) {
       if (e instanceof CommandFailure) return { ok: false, error: e.err }
+      if (e instanceof McpArgError) return { ok: false, error: { error: 'InvalidArgument', field: 'checkpoint_id', detail: e.mcpMessage } }
       throw e
     }
   }
