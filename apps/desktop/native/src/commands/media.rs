@@ -259,6 +259,9 @@ mod mirror_tests {
     #[cfg(feature = "jobs")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ensure_full_proxy_routes_through_seam() {
+        // Serialize against the other TS_DERIVATIVE_AUTHORITY toggle tests; the
+        // guard's Drop resets the flag to false even on an early `expect` panic.
+        let _authority = crate::jobs::AuthorityTestGuard::acquire();
         let sink = Arc::new(crate::events::VecEventSink::new());
         let b = crate::napi_backend::Backend::new_for_test(sink.clone() as Arc<dyn crate::events::EventSink>);
         b.init().await.unwrap();
@@ -270,12 +273,11 @@ mod mirror_tests {
         // Activate TS derivative authority so commit_media_derivatives emits
         // the event rather than writing the actor.
         crate::jobs::set_ts_derivative_authority(true);
-        let result = b.dispatch("ensure_full_proxy", &format!("{{\"mediaId\":\"{id}\"}}")).await;
-        // Reset authority immediately so parallel tests are not affected.
-        crate::jobs::set_ts_derivative_authority(false);
         // The seam path returns Ok; the old direct-actor path returns Err on a
         // mirror-only item because the blank actor has no such media.
-        result.expect("ensure_full_proxy must succeed via the seam");
+        b.dispatch("ensure_full_proxy", &format!("{{\"mediaId\":\"{id}\"}}"))
+            .await
+            .expect("ensure_full_proxy must succeed via the seam");
         assert!(
             sink.names().iter().any(|n| n == "media:derivatives"),
             "media:derivatives must be emitted via seam; got: {:?}",
