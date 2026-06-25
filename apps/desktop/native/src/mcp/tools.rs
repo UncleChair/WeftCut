@@ -773,7 +773,7 @@ pub(super) async fn groups_list(
     b: &Backend,
     _args: EmptyArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let snap = b.project()?.snapshot().await;
+    let snap = b.snapshot_for_read().await?;
     let payload: Vec<_> = snap
         .groups
         .iter()
@@ -791,7 +791,7 @@ pub(super) async fn groups_get(
     args: GroupIdArgs,
 ) -> Result<ToolResult, McpToolError> {
     let gid = parse_uuid(&args.group_id, "group_id")?;
-    let snap = b.project()?.snapshot().await;
+    let snap = b.snapshot_for_read().await?;
     let g = snap
         .groups
         .iter()
