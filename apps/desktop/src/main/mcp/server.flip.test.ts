@@ -38,4 +38,11 @@ describe('handleCallTool flip routing', () => {
     await handleCallTool(fakeBackend(spy), () => null, 'add_color_layer', {})
     expect(spy).toHaveBeenCalled()
   })
+  it('flips the agent-session slot after a successful begin_agent_session', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn()
+    ts.beginAgentSessionSlot = spy
+    await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'begin_agent_session', { reason: 'cleanup' })
+    expect(spy).toHaveBeenCalledWith('cleanup')
+  })
 })

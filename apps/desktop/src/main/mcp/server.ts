@@ -52,7 +52,9 @@ export async function handleCallTool(
       throw e
     }
     if (route === 'ts') {
-      return unwrapEnvelope(tsHost.actor.mcpCall(name, JSON.stringify(args))) as ServerResult
+      const out = unwrapEnvelope(tsHost.actor.mcpCall(name, JSON.stringify(args)))
+      if (name === 'begin_agent_session') tsHost.beginAgentSessionSlot(((args.reason as string | undefined) ?? '').trim())
+      return out as ServerResult
     }
     // route === 'rust' → fall through (reads are mirror-backed).
   }

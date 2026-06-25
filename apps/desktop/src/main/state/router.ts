@@ -9,6 +9,7 @@ export type Route =
   | { kind: 'summary' }       // buildProjectSummary
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
+  | { kind: 'agentSessionEnd' } // agentSessionEnd seam: endSlot + unlockHistory
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
 
@@ -28,6 +29,7 @@ export function routeChannel(channel: string): Route {
     case 'project_save_as': return { kind: 'saveAs' }
     case 'project_new_workspace': return { kind: 'newWorkspace' }
     case 'project_save': return { kind: 'save' }
+    case 'agent_session_end': return { kind: 'agentSessionEnd' }
     default: return { kind: 'rust' }
   }
 }

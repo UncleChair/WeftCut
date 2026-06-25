@@ -7,6 +7,7 @@ import { routeChannel } from './router'
 import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs } from './workspace-orchestrator'
 import { serializeProjectToJson } from './persistence'
+import { agentSessionEnd } from './agent-session-seam'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -26,6 +27,9 @@ export interface TsActorHostDeps {
   /** Push the TS-serialized project + history view into the Rust read-mirror
    *  (backend.setProjectMirror). Optional → omitted/no-op flag-off + in tests. */
   setProjectMirror?: (projectJson: string, historyViewJson: string) => void
+  /** Flip the Rust agent-session slot ON/OFF (backend.beginAgentSessionSlot / endAgentSessionSlot). */
+  beginAgentSessionSlot?: (reason: string) => void
+  endAgentSessionSlot?: () => void
 }
 
 interface PersistenceHandlers {
@@ -38,6 +42,7 @@ interface PersistenceHandlers {
 export interface TsActorHost {
   actor: ActorHandle
   handleInvoke: (channel: string, args: Record<string, unknown>) => Promise<unknown>
+  beginAgentSessionSlot: (reason: string) => void
   start: () => void
   stop: () => void
 }
@@ -108,6 +113,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)
       case 'save': return persistence.save()
+      case 'agentSessionEnd':
+        agentSessionEnd({
+          endSlot: () => deps.endAgentSessionSlot?.(),
+          unlockHistory: () => actor.unlockHistory(),
+        })
+        return null
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
     }
@@ -116,6 +127,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   return {
     actor,
     handleInvoke,
+    beginAgentSessionSlot(reason: string) { deps.beginAgentSessionSlot?.(reason) },
     start() {
       if (!unsub) unsub = actor.subscribe(emitChange)
       autosave.start()
