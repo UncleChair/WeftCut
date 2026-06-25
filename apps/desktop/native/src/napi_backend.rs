@@ -370,7 +370,7 @@ impl Backend {
     /// { cues, comp_w, comp_h, label })`. `format` is one of "srt"/"ass"/"vtt"
     /// (case-insensitive) or null to auto-sniff.
     #[napi]
-    pub fn parse_subtitles(&self, body: String, format: Option<String>) -> napi::Result<String> {
+    pub async fn parse_subtitles(&self, body: String, format: Option<String>) -> napi::Result<String> {
         let fmt = format
             .map(|f| crate::subtitles::SubFormat::from_str(&f))
             .transpose()
