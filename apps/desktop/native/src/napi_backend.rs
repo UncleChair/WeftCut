@@ -1610,7 +1610,8 @@ mod tests {
             );
         }
 
-        // Mirror-read guard: all three handler files must call `snapshot_for_read`.
+        // Mirror-read guard: the two export/media handler files must call
+        // `snapshot_for_read` somewhere.
         assert!(
             media.contains("snapshot_for_read"),
             "commands/media.rs: mirror-backed reads must call `snapshot_for_read`"
@@ -1619,9 +1620,30 @@ mod tests {
             export.contains("snapshot_for_read"),
             "commands/export.rs: mirror-backed reads must call `snapshot_for_read`"
         );
+
+        // F7-read guard (scoped): the mirror-backed READ `motif_staleness_report`
+        // must call `snapshot_for_read` and must NOT contain the stale-actor read.
+        // A function-body SLICE is used (not the whole file): the flag-OFF
+        // `acknowledge_motif_staleness` wrapper legitimately calls
+        // `b.project()?.snapshot()` elsewhere in the same file, so a file-wide
+        // negative would false-fail.  Slicing from `motif_staleness_report`'s `fn`
+        // header to the next top-level `pub ` item isolates just this read handler.
+        let msr_start = motif.find("pub async fn motif_staleness_report")
+            .expect("motif_staleness_report must exist in commands/motif_authoring.rs");
+        let msr_tail = &motif[msr_start..];
+        // Skip the leading "pub" of the header itself, then find the NEXT "\npub ".
+        let msr_body = match msr_tail[3..].find("\npub ") {
+            Some(next) => &msr_tail[..next + 3],
+            None => msr_tail,
+        };
         assert!(
-            motif.contains("snapshot_for_read"),
-            "commands/motif_authoring.rs: motif_staleness_report must call `snapshot_for_read`"
+            msr_body.contains("snapshot_for_read"),
+            "motif_staleness_report must call `snapshot_for_read` (the mirror), not the stale actor"
+        );
+        assert!(
+            !msr_body.contains(".project()?.snapshot()"),
+            "motif_staleness_report must NOT call `.project()?.snapshot()` (stale actor) — \
+             re-point to `snapshot_for_read()` (Phase 3d-e F7-read)"
         );
 
         // F4 seam guard: `ensure_full_proxy` must route the derivative write
