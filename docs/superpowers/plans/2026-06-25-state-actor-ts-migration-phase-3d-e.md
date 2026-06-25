@@ -227,25 +227,29 @@ git commit -m "feat(state-migration): port rebind_motif to the TS actor + differ
 
 ---
 
-### Task 3: Hybrid skeleton + router partition gate + `import_media` hybrid (F3)
+### Task 3: Hybrid skeleton + router partition gate + `import_media` hybrid (F3) + workspace-paths seam
 
-Introduce the `{kind:'hybrid'}` Route, the explicit router allowlists + partition gate, the shared `hybrids.ts` orchestrator, the host compute-napi facade, and wire the first hybrid (`import_media`) end-to-end (renderer + MCP).
+Introduce the `{kind:'hybrid'}` Route, the explicit router allowlists + partition gate, the shared `hybrids.ts` orchestrator, the host compute-napi facade, and wire the first hybrid (`import_media`) end-to-end (renderer + MCP) — INCLUDING the async workspace-copy job, whose `set_media_workspace_paths` write-back is re-pointed through a NEW `media:workspace_paths` event seam (mirrors the 3c-ii-c `commit_media_derivatives` derivative seam) so the copy job never writes the stale actor under the flag. (Decision 2026-06-25: faithful workspace-copy re-point, not deferred — fully closes F3.)
 
 **Files:**
 - Modify: `src/main/state/router.ts` (allowlists + `{kind:'hybrid', tool}` + reject default), `src/main/state/router.test.ts` (partition gate)
 - Create: `src/main/state/hybrids.ts`, `src/main/state/__tests__/hybrids.test.ts`
 - Modify: `src/main/state/ts-actor-host.ts` (deps `compute` facade + `handleInvoke` `hybrid` case)
-- Modify: `src/main/index.ts` (build the `compute` facade from `backend`)
+- Modify: `src/main/index.ts` (build the `compute` facade from `backend`; wire the `media:workspace_paths` onEvent like `media:derivatives` at `index.ts:166-168`)
 - Modify: `src/main/mcp/mutationTools.ts` (`'hybrid'` McpRoute + drop `import_media` from blocked), `src/main/mcp/server.ts` (`handleCallTool` hybrid branch)
-- Modify: `native/src/napi_backend.rs` (`#[napi] probe_media`), `native/src/commands/media.rs` (extract pure `probe_media_item`)
+- Modify: `native/src/napi_backend.rs` (`#[napi] probe_media` + `#[napi] enqueue_workspace_copy`), `native/src/commands/media.rs` (extract pure `probe_media_item`)
+- Modify: `native/src/jobs/mod.rs` (new `commit_media_workspace_paths` seam, mirroring `commit_media_derivatives:77`), `native/src/jobs/import.rs:276` (re-route its `set_media_workspace_paths` call through the seam)
+- Modify: `src/main/state/jobs-writeback.ts` (add `applyWorkspacePathsEvent`, sibling of `applyDerivativesEvent`)
 
 **Interfaces:**
-- Consumes: `actor.dispatch('add_media_item', { media })` (`actor.ts:241`), `napi.enqueueJobsForMedia(json)` (existing facade, `index.ts:223`).
+- Consumes: `actor.dispatch('add_media_item', { media })` (`actor.ts:241`), `napi.enqueueJobsForMedia(json)` (existing facade, `index.ts:223`), `actor.dispatch('set_media_workspace_paths', …)` (ported 3c-i — match its exact arg shape), `crate::jobs::ts_derivative_authority()` (the shared authority flag, `jobs/mod.rs:65`).
 - Produces:
   - `routeChannel` returns `{ kind:'hybrid'; tool: string }` for hybrid channels.
-  - `hybrids.ts`: `export type HybridDeps = { actor: ActorHandle; compute: ComputeNapi; snapshotComposition: () => { width:number; height:number; duration_us:number } }`; `export async function runHybrid(tool: string, args: Record<string, unknown>, deps: HybridDeps): Promise<unknown>`.
+  - `hybrids.ts`: `export type HybridDeps = { actor: ActorHandle; compute: ComputeNapi; enqueueDerivatives: (items: unknown[]) => Promise<void>; enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>; workspaceDir: () => string | null; readFile: (p: string) => string; snapshotComposition: () => { width:number; height:number; duration_us:number } }`; `export async function runHybrid(tool: string, args: Record<string, unknown>, deps: HybridDeps): Promise<unknown>`.
   - `ComputeNapi` facade: `{ probeMedia(path:string): Promise<string /*MediaItemJson*/>; parseSubtitles(body:string, format:string|null): Promise<string>; computeMotifRebind(installArgsJson:string): Promise<string>; computeAckMotifRebind(): Promise<string>; synthesizeSpeechCompute(argsJson:string): Promise<string> }`.
-  - napi `Backend.probeMedia(path: String) -> Promise<String>` returning a serialized `MediaItem`.
+  - napi `Backend.probeMedia(path: String) -> Promise<String>` returning a serialized `MediaItem`; `Backend.enqueueWorkspaceCopy(mediaId: String, sourcePath: String) -> Promise<()>` (wraps `import_queue.enqueue`, reads `workspace.current()` internally; no-op if no workspace).
+  - Rust `commit_media_workspace_paths(events, project, media_id, path_abs, path_rel, file_hash_blake3) -> Result<(), CommandError>`: under `ts_derivative_authority()` emits `media:workspace_paths {media_id, path_abs, path_rel, file_hash_blake3}`, else `project.set_media_workspace_paths(actor_for_jobs(), …)`.
+  - `jobs-writeback.ts` `applyWorkspacePathsEvent(actor, payload)` → `actor.dispatch('set_media_workspace_paths', …)` (MediaNotFound-tolerant, `console.warn`, like `applyDerivativesEvent`).
 
 - [ ] **Step 1: Write the failing partition gate.** In `router.test.ts`, add a test that the full renderer-channel manifest (a hardcoded `ALL_CHANNELS` array mirroring `napi_backend.rs dispatch`, with a comment to keep in sync) is partitioned: every channel routes to exactly one bucket, and `import_media`/`install_motif`/`acknowledge_motif_staleness` route to `{kind:'hybrid'}`, and no channel routes to `{kind:'rust'}` outside a curated `PURE_NATIVE ∪ PERSISTENCE ∪ MIRROR_BACKED_READS ∪ DEBUG_ONLY` allowlist.
 
@@ -317,7 +321,7 @@ pub async fn probe_media(&self, path: String) -> napi::Result<String> {
 - [ ] **Step 6: Regenerate napi bindings (controller, toolchain env).**
 Run: `npm run napi:build` (features `jobs,export,mcp,cloud,motifs`) — regenerates the gitignored `native/index.d.ts`; confirm `probeMedia` is present.
 
-- [ ] **Step 7: Write the failing hybrid unit test.** In `hybrids.test.ts`: a real TS actor + a fake `compute` whose `probeMedia` returns a literal `MediaItem` JSON; call `runHybrid('import_media', { path:'C:/x.mp4' }, deps)`; assert (a) it returns the new media id, (b) `actor.snapshot().media_pool` contains the item, (c) `enqueueJobsForMedia` was called with the item. Add a subtitle-path case asserting it delegates to the subtitle compute (stub until Task 4; assert the orchestrator branches on `.srt`).
+- [ ] **Step 7: Write the failing hybrid unit test.** In `hybrids.test.ts`: a real TS actor + a fake `compute` whose `probeMedia` returns a literal `MediaItem` JSON + spy `enqueueDerivatives`/`enqueueWorkspaceCopy`; call `runHybrid('import_media', { path:'C:/x.mp4' }, deps)`; assert (a) it returns the new media id, (b) `actor.snapshot().media_pool` contains the item, (c) `enqueueDerivatives` was called with the item, (d) with `workspaceDir() → '/ws'`, `enqueueWorkspaceCopy(item.id, 'C:/x.mp4')` was called; (e) with `workspaceDir() → null`, `enqueueWorkspaceCopy` was NOT called. Add a subtitle-path case asserting it delegates to the subtitle path (stub until Task 4; assert the orchestrator branches on `.srt`). Also unit-test `applyWorkspacePathsEvent`: dispatch a `media:workspace_paths` payload at the actor and assert the media item's `path_abs`/`path_rel`/`file_hash_blake3` update.
 
 - [ ] **Step 8: Run it, verify it fails.**
 Run: `npx vitest run src/main/state/__tests__/hybrids.test.ts`
@@ -334,7 +338,11 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       const item = JSON.parse(await deps.compute.probeMedia(path)) as { id: string }
       const r = deps.actor.dispatch('add_media_item', { media: item })
       if (!r.ok) throw new Error(JSON.stringify(r.error))
-      await deps.enqueueDerivatives([item])     // existing makeEnqueueDerivatives seam
+      await deps.enqueueDerivatives([item])     // existing makeEnqueueDerivatives seam (proxy/conform/thumb/waveform)
+      // Workspace copy: copies the source in, rehashes (probe deferred the hash to
+      // "pending-{id}" when a workspace exists), and writes set_media_workspace_paths
+      // back via the media:workspace_paths seam (Steps 9a-9c). No-op napi if no workspace.
+      if (deps.workspaceDir()) await deps.enqueueWorkspaceCopy(item.id, path)
       return item.id
     }
     // install_motif / acknowledge_motif_staleness → Task 5; synthesize_speech/apply_subtitles → Tasks 4/6
@@ -343,12 +351,66 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
 }
 ```
 
-- [ ] **Step 10: Wire the host.** In `ts-actor-host.ts`: add `compute: ComputeNapi` + `enqueueDerivatives` to `TsActorHostDeps` (the latter already exists internally via `makeEnqueueDerivatives`), build `HybridDeps`, and add to `handleInvoke`:
+- [ ] **Step 9a: Add the Rust `commit_media_workspace_paths` seam.** In `native/src/jobs/mod.rs`, mirror `commit_media_derivatives:77` exactly:
+
+```rust
+/// Apply the workspace-copy job's path/hash result to whichever engine is
+/// authoritative (same TS_DERIVATIVE_AUTHORITY flag as derivatives). TS mode:
+/// emit `media:workspace_paths` → the TS host applies set_media_workspace_paths.
+pub(crate) async fn commit_media_workspace_paths(
+    events: &Arc<dyn EventSink>,
+    project: &ProjectHandle,
+    media_id: MediaId,
+    path_abs: std::path::PathBuf,
+    path_rel: std::path::PathBuf,
+    file_hash_blake3: String,
+) -> Result<(), CommandError> {
+    if ts_derivative_authority() {
+        events.emit("media:workspace_paths", serde_json::json!({
+            "media_id": media_id.to_string(),
+            "path_abs": path_abs, "path_rel": path_rel, "file_hash_blake3": file_hash_blake3,
+        }));
+        Ok(())
+    } else {
+        project.set_media_workspace_paths(actor_for_jobs(), media_id, path_abs, path_rel, file_hash_blake3).await
+    }
+}
+```
+(Confirm the exact `set_media_workspace_paths` Rust signature at `actor.rs:1720` and match its arg order/types.) Then re-point `jobs/import.rs:276`'s direct `set_media_workspace_paths` call to `crate::jobs::commit_media_workspace_paths(&<events>, &<handle>, …)`.
+
+- [ ] **Step 9b: Add the `enqueue_workspace_copy` napi.** In `napi_backend.rs` (`#[cfg(feature="jobs")]`), wrap `import_queue.enqueue`, reading the workspace internally:
+
+```rust
+#[napi]
+#[cfg(feature = "jobs")]
+pub async fn enqueue_workspace_copy(&self, media_id: String, source_path: String) -> napi::Result<()> {
+    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
+    let Some(ws) = self.workspace.current() else { return Ok(()); };
+    self.import_queue.enqueue(self.project()?.clone(), self.cache.clone(), id, std::path::PathBuf::from(source_path), ws);
+    Ok(())
+}
+```
+(The `project()?.clone()` handle is inert under the flag — the copy job's write-back is now seam-routed via Step 9a. Match the real `import_queue.enqueue` signature.)
+
+- [ ] **Step 9c: Add the TS `applyWorkspacePathsEvent` handler.** In `jobs-writeback.ts`, sibling of `applyDerivativesEvent`:
+
+```ts
+export function applyWorkspacePathsEvent(actor: ActorHandle, payload: { media_id: string; path_abs: string; path_rel: string; file_hash_blake3: string }): void {
+  // Match the ported set_media_workspace_paths dispatch arg shape (3c-i).
+  const r = actor.dispatch('set_media_workspace_paths', { media: payload.media_id, path_abs: payload.path_abs, path_rel: payload.path_rel, file_hash_blake3: payload.file_hash_blake3 })
+  if (!r.ok) console.warn('[workspace-paths] dispatch failed', r.error)
+}
+```
+(Read the actual `set_media_workspace_paths` dispatch arm in `actor.ts` to match arg keys exactly — do NOT guess; the 3c-i corpus shows them.)
+
+- [ ] **Step 9d: Wire the onEvent in `index.ts`.** Next to the `media:derivatives` handler (`index.ts:166-168`), add a `media:workspace_paths` branch: `if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyWorkspacePathsEvent }) => applyWorkspacePathsEvent(tsHost!.actor, payload as never)); return }`. (Match the exact event-dispatch structure at that site — it may be a `switch`/`if` on the event name.)
+
+- [ ] **Step 10: Wire the host.** In `ts-actor-host.ts`: add `compute: ComputeNapi` to `TsActorHostDeps` (and the `enqueueWorkspaceCopy`/`readFile` deps; `enqueueDerivatives` already exists internally via `makeEnqueueDerivatives`, `workspaceDir` already a dep), build `HybridDeps` (actor, compute, enqueueDerivatives, enqueueWorkspaceCopy, workspaceDir, readFile, snapshotComposition = `() => actor.snapshot().composition`), and add to `handleInvoke`:
 
 ```ts
 case 'hybrid': return runHybrid(route.tool, args, hybridDeps)
 ```
-In `index.ts`, build the `compute` facade: `compute: { probeMedia: (p) => backend!.probeMedia(p), /* parseSubtitles/computeMotifRebind/… added in later tasks */ }` and pass into `createTsActorHost`.
+In `index.ts`, build the `compute` facade: `compute: { probeMedia: (p) => backend!.probeMedia(p), /* parseSubtitles/computeMotifRebind/… added in later tasks */ }`, add `enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p)` and `readFile: nodeFs.readFile` to the host deps, and pass into `createTsActorHost`.
 
 - [ ] **Step 11: Wire MCP.** In `mutationTools.ts`: drop `'import_media'` from `MCP_BLOCKED_UNDER_FLAG`; add `if (HYBRID_TOOLS.has(name)) return 'hybrid'` (a new set `{ 'import_media', … }`) before the `MCP_TOOLS` check. In `server.ts handleCallTool`, add a `route === 'hybrid'` branch calling `runHybrid(name, args, tsHost.hybridDeps)` and shaping the MCP `ToolResult` (`{content:[{type:'text',text:<id>}]}`).
 
@@ -359,8 +421,8 @@ Expected: PASS; tsc clean.
 - [ ] **Step 13: Commit.**
 
 ```bash
-git add src/main/state/router.ts src/main/state/router.test.ts src/main/state/hybrids.ts src/main/state/__tests__/hybrids.test.ts src/main/state/ts-actor-host.ts src/main/index.ts src/main/mcp/mutationTools.ts src/main/mcp/server.ts native/src/napi_backend.rs native/src/commands/media.rs
-git commit -m "feat(state-migration): hybrid skeleton + router partition gate + import_media hybrid (Phase 3d-e)"
+git add src/main/state/router.ts src/main/state/router.test.ts src/main/state/hybrids.ts src/main/state/__tests__/hybrids.test.ts src/main/state/ts-actor-host.ts src/main/state/jobs-writeback.ts src/main/index.ts src/main/mcp/mutationTools.ts src/main/mcp/server.ts native/src/napi_backend.rs native/src/commands/media.rs native/src/jobs/mod.rs native/src/jobs/import.rs
+git commit -m "feat(state-migration): hybrid skeleton + router partition gate + import_media hybrid + workspace-paths seam (Phase 3d-e)"
 ```
 
 ---
