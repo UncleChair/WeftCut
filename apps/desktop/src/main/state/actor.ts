@@ -64,6 +64,9 @@ export interface ActorHandle {
   historyStatus(): ReturnType<History['status']>
   lockHistory(reason: string): void
   unlockHistory(): void
+  checkpoint(label: string): Uuid
+  restoreCheckpoint(id: Uuid): void
+  listCheckpoints(): Array<{ id: Uuid; label: string; created_at: string }>
   dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
   mcpCall(name: string, argsJson: string): McpCallResult
 }
@@ -189,6 +192,26 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const snap = history.redo()
     if (snap === null) throw new CommandFailure({ error: 'NothingToRedo' })
     broadcastUnrecorded('Redo', snap)
+  }
+
+  // ── checkpoints (do_restore_checkpoint actor.rs:3764; History::checkpoint
+  //    history.rs:135) — used by the MCP checkpoint + begin_agent_session tools
+  //    (3d-c). checkpoint mints 1 id, no op/broadcast; restore success = 2 ids
+  //    (entry op_id then broadcast op_id); CheckpointNotFound/HistoryLocked = 0. ──
+  function checkpoint(label: string): Uuid {
+    const id = idGen() // History::checkpoint's new_id — no commit, no broadcast
+    return history.checkpoint(label, actor, id, clock())
+  }
+  function restoreCheckpoint(id: Uuid): void {
+    const reason = history.lockReason()
+    if (reason !== null) throw new CommandFailure({ error: 'HistoryLocked', reason }) // 0 ids
+    if (!history.hasCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids — peek BEFORE mint
+    const opId = idGen() // entry op_id (history.rs:151 new_id, FIRST)
+    const snap = history.restoreCheckpoint(id, opId, clock(), actor)!
+    broadcastUnrecorded(`Restored checkpoint ${id}`, snap) // +1 broadcast id (actor.rs:3780, SECOND)
+  }
+  function listCheckpoints(): Array<{ id: Uuid; label: string; created_at: string }> {
+    return history.listCheckpoints().map((c) => ({ id: c.id, label: c.label, created_at: c.created_at }))
   }
 
   // ── move_track (do_move_track:3394-3426) — the cur===new no-op must skip
@@ -766,6 +789,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
     historyStatus: () => history.status(),
     lockHistory: (r) => history.lock(r),
     unlockHistory: () => history.unlock(),
+    checkpoint,
+    restoreCheckpoint,
+    listCheckpoints,
     dryRun,
   }
 }

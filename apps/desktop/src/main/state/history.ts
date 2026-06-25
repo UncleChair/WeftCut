@@ -90,6 +90,10 @@ export class History {
   listCheckpoints(): NamedCheckpoint[] {
     return [...this.checkpoints.values()].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
   }
+  /** Presence peek (history.rs:149 `checkpoints.get(&id)?`). The actor checks
+   *  this BEFORE minting the restore op_id, so a CheckpointNotFound restore
+   *  burns zero ids — matching Rust, where `new_id()` sits after the `get?`. */
+  hasCheckpoint(id: Uuid): boolean { return this.checkpoints.has(id) }
 
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged
    *  (project_settings_patch_convention). The track-flag variant is

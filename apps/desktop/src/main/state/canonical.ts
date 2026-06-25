@@ -1,4 +1,7 @@
-const TS_FIELDS = new Set(['created_at', 'modified_at'])
+// `started_at` is begin_agent_session's wall-clock result field (the agent
+// session start); normalized so the MCP envelope gates deterministically.
+// No serialized Project field is named started_at (collision-checked).
+const TS_FIELDS = new Set(['created_at', 'modified_at', 'started_at'])
 const TS_SENTINEL = '<TS>'
 
 /** Return a structurally-canonical clone: object keys sorted recursively,
