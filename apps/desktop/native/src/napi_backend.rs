@@ -394,7 +394,7 @@ impl Backend {
             serde_json::from_str(&install_args_json).map_err(|e| Error::from_reason(e.to_string()))?;
         let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
         let (published_id, updates) =
-            crate::commands::motif_authoring::install_motif_compute(&self.motif_store, &snap, &args)
+            crate::motifs::authoring_commands::install_motif_compute(&self.motif_store, &snap, &args)
                 .await
                 .map_err(Error::from_reason)?;
         // Emit motifs:changed — the store was just mutated (draft installed).

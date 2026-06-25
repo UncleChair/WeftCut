@@ -43,22 +43,9 @@ pub async fn import_motif(b: &Backend, path: String) -> Result<String, String> {
 }
 
 pub async fn install_motif(b: &Backend, args: ac::InstallArgs) -> Result<String, String> {
-    // Flag-off path delegates to the shared compute fn (no duplication of the
-    // draft-publish + Update-rebind body). Byte-identical to the prior
-    // `install_motif_core` call: the snapshot is project LAYERS
-    // (motif_id/version/props), independent of the store publish, so taking
-    // `snap` before compute publishes yields the same layers the prior code saw
-    // (it snapshotted after publish); `build_rebind_updates` reads the published
-    // `target_manifest` from the store INSIDE compute (post-publish), as before.
-    // Same store ops, same layers, same updates, same rebind. `emit_changed`
-    // stays here (the napi hybrid emits separately).
-    let snap = b.project()?.snapshot().await;
-    let (final_id, updates) = install_motif_compute(&b.motif_store, &snap, &args).await?;
-    if !updates.is_empty() {
-        b.project()?.rebind_motif(Actor::User, updates).await.map_err(|e| e.to_string())?;
-    }
+    let id = ac::install_motif_core(&b.motif_store, b.project()?, &args).await?;
     emit_changed(b);
-    Ok(final_id)
+    Ok(id)
 }
 
 pub async fn delete_motif(b: &Backend, id: String) -> Result<(), String> {
@@ -104,91 +91,15 @@ pub async fn acknowledge_motif_staleness(b: &Backend) -> Result<usize, String> {
     Ok(n)
 }
 
-// ---- shared compute helpers (Phase 3d-e): store ops without actor write ----
+// ---- shared compute helper (Phase 3d-e): ack entries without actor write ----
 //
-// The ONE home of the install-publish + Update-rebind / ack-entry logic. Both
-// the flag-off command wrappers above (`install_motif` /
-// `acknowledge_motif_staleness`, which apply the rebind to the live actor) and
-// the napi hybrids (`compute_motif_rebind` / `compute_ack_motif_rebind`, which
-// return the updates for the TS actor host to apply against the read-mirror)
-// call these. The compute does the Rust-side store publish + snapshot read +
-// build_rebind_updates / build_ack_entries and RETURNS the updates; it never
+// The install compute lives in `motifs::authoring_commands::install_motif_compute`
+// (next to `build_rebind_updates`; `install_motif_core` delegates to it). The
+// acknowledge compute lives here: both the flag-off `acknowledge_motif_staleness`
+// wrapper above (applies the rebind to the live actor) and the napi
+// `compute_ack_motif_rebind` hybrid (returns the updates for the TS actor host
+// to apply against the read-mirror) call it. It RETURNS the updates; it never
 // writes the actor itself.
-
-/// install_motif compute: publish the draft (store side), extract motif layers
-/// from the caller-provided `snap`, and return `(published_id, updates)`. For a
-/// New install, updates is empty (no rebind needed — id is stable). The single
-/// source of the draft-publish + Update-rebind logic: the napi hybrid passes the
-/// READ-MIRROR snapshot (`snapshot_for_read()`); the flag-off `install_motif`
-/// wrapper passes the live actor snapshot. NO actor write here — the caller
-/// applies the rebind.
-pub async fn install_motif_compute(
-    store: &crate::motifs::store::UserMotifStore,
-    snap: &std::sync::Arc<crate::state::Project>,
-    args: &ac::InstallArgs,
-) -> Result<(String, Vec<crate::state::actor::MotifRebindEntry>), String> {
-    let draft = store
-        .get_draft(&args.draft_id)
-        .ok_or_else(|| format!("unknown draft '{}'", args.draft_id))?;
-    crate::motifs::authoring::validate_manifest(&draft.manifest).map_err(|e| e.to_string())?;
-
-    let mut is_update = false;
-    let (final_id, version) = match &args.mode {
-        ac::InstallMode::New => {
-            let id = draft.manifest.id.clone();
-            if store.published_ids().iter().any(|p| p == &id) {
-                return Err(format!(
-                    "a Motif '{id}' is already installed; rename the draft before installing"
-                ));
-            }
-            (id, 1)
-        }
-        ac::InstallMode::Update { target_id } => {
-            if crate::motifs::catalog::BUILTIN_IDS.contains(&target_id.as_str()) {
-                return Err(format!("cannot overwrite the built-in Motif '{target_id}'"));
-            }
-            let prev = store
-                .get_motif(target_id)
-                .ok_or_else(|| format!("update target '{target_id}' is not an installed Motif"))?;
-            is_update = true;
-            (target_id.clone(), prev.manifest.version.saturating_add(1))
-        }
-    };
-
-    let mut manifest = draft.manifest;
-    manifest.id = final_id.clone();
-    manifest.version = version;
-    let html = crate::motifs::authoring::compose_motif_html(&manifest, &draft.html);
-    store.write_draft(&args.draft_id, &html).map_err(|e| e.to_string())?;
-    store.install_draft(&args.draft_id, &final_id).map_err(|e| e.to_string())?;
-
-    let updates = if is_update {
-        let target_manifest = store
-            .get_motif(&final_id)
-            .ok_or_else(|| format!("installed target '{final_id}' not readable"))?
-            .manifest;
-        let layers: Vec<(LayerId, String, serde_json::Value)> = snap
-            .tracks
-            .iter()
-            .flat_map(|t| t.layers.iter())
-            .filter_map(|l| match &l.params {
-                crate::state::LayerParams::Motif(p) => Some((
-                    l.id,
-                    p.motif_id.clone(),
-                    serde_json::Value::Object(
-                        p.props.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    ),
-                )),
-                _ => None,
-            })
-            .collect();
-        ac::build_rebind_updates(&layers, &args.draft_id, &target_manifest)
-    } else {
-        vec![]
-    };
-
-    Ok((final_id, updates))
-}
 
 /// acknowledge_motif_staleness compute: extract motif layers from the
 /// caller-provided `snap` and return `(count, updates)`. The single source of

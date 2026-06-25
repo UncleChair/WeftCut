@@ -165,16 +165,19 @@ pub struct InstallArgs {
     pub mode: InstallMode,
 }
 
-/// Core of `install_motif`: validate the draft, `install_draft` (rewrite island
-/// to the final id/version + move into the published slot), and for an in-place
-/// Update retarget+lenient-migrate current-project layers via `rebind_motif`.
-/// Returns the published id. No `EventSink` / no emit — the command + the MCP
-/// tool wrap this and emit `motifs:changed` themselves.
-pub async fn install_motif_core(
+/// Publish the draft (store side) + (Update mode) build the rebind updates from
+/// `snap`'s motif layers; returns `(published_id, updates)`. New mode → empty
+/// updates. The SINGLE source of the install draft-publish + Update-rebind-build
+/// logic — does NOT write the actor (the caller applies the rebind). The caller
+/// supplies the snapshot: `install_motif_core` passes the live actor snapshot
+/// (renderer + MCP flag-off); the napi hybrid passes the read-mirror snapshot.
+/// No `EventSink` / no emit — the command + the MCP tool wrap this and emit
+/// `motifs:changed` themselves.
+pub async fn install_motif_compute(
     store: &UserMotifStore,
-    handle: &crate::state::ProjectHandle,
+    snap: &std::sync::Arc<crate::state::Project>,
     args: &InstallArgs,
-) -> Result<String, String> {
+) -> Result<(String, Vec<crate::state::actor::MotifRebindEntry>), String> {
     let draft = store
         .get_draft(&args.draft_id)
         .ok_or_else(|| format!("unknown draft '{}'", args.draft_id))?;
@@ -227,13 +230,14 @@ pub async fn install_motif_core(
 
     // For an in-place Update, retarget current-project layers from the working
     // draft (and any already on the target) onto the now-published target, and
-    // lenient-migrate their props to the target's NEW schema.
-    if is_update {
+    // lenient-migrate their props to the target's NEW schema. The layers come
+    // from `snap` — project LAYERS (motif_id/version/props) are independent of
+    // the store publish above, so the caller may snapshot before or after.
+    let updates = if is_update {
         let target_manifest = store
             .get_motif(&final_id)
             .ok_or_else(|| format!("installed target '{final_id}' not readable"))?
             .manifest;
-        let snap = handle.snapshot().await;
         let layers: Vec<(crate::state::ids::LayerId, String, serde_json::Value)> = snap
             .tracks
             .iter()
@@ -249,13 +253,30 @@ pub async fn install_motif_core(
                 _ => None,
             })
             .collect();
-        let updates = build_rebind_updates(&layers, &args.draft_id, &target_manifest);
-        if !updates.is_empty() {
-            handle
-                .rebind_motif(crate::state::Actor::User, updates)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+        build_rebind_updates(&layers, &args.draft_id, &target_manifest)
+    } else {
+        vec![]
+    };
+    Ok((final_id, updates))
+}
+
+/// Core of `install_motif`: publish the draft + (Update mode) retarget +
+/// lenient-migrate current-project layers via `rebind_motif`. Returns the
+/// published id. Delegates the publish + rebind-build to `install_motif_compute`
+/// (the single source) and applies the rebind to the actor. No `EventSink` / no
+/// emit — the command + the MCP tool wrap this and emit `motifs:changed`.
+pub async fn install_motif_core(
+    store: &UserMotifStore,
+    handle: &crate::state::ProjectHandle,
+    args: &InstallArgs,
+) -> Result<String, String> {
+    let snap = handle.snapshot().await;
+    let (final_id, updates) = install_motif_compute(store, &snap, args).await?;
+    if !updates.is_empty() {
+        handle
+            .rebind_motif(crate::state::Actor::User, updates)
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(final_id)
 }
