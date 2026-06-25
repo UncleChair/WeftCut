@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, McpArgError } from '../mcp-commands'
+import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, parseRgba, parseNum, McpArgError } from '../mcp-commands'
 
 describe('parseInterp', () => {
   it('accepts the simple kinds', () => {
@@ -40,4 +40,36 @@ describe('parseRole', () => {
   })
   it('rejects an unknown role', () => { expect(() => parseRole('bogus')).toThrow(McpArgError) })
   it('rejects a non-string', () => { expect(() => parseRole(3)).toThrow(McpArgError) })
+})
+describe('parseRgba', () => {
+  it('accepts a well-formed Rgba object', () => {
+    expect(parseRgba({ r: 0, g: 128, b: 255, a: 255 }, 'color')).toEqual({ r: 0, g: 128, b: 255, a: 255 })
+  })
+  it('accepts alpha as a small integer (e.g. a:1)', () => {
+    expect(parseRgba({ r: 0, g: 0, b: 0, a: 1 }, 'color')).toEqual({ r: 0, g: 0, b: 0, a: 1 })
+  })
+  it('rejects a hex string', () => { expect(() => parseRgba('#fff', 'color')).toThrow(McpArgError) })
+  it('rejects a missing component', () => { expect(() => parseRgba({ r: 0, g: 0, b: 0 }, 'color')).toThrow(McpArgError) })
+  it('rejects an out-of-range component', () => { expect(() => parseRgba({ r: 0, g: 0, b: 0, a: 256 }, 'color')).toThrow(McpArgError) })
+  it('rejects a non-integer component', () => { expect(() => parseRgba({ r: 0.5, g: 0, b: 0, a: 1 }, 'color')).toThrow(McpArgError) })
+  it('rejects null / non-object', () => {
+    expect(() => parseRgba(null, 'color')).toThrow(McpArgError)
+    expect(() => parseRgba(42, 'color')).toThrow(McpArgError)
+  })
+})
+describe('parseNum', () => {
+  it('accepts finite numbers incl. negatives and zero', () => {
+    expect(parseNum(0, 't_us')).toBe(0)
+    expect(parseNum(1_000_000, 't_us')).toBe(1_000_000)
+    expect(parseNum(-5, 't_us')).toBe(-5)
+  })
+  it('rejects a string', () => { expect(() => parseNum('abc', 't_us')).toThrow(McpArgError) })
+  it('rejects NaN / Infinity', () => {
+    expect(() => parseNum(NaN, 't_us')).toThrow(McpArgError)
+    expect(() => parseNum(Infinity, 't_us')).toThrow(McpArgError)
+  })
+  it('rejects undefined / null', () => {
+    expect(() => parseNum(undefined, 't_us')).toThrow(McpArgError)
+    expect(() => parseNum(null, 't_us')).toThrow(McpArgError)
+  })
 })

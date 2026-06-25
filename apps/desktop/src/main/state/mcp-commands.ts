@@ -4,7 +4,7 @@
 // The byte-exact mcp.differential gate (vs Rust dispatch_tool) is the backstop.
 // Mirrors native/src/mcp/{tools.rs,wire.rs}.
 import type { CommandError } from './errors'
-import type { Animated, Interpolation, Keyframe } from './model'
+import type { Animated, Interpolation, Keyframe, Rgba } from './model'
 import { canonicalize } from './canonical'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
@@ -78,6 +78,42 @@ const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
  *  role at the serde boundary → invalid_params; mirror that here. */
 export function parseRole(v: unknown): string {
   if (typeof v !== 'string' || !AUDIO_ROLES.has(v)) throw new McpArgError(`unknown audio role '${String(v)}'`)
+  return v
+}
+
+/** Validate an Rgba (color.rs: four u8 fields). Rust serde rejects a non-object
+ *  or out-of-range value at the deserialize boundary → invalid_params; the
+ *  dedicated mcpCall arms (add_marker/add_color_layer) previously cast `a.color
+ *  as Rgba` raw, so a string like "#fff" committed to the actor and then broke
+ *  the read-mirror push. Mirror Rust's contract here so it never commits. */
+export function parseRgba(v: unknown, field: string): Rgba {
+  if (v === null || typeof v !== 'object') throw new McpArgError(`${field} must be an {r,g,b,a} color object`)
+  const o = v as Record<string, unknown>
+  const out = { r: 0, g: 0, b: 0, a: 0 }
+  for (const k of ['r', 'g', 'b', 'a'] as const) {
+    const n = o[k]
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 255)
+      throw new McpArgError(`${field}.${k} must be an integer 0..255`)
+    out[k] = n
+  }
+  return out
+}
+
+/** Validate a required finite-number wire arg → invalid_params. A raw `as number`
+ *  cast would let a string/undefined through as NaN into the actor. */
+export function parseNum(v: unknown, field: string): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw new McpArgError(`${field} must be a number`)
+  return v
+}
+
+/** Optional finite-number variant: undefined/null → undefined (absent). */
+export function parseNumOpt(v: unknown, field: string): number | undefined {
+  return v === undefined || v === null ? undefined : parseNum(v, field)
+}
+
+/** Validate a required string wire arg → invalid_params. */
+export function parseStr(v: unknown, field: string): string {
+  if (typeof v !== 'string') throw new McpArgError(`${field} must be a string`)
   return v
 }
 

@@ -29,7 +29,7 @@ import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPat
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { applyRebindMotif } from './mutations/motif'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, parseInterp, parseInterpOpt, parseAnimatedF64, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, parseInterp, parseInterpOpt, parseAnimatedF64, parseRgba, parseNum, parseNumOpt, parseStr, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -647,33 +647,44 @@ export function createActor(opts: ActorOptions): ActorHandle {
       // table path for mechanical tools.
       switch (name) {
         case 'add_color_layer': {
+          // Validate non-uuid args at the boundary (parseRgba/parseNum) BEFORE
+          // commit — a raw `as Rgba`/`as number` cast let malformed input (e.g. a
+          // string color) commit garbage that then broke the read-mirror push.
           const track = parseUuid(a.track_id, 'track_id')
-          const params = colorParams(a.color as Rgba, (a.width as number | undefined) ?? 1920, (a.height as number | undefined) ?? 1080)
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, a.t_start_us as number, a.t_end_us as number))
+          const params = colorParams(parseRgba(a.color, 'color'), parseNumOpt(a.width, 'width') ?? 1920, parseNumOpt(a.height, 'height') ?? 1080)
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
           return { ok: true, result: toolText(id) }
         }
         case 'add_video_layer': {
           const track = parseUuid(a.track_id, 'track_id')
           const media = parseUuid(a.media_id, 'media_id')
+          const srcIn = parseNum(a.src_in_us, 'src_in_us')
+          const srcOut = parseNum(a.src_out_us, 'src_out_us')
+          const t0 = parseNum(a.t_start_us, 't_start_us')
+          const t1 = parseNum(a.t_end_us, 't_end_us')
           const snap = current()
           const item = snap.media_pool[media]
-          const vParams = videoClipParams(media, a.src_in_us as number, a.src_out_us as number)
-          const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, a.t_start_us as number, a.t_end_us as number))
+          const vParams = videoClipParams(media, srcIn, srcOut)
+          const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
           const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.metadata.audio != null)
           if (shouldPair) {
             // ensure_audio_track (tools.rs:123-132): topmost track, or a new "Voiceover".
             const tracks = current().tracks
             const audioTrack = tracks.length ? tracks[tracks.length - 1].id
               : commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Voiceover'))
-            const aParams = { ...audioParams(media, a.src_in_us as number, a.src_out_us as number), role: 'dialogue' as const }
-            const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, audioTrack, aParams, a.t_start_us as number, a.t_end_us as number))
+            const aParams = { ...audioParams(media, srcIn, srcOut), role: 'dialogue' as const }
+            const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, audioTrack, aParams, t0, t1))
             const groupId = commit('Created group', [], { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, [videoId, audioId], null, false))
             return { ok: true, result: toolJson({ video_layer_id: videoId, audio_layer_id: audioId, group_id: groupId }) }
           }
           return { ok: true, result: toolText(videoId) }
         }
         case 'add_marker': {
-          const id = commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, a.t_us as number, (a.end_t_us as number | undefined) ?? null, a.label as string, a.color as Rgba))
+          const color = parseRgba(a.color, 'color')
+          const tUs = parseNum(a.t_us, 't_us')
+          const endT = parseNumOpt(a.end_t_us, 'end_t_us') ?? null
+          const label = parseStr(a.label, 'label')
+          const id = commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color))
           return { ok: true, result: toolText(id) }
         }
         case 'split_layer': {
