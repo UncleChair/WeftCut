@@ -1,0 +1,6 @@
+{ "name": "err-bad-interp", "commands": [
+  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000b1", "kind": "Video", "duration_us": 5000000, "ref": "M1" },
+  { "op": "add_video_layer", "track_id": "@A", "media_id": "@M1", "t_start_us": 1000000, "t_end_us": 4000000, "src_in_us": 0, "src_out_us": 3000000, "ref": "VL" },
+  { "op": "set_keyframe", "layer_id": "@VL", "param_key": "opacity", "t_us": 1000000, "value": 0.0, "interp": { "kind": "Bogus" } },
+  { "op": "add_track", "label": "after bad-interp error" }
+]}

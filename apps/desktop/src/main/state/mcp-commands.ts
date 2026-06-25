@@ -4,6 +4,7 @@
 // The byte-exact mcp.differential gate (vs Rust dispatch_tool) is the backstop.
 // Mirrors native/src/mcp/{tools.rs,wire.rs}. DORMANT until Phase 3d-d.
 import type { CommandError } from './errors'
+import type { Animated, Interpolation, Keyframe } from './model'
 import { canonicalize } from './canonical'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
@@ -22,6 +23,54 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function parseUuid(s: unknown, field: string): string {
   if (typeof s !== 'string' || !UUID_RE.test(s)) throw new McpArgError(`${field} not a UUID: ${String(s)}`)
   return s
+}
+
+const INTERP_SIMPLE = new Set(['Hold', 'Linear', 'EaseIn', 'EaseOut'])
+const isPair = (v: unknown): v is [number, number] =>
+  Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number'
+
+/** Validate an Interpolation (model.ts:16) — mirrors Rust serde from_value::<Interpolation>
+ *  (tools.rs:934). Throws McpArgError on malformed input → invalid_params. */
+export function parseInterp(v: unknown): Interpolation {
+  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid interp: not an object`)
+  const o = v as Record<string, unknown>
+  const kind = o.kind
+  if (typeof kind !== 'string') throw new McpArgError(`invalid interp: missing 'kind'`)
+  if (INTERP_SIMPLE.has(kind)) return { kind } as Interpolation
+  if (kind === 'Bezier') {
+    if (!isPair(o.p1) || !isPair(o.p2)) throw new McpArgError(`invalid interp: Bezier needs p1/p2 as [number, number]`)
+    return { kind: 'Bezier', p1: o.p1, p2: o.p2 }
+  }
+  throw new McpArgError(`invalid interp: unknown kind '${kind}'`)
+}
+
+/** Optional variant: undefined passes through (set_keyframe's interp is Option). */
+export function parseInterpOpt(v: unknown): Interpolation | undefined {
+  return v === undefined ? undefined : parseInterp(v)
+}
+
+/** Validate an Animated<number> (model.ts:20) — mirrors Rust serde
+ *  from_value::<Animated<f64>> (tools.rs:1038). Throws McpArgError → invalid_params. */
+export function parseAnimatedF64(v: unknown): Animated<number> {
+  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: not an object`)
+  const o = v as Record<string, unknown>
+  if (o.mode === 'Static') {
+    if (typeof o.value !== 'number') throw new McpArgError(`invalid track: Static value must be a number`)
+    return { mode: 'Static', value: o.value }
+  }
+  if (o.mode === 'Keyframed') {
+    if (!Array.isArray(o.value)) throw new McpArgError(`invalid track: Keyframed value must be an array`)
+    const kfs: Keyframe<number>[] = o.value.map((raw) => {
+      if (raw === null || typeof raw !== 'object') throw new McpArgError(`invalid track: keyframe must be an object`)
+      const k = raw as Record<string, unknown>
+      if (typeof k.id !== 'string') throw new McpArgError(`invalid track: keyframe id must be a string`)
+      if (typeof k.t_us !== 'number') throw new McpArgError(`invalid track: keyframe t_us must be a number`)
+      if (typeof k.value !== 'number') throw new McpArgError(`invalid track: keyframe value must be a number`)
+      return { id: k.id, t_us: k.t_us, value: k.value, interp: parseInterp(k.interp) }
+    })
+    return { mode: 'Keyframed', value: kfs }
+  }
+  throw new McpArgError(`invalid track: unknown mode '${String(o.mode)}'`)
 }
 
 // ── ToolResult shapers (wire.rs:81-93) ──

@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, Composition, Interpolation, LayerParams, Project, Rational, Rgba, Uuid } from './model'
+import type { Animated, Composition, LayerParams, Project, Rational, Rgba, Uuid } from './model'
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -28,7 +28,7 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, parseInterp, parseInterpOpt, parseAnimatedF64, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -691,7 +691,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layer = parseUuid(a.layer_id, 'layer_id')
           const paramKey = a.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
-          const interp = a.interp as Interpolation | undefined
+          const interp = parseInterpOpt(a.interp)
           const next = upsertKeyframe(track, (a.t_us as number) - tStartUs, a.value as number, interp, idGen)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
@@ -732,7 +732,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const paramKey = a.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
           if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          const next = setKeyframeInterp(track, keyframeId, a.interp as Interpolation)
+          const next = setKeyframeInterp(track, keyframeId, parseInterp(a.interp))
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
@@ -767,7 +767,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const layer = parseUuid(a.layer_id, 'layer_id')
           const paramKey = a.param_key as string
           const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
-          const input = a.track as Animated<number>
+          const input = parseAnimatedF64(a.track)
           const shifted: Animated<number> = input.mode === 'Keyframed'
             ? { mode: 'Keyframed', value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
