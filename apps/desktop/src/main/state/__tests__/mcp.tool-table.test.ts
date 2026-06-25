@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, MCP_TOOLS } from '../mcp-commands'
+import { createActor } from '../actor'
+import { uuidV7Gen } from '../ids'
+import { blankProject } from '../model'
 
 const ALL_46_NAMES = new Set<string>([
   // table-exec tools (27)
@@ -87,5 +90,22 @@ describe('MCP tool table projections', () => {
   it('parseStrOpt hardening: label rejects non-string non-null', () => {
     const u = '00000000-0000-7000-8000-000000000001'
     expect(() => MCP_ARG_PARSERS['groups_create']({ layer_ids: [u], label: 42 })).toThrow()
+  })
+})
+
+describe('dedicated arms reject malformed scalars before commit', () => {
+  const mk = () => createActor({ initial: blankProject(uuidV7Gen(), 't'), idGen: uuidV7Gen(), clock: () => '2026-01-01T00:00:00.000Z' })
+  it('set_keyframe rejects non-number t_us', () => {
+    const r = mk().mcpCall('set_keyframe', JSON.stringify({ layer_id: '00000000-0000-7000-8000-000000000001', param_key: 'opacity', t_us: 'soon', value: 1 }))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe('invalid_params')
+  })
+  it('set_keyframe rejects non-string param_key', () => {
+    const r = mk().mcpCall('set_keyframe', JSON.stringify({ layer_id: '00000000-0000-7000-8000-000000000001', param_key: 42, t_us: 0, value: 1 }))
+    expect(r.ok).toBe(false)
+  })
+  it('dry_run rejects non-array operations', () => {
+    const r = mk().mcpCall('dry_run', JSON.stringify({ operations: 'nope' }))
+    expect(r.ok).toBe(false)
   })
 })

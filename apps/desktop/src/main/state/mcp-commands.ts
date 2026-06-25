@@ -129,8 +129,8 @@ export function parseBoolOpt(v: unknown, field: string, dflt: boolean): boolean 
 }
 
 /** Optional string variant: undefined/null → null, else validates string. */
-export function parseStrOpt(v: unknown): string | null {
-  return v === undefined || v === null ? null : (typeof v === 'string' ? v : (() => { throw new McpArgError('label must be a string') })())
+export function parseStrOpt(v: unknown, field: string): string | null {
+  return v === undefined || v === null ? null : (typeof v === 'string' ? v : (() => { throw new McpArgError(`${field} must be a string`) })())
 }
 
 function asArray(v: unknown, field: string): string[] {
@@ -249,7 +249,7 @@ export interface McpToolDef {
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table', description: '', inputSchema: {},
-    parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label) } }),
+    parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label, 'label') } }),
     shapeResult: (v) => toolText(v as string) },
   { name: 'remove_track', exec: 'table', description: '', inputSchema: {},
     parseArgs: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
@@ -271,7 +271,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
   // ── table-exec: groups ───────────────────────────────────────────────────
   { name: 'groups_create', exec: 'table', description: '', inputSchema: {},
-    parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
+    parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
     shapeResult: (v) => toolText(v as string) },
   { name: 'groups_dissolve', exec: 'table', description: '', inputSchema: {},
     parseArgs: (a) => ({ op: 'groups_dissolve', args: { group: parseUuid(a.group_id, 'group_id') } }) },
@@ -280,7 +280,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   { name: 'groups_remove_members', exec: 'table', description: '', inputSchema: {},
     parseArgs: (a) => ({ op: 'groups_remove_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
   { name: 'groups_rename', exec: 'table', description: '', inputSchema: {},
-    parseArgs: (a) => ({ op: 'groups_rename', args: { group: parseUuid(a.group_id, 'group_id'), label: parseStrOpt(a.label) } }) },
+    parseArgs: (a) => ({ op: 'groups_rename', args: { group: parseUuid(a.group_id, 'group_id'), label: parseStrOpt(a.label, 'label') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table', description: '', inputSchema: {},
     parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: a.kind } }),
@@ -315,28 +315,62 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // set_role_flags: patch stays structural (muted/solo are nullable booleans validated by the mutation)
   { name: 'set_role_flags', exec: 'table', description: '', inputSchema: {},
     parseArgs: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }) },
-  // ── dedicated-exec stubs (19) — behavior lives in actor.ts dedicated arms ──
-  // Task 5 attaches parseDedicated to each; here they exist only to keep MCP_TOOLS complete.
-  { name: 'add_color_layer', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'add_video_layer', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'split_layer', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'add_marker', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'lock_history', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'unlock_history', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'set_keyframe', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'get_param_track', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'remove_keyframe', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'retime_keyframe', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'set_keyframe_easing', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'smooth_keyframes', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'clear_keyframes', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'set_param_track', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'dry_run', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'checkpoint', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'list_checkpoints', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'restore_checkpoint', exec: 'dedicated', description: '', inputSchema: {} },
-  { name: 'begin_agent_session', exec: 'dedicated', description: '', inputSchema: {} },
+  // ── dedicated-exec (19) — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
+  { name: 'add_color_layer', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), color: parseRgba(a.color, 'color'),
+      width: parseNumOpt(a.width, 'width'), height: parseNumOpt(a.height, 'height'),
+      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us') }) },
+  { name: 'add_video_layer', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
+      src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
+      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us') }) },
+  { name: 'split_layer', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'),
+      at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_group: a.escape_group }) },
+  { name: 'add_marker', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ color: parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
+      end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label') }) },
+  { name: 'lock_history', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
+  { name: 'unlock_history', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (_a) => ({}) },
+  { name: 'set_keyframe', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
+      t_us: parseNum(a.t_us, 't_us'), value: parseNum(a.value, 'value'), interp: parseInterpOpt(a.interp) }) },
+  { name: 'get_param_track', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }) },
+  { name: 'remove_keyframe', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
+      param_key: parseStr(a.param_key, 'param_key') }) },
+  { name: 'retime_keyframe', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
+      param_key: parseStr(a.param_key, 'param_key'), t_us: parseNum(a.t_us, 't_us') }) },
+  { name: 'set_keyframe_easing', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
+      param_key: parseStr(a.param_key, 'param_key'), interp: parseInterp(a.interp) }) },
+  { name: 'smooth_keyframes', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
+      keyframe_id: a.keyframe_id != null ? parseUuid(a.keyframe_id, 'keyframe_id') : null }) },
+  { name: 'clear_keyframes', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
+      value: parseNumOpt(a.value, 'value') }) },
+  { name: 'set_param_track', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
+      track: parseAnimatedF64(a.track) }) },
+  { name: 'dry_run', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
+  { name: 'checkpoint', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ label: parseStr(a.label, 'label') }) },
+  { name: 'list_checkpoints', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (_a) => ({}) },
+  { name: 'restore_checkpoint', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ checkpoint_id: parseUuid(a.checkpoint_id, 'checkpoint_id') }) },
+  { name: 'begin_agent_session', exec: 'dedicated', description: '', inputSchema: {},
+    parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
 ]
+
+const DEF_BY_NAME: Map<string, McpToolDef> = new Map(MCP_TOOL_DEFS.map((d) => [d.name, d]))
+export function mcpDef(name: string): McpToolDef { const d = DEF_BY_NAME.get(name); if (!d) throw new Error(`no MCP def for ${name}`); return d }
 
 /** MCP tool → internal dispatch op + renamed args. Projection of MCP_TOOL_DEFS.
  *  Explicit-param tools (add_color_layer/add_video_layer/add_marker/split_layer

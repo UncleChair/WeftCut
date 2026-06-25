@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, AudioRole, Composition, LayerParams, MotifRebindEntry, Project, Rational, Rgba, Uuid } from './model'
+import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MotifRebindEntry, Project, Rational, Rgba, Uuid } from './model'
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -29,7 +29,7 @@ import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPat
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { applyRebindMotif } from './mutations/motif'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, parseInterp, parseInterpOpt, parseAnimatedF64, parseRgba, parseNum, parseNumOpt, parseStr, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -659,21 +659,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
       // table path for mechanical tools.
       switch (name) {
         case 'add_color_layer': {
-          // Validate non-uuid args at the boundary (parseRgba/parseNum) BEFORE
-          // commit — a raw `as Rgba`/`as number` cast let malformed input (e.g. a
-          // string color) commit garbage that then broke the read-mirror push.
-          const track = parseUuid(a.track_id, 'track_id')
-          const params = colorParams(parseRgba(a.color, 'color'), parseNumOpt(a.width, 'width') ?? 1920, parseNumOpt(a.height, 'height') ?? 1080)
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
+          const p = mcpDef('add_color_layer').parseDedicated!(a)
+          const params = colorParams(p.color as Rgba, (p.width as number | undefined) ?? 1920, (p.height as number | undefined) ?? 1080)
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, p.track as string, params, p.t_start_us as number, p.t_end_us as number))
           return { ok: true, result: toolText(id) }
         }
         case 'add_video_layer': {
-          const track = parseUuid(a.track_id, 'track_id')
-          const media = parseUuid(a.media_id, 'media_id')
-          const srcIn = parseNum(a.src_in_us, 'src_in_us')
-          const srcOut = parseNum(a.src_out_us, 'src_out_us')
-          const t0 = parseNum(a.t_start_us, 't_start_us')
-          const t1 = parseNum(a.t_end_us, 't_end_us')
+          const p = mcpDef('add_video_layer').parseDedicated!(a)
+          const track = p.track as string
+          const media = p.media as string
+          const srcIn = p.src_in_us as number
+          const srcOut = p.src_out_us as number
+          const t0 = p.t_start_us as number
+          const t1 = p.t_end_us as number
           const snap = current()
           const item = snap.media_pool[media]
           const vParams = videoClipParams(media, srcIn, srcOut)
@@ -692,16 +690,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolText(videoId) }
         }
         case 'add_marker': {
-          const color = parseRgba(a.color, 'color')
-          const tUs = parseNum(a.t_us, 't_us')
-          const endT = parseNumOpt(a.end_t_us, 'end_t_us') ?? null
-          const label = parseStr(a.label, 'label')
+          const p = mcpDef('add_marker').parseDedicated!(a)
+          const color = p.color as Rgba
+          const tUs = p.t_us as number
+          const endT = (p.end_t_us as number | undefined) ?? null
+          const label = p.label as string
           const id = commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, tUs, endT, label, color))
           return { ok: true, result: toolText(id) }
         }
         case 'split_layer': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const r = dispatch('split_layer', { layer, at_t_us: a.at_t_us, escape_group: (a.escape_group as boolean) ?? false })
+          const p = mcpDef('split_layer').parseDedicated!(a)
+          const layer = p.layer as string
+          const r = dispatch('split_layer', { layer, at_t_us: p.at_t_us, escape_group: (p.escape_group as boolean) ?? false })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           // dispatch('split_layer') (applySplitLayer) already returns the
           // SplitLayerResult `{left, right}` (left = original layer, right = new) —
@@ -709,48 +709,55 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolJson(r.value) }
         }
         case 'lock_history': {
-          const reason = ((a.reason as string | undefined) ?? '').trim()
-          if (reason === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
+          const p = mcpDef('lock_history').parseDedicated!(a)
+          const reason = p.reason as string
+          if (reason.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
           history.lock(reason); return { ok: true, result: toolEmpty() }
         }
-        case 'unlock_history': history.unlock(); return { ok: true, result: toolEmpty() }
+        case 'unlock_history': { mcpDef('unlock_history').parseDedicated!(a); history.unlock(); return { ok: true, result: toolEmpty() } }
         case 'checkpoint': {
-          const label = ((a.label as string | undefined) ?? '').trim()
-          if (label === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
+          const p = mcpDef('checkpoint').parseDedicated!(a)
+          const label = p.label as string
+          if (label.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'label must be non-empty' } }
           return { ok: true, result: toolText(checkpoint(label, MCP_ACTOR)) }
         }
-        case 'list_checkpoints': return { ok: true, result: toolJson(listCheckpoints()) }
+        case 'list_checkpoints': { mcpDef('list_checkpoints').parseDedicated!(a); return { ok: true, result: toolJson(listCheckpoints()) } }
         case 'restore_checkpoint': {
-          const id = parseUuid(a.checkpoint_id, 'checkpoint_id')
+          const p = mcpDef('restore_checkpoint').parseDedicated!(a)
+          const id = p.checkpoint_id as string
           restoreCheckpoint(id) // throws CommandFailure(HistoryLocked|CheckpointNotFound) → outer catch → mapCommandError → invalid_params (no data)
           return { ok: true, result: toolEmpty() }
         }
         case 'begin_agent_session': {
-          const reason = ((a.reason as string | undefined) ?? '').trim()
-          if (reason === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
+          const p = mcpDef('begin_agent_session').parseDedicated!(a)
+          const reason = p.reason as string
+          if (reason.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
           const checkpointId = checkpoint(`Pre-agent: ${reason}`, MCP_ACTOR) // 1 det id; slot-flip + log are non-state side effects (3d-d)
           return { ok: true, result: toolJson({ checkpoint_id: checkpointId, started_at: clock() }) }
         }
         case 'set_keyframe': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('set_keyframe').parseDedicated!(a)
+          const layer = p.layer as string
+          const paramKey = p.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
-          const interp = parseInterpOpt(a.interp)
-          const next = upsertKeyframe(track, (a.t_us as number) - tStartUs, a.value as number, interp, idGen)
+          const interp = p.interp as Interpolation | undefined
+          const next = upsertKeyframe(track, (p.t_us as number) - tStartUs, p.value as number, interp, idGen)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
         }
         case 'get_param_track': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('get_param_track').parseDedicated!(a)
+          const layer = p.layer as string
+          const paramKey = p.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           return { ok: true, result: toolJson(shapeGetParamTrack(track, tStartUs)) }
         }
         case 'remove_keyframe': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const keyframeId = parseUuid(a.keyframe_id, 'keyframe_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('remove_keyframe').parseDedicated!(a)
+          const layer = p.layer as string
+          const keyframeId = p.keyframe_id as string
+          const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
           if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
           const fallback = track.mode === 'Static' ? track.value : (track.value[0]?.value ?? 0)
@@ -760,32 +767,35 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolEmpty() }
         }
         case 'retime_keyframe': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const keyframeId = parseUuid(a.keyframe_id, 'keyframe_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('retime_keyframe').parseDedicated!(a)
+          const layer = p.layer as string
+          const keyframeId = p.keyframe_id as string
+          const paramKey = p.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          const next = retimeKeyframe(track, keyframeId, (a.t_us as number) - tStartUs)
+          const next = retimeKeyframe(track, keyframeId, (p.t_us as number) - tStartUs)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
         }
         case 'set_keyframe_easing': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const keyframeId = parseUuid(a.keyframe_id, 'keyframe_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('set_keyframe_easing').parseDedicated!(a)
+          const layer = p.layer as string
+          const keyframeId = p.keyframe_id as string
+          const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
           if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          const next = setKeyframeInterp(track, keyframeId, parseInterp(a.interp))
+          const next = setKeyframeInterp(track, keyframeId, p.interp as Interpolation)
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
         }
         case 'smooth_keyframes': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('smooth_keyframes').parseDedicated!(a)
+          const layer = p.layer as string
+          const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
-          const keyframeId = a.keyframe_id != null ? parseUuid(a.keyframe_id, 'keyframe_id') : null
+          const keyframeId = p.keyframe_id as string | null
           let next
           if (keyframeId !== null) {
             if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
@@ -798,20 +808,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolEmpty() }
         }
         case 'clear_keyframes': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('clear_keyframes').parseDedicated!(a)
+          const layer = p.layer as string
+          const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
           if (track.mode === 'Static') return { ok: true, result: toolEmpty() } // no-op, no commit (keyframes.rs:294)
-          const value = (a.value as number | undefined) ?? track.value[0]?.value ?? 0
+          const value = (p.value as number | undefined) ?? track.value[0]?.value ?? 0
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: { mode: 'Static', value } })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
         }
         case 'set_param_track': {
-          const layer = parseUuid(a.layer_id, 'layer_id')
-          const paramKey = a.param_key as string
+          const p = mcpDef('set_param_track').parseDedicated!(a)
+          const layer = p.layer as string
+          const paramKey = p.param_key as string
           const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
-          const input = parseAnimatedF64(a.track)
+          const input = p.track as Animated<number>
           const shifted: Animated<number> = input.mode === 'Keyframed'
             ? { mode: 'Keyframed', value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
@@ -820,7 +832,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: toolEmpty() }
         }
         case 'dry_run': {
-          const specs = (a.operations as Array<Record<string, unknown>>) ?? []
+          const p = mcpDef('dry_run').parseDedicated!(a)
+          const specs = p.operations as Array<Record<string, unknown>>
           const ops: DryRunOp[] = []
           for (let i = 0; i < specs.length; i++) {
             try { ops.push(specToDryRunOp(specs[i])) }
