@@ -121,9 +121,15 @@ export function blankProject(idGen: IdGen, name: string): Project {
   const aRoll = newTrack(idGen(), 'A roll', 'ARoll')
   const bRoll = newTrack(idGen(), 'B roll', 'BRoll')
   const projectId = idGen()
+  // LANDMINE: real RFC3339 timestamps, NOT the '<TS>' sentinel. canonicalize()
+  // normalizes these away for differential comparison, so a sentinel would pass
+  // the gates — but the live read-mirror round-trips this JSON through Rust
+  // `DateTime<Utc>` deserialization (set_project_mirror), which rejects a
+  // non-timestamp. Mirrors Rust `Project::new_blank`'s `Utc::now()`.
+  const now = new Date().toISOString()
   return {
     schema_version: SCHEMA_VERSION, project_id: projectId,
-    metadata: { name, created_at: '<TS>', modified_at: '<TS>', description: null },
+    metadata: { name, created_at: now, modified_at: now, description: null },
     composition: defaultComposition(), media_pool: {}, tracks: [aRoll, bRoll],
     markers: [], transitions: [], groups: [], audio_roles: {}, settings: defaultSettings(),
   }
