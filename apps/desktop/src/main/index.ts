@@ -221,6 +221,7 @@ app.whenReady().then(async () => {
       pushRecent: (p: string, n: string) => backend!.pushRecent(p, n),
       setLastNewProjectParent: (p: string) => backend!.setLastNewProjectParent(p),
       enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j),
+      setProjectMirror: (pj: string, hv: string) => backend!.setProjectMirror(pj, hv),
     }
 
     // Workspace dir cache — seeded once at boot; refreshed after each persistence call
@@ -251,6 +252,7 @@ app.whenReady().then(async () => {
       join: path.join,
       napi: napiFacadeWithCache,
       workspaceDir: () => wsCache,
+      setProjectMirror: (pj, hv) => backend!.setProjectMirror(pj, hv),
     })
     tsHost.start()
     // Tell the jobs subsystem the TS actor is now authoritative for derivative write-back.
