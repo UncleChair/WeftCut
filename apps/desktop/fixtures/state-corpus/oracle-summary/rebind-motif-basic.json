@@ -1,0 +1,505 @@
+{
+  "name": "rebind-motif-basic",
+  "steps": [
+    {
+      "error": null,
+      "ok": true,
+      "op": "add_track",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 0,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": true,
+          "cursor": 1,
+          "len": 2
+        },
+        "layer_count": 0,
+        "markers": [],
+        "media": [],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 3,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000005",
+            "kind": "Video",
+            "label": null,
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": null,
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "ok": true,
+      "op": "add_layer",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 2000000,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": true,
+          "cursor": 2,
+          "len": 3
+        },
+        "layer_count": 1,
+        "markers": [],
+        "media": [],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 3,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000005",
+            "kind": "Video",
+            "label": null,
+            "layers": [
+              {
+                "color_hint": "#cb4d4d",
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "Motif",
+                "label": null,
+                "locked": false,
+                "params": {
+                  "kind": "Motif",
+                  "motif_id": "motif-a",
+                  "opacity": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "props": {
+                    "x": 10
+                  },
+                  "scale_x": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "scale_y": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "src_in_us": 0,
+                  "x": {
+                    "mode": "Static",
+                    "value": 0.0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0.0
+                  }
+                },
+                "t_end_us": 2000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "role": null,
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "ok": true,
+      "op": "rebind_motif",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 2000000,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": true,
+          "cursor": 3,
+          "len": 4
+        },
+        "layer_count": 1,
+        "markers": [],
+        "media": [],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 3,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000005",
+            "kind": "Video",
+            "label": null,
+            "layers": [
+              {
+                "color_hint": "#cb4d4d",
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "Motif",
+                "label": null,
+                "locked": false,
+                "params": {
+                  "kind": "Motif",
+                  "motif_id": "motif-b",
+                  "opacity": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "props": {
+                    "x": 20
+                  },
+                  "scale_x": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "scale_y": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "src_in_us": 0,
+                  "x": {
+                    "mode": "Static",
+                    "value": 0.0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0.0
+                  }
+                },
+                "t_end_us": 2000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "role": null,
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "ok": true,
+      "op": "add_track",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 2000000,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": true,
+          "cursor": 4,
+          "len": 5
+        },
+        "layer_count": 1,
+        "markers": [],
+        "media": [],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 4,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000005",
+            "kind": "Video",
+            "label": null,
+            "layers": [
+              {
+                "color_hint": "#cb4d4d",
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "Motif",
+                "label": null,
+                "locked": false,
+                "params": {
+                  "kind": "Motif",
+                  "motif_id": "motif-b",
+                  "opacity": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "props": {
+                    "x": 20
+                  },
+                  "scale_x": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "scale_y": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "src_in_us": 0,
+                  "x": {
+                    "mode": "Static",
+                    "value": 0.0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0.0
+                  }
+                },
+                "t_end_us": 2000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "role": null,
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-00000000000a",
+            "kind": "Video",
+            "label": null,
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": null,
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    }
+  ]
+}
