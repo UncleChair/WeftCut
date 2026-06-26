@@ -283,20 +283,23 @@ app.whenReady().then(async () => {
   const { builtinMotifs } = await import('./motif/authoring.js')
   const motifBuiltins = builtinMotifs(motifBuiltinDir)
 
+  // Atomic-JSON fs adapter (temp+rename) shared by the TS-owned config stores.
+  // nodeFs above has no rename, hence a dedicated one.
+  const atomicFs = {
+    exists: (p: string) => fs.existsSync(p),
+    readFile: (p: string) => fs.readFileSync(p, 'utf8'),
+    writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
+    rename: (a: string, b: string) => fs.renameSync(a, b),
+    mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
+  }
   // App-level prefs: TS-owned (was native/src/app_settings.rs). Same on-disk
   // file (<userData>/app_settings.json) so existing settings carry over.
   const { createAppSettingsStore } = await import('./app-settings.js')
-  const appSettings = createAppSettingsStore({
-    fs: {
-      exists: (p: string) => fs.existsSync(p),
-      readFile: (p: string) => fs.readFileSync(p, 'utf8'),
-      writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
-      rename: (a: string, b: string) => fs.renameSync(a, b),
-      mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
-    },
-    path: path.join(app.getPath('userData'), 'app_settings.json'),
-    dir: app.getPath('userData'),
-  })
+  const appSettings = createAppSettingsStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'app_settings.json'), dir: app.getPath('userData') })
+  // Per-workspace view.json: TS-owned (was native/src/view_state.rs). The host
+  // resolves the workspace dir per call; pre-workspace it skips this store.
+  const { createViewStateStore } = await import('./view-state.js')
+  const viewState = createViewStateStore({ fs: atomicFs, join: path.join })
 
   tsHost = createTsActorHost({
     send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
@@ -317,6 +320,7 @@ app.whenReady().then(async () => {
     motifStore,
     motifBuiltins,
     appSettings,
+    viewState,
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')
