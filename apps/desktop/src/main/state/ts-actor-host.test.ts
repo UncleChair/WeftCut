@@ -8,6 +8,7 @@ import { createAppSettingsStore } from '../app-settings'
 import { createViewStateStore } from '../view-state'
 import { createExportSettingsStore } from '../export-settings'
 import { createKeybindingsStore } from '../keybindings'
+import { createRecentsStore } from '../recents'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -68,6 +69,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       viewState: createViewStateStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
       exportSettings: createExportSettingsStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
       keybindings: createKeybindingsStore({ fs: memFs, path: '/cfg/keybindings.json', dir: '/cfg' }),
+      recents: createRecentsStore({ fs: memFs, path: '/cfg/recents.json', dir: '/cfg' }),
     }
 
     return { deps, vfs, napiCalls, sent }
@@ -244,6 +246,57 @@ describe('createTsActorHost — persistence-route integration', () => {
     const got = await host.handleInvoke('keybindings_get', {}) as Record<string, string[]>
     expect('undo' in got).toBe(true)
     expect(got['undo']).toEqual([])
+    host.stop()
+  })
+
+  it('recents_list returns empty list on cold start', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    const got = await host.handleInvoke('recents_list', {}) as unknown[]
+    expect(got).toEqual([])
+    host.stop()
+  })
+
+  it('recents_set_reopen_on_launch persists and recents_get_reopen_on_launch reads it back', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('recents_set_reopen_on_launch', { value: true })
+    const got = await host.handleInvoke('recents_get_reopen_on_launch', {})
+    expect(got).toBe(true)
+    host.stop()
+  })
+
+  it('recents_most_recent returns null when no entries', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    const got = await host.handleInvoke('recents_most_recent', {})
+    expect(got).toBeNull()
+    host.stop()
+  })
+
+  it('recents_last_new_project_parent returns null then persists after setLastNewProjectParent', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    expect(await host.handleInvoke('recents_last_new_project_parent', {})).toBeNull()
+    deps.recents!.setLastNewProjectParent('/my/projects')
+    expect(await host.handleInvoke('recents_last_new_project_parent', {})).toBe('/my/projects')
+    host.stop()
+  })
+
+  it('recents_remove drops an entry pushed via the store push method', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    deps.recents!.push('/proj/a', 'a')
+    deps.recents!.push('/proj/b', 'b')
+    await host.handleInvoke('recents_remove', { path: '/proj/a' })
+    const got = await host.handleInvoke('recents_list', {}) as Array<{ name: string }>
+    expect(got.length).toBe(1)
+    expect(got[0]!.name).toBe('b')
     host.stop()
   })
 })

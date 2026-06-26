@@ -20,6 +20,7 @@ import type { ViewStateStore } from '../view-state'
 import { viewStateDefaults, type ViewState } from '../../shared/view-state'
 import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
+import type { RecentsStore } from '../recents'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -82,6 +83,9 @@ export interface TsActorHostDeps {
   /** Per-user keybinding overrides (config-dir JSON, owned in TS main). Optional → the
    *  'keybindings' route throws if a renderer hits it without one wired. */
   keybindings?: KeybindingsStore
+  /** Recent-projects list + startup prefs (config-dir JSON, owned in TS main). Optional → the
+   *  'recents' route throws if a renderer hits it without one wired. */
+  recents?: RecentsStore
 }
 
 interface PersistenceHandlers {
@@ -361,6 +365,19 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
           case 'keybindings_import': { const a = args as { src: string }; return store.importFrom(a.src) }
         }
         return reject(`keybindings: unhandled channel ${channel}`)
+      }
+      case 'recents': {
+        const store = deps.recents
+        if (!store) return reject('recents: store not configured')
+        switch (channel) {
+          case 'recents_list': return store.list()
+          case 'recents_remove': { const a = args as { path: string }; store.remove(a.path); return null }
+          case 'recents_get_reopen_on_launch': return store.getReopenOnLaunch()
+          case 'recents_set_reopen_on_launch': { const a = args as { value: boolean }; store.setReopenOnLaunch(a.value); return null }
+          case 'recents_most_recent': return store.mostRecent()
+          case 'recents_last_new_project_parent': return store.lastNewProjectParent()
+        }
+        return reject(`recents: unhandled channel ${channel}`)
       }
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
