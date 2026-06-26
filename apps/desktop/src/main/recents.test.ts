@@ -2,7 +2,7 @@
 // native/src/recents.rs plus dedup/cap/order edge cases.
 // All tests use an in-memory filesystem (no real disk I/O).
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { createRecentsStore } from './recents'
 import type { RecentsFs } from './recents'
 
@@ -155,5 +155,39 @@ describe('recents store — last_opened timestamp is set on push', () => {
     expect(entries[0]!.last_opened.length).toBeGreaterThan(0)
     // Must parse as a date.
     expect(isNaN(Date.parse(entries[0]!.last_opened))).toBe(false)
+  })
+})
+
+// ── Platform-conditional dedup parity (mirrors Rust `same_path` #[cfg] split) ──
+// normPath reads process.platform at call time, so we override it per-test and
+// restore in afterEach. case-INSENSITIVE on Windows, case-SENSITIVE elsewhere.
+describe('recents store — push dedup is platform-conditional (Rust same_path parity)', () => {
+  const realPlatform = process.platform
+  function setPlatform(p: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { value: p, configurable: true })
+  }
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
+  })
+
+  it('on win32, a case-differing path dedupes (collapses to one entry)', () => {
+    setPlatform('win32')
+    const store = fresh(makeFs())
+    store.push('/Proj/A', 'A')
+    store.push('/proj/a', 'a-lower')
+    const entries = store.list()
+    expect(entries.length).toBe(1)
+    // Re-push moved it to top with the new display name.
+    expect(entries[0]!.name).toBe('a-lower')
+  })
+
+  it('on linux, a case-differing path is DISTINCT (two entries)', () => {
+    setPlatform('linux')
+    const store = fresh(makeFs())
+    store.push('/Proj/A', 'A')
+    store.push('/proj/a', 'a-lower')
+    const entries = store.list()
+    expect(entries.length).toBe(2)
+    expect(entries.map((e) => e.path).sort()).toEqual(['/Proj/A', '/proj/a'])
   })
 })

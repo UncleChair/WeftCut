@@ -65,12 +65,13 @@ interface RecentsFile {
 
 const DEFAULTS: RecentsFile = { reopen_on_launch: false, entries: [], last_new_project_parent: null }
 
-/** Normalize path for dedup comparison: lower-case on all platforms to match the
- *  Rust `same_path` (case-insensitive on Windows). Using lower-case is the safe
- *  universal strategy — the functional semantics of dedup are "same logical file",
- *  not "same byte string". */
+/** Normalize path for dedup comparison, mirroring the old Rust `same_path`
+ *  (#[cfg]-split): case-INSENSITIVE on Windows (lower-cased), case-SENSITIVE
+ *  everywhere else (returned verbatim). This preserves exact parity with the
+ *  Rust store across the 3-OS matrix — on macOS/Linux `/Proj/A` and `/proj/a`
+ *  are DISTINCT recents, on Windows they collapse to one. */
 function normPath(p: string): string {
-  return p.toLowerCase()
+  return process.platform === 'win32' ? p.toLowerCase() : p
 }
 
 export function createRecentsStore(deps: { fs: RecentsFs; path: string; dir: string }): RecentsStore {
