@@ -118,8 +118,8 @@ describe('routeChannel', () => {
   it('forwards independent stores + media/jobs/export to rust', () => {
     // import_media is now a hybrid (native-compute → TS-write), not rust.
     // list_motifs is now a motif route (Phase 2), not rust.
-    // app_settings_*, view_state_*, export_settings_*, and keybindings_* migrated off rust to TS handlers.
-    for (const ch of ['recents_list','agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
+    // app_settings_*, view_state_*, export_settings_*, keybindings_*, and recents_* migrated off rust to TS handlers.
+    for (const ch of ['agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
       expect(routeChannel(ch).kind).toBe('rust')
   })
   it('routes export_settings_get/set to the exportSettings TS handler (migrated off rust)', () => {
@@ -137,6 +137,10 @@ describe('routeChannel', () => {
   it('routes view_state_get/set to the viewState TS handler (migrated off rust)', () => {
     expect(routeChannel('view_state_get').kind).toBe('viewState')
     expect(routeChannel('view_state_set').kind).toBe('viewState')
+  })
+  it('routes all 6 recents channels to the recents TS handler (migrated off rust)', () => {
+    for (const ch of ['recents_list', 'recents_remove', 'recents_get_reopen_on_launch', 'recents_set_reopen_on_launch', 'recents_most_recent', 'recents_last_new_project_parent'])
+      expect(routeChannel(ch).kind, ch).toBe('recents')
   })
   it('routes the one remaining hybrid channel to hybrid', () => {
     expect(routeChannel('import_media').kind).toBe('hybrid')

@@ -17,6 +17,7 @@ export type Route =
   | { kind: 'viewState' }     // per-workspace view.json store, owned in TS main
   | { kind: 'exportSettings' } // per-workspace export.json store, owned in TS main
   | { kind: 'keybindings' }   // per-user keybinding overrides, owned in TS main (config-dir)
+  | { kind: 'recents' }       // recent-projects list + prefs, owned in TS main (config-dir)
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write (Phase 3d-e)
   | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install (Phase 2)
   | { kind: 'reject'; reason: string }
@@ -49,8 +50,7 @@ export const PURE_NATIVE: ReadonlySet<string> = new Set([
 
 /** Backend stores (config-dir), not the project actor. */
 export const PERSISTENCE: ReadonlySet<string> = new Set([
-  'workspace_dir', 'recents_list', 'recents_remove', 'recents_get_reopen_on_launch', 'recents_set_reopen_on_launch',
-  'recents_most_recent', 'recents_last_new_project_parent', 'agent_session_get', 'log_list', 'log_clear', 'log_emit', 'log_dir_path',
+  'workspace_dir', 'agent_session_get', 'log_list', 'log_clear', 'log_emit', 'log_dir_path',
 ])
 
 export function routeChannel(channel: string): Route {
@@ -76,6 +76,12 @@ export function routeChannel(channel: string): Route {
     case 'keybindings_reset_all':
     case 'keybindings_export':
     case 'keybindings_import': return { kind: 'keybindings' }
+    case 'recents_list':
+    case 'recents_remove':
+    case 'recents_get_reopen_on_launch':
+    case 'recents_set_reopen_on_launch':
+    case 'recents_most_recent':
+    case 'recents_last_new_project_parent': return { kind: 'recents' }
   }
   if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || MIRROR_BACKED_READS.has(channel))
     return { kind: 'rust' }
