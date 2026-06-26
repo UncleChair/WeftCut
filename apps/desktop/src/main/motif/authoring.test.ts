@@ -181,7 +181,7 @@ describe('deleteMotifCore', () => {
   })
 })
 
-import { buildRebindUpdates, installMotifCompute, type MotifLayerRef, type InstallArgs } from './authoring'
+import { buildRebindUpdates, installMotifCompute, type MotifLayerRef } from './authoring'
 
 describe('buildRebindUpdates', () => {
   it('retargets draft + target layers and lenient-migrates props', () => {
