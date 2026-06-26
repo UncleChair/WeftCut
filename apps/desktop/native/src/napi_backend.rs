@@ -314,70 +314,6 @@ impl Backend {
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
-    /// install_motif hybrid compute (Phase 3d-e): publish the draft (store side)
-    /// + extract motif layers from the READ-MIRROR snapshot + build_rebind_updates.
-    /// Returns JSON `{ published_id: string, updates: MotifRebindEntry[] }`.
-    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
-    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
-    #[napi]
-    #[cfg(feature = "motifs")]
-    pub async fn compute_motif_rebind(&self, install_args_json: String) -> napi::Result<String> {
-        let args: crate::motifs::authoring_commands::InstallArgs =
-            serde_json::from_str(&install_args_json).map_err(|e| Error::from_reason(e.to_string()))?;
-        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
-        let (published_id, updates) =
-            crate::motifs::authoring_commands::install_motif_compute(&self.motif_store, &snap, &args)
-                .await
-                .map_err(Error::from_reason)?;
-        // Emit motifs:changed — the store was just mutated (draft installed).
-        self.events.emit(
-            crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
-            serde_json::json!({}),
-        );
-        serde_json::to_string(&serde_json::json!({ "published_id": published_id, "updates": updates }))
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    /// acknowledge_motif_staleness hybrid compute (Phase 3d-e): read the READ-MIRROR
-    /// snapshot, build ack entries, and return JSON `{ count: number, updates: MotifRebindEntry[] }`.
-    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
-    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
-    #[napi]
-    #[cfg(feature = "motifs")]
-    pub async fn compute_ack_motif_rebind(&self) -> napi::Result<String> {
-        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
-        let (count, updates) =
-            crate::commands::motif_authoring::acknowledge_motif_compute(&self.motif_store, &snap)
-                .await
-                .map_err(Error::from_reason)?;
-        serde_json::to_string(&serde_json::json!({ "count": count, "updates": updates }))
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    /// synthesize_speech hybrid compute (Phase 3d-e): validate text → pick
-    /// synthesizer → content-addressed cache key → synthesize+write if not cached
-    /// → spawn_blocking probe → build `MediaItem`. Returns JSON
-    /// `{ media_item: MediaItem, duration_us: i64, cached: boolean }`.
-    /// NO actor write — the TS host applies the add_media_item + add Audio layer
-    /// (Voiceover role) writes via the authoritative actor.
-    #[napi]
-    #[cfg(feature = "cloud")]
-    pub async fn synthesize_speech_compute(&self, args_json: String) -> napi::Result<String> {
-        let args: crate::mcp::SynthesizeSpeechArgs =
-            serde_json::from_str(&args_json).map_err(|e| Error::from_reason(e.to_string()))?;
-        let (media_item, cached) =
-            crate::mcp::synthesize_speech_audio(self, &args)
-                .await
-                .map_err(|e| Error::from_reason(e.message))?;
-        let duration_us = media_item.metadata.duration_us.unwrap_or(0);
-        serde_json::to_string(&serde_json::json!({
-            "media_item": media_item,
-            "duration_us": duration_us,
-            "cached": cached,
-        }))
-        .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
     /// Queue the background workspace-copy job for an already-inserted media item
     /// (the write half of the `import_media` hybrid is the COPY's path/hash result,
     /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the
@@ -440,6 +376,83 @@ impl Backend {
         crate::export::videosink::video_sink_write(&self.video_sink, data, copy_ns)
             .await
             .map_err(napi::Error::from_reason)
+    }
+}
+
+// Motif-compute napi methods live in their OWN cfg-gated `#[napi] impl` block:
+// the block-level `#[napi]` macro generates a module-level `*_c_callback` for
+// every method but does NOT propagate a method's `#[cfg]` to that callback, so a
+// `#[cfg]`-on-method inside an unconditional `#[napi] impl` leaves a dangling
+// callback when the feature is off (E0425 under `--features jobs,export`).
+// Gating the WHOLE block removes methods AND callbacks together. (Attribute
+// reorder does not help — the block macro expands before the method cfg.)
+#[cfg(feature = "motifs")]
+#[napi]
+impl Backend {
+    /// install_motif hybrid compute (Phase 3d-e): publish the draft (store side)
+    /// + extract motif layers from the READ-MIRROR snapshot + build_rebind_updates.
+    /// Returns JSON `{ published_id: string, updates: MotifRebindEntry[] }`.
+    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
+    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
+    #[napi]
+    pub async fn compute_motif_rebind(&self, install_args_json: String) -> napi::Result<String> {
+        let args: crate::motifs::authoring_commands::InstallArgs =
+            serde_json::from_str(&install_args_json).map_err(|e| Error::from_reason(e.to_string()))?;
+        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
+        let (published_id, updates) =
+            crate::motifs::authoring_commands::install_motif_compute(&self.motif_store, &snap, &args)
+                .await
+                .map_err(Error::from_reason)?;
+        // Emit motifs:changed — the store was just mutated (draft installed).
+        self.events.emit(
+            crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
+            serde_json::json!({}),
+        );
+        serde_json::to_string(&serde_json::json!({ "published_id": published_id, "updates": updates }))
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// acknowledge_motif_staleness hybrid compute (Phase 3d-e): read the READ-MIRROR
+    /// snapshot, build ack entries, and return JSON `{ count: number, updates: MotifRebindEntry[] }`.
+    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
+    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
+    #[napi]
+    pub async fn compute_ack_motif_rebind(&self) -> napi::Result<String> {
+        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
+        let (count, updates) =
+            crate::commands::motif_authoring::acknowledge_motif_compute(&self.motif_store, &snap)
+                .await
+                .map_err(Error::from_reason)?;
+        serde_json::to_string(&serde_json::json!({ "count": count, "updates": updates }))
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+}
+
+// synthesize_speech compute is `cloud`-gated for the same reason — its own block.
+#[cfg(feature = "cloud")]
+#[napi]
+impl Backend {
+    /// synthesize_speech hybrid compute (Phase 3d-e): validate text → pick
+    /// synthesizer → content-addressed cache key → synthesize+write if not cached
+    /// → spawn_blocking probe → build `MediaItem`. Returns JSON
+    /// `{ media_item: MediaItem, duration_us: i64, cached: boolean }`.
+    /// NO actor write — the TS host applies the add_media_item + add Audio layer
+    /// (Voiceover role) writes via the authoritative actor.
+    #[napi]
+    pub async fn synthesize_speech_compute(&self, args_json: String) -> napi::Result<String> {
+        let args: crate::mcp::SynthesizeSpeechArgs =
+            serde_json::from_str(&args_json).map_err(|e| Error::from_reason(e.to_string()))?;
+        let (media_item, cached) =
+            crate::mcp::synthesize_speech_audio(self, &args)
+                .await
+                .map_err(|e| Error::from_reason(e.message))?;
+        let duration_us = media_item.metadata.duration_us.unwrap_or(0);
+        serde_json::to_string(&serde_json::json!({
+            "media_item": media_item,
+            "duration_us": duration_us,
+            "cached": cached,
+        }))
+        .map_err(|e| Error::from_reason(e.to_string()))
     }
 }
 
