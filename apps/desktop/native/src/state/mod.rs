@@ -1,4 +1,6 @@
-//! Project state, single-writer actor, history, validation, persistence.
+//! Project state model: the document types, their serde, and the shared
+//! command-surface types (errors, media/motif patches, `Actor`) that outlive
+//! the deleted Rust state actor.
 //!
 //! Design: `docs/data-model.md`.
 
@@ -30,10 +32,7 @@ pub mod transition;
 // The shared command/error/patch types it used were extracted to `command` in
 // Phase 4a and stay here; the model serde modules below are untouched.
 pub use command::{
-    Actor, AudioPatch, CaptionStylePatch, ColorPatch, CommandError, CompositionPatch, DiffHint,
-    EntityRef, ImageOverlayPatch, LayerEdge, LayerParamsPatch, LayerPatch, MarkerPatch,
-    MediaDerivativesPatch, MotifPatch, MotifRebindEntry, TextPatch, ValidationError,
-    VideoClipPatch,
+    Actor, CommandError, MediaDerivativesPatch, MotifRebindEntry, ValidationError,
 };
 
 pub use animated::{Animated, Interpolation, Keyframe};

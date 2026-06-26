@@ -38,8 +38,8 @@ function unwrapEnvelope(env: Envelope): unknown {
 }
 function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) as Envelope) }
 
-/** CallTool routing. Under the flag (tsHost present): mutations → TS actor.mcpCall,
- *  blocked → -32600, rust → backend (mirror-backed reads). Flag-off → backend. */
+/** CallTool routing (tsHost present): mutations → TS actor.mcpCall, hybrid →
+ *  runHybrid, rust → backend (mirror-backed reads). */
 export async function handleCallTool(
   backend: Backend,
   getTsHost: () => TsActorHost | null,
@@ -49,11 +49,6 @@ export async function handleCallTool(
   const tsHost = getTsHost()
   if (tsHost) {
     const route = routeMcpTool(name)
-    if (route === 'blocked') {
-      const e = new Error(`${name} is unavailable while the TS state actor is active (WEFTCUT_TS_ACTOR); ported in a later phase`) as Error & { code?: number }
-      e.code = -32600
-      throw e
-    }
     if (route === 'ts') {
       const out = unwrapEnvelope(tsHost.mcpCall(name, JSON.stringify(args)))
       if (name === 'begin_agent_session') tsHost.beginAgentSessionSlot(((args.reason as string | undefined) ?? '').trim())

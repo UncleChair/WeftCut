@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { routeMcpTool, MCP_BLOCKED_UNDER_FLAG, HYBRID_TOOLS } from './mutationTools'
+import { routeMcpTool, HYBRID_TOOLS } from './mutationTools'
 import { MCP_TOOLS, MCP_TOOL_DEFS } from '../state/mcp-commands'
 import { mergeMcpCatalog } from './mcpCatalog'
 
@@ -15,9 +15,8 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('acknowledge_motif_staleness')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
   })
-  it('add_motif routes to ts (pure TS mutation, Phase 4a-ii §2.2; MCP_BLOCKED_UNDER_FLAG ∅)', () => {
+  it('add_motif routes to ts (pure TS mutation, Phase 4a-ii §2.2)', () => {
     expect(routeMcpTool('add_motif')).toBe('ts')
-    expect(MCP_BLOCKED_UNDER_FLAG.size).toBe(0)
   })
   it('routes reads + native-read tools to rust (including motif_staleness_report)', () => {
     for (const t of ['groups_list', 'groups_get', 'ping', 'list_motifs', 'get_motif_source', 'preview_motif_draft', 'detect_silences', 'transcribe_clip', 'motif_staleness_report'])
@@ -26,13 +25,9 @@ describe('routeMcpTool', () => {
   it('single-writer invariant: every TS-adapter tool routes to ts, never rust', () => {
     for (const t of MCP_TOOLS) expect(routeMcpTool(t), t).toBe('ts')
   })
-  it('no blocked tool is also a TS-adapter tool', () => {
-    for (const t of MCP_BLOCKED_UNDER_FLAG) expect(MCP_TOOLS.has(t), t).toBe(false)
-  })
-  it('no hybrid tool is also a TS-adapter or blocked tool', () => {
+  it('no hybrid tool is also a TS-adapter tool', () => {
     for (const t of HYBRID_TOOLS) {
       expect(MCP_TOOLS.has(t), t).toBe(false)
-      expect(MCP_BLOCKED_UNDER_FLAG.has(t), t).toBe(false)
     }
   })
 })
