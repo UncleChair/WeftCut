@@ -1,6 +1,5 @@
 // apps/desktop/src/main/state/router.ts
-// Pure splitter classification for the WEFTCUT_TS_ACTOR flip. Consulted by
-// src/main/index.ts ONLY when the flag is on; flag-off = everything → rust.
+// Pure splitter: the TS actor is authoritative; this splits every renderer channel.
 // SAFETY INVARIANT (router.test.ts partition gate): every renderer channel is
 // classified into exactly one bucket, and no project-touching channel routes to
 // 'rust' (the curated PURE_NATIVE ∪ PERSISTENCE ∪ MIRROR_BACKED_READS ∪
@@ -17,15 +16,6 @@ export type Route =
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write (Phase 3d-e)
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
-
-/** Renderer-reachable category-A mutations with NO TS path — rejected under the
- *  flag (single-writer). All channels have landed as of Phase 4a-ii §2.2:
- *  import_media, install_motif, acknowledge_motif_staleness are hybrids
- *  (HYBRID_CHANNELS); apply_subtitles and synthesize_speech are MCP-only hybrids
- *  (HYBRID_TOOLS in mutationTools.ts); project_restore_checkpoint is wired
- *  (Phase 4a-i §2.1); add_motif is a pure TS mutation (Phase 4a-ii §2.2).
- *  Slice 4a is complete: BLOCKED_UNDER_FLAG = ∅. */
-export const BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set([])
 
 /** Hybrid Rust-compute → TS-write channels (Phase 3d-e). */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media', 'install_motif', 'acknowledge_motif_staleness'])
@@ -57,7 +47,6 @@ export const DEBUG_ONLY: ReadonlySet<string> = new Set(['debug_lock_history', 'd
 export function routeChannel(channel: string): Route {
   if (PRODUCTION_OPS.has(channel)) return { kind: 'command' }
   if (HYBRID_CHANNELS.has(channel)) return { kind: 'hybrid', tool: channel }
-  if (BLOCKED_UNDER_FLAG.has(channel)) return { kind: 'reject', reason: `${channel} is unavailable while the TS state actor is active (WEFTCUT_TS_ACTOR); ported in Phase 4` }
   switch (channel) {
     case 'project_summary': return { kind: 'summary' }
     case 'get_project_settings': return { kind: 'projectSettings' }

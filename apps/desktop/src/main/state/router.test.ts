@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
-  HYBRID_CHANNELS, MIRROR_BACKED_READS, PURE_NATIVE, PERSISTENCE, DEBUG_ONLY, BLOCKED_UNDER_FLAG,
+  HYBRID_CHANNELS, MIRROR_BACKED_READS, PURE_NATIVE, PERSISTENCE, DEBUG_ONLY,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
@@ -57,10 +57,9 @@ describe('router partition gate', () => {
   it('every renderer channel is classified; no project-touching channel routes to rust', () => {
     for (const ch of ALL_CHANNELS) {
       const r = routeChannel(ch)
-      // Every known channel is classified: a 'reject' is only legitimate when the
-      // channel is an intentionally-deferred BLOCKED_UNDER_FLAG one (single-writer).
-      // Any OTHER reject is the unclassified-default → an out-of-sync manifest.
-      if (r.kind === 'reject') expect(BLOCKED_UNDER_FLAG.has(ch), `${ch} unclassified (reject default)`).toBe(true)
+      // Every known channel must be classified — a 'reject' here means an
+      // unclassified channel hit the default → out-of-sync manifest.
+      expect(r.kind, `${ch} unclassified (reject default)`).not.toBe('reject')
       if (r.kind === 'rust') expect(RUST_ALLOWLIST.has(ch), `${ch} routes to rust`).toBe(true)
     }
     for (const ch of ['import_media', 'install_motif', 'acknowledge_motif_staleness'])
@@ -83,7 +82,7 @@ describe('router partition gate', () => {
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
       ['MIRROR_BACKED_READS', MIRROR_BACKED_READS], ['DEBUG_ONLY', DEBUG_ONLY],
-      ['HYBRID_CHANNELS', HYBRID_CHANNELS], ['BLOCKED_UNDER_FLAG', BLOCKED_UNDER_FLAG],
+      ['HYBRID_CHANNELS', HYBRID_CHANNELS],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],
       ['SPECIAL', SPECIAL],
     ]

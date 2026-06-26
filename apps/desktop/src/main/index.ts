@@ -14,7 +14,6 @@ import { broadcastEvent } from './broadcast.js'
 import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
-import { tsActorHandles } from './state/shadow.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
 
 protocol.registerSchemesAsPrivileged([
@@ -208,99 +207,98 @@ app.whenReady().then(async () => {
     backend.setCloudKey(provider, key)
   }
 
+  // TS actor host: constructed unconditionally; must start (pushing the initial
+  // read-mirror via setProjectMirror) BEFORE startMcpHost so that
+  // snapshot_for_read() has the mirror populated before any compute/MCP read
+  // can run (spec §4.3/§4.6). mcpNotify uses mcpHostRef?.notifyChange (optional)
+  // so the pre-MCP initial mirror push is a safe no-op for the notify path.
+  const { createTsActorHost } = await import('./state/ts-actor-host.js')
+
+  // The TS actor snaps frame edges via the wasm eval leaf (snap.ts → renderer/eval).
+  // Main MUST initialize it once at boot before the actor handles any command
+  // (snap.ts contract).
+  const { initEval } = await import('./state/snap.js')
+  await initEval()
+
+  // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs.
+  const nodeFs = {
+    exists: (p: string) => fs.existsSync(p),
+    readFile: (p: string) => fs.readFileSync(p, 'utf8'),
+    writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
+    mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
+    copyFile: (s: string, d: string) => fs.copyFileSync(s, d),
+    readdir: (d: string) => fs.readdirSync(d) as string[],
+    rm: (p: string) => { fs.rmSync(p, { force: true }) },
+  }
+
+  // Napi facade for workspace bookkeeping — delegates to the Backend instance.
+  const napiFacade = {
+    commitWorkspace: (p: string) => backend!.commitWorkspace(p),
+    pushRecent: (p: string, n: string) => backend!.pushRecent(p, n),
+    setLastNewProjectParent: (p: string) => backend!.setLastNewProjectParent(p),
+    enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j),
+  }
+
+  // Workspace dir cache — seeded once at boot; refreshed after each persistence call
+  // (the orchestrator calls commitWorkspace itself before replaceState, so by the time
+  // open/saveAs/newWorkspace resolves wsCache must reflect the NEW workspace so that
+  // buildProjectSummary's fileExists + autosave see the right dir).
+  let wsCache: string | null = null
+  try {
+    wsCache = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
+  } catch { /* no workspace at cold boot */ }
+
+  // Wrap napiFacade.commitWorkspace to also refresh wsCache as a side effect —
+  // the orchestrator calls it before replaceState, so by the time any post-open
+  // handler runs, wsCache already holds the new path.
+  const napiFacadeWithCache = {
+    ...napiFacade,
+    commitWorkspace: async (p: string) => {
+      await napiFacade.commitWorkspace(p)
+      wsCache = p
+    },
+  }
+
+  // Rust compute facade for the native-compute → TS-write hybrids (Phase 3d-e):
+  // Rust probes/hashes/parses (no actor write); the TS host applies the write.
+  // Later-task methods (parseSubtitles/computeMotifRebind/… ) are wired as their
+  // hybrids land (Tasks 4-6).
+  const computeFacade = {
+    probeMedia: (p: string) => backend!.probeMedia(p),
+    parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
+    computeMotifRebind: (argsJson: string) => backend!.computeMotifRebind(argsJson),
+    computeAckMotifRebind: () => backend!.computeAckMotifRebind(),
+    synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
+  }
+
+  tsHost = createTsActorHost({
+    send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
+    mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
+    fileExists: (p) => fs.existsSync(p),
+    fs: nodeFs,
+    join: path.join,
+    napi: napiFacadeWithCache,
+    compute: computeFacade,
+    enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p),
+    readFile: (p) => fs.readFileSync(p, 'utf8'),
+    workspaceDir: () => wsCache,
+    setProjectMirror: (pj, hv) => backend!.setProjectMirror(pj, hv),
+    beginAgentSessionSlot: (reason) => backend!.beginAgentSessionSlot(reason),
+    endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
+    emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
+    listMotifs: () => backend!.invoke('list_motifs', '{}'),
+  })
+  tsHost.start()
+  // Tell the jobs subsystem the TS actor is now authoritative for derivative write-back.
+  backend!.setTsDerivativeAuthority(true)
+  console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')
+
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
+  // Started AFTER tsHost.start() so the read-mirror is populated before any
+  // MCP compute read can run (spec §4.3/§4.6).
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend, () => tsHost)
   mcpHostRef = mcpHost
-
-  // TS-actor host: construct after mcpHostRef is set (emitChange relays via mcpNotify).
-  // DEFAULT-ON (Phase 4 transition): the TS state actor is authoritative unless
-  // explicitly disabled with WEFTCUT_TS_ACTOR=0. The opt-out is a brief transition
-  // bridge to the Rust fallback — Phase 4b deletes the actor + removes this flag and
-  // always constructs tsHost.
-  const tsActorOn = process.env['WEFTCUT_TS_ACTOR'] !== '0'
-  if (tsActorOn) {
-    const { createTsActorHost } = await import('./state/ts-actor-host.js')
-
-    // The TS actor snaps frame edges via the wasm eval leaf (snap.ts → renderer/eval).
-    // Main MUST initialize it once at boot before the actor handles any command
-    // (snap.ts contract) — the Rust actor used the native leaf, so this is flip-only.
-    const { initEval } = await import('./state/snap.js')
-    await initEval()
-
-    // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs.
-    const nodeFs = {
-      exists: (p: string) => fs.existsSync(p),
-      readFile: (p: string) => fs.readFileSync(p, 'utf8'),
-      writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
-      mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
-      copyFile: (s: string, d: string) => fs.copyFileSync(s, d),
-      readdir: (d: string) => fs.readdirSync(d) as string[],
-      rm: (p: string) => { fs.rmSync(p, { force: true }) },
-    }
-
-    // Napi facade for workspace bookkeeping — delegates to the Backend instance.
-    const napiFacade = {
-      commitWorkspace: (p: string) => backend!.commitWorkspace(p),
-      pushRecent: (p: string, n: string) => backend!.pushRecent(p, n),
-      setLastNewProjectParent: (p: string) => backend!.setLastNewProjectParent(p),
-      enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j),
-    }
-
-    // Workspace dir cache — seeded once at boot; refreshed after each persistence call
-    // (the orchestrator calls commitWorkspace itself before replaceState, so by the time
-    // open/saveAs/newWorkspace resolves wsCache must reflect the NEW workspace so that
-    // buildProjectSummary's fileExists + autosave see the right dir).
-    let wsCache: string | null = null
-    try {
-      wsCache = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
-    } catch { /* no workspace at cold boot */ }
-
-    // Wrap napiFacade.commitWorkspace to also refresh wsCache as a side effect —
-    // the orchestrator calls it before replaceState, so by the time any post-open
-    // handler runs, wsCache already holds the new path.
-    const napiFacadeWithCache = {
-      ...napiFacade,
-      commitWorkspace: async (p: string) => {
-        await napiFacade.commitWorkspace(p)
-        wsCache = p
-      },
-    }
-
-    // Rust compute facade for the native-compute → TS-write hybrids (Phase 3d-e):
-    // Rust probes/hashes/parses (no actor write); the TS host applies the write.
-    // Later-task methods (parseSubtitles/computeMotifRebind/… ) are wired as their
-    // hybrids land (Tasks 4-6).
-    const computeFacade = {
-      probeMedia: (p: string) => backend!.probeMedia(p),
-      parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
-      computeMotifRebind: (argsJson: string) => backend!.computeMotifRebind(argsJson),
-      computeAckMotifRebind: () => backend!.computeAckMotifRebind(),
-      synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
-    }
-
-    tsHost = createTsActorHost({
-      send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
-      mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
-      fileExists: (p) => fs.existsSync(p),
-      fs: nodeFs,
-      join: path.join,
-      napi: napiFacadeWithCache,
-      compute: computeFacade,
-      enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p),
-      readFile: (p) => fs.readFileSync(p, 'utf8'),
-      workspaceDir: () => wsCache,
-      setProjectMirror: (pj, hv) => backend!.setProjectMirror(pj, hv),
-      beginAgentSessionSlot: (reason) => backend!.beginAgentSessionSlot(reason),
-      endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
-      emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
-      listMotifs: () => backend!.invoke('list_motifs', '{}'),
-    })
-    tsHost.start()
-    // Tell the jobs subsystem the TS actor is now authoritative for derivative write-back.
-    backend!.setTsDerivativeAuthority(true)
-    console.log('[main] WEFTCUT_TS_ACTOR on — TS state actor authoritative')
-  }
 
   ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
@@ -335,27 +333,11 @@ app.whenReady().then(async () => {
       backend!.clearCloudKey(provider)
       return null
     }
-    // TS-actor splitter: when the flag is on, route non-Rust channels into the TS
-    // host. Consulted AFTER main-only intercepts above, BEFORE the Rust fallthrough.
-    // Flag-off: tsHost is null, block is skipped, behavior unchanged.
+    // TS actor splitter: route non-Rust channels into the TS host.
+    // Consulted AFTER main-only intercepts above, BEFORE the Rust fallthrough.
     if (tsHost) {
       const route = (await import('./state/router.js')).routeChannel(channel)
       if (route.kind !== 'rust') return await tsHost.handleInvoke(channel, (args ?? {}) as Record<string, unknown>)
-    }
-    // Dev-only shadow: log when the Phase-1 TS actor vocabulary covers this command.
-    // Rust stays authoritative; this flag is OFF by default.
-    // Full live divergence check is deferred to a future phase — the Task-12
-    // differential harness (replay_driver) is the Phase-1 correctness gate.
-    if (process.env['WEFTCUT_TS_ACTOR_SHADOW'] === '1') {
-      try {
-        if (tsActorHandles(channel)) {
-          console.log(`[ts-actor-shadow] shadow enabled — ${channel} is in Phase-1 vocabulary`)
-        } else {
-          console.log(`[ts-actor-shadow] shadow enabled — ${channel} is out-of-vocabulary (skipped)`)
-        }
-      } catch (e) {
-        console.warn('[ts-actor-shadow] shadow hook threw', e)
-      }
     }
     const json = await backend!.invoke(channel, JSON.stringify(args ?? {}))
     return JSON.parse(json)
