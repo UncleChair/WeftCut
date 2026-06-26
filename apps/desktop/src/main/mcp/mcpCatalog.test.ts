@@ -24,7 +24,7 @@ describe('mergeMcpCatalog', () => {
   it('every merged name resolves to exactly one engine (no advertised-but-unhandled)', () => {
     const rust = [{ name: 'list_motifs' }, { name: 'ping' }, { name: 'import_media' }, { name: 'add_track' }]
     const merged = mergeMcpCatalog(rust, tsDefs)
-    for (const t of merged) expect(['ts', 'rust', 'hybrid']).toContain(routeMcpTool(t.name))
+    for (const t of merged) expect(['ts', 'rust', 'hybrid', 'motif']).toContain(routeMcpTool(t.name))
   })
 
   it('advertises the TS table inputSchema for ts-routed tools', () => {
