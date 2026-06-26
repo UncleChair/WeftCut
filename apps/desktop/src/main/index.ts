@@ -242,11 +242,14 @@ app.whenReady().then(async () => {
     rm: (p: string) => { fs.rmSync(p, { force: true }) },
   }
 
-  // Napi facade for workspace bookkeeping — delegates to the Backend instance.
+  // Napi facade for workspace bookkeeping — delegates to the Backend instance,
+  // except pushRecent and setLastNewProjectParent which are now owned by the TS
+  // recents store (was native/src/recents.rs #[napi] methods push_recent /
+  // set_last_new_project_parent; deleted from Rust as part of the recents migration).
   const napiFacade = {
     commitWorkspace: (p: string) => backend!.commitWorkspace(p),
-    pushRecent: (p: string, n: string) => backend!.pushRecent(p, n),
-    setLastNewProjectParent: (p: string) => backend!.setLastNewProjectParent(p),
+    pushRecent: (p: string, n: string) => recents.push(p, n),
+    setLastNewProjectParent: (p: string) => recents.setLastNewProjectParent(p),
     enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j),
   }
 
@@ -312,6 +315,14 @@ app.whenReady().then(async () => {
     path: path.join(app.getPath('userData'), 'keybindings.json'),
     dir: app.getPath('userData'),
   })
+  // Recent-projects list + startup prefs: TS-owned (was native/src/recents.rs). Same
+  // on-disk file (<userData>/recents.json) so existing users' recents carry over.
+  const { createRecentsStore } = await import('./recents.js')
+  const recents = createRecentsStore({
+    fs: atomicFs,
+    path: path.join(app.getPath('userData'), 'recents.json'),
+    dir: app.getPath('userData'),
+  })
 
   tsHost = createTsActorHost({
     send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
@@ -335,6 +346,7 @@ app.whenReady().then(async () => {
     viewState,
     exportSettings,
     keybindings,
+    recents,
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')

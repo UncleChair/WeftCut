@@ -2,6 +2,8 @@ import { invoke } from "@/bridge/ipc";
 
 import type { ExportSettings } from "../render/exportSettings";
 import type { MotifManifest } from "../render/motifs/catalog";
+import type { RecentEntry } from "../../shared/recents";
+export type { RecentEntry } from "../../shared/recents";
 
 export interface CompositionSummary {
   width: number;
@@ -537,13 +539,6 @@ export async function projectNewWorkspace(args: {
     fpsNum: args.canvas.fpsNum,
     fpsDen: args.canvas.fpsDen,
   });
-}
-
-export interface RecentEntry {
-  path: string;
-  name: string;
-  /// ISO-8601 timestamp from chrono::DateTime<Utc>.
-  last_opened: string;
 }
 
 export async function recentsList(): Promise<RecentEntry[]> {
