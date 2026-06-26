@@ -14,8 +14,9 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('acknowledge_motif_staleness')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
   })
-  it('blocks the Phase-4b deferred tool (project_restore_checkpoint wired Phase 4a-i §2.1)', () => {
-    expect(routeMcpTool('add_motif')).toBe('blocked')
+  it('add_motif routes to ts (pure TS mutation, Phase 4a-ii §2.2; MCP_BLOCKED_UNDER_FLAG ∅)', () => {
+    expect(routeMcpTool('add_motif')).toBe('ts')
+    expect(MCP_BLOCKED_UNDER_FLAG.size).toBe(0)
   })
   it('routes reads + native-read tools to rust (including motif_staleness_report)', () => {
     for (const t of ['groups_list', 'groups_get', 'ping', 'list_motifs', 'get_motif_source', 'preview_motif_draft', 'detect_silences', 'transcribe_clip', 'motif_staleness_report'])

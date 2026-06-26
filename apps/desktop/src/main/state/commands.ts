@@ -197,6 +197,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   project_undo: () => ({ op: 'undo', args: {} }),
   project_redo: () => ({ op: 'redo', args: {} }),
   project_restore_checkpoint: (a) => ({ op: 'restore_checkpoint', args: { checkpoint_id: a.checkpointId } }),
+  // add_motif: renderer sends camelCase; dispatch arm handles the rich logic.
+  // parseMechanical returns null here so command() falls through to the rich arm.
+  // The entry exists only so PRODUCTION_OPS can include 'add_motif'.
 }
 
 /** All production channels this adapter handles (mechanical + rich + meta). */
@@ -213,6 +216,8 @@ export const PRODUCTION_OPS = new Set<string>([
   'update_track_flags', 'set_role_gain', 'update_role_flags',
   'separate_audio_to_new_track', 'restyle_caption_track',
   'update_project_settings', 'project_undo', 'project_redo', 'project_restore_checkpoint',
+  // Task 5: add_motif as a pure TS recorded mutation (Phase 4a-ii §2.2)
+  'add_motif',
 ])
 
 export function parseMechanical(channel: string, a: Record<string, unknown>): { op: string; args: Record<string, unknown> } | null {

@@ -4,7 +4,7 @@ import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 
-const ALL_46_NAMES = new Set<string>([
+const ALL_47_NAMES = new Set<string>([
   // table-exec tools (27)
   'add_track', 'remove_track', 'duplicate_layer', 'move_track',
   'update_layer', 'update_layer_params',
@@ -15,8 +15,9 @@ const ALL_46_NAMES = new Set<string>([
   'update_marker', 'remove_marker',
   'remove_media', 'undo', 'redo',
   'set_role_gain', 'set_role_flags',
-  // dedicated-exec tools (19)
+  // dedicated-exec tools (20) — add_motif added Phase 4a-ii §2.2
   'add_color_layer', 'add_video_layer', 'split_layer', 'add_marker',
+  'add_motif',
   'lock_history', 'unlock_history',
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
   'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track',
@@ -24,8 +25,8 @@ const ALL_46_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the original 46 tool names', () => {
-    expect(MCP_TOOLS).toEqual(ALL_46_NAMES)
+  it('MCP_TOOLS contains exactly the 47 tool names (add_motif added Phase 4a-ii §2.2)', () => {
+    expect(MCP_TOOLS).toEqual(ALL_47_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -57,7 +58,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(19)
+    expect(dedicated.length).toBe(20) // add_motif added Phase 4a-ii §2.2
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }

@@ -28,7 +28,8 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
-import { applyRebindMotif } from './mutations/motif'
+import { applyRebindMotif, motifLayerParams } from './mutations/motif'
+import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseRgba, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
@@ -619,6 +620,32 @@ export function createActor(opts: ActorOptions): ActorHandle {
           })
           return { ok: true, value: id }
         }
+        case 'add_motif': {
+          // add_motif_impl (commands/motifs.rs:138-212): pure TS mutation (Phase 4a-ii §2.2).
+          // Renderer camelCase: motifId, trackId?, tStartUs, tEndUs?, props?
+          const motifId = wireArgs.motifId as string | undefined
+          if (typeof motifId !== 'string') return { ok: false, error: { error: 'InvalidArgument', field: 'motifId', detail: 'motifId must be a string' } }
+          const manifest = motifCatalog.get(motifId)
+          if (!manifest) return { ok: false, error: { error: 'InvalidArgument', field: 'motifId', detail: `unknown motif_id '${motifId}' — call list_motifs for the catalog` } }
+          // Canonicalize props BEFORE any commit (reject-before-commit gate).
+          let canonicalProps: Record<string, unknown>
+          try {
+            canonicalProps = canonicalizeProps(manifest, (wireArgs.props ?? null) as unknown)
+          } catch (err) {
+            if (err instanceof MotifPropError) return { ok: false, error: { error: 'InvalidArgument', field: 'props', detail: `invalid props: ${err.detail}` } }
+            throw err
+          }
+          const tStartUs = parseNum(wireArgs.tStartUs, 'tStartUs')
+          const tEndUsRaw = parseNumOpt(wireArgs.tEndUs, 'tEndUs') ?? null
+          const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
+          if (resolvedEnd <= tStartUs) return { ok: false, error: { error: 'InvalidArgument', field: 't_end_us', detail: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
+          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
+          // Two-commit: if no track_id → mint Overlay track FIRST, THEN Motif layer.
+          const trackId = wireArgs.trackId !== undefined ? parseUuid(wireArgs.trackId, 'trackId') : null
+          const track = trackId ?? commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
+          const layerId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
+          return { ok: true, value: layerId }
+        }
         default:
           // (meta channels added in Task 4)
           return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported production op ${channel}` } }
@@ -850,6 +877,32 @@ export function createActor(opts: ActorOptions): ActorHandle {
             }
           }
           return { ok: true, result: shapeDryRunResponse(dryRun(ops)) }
+        }
+        case 'add_motif': {
+          // add_motif MCP arm (mcp/tools.rs:2024-2095): pure TS, dedicated mcpCall.
+          // Mirrors the Rust tool: catalog lookup → canonicalize → resolve → two-commit.
+          const p = mcpDef('add_motif').parseDedicated!(a)
+          const motifId = p.motif_id as string
+          const manifest = motifCatalog.get(motifId)
+          if (!manifest) return { ok: false, error: { code: 'invalid_params', message: `unknown motif_id '${motifId}' — call list_motifs for the catalog` } }
+          // Canonicalize props BEFORE any commit (reject-before-commit gate).
+          let canonicalProps: Record<string, unknown>
+          try {
+            canonicalProps = canonicalizeProps(manifest, (p.props ?? null) as unknown)
+          } catch (err) {
+            if (err instanceof MotifPropError) return { ok: false, error: { code: 'invalid_params', message: `invalid props: ${err.detail}` } }
+            throw err
+          }
+          const tStartUs = p.t_start_us as number
+          const tEndUsRaw = (p.t_end_us as number | null | undefined) ?? null
+          const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
+          if (resolvedEnd <= tStartUs) return { ok: false, error: { code: 'invalid_params', message: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
+          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps)
+          // Two-commit: if no track_id → mint Overlay track FIRST, THEN Motif layer.
+          const trackId = (p.track_id as string | null | undefined) ?? null
+          const track = trackId ?? commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Overlay'))
+          const layerId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
+          return { ok: true, result: toolText(layerId) }
         }
       }
       const parse = MCP_ARG_PARSERS[name]

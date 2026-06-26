@@ -44,6 +44,11 @@ const STRUCTURAL_REQUIRED: Record<string, ReadonlySet<string>> = {
   update_marker:       new Set(['patch']),
   set_composition:     new Set(['patch']),
   set_keyframe:        new Set(['interp']),
+  // add_motif.props is a structural JSON object passed through to canonicalizeProps
+  // (absent = use all schema defaults; null/undefined → treat as {}). The parser does
+  // `a.props ?? null` and does NOT throw on its absence — matching Rust's wire contract
+  // where props is Option<serde_json::Value>, defaulting to {} when None.
+  add_motif:           new Set(['props']),
 }
 
 describe('MCP catalog↔handler bijection (permanent gate)', () => {

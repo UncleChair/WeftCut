@@ -107,8 +107,8 @@ describe('routeChannel', () => {
     expect(routeChannel('project_save').kind).toBe('save')
     expect(routeChannel('agent_session_end').kind).toBe('agentSessionEnd')
   })
-  it('rejects the deferred renderer category-A channel (Phase 4b)', () => {
-    expect(routeChannel('add_motif').kind).toBe('reject')
+  it('routes add_motif to command (Phase 4a-ii §2.2 — pure TS mutation, blocked sets ∅)', () => {
+    expect(routeChannel('add_motif').kind).toBe('command')
   })
   it('routes project_restore_checkpoint to command (Phase 4a-i §2.1)', () => {
     expect(routeChannel('project_restore_checkpoint').kind).toBe('command')

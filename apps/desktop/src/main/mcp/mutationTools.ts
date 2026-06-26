@@ -3,12 +3,10 @@ import { MCP_TOOLS } from '../state/mcp-commands.js'
 export type McpRoute = 'ts' | 'rust' | 'blocked' | 'hybrid'
 
 /** Category-A MCP tools with NO TS path under WEFTCUT_TS_ACTOR — rejected -32600.
- *  Phase 3d-e is now COMPLETE and project_restore_checkpoint is wired (Phase 4a-i
- *  §2.1). Only add_motif remains here: it needs the motif catalog in TS (Phase 4b).
+ *  Phase 3d-e is COMPLETE; project_restore_checkpoint is wired (Phase 4a-i §2.1);
+ *  add_motif is a pure TS mutation (Phase 4a-ii §2.2). Slice 4a complete: ∅.
  *  motif_staleness_report is a mirror-backed READ (routes to 'rust') — NOT blocked. */
-export const MCP_BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set([
-  'add_motif',
-])
+export const MCP_BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set([])
 
 /** MCP tools served by the native-compute → TS-write hybrid orchestrator
  *  (hybrids.ts runHybrid). Grows as each hybrid lands (install_motif/

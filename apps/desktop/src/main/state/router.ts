@@ -19,13 +19,13 @@ export type Route =
   | { kind: 'rust' }
 
 /** Renderer-reachable category-A mutations with NO TS path — rejected under the
- *  flag (single-writer), deferred to Phase 4. add_motif needs the motif catalog
- *  in TS (Phase 4b). All other previously-blocked channels have landed:
+ *  flag (single-writer). All channels have landed as of Phase 4a-ii §2.2:
  *  import_media, install_motif, acknowledge_motif_staleness are hybrids
  *  (HYBRID_CHANNELS); apply_subtitles and synthesize_speech are MCP-only hybrids
  *  (HYBRID_TOOLS in mutationTools.ts); project_restore_checkpoint is wired
- *  (Phase 4a-i §2.1). */
-export const BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set(['add_motif'])
+ *  (Phase 4a-i §2.1); add_motif is a pure TS mutation (Phase 4a-ii §2.2).
+ *  Slice 4a is complete: BLOCKED_UNDER_FLAG = ∅. */
+export const BLOCKED_UNDER_FLAG: ReadonlySet<string> = new Set([])
 
 /** Hybrid Rust-compute → TS-write channels (Phase 3d-e). */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media', 'install_motif', 'acknowledge_motif_staleness'])
