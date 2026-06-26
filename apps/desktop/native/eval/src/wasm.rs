@@ -9,7 +9,7 @@
 //! the snap fn takes `(num, den)` primitives (it stays in the napi crate).
 use crate::{
     db_to_linear as db_to_linear_impl, eval_f64, role_audible as role_audible_impl,
-    snap_frame_round, Interpolation, Kf,
+    snap_frame_floor, snap_frame_round, Interpolation, Kf,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -30,6 +30,12 @@ static mut N: usize = 0;
 #[no_mangle]
 pub extern "C" fn snap_round(t_us: f64, num: i32, den: i32) -> f64 {
     snap_frame_round(t_us as i64, num as u32, den as u32) as f64
+}
+
+/// `snap_frame_floor(t_us, num/den)` — floor to the frame boundary at or below.
+#[no_mangle]
+pub extern "C" fn snap_floor(t_us: f64, num: i32, den: i32) -> f64 {
+    snap_frame_floor(t_us as i64, num as u32, den as u32) as f64
 }
 
 /// Set the resident track length (number of keyframes uploaded via `set_kf`).

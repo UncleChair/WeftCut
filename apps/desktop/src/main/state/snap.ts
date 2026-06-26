@@ -5,4 +5,4 @@
 // renderer tree at every call site. In tests the wasm is initialized by
 // src/renderer/testSetup.ts (initEval in beforeAll); in production the main
 // process must await initEval() once at boot before the actor handles a command.
-export { snapFrameRound, initEval } from '../../renderer/eval'
+export { snapFrameRound, snapFrameFloor, initEval } from '../../renderer/eval'

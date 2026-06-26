@@ -291,6 +291,7 @@ app.whenReady().then(async () => {
       beginAgentSessionSlot: (reason) => backend!.beginAgentSessionSlot(reason),
       endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
       emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
+      listMotifs: () => backend!.invoke('list_motifs', '{}'),
     })
     tsHost.start()
     // Tell the jobs subsystem the TS actor is now authoritative for derivative write-back.

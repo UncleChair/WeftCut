@@ -26,6 +26,7 @@ import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, m
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
+import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { applyRebindMotif } from './mutations/motif'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
@@ -56,7 +57,7 @@ export type DryRunOutput =
   | { kind: 'SplitLayer'; left_id: Uuid; right_id: Uuid }
   | { kind: 'Void' }
 
-export interface ActorOptions { initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor }
+export interface ActorOptions { initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor; motifCatalog?: MotifCatalog }
 export type DispatchResult = { ok: true; value: unknown } | { ok: false; error: CommandError }
 
 export interface ActorHandle {
@@ -74,6 +75,10 @@ export interface ActorHandle {
   listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>
   dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
   mcpCall(name: string, argsJson: string): McpCallResult
+  /** Replace the user-layer of the motif catalog (built-ins are always present).
+   *  Called by the host after motif-store-mutating operations to keep the catalog
+   *  current for the content-window clamp in applyUpdateLayerParams. */
+  setUserMotifManifests(ms: Manifest[]): void
 }
 
 export function createActor(opts: ActorOptions): ActorHandle {
@@ -82,6 +87,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   const actor: Actor = opts.actor ?? { kind: 'User' }
   const history = new History(opts.initial, actor, idGen(), clock()) // consumes the Initial op_id
   const subs = new Set<(e: ChangeEvent) => void>()
+  const motifCatalog: MotifCatalog = opts.motifCatalog ?? new MotifCatalog()
 
   function current(): Project { return history.current() }
 
@@ -357,7 +363,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'AddLayer': value = { kind: 'AddLayer', layer_id: applyAddLayer(d, idGen, op.track_id, op.params, op.t_start_us, op.t_end_us) }; break
             case 'DeleteLayer': applyDeleteLayer(d, op.id); break
             case 'UpdateLayer': applyUpdateLayer(d, op.id, op.patch); break
-            case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch); break
+            case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch, motifCatalog); break
             case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_group); break
             case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_group); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
             case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_group); break
@@ -416,7 +422,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'groups_remove_members': commit('Removed group members', [], { kind: 'Coarse' }, (d) => applyGroupsRemoveMembers(d, a.group as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
         case 'groups_rename': commit('Renamed group', [], { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.group as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_layer': commit('Updated layer', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
-        case 'update_layer_params': commit('Updated layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch)); return { ok: true, value: null }
+        case 'update_layer_params': commit('Updated layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog)); return { ok: true, value: null }
         case 'update_layer_param_track': commit('Keyframed layer param', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>)); return { ok: true, value: null }
         case 'update_layer_param_tracks': commit('Keyframed layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t) }); return { ok: true, value: null }
         case 'fit_composition_to_layers': commit('Fit composition duration to layers', [], { kind: 'Composition' }, (d) => applyFitComposition(d)); return { ok: true, value: null }
@@ -875,5 +881,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
     restoreCheckpoint,
     listCheckpoints,
     dryRun,
+    setUserMotifManifests(ms: Manifest[]) { motifCatalog.setUserManifests(ms) },
   }
 }

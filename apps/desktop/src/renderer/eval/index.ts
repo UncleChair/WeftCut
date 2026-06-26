@@ -7,6 +7,7 @@ import { EVAL_WASM_BASE64 } from './evalWasm.generated'
 
 interface Exports {
   snap_round(tUs: number, num: number, den: number): number
+  snap_floor(tUs: number, num: number, den: number): number
   set_n(n: number): void
   set_kf(
     i: number,
@@ -59,6 +60,12 @@ function E(): Exports {
 export function snapFrameRound(tUs: number, num: number, den: number): number {
   if (num <= 0 || den <= 0) return tUs
   return E().snap_round(tUs, num, den)
+}
+
+/** Floor `tUs` to the frame boundary at or below. Degenerate fps is a no-op. */
+export function snapFrameFloor(tUs: number, num: number, den: number): number {
+  if (num <= 0 || den <= 0) return tUs
+  return E().snap_floor(tUs, num, den)
 }
 
 /** Keyframe shape from the IPC AnimTrack (renderer/render/animated.ts). */

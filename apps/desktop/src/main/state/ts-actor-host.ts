@@ -9,6 +9,7 @@ import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type 
 import { serializeProjectToJson } from './persistence'
 import { agentSessionEnd } from './agent-session-seam'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
+import type { Manifest } from '../../shared/motifs/catalog'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -47,6 +48,10 @@ export interface TsActorHostDeps {
     message: string
     details?: Record<string, unknown>
   }) => void
+  /** list_motifs JSON from the backend — used to hydrate the actor's motif catalog
+   *  after start() and after motif-store-mutating operations (install/delete/write/
+   *  import/amend/create_edit). Optional → no-op when absent (tests, flag-off). */
+  listMotifs?: () => Promise<string>
 }
 
 interface PersistenceHandlers {
@@ -77,6 +82,24 @@ export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'us
   const actor_kind = e.actor.kind === 'Agent' ? 'agent' : 'user'
   const client = e.actor.kind === 'Agent' ? e.actor.client : null
   return { op_id: e.op_id, actor_kind, client, summary: e.summary, timestamp: e.timestamp, affected_count: e.affected.length }
+}
+
+/** Extract Manifest-shaped entries from a `list_motifs` JSON array.
+ *  list_motifs returns every manifest field plus `html`/`status`/`content_hash`;
+ *  we keep only non-builtin entries (installed + draft) — built-ins are already
+ *  in the catalog's built-in layer and built-ins always win on id collision. */
+function manifestsFromList(entries: unknown[]): Manifest[] {
+  const out: Manifest[] = []
+  for (const e of entries) {
+    if (e == null || typeof e !== 'object') continue
+    const entry = e as Record<string, unknown>
+    // Skip built-ins — already present in MotifCatalog's built-in layer.
+    if (entry['status'] === 'builtin') continue
+    // Keep only entries that have at minimum the required Manifest fields.
+    if (typeof entry['id'] !== 'string' || typeof entry['name'] !== 'string') continue
+    out.push(entry as unknown as Manifest)
+  }
+  return out
 }
 
 export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
@@ -114,6 +137,16 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     saveAs: (dir) => saveProjectAs(orchestratorDeps, dir),
     newWorkspace: (a) => newWorkspace(orchestratorDeps, a),
     save: () => autosave.forceFlush(),
+  }
+
+  /** Best-effort refresh the actor's user motif layer from list_motifs.
+   *  Called on start() and after motif-store-mutating hybrid channels
+   *  (install_motif, delete_motif, write_motif_draft, amend_motif_draft,
+   *  create_edit_draft, import_motif). A refresh failure must never abort. */
+  function refreshMotifCatalog(): void {
+    deps.listMotifs?.().then((j) => {
+      actor.setUserMotifManifests(manifestsFromList(JSON.parse(j) as unknown[]))
+    }).catch(() => {})
   }
 
   function pushMirror(): void {
@@ -219,7 +252,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
           unlockHistory: () => actor.unlockHistory(),
         })
         return null
-      case 'hybrid': return runHybrid(route.tool, args, hybridDeps)
+      case 'hybrid': {
+        const hybridResult = await runHybrid(route.tool, args, hybridDeps)
+        // Motif-store-mutating hybrids: refresh the actor's motif catalog so the
+        // content-window clamp in applyUpdateLayerParams sees the updated manifests.
+        if (channel === 'install_motif' || channel === 'acknowledge_motif_staleness') {
+          refreshMotifCatalog()
+        }
+        return hybridResult
+      }
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
     }
@@ -235,6 +276,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       if (!unsub) unsub = actor.subscribe(emitChange)
       autosave.start()
       pushMirror()
+      refreshMotifCatalog()
     },
     stop() {
       autosave.stop()

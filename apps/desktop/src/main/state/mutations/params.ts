@@ -1,8 +1,10 @@
 import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextParams, Uuid, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
-import { snapFrameRound } from '../snap'
-import { checkTrackLock, locateLayer } from './helpers'
+import { snapFrameRound, snapFrameFloor } from '../snap'
+import { checkTrackLock, locateLayer, applyDurationAutofit } from './helpers'
 import { normalizeKeyframes } from './animated'
+import type { MotifCatalog } from '../../../shared/motifs/catalog'
+import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 
 /** native/src/state/actor.rs:99-255 — internally-tagged ("kind") param patch.
  *  Every field optional bar kind; absent = "don't touch". */
@@ -99,14 +101,52 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
 }
 
 /** actor.rs:2734 do_update_layer_params (mutation half): lock-check, locate,
- *  field-merge. The Motif content-window clamp + autofit (mutations.rs:391-453)
- *  is SCOPED OUT — it needs the motif catalog (motif_cap_us) the TS actor lacks,
- *  and the corpus has no Motif layers; it is the ONLY autofit trigger, so every
- *  non-Motif params edit leaves geometry (and composition duration) unchanged. */
-export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch): void {
+ *  field-merge, then Motif content-window clamp (mutations.rs:391-453).
+ *  After the field-merge: if the layer is a Motif with a known catalog entry and
+ *  a finite contentDur, and the placed window exceeds that contentDur, clamp
+ *  src_in_us + t_end_us into the new content. Growing never resizes.
+ *
+ *  LANDMINE: JS numbers are exact to 2^53 µs — consistent with the
+ *  resolveMotifTEndUs twin note in catalog.ts — diverges from Rust saturating
+ *  arithmetic only for absurd timestamps far beyond realistic use. */
+export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
   checkTrackLock(p, id) // LayerNotFound / TrackLocked
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
-  applyParamsPatch(p.tracks[loc[0]].layers[loc[1]], patch)
+  const layer = p.tracks[loc[0]].layers[loc[1]]
+  applyParamsPatch(layer, patch)
+
+  // Content-window model: after a Motif params update, if the cap-driving prop
+  // (e.g. `seconds`) shrank the content below the current window, clamp the
+  // geometry. Growing never resizes. Mirrors mutations.rs:391-453.
+  if (layer.params.kind === 'Motif') {
+    const params = layer.params as MotifParams
+    const manifest = catalog.get(params.motif_id)
+    if (manifest === undefined) return // unknown motif → no clamp
+    const contentDur = resolveMotifMaxDurUs(manifest, params.props)
+    if (contentDur === null) return // unbounded → no clamp
+
+    const tStart = layer.t_start_us
+    const tEnd = layer.t_end_us
+    const srcIn = params.src_in_us
+    const width = tEnd - tStart
+
+    if (srcIn + width <= contentDur) return // grow / within content → no geometry change
+
+    // Clamp the window start into content (keep >= 0, < contentDur). Floor (not
+    // round) so newSrcIn can never round UP toward contentDur on off-grid inputs.
+    const maxSrcIn = Math.max(contentDur - 1, 0)
+    const fps = p.composition.fps
+    // Double-snap: floor keeps it < contentDur; round canonicalises the µs grid.
+    const newSrcIn = snapFrameRound(snapFrameFloor(Math.min(srcIn, maxSrcIn), fps.num, fps.den), fps.num, fps.den)
+    // Largest grid t_end whose derived src_out stays <= contentDur.
+    const cappedEnd = snapFrameRound(snapFrameFloor(tStart + (contentDur - newSrcIn), fps.num, fps.den), fps.num, fps.den)
+    // Never collapse to zero-width (guards degenerate contentDur <= 0).
+    const newTEnd = Math.max(cappedEnd, tStart + 1)
+
+    params.src_in_us = newSrcIn
+    layer.t_end_us = newTEnd
+    applyDurationAutofit(p)
+  }
 }
 
 /** native/src/state/layer.rs:358 — parse "effects[<uuid>].params[<key>]" →
