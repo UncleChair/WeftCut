@@ -429,7 +429,7 @@ export function composeMotifHtml(manifest: Manifest, html: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Validation and duration resolution (Tasks 3)
+// Validation and duration resolution (Task 3)
 // ---------------------------------------------------------------------------
 
 const MAX_DIMENSION = 8192;
@@ -444,7 +444,7 @@ export function validateDefaultFor(key: string, spec: PropSpec): void {
 export function validateManifest(m: Manifest): void {
   if (m.name.trim() === "") throw new MotifPropError("name must not be empty");
   const [w, h] = m.size;
-  if (w === 0 || h === 0 || w > MAX_DIMENSION || h > MAX_DIMENSION) {
+  if (w < 1 || h < 1 || w > MAX_DIMENSION || h > MAX_DIMENSION) {
     throw new MotifPropError(`size [${w},${h}] must be within [1,${MAX_DIMENSION}] on each axis`);
   }
   if (!(Number.isFinite(m.default_duration_s) && m.default_duration_s > 0)) {

@@ -115,6 +115,7 @@ describe("validateManifest", () => {
     expect(() => validateManifest({ ...base(), size: [0, 100] })).toThrow();
     expect(() => validateManifest({ ...base(), size: [99999, 100] })).toThrow();
   });
+  it("rejects negative size", () => { expect(() => validateManifest({ ...base(), size: [-1, 100] })).toThrow(); });
   it("rejects bad durations", () => {
     expect(() => validateManifest({ ...base(), default_duration_s: 0 })).toThrow();
     expect(() => validateManifest({ ...base(), content_duration_s: -1 })).toThrow();
