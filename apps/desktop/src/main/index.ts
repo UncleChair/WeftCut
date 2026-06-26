@@ -272,13 +272,11 @@ app.whenReady().then(async () => {
 
   // Rust compute facade for the native-compute → TS-write hybrids (Phase 3d-e):
   // Rust probes/hashes/parses (no actor write); the TS host applies the write.
-  // Later-task methods (parseSubtitles/computeMotifRebind/… ) are wired as their
-  // hybrids land (Tasks 4-6).
+  // Later-task methods (parseSubtitles/synthesizeSpeechCompute) are wired as
+  // their hybrids land (Tasks 4-6).
   const computeFacade = {
     probeMedia: (p: string) => backend!.probeMedia(p),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
-    computeMotifRebind: (argsJson: string) => backend!.computeMotifRebind(argsJson),
-    computeAckMotifRebind: () => backend!.computeAckMotifRebind(),
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
   }
 

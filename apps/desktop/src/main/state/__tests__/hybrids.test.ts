@@ -50,8 +50,6 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
     compute: {
       probeMedia,
       parseSubtitles,
-      computeMotifRebind: vi.fn(async () => '[]'),
-      computeAckMotifRebind: vi.fn(async () => '[]'),
       synthesizeSpeechCompute: vi.fn(async () => '{}'),
     },
     enqueueDerivatives,
@@ -123,84 +121,6 @@ describe('runHybrid: import_media', () => {
     // it, this still exercises the !r.ok throw path defensively.)
     const r = await runHybrid('import_media', { path: 'C:/x.mp4' }, deps).then(() => 'ok', () => 'threw')
     expect(['ok', 'threw']).toContain(r)
-  })
-})
-
-describe('runHybrid: install_motif (motif hybrid)', () => {
-  it('rebinds the motif layer to the new version and returns published_id', async () => {
-    const actor = freshActor()
-    // Add a Motif layer so there is something to rebind.
-    const aRoll = actor.snapshot().tracks[0].id
-    const addR = actor.dispatch('add_layer', {
-      track: aRoll, kind: 'Motif', motif_id: 'm-draft', motif_version: 1,
-      props: {}, t_start_us: 0, t_end_us: 1_000_000,
-    })
-    expect(addR.ok).toBe(true)
-    if (!addR.ok) throw new Error(JSON.stringify(addR.error))
-    const layerId = addR.value as string
-
-    const deps = makeDeps(actor)
-    // Fake compute returns an update that retargets the layer to motif_version 2.
-    deps.compute.computeMotifRebind = vi.fn(async () =>
-      JSON.stringify({
-        published_id: 'm',
-        updates: [{ layer_id: layerId, motif_id: 'm', motif_version: 2, props: {} }],
-      }),
-    )
-
-    const result = await runHybrid('install_motif', { args: { draft_id: 'd', mode: { kind: 'new' } } }, deps)
-    expect(result).toBe('m')
-
-    // The layer must now be bound to motif version 2.
-    const snap = actor.snapshot()
-    const layer = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
-    expect((layer.params as import('../model').MotifParams).motif_version).toBe(2)
-    expect((layer.params as import('../model').MotifParams).motif_id).toBe('m')
-  })
-
-  it('returns published_id and skips rebind when updates are empty (New mode)', async () => {
-    const actor = freshActor()
-    const deps = makeDeps(actor)
-    deps.compute.computeMotifRebind = vi.fn(async () =>
-      JSON.stringify({ published_id: 'm-new', updates: [] }),
-    )
-
-    const result = await runHybrid('install_motif', { args: { draft_id: 'd', mode: { kind: 'new' } } }, deps)
-    expect(result).toBe('m-new')
-    // computeMotifRebind was called with the JSON-stringified args.
-    expect(deps.compute.computeMotifRebind).toHaveBeenCalledTimes(1)
-  })
-
-  it('passes the install args as JSON to computeMotifRebind', async () => {
-    const actor = freshActor()
-    const deps = makeDeps(actor)
-    deps.compute.computeMotifRebind = vi.fn(async () =>
-      JSON.stringify({ published_id: 'm', updates: [] }),
-    )
-
-    const installArgs = { draft_id: 'my-draft', mode: { kind: 'update', target_id: 'x' } }
-    await runHybrid('install_motif', { args: installArgs }, deps)
-    const calledWith = JSON.parse((deps.compute.computeMotifRebind as ReturnType<typeof vi.fn>).mock.calls[0][0] as string)
-    expect(calledWith).toMatchObject({ draft_id: 'my-draft' })
-  })
-
-  it('throws when the actor rejects the rebind', async () => {
-    const actor = freshActor()
-    const deps = makeDeps(actor)
-    // Provide a non-existent layer_id → rebind_motif silently skips it (no error).
-    // Use a deliberately malformed update to trigger actor rejection.
-    deps.compute.computeMotifRebind = vi.fn(async () =>
-      JSON.stringify({
-        published_id: 'm',
-        // Simulate a rebind update so the dispatch path is exercised.
-        updates: [{ layer_id: '00000000-0000-0000-0000-000000000000', motif_id: 'm', motif_version: 2, props: {} }],
-      }),
-    )
-    // Actor silently skips unknown layers (layer not found), so no throw — but
-    // the hybrid must not crash either way. Accept both ok and error outcomes.
-    const r = await runHybrid('install_motif', { args: { draft_id: 'd', mode: { kind: 'new' } } }, deps)
-      .then((v) => ({ ok: true as const, v }), (e: Error) => ({ ok: false as const, e }))
-    expect(['ok', 'threw']).toContain(r.ok ? 'ok' : 'threw')
   })
 })
 

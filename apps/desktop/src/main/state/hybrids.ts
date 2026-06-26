@@ -17,10 +17,6 @@ export interface ComputeNapi {
   probeMedia(path: string): Promise<string>
   /** Parse a subtitle body → {cues, simplified, label} JSON. (apply_subtitles, Task 4) */
   parseSubtitles(body: string, format: string | null): Promise<string>
-  /** install_motif Update: store ops stay Rust; compute the rebind updates. (Task 5) */
-  computeMotifRebind(installArgsJson: string): Promise<string>
-  /** acknowledge_motif_staleness: compute the ack rebind entries. (Task 5) */
-  computeAckMotifRebind(): Promise<string>
   /** synthesize_speech: TTS + cache + probe → {media_item, …} JSON. (Task 6) */
   synthesizeSpeechCompute(argsJson: string): Promise<string>
 }
@@ -130,21 +126,6 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         deps,
       )
       return simplified ? `${track_id} (some ASS styling was simplified)` : track_id
-    }
-    case 'install_motif': {
-      // Rust: publish the draft (store side) + read the mirror + build_rebind_updates.
-      // TS: apply the rebind write via the authoritative actor.
-      // `args` from the renderer dispatcher is `{ args: InstallArgs }` (napi_backend.rs line
-      // "struct A { args: InstallArgs }") so we unwrap `args.args ?? args` for MCP callers
-      // that may pass the fields directly.
-      const { published_id, updates } = JSON.parse(
-        await deps.compute.computeMotifRebind(JSON.stringify(args.args ?? args)),
-      ) as { published_id: string; updates: unknown[] }
-      if (updates.length) {
-        const r = deps.actor.dispatch('rebind_motif', { updates })
-        if (!r.ok) throw new Error(JSON.stringify(r.error))
-      }
-      return published_id
     }
     case 'synthesize_speech': {
       // Rust: TTS compute (validate text → pick synthesizer → cache key →
