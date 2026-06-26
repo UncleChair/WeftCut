@@ -4,10 +4,7 @@ export type McpRoute = 'ts' | 'rust' | 'hybrid' | 'motif'
 
 /** MCP tools served by the native-compute → TS-write hybrid orchestrator. */
 export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
-  'import_media', 'apply_subtitles',
-  // install_motif moved to the 'motif' route (Phase 2);
-  // acknowledge_motif_staleness moved to the 'motif' route (Phase 3).
-  'synthesize_speech',
+  'import_media', 'apply_subtitles', 'synthesize_speech',
 ])
 
 /** Motif catalog-read + authoring + install + staleness tools, served in TS by
