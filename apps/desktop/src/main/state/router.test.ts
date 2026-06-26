@@ -118,9 +118,13 @@ describe('routeChannel', () => {
   it('forwards independent stores + media/jobs/export to rust', () => {
     // import_media is now a hybrid (native-compute → TS-write), not rust.
     // list_motifs is now a motif route (Phase 2), not rust.
-    // app_settings_* and view_state_* migrated off rust to TS handlers.
-    for (const ch of ['export_settings_get','recents_list','keybindings_get','agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
+    // app_settings_*, view_state_*, and export_settings_* migrated off rust to TS handlers.
+    for (const ch of ['recents_list','keybindings_get','agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
       expect(routeChannel(ch).kind).toBe('rust')
+  })
+  it('routes export_settings_get/set to the exportSettings TS handler (migrated off rust)', () => {
+    expect(routeChannel('export_settings_get').kind).toBe('exportSettings')
+    expect(routeChannel('export_settings_set').kind).toBe('exportSettings')
   })
   it('routes app_settings_get/set to the appSettings TS handler (migrated off rust)', () => {
     expect(routeChannel('app_settings_get').kind).toBe('appSettings')

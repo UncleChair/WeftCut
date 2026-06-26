@@ -6,6 +6,7 @@ import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
 import { UserMotifStore } from '../motif/store'
 import { createAppSettingsStore } from '../app-settings'
 import { createViewStateStore } from '../view-state'
+import { createExportSettingsStore } from '../export-settings'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -64,6 +65,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       workspaceDir: () => wsDir,
       appSettings: createAppSettingsStore({ fs: memFs, path: '/cfg/app_settings.json', dir: '/cfg' }),
       viewState: createViewStateStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
+      exportSettings: createExportSettingsStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
     }
 
     return { deps, vfs, napiCalls, sent }
@@ -175,6 +177,30 @@ describe('createTsActorHost — persistence-route integration', () => {
     expect(got.timeline_px_per_sec).toBe(80)
     await host.handleInvoke('view_state_set', { state: { timeline_px_per_sec: 999, track_heights: {}, expanded_tracks: [] } })
     expect(Object.keys(vfs).some((k) => k.endsWith('view.json'))).toBe(false)
+    host.stop()
+  })
+
+  it('export_settings_set persists to <workspace>/export.json and export_settings_get reads it back', async () => {
+    const { deps, vfs } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'es', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
+    const value = { codec: 'av1', quality: 'high', resolution: '1080p' }
+    await host.handleInvoke('export_settings_set', { settings: value })
+    expect(vfs['/projects/es/export.json']).toBeDefined()
+    const got = await host.handleInvoke('export_settings_get', {})
+    expect(got).toEqual(value)
+    host.stop()
+  })
+
+  it('pre-workspace: export_settings_get returns null and export_settings_set is a no-op', async () => {
+    const { deps, vfs } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    const got = await host.handleInvoke('export_settings_get', {})
+    expect(got).toBeNull()
+    await host.handleInvoke('export_settings_set', { settings: { codec: 'h264' } })
+    expect(Object.keys(vfs).some((k) => k.endsWith('export.json'))).toBe(false)
     host.stop()
   })
 })

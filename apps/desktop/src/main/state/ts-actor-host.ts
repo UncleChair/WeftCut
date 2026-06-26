@@ -18,6 +18,7 @@ import type { AppSettingsStore } from '../app-settings'
 import type { AppSettingsPatch } from '../../shared/app-settings'
 import type { ViewStateStore } from '../view-state'
 import { viewStateDefaults, type ViewState } from '../../shared/view-state'
+import type { ExportSettingsStore } from '../export-settings'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -74,6 +75,9 @@ export interface TsActorHostDeps {
   /** Per-workspace view.json store (owned in TS main). Optional → the
    *  'viewState' route throws if a renderer hits it without one wired. */
   viewState?: ViewStateStore
+  /** Per-workspace export.json store (owned in TS main, opaque value). Optional → the
+   *  'exportSettings' route throws if a renderer hits it without one wired. */
+  exportSettings?: ExportSettingsStore
 }
 
 interface PersistenceHandlers {
@@ -329,6 +333,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         // old Rust behavior — the next debounced write lands after Save As.
         const state = (args as { state?: ViewState }).state
         if (ws && state) store.save(ws, state)
+        return null
+      }
+      case 'exportSettings': {
+        const store = deps.exportSettings
+        if (!store) return reject('export_settings: store not configured')
+        const ws = deps.workspaceDir()
+        if (channel === 'export_settings_get') return ws ? store.load(ws) : null
+        // export_settings_set: pre-workspace (ws null) silently drops, matching
+        // the old Rust behavior — the next write lands after the workspace is open.
+        const settings = (args as { settings?: unknown }).settings
+        if (ws && settings !== undefined) store.save(ws, settings)
         return null
       }
       case 'reject': return reject(route.reason)
