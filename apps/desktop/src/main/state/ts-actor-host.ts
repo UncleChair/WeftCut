@@ -14,6 +14,8 @@ import type { UserMotifStore } from '../motif/store'
 import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
 import type { BuiltinMotif, MotifLayerRef } from '../motif/authoring'
 import type { MotifParams, MotifRebindEntry } from './model'
+import type { AppSettingsStore } from '../app-settings'
+import type { AppSettingsPatch } from '../../shared/app-settings'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -64,6 +66,9 @@ export interface TsActorHostDeps {
    *  relocated served assets. Empty in tests that don't exercise built-ins.
    *  Optional — defaults to [] when absent. */
   motifBuiltins?: BuiltinMotif[]
+  /** App-level prefs store (config-dir JSON, owned in TS main). Optional → the
+   *  'appSettings' route throws if a renderer hits it without one wired. */
+  appSettings?: AppSettingsStore
 }
 
 interface PersistenceHandlers {
@@ -301,6 +306,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
       case 'motif':
         return runMotif(route.tool, args)
+      case 'appSettings': {
+        const store = deps.appSettings
+        if (!store) return reject('app_settings: store not configured')
+        if (channel === 'app_settings_get') return store.get()
+        const patch = (args as { patch?: AppSettingsPatch }).patch ?? {}
+        const after = store.apply(patch)
+        deps.send('app_settings:changed', after)
+        return after
+      }
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
     }

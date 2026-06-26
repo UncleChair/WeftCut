@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import nodePath from 'node:path'
 import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
 import { UserMotifStore } from '../motif/store'
+import { createAppSettingsStore } from '../app-settings'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -29,6 +30,7 @@ describe('createTsActorHost — persistence-route integration', () => {
         return vfs[p]!
       },
       writeFile: (p: string, t: string) => { vfs[p] = t },
+      rename: (a: string, b: string) => { vfs[b] = vfs[a]!; delete vfs[a] },
       mkdirp: (d: string) => { dirsMade.add(d) },
       copyFile: (s: string, d: string) => { vfs[d] = vfs[s]! },
       readdir: (d: string) => Object.keys(vfs).filter((k) => k.startsWith(d + '/') && k.slice(d.length + 1).indexOf('/') === -1).map((k) => k.slice(d.length + 1)),
@@ -59,6 +61,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       enqueueWorkspaceCopy: async () => {},
       readFile: (p: string) => memFs.readFile(p),
       workspaceDir: () => wsDir,
+      appSettings: createAppSettingsStore({ fs: memFs, path: '/cfg/app_settings.json', dir: '/cfg' }),
     }
 
     return { deps, vfs, napiCalls, sent }
@@ -125,6 +128,26 @@ describe('createTsActorHost — persistence-route integration', () => {
     expect(typeof id).toBe('string')
     expect(motifStore.getDraft(id)).not.toBeNull()
     expect(sent.some((s) => s.event === 'motifs:changed')).toBe(true)
+    host.stop()
+  })
+
+  it('app_settings_set persists, returns the after-state, and emits app_settings:changed', async () => {
+    const { deps, sent } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    const after = await host.handleInvoke('app_settings_set', { patch: { display_mode: 'ShowAll' } }) as { display_mode: string }
+    expect(after.display_mode).toBe('ShowAll')
+    expect(sent.some((s) => s.event === 'app_settings:changed' && (s.payload as { display_mode?: string }).display_mode === 'ShowAll')).toBe(true)
+    host.stop()
+  })
+
+  it('app_settings_get returns the persisted value', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('app_settings_set', { patch: { tail_snap_strength_px: 20 } })
+    const got = await host.handleInvoke('app_settings_get', {}) as { tail_snap_strength_px: number }
+    expect(got.tail_snap_strength_px).toBe(20)
     host.stop()
   })
 })
