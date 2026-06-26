@@ -89,6 +89,16 @@ unreachable during the single-writer soak.
   alias verified by unit test + the targeted soak. Decide in the plan.
 
 ### 2.2 `add_motif` — hybrid (Rust validates, TS applies)
+> **SUPERSEDED 2026-06-26 (see §9.8).** A boundary audit found the motif *catalog*
+> (canonicalize/cap/manifest) is pure logic with NO native dependency (export bake +
+> capture are already TS; the only Rust residue is the `motif://` byte-server), and TS
+> already owns ~most of the catalog (renderer `catalog.ts` + `Rasterizer.ts` strict
+> `canonicalizeProps`). So `add_motif` is now a **PURE TS recorded mutation** over a
+> **shared TS catalog module** (main + renderer), NOT a hybrid; §2.3's manifest-cache +
+> golden are replaced by that shared module; the differential gate proves TS
+> `canonicalizeProps`/cap ≡ Rust during the final regen. The text below is the prior
+> (hybrid) design, kept for context.
+
 `add_motif` joins the 3d-e hybrid family. **No new cross-language validation twin** — the strict
 `canonicalize_props` (`motifs/catalog.rs`), catalog lookup (built-ins via `include_str!` +
 `UserMotifStore`), and motif version stay Rust's single source.
@@ -337,10 +347,12 @@ media/export/cloud/motif/eval + read-mirror surface; the worktree bootstrap simp
 ## 5. Final Rust boundary (the narrowed napi surface)
 Post-4b, Rust is a focused media-compute lib: ffmpeg orchestration (import/proxy/conform/thumbnail/
 waveform), audio DSP/mixer/conform/envelope, the export pipeline (IPC frame sink, mux, EOS-tail),
-media probe, motif file resolution + capture + the **motif catalog** (`builtins()`/`canonicalize_props`/
-`resolve_motif_max_dur_us` — now also feeding the `add_motif` hybrid + the TS manifest cache + the
-golden cap fixture), cloud audio extraction, the `weftcut-eval` wasm leaf, the **read-mirror**, and a
-**compute-only MCP catalog**. No project state, no mutations, no history, no validation, no autosave.
+media probe, the **motif `motif://` byte-server** (`motif_resolve_file`/`builtin::resolve_bytes` —
+serves the embedded built-in HTML + user-motif files; an asset server, NOT project logic), cloud audio
+extraction, the `weftcut-eval` wasm leaf, the **read-mirror**, and a **compute-only MCP catalog**.
+(Per §9.8 the motif *catalog logic* — manifest model / `canonicalize_props` / `resolve_motif_max_dur_us`
+/ built-in manifests — moves to a **shared TS module**; the `UserMotifStore` + authoring stay Rust as a
+deferred follow-up.) No project state, no mutations, no history, no validation, no autosave.
 
 ---
 
@@ -393,3 +405,19 @@ golden cap fixture), cloud audio extraction, the `weftcut-eval` wasm leaf, the *
    4a** so parser-hardening lands once and a permanent structural bijection gate is authored before
    the irreversible delete. 4b only flips `ListTools` to the merge + deletes the Rust mutation
    catalog. [strengthens decision 5 — "single-sourced" made an invariant, not a placement convention]
+8. **Motifs pulled fully to TS (overturns §2.2's hybrid), 2026-06-26.** A boundary audit
+   established there is NO native-must-keep dependency on the motif *catalog logic*: export bake
+   is renderer-TS (Rust ffmpeg receives baked pixel frames), capture is TS-main (offscreen
+   BrowserWindow + CDP; its one `motif_ctx_duration_s` shim is already mirrored in TS), and TS
+   already owns the manifest model + a strict `canonicalizeProps` (`Rasterizer.ts`) + `propValueValid`.
+   The hybrid's sole rationale was avoiding a port/twin — but the twin only exists if Rust *keeps*
+   its catalog; pulling it fully to TS makes the Rust catalog a temporary oracle (gated, then
+   deleted in 4b), like every other migrated mutation. DECISION (staged): 4a-ii ports the catalog
+   LOGIC to a **shared TS module** (main+renderer), makes `add_motif` a **pure TS recorded mutation**
+   (canonicalize + cap + two-commit track→layer, reject-before-commit), and the Motif clamp uses that
+   shared catalog. The catalog's user layer hydrates from Rust `list_motifs` (read). DEFERRED to a
+   follow-up: porting `UserMotifStore` + authoring (`write/install/delete`) to TS and de-hybridizing
+   the existing install/ack hybrids (not blocking; install is a working hybrid). KEPT in Rust for now:
+   the `motif://` byte-server (`motif_resolve_file`/`builtin::resolve_bytes`) — an asset server for the
+   embedded built-in HTML, not project logic. NO golden fixture (the differential gate covers
+   equivalence during the final regen; after 4b the TS catalog is sole owner — no twin to drift from).
