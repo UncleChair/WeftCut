@@ -1,10 +1,9 @@
-//! Prefs/settings/recents/logs/agent commands — re-signed
-//! from `commands_legacy.rs`. Bodies are copied verbatim; only the signature
-//! changes (the napi `Backend` carries the managed state) and the managed-state
-//! side effects are re-pointed at the matching `Backend` fields.
+//! Prefs/settings/logs/agent commands — re-signed from `commands_legacy.rs`.
+//! Bodies are copied verbatim; only the signature changes (the napi `Backend`
+//! carries the managed state) and the managed-state side effects are re-pointed
+//! at the matching `Backend` fields.
 //! Keybindings moved to TS (src/main/keybindings.ts; native/src/keybindings.rs deleted).
-
-use std::path::PathBuf;
+//! Recents moved to TS (src/main/recents.ts; native/src/recents.rs deleted).
 
 use crate::napi_backend::Backend;
 
@@ -29,53 +28,6 @@ pub async fn workspace_dir(backend: &Backend) -> Result<Option<String>, String> 
         .workspace
         .current()
         .map(|p| p.to_string_lossy().into_owned()))
-}
-
-// ---- Recents ------------------------------------------------------------
-
-pub async fn recents_list(
-    backend: &Backend,
-) -> Result<Vec<crate::recents::RecentEntry>, String> {
-    backend.recents.list().map_err(|e| format!("{e:#}"))
-}
-
-pub async fn recents_remove(backend: &Backend, path: String) -> Result<(), String> {
-    backend
-        .recents
-        .remove(&PathBuf::from(path))
-        .map_err(|e| format!("{e:#}"))
-}
-
-pub async fn recents_get_reopen_on_launch(backend: &Backend) -> Result<bool, String> {
-    backend.recents.reopen_on_launch().map_err(|e| format!("{e:#}"))
-}
-
-pub async fn recents_set_reopen_on_launch(backend: &Backend, value: bool) -> Result<(), String> {
-    backend
-        .recents
-        .set_reopen_on_launch(value)
-        .map_err(|e| format!("{e:#}"))
-}
-
-/// Returns the most recent workspace, if any. Used by the startup screen
-/// on boot: when `reopen_on_launch` is enabled, the UI calls this and
-/// immediately fires `project_open` on the result.
-pub async fn recents_most_recent(
-    backend: &Backend,
-) -> Result<Option<crate::recents::RecentEntry>, String> {
-    backend.recents.most_recent().map_err(|e| format!("{e:#}"))
-}
-
-/// Parent folder of the last project the user created via "+ New project".
-/// `null` on first launch — the UI falls back to OS Documents.
-pub async fn recents_last_new_project_parent(
-    backend: &Backend,
-) -> Result<Option<String>, String> {
-    backend
-        .recents
-        .last_new_project_parent()
-        .map(|opt| opt.map(|p| p.to_string_lossy().to_string()))
-        .map_err(|e| format!("{e:#}"))
 }
 
 // ---- Agent session -------------------------------------------------------
@@ -125,20 +77,6 @@ pub async fn log_dir_path(backend: &Backend) -> Result<Option<String>, String> {
 }
 
 // ---- Args structs -------------------------------------------------------
-
-/// `recents_remove` — `{ path: String }`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecentsRemoveArgs {
-    pub path: String,
-}
-
-/// `recents_set_reopen_on_launch` — `{ value: bool }`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecentsSetReopenOnLaunchArgs {
-    pub value: bool,
-}
 
 /// `log_emit` — `{ input: LogEntryInput }`.
 #[derive(serde::Deserialize)]

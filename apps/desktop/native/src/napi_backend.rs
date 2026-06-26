@@ -19,7 +19,6 @@ use crate::agent_session::AgentSessionSlot;
 use crate::cache::CacheLayout;
 use crate::events::{EventSink, TsfnEventSink};
 use crate::logs::{self, LogBusSlot};
-use crate::recents::RecentsStore;
 use crate::workspace::WorkspaceSlot;
 
 /// A TS-fed read-replica of the project: the TS state actor is the sole writer,
@@ -35,7 +34,6 @@ pub(crate) struct ReadMirror {
 #[napi]
 pub struct Backend {
     pub(crate) events: Arc<dyn EventSink>,
-    pub(crate) recents: RecentsStore,
     pub(crate) cache: CacheLayout,
     #[cfg(feature = "jobs")]
     pub(crate) import_queue: crate::jobs::import::ImportQueue,
@@ -48,7 +46,6 @@ pub struct Backend {
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
-    pub(crate) config_dir: String,
     pub(crate) cache_dir: String,
     /// Plaintext cloud-provider API keys, keyed by provider tag ("openai").
     /// Pushed in by Electron main (decrypted from safeStorage) via
@@ -65,10 +62,6 @@ pub struct Backend {
 /// tracing→LogBus bridge once, and assemble a `Backend`. Shared by the napi
 /// `new` constructor and the `new_for_test` helper so both run identical setup.
 fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: String) -> Backend {
-    let config_path = PathBuf::from(&config_dir);
-    if let Err(e) = std::fs::create_dir_all(&config_path) {
-        tracing::warn!("app config dir setup failed: {e:#} ({})", config_path.display());
-    }
     let cache = CacheLayout::new(PathBuf::from(&cache_dir));
     if let Err(e) = cache.ensure_dirs() {
         tracing::warn!("cache dir setup failed: {e:#}");
@@ -93,10 +86,13 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         .with(tracing_subscriber::fmt::layer())
         .with(logs::LogBusLayer::new(log_slot.clone()))
         .try_init();
+    // config_dir is passed through from the caller (app userData dir); not
+    // stored as a field (config stores moved to TS) but kept as a parameter for
+    // backward-compat with the `new` constructor signature that Electron main calls.
+    let _ = config_dir;
 
     Backend {
         events,
-        recents: RecentsStore::new(config_path),
         cache,
         #[cfg(feature = "jobs")]
         import_queue,
@@ -109,7 +105,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
-        config_dir,
         cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
         read_mirror,
@@ -203,15 +198,6 @@ impl Backend {
         Ok(())
     }
 
-    /// `recents.push` — record the workspace in recents.json. The TS orchestrator
-    /// calls this AFTER a successful `replace_state` (open / new) or write
-    /// (save-as), matching the Rust handler order: a project that fails to load
-    /// is never recorded. Best-effort inside the store (failures are logged).
-    #[napi]
-    pub fn push_recent(&self, path: String, display_name: String) {
-        self.recents.push(std::path::PathBuf::from(path), display_name);
-    }
-
     /// Re-fan-out background derivative jobs for a media list (open-time
     /// regeneration of proxies / thumbnails / waveforms) — the TS-orchestrated
     /// analogue of `commands::persistence::project_open`'s post-load enqueue loop
@@ -296,14 +282,6 @@ impl Backend {
         let Some(ws) = self.workspace.current() else { return Ok(()); };
         self.import_queue.enqueue(self.cache.clone(), id, std::path::PathBuf::from(source_path), ws);
         Ok(())
-    }
-
-    /// `recents.set_last_new_project_parent` — only the new-workspace flow, so the
-    /// next "+ New project" form opens pre-filled at the same parent. Best-effort.
-    #[napi]
-    pub fn set_last_new_project_parent(&self, parent: String) {
-        self.recents
-            .set_last_new_project_parent(std::path::PathBuf::from(parent));
     }
 
     /// Open the agent-session slot: installs a new session with `client = "mcp"`
@@ -471,20 +449,10 @@ impl Backend {
         // synthesize_speech_compute / …), not this match.
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
-            // ---- prefs / settings / recents / keybindings / logs / agent ----
+            // ---- prefs / settings / logs / agent ----
+            // Recents moved to TS (src/main/recents.ts); keybindings already
+            // moved to TS (src/main/keybindings.ts). These arms are gone.
             "workspace_dir" => ser(crate::commands::prefs::workspace_dir(self).await),
-            "recents_list" => ser(crate::commands::prefs::recents_list(self).await),
-            "recents_remove" => {
-                let a: crate::commands::prefs::RecentsRemoveArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::recents_remove(self, a.path).await)
-            }
-            "recents_get_reopen_on_launch" => ser(crate::commands::prefs::recents_get_reopen_on_launch(self).await),
-            "recents_set_reopen_on_launch" => {
-                let a: crate::commands::prefs::RecentsSetReopenOnLaunchArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::recents_set_reopen_on_launch(self, a.value).await)
-            }
-            "recents_most_recent" => ser(crate::commands::prefs::recents_most_recent(self).await),
-            "recents_last_new_project_parent" => ser(crate::commands::prefs::recents_last_new_project_parent(self).await),
             "agent_session_get" => ser(crate::commands::prefs::agent_session_get(self).await),
             "log_list" => ser(crate::commands::prefs::log_list(self).await),
             "log_clear" => ser(crate::commands::prefs::log_clear(self).await),
@@ -810,10 +778,11 @@ mod tests {
         assert_eq!(reply["ok"], false);
     }
 
-    /// `commit_workspace` re-points cache + workspace slot; `push_recent`
-    /// records the entry in recents. Both are observable via kept dispatch arms.
+    /// `commit_workspace` re-points cache + workspace slot — both are observable
+    /// via kept dispatch arms. push_recent and recents_list moved to TS
+    /// (src/main/recents.ts) and are no longer tested here.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn commit_workspace_sets_workspace_cache_and_recents() {
+    async fn commit_workspace_sets_workspace_and_cache() {
         use std::sync::Arc;
         let backend = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
         let dir = std::env::temp_dir().join(format!("weftcut-3cb-{}", std::process::id()));
@@ -836,17 +805,6 @@ mod tests {
 
         // cache.set_workspace creates <dir>/Cache synchronously.
         assert!(dir.join("Cache").exists(), "cache dir not created by commit_workspace");
-
-        // push_recent then verify via recents_list.
-        backend.push_recent(path.clone(), "Demo".to_string());
-        let recents_json = backend.dispatch("recents_list", "{}").await.unwrap();
-        let dir_name = dir.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        assert!(
-            recents_json.contains(&dir_name),
-            "recents_list did not include the pushed path (looking for {dir_name:?}): {recents_json}"
-        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

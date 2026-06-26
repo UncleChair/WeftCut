@@ -32,7 +32,6 @@ mod mcp;
 mod logs;
 mod preview;
 mod agent_session;
-mod recents;
 pub mod state;
 pub mod subtitles;
 mod workspace;
