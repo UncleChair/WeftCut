@@ -616,17 +616,14 @@ After verification passes, append a note to the `project_state_actor_ts_migratio
 
 ---
 
-# Sub-Plans 2-5 (scope blocks — expand to full TDD tasks when started)
+# Sub-Plans 3-5 (remaining — scope blocks; expand to full TDD tasks when started)
 
 > Each follows the shared pattern. These are scoped, not yet step-detailed; expand each into A1-A5-style tasks at execution time.
+>
+> **RESUME NOTE (new session):** stores #1 app_settings + #2 view_state are DONE on local `main` (committed, NOT pushed). The exact pattern to copy is in `Sub-Plan 1` above (full TDD tasks) and the two completed migrations in git (`feat(app-settings)…` / `feat(view-state)…`). A shared `atomicFs` adapter already exists in `main/index.ts` — inject it into each new store. **The `prefs.rs` / `napi_backend.rs` line numbers in these scope blocks are PRE-MIGRATION and now stale — re-grep the symbol (`rg -n '<channel>|<StructArgs>' apps/desktop/native/src`) instead of trusting them.** Verify TS with `npm test` + `npm run typecheck`; verify Rust with `cargo test --features jobs,export,mcp,cloud` (a bare `cargo build` fails on feature-gated napi callbacks — expected). Next up: **#3 export_settings**.
 
-## Sub-Plan 2: `view_state` (`<workspace>/view.json`)
-- **Source of truth:** already TS (renderer mutates view state; Rust only persisted). **Workspace-scoped.**
-- **Store:** `src/main/view-state.ts` — same fs-backed shape, but the path is `join(workspaceDir, 'view.json')`. The host already has `deps.workspaceDir()`. Pre-workspace (`workspaceDir() === null`): `get` returns defaults, `set` silently drops (parity with `prefs.rs:43-62`).
-- **Types:** there's no rich struct — `ViewState` is opaque-ish; define minimal shared type in `src/shared/view-state.ts` matching `native/src/view_state.rs`.
-- **Router:** new `{ kind: 'viewState' }`; remove `view_state_get`/`view_state_set` from `PERSISTENCE`.
-- **Host:** `case 'viewState'` reads `deps.workspaceDir()`; no `:changed` event.
-- **Delete Rust:** `native/src/view_state.rs`, its `mod` decl, `prefs.rs:43-62` (`view_state_get`/`view_state_set`) + `ViewStateSetArgs` (`prefs.rs:240-244`), `napi_backend.rs:486-490` arms.
+## Sub-Plan 2: `view_state` (`<workspace>/view.json`) — ✅ DONE (local main)
+Done via the shared pattern: `src/shared/view-state.ts` + `src/main/view-state.ts` (`load(ws)/save(ws,state)`), router `{kind:'viewState'}`, host case (pre-workspace get→defaults / set→drop, no event), wired with `atomicFs`, Rust `view_state.rs` deleted. The dead `prune_track_heights` Rust helper went with it (renderer prunes in `useTimelineView`). Kept here for reference.
 
 ## Sub-Plan 3: `export_settings` (`<workspace>/export.json`)
 - **Source of truth:** TS (renderer/encoder owns the schema; Rust stores an opaque `serde_json::Value`). **Workspace-scoped.**
