@@ -18,6 +18,9 @@ extraResources:
   - from: resources/ffmpeg/${os}
     to: ffmpeg
     filter: ["**/*"]
+  - from: src/shared/motifs/builtin
+    to: motifs/builtin
+    filter: ["**/*"]
 # App icon. build/icon-256.png is a 256x256 source (electron-builder generates
 # the .ico for NSIS and uses the png directly on Linux). A deliberately
 # non-magic filename so it is NOT auto-fed to the mac .icns generator, which

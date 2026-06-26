@@ -7,7 +7,9 @@ import { execFile } from 'node:child_process'
 import { app, BrowserWindow, dialog, ipcMain, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
-import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, setMotifStore } from './motif/capture.js'
+import { UserMotifStore } from './motif/store.js'
+import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { broadcastEvent } from './broadcast.js'
@@ -207,6 +209,13 @@ app.whenReady().then(async () => {
     backend.setCloudKey(provider, key)
   }
 
+  // Construct the motif store + resolve the built-in dir once at boot.
+  // Both are passed to the protocol handler and the capture singleton so
+  // captureMotifFrameB64 and registerMotifProtocol no longer need the backend.
+  const motifStore = new UserMotifStore(path.join(app.getPath('userData'), 'motifs'))
+  const motifBuiltinDir = builtinAssetDir()
+  setMotifStore(motifStore)
+
   // TS actor host: constructed unconditionally; must start (pushing the initial
   // read-mirror via setProjectMirror) BEFORE startMcpHost so that
   // snapshot_for_read() has the mirror populated before any compute/MCP read
@@ -315,7 +324,7 @@ app.whenReady().then(async () => {
         motifId: string; tSec: number; propsJson: string
         width: number; height: number; settleRafs: number | null; contentHash: string
       }
-      return await captureMotifFrameB64(backend!, a)
+      return await captureMotifFrameB64(a)
     }
     // API-key writes need safeStorage (main-only) + a push into the backend
     // cache. Intercept here; status/test fall through to the Rust dispatcher.
@@ -522,7 +531,7 @@ app.whenReady().then(async () => {
     })),
   )
 
-  registerMotifProtocol(backend!)
+  registerMotifProtocol(motifBuiltinDir, motifStore)
 
   protocol.handle('weftcut-media', async (request) => {
     // URL form: weftcut-media://localhost/<encodeURIComponent(absPath)>

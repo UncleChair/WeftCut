@@ -285,6 +285,41 @@ export function resolveMotifContentDurationUs(
   return null;
 }
 
+/** Reserved built-in ids; a user/uploaded Motif may never take one. */
+export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx"];
+const DRAFTS_DIR = "drafts";
+
+/** Slugify a name → safe single path-segment id. Mirrors Rust `sanitize_id`. */
+export function sanitizeId(name: string): string {
+  let out = "";
+  let prevDash = false;
+  for (const c of name) {
+    if (/[a-zA-Z0-9]/.test(c)) {
+      out += c.toLowerCase();
+      prevDash = false;
+    } else if (!prevDash) {
+      out += "-";
+      prevDash = true;
+    }
+  }
+  const trimmed = out.replace(/^-+|-+$/g, "");
+  return trimmed === "" ? "motif" : trimmed;
+}
+
+/** Unique id from `name`, avoiding `taken`, built-ins, and `drafts`. Mirrors `assign_unique_id`. */
+export function assignUniqueId(name: string, taken: string[]): string {
+  const base = sanitizeId(name);
+  const reserved = (id: string): boolean =>
+    BUILTIN_IDS.includes(id) || id === DRAFTS_DIR || taken.includes(id);
+  if (!reserved(base)) return base;
+  let n = 2;
+  for (;;) {
+    const candidate = `${base}-${n}`;
+    if (!reserved(candidate)) return candidate;
+    n += 1;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Built-in manifests
 // ---------------------------------------------------------------------------
@@ -305,6 +340,157 @@ export const BUILTIN_MANIFESTS: ReadonlyMap<string, Manifest> = new Map([
   [_lowerThird.id, _lowerThird],
   [_textFx.id, _textFx],
 ]);
+
+// ---------------------------------------------------------------------------
+// Manifest island parse / compose (ports native/src/motifs/{catalog,authoring}.rs)
+// ---------------------------------------------------------------------------
+
+const ISLAND_MARKER = 'id="motif-manifest"';
+
+/**
+ * Extract + JSON-parse the `<script type="application/json" id="motif-manifest">`
+ * island from a Motif's HTML, WITHOUT executing the page. Mirrors Rust
+ * `parse_manifest_island`. Throws MotifPropError on a missing island or bad JSON.
+ */
+export function parseManifestIsland(html: string): Manifest {
+  const idMarker = html.indexOf(ISLAND_MARKER);
+  if (idMarker < 0) throw new MotifPropError("no motif-manifest island found in HTML");
+  // Constraint (mirrors Rust): the island's opening <script> tag must not contain
+  // a `>` inside an attribute value — we control the writer (composeMotifHtml), so this holds.
+  // End of the opening <script ...> tag: first '>' at or after the marker.
+  const gt = html.indexOf(">", idMarker);
+  if (gt < 0) throw new MotifPropError("no motif-manifest island found in HTML");
+  const tagEnd = gt + 1;
+  const closeRel = html.indexOf("</script>", tagEnd);
+  if (closeRel < 0) throw new MotifPropError("no motif-manifest island found in HTML");
+  const json = html.slice(tagEnd, closeRel).trim();
+  try {
+    return JSON.parse(json) as Manifest;
+  } catch (e) {
+    throw new MotifPropError(`manifest island is not valid JSON: ${String(e)}`);
+  }
+}
+
+/** Remove the existing manifest island (its owning <script>..</script>) if present. */
+export function stripManifestIsland(html: string): string {
+  const idMarker = html.indexOf(ISLAND_MARKER);
+  if (idMarker < 0) return html;
+  const open = html.lastIndexOf("<script", idMarker);
+  if (open < 0) return html;
+  const closeRel = html.indexOf("</script>", idMarker);
+  if (closeRel < 0) return html;
+  const close = closeRel + "</script>".length;
+  return html.slice(0, open) + html.slice(close);
+}
+
+function findCi(haystack: string, needle: string): number {
+  return haystack.toLowerCase().indexOf(needle.toLowerCase());
+}
+
+/**
+ * The core manifest fields that live in the on-disk island — the ONLY fields the
+ * composed island and the content hash serialize. Excludes payload-decoration
+ * fields (`status`, `content_hash`, `target_id`, `settle_rafs`) so the island +
+ * hash are stable. Keys emitted in a fixed order for deterministic JSON.
+ * (Consumed here by `composeMotifHtml` and in Task 4 by `motifContentHash`.)
+ */
+export function coreManifestForHash(m: Manifest): Record<string, unknown> {
+  return {
+    id: m.id,
+    name: m.name,
+    version: m.version,
+    size: m.size,
+    default_duration_s: m.default_duration_s,
+    max_duration_s: m.max_duration_s ?? null,
+    max_duration_prop: m.max_duration_prop ?? null,
+    content_duration_s: m.content_duration_s ?? null,
+    fonts: m.fonts ?? [],
+    props_schema: m.props_schema,
+  };
+}
+
+/**
+ * Compose the canonical single-file Motif HTML: strip any existing island, then
+ * inject a fresh pretty-JSON island (with `<` escaped as < so a string
+ * field can't close the island early) right after the opening <head> (or at the
+ * top if none). Mirrors Rust `compose_motif_html`. Round-trips through
+ * `parseManifestIsland`.
+ */
+export function composeMotifHtml(manifest: Manifest, html: string): string {
+  const stripped = stripManifestIsland(html);
+  const json = JSON.stringify(coreManifestForHash(manifest), null, 2).replaceAll("<", "\\u003c");
+  const island = `<script type="application/json" id="motif-manifest">\n${json}\n</script>\n`;
+  const headPos = findCi(stripped, "<head>");
+  if (headPos >= 0) {
+    const at = headPos + "<head>".length;
+    return stripped.slice(0, at) + "\n" + island + stripped.slice(at);
+  }
+  return island + stripped;
+}
+
+// ---------------------------------------------------------------------------
+// Validation and duration resolution (Task 3)
+// ---------------------------------------------------------------------------
+
+const MAX_DIMENSION = 8192;
+const MAX_PROPS = 64;
+
+/** Validate a default value against its own spec. Mirrors `validate_default_for`. */
+export function validateDefaultFor(key: string, spec: PropSpec): void {
+  validateProp(key, spec, specDefault(spec));
+}
+
+/** Semantic manifest validation beyond JSON shape. Mirrors `validate_manifest`. */
+export function validateManifest(m: Manifest): void {
+  if (m.name.trim() === "") throw new MotifPropError("name must not be empty");
+  const [w, h] = m.size;
+  if (w < 1 || h < 1 || w > MAX_DIMENSION || h > MAX_DIMENSION) {
+    throw new MotifPropError(`size [${w},${h}] must be within [1,${MAX_DIMENSION}] on each axis`);
+  }
+  if (!(Number.isFinite(m.default_duration_s) && m.default_duration_s > 0)) {
+    throw new MotifPropError("default_duration_s must be finite and > 0");
+  }
+  for (const [field, val] of [
+    ["max_duration_s", m.max_duration_s],
+    ["content_duration_s", m.content_duration_s],
+  ] as const) {
+    if (val != null && !(Number.isFinite(val) && val > 0)) {
+      throw new MotifPropError(`${field} must be finite and > 0 when present`);
+    }
+  }
+  const keys = Object.keys(m.props_schema);
+  if (keys.length > MAX_PROPS) {
+    throw new MotifPropError(`props_schema has ${keys.length} entries (max ${MAX_PROPS})`);
+  }
+  for (const key of keys) {
+    const spec = m.props_schema[key]!;
+    if (spec.type === "number") {
+      if (spec.min != null && spec.max != null && spec.min > spec.max) {
+        throw new MotifPropError(`prop \`${key}\`: min ${spec.min} > max ${spec.max}`);
+      }
+      if (!Number.isFinite(spec.default)) {
+        throw new MotifPropError(`prop \`${key}\`: default must be finite`);
+      }
+    }
+    validateDefaultFor(key, spec);
+  }
+}
+
+/**
+ * Capture content duration in SECONDS. Mirrors Rust `motif_ctx_duration_s`:
+ * content_duration_s → max_duration_prop live value → max_duration_s → default_duration_s.
+ */
+export function motifCtxDurationS(manifest: Manifest, props: Record<string, unknown>): number {
+  const cds = manifest.content_duration_s;
+  if (typeof cds === "number" && Number.isFinite(cds) && cds > 0) return cds;
+  const propName = manifest.max_duration_prop;
+  if (propName) {
+    const raw = props[propName];
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  }
+  if (typeof manifest.max_duration_s === "number" && manifest.max_duration_s > 0) return manifest.max_duration_s;
+  return manifest.default_duration_s;
+}
 
 // ---------------------------------------------------------------------------
 // MotifCatalog class
