@@ -320,6 +320,8 @@ const ISLAND_MARKER = 'id="motif-manifest"';
 export function parseManifestIsland(html: string): Manifest {
   const idMarker = html.indexOf(ISLAND_MARKER);
   if (idMarker < 0) throw new MotifPropError("no motif-manifest island found in HTML");
+  // Constraint (mirrors Rust): the island's opening <script> tag must not contain
+  // a `>` inside an attribute value — we control the writer (composeMotifHtml), so this holds.
   // End of the opening <script ...> tag: first '>' at or after the marker.
   const gt = html.indexOf(">", idMarker);
   if (gt < 0) throw new MotifPropError("no motif-manifest island found in HTML");

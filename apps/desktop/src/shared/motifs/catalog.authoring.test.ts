@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseManifestIsland,
+  stripManifestIsland,
   composeMotifHtml,
   type Manifest,
 } from "./catalog";
@@ -25,6 +26,21 @@ describe("parseManifestIsland", () => {
   it("throws on invalid island JSON", () => {
     const html = `<script type="application/json" id="motif-manifest">{not json}</script>`;
     expect(() => parseManifestIsland(html)).toThrow();
+  });
+});
+
+describe("stripManifestIsland", () => {
+  it("removes the island and preserves surrounding HTML", () => {
+    const html = `<head><script type="application/json" id="motif-manifest">{"x":1}</script></head><body>keep</body>`;
+    const stripped = stripManifestIsland(html);
+    expect(stripped).not.toContain(`id="motif-manifest"`);
+    expect(stripped).toContain("keep");
+    expect(stripped).toContain("<head>");
+    expect(stripped).toContain("</head>");
+  });
+  it("no-ops when no island present", () => {
+    const html = `<head></head><body>hi</body>`;
+    expect(stripManifestIsland(html)).toBe(html);
   });
 });
 
