@@ -52,7 +52,7 @@
   - `motifCtxDurationS(manifest: Manifest, props: Record<string, unknown>): number`
 - `src/main/motif/contentHash.ts`: `motifContentHash(manifest: Manifest, html: string): string`
 - `src/main/motif/store.ts`: `class UserMotifStore` (methods listed in Task 5)
-- `src/main/motif/builtinAssets.ts`: `resolveMotifFile(store: UserMotifStore, id: string, rest: string): { bytes: Buffer; contentType: string } | null`, `contentTypeFor(rel: string): string`
+- `src/main/motif/builtinAssets.ts`: `resolveMotifFile(builtinDir: string, store: UserMotifStore, id: string, rest: string): { bytes: Buffer; contentType: string } | null`, `contentTypeFor(rel: string): string`, `builtinAssetDir(): string` (production-only)
 
 ---
 
@@ -189,6 +189,28 @@ function findCi(haystack: string, needle: string): number {
 }
 
 /**
+ * The core manifest fields that live in the on-disk island — the ONLY fields the
+ * composed island and the content hash serialize. Excludes payload-decoration
+ * fields (`status`, `content_hash`, `target_id`, `settle_rafs`) so the island +
+ * hash are stable. Keys emitted in a fixed order for deterministic JSON.
+ * (Consumed here by `composeMotifHtml` and in Task 4 by `motifContentHash`.)
+ */
+export function coreManifestForHash(m: Manifest): Record<string, unknown> {
+  return {
+    id: m.id,
+    name: m.name,
+    version: m.version,
+    size: m.size,
+    default_duration_s: m.default_duration_s,
+    max_duration_s: m.max_duration_s ?? null,
+    max_duration_prop: m.max_duration_prop ?? null,
+    content_duration_s: m.content_duration_s ?? null,
+    fonts: m.fonts ?? [],
+    props_schema: m.props_schema,
+  };
+}
+
+/**
  * Compose the canonical single-file Motif HTML: strip any existing island, then
  * inject a fresh pretty-JSON island (with `<` escaped as < so a string
  * field can't close the island early) right after the opening <head> (or at the
@@ -208,7 +230,7 @@ export function composeMotifHtml(manifest: Manifest, html: string): string {
 }
 ```
 
-> Note: `composeMotifHtml` serializes via `coreManifestForHash` (defined in Task 4) so the island never carries decoration fields. If implementing Task 1 before Task 4, temporarily inline `JSON.stringify(manifest, null, 2)`; Task 4 swaps it to `coreManifestForHash`. The round-trip tests pass either way because `base()` has no decoration fields.
+> Note: `composeMotifHtml` + `coreManifestForHash` are defined together here so the island never carries decoration fields. Task 4's `motifContentHash` imports `coreManifestForHash` from this file (no redefinition).
 
 - [ ] **Step 4: Run the tests; verify they pass**
 
@@ -465,42 +487,14 @@ git commit -m "feat(motifs): port validateManifest/validateDefaultFor/motifCtxDu
 ## Task 4: content hash (sha256, main-only)
 
 **Files:**
-- Modify: `apps/desktop/src/shared/motifs/catalog.ts` (add `coreManifestForHash` helper)
 - Create: `apps/desktop/src/main/motif/contentHash.ts`
 - Test: `apps/desktop/src/main/motif/contentHash.test.ts`
 
 **Interfaces:**
-- Consumes: `Manifest` + `coreManifestForHash` from shared catalog.
+- Consumes: `Manifest` + `coreManifestForHash` (BOTH already exported from `src/shared/motifs/catalog.ts` by Task 1 — do NOT redefine `coreManifestForHash`).
 - Produces: `motifContentHash(manifest, html): string`.
 
-- [ ] **Step 1: Add `coreManifestForHash` to `catalog.ts`** (no test of its own; exercised via Task 1 round-trip + Task 4 hash)
-
-```ts
-/**
- * The core manifest fields that live in the on-disk island — the ONLY fields the
- * content hash and composed island serialize. Excludes payload-decoration fields
- * (`status`, `content_hash`, `target_id`, `settle_rafs`) so the hash is stable.
- * Keys are emitted in a fixed order for deterministic JSON.
- */
-export function coreManifestForHash(m: Manifest): Record<string, unknown> {
-  return {
-    id: m.id,
-    name: m.name,
-    version: m.version,
-    size: m.size,
-    default_duration_s: m.default_duration_s,
-    max_duration_s: m.max_duration_s ?? null,
-    max_duration_prop: m.max_duration_prop ?? null,
-    content_duration_s: m.content_duration_s ?? null,
-    fonts: m.fonts ?? [],
-    props_schema: m.props_schema,
-  };
-}
-```
-
-> Swap the temporary `JSON.stringify(manifest, null, 2)` in `composeMotifHtml` (Task 1) to `JSON.stringify(coreManifestForHash(manifest), null, 2)` now. Re-run `catalog.authoring.test.ts` to confirm still green.
-
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 1: Write the failing test**
 
 Create `apps/desktop/src/main/motif/contentHash.test.ts`:
 
@@ -532,12 +526,12 @@ describe("motifContentHash", () => {
 });
 ```
 
-- [ ] **Step 3: Run; verify fail**
+- [ ] **Step 2: Run; verify fail**
 
 Run: `npx vitest run src/main/motif/contentHash.test.ts`
 Expected: FAIL — module not found.
 
-- [ ] **Step 4: Implement `contentHash.ts`**
+- [ ] **Step 3: Implement `contentHash.ts`**
 
 ```ts
 import { createHash } from "node:crypto";
@@ -560,16 +554,16 @@ export function motifContentHash(manifest: Manifest, html: string): string {
 }
 ```
 
-- [ ] **Step 5: Run; verify pass**
+- [ ] **Step 4: Run; verify pass**
 
 Run: `npx vitest run src/main/motif/contentHash.test.ts`
 Expected: PASS (5 tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add apps/desktop/src/shared/motifs/catalog.ts apps/desktop/src/main/motif/contentHash.ts apps/desktop/src/main/motif/contentHash.test.ts
-git commit -m "feat(motifs): TS sha256 motifContentHash + coreManifestForHash helper"
+git add apps/desktop/src/main/motif/contentHash.ts apps/desktop/src/main/motif/contentHash.test.ts
+git commit -m "feat(motifs): TS sha256 motifContentHash (reuses coreManifestForHash from Task 1)"
 ```
 
 ---
@@ -958,23 +952,28 @@ git commit -m "chore(motifs): relocate built-in served assets to src/shared + pa
 
 **Interfaces:**
 - Consumes: `UserMotifStore` (Task 5); the relocated built-in dir (Task 6).
-- Produces: `resolveMotifFile(store, id, rest)`, `contentTypeFor(rel)`, `builtinAssetDir()`.
+- Produces:
+  - `resolveMotifFile(builtinDir: string, store: UserMotifStore, id: string, rest: string): { bytes: Buffer; contentType: string } | null` — `builtinDir` is passed in EXPLICITLY (no `__dirname` inside the tested function), so the unit is hermetic.
+  - `contentTypeFor(rel: string): string`
+  - `builtinAssetDir(): string` — PRODUCTION-ONLY helper that resolves the dir from the bundled-main `__dirname` / `process.resourcesPath`. Never called by the unit tests; verified live in Task 9. (Task 8's `index.ts` calls it and threads the result into `registerMotifProtocol`.)
+
+> Why `builtinDir` is a parameter: there is no single `__dirname`-relative path that resolves correctly in BOTH vitest (`__dirname = src/main/motif`) AND the bundled dev main (`__dirname = out/main`) — the file sits at different depths relative to `src/`. Threading the dir in removes the ambiguity from the tested path; `builtinAssetDir()` carries the production-only `__dirname` logic and is exercised by the real-app check in Task 9.
 
 - [ ] **Step 1: Write the failing test**
 
 Create `apps/desktop/src/main/motif/builtinAssets.test.ts`:
 
 ```ts
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
-// app.isPackaged → false in tests; builtinAssetDir resolves to the src tree.
-vi.mock("electron", () => ({ app: { isPackaged: false } }));
-
 import { resolveMotifFile, contentTypeFor } from "./builtinAssets";
 import { UserMotifStore } from "./store";
+
+// The real relocated built-in dir, resolved from THIS test file's location
+// (src/main/motif → ../../shared/motifs/builtin = src/shared/motifs/builtin).
+const BUILTIN_DIR = path.resolve(__dirname, "../../shared/motifs/builtin");
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), "motif-assets-")); });
@@ -992,21 +991,32 @@ describe("contentTypeFor", () => {
 describe("resolveMotifFile", () => {
   it("serves a built-in index.html (built-in wins)", () => {
     const s = new UserMotifStore(root);
-    const file = resolveMotifFile(s, "countdown", "index.html");
+    const file = resolveMotifFile(BUILTIN_DIR, s, "countdown", "index.html");
     expect(file).not.toBeNull();
     expect(file!.contentType).toBe("text/html; charset=utf-8");
     expect(file!.bytes.toString("utf8")).toContain("motif.define");
+  });
+  it("serves a built-in font asset", () => {
+    const s = new UserMotifStore(root);
+    const file = resolveMotifFile(BUILTIN_DIR, s, "lower-third", "assets/Inter.woff2");
+    expect(file).not.toBeNull();
+    expect(file!.contentType).toBe("font/woff2");
+    expect(file!.bytes.length).toBeGreaterThan(0);
   });
   it("falls back to the user store for a non-built-in id", () => {
     const dir = path.join(root, "user-z");
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "index.html"), "<html>user-z</html>");
     const s = new UserMotifStore(root);
-    expect(resolveMotifFile(s, "user-z", "index.html")!.bytes.toString("utf8")).toBe("<html>user-z</html>");
+    expect(resolveMotifFile(BUILTIN_DIR, s, "user-z", "index.html")!.bytes.toString("utf8")).toBe("<html>user-z</html>");
   });
   it("returns null for an unknown id", () => {
     const s = new UserMotifStore(root);
-    expect(resolveMotifFile(s, "nope", "index.html")).toBeNull();
+    expect(resolveMotifFile(BUILTIN_DIR, s, "nope", "index.html")).toBeNull();
+  });
+  it("rejects a traversal in a built-in rest path", () => {
+    const s = new UserMotifStore(root);
+    expect(resolveMotifFile(BUILTIN_DIR, s, "countdown", "../../../etc/hosts")).toBeNull();
   });
 });
 ```
@@ -1026,10 +1036,11 @@ import { BUILTIN_IDS } from "../../shared/motifs/catalog";
 import type { UserMotifStore } from "./store";
 
 /**
- * Base dir of built-in served assets. Mirrors the ffmpeg-sidecar resolution
- * (`src/main/index.ts`): packaged → `<resources>/motifs/builtin`; dev/test →
- * `<projectRoot>/src/shared/motifs/builtin` relative to the bundled main file.
- * In dev the bundled main is `apps/desktop/out/main`, so `../../src/...`.
+ * PRODUCTION-ONLY: base dir of built-in served assets. Mirrors the ffmpeg-sidecar
+ * resolution (`src/main/index.ts`): packaged → `<resources>/motifs/builtin`;
+ * dev → `apps/desktop/src/shared/motifs/builtin` relative to the bundled main
+ * (`__dirname = apps/desktop/out/main`, so `../../src/...`). NOT used by unit
+ * tests (they pass an explicit dir to `resolveMotifFile`); verified live in Task 9.
  */
 export function builtinAssetDir(): string {
   return app.isPackaged
@@ -1072,9 +1083,11 @@ function safeBuiltinRel(rel: string): string[] | null {
 /**
  * Resolve `motif://<id>/<rest>` to bytes + content-type. Embedded built-ins win;
  * the on-disk user store is the fallback. Mirrors `resolve_bytes` + the napi
- * `motif_resolve_file`.
+ * `motif_resolve_file`. `builtinDir` is passed EXPLICITLY (the caller — index.ts —
+ * computes it via `builtinAssetDir()`; tests pass a fixture dir).
  */
 export function resolveMotifFile(
+  builtinDir: string,
   store: UserMotifStore,
   id: string,
   rest: string,
@@ -1083,7 +1096,7 @@ export function resolveMotifFile(
     const safe = safeBuiltinRel(rest);
     if (safe) {
       try {
-        const bytes = readFileSync(path.join(builtinAssetDir(), id, ...safe));
+        const bytes = readFileSync(path.join(builtinDir, id, ...safe));
         return { bytes, contentType: contentTypeFor(rest) };
       } catch { /* fall through to store (won't normally hit for built-ins) */ }
     }
@@ -1093,14 +1106,12 @@ export function resolveMotifFile(
 }
 ```
 
-> Built-ins are checked first by id (matching Rust: an uploaded motif can never shadow a built-in). The `readFileSync` path-join uses `safeBuiltinRel` segments so a built-in request can't traverse either.
+> Built-ins are checked first by id (matching Rust: an uploaded motif can never shadow a built-in). The `readFileSync` path-join uses `safeBuiltinRel` segments so a built-in request can't traverse. `builtinAssetDir()` imports `app` from electron; since the unit tests never call it, no electron mock is needed in the test.
 
 - [ ] **Step 4: Run; verify pass**
 
 Run: `npx vitest run src/main/motif/builtinAssets.test.ts`
-Expected: PASS (all suites). (`builtinAssetDir` resolves via `__dirname` to `apps/desktop/src/shared/motifs/builtin` in the vitest run — confirm the test machine runs vitest from `apps/desktop`. If `__dirname` differs under vitest, see the note below.)
-
-> **vitest `__dirname` caveat:** under vitest, `__dirname` is the test file's dir (`src/main/motif`), so `../../src/shared/motifs/builtin` would be wrong. To keep the test hermetic, the test mocks `electron` only for `app.isPackaged`; `builtinAssetDir` still uses `__dirname`. If the path resolves wrong in the test runner, adjust `builtinAssetDir` to derive from a known anchor that holds in BOTH the bundled-main (`out/main`) and vitest (`src/main/motif`) contexts — e.g. walk up to the nearest `src/shared/motifs/builtin`. Simplest robust form: `path.resolve(__dirname, "../../shared/motifs/builtin")` works from `src/main/motif` (→ `src/shared/motifs/builtin`) in vitest, AND the bundled main can be configured to the same relative depth. Pick the form that makes BOTH this test and the Task 9 packaged-build check pass; the dev (`__dirname=out/main`) path is verified in Task 9, not here.
+Expected: PASS (all suites). `BUILTIN_DIR` resolves from the test file (`src/main/motif`) to `src/shared/motifs/builtin` — the real relocated assets from Task 6.
 
 - [ ] **Step 5: Commit**
 
@@ -1119,12 +1130,12 @@ git commit -m "feat(motifs): TS built-in asset resolver + contentTypeFor (motif:
 - Modify: `apps/desktop/src/main/index.ts`
 
 **Interfaces:**
-- Consumes: `resolveMotifFile` (Task 7), `UserMotifStore` (Task 5), `motifCtxDurationS` (Task 3).
-- Produces: a single `UserMotifStore` instance in main, threaded to protocol + capture. `registerMotifProtocol(store)` and `captureMotifFrameB64(store, a)` new signatures.
+- Consumes: `resolveMotifFile` + `builtinAssetDir` (Task 7), `UserMotifStore` (Task 5), `motifCtxDurationS` + `BUILTIN_MANIFESTS` (Task 3 / existing shared catalog).
+- Produces: a single `UserMotifStore` instance + the resolved `builtinDir` in main, threaded to protocol + capture. New signatures: `registerMotifProtocol(builtinDir: string, store: UserMotifStore)` and `captureMotifFrameB64(store: UserMotifStore, a: CaptureArgs)`.
 
 - [ ] **Step 1: Re-point `protocol.ts` to `resolveMotifFile`**
 
-Replace the `Backend`-based handler body. New `registerMotifProtocol`:
+Replace the `Backend`-based handler body. New `registerMotifProtocol` takes `builtinDir` + `store` and threads `builtinDir` into `resolveMotifFile`:
 
 ```ts
 import { protocol } from 'electron'
@@ -1140,12 +1151,12 @@ export const MOTIF_SCHEME_ENTRY = {
 } as const
 
 /** Serve motif://<id>/<rest> from TS (built-in assets + the user store). */
-export function registerMotifProtocol(store: UserMotifStore): void {
+export function registerMotifProtocol(builtinDir: string, store: UserMotifStore): void {
   protocol.handle('motif', async (request) => {
     const url = new URL(request.url)
     const id = url.hostname
     const rest = decodeURIComponent(url.pathname.replace(/^\/+/, '')) || 'index.html'
-    const file = resolveMotifFile(store, id, rest)
+    const file = resolveMotifFile(builtinDir, store, id, rest)
     if (!file) return new Response('not found: ' + id + '/' + rest, { status: 404 })
     return new Response(new Uint8Array(file.bytes), {
       status: 200,
@@ -1192,18 +1203,20 @@ export function captureMotifFrameB64(store: UserMotifStore, a: CaptureArgs): Pro
 - [ ] **Step 3: Wire the store in `index.ts`**
 
 In `apps/desktop/src/main/index.ts`:
-- Construct the store once after `app` paths are known:
+- Construct the store + resolve the built-in dir once after `app` paths are known:
   ```ts
   import { UserMotifStore } from './motif/store.js'
+  import { builtinAssetDir } from './motif/builtinAssets.js'
   // ... after backend/userData setup:
   const motifStore = new UserMotifStore(path.join(app.getPath('userData'), 'motifs'))
+  const motifBuiltinDir = builtinAssetDir()
   ```
-- Replace `registerMotifProtocol(backend!)` (line ~525) with `registerMotifProtocol(motifStore)`.
+- Replace `registerMotifProtocol(backend!)` (line ~525) with `registerMotifProtocol(motifBuiltinDir, motifStore)`.
 - Replace the capture-frame IPC handler body (line ~313) call `captureMotifFrameB64(backend!, {...})` with `captureMotifFrameB64(motifStore, {...})`.
 - The MCP `preview_motif_draft` path in `src/main/mcp/server.ts` also calls `captureMotifFrameB64(backend, {...})` — update it to pass `motifStore`. Thread `motifStore` into `buildMcpServer`/`handleCallTool` (add a param) OR export the singleton store from a small module and import it in `server.ts`. Prefer threading a param to avoid a hidden singleton.
 
 Run: `grep -rn "captureMotifFrameB64\|registerMotifProtocol" apps/desktop/src/main`
-Expected: every call site updated to pass `motifStore`.
+Expected: every call site updated — `registerMotifProtocol(motifBuiltinDir, motifStore)` and `captureMotifFrameB64(motifStore, …)`.
 
 - [ ] **Step 4: Typecheck**
 
@@ -1259,5 +1272,5 @@ No code change. Record the result in the PR description / phase note. Phase 1 co
   - parse/strip/compose → Task 1 ✓; sanitize/assign-id → Task 2 ✓; validate_manifest/validate_default_for/motif_ctx_duration_s → Task 3 ✓; content_hash (sha256, core-fields-only) → Task 4 ✓; UserMotifStore → Task 5 ✓; built-in asset relocation + extraResources → Task 6 ✓; resolve_bytes/content_type_for → Task 7 ✓; protocol + capture re-point → Task 8 ✓; packaged-build gate (spec §10 risk) → Task 9 ✓.
   - Out of Phase 1 scope (deferred to later phases, per the 4-phase plan): list_motifs payload, authoring lifecycle, hybrid collapse (Phase 2); staleness + watcher (Phase 3); Rust deletion + MCP def moves (Phase 4). These are NOT gaps — they are later phases.
 - **Placeholder scan:** No TBD/TODO. The only conditional guidance is the `builtinAssetDir()` `__dirname` caveat in Task 7 Step 4 — it gives a concrete robust form (`path.resolve(__dirname, "../../shared/motifs/builtin")`) and defers final confirmation to the Task 9 packaged check, which is a real gate, not a placeholder.
-- **Type consistency:** `Manifest`/`PropSpec`/`MotifPropError` come from the existing `catalog.ts`. `UserMotifStore` method names used in Task 7/8 match Task 5's produced list (`readFile`, `getMotif`, `listManifests`). `resolveMotifFile(store, id, rest)` signature consistent across Tasks 7 and 8. `motifContentHash` not consumed until Phase 2 (list_motifs payload) — defined here, no Phase 1 caller, which is intentional (it's a produced interface).
+- **Type consistency:** `Manifest`/`PropSpec`/`MotifPropError` come from the existing `catalog.ts`. `coreManifestForHash` defined once (Task 1), consumed by `composeMotifHtml` (Task 1) + `motifContentHash` (Task 4). `UserMotifStore` method names used in Task 7/8 match Task 5's produced list (`readFile`, `getMotif`, `listManifests`). `resolveMotifFile(builtinDir, store, id, rest)` signature consistent across Tasks 7 and 8; `registerMotifProtocol(builtinDir, store)` consistent between Task 8 protocol.ts and index.ts wiring. `motifContentHash` not consumed until Phase 2 (list_motifs payload) — defined here, no Phase 1 caller, which is intentional (it's a produced interface).
 - **Naming:** `coreManifestForHash` used by both `composeMotifHtml` (Task 1, after Task 4 swap) and `motifContentHash` (Task 4) — single definition in `catalog.ts`.
