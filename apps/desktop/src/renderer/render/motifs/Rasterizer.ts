@@ -1,9 +1,13 @@
 // Prop canonicalizer for motifs.
 //
 // `canonicalizeProps` fills missing props from schema defaults, rejects
-// unknown keys, and emits a key-order-stable object so the canonical JSON
-// form (used in raster cache keys) is deterministic. It mirrors the Rust
-// `Motif::canonicalize_props` validator.
+// unknown keys, validates prop values, and emits a key-order-stable object
+// (alphabetical — BTreeMap order) so the canonical JSON form (used in raster
+// cache keys) is deterministic. It mirrors the Rust `Motif::canonicalize_props`
+// validator. Logic lives once in src/shared/motifs/catalog.ts.
+//
+// NOTE: argument order here is (raw, manifest) — intentionally opposite of the
+// shared function — to preserve the existing call sites unchanged.
 //
 // Only the prop canonicalizer lives here now; the old foreignObject SVG
 // rasterizer was removed with the SVG render path (`harness.ts`, `svgRaster.ts`).
@@ -11,24 +15,17 @@
 // motifFrameDescriptor tests).
 
 import type { MotifManifest } from "./catalog";
+import { canonicalizeProps as _sharedStrict } from "../../../shared/motifs/catalog";
 
-/// Fill defaults for missing props, reject unknown keys. Returns a
-/// new object with keys in `props_schema` insertion order so the
-/// canonical JSON form is stable.
+/// Fill defaults for missing props, reject unknown keys, validate values.
+/// Returns a new object with keys in alphabetical order (BTreeMap order) so
+/// the canonical JSON form is stable.
+///
+/// Adapter: keeps the (raw, manifest) call signature so all consumers compile
+/// unchanged; delegates to the shared (manifest, raw) strict canonicalizer.
 export function canonicalizeProps(
   raw: Record<string, unknown>,
   manifest: MotifManifest,
 ): Record<string, unknown> {
-  for (const key of Object.keys(raw)) {
-    if (!(key in manifest.props_schema)) {
-      throw new Error(
-        `canonicalizeProps: unknown prop "${key}" for motif "${manifest.id}"`,
-      );
-    }
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, spec] of Object.entries(manifest.props_schema)) {
-    out[key] = raw[key] ?? spec.default;
-  }
-  return out;
+  return _sharedStrict(manifest, raw);
 }
