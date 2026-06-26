@@ -248,6 +248,7 @@ export function resolveMotifTEndUs(
     const durationUs = Math.trunc(defaultDurationS * 1_000_000);
     end = tStartUs + durationUs;
   }
+  // No saturating_add (Rust): JS numbers are exact to 2^53, safe for realistic µs timestamps; diverges only on absurd values.
   if (maxDurUs !== null && end - tStartUs > maxDurUs) {
     return tStartUs + maxDurUs;
   }

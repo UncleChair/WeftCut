@@ -36,6 +36,9 @@ describe("canonicalizeProps", () => {
     // "abcdef" is 6 unicode chars, max_length is 5 — must throw
     expect(() => canonicalizeProps(m, { title: "abcdef" })).toThrow());
 
+  it("string max_length exact boundary passes", () =>
+    expect(canonicalizeProps(m, { title: "abcde" })).toBeTruthy());
+
   it("color must match #rgb/#rgba/#rrggbb/#rrggbbaa", () =>
     expect(() => canonicalizeProps(m, { color: "red" })).toThrow());
 
