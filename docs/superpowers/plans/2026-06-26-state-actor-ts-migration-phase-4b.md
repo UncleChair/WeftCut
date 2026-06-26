@@ -58,7 +58,10 @@ The Rust build cannot be green at every micro-step because the actor's consumers
 - Modify: `apps/desktop/src/main/mcp/server.ts:86-89` (the `ListToolsRequestSchema` handler)
 - Create: `apps/desktop/src/main/mcp/mcpCatalog.ts` (the pure `mergeMcpCatalog` fn)
 - Modify: `apps/desktop/src/main/mcp/mcpRouter.test.ts` (re-target the bijection gate at the merged catalog)
+- Modify: `apps/desktop/src/main/state/mcp-commands.ts` (enrich the bare complex-field schemas — Step 7)
 - Test: `apps/desktop/src/main/mcp/mcpCatalog.test.ts` (new)
+
+**Carry-item (ledger T6-M2):** when ListTools flips to advertise the TS table's `inputSchema`, the complex-field property schemas currently advertised as bare `{}` in the TS table — `role` (`set_role_gain`/`set_role_flags`), `color` (`add_color_layer`), `patch` (`update_layer`/`update_layer_params`) — would regress vs the richer Rust-derived schemas. Runtime validation is unaffected (parseArgs still enforces), but this is the **last task that can copy the Rust shapes** (T3 deletes the Rust catalog). Step 7 enriches them. (The 5 whole-`{}` schemas — `undo`/`redo`/`fit_composition_to_layers`/`unlock_history`/`list_checkpoints` — are correctly no-arg; leave them.)
 
 **Interfaces:**
 - Consumes: `MCP_TOOL_DEFS` (`apps/desktop/src/main/state/mcp-commands.ts:247`, `ReadonlyArray<McpToolDef>` with `{name, description, inputSchema, exec, …}`); `routeMcpTool` (`apps/desktop/src/main/mcp/mutationTools.ts:24`, `(name) => 'ts'|'rust'|'blocked'|'hybrid'`); `MCP_TOOLS`/`HYBRID_TOOLS` (`mcp-commands.ts`/`mutationTools.ts`).
@@ -185,13 +188,15 @@ describe('merged ListTools is a clean catalog↔handler bijection', () => {
 })
 ```
 
-- [ ] **Step 7: Run the gates.** Run: `npx vitest run src/main/mcp/` → all PASS.
+- [ ] **Step 7: Enrich the bare complex-field schemas (ledger T6-M2; last chance before T3).** Capture the Rust-advertised schemas while they still exist: `node -e "const {Backend}=require('./native'); const b=new Backend(); b.init().then(async()=>{const c=JSON.parse(await b.mcpCatalog()); for(const t of c.tools) if(['set_role_gain','set_role_flags','add_color_layer','update_layer','update_layer_params'].includes(t.name)) console.log(t.name, JSON.stringify(t.inputSchema));})"` (or read the Rust `tool_table!` arg types). In `apps/desktop/src/main/state/mcp-commands.ts`, replace the bare `role: {}` / `color: {}` / `patch: {}` property sub-schemas with the Rust shapes — e.g. `role: { type: 'string', enum: [<the AudioRole kebab values>] }`, `color: { type: 'object', properties: { r/g/b/a … }, … }`, `patch` with its documented structure. If the captured Rust sub-schema is ALSO bare `{}` (no richer source exists), leave the TS one as `{}` and note it in the commit body. Do NOT change `parseArgs`/`parseDedicated` — only the advertised `inputSchema`. The 5 no-arg whole-`{}` schemas stay.
 
-- [ ] **Step 8: Full verification + commit.** Run: `npm run typecheck` (clean) and `npm test` (2085 passed, 0 skipped). Then:
+- [ ] **Step 8: Run the gates.** Run: `npx vitest run src/main/mcp/` → all PASS.
+
+- [ ] **Step 9: Full verification + commit.** Run: `npm run typecheck` (clean) and `npm test` (2085 passed, 0 skipped). Then:
 
 ```bash
-git add apps/desktop/src/main/mcp/server.ts apps/desktop/src/main/mcp/mcpCatalog.ts apps/desktop/src/main/mcp/mcpCatalog.test.ts apps/desktop/src/main/mcp/mcpRouter.test.ts
-git commit   # subject: feat(state-migration): MCP ListTools merges TS single-source table (Phase 4b T1 §4.2)
+git add apps/desktop/src/main/mcp/server.ts apps/desktop/src/main/mcp/mcpCatalog.ts apps/desktop/src/main/mcp/mcpCatalog.test.ts apps/desktop/src/main/mcp/mcpRouter.test.ts apps/desktop/src/main/state/mcp-commands.ts
+git commit   # subject: feat(state-migration): MCP ListTools merges TS single-source table + enrich schemas (Phase 4b T1 §4.2)
 ```
 
 ---
