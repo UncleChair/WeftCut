@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { routeMcpTool, MCP_BLOCKED_UNDER_FLAG, HYBRID_TOOLS } from './mutationTools'
-import { MCP_TOOLS } from '../state/mcp-commands'
+import { MCP_TOOLS, MCP_TOOL_DEFS } from '../state/mcp-commands'
+import { mergeMcpCatalog } from './mcpCatalog'
 
 describe('routeMcpTool', () => {
   it('routes ported mutations + reads to ts', () => {
@@ -32,6 +33,33 @@ describe('routeMcpTool', () => {
     for (const t of HYBRID_TOOLS) {
       expect(MCP_TOOLS.has(t), t).toBe(false)
       expect(MCP_BLOCKED_UNDER_FLAG.has(t), t).toBe(false)
+    }
+  })
+})
+
+describe('merged ListTools is a clean catalog↔handler bijection', () => {
+  // Simulate the Rust-advertised set: in 4a it still includes the TS-executed
+  // names; in 4b it is the post-split native+hybrid set. Either way the merge
+  // must be a duplicate-free union where every name routes to exactly one engine.
+  const rust4a = [...MCP_TOOLS].map((n) => ({ name: n })).concat(
+    [{ name: 'ping' }, { name: 'list_motifs' }, { name: 'get_motif_source' }, { name: 'preview_motif_draft' },
+     { name: 'detect_silences' }, { name: 'transcribe_clip' }, { name: 'import_media' }, { name: 'apply_subtitles' },
+     { name: 'install_motif' }, { name: 'acknowledge_motif_staleness' }, { name: 'synthesize_speech' }],
+  )
+  const tsDefs = MCP_TOOL_DEFS.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }))
+  const merged = mergeMcpCatalog(rust4a, tsDefs)
+
+  it('no duplicate names', () => {
+    const names = merged.map((t) => t.name)
+    expect(new Set(names).size).toBe(names.length)
+  })
+  it('no advertised-but-unhandled / handled-but-unadvertised', () => {
+    const advertised = new Set(merged.map((t) => t.name))
+    for (const n of MCP_TOOLS) expect(advertised.has(n)).toBe(true)   // every ts tool advertised
+    for (const t of merged) {
+      const r = routeMcpTool(t.name)
+      if (r === 'ts') expect(MCP_TOOLS.has(t.name)).toBe(true)
+      if (r === 'hybrid') expect(HYBRID_TOOLS.has(t.name)).toBe(true)
     }
   })
 })

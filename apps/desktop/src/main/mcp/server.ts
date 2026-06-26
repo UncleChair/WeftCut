@@ -12,6 +12,8 @@ import { captureMotifFrameB64 } from '../motif/capture.js'
 import { routeMcpTool } from './mutationTools.js'
 import { runHybrid } from '../state/hybrids.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
+import { mergeMcpCatalog } from './mcpCatalog.js'
+import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -84,8 +86,8 @@ export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | 
   )
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const cat = JSON.parse(await backend.mcpCatalog()) as { tools: unknown[] }
-    return { tools: cat.tools } as unknown as ServerResult
+    const rust = (JSON.parse(await backend.mcpCatalog()) as { tools: Array<{ name: string }> }).tools
+    return { tools: mergeMcpCatalog(rust, MCP_TOOL_DEFS) } as unknown as ServerResult
   })
   server.setRequestHandler(CallToolRequestSchema, async (req) =>
     handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>),
