@@ -14,11 +14,20 @@ export type Route =
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
   | { kind: 'agentSessionEnd' } // agentSessionEnd seam: endSlot + unlockHistory
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write (Phase 3d-e)
+  | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install (Phase 2)
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
 
-/** Hybrid Rust-compute → TS-write channels (Phase 3d-e). */
-export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media', 'install_motif', 'acknowledge_motif_staleness'])
+/** Hybrid Rust-compute → TS-write channels (Phase 3d-e). install_motif moved to
+ *  the motif route (Phase 2); acknowledge_motif_staleness stays here (Phase 3). */
+export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media', 'acknowledge_motif_staleness'])
+
+/** Motif catalog-read + authoring + install channels, served in TS by
+ *  runMotifTool (Phase 2). */
+export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
+  'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
+  'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',
+])
 
 /** Read-only native handlers re-pointed to the read-mirror (Group A) — safe on rust. */
 export const MIRROR_BACKED_READS: ReadonlySet<string> = new Set([
@@ -30,7 +39,6 @@ export const MIRROR_BACKED_READS: ReadonlySet<string> = new Set([
 export const PURE_NATIVE: ReadonlySet<string> = new Set([
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish', 'export_video_sink_cancel',
   'import_cancel', 'import_queue_list', 'report_audio_meter', 'settings_get_api_key_status', 'settings_test_provider',
-  'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif',
 ])
 
 /** Backend stores (config-dir), not the project actor. */
@@ -44,6 +52,7 @@ export const PERSISTENCE: ReadonlySet<string> = new Set([
 export function routeChannel(channel: string): Route {
   if (PRODUCTION_OPS.has(channel)) return { kind: 'command' }
   if (HYBRID_CHANNELS.has(channel)) return { kind: 'hybrid', tool: channel }
+  if (MOTIF_CHANNELS.has(channel)) return { kind: 'motif', tool: channel }
   switch (channel) {
     case 'project_summary': return { kind: 'summary' }
     case 'get_project_settings': return { kind: 'projectSettings' }

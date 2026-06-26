@@ -280,6 +280,11 @@ app.whenReady().then(async () => {
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
   }
 
+  // Load built-in Motif sources once (manifest + relocated index.html) for the
+  // TS catalog/authoring surface (Phase 2). builtinMotifs reads from motifBuiltinDir.
+  const { builtinMotifs } = await import('./motif/authoring.js')
+  const motifBuiltins = builtinMotifs(motifBuiltinDir)
+
   tsHost = createTsActorHost({
     send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
@@ -296,6 +301,8 @@ app.whenReady().then(async () => {
     endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
     listMotifs: () => backend!.invoke('list_motifs', '{}'),
+    motifStore,
+    motifBuiltins,
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')

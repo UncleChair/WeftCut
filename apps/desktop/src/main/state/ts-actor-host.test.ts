@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import nodePath from 'node:path'
 import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
+import { UserMotifStore } from '../motif/store'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -108,6 +112,19 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.start()
     // No workspace set — forceFlush should not throw.
     await expect(host.handleInvoke('project_save', {})).resolves.toBeUndefined()
+    host.stop()
+  })
+
+  it('handleInvoke routes a motif channel through runMotifTool (write_motif_draft)', async () => {
+    const { deps, sent } = makeInMemoryDeps()
+    const motifStore = new UserMotifStore(mkdtempSync(nodePath.join(tmpdir(), 'host-motif-')))
+    const host = createTsActorHost({ ...deps, motifStore, motifBuiltins: [] })
+    host.start()
+    const manifest = { id: 'x', name: 'Foo', version: 1, size: [10, 10], default_duration_s: 1, fonts: [], props_schema: {} }
+    const id = await host.handleInvoke('write_motif_draft', { args: { manifest, html: '<head></head><body>b</body>' } }) as string
+    expect(typeof id).toBe('string')
+    expect(motifStore.getDraft(id)).not.toBeNull()
+    expect(sent.some((s) => s.event === 'motifs:changed')).toBe(true)
     host.stop()
   })
 })

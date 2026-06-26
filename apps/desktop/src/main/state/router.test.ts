@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
-  HYBRID_CHANNELS, MIRROR_BACKED_READS, PURE_NATIVE, PERSISTENCE,
+  HYBRID_CHANNELS, MIRROR_BACKED_READS, PURE_NATIVE, PERSISTENCE, MOTIF_CHANNELS,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
@@ -24,13 +24,15 @@ const ALL_CHANNELS: readonly string[] = [
   // router special-cases (summary / settings / persistence seam / agent-session)
   'project_summary', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end',
-  // hybrids (native-compute → TS-write)
-  'import_media', 'install_motif', 'acknowledge_motif_staleness',
+  // motif route (TS authoring + read + install — Phase 2)
+  'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
+  'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
-  'settings_get_api_key_status', 'settings_test_provider', 'list_motifs', 'get_motif_source',
-  'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif',
+  'settings_get_api_key_status', 'settings_test_provider',
+  // hybrids (native-compute → TS-write)
+  'import_media', 'acknowledge_motif_staleness',
   // mirror-backed reads (re-pointed to the read-mirror in Group A)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'get_media_thumbnail', 'get_waveform_peaks', 'motif_staleness_report',
@@ -59,8 +61,10 @@ describe('router partition gate', () => {
       expect(r.kind, `${ch} unclassified (reject default)`).not.toBe('reject')
       if (r.kind === 'rust') expect(RUST_ALLOWLIST.has(ch), `${ch} routes to rust`).toBe(true)
     }
-    for (const ch of ['import_media', 'install_motif', 'acknowledge_motif_staleness'])
+    for (const ch of ['import_media', 'acknowledge_motif_staleness'])
       expect(routeChannel(ch).kind, ch).toBe('hybrid')
+    for (const ch of MOTIF_CHANNELS)
+      expect(routeChannel(ch).kind, ch).toBe('motif')
   })
 
   it('an unclassified channel routes to reject (single-writer backstop)', () => {
@@ -80,6 +84,7 @@ describe('router partition gate', () => {
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
       ['MIRROR_BACKED_READS', MIRROR_BACKED_READS],
       ['HYBRID_CHANNELS', HYBRID_CHANNELS],
+      ['MOTIF_CHANNELS', MOTIF_CHANNELS],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],
       ['SPECIAL', SPECIAL],
     ]
@@ -111,12 +116,17 @@ describe('routeChannel', () => {
   })
   it('forwards independent stores + media/jobs/export to rust', () => {
     // import_media is now a hybrid (native-compute → TS-write), not rust.
-    for (const ch of ['app_settings_get','app_settings_set','view_state_get','export_settings_get','recents_list','keybindings_get','agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','list_motifs','settings_test_provider','workspace_dir','ping'])
+    // list_motifs is now a motif route (Phase 2), not rust.
+    for (const ch of ['app_settings_get','app_settings_set','view_state_get','export_settings_get','recents_list','keybindings_get','agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
       expect(routeChannel(ch).kind).toBe('rust')
   })
-  it('routes the three hybrid channels to hybrid', () => {
-    for (const ch of ['import_media','install_motif','acknowledge_motif_staleness'])
+  it('routes the two hybrid channels to hybrid', () => {
+    for (const ch of ['import_media', 'acknowledge_motif_staleness'])
       expect(routeChannel(ch).kind).toBe('hybrid')
+  })
+  it('routes motif authoring/read/install channels to the motif route (Phase 2)', () => {
+    for (const ch of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif'])
+      expect(routeChannel(ch).kind, ch).toBe('motif')
   })
   it('never routes a category-A state mutation to rust', () => {
     for (const ch of PRODUCTION_OPS) expect(routeChannel(ch).kind).not.toBe('rust')

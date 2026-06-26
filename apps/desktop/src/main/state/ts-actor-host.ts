@@ -10,6 +10,10 @@ import { serializeProjectToJson } from './persistence'
 import { agentSessionEnd } from './agent-session-seam'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import type { Manifest } from '../../shared/motifs/catalog'
+import type { UserMotifStore } from '../motif/store'
+import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
+import type { BuiltinMotif, MotifLayerRef } from '../motif/authoring'
+import type { MotifParams, MotifRebindEntry } from './model'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -52,6 +56,14 @@ export interface TsActorHostDeps {
    *  after start() and after motif-store-mutating operations (install/delete/write/
    *  import/amend/create_edit). Optional → no-op when absent (tests, flag-off). */
   listMotifs?: () => Promise<string>
+  /** On-disk user Motif store (Phase 2 — the TS authoring/read/install surface).
+   *  Optional → guard in runMotif throws if absent. Tests that don't exercise
+   *  motif tools omit this so they don't need a real temp-dir store. */
+  motifStore?: UserMotifStore
+  /** Built-in Motifs ({id, manifest, html}), loaded once at boot from the
+   *  relocated served assets. Empty in tests that don't exercise built-ins.
+   *  Optional — defaults to [] when absent. */
+  motifBuiltins?: BuiltinMotif[]
 }
 
 interface PersistenceHandlers {
@@ -150,6 +162,24 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     deps.listMotifs?.().then((j) => {
       actor.setUserMotifManifests(manifestsFromList(JSON.parse(j) as unknown[]))
     }).catch(() => {})
+  }
+
+  function runMotif(name: string, args: Record<string, unknown>): unknown {
+    if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
+    const motifToolDeps: MotifToolDeps = {
+      store: deps.motifStore,
+      builtins: deps.motifBuiltins ?? [],
+      motifLayers: () =>
+        actor.snapshot().tracks
+          .flatMap((t) => t.layers)
+          .filter((l) => l.params.kind === 'Motif')
+          .map((l) => { const p = l.params as MotifParams; return { layerId: l.id, motifId: p.motif_id, props: p.props } satisfies MotifLayerRef }),
+      dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
+      emitChanged: () => deps.send('motifs:changed', {}),
+      refreshCatalog: () => refreshMotifCatalog(),
+      readFile: deps.readFile,
+    }
+    return runMotifTool(name, args, motifToolDeps)
   }
 
   function pushMirror(): void {
@@ -257,13 +287,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return null
       case 'hybrid': {
         const hybridResult = await runHybrid(route.tool, args, hybridDeps)
-        // Motif-store-mutating hybrids: refresh the actor's motif catalog so the
+        // acknowledge_motif_staleness: refresh the actor's motif catalog so the
         // content-window clamp in applyUpdateLayerParams sees the updated manifests.
-        if (channel === 'install_motif' || channel === 'acknowledge_motif_staleness') {
+        if (channel === 'acknowledge_motif_staleness') {
           refreshMotifCatalog()
         }
         return hybridResult
       }
+      case 'motif':
+        return runMotif(route.tool, args)
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
     }
@@ -274,8 +306,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     handleInvoke,
     mcpCall,
     hybridDeps,
-    // Task 6 replaces this stub with the real runMotifTool dispatch.
-    motifTool(_name: string, _args: Record<string, unknown>): unknown { throw new Error('motifTool: not yet implemented (Task 6)') },
+    motifTool: runMotif,
     beginAgentSessionSlot(reason: string) { deps.beginAgentSessionSlot?.(reason) },
     start() {
       if (!unsub) unsub = actor.subscribe(emitChange)
