@@ -712,7 +712,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
           const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.metadata.audio != null)
           if (shouldPair) {
-            // ensure_audio_track (tools.rs:123-132): topmost track, or a new "Voiceover".
+            // ensure_audio_track: topmost track, or a new "Voiceover" if none.
             const tracks = current().tracks
             const audioTrack = tracks.length ? tracks[tracks.length - 1].id
               : commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Voiceover'))

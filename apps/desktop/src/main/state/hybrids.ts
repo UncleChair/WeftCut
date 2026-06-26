@@ -42,18 +42,16 @@ export type HybridDeps = {
   snapshotComposition: () => { width: number; height: number; duration_us: number }
 }
 
-/** Mirror of `ensure_audio_track` (tools.rs:123-130): return the id of the
- *  topmost (last) track, or create a new "Voiceover" track and return its id.
- *  "Topmost" = last in `tracks` array (matching Rust's `tracks.last()`). */
+/** Return the id of the topmost (last) track, or create a new "Voiceover"
+ *  track and return its id. "Topmost" = last in the `tracks` array. */
 function ensureAudioTrack(deps: HybridDeps): string {
   const snap = deps.actor.snapshot()
   if (snap.tracks.length > 0) {
     return snap.tracks[snap.tracks.length - 1].id
   }
-  // No tracks at all — create a "Voiceover" track (mirrors add_track in tools.rs:129).
-  // Pathological-only branch: production projects always carry the reserved,
-  // non-removable A/B-roll tracks, so a zero-track project is unconstructable
-  // through the validated actor. Kept for parity with Rust's ensure_audio_track fallback.
+  // No tracks at all — create a "Voiceover" track. Pathological-only branch:
+  // production projects always carry the reserved, non-removable A/B-roll tracks,
+  // so a zero-track project is unconstructable through the validated actor.
   const r = deps.actor.dispatch('add_track', { label: 'Voiceover' })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   return r.value as string

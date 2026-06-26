@@ -135,20 +135,6 @@ pub enum ValidationError {
 
 }
 
-// ---- Actor ----
-
-// Internally tagged (NOT adjacently tagged): `Agent`'s `client` field
-// flattens alongside the `kind` tag → {"kind":"Agent","client":"x"}. This
-// shape is serialized whole onto the MCP `/events` feed via
-// `ChangeEventSummary`; `content = "client"` (adjacent tagging) would nest it
-// as {"kind":"Agent","client":{"client":"x"}} (the "[object Object]" bug).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum Actor {
-    User,
-    Agent { client: String },
-}
-
 /// One layer's retarget for `rebind_motif`. The caller (install_motif) precomputes
 /// the target id/version + migrated props per affected layer; the actor applies by id.
 #[derive(Clone, Debug, Serialize, Deserialize)]

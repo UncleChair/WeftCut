@@ -1,6 +1,6 @@
 # State-corpus: command sequences and oracle traces
 
-This directory contains the command-sequence corpus for the Rust↔TS differential state-migration test harness.
+This directory contains the command-sequence corpus and committed oracle traces for the state-migration test harness. The oracles were minted by the now-deleted Rust↔TS differential harness and are now **frozen TS-only regression fixtures** (see below).
 
 ## Structure
 

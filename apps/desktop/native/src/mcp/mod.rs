@@ -16,7 +16,6 @@
 //! Design: `docs/mcp.md`.
 
 mod catalog;
-mod effects;
 mod prompts;
 mod resources;
 mod tools;
