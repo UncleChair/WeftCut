@@ -14,6 +14,7 @@ export type Route =
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
   | { kind: 'agentSessionEnd' } // agentSessionEnd seam: endSlot + unlockHistory
   | { kind: 'appSettings' }   // app-level prefs store, owned in TS main (config-dir)
+  | { kind: 'viewState' }     // per-workspace view.json store, owned in TS main
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write (Phase 3d-e)
   | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install (Phase 2)
   | { kind: 'reject'; reason: string }
@@ -46,7 +47,7 @@ export const PURE_NATIVE: ReadonlySet<string> = new Set([
 
 /** Backend stores (config-dir), not the project actor. */
 export const PERSISTENCE: ReadonlySet<string> = new Set([
-  'view_state_get', 'view_state_set', 'export_settings_get', 'export_settings_set',
+  'export_settings_get', 'export_settings_set',
   'workspace_dir', 'recents_list', 'recents_remove', 'recents_get_reopen_on_launch', 'recents_set_reopen_on_launch',
   'recents_most_recent', 'recents_last_new_project_parent', 'keybindings_get', 'keybindings_set', 'keybindings_reset_all',
   'keybindings_export', 'keybindings_import', 'agent_session_get', 'log_list', 'log_clear', 'log_emit', 'log_dir_path',
@@ -66,6 +67,8 @@ export function routeChannel(channel: string): Route {
     case 'agent_session_end': return { kind: 'agentSessionEnd' }
     case 'app_settings_get':
     case 'app_settings_set': return { kind: 'appSettings' }
+    case 'view_state_get':
+    case 'view_state_set': return { kind: 'viewState' }
   }
   if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || MIRROR_BACKED_READS.has(channel))
     return { kind: 'rust' }

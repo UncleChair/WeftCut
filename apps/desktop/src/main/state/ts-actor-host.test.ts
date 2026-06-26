@@ -5,6 +5,7 @@ import nodePath from 'node:path'
 import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
 import { UserMotifStore } from '../motif/store'
 import { createAppSettingsStore } from '../app-settings'
+import { createViewStateStore } from '../view-state'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -62,6 +63,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       readFile: (p: string) => memFs.readFile(p),
       workspaceDir: () => wsDir,
       appSettings: createAppSettingsStore({ fs: memFs, path: '/cfg/app_settings.json', dir: '/cfg' }),
+      viewState: createViewStateStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
     }
 
     return { deps, vfs, napiCalls, sent }
@@ -148,6 +150,31 @@ describe('createTsActorHost — persistence-route integration', () => {
     await host.handleInvoke('app_settings_set', { patch: { tail_snap_strength_px: 20 } })
     const got = await host.handleInvoke('app_settings_get', {}) as { tail_snap_strength_px: number }
     expect(got.tail_snap_strength_px).toBe(20)
+    host.stop()
+  })
+
+  it('view_state_set persists to <workspace>/view.json and view_state_get reads it back', async () => {
+    const { deps, vfs } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'vs', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
+    await host.handleInvoke('view_state_set', { state: { timeline_px_per_sec: 200, track_heights: { t1: 64 }, expanded_tracks: ['t1'] } })
+    expect(vfs['/projects/vs/view.json']).toBeDefined()
+    const got = await host.handleInvoke('view_state_get', {}) as { timeline_px_per_sec: number; track_heights: Record<string, number>; expanded_tracks: string[] }
+    expect(got.timeline_px_per_sec).toBe(200)
+    expect(got.track_heights.t1).toBe(64)
+    expect(got.expanded_tracks).toEqual(['t1'])
+    host.stop()
+  })
+
+  it('pre-workspace: view_state_get returns defaults and view_state_set is a no-op', async () => {
+    const { deps, vfs } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    const got = await host.handleInvoke('view_state_get', {}) as { timeline_px_per_sec: number }
+    expect(got.timeline_px_per_sec).toBe(80)
+    await host.handleInvoke('view_state_set', { state: { timeline_px_per_sec: 999, track_heights: {}, expanded_tracks: [] } })
+    expect(Object.keys(vfs).some((k) => k.endsWith('view.json'))).toBe(false)
     host.stop()
   })
 })

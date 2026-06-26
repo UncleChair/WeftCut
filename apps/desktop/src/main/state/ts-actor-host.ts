@@ -16,6 +16,8 @@ import type { BuiltinMotif, MotifLayerRef } from '../motif/authoring'
 import type { MotifParams, MotifRebindEntry } from './model'
 import type { AppSettingsStore } from '../app-settings'
 import type { AppSettingsPatch } from '../../shared/app-settings'
+import type { ViewStateStore } from '../view-state'
+import { viewStateDefaults, type ViewState } from '../../shared/view-state'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -69,6 +71,9 @@ export interface TsActorHostDeps {
   /** App-level prefs store (config-dir JSON, owned in TS main). Optional → the
    *  'appSettings' route throws if a renderer hits it without one wired. */
   appSettings?: AppSettingsStore
+  /** Per-workspace view.json store (owned in TS main). Optional → the
+   *  'viewState' route throws if a renderer hits it without one wired. */
+  viewState?: ViewStateStore
 }
 
 interface PersistenceHandlers {
@@ -314,6 +319,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         const after = store.apply(patch)
         deps.send('app_settings:changed', after)
         return after
+      }
+      case 'viewState': {
+        const store = deps.viewState
+        if (!store) return reject('view_state: store not configured')
+        const ws = deps.workspaceDir()
+        if (channel === 'view_state_get') return ws ? store.load(ws) : viewStateDefaults()
+        // view_state_set: pre-workspace (ws null) silently drops, matching the
+        // old Rust behavior — the next debounced write lands after Save As.
+        const state = (args as { state?: ViewState }).state
+        if (ws && state) store.save(ws, state)
+        return null
       }
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
