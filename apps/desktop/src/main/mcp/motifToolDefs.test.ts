@@ -14,12 +14,13 @@ const MCP_MOTIF_NAMES = new Set([
   'list_motifs',
   'get_motif_source',
   'write_motif_draft',
+  'preview_motif_draft',
   'install_motif',
   'delete_motif',
 ])
 
 describe('MOTIF_TOOL_DEFS', () => {
-  it('contains exactly the 5 MCP-advertised motif tool names', () => {
+  it('contains exactly the 6 MCP-advertised motif tool names', () => {
     expect(new Set(MOTIF_TOOL_DEFS.map((d) => d.name))).toEqual(MCP_MOTIF_NAMES)
   })
 

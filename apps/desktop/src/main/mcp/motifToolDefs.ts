@@ -2,8 +2,10 @@
 // TS-owned MCP tool defs + resource defs for the motif surface (Phase 4 Task 1).
 // Descriptions verbatim from native/src/mcp/catalog.rs lines 88–118.
 // inputSchemas verbatim from fixtures/mcp/rust-catalog-snapshot.json.
-// preview_motif_draft stays on the Rust path (special-cased capture in server.ts)
-// and is NOT included here.
+// All 6 motif tool DEFS live here so they survive the Phase 4 Task 3 deletion of
+// the Rust motif arms. preview_motif_draft's DEF is TS-sourced like the others, but
+// its EXECUTION still routes 'rust' (the CDP capture special-case in server.ts) —
+// only its advertised def moved.
 
 export interface MotifToolDef {
   name: string
@@ -85,6 +87,47 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
       },
       required: ['html', 'manifest'],
       title: 'WriteMotifDraftArgs',
+      type: 'object',
+    },
+  },
+  {
+    name: 'preview_motif_draft',
+    description:
+      'Render one frame of a Motif (draft / installed / built-in) and return it as a ' +
+      'base64-encoded PNG, so you can SEE your output and self-correct. Args: `id`, ' +
+      '`t_sec` (content time), optional `width`/`height` (default = the motif\'s size), ' +
+      'optional `props`. Requires the app\'s preview runtime to be live; returns an error ' +
+      '(rather than hanging) if it isn\'t ready.',
+    inputSchema: {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      properties: {
+        height: {
+          description: 'Optional render height (default = the motif\'s manifest height).',
+          format: 'uint32',
+          minimum: 0,
+          type: ['integer', 'null'],
+        },
+        id: {
+          description: 'Motif id (draft / installed / built-in).',
+          type: 'string',
+        },
+        props: {
+          description: 'Optional props (JSON object); defaults to the manifest defaults.',
+        },
+        t_sec: {
+          description: 'Content time in seconds to render (e.g. 0 = first frame).',
+          format: 'double',
+          type: 'number',
+        },
+        width: {
+          description: 'Optional render width (default = the motif\'s manifest width).',
+          format: 'uint32',
+          minimum: 0,
+          type: ['integer', 'null'],
+        },
+      },
+      required: ['id', 'props', 't_sec'],
+      title: 'PreviewMotifDraftArgs',
       type: 'object',
     },
   },

@@ -13,9 +13,12 @@ const rust = JSON.parse(readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 
 const allRustNames = rust.tools.map((t) => t.name)
 const tsNames = new Set(MCP_TOOL_DEFS.map((d) => d.name))
 const motifNames = new Set(MOTIF_TOOL_DEFS.map((d) => d.name))
-// Phase 4 derivation: "Rust-native" = only tools that route 'rust' or 'hybrid'.
-// Motif tools (route 'motif') now come from the TS motif table — excluded from nativeNames.
-const nativeNames = allRustNames.filter((n) => { const r = routeMcpTool(n); return r === 'rust' || r === 'hybrid' })
+// Phase 4 derivation: the TS tables (MCP_TOOL_DEFS + MOTIF_TOOL_DEFS) are the source of
+// truth for any tool they list; mergeMcpCatalog dedups by NAME. So "Rust-native" = every
+// advertised Rust name that neither TS table claims. This is name-based, not route-based:
+// preview_motif_draft routes 'rust' for execution but its DEF is in motifNames, so it
+// belongs to the motif bucket here (and survives the Rust motif-arm deletion).
+const nativeNames = allRustNames.filter((n) => !tsNames.has(n) && !motifNames.has(n))
 
 // ── Assertion 4: structural-field exclusions ─────────────────────────────────
 // These (tool, field) pairs are excluded from the "omit a required field → throw"
@@ -66,9 +69,16 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
     expect(merged).toEqual(new Set(allRustNames))
   })
 
-  it('2. every TS-table name routes to ts; every MOTIF_TOOL_DEFS name routes to motif', () => {
+  it('2. every TS-table name routes to ts; every motif def routes to motif except preview (rust capture)', () => {
     for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name)).toBe('ts')
-    for (const d of MOTIF_TOOL_DEFS) expect(routeMcpTool(d.name)).toBe('motif')
+    for (const d of MOTIF_TOOL_DEFS) {
+      // preview_motif_draft is the one motif DEF whose EXECUTION is not the motif-store
+      // route: it is served by the CDP-capture special-case in server.ts, so it routes
+      // 'rust'. Its def still lives in MOTIF_TOOL_DEFS so it survives the Phase 4 Task 3
+      // deletion of the Rust motif arms. The other 5 route to the 'motif' store path.
+      if (d.name === 'preview_motif_draft') expect(routeMcpTool(d.name)).toBe('rust')
+      else expect(routeMcpTool(d.name)).toBe('motif')
+    }
   })
 
   it('3. every ts-routed name is in the TS table; every hybrid-routed name is in HYBRID_TOOLS; every motif-routed name in allRustNames is in motifNames', () => {
