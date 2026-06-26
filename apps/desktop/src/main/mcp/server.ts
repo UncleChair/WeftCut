@@ -13,8 +13,9 @@ import { routeMcpTool } from './mutationTools.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
-import { mergeMcpCatalog } from './mcpCatalog.js'
+import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
+import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -89,16 +90,22 @@ export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | 
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const rust = (JSON.parse(await backend.mcpCatalog()) as { tools: Array<{ name: string }> }).tools
-    return { tools: mergeMcpCatalog(rust, MCP_TOOL_DEFS) } as unknown as ServerResult
+    return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
   })
   server.setRequestHandler(CallToolRequestSchema, async (req) =>
     handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>),
   )
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    const cat = JSON.parse(await backend.mcpCatalog()) as { resources: unknown[] }
-    return { resources: cat.resources } as unknown as ServerResult
+    const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }
+    return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult
   })
   server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+    const tsHost = getTsHost()
+    if (req.params.uri === 'motifs://current' && tsHost) {
+      const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>
+      const list = raw.map((e) => { const { html: _html, ...rest } = e; return rest })
+      return { contents: [{ uri: 'motifs://current', mimeType: 'application/json', text: JSON.stringify(list) }] } as unknown as ServerResult
+    }
     return unwrap(await backend.mcpReadResource(req.params.uri)) as ServerResult
   })
   server.setRequestHandler(ListPromptsRequestSchema, async () => {

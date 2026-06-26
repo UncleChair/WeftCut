@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { routeMcpTool, HYBRID_TOOLS, MOTIF_TOOLS } from './mutationTools'
 import { MCP_TOOLS, MCP_TOOL_DEFS } from '../state/mcp-commands'
 import { mergeMcpCatalog } from './mcpCatalog'
+import { MOTIF_TOOL_DEFS } from './motifToolDefs'
 
 describe('routeMcpTool', () => {
   it('routes ported mutations + reads to ts', () => {
@@ -51,7 +52,8 @@ describe('merged ListTools is a clean catalog↔handler bijection', () => {
      { name: 'install_motif' }, { name: 'motif_staleness_report' }, { name: 'acknowledge_motif_staleness' }, { name: 'synthesize_speech' }],
   )
   const tsDefs = MCP_TOOL_DEFS.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }))
-  const merged = mergeMcpCatalog(rust4a, tsDefs)
+  const motifDefs = MOTIF_TOOL_DEFS.map((d) => ({ name: d.name, description: d.description, inputSchema: d.inputSchema }))
+  const merged = mergeMcpCatalog(rust4a, [...tsDefs, ...motifDefs])
 
   it('no duplicate names', () => {
     const names = merged.map((t) => t.name)

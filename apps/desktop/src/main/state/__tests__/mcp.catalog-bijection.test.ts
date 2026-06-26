@@ -7,12 +7,15 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { routeMcpTool, HYBRID_TOOLS } from '../../mcp/mutationTools'
+import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
 
 const rust = JSON.parse(readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')) as { tools: Array<{ name: string }> }
 const allRustNames = rust.tools.map((t) => t.name)
 const tsNames = new Set(MCP_TOOL_DEFS.map((d) => d.name))
-// 4a derivation: "Rust-native" = the live catalog minus the ts-routed names.
-const nativeNames = allRustNames.filter((n) => routeMcpTool(n) !== 'ts')
+const motifNames = new Set(MOTIF_TOOL_DEFS.map((d) => d.name))
+// Phase 4 derivation: "Rust-native" = only tools that route 'rust' or 'hybrid'.
+// Motif tools (route 'motif') now come from the TS motif table — excluded from nativeNames.
+const nativeNames = allRustNames.filter((n) => { const r = routeMcpTool(n); return r === 'rust' || r === 'hybrid' })
 
 // ── Assertion 4: structural-field exclusions ─────────────────────────────────
 // These (tool, field) pairs are excluded from the "omit a required field → throw"
@@ -52,26 +55,28 @@ const STRUCTURAL_REQUIRED: Record<string, ReadonlySet<string>> = {
 }
 
 describe('MCP catalog↔handler bijection (permanent gate)', () => {
-  it('1. merged catalog (native ∪ TS table) is an exact union — no dup, no drop', () => {
-    const merged = new Set([...nativeNames, ...tsNames])
-    // nativeNames are constructed by filtering to non-'ts' routes, so by
-    // construction any ts-routed name is absent from nativeNames.
+  it('1. merged catalog (native ∪ TS table ∪ motif table) is an exact union — no dup, no drop', () => {
+    const merged = new Set([...nativeNames, ...tsNames, ...motifNames])
+    // No overlap among the three buckets.
     expect(nativeNames.filter((n) => tsNames.has(n))).toEqual([])
-    // exact union: merged equals the advertised Rust set (no drop, no extra).
-    // In 4a every TS tool is still Rust-advertised, so the two sets coincide;
-    // in 4b the same assertion re-targets the post-split merged catalog.
+    expect(nativeNames.filter((n) => motifNames.has(n))).toEqual([])
+    expect([...tsNames].filter((n) => motifNames.has(n))).toEqual([])
+    // Exact union: merged equals the advertised Rust set (no drop, no extra).
+    // nativeNames excludes motif-routed names; motifNames covers them instead.
     expect(merged).toEqual(new Set(allRustNames))
   })
 
-  it('2. every TS-table name routes to ts (advertised ⇒ handled by the TS path)', () => {
+  it('2. every TS-table name routes to ts; every MOTIF_TOOL_DEFS name routes to motif', () => {
     for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name)).toBe('ts')
+    for (const d of MOTIF_TOOL_DEFS) expect(routeMcpTool(d.name)).toBe('motif')
   })
 
-  it('3. every ts-routed name is in the TS table; every hybrid-routed name is in HYBRID_TOOLS (handled ⇒ advertised)', () => {
+  it('3. every ts-routed name is in the TS table; every hybrid-routed name is in HYBRID_TOOLS; every motif-routed name in allRustNames is in motifNames', () => {
     for (const n of allRustNames) {
       const r = routeMcpTool(n)
       if (r === 'ts') expect(tsNames.has(n)).toBe(true)
       if (r === 'hybrid') expect(HYBRID_TOOLS.has(n)).toBe(true)
+      if (r === 'motif') expect(motifNames.has(n)).toBe(true)
     }
   })
 
