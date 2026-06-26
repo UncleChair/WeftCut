@@ -214,8 +214,11 @@ app.whenReady().then(async () => {
   mcpHostRef = mcpHost
 
   // TS-actor host: construct after mcpHostRef is set (emitChange relays via mcpNotify).
-  // DORMANT unless WEFTCUT_TS_ACTOR=1 — flag-off leaves existing behavior 100% unchanged.
-  const tsActorOn = process.env['WEFTCUT_TS_ACTOR'] === '1'
+  // DEFAULT-ON (Phase 4 transition): the TS state actor is authoritative unless
+  // explicitly disabled with WEFTCUT_TS_ACTOR=0. The opt-out is a brief transition
+  // bridge to the Rust fallback — Phase 4b deletes the actor + removes this flag and
+  // always constructs tsHost.
+  const tsActorOn = process.env['WEFTCUT_TS_ACTOR'] !== '0'
   if (tsActorOn) {
     const { createTsActorHost } = await import('./state/ts-actor-host.js')
 
