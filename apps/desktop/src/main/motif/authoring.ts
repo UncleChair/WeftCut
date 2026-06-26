@@ -9,8 +9,9 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   BUILTIN_IDS, BUILTIN_MANIFESTS, type Manifest,
-  parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId,
+  parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId, canonicalizePropsLenient,
 } from '../../shared/motifs/catalog'
+import type { MotifRebindEntry } from '../state/model'
 import { motifContentHash } from './contentHash'
 import type { UserMotifStore } from './store'
 
@@ -152,4 +153,76 @@ export function importMotifFromSource(store: UserMotifStore, source: string): st
 export function deleteMotifCore(store: UserMotifStore, id: string): void {
   if (BUILTIN_IDS.includes(id)) throw new Error(`cannot delete the built-in Motif '${id}'`)
   store.deleteUserMotif(id)
+}
+
+// ---------------------------------------------------------------------------
+// Install compute (Task 3) — buildRebindUpdates + installMotifCompute
+// ---------------------------------------------------------------------------
+
+export interface MotifLayerRef { layerId: string; motifId: string; props: Record<string, unknown> }
+export type InstallArgs = { draft_id: string; mode: { kind: 'new' } | { kind: 'update'; target_id: string } }
+
+/** Per-layer rebind updates for an Update: every layer whose motif_id is the
+ *  working draft id OR the target id ends up on the target id, at the new version,
+ *  with props lenient-migrated to the new schema (drop unknown, fill new defaults,
+ *  fall back invalid values). Pure. Mirrors `build_rebind_updates`. */
+export function buildRebindUpdates(layers: MotifLayerRef[], workingId: string, target: Manifest): MotifRebindEntry[] {
+  return layers
+    .filter((l) => l.motifId === workingId || l.motifId === target.id)
+    .map((l) => ({
+      layer_id: l.layerId,
+      motif_id: target.id,
+      motif_version: target.version,
+      props: canonicalizePropsLenient(target, l.props),
+    }))
+}
+
+/** Publish the draft (store side) + (Update) build rebind updates from the
+ *  caller-supplied motif layers; returns `{ publishedId, updates }`. New mode →
+ *  empty updates. Does NOT write the actor (the host dispatches rebind_motif).
+ *  Mirrors `install_motif_compute`. */
+export function installMotifCompute(
+  store: UserMotifStore,
+  motifLayers: MotifLayerRef[],
+  args: InstallArgs,
+): { publishedId: string; updates: MotifRebindEntry[] } {
+  const draft = store.getDraft(args.draft_id)
+  if (!draft) throw new Error(`unknown draft '${args.draft_id}'`)
+  // Re-validate at the install gate (the on-disk draft could have been hand-edited).
+  validateManifest(draft.manifest)
+
+  let isUpdate = false
+  let finalId: string
+  let version: number
+  if (args.mode.kind === 'new') {
+    // Draft id was made final-ready at write time; keep it (placed layers need no
+    // rebind). Guard the rare race where a published Motif took the id since.
+    const id = draft.manifest.id
+    if (store.publishedIds().includes(id))
+      throw new Error(`a Motif '${id}' is already installed; rename the draft before installing`)
+    finalId = id; version = 1
+  } else {
+    const targetId = args.mode.target_id
+    if (BUILTIN_IDS.includes(targetId)) throw new Error(`cannot overwrite the built-in Motif '${targetId}'`)
+    const prev = store.getMotif(targetId)
+    if (!prev) throw new Error(`update target '${targetId}' is not an installed Motif`)
+    isUpdate = true
+    finalId = targetId; version = prev.manifest.version + 1 // bump → frame cache invalidates
+  }
+
+  const manifest: Manifest = { ...draft.manifest, id: finalId, version }
+  const html = composeMotifHtml(manifest, draft.html)
+  // Rewrite the draft's island to the final id + bumped version, THEN move it into
+  // the published slot. Order matters: if installDraft fails, only the DRAFT is
+  // dirty; a retry re-derives the same final_id and re-runs both steps safely.
+  store.writeDraft(args.draft_id, html)
+  store.installDraft(args.draft_id, finalId)
+
+  let updates: MotifRebindEntry[] = []
+  if (isUpdate) {
+    const target = store.getMotif(finalId)
+    if (!target) throw new Error(`installed target '${finalId}' not readable`)
+    updates = buildRebindUpdates(motifLayers, args.draft_id, target.manifest)
+  }
+  return { publishedId: finalId, updates }
 }

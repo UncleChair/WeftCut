@@ -180,3 +180,60 @@ describe('deleteMotifCore', () => {
     expect(() => deleteMotifCore(store, BUILTIN_IDS[0])).toThrow(/cannot delete the built-in/)
   })
 })
+
+import { buildRebindUpdates, installMotifCompute, type MotifLayerRef, type InstallArgs } from './authoring'
+
+describe('buildRebindUpdates', () => {
+  it('retargets draft + target layers and lenient-migrates props', () => {
+    const target: Manifest = {
+      ...m('Foo', 'foo'), version: 2,
+      props_schema: { title: { kind: 'String', default: 'Hi' } } as any,
+    }
+    const layers: MotifLayerRef[] = [
+      { layerId: 'la', motifId: 'wip', props: { old: 1 } },
+      { layerId: 'lb', motifId: 'foo', props: { old: 2 } },
+      { layerId: 'lc', motifId: 'other', props: {} }, // untouched
+    ]
+    const updates = buildRebindUpdates(layers, 'wip', target)
+    expect(updates.length).toBe(2)
+    for (const u of updates) {
+      expect(u.motif_id).toBe('foo'); expect(u.motif_version).toBe(2)
+      expect(u.props.old).toBeUndefined()      // dropped (lenient)
+      expect(u.props.title).toBe('Hi')         // filled default
+    }
+  })
+})
+
+describe('installMotifCompute', () => {
+  it('New mode: keeps the draft id, version 1, no updates', () => {
+    store.writeDraft('foo', doc(m('Foo', 'foo')))
+    const r = installMotifCompute(store, [], { draft_id: 'foo', mode: { kind: 'new' } })
+    expect(r.publishedId).toBe('foo'); expect(r.updates).toEqual([])
+    expect(store.getMotif('foo')!.manifest.version).toBe(1)
+  })
+  it('New mode: rejects if a published Motif already took the id', () => {
+    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    store.writeDraft('foo', doc(m('Foo', 'foo'))) // a second draft re-using the id
+    expect(() => installMotifCompute(store, [], { draft_id: 'foo', mode: { kind: 'new' } })).toThrow(/already installed/)
+  })
+  it('Update mode: bumps version, retargets layers from the working draft', () => {
+    // publish target "foo" v1
+    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    // a working draft "wip" targeting foo
+    store.writeDraft('wip', doc(m('Foo', 'wip')))
+    const layers: MotifLayerRef[] = [{ layerId: 'la', motifId: 'wip', props: {} }]
+    const r = installMotifCompute(store, layers, { draft_id: 'wip', mode: { kind: 'update', target_id: 'foo' } })
+    expect(r.publishedId).toBe('foo')
+    expect(store.getMotif('foo')!.manifest.version).toBe(2)
+    expect(r.updates.length).toBe(1)
+    expect(r.updates[0]).toMatchObject({ layer_id: 'la', motif_id: 'foo', motif_version: 2 })
+  })
+  it('Update mode: rejects a built-in target', () => {
+    store.writeDraft('wip', doc(m('Foo', 'wip')))
+    expect(() => installMotifCompute(store, [], { draft_id: 'wip', mode: { kind: 'update', target_id: 'countdown' } }))
+      .toThrow(/cannot overwrite the built-in/)
+  })
+  it('rejects an unknown draft', () => {
+    expect(() => installMotifCompute(store, [], { draft_id: 'ghost', mode: { kind: 'new' } })).toThrow(/unknown draft/)
+  })
+})
