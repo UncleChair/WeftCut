@@ -1233,12 +1233,15 @@ mod tests {
 
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn mcp_catalog_lists_ping_and_add_track() {
+    async fn mcp_catalog_lists_ping_and_apply_subtitles() {
+        // Phase 4b T3: Rust catalog is native/compute/hybrid only.
+        // `add_track` is TS-served and must NOT appear here.
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
         let cat = b.mcp_catalog().await.unwrap();
         assert!(cat.contains("\"ping\""));
-        assert!(cat.contains("\"add_track\""));
+        assert!(cat.contains("\"apply_subtitles\""));
+        assert!(!cat.contains("\"add_track\""), "add_track must not be in the Rust-native catalog (Phase 4b T3)");
         // every tool advertises an object inputSchema
         let v: serde_json::Value = serde_json::from_str(&cat).unwrap();
         for t in v["tools"].as_array().unwrap() {
@@ -1269,21 +1272,8 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "mcp")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn mcp_call_tool_add_track_grows_summary() {
-        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
-        b.init().await.unwrap();
-        let before: serde_json::Value =
-            serde_json::from_str(&b.dispatch("project_summary", "{}").await.unwrap()).unwrap();
-        let baseline = before["track_count"].as_u64().unwrap();
-        let reply: serde_json::Value =
-            serde_json::from_str(&b.mcp_call_tool("add_track".into(), "{}".into()).await.unwrap()).unwrap();
-        assert_eq!(reply["ok"], true, "got {reply}");
-        let after: serde_json::Value =
-            serde_json::from_str(&b.dispatch("project_summary", "{}").await.unwrap()).unwrap();
-        assert_eq!(after["track_count"].as_u64().unwrap(), baseline + 1);
-    }
+    // mcp_call_tool_add_track_grows_summary deleted (Phase 4b T3):
+    // add_track is now TS-served; Rust's dispatch_tool returns not_found for it.
 
     #[cfg(feature = "cloud")]
     #[tokio::test]

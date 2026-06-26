@@ -6,19 +6,17 @@
 //!
 //! Module shape:
 //! - `wire`     — transport-agnostic result/error/catalog types.
-//! - `tools`    — every active tool as a `pub(super) async fn(&Backend, Args)`.
+//! - `tools`    — native/compute/hybrid-compute tools; TS-executed mutations
+//!   were deleted in Phase 4b T3 (served by the TS actor's `MCP_TOOLS` table).
 //! - `resources`— the read-only `project://*` / `media://*` resource readers.
 //! - `prompts`  — user-invokable prompt templates (`cut-silences`).
-//! - `keyframes`— keyframe-authoring helpers (the thin tool wrappers live in
-//!   `tools.rs`).
 //! - `catalog`  — the `tool_table!` macro feeding BOTH the advertised schemas
-//!   and the name→handler dispatch.
+//!   and the name→handler dispatch (trimmed to native/compute/hybrid, Phase 4b T3).
 //!
 //! Design: `docs/mcp.md`.
 
 mod catalog;
 mod effects;
-mod keyframes;
 mod prompts;
 mod resources;
 mod tools;
