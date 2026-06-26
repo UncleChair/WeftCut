@@ -306,37 +306,61 @@ git commit   # subject: refactor(state-migration): split MCP catalog — Rust ad
 
 ---
 
-## Task 4: ⚠️ THE IRREVERSIBLE CORE — delete the Rust actor + every live consumer
+## Task 4a: Extract the actor-owned shared types into a surviving module (GREEN refactor — reversible)
 
-> One coupled deletion. The Rust build will NOT be green until every sub-step is done. Work top-to-bottom, then build. The pre-flight tag (`state-corpus-frozen-pre-phase4b`) is the recovery point.
+> **Why this exists (Task-4 BLOCKED finding, 2026-06-26):** `state/actor.rs` (~3845 lines) and `state/validate.rs` are NOT purely actor logic — they DEFINE shared types that KEPT code uses: `CommandError` (actor.rs ~L351; return type of kept `jobs::commit_media_*`, pattern-matched in kept `mcp/tools.rs` `map_command_error`), `ValidationError` (validate.rs ~L23; its `LayerOverlap`/`MediaInUse` variants matched in kept `mcp/tools.rs`), `Actor` (~L45), `MediaDerivativesPatch` (~L270; kept `jobs/mod.rs`, `commands/media.rs`, `jobs/import.rs`), `MotifRebindEntry` (~L220; kept `commands/motif_authoring.rs::acknowledge_motif_compute`), and the `*Patch` structs. Deleting those files wholesale (old Task 4) orphans the survivors → won't compile. 4a moves the surviving types to a permanent home FIRST (a pure refactor that builds green while the actor still exists); 4b then deletes the actor machinery cleanly.
 
-**Files (delete wholesale):**
-- `apps/desktop/native/src/state/actor.rs`, `state/actor/mutations.rs`, `state/actor/tests.rs`, `state/history.rs`, `state/validate.rs`
-- `apps/desktop/native/src/commands/mutations.rs`, `commands/history.rs`, `commands/query.rs`
-- `apps/desktop/native/src/io/autosave.rs`
+**Files:**
+- Create: `apps/desktop/native/src/state/command.rs` (the surviving shared types)
+- Modify: `apps/desktop/native/src/state/actor.rs` (remove the extracted type defs ~L45-457; the actor machinery stays this task but now imports the types from `command`)
+- Modify: `apps/desktop/native/src/state/validate.rs` (move `ValidationError` out; drop the validator FUNCTIONS — no kept caller, TS validates now, the frozen corpus replays through TS)
+- Modify: `apps/desktop/native/src/state/mod.rs` (add `mod command; pub use command::{…}`; re-point the `pub use` that pointed at actor/validate for the moved types)
+- Modify: kept consumers that import via `crate::state::actor::X` / `crate::state::validate::X` for a moved type — re-point to `crate::state::command::X` (the compiler lists them: `commands/mod.rs`, `commands/media.rs`, `commands/motif_authoring.rs`, `jobs/mod.rs`, `jobs/import.rs`, `mcp/tools.rs`, and `actor.rs`/`mutations.rs`/`history.rs` themselves).
 
-**Files (partial edits):**
-- `apps/desktop/native/src/state/mod.rs` — drop `mod actor; mod history; mod validate;` (or the `actor` submodule wiring) + the `pub use actor::{ProjectHandle, ProjectActor, spawn, …}` / `pub use history::{…}` / `pub use validate::{…}` re-exports; KEEP all model `mod`/`pub use`.
-- `apps/desktop/native/src/commands/mod.rs` — drop `pub mod mutations; pub mod history; pub mod query;` and the `build_project_summary` fn + `ProjectSummary` type (~L321-…); KEEP the other command modules.
-- `apps/desktop/native/src/lib.rs:18-19` — drop `pub use commands::build_project_summary;`.
-- `apps/desktop/native/src/napi_backend.rs` — see sub-steps (dispatch arms, `Backend` field, `init`, `snapshot_for_read`, debug arms, replay constructors).
-- `apps/desktop/native/src/jobs/mod.rs` — `commit_media_derivatives`/`commit_media_workspace_paths` signature change + `TS_DERIVATIVE_AUTHORITY` removal + callers.
-- `apps/desktop/src/main/index.ts` — drop `backend.setTsDerivativeAuthority(true)` (the Rust method is being removed).
-- `apps/desktop/native/index.d.ts` — drop `setTsDerivativeAuthority` (regenerated in T6, but remove the call site now).
+- [ ] **Step 1: Create `state/command.rs`** holding, moved verbatim from `actor.rs` (~L45-457, i.e. the type block BEFORE `Command`/`ChangeEvent`/`DryRun*`/`HistoryStatus`/`ProjectHandle`/`ProjectActor`/`spawn`): `CommandError` (keep the FULL enum — do NOT prune variants), `Actor`, `EntityRef`/`LayerEdge` (if present and used), `MediaDerivativesPatch`, `MotifRebindEntry`, and the patch structs (`LayerPatch`, `LayerParamsPatch`, `TextPatch`, `VideoClipPatch`, `ImageOverlayPatch`, `MotifPatch`, `ColorPatch`, `AudioPatch`, `MarkerPatch`, `CompositionPatch`, `CaptionStylePatch`). Move `ValidationError` (the enum + variants) here from `validate.rs`. Preserve all derives/serde attrs byte-for-byte. Keep `impl From<ValidationError> for CommandError` with the type. (Edit `.rs` with Edit/Write — never Set-Content.)
 
-- [ ] **Step 1: Delete the actor core files** (`state/actor.rs`, `state/actor/mutations.rs`, `state/actor/tests.rs`, `state/history.rs`, `state/validate.rs`) and fix `state/mod.rs` (drop the modules + their re-exports; keep the model). The 5,429-line `actor/tests.rs` goes with it (its coverage is replaced by the TS suite + frozen differential gates).
+- [ ] **Step 2: Trim `validate.rs`.** Delete the validator FUNCTIONS (e.g. `validate(...)` and helpers — confirm via grep no KEPT code calls them; only the deleted actor did). If `validate.rs` is left empty, delete it + its `mod validate;`. If a kept helper remains, keep a trimmed file. `ValidationError` now lives in `command.rs`.
 
-- [ ] **Step 2: Delete the renderer dispatch fallback.** Delete `commands/mutations.rs`, `commands/history.rs`, `commands/query.rs`; update `commands/mod.rs` (drop the modules + `build_project_summary`/`ProjectSummary`); drop `lib.rs:18-19`. In `napi_backend.rs` `dispatch()` (the big `match` ~L680+): delete every arm that called `commands::mutations::*`, `commands::history::*`, or `commands::query::project_summary` — plus the `debug_lock_history`/`debug_unlock_history`/`debug_simulate_agent_session` arms. **KEEP** the arms for channels the router still sends to `'rust'`: the `PURE_NATIVE ∪ PERSISTENCE ∪ MIRROR_BACKED_READS` sets in `router.ts:40-52` (e.g. `ping`, `mux_export`, settings/recents/keybindings/log stores, `export_project_audio_only`, `ensure_conform`, `get_media_thumbnail`, `get_waveform_peaks`, `motif_staleness_report`, motif authoring) + the hybrid-compute channels. Cross-check the kept arms against that allowlist.
+- [ ] **Step 3: Re-point `state/mod.rs` + all consumers.** Add `mod command; pub use command::{CommandError, ValidationError, Actor, MediaDerivativesPatch, MotifRebindEntry, …the patch types…};`. Keep the `actor`/`history`/`validate`-machinery re-exports the actor still needs THIS task (they go in 4b). Fix every `crate::state::actor::{CommandError|Actor|…Patch}` and `crate::state::validate::ValidationError` import in kept + actor code to `crate::state::command::…`.
 
-- [ ] **Step 3: Remove the `DEBUG_ONLY` routing (TS).** In `apps/desktop/src/main/state/router.ts`: delete the `DEBUG_ONLY` set (line 55) and drop it from the `'rust'` fall-through condition (line 70). Update `router.test.ts` to remove `DEBUG_ONLY`/`debug_*` assertions. (The Rust debug handlers were deleted in Step 2; they have no e2e dependency — verified by grep, only `router.*`/`napi_backend.rs`/`commands/history.rs` referenced them.)
+- [ ] **Step 4: Build green (pure refactor — the actor still works).** Run: `npm run napi:build`, `cargo build --manifest-path apps/desktop/native/Cargo.toml --features jobs,export,mcp,cloud,motifs`, `cargo test --manifest-path apps/desktop/native/Cargo.toml --features jobs,export,mcp,cloud,motifs` → all green (no behavior change; tests unchanged). `npm run typecheck` + `npm test` → green, 0 skipped. `git diff --stat apps/desktop/fixtures/state-corpus/` → empty.
 
-- [ ] **Step 4: Delete autosave + the actor spawn in `Backend`.** Delete `io/autosave.rs` + its `mod autosave;`. In `napi_backend.rs` `init()`: delete the `state::spawn(...)` (~L147), the `handle.subscribe()` UI-event bridge (~L158), and `AutosaveController::spawn(handle, …)` (~L216). Delete the `Backend.project` field (the `OnceCell<ProjectHandle>` / actor handle) and the `pub fn project(&self) -> Result<&ProjectHandle, …>` method. Fix the two remaining `project()` callers found in the census — `enqueue_jobs_for_media` (~L330) and `commit_workspace` (~L462): these are jobs/workspace bookkeeping that no longer need the actor handle (the TS host drives state); remove the handle access (they should operate without the actor — confirm each compiles against the mirror or drops the unused read).
+- [ ] **Step 5: Commit.**
 
-- [ ] **Step 5: Make `snapshot_for_read` mirror-only.** In `napi_backend.rs` (~L619-624): remove the actor fallback (`self.project()?.snapshot().await`). Return the mirror's `Arc<Project>` snapshot; if the mirror is unset, return a clear error (bring-up guarantees it is pushed first — T2). Same for `mirror_history_view` if it had a fallback. KEEP `read_mirror`, `set_project_mirror`, `read_mirror_handle`.
+```bash
+git add -A apps/desktop/native/src/state/ apps/desktop/native/src/commands/ apps/desktop/native/src/jobs/ apps/desktop/native/src/mcp/tools.rs
+git status   # confirm command.rs is new, validate.rs trimmed/deleted, no other behavior files touched
+git commit   # subject: refactor(state-migration): extract actor-owned shared types to state/command.rs (Phase 4b T4a)
+```
 
-- [ ] **Step 6: Simplify the jobs write-back + remove the authority flag.** In `jobs/mod.rs`:
-  - Delete `TS_DERIVATIVE_AUTHORITY` (L58), `set_ts_derivative_authority` (L61-63), `ts_derivative_authority` (L65-67), and `actor_for_jobs()` (now dead — only the deleted `else` arms used it).
-  - Rewrite `commit_media_derivatives` to drop the `project: &ProjectHandle` param and the `if/else` — always emit:
+---
+
+## Task 4b: ⚠️ THE IRREVERSIBLE CORE — delete the Rust actor machinery + every live consumer
+
+> One coupled deletion. The Rust build will NOT be green until every sub-step is done. After 4a the surviving types live in `state/command.rs`, so this task deletes machinery only. The pre-flight tag (`state-corpus-frozen-pre-phase4b`) is the recovery point.
+
+**Files (delete wholesale):** `state/actor.rs`, `state/actor/mutations.rs`, `state/actor/tests.rs`, `state/history.rs`; `commands/mutations.rs`, `commands/history.rs`, `commands/query.rs`; `io/autosave.rs`. (`validate.rs` already handled in 4a.)
+
+**Files (partial edits):** `state/mod.rs`, `commands/mod.rs`, `commands/prefs.rs`, `commands/motif_authoring.rs`, `commands/authoring_commands.rs`, `lib.rs`, `napi_backend.rs`, `jobs/mod.rs` (+ job callers), `mcp/catalog.rs`, `mcp/tools.rs`, `src/main/index.ts`, `src/main/state/router.ts`, `src/main/state/router.test.ts`, `native/index.d.ts`.
+
+- [ ] **Step 1: Delete the actor machinery files** (`actor.rs`, `actor/mutations.rs`, `actor/tests.rs`, `history.rs`) and drop the now-dead `mod actor; mod history;` + the `pub use actor::{ProjectHandle, ProjectActor, spawn, Command, ChangeEvent, DryRun*, HistoryStatus, …}` / `pub use history::{…}` re-exports from `state/mod.rs`. KEEP `mod command;` (4a) + all model modules.
+
+- [ ] **Step 2: Delete the renderer dispatch fallback + the dead command modules.** Delete `commands/mutations.rs`, `commands/history.rs`, `commands/query.rs`; in `commands/mod.rs` drop those `pub mod`s + the `build_project_summary` fn + `ProjectSummary` type; drop `lib.rs` `pub use commands::build_project_summary;`. In `napi_backend.rs` `dispatch()` (the big `match`): delete every arm calling `commands::mutations::*` / `commands::history::*` / `commands::query::project_summary`, plus the `debug_lock_history`/`debug_unlock_history`/`debug_simulate_agent_session` arms. **KEEP** only the arms for channels the router sends to `'rust'` — the `PURE_NATIVE ∪ PERSISTENCE ∪ MIRROR_BACKED_READS` sets + the `HYBRID_CHANNELS` compute halves (read `src/main/state/router.ts`; cross-check each kept arm against that allowlist).
+
+- [ ] **Step 3: Delete the omitted dead survivors (the 4a investigation's findings).** These call `b.project()` but route to TS/hybrid → dead under the always-on host:
+  - `commands/prefs.rs`: `get_project_settings`, `update_project_settings`, `agent_session_end` (route → `projectSettings`/`command`/`agentSessionEnd` = TS). Delete the fns + their dispatch arms.
+  - `commands/motif_authoring.rs`: `install_motif`, `acknowledge_motif_staleness` (route → `hybrid`). Delete the fns + dispatch arms. Delete `commands/authoring_commands.rs::install_motif_core(&ProjectHandle)` (becomes dead). **KEEP** `commands/motif_authoring.rs::acknowledge_motif_compute` (the napi `compute_ack_motif_rebind` hybrid-compute half — it uses `MotifRebindEntry` from `command.rs`, no actor).
+  - Confirm each deletion with grep (no kept caller) before removing.
+
+- [ ] **Step 4: MCP handler reconciliation (the 4a hybrid/`begin_agent_session` finding).** In `mcp/tools.rs` + `mcp/catalog.rs`:
+  - The kept hybrid catalog entries `import_media` / `install_motif` / `synthesize_speech` (and `apply_subtitles` / `acknowledge_motif_staleness` if their handlers call `b.project()`) route `'hybrid'` → their Rust handlers are dead at runtime but their **catalog schema must STAY** (merge keeps non-`ts` names). **Stub** each such handler body to return a "handled by the TS host" error (mirror the existing `preview_motif_draft` stub pattern) instead of calling the deleted actor. Do NOT delete their `tool_table!` entries.
+  - `begin_agent_session` routes `'ts'` (in `MCP_TOOLS`) → `mergeMcpCatalog` filters it out of the Rust side. Delete its `tool_table!` entry + handler (the TS def supplies it). This corrects the T3 keep-list (it was kept then; it is a `'ts'` tool).
+
+- [ ] **Step 5: Delete autosave + the actor spawn in `Backend`.** Delete `io/autosave.rs` + `mod autosave;`. In `napi_backend.rs` `init()`: delete `state::spawn(...)`, the `handle.subscribe()` UI bridge, and `AutosaveController::spawn(...)`. Delete the `Backend.project` field (`OnceCell<ProjectHandle>`) + the `pub fn project(...)` method. Re-point the two remaining `project()` callers (`enqueue_jobs_for_media`, `commit_workspace`) to operate without the actor handle (drop the unused read).
+
+- [ ] **Step 6: Make `snapshot_for_read` mirror-only.** Remove the actor fallback (`self.project()?.snapshot()`); return the mirror snapshot, or a CLEAR error if the mirror is unset (bring-up guarantees it is pushed first — T2; never add an actor fallback). Same for `mirror_history_view` if it had one. KEEP `read_mirror`/`set_project_mirror`/`read_mirror_handle`.
+
+- [ ] **Step 7: Simplify the jobs write-back + remove the authority flag.** In `jobs/mod.rs`: delete `TS_DERIVATIVE_AUTHORITY`, `set_ts_derivative_authority`, `ts_derivative_authority`, `actor_for_jobs()`. Rewrite `commit_media_derivatives` (drop `project: &ProjectHandle`, always emit):
 
 ```rust
 pub(crate) async fn commit_media_derivatives(
@@ -352,22 +376,20 @@ pub(crate) async fn commit_media_derivatives(
 }
 ```
 
-  - Rewrite `commit_media_workspace_paths` the same way (drop `project: &ProjectHandle`, keep the emit arm, delete the `else`).
-  - Update **every caller** of these two fns to drop the `ProjectHandle` argument (the census flagged the napi open-time derivative fan-out + the proxy/conform/quick_proxy/waveform/thumbnail/import job sites). The compiler will list them; remove the now-unused `ProjectHandle` plumbing threaded through those job signatures.
-  - Delete the test-only `set_ts_derivative_authority(false/true)` setups in the `jobs` tests (~L840/848/982) and any test that depended on the Rust-write arm.
+  Rewrite `commit_media_workspace_paths` the same way. Update EVERY caller to drop the `ProjectHandle` arg + the now-unused handle plumbing threaded through `enqueue_for_media`/`enqueue_conform`/`enqueue_full_proxy`/`spawn_*`/`fresh_media_item`/`ImportQueue.enqueue`/`patch_derivative_paths_after_hash_migration` (the 4a trace; `fresh_media_item`/`patch_*` use `handle.snapshot()` as the actor fallback → make mirror-only). Delete the test-only `set_ts_derivative_authority(...)` setups + any test depending on the Rust-write arm.
 
-- [ ] **Step 7: Remove the napi `setTsDerivativeAuthority` method + its call site + replay constructors.** In `napi_backend.rs`: delete the `#[napi] pub fn set_ts_derivative_authority` method and the `#[cfg(feature="replay")]` `new_for_replay`/`init_for_replay` (~L665-679). In `apps/desktop/src/main/index.ts`: delete the `backend.setTsDerivativeAuthority(true)` call (added unconditionally in T2). In `native/index.d.ts`: delete the `setTsDerivativeAuthority(on: boolean): void` line (T6 regenerates the file; remove now so typecheck passes).
+- [ ] **Step 8: Remove the napi `setTsDerivativeAuthority` + call site + replay constructors.** In `napi_backend.rs`: delete the `#[napi] pub fn set_ts_derivative_authority` + the `#[cfg(feature="replay")]` `new_for_replay`/`init_for_replay`. In `src/main/index.ts`: delete the `backend.setTsDerivativeAuthority(true)` call (added in T2). In `native/index.d.ts`: delete the `setTsDerivativeAuthority(on: boolean): void` line.
 
-- [ ] **Step 8: Build the Rust side green.** Run: `npm run napi:build` and `cargo build --manifest-path apps/desktop/native/Cargo.toml --features jobs,export,mcp,cloud,motifs`. Iterate on the compiler's dangling-reference list until both succeed with **no `state::actor`/`ProjectHandle`/`history`/`validate` references remaining**. Run `cargo test --manifest-path apps/desktop/native/Cargo.toml --features jobs,export,mcp,cloud,motifs` → green (delete any surviving Rust test that drove the actor; the `napi_backend.rs` `project_summary_*` / actor tests at ~L1039+ go with the actor).
+- [ ] **Step 9: Remove `DEBUG_ONLY` routing (TS) + fix the T2 stale comment.** In `router.ts`: delete the `DEBUG_ONLY` set + drop it from the `'rust'` fall-through. In `router.test.ts`: remove `DEBUG_ONLY`/`debug_*` assertions AND fix the stale comment that still reads "…may reach Rust under WEFTCUT_TS_ACTOR" → drop the "under WEFTCUT_TS_ACTOR" flag-era phrasing.
 
-- [ ] **Step 9: Typecheck + full TS suite + frozen-corpus integrity.** Run: `npm run typecheck` (clean — the `index.d.ts` edit removed `setTsDerivativeAuthority`), `npm test` (TS baseline still green; the six differential gates still `skipped===[]` — they replay through the TS actor, unaffected by the Rust deletion). `git diff --stat apps/desktop/fixtures/state-corpus/` → empty.
+- [ ] **Step 10: Build green + frozen-corpus integrity.** Iterate against the compiler until: `npm run napi:build` + `cargo build --manifest-path apps/desktop/native/Cargo.toml --features jobs,export,mcp,cloud,motifs` succeed with **no `state::actor`/`ProjectHandle`/`spawn`/`mod actor`/`history`-machinery references remaining**; `cargo test … (same features)` green (delete actor tests, e.g. `napi_backend.rs` `project_summary_*`; do NOT weaken kept-code tests); `npm run typecheck` clean; `npm test` green + 0 skipped (the six differential gates replay through TS, unaffected); `git diff --stat apps/desktop/fixtures/state-corpus/` empty. Note any now-dead `pub` patch type in `command.rs` (unreferenced after the dead Args are gone) for final-review cleanup.
 
-- [ ] **Step 10: Commit (the point of no return).**
+- [ ] **Step 11: Commit (the point of no return).**
 
 ```bash
 git add -A apps/desktop/native/ apps/desktop/src/main/index.ts apps/desktop/src/main/state/router.ts apps/desktop/src/main/state/router.test.ts
-git status   # confirm the deleted files (actor.rs, mutations.rs, history.rs, validate.rs, autosave.rs, commands/{mutations,history,query}.rs) show as deletions
-git commit   # subject: feat(state-migration)!: delete the Rust state actor + all live consumers; mirror-only reads (Phase 4b T4 §4.1)
+git status   # confirm deletions: actor.rs, actor/mutations.rs, actor/tests.rs, history.rs, io/autosave.rs, commands/{mutations,history,query}.rs
+git commit   # subject: feat(state-migration)!: delete the Rust state actor machinery + all live consumers; mirror-only reads (Phase 4b T4b §4.1)
 ```
 
 ---
