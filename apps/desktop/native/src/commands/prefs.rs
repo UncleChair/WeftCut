@@ -1,7 +1,8 @@
-//! Prefs/settings/recents/keybindings/logs/agent commands — re-signed
+//! Prefs/settings/recents/logs/agent commands — re-signed
 //! from `commands_legacy.rs`. Bodies are copied verbatim; only the signature
 //! changes (the napi `Backend` carries the managed state) and the managed-state
 //! side effects are re-pointed at the matching `Backend` fields.
+//! Keybindings moved to TS (src/main/keybindings.ts; native/src/keybindings.rs deleted).
 
 use std::path::PathBuf;
 
@@ -77,43 +78,6 @@ pub async fn recents_last_new_project_parent(
         .map_err(|e| format!("{e:#}"))
 }
 
-// ---- Keybindings --------------------------------------------------------
-
-pub async fn keybindings_get(
-    backend: &Backend,
-) -> Result<crate::keybindings::KeybindingsMap, String> {
-    backend.keybindings.get().map_err(|e| format!("{e:#}"))
-}
-
-pub async fn keybindings_set(
-    backend: &Backend,
-    action: String,
-    keys: Vec<String>,
-) -> Result<(), String> {
-    backend.keybindings.set(action, keys).map_err(|e| format!("{e:#}"))
-}
-
-pub async fn keybindings_reset_all(backend: &Backend) -> Result<(), String> {
-    backend.keybindings.reset_all().map_err(|e| format!("{e:#}"))
-}
-
-pub async fn keybindings_export(backend: &Backend, dest: String) -> Result<(), String> {
-    backend
-        .keybindings
-        .export_to(PathBuf::from(dest))
-        .map_err(|e| format!("{e:#}"))
-}
-
-pub async fn keybindings_import(
-    backend: &Backend,
-    src: String,
-) -> Result<crate::keybindings::KeybindingsMap, String> {
-    backend
-        .keybindings
-        .import_from(&PathBuf::from(src))
-        .map_err(|e| format!("{e:#}"))
-}
-
 // ---- Agent session -------------------------------------------------------
 
 pub async fn agent_session_get(
@@ -174,28 +138,6 @@ pub struct RecentsRemoveArgs {
 #[serde(rename_all = "camelCase")]
 pub struct RecentsSetReopenOnLaunchArgs {
     pub value: bool,
-}
-
-/// `keybindings_set` — `{ action: String, keys: Vec<String> }`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeybindingsSetArgs {
-    pub action: String,
-    pub keys: Vec<String>,
-}
-
-/// `keybindings_export` — `{ dest: String }`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeybindingsExportArgs {
-    pub dest: String,
-}
-
-/// `keybindings_import` — `{ src: String }`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeybindingsImportArgs {
-    pub src: String,
 }
 
 /// `log_emit` — `{ input: LogEntryInput }`.

@@ -19,6 +19,7 @@ import type { AppSettingsPatch } from '../../shared/app-settings'
 import type { ViewStateStore } from '../view-state'
 import { viewStateDefaults, type ViewState } from '../../shared/view-state'
 import type { ExportSettingsStore } from '../export-settings'
+import type { KeybindingsStore } from '../keybindings'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -78,6 +79,9 @@ export interface TsActorHostDeps {
   /** Per-workspace export.json store (owned in TS main, opaque value). Optional → the
    *  'exportSettings' route throws if a renderer hits it without one wired. */
   exportSettings?: ExportSettingsStore
+  /** Per-user keybinding overrides (config-dir JSON, owned in TS main). Optional → the
+   *  'keybindings' route throws if a renderer hits it without one wired. */
+  keybindings?: KeybindingsStore
 }
 
 interface PersistenceHandlers {
@@ -345,6 +349,18 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         const settings = (args as { settings?: unknown }).settings
         if (ws && settings !== undefined) store.save(ws, settings)
         return null
+      }
+      case 'keybindings': {
+        const store = deps.keybindings
+        if (!store) return reject('keybindings: store not configured')
+        switch (channel) {
+          case 'keybindings_get': return store.get()
+          case 'keybindings_set': { const a = args as { action: string; keys: string[] }; store.set(a.action, a.keys); return null }
+          case 'keybindings_reset_all': store.resetAll(); return null
+          case 'keybindings_export': { const a = args as { dest: string }; store.exportTo(a.dest); return null }
+          case 'keybindings_import': { const a = args as { src: string }; return store.importFrom(a.src) }
+        }
+        return reject(`keybindings: unhandled channel ${channel}`)
       }
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)

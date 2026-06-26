@@ -16,6 +16,7 @@ export type Route =
   | { kind: 'appSettings' }   // app-level prefs store, owned in TS main (config-dir)
   | { kind: 'viewState' }     // per-workspace view.json store, owned in TS main
   | { kind: 'exportSettings' } // per-workspace export.json store, owned in TS main
+  | { kind: 'keybindings' }   // per-user keybinding overrides, owned in TS main (config-dir)
   | { kind: 'hybrid'; tool: string } // native-compute → TS-write (Phase 3d-e)
   | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install (Phase 2)
   | { kind: 'reject'; reason: string }
@@ -49,8 +50,7 @@ export const PURE_NATIVE: ReadonlySet<string> = new Set([
 /** Backend stores (config-dir), not the project actor. */
 export const PERSISTENCE: ReadonlySet<string> = new Set([
   'workspace_dir', 'recents_list', 'recents_remove', 'recents_get_reopen_on_launch', 'recents_set_reopen_on_launch',
-  'recents_most_recent', 'recents_last_new_project_parent', 'keybindings_get', 'keybindings_set', 'keybindings_reset_all',
-  'keybindings_export', 'keybindings_import', 'agent_session_get', 'log_list', 'log_clear', 'log_emit', 'log_dir_path',
+  'recents_most_recent', 'recents_last_new_project_parent', 'agent_session_get', 'log_list', 'log_clear', 'log_emit', 'log_dir_path',
 ])
 
 export function routeChannel(channel: string): Route {
@@ -71,6 +71,11 @@ export function routeChannel(channel: string): Route {
     case 'view_state_set': return { kind: 'viewState' }
     case 'export_settings_get':
     case 'export_settings_set': return { kind: 'exportSettings' }
+    case 'keybindings_get':
+    case 'keybindings_set':
+    case 'keybindings_reset_all':
+    case 'keybindings_export':
+    case 'keybindings_import': return { kind: 'keybindings' }
   }
   if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || MIRROR_BACKED_READS.has(channel))
     return { kind: 'rust' }

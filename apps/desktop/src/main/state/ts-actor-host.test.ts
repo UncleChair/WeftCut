@@ -7,6 +7,7 @@ import { UserMotifStore } from '../motif/store'
 import { createAppSettingsStore } from '../app-settings'
 import { createViewStateStore } from '../view-state'
 import { createExportSettingsStore } from '../export-settings'
+import { createKeybindingsStore } from '../keybindings'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -66,6 +67,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       appSettings: createAppSettingsStore({ fs: memFs, path: '/cfg/app_settings.json', dir: '/cfg' }),
       viewState: createViewStateStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
       exportSettings: createExportSettingsStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
+      keybindings: createKeybindingsStore({ fs: memFs, path: '/cfg/keybindings.json', dir: '/cfg' }),
     }
 
     return { deps, vfs, napiCalls, sent }
@@ -201,6 +203,47 @@ describe('createTsActorHost — persistence-route integration', () => {
     expect(got).toBeNull()
     await host.handleInvoke('export_settings_set', { settings: { codec: 'h264' } })
     expect(Object.keys(vfs).some((k) => k.endsWith('export.json'))).toBe(false)
+    host.stop()
+  })
+
+  it('keybindings_set persists and keybindings_get reads it back', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('keybindings_set', { action: 'undo', keys: ['Mod+Z', 'F3'] })
+    const got = await host.handleInvoke('keybindings_get', {}) as Record<string, string[]>
+    expect(got['undo']).toEqual(['Mod+Z', 'F3'])
+    host.stop()
+  })
+
+  it('keybindings_reset_all clears all overrides', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('keybindings_set', { action: 'undo', keys: ['F3'] })
+    await host.handleInvoke('keybindings_reset_all', {})
+    const got = await host.handleInvoke('keybindings_get', {}) as Record<string, string[]>
+    expect(got).toEqual({})
+    host.stop()
+  })
+
+  it('keybindings_get returns empty map when no file', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    const got = await host.handleInvoke('keybindings_get', {}) as Record<string, string[]>
+    expect(got).toEqual({})
+    host.stop()
+  })
+
+  it('keybindings empty keys (explicitly unbound) round-trips through the host', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('keybindings_set', { action: 'undo', keys: [] })
+    const got = await host.handleInvoke('keybindings_get', {}) as Record<string, string[]>
+    expect('undo' in got).toBe(true)
+    expect(got['undo']).toEqual([])
     host.stop()
   })
 })

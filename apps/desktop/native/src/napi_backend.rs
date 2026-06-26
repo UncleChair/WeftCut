@@ -18,7 +18,6 @@ use chrono::Utc;
 use crate::agent_session::AgentSessionSlot;
 use crate::cache::CacheLayout;
 use crate::events::{EventSink, TsfnEventSink};
-use crate::keybindings::KeybindingsStore;
 use crate::logs::{self, LogBusSlot};
 use crate::recents::RecentsStore;
 use crate::workspace::WorkspaceSlot;
@@ -37,7 +36,6 @@ pub(crate) struct ReadMirror {
 pub struct Backend {
     pub(crate) events: Arc<dyn EventSink>,
     pub(crate) recents: RecentsStore,
-    pub(crate) keybindings: KeybindingsStore,
     pub(crate) cache: CacheLayout,
     #[cfg(feature = "jobs")]
     pub(crate) import_queue: crate::jobs::import::ImportQueue,
@@ -98,8 +96,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
 
     Backend {
         events,
-        recents: RecentsStore::new(config_path.clone()),
-        keybindings: KeybindingsStore::new(config_path),
+        recents: RecentsStore::new(config_path),
         cache,
         #[cfg(feature = "jobs")]
         import_queue,
@@ -488,20 +485,6 @@ impl Backend {
             }
             "recents_most_recent" => ser(crate::commands::prefs::recents_most_recent(self).await),
             "recents_last_new_project_parent" => ser(crate::commands::prefs::recents_last_new_project_parent(self).await),
-            "keybindings_get" => ser(crate::commands::prefs::keybindings_get(self).await),
-            "keybindings_set" => {
-                let a: crate::commands::prefs::KeybindingsSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::keybindings_set(self, a.action, a.keys).await)
-            }
-            "keybindings_reset_all" => ser(crate::commands::prefs::keybindings_reset_all(self).await),
-            "keybindings_export" => {
-                let a: crate::commands::prefs::KeybindingsExportArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::keybindings_export(self, a.dest).await)
-            }
-            "keybindings_import" => {
-                let a: crate::commands::prefs::KeybindingsImportArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::keybindings_import(self, a.src).await)
-            }
             "agent_session_get" => ser(crate::commands::prefs::agent_session_get(self).await),
             "log_list" => ser(crate::commands::prefs::log_list(self).await),
             "log_clear" => ser(crate::commands::prefs::log_clear(self).await),

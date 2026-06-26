@@ -304,6 +304,14 @@ app.whenReady().then(async () => {
   // Value is opaque unknown — the renderer owns the schema.
   const { createExportSettingsStore } = await import('./export-settings.js')
   const exportSettings = createExportSettingsStore({ fs: atomicFs, join: path.join })
+  // Per-user keybinding overrides: TS-owned (was native/src/keybindings.rs). Same
+  // on-disk file (<userData>/keybindings.json) so existing overrides carry over.
+  const { createKeybindingsStore } = await import('./keybindings.js')
+  const keybindings = createKeybindingsStore({
+    fs: atomicFs,
+    path: path.join(app.getPath('userData'), 'keybindings.json'),
+    dir: app.getPath('userData'),
+  })
 
   tsHost = createTsActorHost({
     send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
@@ -326,6 +334,7 @@ app.whenReady().then(async () => {
     appSettings,
     viewState,
     exportSettings,
+    keybindings,
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')

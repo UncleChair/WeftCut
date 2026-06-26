@@ -581,8 +581,13 @@ export async function recentsSetReopenOnLaunch(value: boolean): Promise<void> {
 // `shortcuts/defs.ts`. Empty / missing entries inherit the default.
 // An empty `keys` array means "explicitly unbound" — distinct from
 // "use the default."
-
-export type KeybindingsMap = Record<string, string[]>;
+//
+// KeybindingsMap is single-sourced in src/shared/keybindings.ts (main owns
+// persistence; renderer consumes). Imported locally for the wrappers below +
+// re-exported so existing `import { KeybindingsMap } from "../ipc"` call sites
+// keep working.
+import type { KeybindingsMap } from "../../shared/keybindings";
+export type { KeybindingsMap };
 
 export async function keybindingsGet(): Promise<KeybindingsMap> {
   return invoke<KeybindingsMap>("keybindings_get");

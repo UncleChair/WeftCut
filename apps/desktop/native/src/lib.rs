@@ -29,7 +29,6 @@ mod cloud;
 #[cfg(feature = "mcp")]
 mod mcp;
 
-mod keybindings;
 mod logs;
 mod preview;
 mod agent_session;
