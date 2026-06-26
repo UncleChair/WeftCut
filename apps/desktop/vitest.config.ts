@@ -21,6 +21,7 @@ export default defineConfig({
     include: [
       'src/renderer/**/*.{test,spec}.{ts,tsx}',
       'src/main/**/*.{test,spec}.{ts,tsx}',
+      'src/shared/**/*.{test,spec}.{ts,tsx}',
     ],
     // Loads the weftcut-eval wasm before every test file (snap/keyframe/audio
     // math now runs through it). Requires the generated module — the `pretest`

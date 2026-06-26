@@ -31,5 +31,5 @@
     "disableSourceOfProjectReferenceRedirect": true
   },
   "include": ["electron.vite.config.ts", "src/main/**/*.ts"],
-  "references": [{ "path": "./tsconfig.web.json" }]
+  "references": [{ "path": "./tsconfig.web.json" }, { "path": "./tsconfig.shared.json" }]
 }

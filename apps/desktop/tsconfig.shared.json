@@ -17,7 +17,8 @@
     // composite requires emit; redirect .d.ts out of source (TS6310).
     "emitDeclarationOnly": true,
     "declarationDir": "node_modules/.cache/tsc/shared",
-    "types": []
+    "types": [],
+    "resolveJsonModule": true
   },
   "include": ["src/shared/**/*.ts"]
 }
