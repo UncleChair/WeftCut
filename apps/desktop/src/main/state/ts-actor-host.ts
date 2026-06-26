@@ -87,6 +87,10 @@ export interface TsActorHost {
   /** Host-level Motif tool dispatch (catalog read + authoring + install). Both
    *  the renderer `handleInvoke('motif')` and the MCP `route==='motif'` path use it. */
   motifTool: (name: string, args: Record<string, unknown>) => unknown
+  /** Re-pull list_motifs → actor.setUserMotifManifests. Exposed so the file
+   *  watcher can refresh the actor catalog when a Motif appears on disk with no
+   *  store-mutating tool call (otherwise add_motif rejects it). */
+  refreshMotifCatalog: () => void
   beginAgentSessionSlot: (reason: string) => void
   start: () => void
   stop: () => void
@@ -173,11 +177,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         actor.snapshot().tracks
           .flatMap((t) => t.layers)
           .filter((l) => l.params.kind === 'Motif')
-          .map((l) => { const p = l.params as MotifParams; return { layerId: l.id, motifId: p.motif_id, props: p.props } satisfies MotifLayerRef }),
+          .map((l) => { const p = l.params as MotifParams; return { layerId: l.id, motifId: p.motif_id, version: p.motif_version, props: p.props } satisfies MotifLayerRef }),
       dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
       emitChanged: () => deps.send('motifs:changed', {}),
       refreshCatalog: () => refreshMotifCatalog(),
       readFile: deps.readFile,
+      emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (motif)', err) } },
     }
     return runMotifTool(name, args, motifToolDeps)
   }
@@ -302,6 +307,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     mcpCall,
     hybridDeps,
     motifTool: runMotif,
+    refreshMotifCatalog,
     beginAgentSessionSlot(reason: string) { deps.beginAgentSessionSlot?.(reason) },
     start() {
       if (!unsub) unsub = actor.subscribe(emitChange)

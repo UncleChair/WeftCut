@@ -9,6 +9,7 @@ import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64, setMotifStore } from './motif/capture.js'
 import { UserMotifStore } from './motif/store.js'
+import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
@@ -37,6 +38,7 @@ let mainWindow: BrowserWindow | null = null
 // `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
+let motifWatcher: MotifWatcher | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
@@ -306,6 +308,16 @@ app.whenReady().then(async () => {
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')
+
+  // Stage-5 file watch (TS): on any disk change under <userData>/motifs/,
+  // refresh the actor catalog (so a disk-written Motif is placeable via
+  // add_motif) AND emit motifs:changed (renderer resync → ?v= host buster).
+  // Supersedes the Rust watcher (still live until Phase 4 deletes the feature;
+  // its duplicate emit is idempotent).
+  motifWatcher = spawnMotifWatcher(motifStore.root(), () => {
+    tsHost?.refreshMotifCatalog()
+    mainWindow?.webContents.send('evt:motifs:changed', {})
+  })
 
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
   // Started AFTER tsHost.start() so the read-mirror is populated before any
@@ -617,6 +629,7 @@ app.on('window-all-closed', () => {
 // Flag-off (tsHost null) early-returns so the Rust path's quit behavior is unchanged.
 let quitFlushed = false
 app.on('before-quit', (event) => {
+  motifWatcher?.close(); motifWatcher = null
   if (quitFlushed || !tsHost) return
   event.preventDefault()
   quitFlushed = true
