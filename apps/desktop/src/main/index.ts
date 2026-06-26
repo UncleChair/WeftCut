@@ -300,6 +300,10 @@ app.whenReady().then(async () => {
   // resolves the workspace dir per call; pre-workspace it skips this store.
   const { createViewStateStore } = await import('./view-state.js')
   const viewState = createViewStateStore({ fs: atomicFs, join: path.join })
+  // Per-workspace export.json: TS-owned (was native/src/export_settings_store.rs).
+  // Value is opaque unknown — the renderer owns the schema.
+  const { createExportSettingsStore } = await import('./export-settings.js')
+  const exportSettings = createExportSettingsStore({ fs: atomicFs, join: path.join })
 
   tsHost = createTsActorHost({
     send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
@@ -321,6 +325,7 @@ app.whenReady().then(async () => {
     motifBuiltins,
     appSettings,
     viewState,
+    exportSettings,
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')
