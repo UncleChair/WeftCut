@@ -159,7 +159,7 @@ export function deleteMotifCore(store: UserMotifStore, id: string): void {
 // Install compute (Task 3) — buildRebindUpdates + installMotifCompute
 // ---------------------------------------------------------------------------
 
-export interface MotifLayerRef { layerId: string; motifId: string; props: Record<string, unknown> }
+export interface MotifLayerRef { layerId: string; motifId: string; version: number; props: Record<string, unknown> }
 export type InstallArgs = { draft_id: string; mode: { kind: 'new' } | { kind: 'update'; target_id: string } }
 
 /** Per-layer rebind updates for an Update: every layer whose motif_id is the

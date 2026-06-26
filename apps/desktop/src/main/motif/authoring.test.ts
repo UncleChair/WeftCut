@@ -190,9 +190,9 @@ describe('buildRebindUpdates', () => {
       props_schema: { title: { kind: 'String', default: 'Hi' } } as any,
     }
     const layers: MotifLayerRef[] = [
-      { layerId: 'la', motifId: 'wip', props: { old: 1 } },
-      { layerId: 'lb', motifId: 'foo', props: { old: 2 } },
-      { layerId: 'lc', motifId: 'other', props: {} }, // untouched
+      { layerId: 'la', motifId: 'wip', version: 1, props: { old: 1 } },
+      { layerId: 'lb', motifId: 'foo', version: 1, props: { old: 2 } },
+      { layerId: 'lc', motifId: 'other', version: 1, props: {} }, // untouched
     ]
     const updates = buildRebindUpdates(layers, 'wip', target)
     expect(updates.length).toBe(2)
@@ -221,7 +221,7 @@ describe('installMotifCompute', () => {
     store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
     // a working draft "wip" targeting foo
     store.writeDraft('wip', doc(m('Foo', 'wip')))
-    const layers: MotifLayerRef[] = [{ layerId: 'la', motifId: 'wip', props: {} }]
+    const layers: MotifLayerRef[] = [{ layerId: 'la', motifId: 'wip', version: 1, props: {} }]
     const r = installMotifCompute(store, layers, { draft_id: 'wip', mode: { kind: 'update', target_id: 'foo' } })
     expect(r.publishedId).toBe('foo')
     expect(store.getMotif('foo')!.manifest.version).toBe(2)

@@ -14,6 +14,7 @@ import {
   getMotifSource, listMotifsInner, writeMotifDraftCore, amendDraftHtml,
   createEditDraftCore, importMotifFromSource, deleteMotifCore, installMotifCompute,
 } from './authoring'
+import { type MotifStaleEntry, currentVersions, buildStalenessReport, buildAckEntries } from './staleness'
 
 export interface MotifToolDeps {
   store: UserMotifStore
@@ -28,6 +29,9 @@ export interface MotifToolDeps {
   refreshCatalog: () => void
   /** node:fs readFileSync(utf8) — import_motif reads an external .html. */
   readFile: (p: string) => string
+  /** Emit a record-panel LogBus warn row (the on-open staleness summary).
+   *  Best-effort; the host wraps the underlying emit in try/catch. */
+  emitLog: (entry: { level: 'warn'; category: { kind: 'Project' }; source: { kind: 'System' }; message: string }) => void
 }
 
 /** Coerce the install `mode` arg. Renderer sends the object form
@@ -81,6 +85,28 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       if (updates.length) deps.dispatchRebind(updates)
       deps.emitChanged(); deps.refreshCatalog()
       return publishedId
+    }
+    case 'motif_staleness_report': {
+      const current = currentVersions(deps.builtins, deps.store.listManifests())
+      const layers = deps.motifLayers().map((l) => ({ motifId: l.motifId, placedVersion: l.version }))
+      const report: MotifStaleEntry[] = buildStalenessReport(layers, current)
+      if (report.length) {
+        const summary = report
+          .map((e) => `${e.motif_id} v${e.placed_version}→v${e.current_version} (${e.layer_count} layer(s))`)
+          .join(', ')
+        deps.emitLog({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message: `Motifs changed since placement: ${summary}` })
+      }
+      return report
+    }
+    case 'acknowledge_motif_staleness': {
+      const current = currentVersions(deps.builtins, deps.store.listManifests())
+      const layers = deps.motifLayers().map((l) => ({ layerId: l.layerId, motifId: l.motifId, placedVersion: l.version, props: l.props }))
+      const updates = buildAckEntries(layers, current)
+      if (updates.length) deps.dispatchRebind(updates)
+      // Refresh so applyUpdateLayerParams' content-window clamp sees the current
+      // manifests (parity with the old hybrid's post-ack refresh). Cheap + idempotent.
+      deps.refreshCatalog()
+      return updates.length
     }
     default:
       throw new Error(`runMotifTool: unhandled tool ${name}`)
