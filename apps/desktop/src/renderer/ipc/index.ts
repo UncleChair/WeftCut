@@ -654,40 +654,17 @@ export async function workspaceDir(): Promise<string | null> {
 // subscribers re-render without an extra round-trip.
 // ============================================================
 
-export type DisplayMode = "AbRoll" | "ShowAll";
-
-export interface AppSettings {
-  display_mode: DisplayMode;
-  /// Half-width of the symmetric peek window in microseconds (default
-  /// 10_000_000 = 10 s). Clamped server-side to [1 s, 5 min].
-  delta_window_us: number;
-  /// Remembered last-toggle of the left MediaPool drawer.
-  media_pool_drawer_open: boolean;
-  /// Snap moved timeline layers to nearby layer boundaries and playhead.
-  tail_snap_enabled: boolean;
-  /// Pixel threshold for boundary snapping. Clamped server-side.
-  tail_snap_strength_px: number;
-  /// When true, every motif layer's full frame sequence is pre-baked
-  /// to disk in the background (L2). Default false. See docs/motifs.md.
-  prebake_motifs: boolean;
-  /// When false, the preview compositor skips all effect filters (LOD
-  /// toggle for scrub performance). Default true.
-  preview_effects_enabled: boolean;
-}
-
-/// Patch shape — every field optional. The backend merges into the
-/// current settings, persists atomically, and returns the post-patch
-/// snapshot. Use this for one-field flips (e.g., `{ display_mode: "ShowAll" }`)
-/// instead of round-tripping the whole struct.
-export interface AppSettingsPatch {
-  display_mode?: DisplayMode;
-  delta_window_us?: number;
-  media_pool_drawer_open?: boolean;
-  tail_snap_enabled?: boolean;
-  tail_snap_strength_px?: number;
-  prebake_motifs?: boolean;
-  preview_effects_enabled?: boolean;
-}
+// App-settings types are single-sourced in src/shared/app-settings.ts so the
+// main process (persistence owner, src/main/app-settings.ts) and the renderer
+// (consumer) can't drift. (`@/` only aliases src/renderer, hence the relative path.)
+// Imported locally (the wrappers below reference them) and re-exported so
+// existing `import { AppSettings } from "../ipc"` call sites keep working.
+import type {
+  DisplayMode,
+  AppSettings,
+  AppSettingsPatch,
+} from "../../shared/app-settings";
+export type { DisplayMode, AppSettings, AppSettingsPatch };
 
 export async function appSettingsGet(): Promise<AppSettings> {
   return invoke<AppSettings>("app_settings_get");
