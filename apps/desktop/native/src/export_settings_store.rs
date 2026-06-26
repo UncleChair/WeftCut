@@ -6,7 +6,7 @@
 //! `view.json` so the timeline's whole-file view-state writer can never
 //! clobber export settings (two independent writers, one file = data loss).
 //!
-//! Atomic write pattern mirrors `view_state.rs` (temp file + rename).
+//! Atomic write pattern mirrors `keybindings.rs` (temp file + rename).
 
 use std::fs;
 use std::path::Path;

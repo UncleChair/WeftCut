@@ -39,5 +39,4 @@ mod agent_session;
 mod recents;
 pub mod state;
 pub mod subtitles;
-mod view_state;
 mod workspace;

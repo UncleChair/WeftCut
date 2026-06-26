@@ -18,29 +18,6 @@ pub fn ping() -> &'static str {
 // renderer routes `get_project_settings`/`update_project_settings`/
 // `agent_session_end` to the TS actor, so these are gone (Phase 4b).
 
-// ---- View state (per-workspace) -----------------------------------------
-
-pub async fn view_state_get(
-    backend: &Backend,
-) -> Result<crate::view_state::ViewState, String> {
-    let Some(ws) = backend.workspace.current() else {
-        return Ok(crate::view_state::ViewState::default());
-    };
-    Ok(crate::view_state::load(&ws))
-}
-
-pub async fn view_state_set(
-    backend: &Backend,
-    state: crate::view_state::ViewState,
-) -> Result<(), String> {
-    let Some(ws) = backend.workspace.current() else {
-        // Pre-workspace: silently drop. Once the user does a Save As,
-        // the next debounced write will land in the new workspace.
-        return Ok(());
-    };
-    crate::view_state::save(&ws, &state).map_err(|e| format!("{e:#}"))
-}
-
 // ---- Export settings (per-workspace) ------------------------------------
 
 pub async fn export_settings_get(
@@ -57,7 +34,7 @@ pub async fn export_settings_set(
     settings: serde_json::Value,
 ) -> Result<(), String> {
     let Some(ws) = backend.workspace.current() else {
-        // Pre-workspace (blank-on-boot): silently drop, like view_state_set.
+        // Pre-workspace (blank-on-boot): silently drop.
         return Ok(());
     };
     crate::export_settings_store::save(&ws, &settings).map_err(|e| format!("{e:#}"))
@@ -206,14 +183,6 @@ pub async fn log_dir_path(backend: &Backend) -> Result<Option<String>, String> {
 }
 
 // ---- Args structs -------------------------------------------------------
-
-/// `view_state_set` — `{ state: ViewState }`. No TS wrapper found that
-/// would use a different key, so "state" matches the legacy param name.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ViewStateSetArgs {
-    pub state: crate::view_state::ViewState,
-}
 
 /// `export_settings_set` — `{ settings: Value }`.
 #[derive(serde::Deserialize)]
