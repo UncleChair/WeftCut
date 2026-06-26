@@ -429,6 +429,70 @@ export function composeMotifHtml(manifest: Manifest, html: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Validation and duration resolution (Tasks 3)
+// ---------------------------------------------------------------------------
+
+const MAX_DIMENSION = 8192;
+const MAX_PROPS = 64;
+
+/** Validate a default value against its own spec. Mirrors `validate_default_for`. */
+export function validateDefaultFor(key: string, spec: PropSpec): void {
+  validateProp(key, spec, specDefault(spec));
+}
+
+/** Semantic manifest validation beyond JSON shape. Mirrors `validate_manifest`. */
+export function validateManifest(m: Manifest): void {
+  if (m.name.trim() === "") throw new MotifPropError("name must not be empty");
+  const [w, h] = m.size;
+  if (w === 0 || h === 0 || w > MAX_DIMENSION || h > MAX_DIMENSION) {
+    throw new MotifPropError(`size [${w},${h}] must be within [1,${MAX_DIMENSION}] on each axis`);
+  }
+  if (!(Number.isFinite(m.default_duration_s) && m.default_duration_s > 0)) {
+    throw new MotifPropError("default_duration_s must be finite and > 0");
+  }
+  for (const [field, val] of [
+    ["max_duration_s", m.max_duration_s],
+    ["content_duration_s", m.content_duration_s],
+  ] as const) {
+    if (val != null && !(Number.isFinite(val) && val > 0)) {
+      throw new MotifPropError(`${field} must be finite and > 0 when present`);
+    }
+  }
+  const keys = Object.keys(m.props_schema);
+  if (keys.length > MAX_PROPS) {
+    throw new MotifPropError(`props_schema has ${keys.length} entries (max ${MAX_PROPS})`);
+  }
+  for (const key of keys) {
+    const spec = m.props_schema[key]!;
+    if (spec.type === "number") {
+      if (spec.min != null && spec.max != null && spec.min > spec.max) {
+        throw new MotifPropError(`prop \`${key}\`: min ${spec.min} > max ${spec.max}`);
+      }
+      if (!Number.isFinite(spec.default)) {
+        throw new MotifPropError(`prop \`${key}\`: default must be finite`);
+      }
+    }
+    validateDefaultFor(key, spec);
+  }
+}
+
+/**
+ * Capture content duration in SECONDS. Mirrors Rust `motif_ctx_duration_s`:
+ * content_duration_s → max_duration_prop live value → max_duration_s → default_duration_s.
+ */
+export function motifCtxDurationS(manifest: Manifest, props: Record<string, unknown>): number {
+  const cds = manifest.content_duration_s;
+  if (typeof cds === "number" && Number.isFinite(cds) && cds > 0) return cds;
+  const propName = manifest.max_duration_prop;
+  if (propName) {
+    const raw = props[propName];
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  }
+  if (typeof manifest.max_duration_s === "number" && manifest.max_duration_s > 0) return manifest.max_duration_s;
+  return manifest.default_duration_s;
+}
+
+// ---------------------------------------------------------------------------
 // MotifCatalog class
 // ---------------------------------------------------------------------------
 

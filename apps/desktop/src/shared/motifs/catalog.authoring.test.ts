@@ -6,6 +6,9 @@ import {
   sanitizeId,
   assignUniqueId,
   BUILTIN_IDS,
+  validateManifest,
+  validateDefaultFor,
+  motifCtxDurationS,
   type Manifest,
 } from "./catalog";
 
@@ -100,5 +103,40 @@ describe("assignUniqueId", () => {
 describe("BUILTIN_IDS", () => {
   it("is the three built-ins", () => {
     expect([...BUILTIN_IDS].sort()).toEqual(["countdown", "lower-third", "text-fx"]);
+  });
+});
+
+describe("validateManifest", () => {
+  it("accepts a sane manifest", () => {
+    expect(() => validateManifest(base())).not.toThrow();
+  });
+  it("rejects empty name / zero / huge size", () => {
+    expect(() => validateManifest({ ...base(), name: "  " })).toThrow();
+    expect(() => validateManifest({ ...base(), size: [0, 100] })).toThrow();
+    expect(() => validateManifest({ ...base(), size: [99999, 100] })).toThrow();
+  });
+  it("rejects bad durations", () => {
+    expect(() => validateManifest({ ...base(), default_duration_s: 0 })).toThrow();
+    expect(() => validateManifest({ ...base(), content_duration_s: -1 })).toThrow();
+  });
+  it("rejects inverted number bounds and bad color default", () => {
+    expect(() => validateManifest({ ...base(), props_schema: { n: { type: "number", default: 5, min: 10, max: 1 } } })).toThrow();
+    expect(() => validateManifest({ ...base(), props_schema: { c: { type: "color", default: "not-a-hex" } } })).toThrow();
+  });
+});
+
+describe("validateDefaultFor", () => {
+  it("rejects an enum default not in options; accepts one that is", () => {
+    expect(() => validateDefaultFor("e", { type: "enum", default: "x", options: ["a", "b"] })).toThrow();
+    expect(() => validateDefaultFor("e", { type: "enum", default: "a", options: ["a", "b"] })).not.toThrow();
+  });
+});
+
+describe("motifCtxDurationS", () => {
+  it("prefers content_duration_s, then prop value, then max_duration_s, then default", () => {
+    expect(motifCtxDurationS({ ...base(), content_duration_s: 2.5 }, {})).toBeCloseTo(2.5);
+    expect(motifCtxDurationS({ ...base(), max_duration_prop: "seconds" }, { seconds: 7 })).toBeCloseTo(7);
+    expect(motifCtxDurationS({ ...base(), max_duration_s: 4 }, {})).toBeCloseTo(4);
+    expect(motifCtxDurationS({ ...base(), default_duration_s: 5 }, {})).toBeCloseTo(5);
   });
 });
