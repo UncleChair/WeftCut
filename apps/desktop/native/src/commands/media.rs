@@ -97,7 +97,7 @@ pub async fn import_media(backend: &Backend, path: String) -> Result<String, Str
         .await
         .map_err(|e| e.to_string())?;
 
-    crate::jobs::enqueue_for_media(backend.events.clone(), cache.clone(), handle.clone(), item_for_jobs);
+    crate::jobs::enqueue_for_media(backend.events.clone(), cache.clone(), handle.clone(), item_for_jobs, backend.read_mirror_handle());
 
     if let Some(ws) = workspace_root {
         backend
@@ -182,7 +182,7 @@ pub async fn ensure_full_proxy(backend: &Backend, media_id: String) -> Result<()
         &backend.events, handle, id,
         state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
     ).await.map_err(|e| format!("route-correct {media_id}: {e}"))?;
-    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), handle.clone(), item);
+    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), handle.clone(), item, backend.read_mirror_handle());
     Ok(())
 }
 
@@ -199,7 +199,7 @@ pub async fn ensure_conform(backend: &Backend, media_id: String) -> Result<(), S
     if crate::cache::cached_ok(&backend.cache.audio_conform(&item.file_hash_blake3)) {
         return Ok(());
     }
-    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), handle.clone(), item);
+    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), handle.clone(), item, backend.read_mirror_handle());
     Ok(())
 }
 

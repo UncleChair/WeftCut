@@ -29,9 +29,9 @@ use crate::workspace::WorkspaceSlot;
 /// read paths (resources, detect_silences, transcribe_clip, + Phase-3d-e compute)
 /// serve fresh state while the Rust actor is frozen. Set only from TS; never
 /// mutated by Rust handlers. `None` = flag-off → fall through to the actor.
-struct ReadMirror {
-    project: std::sync::Arc<crate::state::Project>,
-    history_view: serde_json::Value,
+pub(crate) struct ReadMirror {
+    pub(crate) project: std::sync::Arc<crate::state::Project>,
+    pub(crate) history_view: serde_json::Value,
 }
 
 #[napi]
@@ -62,8 +62,9 @@ pub struct Backend {
     /// Always compiled (cache is feature-independent) so main can push keys
     /// regardless of the addon's feature set.
     pub(crate) cloud_keys: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    /// See ReadMirror. Behind a Mutex like cloud_keys; None until the TS host pushes.
-    read_mirror: std::sync::Mutex<Option<ReadMirror>>,
+    /// See ReadMirror. Behind an Arc<Mutex> so background jobs can hold a
+    /// handle to the same mirror without borrowing the Backend across await.
+    read_mirror: std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>>,
     #[cfg(feature = "motifs")]
     pub(crate) motif_store: crate::motifs::store::UserMotifStore,
     #[cfg(feature = "motifs")]
@@ -123,7 +124,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         config_dir,
         cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
-        read_mirror: std::sync::Mutex::new(None),
+        read_mirror: std::sync::Arc::new(std::sync::Mutex::new(None)),
         #[cfg(feature = "motifs")]
         motif_store,
         #[cfg(feature = "motifs")]
@@ -340,7 +341,7 @@ impl Backend {
                 let patch = crate::state::MediaDerivativesPatch { proxy_path: Some(None), ..Default::default() };
                 let _ = crate::jobs::commit_media_derivatives(&self.events, handle, item.id, patch).await;
             }
-            crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), handle.clone(), item);
+            crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), handle.clone(), item, self.read_mirror_handle());
         }
         Ok(())
     }
@@ -605,6 +606,12 @@ impl Backend {
 impl Backend {
     pub(crate) fn project(&self) -> std::result::Result<&ProjectHandle, String> {
         self.project.get().ok_or_else(|| "backend not initialized".to_string())
+    }
+
+    /// Clone the Arc handle so background jobs can read the mirror without
+    /// borrowing `Backend` across an await point.
+    pub(crate) fn read_mirror_handle(&self) -> std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>> {
+        self.read_mirror.clone()
     }
 
     /// Project snapshot for READ-ONLY consumers (resources, detect_silences,

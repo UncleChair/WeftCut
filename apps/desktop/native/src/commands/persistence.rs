@@ -100,6 +100,7 @@ pub async fn project_open(backend: &Backend, path: String) -> Result<(), String>
                 backend.cache.clone(),
                 handle.clone(),
                 item.clone(),
+                backend.read_mirror_handle(),
             );
         }
     }

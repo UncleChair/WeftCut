@@ -119,6 +119,7 @@ pub async fn ensure_export_audio_conform(
             backend.cache.clone(),
             handle.clone(),
             item,
+            backend.read_mirror_handle(),
         );
     }
     Ok(waiting.iter().map(|u| u.to_string()).collect())

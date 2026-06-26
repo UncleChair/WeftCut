@@ -1262,6 +1262,7 @@ pub(super) async fn import_media(
         b.cache.clone(),
         b.project()?.clone(),
         item_for_jobs,
+        b.read_mirror_handle(),
     );
     Ok(ToolResult::text(id.to_string()))
 }
@@ -2801,6 +2802,7 @@ pub(super) async fn synthesize_speech(
         b.cache.clone(),
         b.project()?.clone(),
         media_item_for_jobs,
+        b.read_mirror_handle(),
     );
 
     let snap = b.project()?.snapshot().await;
