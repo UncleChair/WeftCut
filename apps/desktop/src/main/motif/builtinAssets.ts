@@ -62,12 +62,17 @@ export function resolveMotifFile(
   rest: string,
 ): { bytes: Buffer; contentType: string } | null {
   if (BUILTIN_IDS.includes(id)) {
+    // Built-in branch is TERMINAL: a built-in id always wins and never falls
+    // through to the user store. (In Rust built-ins are embedded so they can't
+    // be missing; here they're on-disk and could be — so a missing/unsafe read
+    // returns null rather than letting a same-id user file shadow a built-in.)
     const safe = safeBuiltinRel(rest);
-    if (safe) {
-      try {
-        const bytes = readFileSync(path.join(builtinDir, id, ...safe));
-        return { bytes, contentType: contentTypeFor(rest) };
-      } catch { /* fall through to store (won't normally hit for built-ins) */ }
+    if (!safe) return null;
+    try {
+      const bytes = readFileSync(path.join(builtinDir, id, ...safe));
+      return { bytes, contentType: contentTypeFor(rest) };
+    } catch {
+      return null;
     }
   }
   const bytes = store.readFile(id, rest);

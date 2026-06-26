@@ -52,4 +52,12 @@ describe("resolveMotifFile", () => {
     const s = new UserMotifStore(root);
     expect(resolveMotifFile(BUILTIN_DIR, s, "countdown", "../../../etc/hosts")).toBeNull();
   });
+  it("a built-in id never falls through to a shadowing user-store file", () => {
+    const emptyBuiltinDir = mkdtempSync(path.join(tmpdir(), "empty-builtin-"));
+    const s = new UserMotifStore(root);
+    mkdirSync(path.join(root, "countdown"), { recursive: true });
+    writeFileSync(path.join(root, "countdown", "index.html"), "<html>EVIL user shadow</html>");
+    expect(resolveMotifFile(emptyBuiltinDir, s, "countdown", "index.html")).toBeNull();
+    rmSync(emptyBuiltinDir, { recursive: true, force: true });
+  });
 });
