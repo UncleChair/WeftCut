@@ -511,6 +511,9 @@ export class MotifCatalog {
    *   `list_motifs` before that refresh lands. Wiring this to the store
    *   (`store.getMotif(id)?.manifest`) lets `add_motif` resolve such a Motif
    *   without losing the watcher race. Omitted in tests/renderer → cache-only.
+   *   Called SYNCHRONOUSLY on the main thread and only on a cache MISS (the `??`
+   *   chain short-circuits on builtins/cache) — a mutation-time slow path
+   *   (add_motif / the content-window clamp), never the per-frame render path.
    */
   constructor(private readonly resolveMissing?: (id: string) => Manifest | null) {}
 
