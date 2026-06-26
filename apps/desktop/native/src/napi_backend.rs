@@ -1,6 +1,7 @@
-//! `Backend` — the napi entry point. Holds the actor handle + managed stores,
-//! exposes a single `invoke` dispatcher and an `init` that spawns the actor and
-//! the actor→UI event bridge.
+//! `Backend` — the napi entry point. Holds the TS-fed read-mirror + managed
+//! stores, exposes a single `invoke` dispatcher and an `init` that warms up the
+//! motif watcher + ffmpeg. The TS state actor is the sole project writer; this
+//! boundary owns no actor (Phase 4b).
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -18,17 +19,16 @@ use crate::agent_session::AgentSessionSlot;
 use crate::app_settings::AppSettingsStore;
 use crate::cache::CacheLayout;
 use crate::events::{EventSink, TsfnEventSink};
-use crate::io::autosave::AutosaveController;
 use crate::keybindings::KeybindingsStore;
 use crate::logs::{self, LogBusSlot};
 use crate::recents::RecentsStore;
-use crate::state::{self, ProjectHandle};
 use crate::workspace::WorkspaceSlot;
 
-/// A TS-fed read-replica of the project, used under WEFTCUT_TS_ACTOR so the Rust
-/// read paths (resources, detect_silences, transcribe_clip, + Phase-3d-e compute)
-/// serve fresh state while the Rust actor is frozen. Set only from TS; never
-/// mutated by Rust handlers. `None` = flag-off → fall through to the actor.
+/// A TS-fed read-replica of the project: the TS state actor is the sole writer,
+/// so the Rust read paths (resources, detect_silences, transcribe_clip, the
+/// Phase-3d-e compute hybrids) serve fresh state from this mirror. Set only from
+/// TS via `set_project_mirror`; never mutated by Rust handlers. The TS host
+/// pushes the initial mirror at boot before any read can run (bring-up order).
 pub(crate) struct ReadMirror {
     pub(crate) project: std::sync::Arc<crate::state::Project>,
     pub(crate) history_view: serde_json::Value,
@@ -37,8 +37,6 @@ pub(crate) struct ReadMirror {
 #[napi]
 pub struct Backend {
     pub(crate) events: Arc<dyn EventSink>,
-    project: OnceLock<ProjectHandle>,
-    autosave: OnceLock<AutosaveController>,
     pub(crate) recents: RecentsStore,
     pub(crate) keybindings: KeybindingsStore,
     pub(crate) app_settings: AppSettingsStore,
@@ -84,8 +82,13 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         tracing::warn!("cache dir setup failed: {e:#}");
     }
     let log_slot = LogBusSlot::new();
+    // The TS read-mirror is the sole project source; the import queue reads it
+    // to rewrite `pending-` derivative paths, so share the one Arc.
+    let read_mirror: std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     #[cfg(feature = "jobs")]
-    let import_queue = crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone());
+    let import_queue =
+        crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone(), read_mirror.clone());
     #[cfg(feature = "motifs")]
     let motif_store = crate::motifs::store::UserMotifStore::new(config_path.clone().join("motifs"));
 
@@ -104,8 +107,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
 
     Backend {
         events,
-        project: OnceLock::new(),
-        autosave: OnceLock::new(),
         recents: RecentsStore::new(config_path.clone()),
         keybindings: KeybindingsStore::new(config_path.clone()),
         app_settings: AppSettingsStore::new(config_path),
@@ -124,7 +125,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         config_dir,
         cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
-        read_mirror: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        read_mirror,
         #[cfg(feature = "motifs")]
         motif_store,
         #[cfg(feature = "motifs")]
@@ -140,82 +141,13 @@ impl Backend {
         build_backend(events, app_config_dir, app_cache_dir)
     }
 
-    /// Spawn the actor + bridge. Must be awaited once before any `invoke`.
+    /// Warm up the motif watcher + ffmpeg sidecar. Must be awaited once before
+    /// any `invoke`. The project itself lives in the TS state actor (the sole
+    /// writer); the `project:changed` UI bridge + autosave moved to the TS host
+    /// in Phase 4b, so this no longer spawns a Rust actor.
     /// Runs inside napi's tokio runtime, so `tokio::spawn` has a runtime.
     #[napi]
     pub async fn init(&self) -> napi::Result<()> {
-        let handle = state::spawn(state::Project::new_blank("untitled"));
-        self.project.set(handle.clone()).map_err(|_| Error::from_reason("init called twice"))?;
-
-        // Bridge actor ChangeEvents to the `project:changed` UI event. Without
-        // this, agent/MCP-driven mutations land in state but the UI panels stay
-        // frozen until the user interacts. The payload is a tiny summary — the
-        // UI just re-fetches `project_summary` on any signal. Each event also
-        // feeds the status-log bus (no-op until a workspace installs a bus).
-        //
-        // Subscribe BEFORE spawning so that any broadcast sent after init()
-        // returns is buffered for this receiver — not dropped to zero receivers.
-        let mut rx = handle.subscribe();
-        let events = self.events.clone();
-        let log_slot = self.log_slot.clone();
-        tokio::spawn(async move {
-            use tokio::sync::broadcast::error::RecvError;
-            loop {
-                match rx.recv().await {
-                    Ok(event) => {
-                        let (actor_kind, client) = match &event.actor {
-                            state::Actor::User => ("user", None),
-                            state::Actor::Agent { client } => ("agent", Some(client.clone())),
-                        };
-                        events.emit(
-                            "project:changed",
-                            serde_json::json!({
-                                "op_id": event.op_id.to_string(),
-                                "actor_kind": actor_kind,
-                                "client": client,
-                                "summary": event.summary,
-                                "timestamp": event.timestamp.to_rfc3339(),
-                                "affected_count": event.affected.len(),
-                            }),
-                        );
-
-                        #[cfg(feature = "mcp")]
-                        {
-                            let summary = crate::mcp::ChangeEventSummary::from(&event);
-                            if let Ok(v) = serde_json::to_value(&summary) {
-                                events.emit("mcp:change", v);
-                            }
-                        }
-
-                        let source = match &event.actor {
-                            state::Actor::User => logs::LogSource::User,
-                            state::Actor::Agent { client } => logs::LogSource::Agent {
-                                client: client.clone(),
-                            },
-                        };
-                        log_slot.emit(logs::LogEntryInput {
-                            level: logs::LogLevel::Info,
-                            category: logs::LogCategory::Project,
-                            source,
-                            message: event.summary.clone(),
-                            op_id: Some(event.op_id),
-                            ..Default::default()
-                        });
-                    }
-                    Err(RecvError::Lagged(n)) => {
-                        tracing::warn!("ui-event bridge: lagged {n} events; emitting refresh signal");
-                        events.emit("project:changed", serde_json::json!({ "lagged": n }));
-                    }
-                    Err(RecvError::Closed) => break,
-                }
-            }
-        });
-
-        // Auto-save subscriber. Listens to actor events, debounces, writes
-        // `project.json` whenever a workspace is set. Dormant pre-workspace.
-        let autosave = AutosaveController::spawn(handle, self.workspace.clone());
-        let _ = self.autosave.set(autosave);
-
         // S5: watch <config_dir>/motifs/ so external edits + agent writes resync
         // the renderer catalog (motifs:changed → syncCatalog → ?v= host buster).
         #[cfg(feature = "motifs")]
@@ -327,7 +259,6 @@ impl Backend {
         use crate::jobs::proxy::PROXY_FORMAT_VERSION;
         let items: Vec<crate::state::MediaItem> = serde_json::from_str(&media_items_json)
             .map_err(|e| Error::from_reason(format!("parse media list: {e}")))?;
-        let handle = self.project().map_err(Error::from_reason)?;
         for mut item in items {
             let stale = item.proxy_path.is_some() && item.proxy_format_version < PROXY_FORMAT_VERSION;
             if stale {
@@ -335,13 +266,13 @@ impl Backend {
                     let _ = std::fs::remove_file(&path); // best-effort; logged-only in prod
                 }
                 // Clear the stale proxy through the same seam as job completion, so
-                // the authoritative engine's pool drops it (TS mode emits the event;
-                // Rust mode writes the actor). We're in an async napi → tokio runtime
-                // is present, so `.await` directly. `item` carries the cleared copy on.
+                // the TS actor's pool drops it (the seam emits `media:derivatives`,
+                // which Electron main applies). We're in an async napi → tokio
+                // runtime is present, so `.await` directly.
                 let patch = crate::state::MediaDerivativesPatch { proxy_path: Some(None), ..Default::default() };
-                let _ = crate::jobs::commit_media_derivatives(&self.events, handle, item.id, patch).await;
+                let _ = crate::jobs::commit_media_derivatives(&self.events, item.id, patch).await;
             }
-            crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), handle.clone(), item, self.read_mirror_handle());
+            crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), item, self.read_mirror_handle());
         }
         Ok(())
     }
@@ -377,7 +308,7 @@ impl Backend {
             .transpose()
             .map_err(Error::from_reason)?;
         let (cues, simplified) =
-            crate::commands::mutations::parse_subtitle_cues(&body, fmt)
+            crate::subtitles::parse_subtitle_cues(&body, fmt)
                 .map_err(Error::from_reason)?;
         serde_json::to_string(&serde_json::json!({ "cues": cues, "simplified": simplified }))
             .map_err(|e| Error::from_reason(e.to_string()))
@@ -451,16 +382,14 @@ impl Backend {
     /// (the write half of the `import_media` hybrid is the COPY's path/hash result,
     /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the
     /// workspace internally; no-op when none is set (the item keeps referencing the
-    /// original source, matching `import_media`'s no-workspace branch). The
-    /// `project()` handle is inert under the flag — the copy job's write-back is
-    /// seam-routed, not a direct actor write.
+    /// original source). The copy job's write-back is seam-routed (the TS host
+    /// applies it), so no actor handle is threaded through.
     #[napi]
     #[cfg(feature = "jobs")]
     pub async fn enqueue_workspace_copy(&self, media_id: String, source_path: String) -> napi::Result<()> {
         let id = uuid::Uuid::parse_str(&media_id).map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
         let Some(ws) = self.workspace.current() else { return Ok(()); };
-        let handle = self.project().map_err(Error::from_reason)?;
-        self.import_queue.enqueue(handle.clone(), self.cache.clone(), id, std::path::PathBuf::from(source_path), ws);
+        self.import_queue.enqueue(self.cache.clone(), id, std::path::PathBuf::from(source_path), ws);
         Ok(())
     }
 
@@ -470,17 +399,6 @@ impl Backend {
     pub fn set_last_new_project_parent(&self, parent: String) {
         self.recents
             .set_last_new_project_parent(std::path::PathBuf::from(parent));
-    }
-
-    /// Tell the jobs subsystem the TS state actor is authoritative for derivative
-    /// write-back: when on, a completed job emits `media:derivatives` (applied to
-    /// the TS actor by Electron main) instead of writing the Rust actor. Electron
-    /// main sets this from the `WEFTCUT_TS_ACTOR` launch flag at boot. Jobs-gated —
-    /// the authority flag lives in the jobs module.
-    #[napi]
-    #[cfg(feature = "jobs")]
-    pub fn set_ts_derivative_authority(&self, on: bool) {
-        crate::jobs::set_ts_derivative_authority(on);
     }
 
     /// Open the agent-session slot: installs a new session with `client = "mcp"`
@@ -604,10 +522,6 @@ impl Backend {
 // is `napi::Error`. The plain-Rust dispatch surface below speaks
 // `std::result::Result<_, String>`, so spell it out fully to dodge that alias.
 impl Backend {
-    pub(crate) fn project(&self) -> std::result::Result<&ProjectHandle, String> {
-        self.project.get().ok_or_else(|| "backend not initialized".to_string())
-    }
-
     /// Clone the Arc handle so background jobs can read the mirror without
     /// borrowing `Backend` across an await point.
     pub(crate) fn read_mirror_handle(&self) -> std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>> {
@@ -615,23 +529,22 @@ impl Backend {
     }
 
     /// Project snapshot for READ-ONLY consumers (resources, detect_silences,
-    /// transcribe_clip). Returns the TS read-mirror when set, else the actor.
+    /// transcribe_clip, the compute hybrids). Returns the TS read-mirror — the
+    /// sole project source post-4b. A clear error if the mirror is unset: the TS
+    /// host pushes the initial mirror at boot before any read can run (bring-up
+    /// order), so an unset mirror is a wiring bug, never an actor fallback.
     pub(crate) async fn snapshot_for_read(&self) -> std::result::Result<std::sync::Arc<crate::state::Project>, String> {
-        if let Some(m) = self.read_mirror.lock().expect("read_mirror poisoned").as_ref() {
-            return Ok(m.project.clone());
-        }
-        Ok(self.project()?.snapshot().await)
+        self.read_mirror
+            .lock()
+            .expect("read_mirror poisoned")
+            .as_ref()
+            .map(|m| m.project.clone())
+            .ok_or_else(|| "read-mirror not set (TS host must push it before any read)".to_string())
     }
 
-    /// The mirrored history view (project://history under the flag), or None.
+    /// The mirrored history view (project://history), or None when unset.
     pub(crate) fn mirror_history_view(&self) -> Option<serde_json::Value> {
         self.read_mirror.lock().expect("read_mirror poisoned").as_ref().map(|m| m.history_view.clone())
-    }
-
-    /// The autosave controller installed by `init`. `project_save` force-flushes
-    /// through it; pre-`init` it's absent (the unreachable blank-boot window).
-    pub(crate) fn autosave(&self) -> std::result::Result<&AutosaveController, String> {
-        self.autosave.get().ok_or_else(|| "backend not initialized".to_string())
     }
 
     /// Plain (non-napi) constructor for tests: roots config + cache in an
@@ -659,162 +572,18 @@ impl Backend {
         build_backend(events, config_dir, cache_dir)
     }
 
-    /// Replay-harness constructor: a Backend with a no-op event sink and on-disk
-    /// temp dirs, for the differential `prod_driver` bin. Mirrors `new_for_test`
-    /// but is available under the `replay` feature (bins are not `cfg(test)`).
-    #[cfg(feature = "replay")]
-    pub fn new_for_replay(events: std::sync::Arc<dyn EventSink>, config_dir: String, cache_dir: String) -> Self {
-        build_backend(events, config_dir, cache_dir)
-    }
-
-    /// Slim init for the replay harness: spawn the actor and store the handle,
-    /// WITHOUT the event-bridge / autosave / motif-watcher / ffmpeg tasks that
-    /// `init()` starts (none are part of command→state evolution). Returns the
-    /// handle so the bin can snapshot between commands.
-    #[cfg(feature = "replay")]
-    pub async fn init_for_replay(&self) -> crate::state::ProjectHandle {
-        let handle = crate::state::spawn(crate::state::Project::new_blank("replay"));
-        self.project.set(handle.clone()).ok();
-        handle
-    }
-
     pub async fn dispatch(&self, cmd: &str, args: &str) -> std::result::Result<String, String> {
+        // Phase 4b: only native / persistence-store / mirror-backed-read channels
+        // reach here. Every project mutation, history op, project-summary read, and
+        // project_open/save persistence op routes to the TS state actor (the sole
+        // writer) in Electron main; their Rust fallback arms were deleted with the
+        // actor. The kept set mirrors the router's 'rust' allowlist (PURE_NATIVE ∪
+        // PERSISTENCE ∪ MIRROR_BACKED_READS); the hybrid compute halves are
+        // dispatched via dedicated napi methods (probe_media / parse_subtitles /
+        // compute_motif_rebind / …), not this match.
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
-            "project_summary" => ser(crate::commands::query::project_summary(self).await),
-            "add_track" => ser(crate::commands::mutations::add_track(self).await),
-            "separate_audio_to_new_track" => {
-                let a: crate::commands::SeparateAudioToNewTrackArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::separate_audio_to_new_track(self, a.layer_id).await)
-            }
-            "add_demo_color_layer" => ser(crate::commands::mutations::add_demo_color_layer(self).await),
-            "add_color_layer" => {
-                let a: crate::commands::AddColorLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::add_color_layer(self, a.track_id, a.color, a.width, a.height, a.t_start_us, a.duration_us).await)
-            }
-            "add_media_layer" => {
-                let a: crate::commands::AddMediaLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::add_media_layer(self, a.track_id, a.media_id, a.t_start_us).await)
-            }
-            "add_text_layer" => {
-                let a: crate::commands::AddTextLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::add_text_layer(self, a.track_id, a.content, a.t_start_us, a.duration_us).await)
-            }
-            "add_demo_text_layer" => ser(crate::commands::mutations::add_demo_text_layer(self).await),
-            "update_layer" => {
-                let a: crate::commands::UpdateLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::update_layer(self, a.layer_id, a.patch).await)
-            }
-            "update_layer_params" => {
-                let a: crate::commands::UpdateLayerParamsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::update_layer_params(self, a.layer_id, a.patch).await)
-            }
-            "update_layer_param_track" => {
-                let a: crate::commands::UpdateLayerParamTrackArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::update_layer_param_track(self, a.layer_id, a.param_key, a.track).await)
-            }
-            "update_layer_param_tracks" => {
-                let a: crate::commands::UpdateLayerParamTracksArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::update_layer_param_tracks(self, a.layer_id, a.entries).await)
-            }
-            "add_effect" => {
-                let a: crate::commands::AddEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::add_effect(self, a.layer_id, a.kind).await)
-            }
-            "update_effect" => {
-                let a: crate::commands::UpdateEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::update_effect(self, a.layer_id, a.effect_id, a.patch).await)
-            }
-            "move_effect" => {
-                let a: crate::commands::MoveEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::move_effect(self, a.layer_id, a.effect_id, a.new_index).await)
-            }
-            "remove_effect" => {
-                let a: crate::commands::RemoveEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::remove_effect(self, a.layer_id, a.effect_id).await)
-            }
-            "move_layer" => {
-                let a: crate::commands::MoveLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::move_layer(self, crate::state::Actor::User, a.layer_id, a.new_track_id, a.new_t_start_us, a.escape_group).await.map_err(|e| e.to_string()))
-            }
-            "trim_layer" => {
-                let a: crate::commands::TrimLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::trim_layer(self, crate::state::Actor::User, a.layer_id, a.edge, a.new_t_us, a.escape_group).await.map_err(|e| e.to_string()))
-            }
-            "split_layer_grouped" => {
-                let a: crate::commands::SplitLayerGroupedArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::split_layer_grouped(self, a.layer_id, a.at_t_us, a.escape_group).await)
-            }
-            "groups_create" => {
-                let a: crate::commands::GroupsCreateArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::groups_create(self, a.layer_ids, a.label, a.reassign).await)
-            }
-            "groups_dissolve" => {
-                let a: crate::commands::GroupsDissolveArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::groups_dissolve(self, a.group_id).await)
-            }
-            "duplicate_layer" => {
-                let a: crate::commands::DuplicateLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::duplicate_layer(self, crate::state::Actor::User, a.layer_id, a.t_offset_us).await.map(|id| id.to_string()).map_err(|e| e.to_string()))
-            }
-            "delete_layer" => {
-                let a: crate::commands::DeleteLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::delete_layer(self, crate::state::Actor::User, a.layer_id).await.map_err(|e| e.to_string()))
-            }
-            "set_composition" => {
-                let a: crate::commands::SetCompositionArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::set_composition(self, a.patch).await)
-            }
-            "fit_composition_to_layers" => ser(crate::commands::mutations::fit_composition_to_layers(self).await),
-            "update_track_flags" => {
-                let a: crate::commands::UpdateTrackFlagsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::update_track_flags(self, a.track_id, a.patch).await)
-            }
-            "set_role_gain" => {
-                let a: crate::commands::SetRoleGainArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::set_role_gain(self, a.role, a.gain_db).await)
-            }
-            "update_role_flags" => {
-                let a: crate::commands::UpdateRoleFlagsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::update_role_flags(self, a.role, a.patch).await)
-            }
-            "project_undo" => ser(crate::commands::history::project_undo(self).await),
-            "project_redo" => ser(crate::commands::history::project_redo(self).await),
-            "project_restore_checkpoint" => {
-                let a: crate::commands::RestoreCheckpointArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::history::project_restore_checkpoint(self, a.checkpoint_id).await)
-            }
-            #[cfg(debug_assertions)]
-            "debug_lock_history" => {
-                let a: crate::commands::DebugLockHistoryArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::history::debug_lock_history(self, a.reason).await)
-            }
-            #[cfg(debug_assertions)]
-            "debug_unlock_history" => ser(crate::commands::history::debug_unlock_history(self).await),
-            "project_save" => ser(crate::commands::persistence::project_save(self).await),
-            "project_save_as" => {
-                let a: crate::commands::PathArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::persistence::project_save_as(self, a.path).await)
-            }
-            "project_open" => {
-                let a: crate::commands::PathArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::persistence::project_open(self, a.path).await)
-            }
-            "project_new_workspace" => {
-                let a: crate::commands::NewWorkspaceArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::persistence::project_new_workspace(self, a.parent_folder, a.name, a.width, a.height, a.fps_num, a.fps_den).await)
-            }
-            #[cfg(debug_assertions)]
-            "debug_simulate_agent_session" => {
-                let a: crate::commands::DebugSimulateAgentSessionArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::history::debug_simulate_agent_session(self, a.reason).await)
-            }
             // ---- prefs / settings / recents / keybindings / logs / agent ----
-            "get_project_settings" => ser(crate::commands::prefs::get_project_settings(self).await),
-            "update_project_settings" => {
-                let a: crate::commands::prefs::UpdateProjectSettingsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::update_project_settings(self, a.patch).await)
-            }
             "app_settings_get" => ser(crate::commands::prefs::app_settings_get(self).await),
             "app_settings_set" => {
                 let a: crate::commands::prefs::AppSettingsSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -858,7 +627,6 @@ impl Backend {
                 ser(crate::commands::prefs::keybindings_import(self, a.src).await)
             }
             "agent_session_get" => ser(crate::commands::prefs::agent_session_get(self).await),
-            "agent_session_end" => ser(crate::commands::prefs::agent_session_end(self).await),
             "log_list" => ser(crate::commands::prefs::log_list(self).await),
             "log_clear" => ser(crate::commands::prefs::log_clear(self).await),
             "log_emit" => {
@@ -866,11 +634,6 @@ impl Backend {
                 ser(crate::commands::prefs::log_emit(self, a.input).await)
             }
             "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
-            #[cfg(feature = "jobs")]
-            "import_media" => {
-                let a: crate::commands::PathArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::import_media(self, a.path).await)
-            }
             #[cfg(feature = "jobs")]
             "import_cancel" => {
                 let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -950,12 +713,6 @@ impl Backend {
             #[cfg(feature = "motifs")]
             "list_motifs" => ser(crate::commands::motifs::list_motifs(self).await),
             #[cfg(feature = "motifs")]
-            "add_motif" => {
-                let a: crate::commands::motifs::AddMotifArgs =
-                    serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motifs::add_motif(self, a).await)
-            }
-            #[cfg(feature = "motifs")]
             "get_motif_source" => {
                 #[derive(serde::Deserialize)] struct A { id: String }
                 let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -986,12 +743,6 @@ impl Backend {
                 ser(crate::commands::motif_authoring::import_motif(self, a.path).await)
             }
             #[cfg(feature = "motifs")]
-            "install_motif" => {
-                #[derive(serde::Deserialize)] struct A { args: crate::motifs::authoring_commands::InstallArgs }
-                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motif_authoring::install_motif(self, a.args).await)
-            }
-            #[cfg(feature = "motifs")]
             "delete_motif" => {
                 #[derive(serde::Deserialize)] struct A { id: String }
                 let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -999,12 +750,6 @@ impl Backend {
             }
             #[cfg(feature = "motifs")]
             "motif_staleness_report" => ser(crate::commands::motif_authoring::motif_staleness_report(self).await),
-            #[cfg(feature = "motifs")]
-            "acknowledge_motif_staleness" => ser(crate::commands::motif_authoring::acknowledge_motif_staleness(self).await),
-            "restyle_caption_track" => {
-                let a: crate::commands::RestyleCaptionTrackArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::restyle_caption_track(self, a.track_id, a.patch).await)
-            }
             other => Err(format!("unknown command: '{other}'")),
         }
     }
@@ -1022,8 +767,6 @@ mod tests {
 
     /// Poll `sink.names()` until `name` appears or `timeout_ms` elapses.
     /// Returns `true` as soon as the event is seen, `false` on timeout.
-    /// Polls every 5 ms so the test exits early on fast machines and only
-    /// reaches the ceiling on genuine failure.
     async fn wait_for_event(sink: &VecEventSink, name: &str, timeout_ms: u64) -> bool {
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(timeout_ms) {
@@ -1035,123 +778,12 @@ mod tests {
         sink.names().iter().any(|n| n == name)
     }
 
-    #[tokio::test]
-    async fn project_summary_on_blank_project() {
-        let sink = VecEventSink::new();
-        let b = Backend::new_for_test(Arc::new(sink.clone()));
-        b.init().await.unwrap();
-        let json = b.dispatch("project_summary", "{}").await.unwrap();
-        assert!(json.contains("\"track_count\""));
-    }
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn undo_after_add_track_restores_baseline() {
-        let sink = VecEventSink::new();
-        let b = Backend::new_for_test(Arc::new(sink));
-        b.init().await.unwrap();
-        // Capture baseline track count (blank project = 2 reserved A/B-roll tracks).
-        let before_json = b.dispatch("project_summary", "{}").await.unwrap();
-        let before: serde_json::Value = serde_json::from_str(&before_json).unwrap();
-        let baseline = before["track_count"].as_u64().expect("track_count must be present") as usize;
-        // Add one track → baseline + 1.
-        b.dispatch("add_track", "{}").await.unwrap();
-        let after_json = b.dispatch("project_summary", "{}").await.unwrap();
-        let after: serde_json::Value = serde_json::from_str(&after_json).unwrap();
-        assert_eq!(after["track_count"].as_u64().unwrap() as usize, baseline + 1);
-        // Undo → back to baseline.
-        b.dispatch("project_undo", "{}").await.unwrap();
-        let undone_json = b.dispatch("project_summary", "{}").await.unwrap();
-        let undone: serde_json::Value = serde_json::from_str(&undone_json).unwrap();
-        assert_eq!(undone["track_count"].as_u64().unwrap() as usize, baseline);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn add_track_then_summary_grows_and_emits() {
-        let sink = VecEventSink::new();
-        let b = Backend::new_for_test(Arc::new(sink.clone()));
-        b.init().await.unwrap();
-        let track_id_json = b.dispatch("add_track", "{}").await.unwrap();
-        assert!(!track_id_json.is_empty());
-        // poll until the broadcast bridge task fires (or 2 s timeout on genuine failure)
-        assert!(wait_for_event(&sink, "project:changed", 2000).await);
-        let summary = b.dispatch("project_summary", "{}").await.unwrap();
-        // blank project has 2 reserved tracks (A roll + B roll); add_track appends a 3rd
-        assert!(summary.contains("\"track_count\":3") || summary.contains("\"track_count\": 3"));
-    }
-
-    /// S2 persistence round-trip: backend A adds a track and `save_as` to a
-    /// `.vproj` dir; a FRESH backend B `open`s it and must observe the same
-    /// post-add track count. Multi-thread flavor so the actor→UI bridge +
-    /// LogBus writer tasks can run on a worker while we await dispatches.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn save_as_then_open_round_trips_and_logs() {
-        let dir = std::env::temp_dir()
-            .join(format!("weftcut-s2-{}-{}", std::process::id(), "roundtrip"));
-        std::fs::remove_dir_all(&dir).ok();
-        let proj = dir.join("proj.vproj");
-
-        // Backend A: add a track, capture the count, then save-as.
-        let sink = VecEventSink::new();
-        let b = Backend::new_for_test(Arc::new(sink.clone()));
-        b.init().await.unwrap();
-        b.dispatch("add_track", "{}").await.unwrap();
-        let a_summary = b.dispatch("project_summary", "{}").await.unwrap();
-        let a: serde_json::Value = serde_json::from_str(&a_summary).unwrap();
-        let a_count = a["track_count"].as_u64().expect("track_count present");
-        b.dispatch(
-            "project_save_as",
-            &format!("{{\"path\":{:?}}}", proj.to_string_lossy()),
-        )
-        .await
-        .unwrap();
-
-        // A fresh backend B opens it and must match A's post-add count.
-        let b2 = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b2.init().await.unwrap();
-        b2.dispatch(
-            "project_open",
-            &format!("{{\"path\":{:?}}}", proj.to_string_lossy()),
-        )
-        .await
-        .unwrap();
-        let summary = b2.dispatch("project_summary", "{}").await.unwrap();
-        let s: serde_json::Value = serde_json::from_str(&summary).unwrap();
-        assert_eq!(
-            s["track_count"].as_u64().expect("track_count present"),
-            a_count,
-            "opened project must have the same track count as the saved one",
-        );
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// A 1×1 PNG (67 bytes) — imports as MediaKind::Image, so no ffmpeg job runs.
-    #[cfg(feature = "jobs")]
-    const TINY_PNG: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-        0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00,
-        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
-        0x42, 0x60, 0x82,
-    ];
-
-    #[cfg(feature = "jobs")]
-    #[tokio::test]
-    async fn import_media_adds_to_pool_and_returns_id() {
-        let sink = crate::events::VecEventSink::new();
-        let b = Backend::new_for_test(std::sync::Arc::new(sink.clone()));
-        b.init().await.unwrap();
-
-        let dir = tempfile::tempdir().unwrap();
-        let png = dir.path().join("pixel.png");
-        std::fs::write(&png, TINY_PNG).unwrap();
-
-        let args = serde_json::json!({ "path": png.to_string_lossy() }).to_string();
-        let id_json = b.dispatch("import_media", &args).await.unwrap();
-        let media_id: String = serde_json::from_str(&id_json).unwrap();
-        assert!(!media_id.is_empty(), "import_media returns a media id");
-
-        let summary = b.dispatch("project_summary", "{}").await.unwrap();
-        assert!(summary.contains(&media_id), "the new media id appears in project_summary");
+    /// Push a blank project as the read-mirror so the mirror-backed read handlers
+    /// (`get_*`, `ensure_*`, `motif_staleness_report`, `transcribe`/`detect`) have
+    /// a project source — the TS host does this at boot in production.
+    fn push_blank_mirror(b: &Backend) {
+        let p = crate::state::Project::new_blank("test-mirror");
+        b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
     }
 
     #[cfg(feature = "jobs")]
@@ -1159,6 +791,7 @@ mod tests {
     async fn get_waveform_peaks_unknown_media_errors() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
+        push_blank_mirror(&b);
         let args = serde_json::json!({ "mediaId": uuid::Uuid::new_v4().to_string() }).to_string();
         let err = b.dispatch("get_waveform_peaks", &args).await.unwrap_err();
         assert!(err.contains("not found"), "unknown media → not found, got: {err}");
@@ -1175,8 +808,6 @@ mod tests {
     }
 
     /// S2 prefs: `app_settings_set` must fire `app_settings:changed`.
-    /// An empty patch `{}` is a valid `AppSettingsPatch` (all fields optional)
-    /// and is enough to exercise the emit path.
     #[tokio::test]
     async fn app_settings_set_emits_changed() {
         let sink = VecEventSink::new();
@@ -1202,6 +833,7 @@ mod tests {
     async fn ensure_export_audio_conform_blank_is_empty() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
+        push_blank_mirror(&b);
         let out = b
             .dispatch("ensure_export_audio_conform", r#"{"startUs":0,"endUs":1000000}"#)
             .await
@@ -1234,14 +866,14 @@ mod tests {
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn mcp_catalog_lists_ping_and_apply_subtitles() {
-        // Phase 4b T3: Rust catalog is native/compute/hybrid only.
+        // Phase 4b: Rust catalog is native/compute/hybrid only.
         // `add_track` is TS-served and must NOT appear here.
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
         let cat = b.mcp_catalog().await.unwrap();
         assert!(cat.contains("\"ping\""));
         assert!(cat.contains("\"apply_subtitles\""));
-        assert!(!cat.contains("\"add_track\""), "add_track must not be in the Rust-native catalog (Phase 4b T3)");
+        assert!(!cat.contains("\"add_track\""), "add_track must not be in the Rust-native catalog (Phase 4b)");
         // every tool advertises an object inputSchema
         let v: serde_json::Value = serde_json::from_str(&cat).unwrap();
         for t in v["tools"].as_array().unwrap() {
@@ -1271,9 +903,6 @@ mod tests {
             check(&t["inputSchema"], t["name"].as_str().unwrap_or("?"));
         }
     }
-
-    // mcp_call_tool_add_track_grows_summary deleted (Phase 4b T3):
-    // add_track is now TS-served; Rust's dispatch_tool returns not_found for it.
 
     #[cfg(feature = "cloud")]
     #[tokio::test]
@@ -1340,23 +969,19 @@ mod tests {
         assert!(!b.cloud_keys.lock().unwrap().contains_key("openai"));
     }
 
-    /// S2 deferred cleanup: a `log_emit` dispatch after a workspace is installed
-    /// must reach the EventSink as a `log:entry` event. The LogBus bridge is
-    /// async (broadcast → sink), so we poll until the event appears.
+    /// A `log_emit` dispatch after a workspace is installed (via `commit_workspace`,
+    /// the TS-host persistence seam) must reach the EventSink as a `log:entry`
+    /// event. The LogBus bridge is async (broadcast → sink), so we poll.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn logged_action_after_workspace_emits_log_entry() {
         let sink = VecEventSink::new();
         let b = Backend::new_for_test(Arc::new(sink.clone()));
         b.init().await.unwrap();
-        // Install a workspace (save_as) so the LogBus slot is live, then emit a log.
+        // Install a workspace so the LogBus slot is live, then emit a log.
         let dir = tempfile::tempdir().unwrap();
         let proj = dir.path().join("p.vproj");
-        b.dispatch(
-            "project_save_as",
-            &serde_json::json!({ "path": proj.to_string_lossy() }).to_string(),
-        )
-        .await
-        .unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        b.commit_workspace(proj.to_string_lossy().to_string()).await.unwrap();
         // LogCategory::System serializes as {"kind":"System"} (adjacently-tagged, unit variant).
         // LogSource::User serializes as {"kind":"User"} (internally-tagged, unit variant).
         // LogLevel::Info serializes as "info" (rename_all = "lowercase").
@@ -1383,6 +1008,7 @@ mod tests {
     async fn staleness_report_arm_is_empty_on_blank_project() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
+        push_blank_mirror(&b);
         let json = b.dispatch("motif_staleness_report", "{}").await.unwrap();
         assert_eq!(json, "[]"); // no motif layers placed → empty report
     }
@@ -1395,18 +1021,6 @@ mod tests {
         let json = b.invoke("list_motifs".into(), "{}".into()).await.unwrap();
         assert!(json.contains("countdown"));
         assert!(json.contains("lower-third"));
-    }
-
-    #[cfg(feature = "motifs")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn add_motif_arm_places_a_layer() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        let out = b
-            .invoke("add_motif".into(), r#"{"motifId":"countdown","tStartUs":0}"#.into())
-            .await
-            .unwrap();
-        assert!(!out.is_empty()); // returns the new layer id
     }
 
     #[cfg(feature = "motifs")]
@@ -1423,28 +1037,13 @@ mod tests {
         assert!(sink.names().iter().any(|n| n == "motifs:changed"));
     }
 
-    #[cfg(feature = "jobs")]
-    #[tokio::test]
-    async fn import_srt_makes_caption_track_not_pool_item() {
-        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
-        b.init().await.unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let srt = dir.path().join("c.srt");
-        std::fs::write(&srt, "1\n00:00:01,000 --> 00:00:02,000\nHi\n").unwrap();
-        let args = serde_json::json!({ "path": srt.to_string_lossy() }).to_string();
-        let _ = b.dispatch("import_media", &args).await.unwrap();
-        let snap = b.project().unwrap().snapshot().await;
-        assert!(snap.media_pool.is_empty(), "subtitle must NOT enter the media pool");
-        assert!(snap.tracks.iter().any(|t| t.role == Some(crate::state::track::TrackRole::Caption)));
-    }
-
     #[cfg(feature = "cloud")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn transcribe_clip_without_key_is_clean_error() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
-        // Bogus layer id, but the no-provider check fires before layer lookup
-        // resolves to a transcribe — either way the reply is ok:false.
+        push_blank_mirror(&b);
+        // Bogus layer id; the layer lookup fails on the blank mirror → ok:false.
         let reply: serde_json::Value = serde_json::from_str(
             &b.mcp_call_tool("transcribe_clip".into(), r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into())
                 .await
@@ -1454,40 +1053,8 @@ mod tests {
         assert_eq!(reply["ok"], false);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn add_effect_command_appends_blur_to_layer() {
-        let sink = VecEventSink::new();
-        let b = Backend::new_for_test(Arc::new(sink.clone()));
-        b.init().await.unwrap();
-        // Create a layer via an existing demo command, then read its id from the summary.
-        b.dispatch("add_demo_color_layer", "{}").await.unwrap();
-        let summary = b.dispatch("project_summary", "{}").await.unwrap();
-        let v: serde_json::Value = serde_json::from_str(&summary).unwrap();
-        let layer_id = v["tracks"]
-            .as_array().unwrap().iter()
-            .flat_map(|t| t["layers"].as_array().unwrap().clone())
-            .next().expect("a layer")["id"].as_str().unwrap().to_string();
-
-        let args = format!(r#"{{"layerId":"{layer_id}","kind":"blur"}}"#);
-        let effect_id_json = b.dispatch("add_effect", &args).await.unwrap();
-        let effect_id: String = serde_json::from_str(&effect_id_json).unwrap();
-        assert!(uuid::Uuid::parse_str(&effect_id).is_ok(), "expected a uuid string, got {effect_id}");
-
-        let after = b.dispatch("project_summary", "{}").await.unwrap();
-        assert!(after.contains("\"kind\":\"blur\"") || after.contains("\"kind\": \"blur\""));
-    }
-
-    #[tokio::test]
-    async fn add_effect_command_rejects_bad_layer_id() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        let err = b.dispatch("add_effect", r#"{"layerId":"not-a-uuid","kind":"blur"}"#).await;
-        let msg = err.unwrap_err();
-        assert!(msg.contains("layer_id"), "expected a layer_id parse error, got: {msg}");
-    }
-
-    /// Phase 3c-ii-b: `commit_workspace` re-points cache + workspace slot; `push_recent`
-    /// records the entry in recents. Both are observable via the existing dispatch arms.
+    /// `commit_workspace` re-points cache + workspace slot; `push_recent`
+    /// records the entry in recents. Both are observable via kept dispatch arms.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn commit_workspace_sets_workspace_cache_and_recents() {
         use std::sync::Arc;
@@ -1499,11 +1066,8 @@ mod tests {
 
         backend.commit_workspace(path.clone()).await.unwrap();
 
-        // workspace slot now reports the committed path — workspace_dir returns
-        // Option<String> serialized as a JSON string (Some("...")) or null.
+        // workspace slot now reports the committed path.
         let ws_json = backend.dispatch("workspace_dir", "{}").await.unwrap();
-        // Deserialize the JSON-encoded Option<String> and compare as PathBuf to
-        // avoid brittle backslash-escaping assertions on Windows.
         let ws_str: Option<String> = serde_json::from_str(&ws_json)
             .expect("workspace_dir must deserialize to Option<String>");
         let ws_path = std::path::PathBuf::from(ws_str.expect("workspace must be Some after commit_workspace"));
@@ -1519,8 +1083,6 @@ mod tests {
         // push_recent then verify via recents_list.
         backend.push_recent(path.clone(), "Demo".to_string());
         let recents_json = backend.dispatch("recents_list", "{}").await.unwrap();
-        // recents_list serializes as a JSON array of RecentEntry objects with a
-        // "path" field. Assert the committed path's filename appears somewhere.
         let dir_name = dir.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
@@ -1532,57 +1094,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Phase 3c-ii-c: `enqueue_jobs_for_media` must emit a `media:derivatives`
-    /// clearing event for any item whose `proxy_format_version` is below the
-    /// current encoder version — the stale-proxy invalidation seam.
-    #[cfg(feature = "jobs")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn enqueue_jobs_for_media_invalidates_stale_proxy() {
-        use std::sync::Arc;
-        let _authority = crate::jobs::AuthorityTestGuard::acquire();
-
-        let sink = Arc::new(crate::events::VecEventSink::new());
-        let backend = Backend::new_for_test(sink.clone());
-        // Install a project handle so self.project() succeeds (new_for_test does
-        // NOT call init(); set the private field directly from inside the test mod).
-        backend.project.set(crate::state::spawn(crate::state::Project::new_blank("t"))).ok();
-        crate::jobs::set_ts_derivative_authority(true);
-
-        // A media item with proxy at format version 0 — stale vs PROXY_FORMAT_VERSION (7).
-        let item = serde_json::json!({
-            "id": uuid::Uuid::now_v7().to_string(), "label": null,
-            "path_abs": "/x/clip.mp4", "path_rel": null, "kind": "Video",
-            "metadata": {}, "proxy_path": "/x/stale.mp4", "proxy_format_version": 0,
-            "quick_proxy_path": null, "proxy_bypassed": false, "export_uses_original": false,
-            "waveform_path": null, "conform_path": null, "thumbnails_dir": null,
-            "file_hash_blake3": "h", "file_size": 0, "file_mtime": 0,
-            "imported_at": "2026-01-01T00:00:00Z"
-        });
-        backend
-            .enqueue_jobs_for_media(serde_json::to_string(&serde_json::json!([item])).unwrap())
-            .await
-            .unwrap(); // commit_media_derivatives is awaited inline — no sleep needed
-
-        let names = sink.names();
-        assert!(
-            names.iter().any(|n| n == "media:derivatives"),
-            "stale proxy must emit a clearing event; saw {names:?}"
-        );
-    }
-
-    /// Phase 3d-e durable guard: the mirror-backed read handlers must use
-    /// `snapshot_for_read()` (the TS read-mirror path) and must NOT contain the
-    /// stale-actor read `.project()?.snapshot()` that bugs F1–F7 would have
-    /// introduced.  Also asserts that `ensure_full_proxy` routes its derivative
-    /// write through the `commit_media_derivatives` seam (F4 guard) rather than
-    /// calling `handle.set_media_derivatives` directly.
-    ///
-    /// This is a MECHANICAL source-scan — no Backend is constructed, no tokio
-    /// runtime is needed.  It is the spec's #1 durable guard: any regression
-    /// that re-inserts a stale-actor read in these files will fail here before
-    /// it can break the live flag-on path.
+    /// Durable guard: the mirror-backed read handlers must read from the
+    /// read-mirror (`snapshot_for_read`) and never the deleted Rust actor
+    /// (`.project()?.snapshot()`), and `ensure_full_proxy` must route its
+    /// derivative write through the `commit_media_derivatives` seam.
+    /// A MECHANICAL source-scan — no Backend / tokio runtime.
     #[test]
-    fn mirror_backed_reads_do_not_touch_the_stale_actor() {
+    fn mirror_backed_reads_use_the_mirror_not_an_actor() {
         let root = env!("CARGO_MANIFEST_DIR");
         let media = std::fs::read_to_string(format!("{root}/src/commands/media.rs"))
             .expect("commands/media.rs must be readable");
@@ -1591,77 +1109,42 @@ mod tests {
         let motif = std::fs::read_to_string(format!("{root}/src/commands/motif_authoring.rs"))
             .expect("commands/motif_authoring.rs must be readable");
 
-        // F1/F2/F4/F5/F6 regression guard: the mirror-backed read handlers in
-        // media.rs + export.rs must NOT contain the stale-actor snapshot call
-        // `.project()?.snapshot()`.  motif_authoring.rs is intentionally excluded
-        // from this check: the flag-OFF wrapper `acknowledge_motif_staleness`
-        // legitimately calls `b.project()?.snapshot().await` (it applies the rebind
-        // to the live actor on the non-flagged path); that stale-actor call is EXPECTED
-        // there.  The mirror-backed read in motif_authoring (`motif_staleness_report`)
-        // uses `b.snapshot_for_read()` and is guarded by the presence check below.
-        for (name, src) in [("commands/media.rs", &media), ("commands/export.rs", &export)] {
+        // No file may contain the deleted stale-actor snapshot read.
+        for (name, src) in [
+            ("commands/media.rs", &media),
+            ("commands/export.rs", &export),
+            ("commands/motif_authoring.rs", &motif),
+        ] {
             assert!(
                 !src.contains(".project()?.snapshot()"),
                 "{name}: stale-actor snapshot read `.project()?.snapshot()` is present — \
-                 re-point to `snapshot_for_read()` (Phase 3d-e F1–F7)"
+                 the Rust actor was deleted; re-point to `snapshot_for_read()`"
             );
         }
 
-        // Mirror-read guard: the two export/media handler files must call
-        // `snapshot_for_read` somewhere.
-        assert!(
-            media.contains("snapshot_for_read"),
-            "commands/media.rs: mirror-backed reads must call `snapshot_for_read`"
-        );
-        assert!(
-            export.contains("snapshot_for_read"),
-            "commands/export.rs: mirror-backed reads must call `snapshot_for_read`"
-        );
+        // The mirror-backed read handlers must call `snapshot_for_read`.
+        for (name, src) in [
+            ("commands/media.rs", &media),
+            ("commands/export.rs", &export),
+            ("commands/motif_authoring.rs", &motif),
+        ] {
+            assert!(
+                src.contains("snapshot_for_read"),
+                "{name}: mirror-backed reads must call `snapshot_for_read`"
+            );
+        }
 
-        // F7-read guard (scoped): the mirror-backed READ `motif_staleness_report`
-        // must call `snapshot_for_read` and must NOT contain the stale-actor read.
-        // A function-body SLICE is used (not the whole file): the flag-OFF
-        // `acknowledge_motif_staleness` wrapper legitimately calls
-        // `b.project()?.snapshot()` elsewhere in the same file, so a file-wide
-        // negative would false-fail.  Slicing from `motif_staleness_report`'s `fn`
-        // header to the next top-level `pub ` item isolates just this read handler.
-        let msr_start = motif.find("pub async fn motif_staleness_report")
-            .expect("motif_staleness_report must exist in commands/motif_authoring.rs");
-        let msr_tail = &motif[msr_start..];
-        // Skip the leading "pub" of the header itself, then find the NEXT "\npub ".
-        let msr_body = match msr_tail[3..].find("\npub ") {
-            Some(next) => &msr_tail[..next + 3],
-            None => msr_tail,
-        };
-        assert!(
-            msr_body.contains("snapshot_for_read"),
-            "motif_staleness_report must call `snapshot_for_read` (the mirror), not the stale actor"
-        );
-        assert!(
-            !msr_body.contains(".project()?.snapshot()"),
-            "motif_staleness_report must NOT call `.project()?.snapshot()` (stale actor) — \
-             re-point to `snapshot_for_read()` (Phase 3d-e F7-read)"
-        );
-
-        // F4 seam guard: `ensure_full_proxy` must route the derivative write
-        // through `commit_media_derivatives` (the TS-authority seam), not call
-        // `handle.set_media_derivatives` directly.
+        // `ensure_full_proxy` routes its derivative write through the seam.
         let efp_start = media.find("fn ensure_full_proxy")
             .expect("ensure_full_proxy must exist in commands/media.rs");
         let efp_tail = &media[efp_start..];
-        // Slice up to the next top-level `pub` fn (or end of file) to isolate the fn body.
         let efp_body = match efp_tail.find("\npub async fn ") {
             Some(next) => &efp_tail[..next],
             None => efp_tail,
         };
         assert!(
             efp_body.contains("commit_media_derivatives"),
-            "ensure_full_proxy must call `commit_media_derivatives` (the TS-authority seam)"
-        );
-        assert!(
-            !efp_body.contains("handle\n        .set_media_derivatives")
-                && !efp_body.contains("handle.set_media_derivatives"),
-            "ensure_full_proxy must NOT call `handle.set_media_derivatives` directly — use the seam"
+            "ensure_full_proxy must call `commit_media_derivatives` (the TS-write seam)"
         );
     }
 }

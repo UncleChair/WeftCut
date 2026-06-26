@@ -6,7 +6,7 @@ use crate::napi_backend::Backend;
 use crate::motifs::authoring_commands as ac;
 use crate::motifs::catalog::builtins;
 use crate::motifs::staleness as st;
-use crate::state::{Actor, LayerParams};
+use crate::state::LayerParams;
 use crate::state::ids::LayerId;
 
 fn emit_changed(b: &Backend) {
@@ -42,11 +42,11 @@ pub async fn import_motif(b: &Backend, path: String) -> Result<String, String> {
     Ok(id)
 }
 
-pub async fn install_motif(b: &Backend, args: ac::InstallArgs) -> Result<String, String> {
-    let id = ac::install_motif_core(&b.motif_store, b.project()?, &args).await?;
-    emit_changed(b);
-    Ok(id)
-}
+// `install_motif` (the renderer/MCP flag-off wrapper that called
+// `install_motif_core(&ProjectHandle)` then applied the rebind to the actor)
+// is gone post-4b: install routes through the hybrid (`compute_motif_rebind`
+// napi → TS-actor `rebind_motif` write). The pure publish+rebind-build core
+// (`install_motif_compute`) stays in `motifs::authoring_commands`.
 
 pub async fn delete_motif(b: &Backend, id: String) -> Result<(), String> {
     ac::delete_motif_core(&b.motif_store, &id)?;
@@ -80,32 +80,24 @@ pub async fn motif_staleness_report(b: &Backend) -> Result<Vec<st::MotifStaleEnt
     Ok(report)
 }
 
-pub async fn acknowledge_motif_staleness(b: &Backend) -> Result<usize, String> {
-    // Flag-off path delegates to the shared compute fn. Byte-identical:
-    // `n == updates.len()`, so `Ok(0)` on empty matches the prior early-return,
-    // and the rebind is skipped on empty exactly as before.
-    let snap = b.project()?.snapshot().await;
-    let (n, updates) = acknowledge_motif_compute(&b.motif_store, &snap).await?;
-    if updates.is_empty() { return Ok(0); }
-    b.project()?.rebind_motif(Actor::User, updates).await.map_err(|e| e.to_string())?;
-    Ok(n)
-}
+// `acknowledge_motif_staleness` (the flag-off wrapper that snapshotted the actor
+// and applied the rebind) is gone post-4b: ack routes through the hybrid
+// (`compute_ack_motif_rebind` napi → TS-actor `rebind_motif`). The pure
+// compute half (`acknowledge_motif_compute`) below stays — the napi hybrid
+// uses it against the read-mirror snapshot.
 
 // ---- shared compute helper (Phase 3d-e): ack entries without actor write ----
 //
 // The install compute lives in `motifs::authoring_commands::install_motif_compute`
-// (next to `build_rebind_updates`; `install_motif_core` delegates to it). The
-// acknowledge compute lives here: both the flag-off `acknowledge_motif_staleness`
-// wrapper above (applies the rebind to the live actor) and the napi
-// `compute_ack_motif_rebind` hybrid (returns the updates for the TS actor host
-// to apply against the read-mirror) call it. It RETURNS the updates; it never
-// writes the actor itself.
+// (next to `build_rebind_updates`). The acknowledge compute lives here and is
+// called by the napi `compute_ack_motif_rebind` hybrid (it returns the updates
+// for the TS actor host to apply against the read-mirror). It RETURNS the
+// updates; it never writes the actor itself.
 
 /// acknowledge_motif_staleness compute: extract motif layers from the
 /// caller-provided `snap` and return `(count, updates)`. The single source of
-/// the ack-entry logic: the napi hybrid passes the READ-MIRROR snapshot
-/// (`snapshot_for_read()`); the flag-off wrapper passes the live actor snapshot.
-/// NO actor write here — the caller applies the rebind.
+/// the ack-entry logic; the napi hybrid passes the READ-MIRROR snapshot
+/// (`snapshot_for_read()`). NO actor write here — the caller applies the rebind.
 pub async fn acknowledge_motif_compute(
     store: &crate::motifs::store::UserMotifStore,
     snap: &std::sync::Arc<crate::state::Project>,

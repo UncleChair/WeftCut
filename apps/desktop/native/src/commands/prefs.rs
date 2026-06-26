@@ -6,7 +6,6 @@
 use std::path::PathBuf;
 
 use crate::napi_backend::Backend;
-use crate::state::{Actor, CommandError, ProjectSettings, ProjectSettingsPatch};
 
 // ---- ping ---------------------------------------------------------------
 
@@ -14,25 +13,10 @@ pub fn ping() -> &'static str {
     "pong"
 }
 
-// ---- Project settings ---------------------------------------------------
-
-pub async fn get_project_settings(backend: &Backend) -> Result<ProjectSettings, String> {
-    let handle = backend.project()?;
-    Ok(handle.snapshot().await.settings.clone())
-}
-
-/// Preference-shaped (not editing-shaped): applied to every history
-/// snapshot and not recorded, so undo never flips a settings toggle.
-pub async fn update_project_settings(
-    backend: &Backend,
-    patch: ProjectSettingsPatch,
-) -> Result<(), String> {
-    let handle = backend.project()?;
-    handle
-        .update_project_settings(Actor::User, patch)
-        .await
-        .map_err(|e: CommandError| e.to_string())
-}
+// Project-settings get/update + agent_session_end were renderer-fallback
+// wrappers over the deleted Rust actor; under the always-on TS host the
+// renderer routes `get_project_settings`/`update_project_settings`/
+// `agent_session_end` to the TS actor, so these are gone (Phase 4b).
 
 // ---- App-level settings -------------------------------------------------
 
@@ -203,32 +187,9 @@ pub async fn agent_session_get(
     Ok(backend.agent_session.current())
 }
 
-/// User-side "Exit to editor" handler. Always allowed — even with a
-/// lock or in-flight ops. Releases the revert lock so the user can
-/// immediately undo/restore once back in editor mode.
-pub async fn agent_session_end(backend: &Backend) -> Result<(), String> {
-    let prior = crate::agent_session::end_and_emit(&*backend.events, &backend.agent_session);
-    // Release any agent-taken revert lock so the human's editor-mode
-    // Undo / Restore buttons re-enable on the next paint.
-    let handle = backend.project()?;
-    handle.unlock_history().await;
-    if let Some(s) = prior {
-        // System-attributed entry so the record panel — already
-        // closed by the time this lands — and the full LogConsole
-        // both surface the transition.
-        backend.log_slot.emit(crate::logs::LogEntryInput {
-            level: crate::logs::LogLevel::Info,
-            category: crate::logs::LogCategory::System,
-            source: crate::logs::LogSource::System,
-            message: format!(
-                "User exited agent mode (session client={} reason={})",
-                s.client, s.reason,
-            ),
-            ..Default::default()
-        });
-    }
-    Ok(())
-}
+// `agent_session_end` (the user-side "Exit to editor" handler) routed through
+// the deleted actor's `unlock_history`; the TS host now owns the
+// `agentSessionEnd` seam (endSlot + unlockHistory), so it's gone (Phase 4b).
 
 // ---- Logs ---------------------------------------------------------------
 
@@ -272,13 +233,6 @@ pub async fn log_dir_path(backend: &Backend) -> Result<Option<String>, String> {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettingsSetArgs {
     pub patch: crate::app_settings::AppSettingsPatch,
-}
-
-/// `update_project_settings` — `{ patch: ProjectSettingsPatch }`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateProjectSettingsArgs {
-    pub patch: crate::state::ProjectSettingsPatch,
 }
 
 /// `view_state_set` — `{ state: ViewState }`. No TS wrapper found that

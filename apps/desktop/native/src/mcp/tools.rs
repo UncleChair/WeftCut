@@ -23,114 +23,23 @@ use crate::jobs;
 use uuid::Uuid;
 
 use crate::napi_backend::Backend;
-use crate::state::{
-    Actor, Animated, AudioParams, CommandError,
-    LayerId, LayerParams, TrackId, ValidationError,
-};
-
-#[cfg(feature = "cloud")]
-use crate::state::audio_role::AudioRole;
-
-#[cfg(feature = "jobs")]
-use crate::io::probe;
-#[cfg(feature = "jobs")]
-use crate::state::{MediaItem, MediaKind, new_id};
+use crate::state::{LayerId, LayerParams};
 
 use super::wire::{McpToolError, ToolResult};
 use super::EmptyArgs;
 
 // ============================================================
-// Shared helpers (ported verbatim; McpError → McpToolError)
+// Shared helpers
 // ============================================================
 
-/// Stamp every MCP-originated mutation with a stable Agent actor. The client
-/// name is hardcoded to "mcp".
-pub(super) fn agent_actor() -> Actor {
-    Actor::Agent {
-        client: "mcp".to_string(),
-    }
-}
+// `agent_actor` + `map_command_error` (the Agent-actor stamp + the structured
+// CommandError→MCP error mapper) were used only by the deleted/stubbed mutation
+// handlers (add_*, import_media, install_motif, synthesize_speech). The kept
+// read/compute tools don't write the actor, so both are gone (Phase 4b).
 
 pub(super) fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpToolError> {
     Uuid::parse_str(s)
         .map_err(|e| McpToolError::invalid_params(format!("{field} not a UUID: {e}"), None))
-}
-
-/// Map an actor `CommandError` to an MCP error. Validation failures with
-/// agent-actionable alternatives (LayerOverlap) carry a structured `options[]`
-/// list per the docs/mcp.md error model so the agent can pick a recovery
-/// rather than bouncing off a brick wall.
-pub(super) fn map_command_error(e: CommandError) -> McpToolError {
-    // Step 1a: errors the shared command layer raises while parsing args map to
-    // the same MCP shapes the per-tool handlers produced directly before
-    // delegation — bad input → invalid_params, missing backend → internal_error
-    // (the latter matching the old `From<String> for McpToolError`).
-    match &e {
-        CommandError::InvalidArgument { field, detail } => {
-            return McpToolError::invalid_params(format!("{field}: {detail}"), None);
-        }
-        CommandError::Backend(msg) => {
-            return McpToolError::internal_error(msg.clone(), None);
-        }
-        _ => {}
-    }
-    let message = e.to_string();
-    let detail = match &e {
-        CommandError::ValidationFailed(ValidationError::LayerOverlap {
-            track,
-            a,
-            a_start,
-            a_end,
-            b: _,
-            b_start,
-            b_end,
-        }) => Some(serde_json::json!({
-            "error": "LayerOverlap",
-            "track": track.to_string(),
-            "blocking_layer": a.to_string(),
-            "blocking_range_us": [*a_start, *a_end],
-            "requested_range_us": [*b_start, *b_end],
-            "options": [
-                { "action": "create_new_track", "kind": "Video" },
-                { "action": "trim_existing", "layer_id": a.to_string(), "new_t_end_us": *b_start },
-                { "action": "split_at_t", "layer_id": a.to_string(), "at_t_us": *b_start }
-            ]
-        })),
-        CommandError::MediaInUse {
-            media,
-            referenced_by,
-        } => Some(serde_json::json!({
-            "error": "MediaInUse",
-            "media": media.to_string(),
-            "referenced_by": referenced_by
-                .iter()
-                .map(|l| l.to_string())
-                .collect::<Vec<_>>(),
-            "options": [
-                { "action": "force_remove", "note": "calls remove_media with force=true; cascades layer deletions" },
-                { "action": "delete_layers_first", "layer_ids": referenced_by.iter().map(|l| l.to_string()).collect::<Vec<_>>() }
-            ]
-        })),
-        _ => None,
-    };
-    match detail {
-        Some(d) => McpToolError::invalid_params(message, Some(d)),
-        None => McpToolError::invalid_params(message, None),
-    }
-}
-
-/// V.5: tracks are kind-agnostic. Pick the topmost track or spawn a
-/// "Voiceover" track when none exists. Used for the auto-paired audio layer
-/// in `add_video_layer`.
-async fn ensure_audio_track(b: &Backend) -> Result<TrackId, McpToolError> {
-    let snap = b.project()?.snapshot().await;
-    if let Some(t) = snap.tracks.last() {
-        return Ok(t.id);
-    }
-    b.project()?
-        .add_track(agent_actor(), Some("Voiceover".into()))
-        .await
-        .map_err(map_command_error)
 }
 
 // ============================================================
@@ -141,104 +50,9 @@ pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, M
     Ok(ToolResult::text("pong"))
 }
 
-// ============================================================
-// Agent-mode session lifecycle
-// ============================================================
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(super) struct BeginAgentSessionArgs {
-    /// Short free-text label shown in the human's record-panel header
-    /// while the session is active. Examples: "cutting filler words",
-    /// "applying transcribe + auto-cut pass". Required, non-empty.
-    pub reason: String,
-}
-
-pub(super) async fn begin_agent_session(
-    b: &Backend,
-    args: BeginAgentSessionArgs,
-) -> Result<ToolResult, McpToolError> {
-    let reason = args.reason.trim();
-    if reason.is_empty() {
-        return Err(McpToolError::invalid_params(
-            "reason must be non-empty",
-            None,
-        ));
-    }
-    let op_id = uuid::Uuid::now_v7();
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: crate::logs::LogLevel::Info,
-        category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
-        message: format!("MCP: begin_agent_session started ({reason})"),
-        op_id: Some(op_id),
-        op_state: Some(crate::logs::OpState::Started),
-        ..Default::default()
-    });
-
-    // Auto-checkpoint BEFORE flipping the slot — wait, we actually
-    // need started_at LOCKED first so the record-panel's filter
-    // (`ts >= started_at`) catches the checkpoint LogEntry. The
-    // history.checkpoint() call itself doesn't emit a LogEntry; we
-    // emit one below with the same structured `details` shape the
-    // `checkpoint` MCP tool uses, so the record panel renders this
-    // as a normal pin-row at the top of the session.
-    let started_at = Utc::now();
-    let label = format!("Pre-agent: {reason}");
-    let checkpoint_id = b
-        .project()?
-        .checkpoint(agent_actor(), label.clone())
-        .await;
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: crate::logs::LogLevel::Info,
-        category: crate::logs::LogCategory::Project,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
-        message: format!("Checkpoint: {label}"),
-        details: Some(serde_json::json!({
-            "kind": "Checkpoint",
-            "id": checkpoint_id.to_string(),
-            "label": label,
-        })),
-        ..Default::default()
-    });
-
-    let session = crate::agent_session::AgentSession {
-        client: "mcp".into(),
-        reason: reason.to_string(),
-        started_at,
-    };
-    let prior = crate::agent_session::begin_and_emit(
-        b.events.as_ref(),
-        &b.agent_session,
-        session,
-    );
-    if let Some(prev) = prior {
-        b.log_slot.emit(crate::logs::LogEntryInput {
-            level: crate::logs::LogLevel::Info,
-            category: crate::logs::LogCategory::System,
-            source: crate::logs::LogSource::System,
-            message: format!(
-                "Prior agent session displaced (client={} reason={})",
-                prev.client, prev.reason,
-            ),
-            ..Default::default()
-        });
-    }
-
-    b.log_slot.emit(crate::logs::LogEntryInput {
-        level: crate::logs::LogLevel::Info,
-        category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
-        message: format!("MCP: begin_agent_session done (checkpoint={checkpoint_id})"),
-        op_id: Some(op_id),
-        op_state: Some(crate::logs::OpState::Ok),
-        ..Default::default()
-    });
-
-    ToolResult::json(&serde_json::json!({
-        "checkpoint_id": checkpoint_id.to_string(),
-        "started_at": started_at.to_rfc3339(),
-    }))
-}
+// `begin_agent_session` routes to the TS actor (it is a `'ts'` MCP tool, so
+// `mergeMcpCatalog` filters it out of the Rust catalog and the TS def supplies
+// it). Its Rust handler + args + catalog entry were deleted in Phase 4b.
 
 // Track and layer mutation tools (add_track, remove_track, move_track,
 // add_color_layer, add_video_layer, update_layer, update_layer_params,
@@ -262,38 +76,18 @@ pub(super) struct ApplySubtitlesArgs {
     pub t_end_us: i64,
 }
 
+/// `apply_subtitles` Rust handler is a stub — the tool routes through the hybrid
+/// orchestrator (parse_subtitles napi compute → TS-actor add_caption_track write);
+/// the schema stays so `listTools` advertises it, but the TS host intercepts the
+/// call before dispatch reaches this handler. (Phase 4b.)
 pub(super) async fn apply_subtitles(
-    b: &Backend,
-    args: ApplySubtitlesArgs,
+    _b: &Backend,
+    _args: ApplySubtitlesArgs,
 ) -> Result<ToolResult, McpToolError> {
-    if args.body.trim().is_empty() {
-        return Err(McpToolError::invalid_params(
-            "subtitles body is empty",
-            None,
-        ));
-    }
-    let format = match args.format.as_deref() {
-        Some("srt") | Some("SRT") => Some(crate::subtitles::SubFormat::Srt),
-        Some("ass") | Some("ASS") => Some(crate::subtitles::SubFormat::Ass),
-        Some("vtt") | Some("VTT") => Some(crate::subtitles::SubFormat::Vtt),
-        None => None,
-        Some(other) => {
-            return Err(McpToolError::invalid_params(
-                format!("unknown subtitle format '{other}' — expected 'srt', 'ass', or 'vtt'"),
-                None,
-            ));
-        }
-    };
-    let (track_id, simplified) =
-        crate::commands::mutations::import_subtitles(b, args.body, format, Some("Captions".into()))
-            .await
-            .map_err(|e| McpToolError::internal_error(e, None))?;
-    let msg = if simplified {
-        format!("{track_id} (some ASS styling was simplified)")
-    } else {
-        track_id
-    };
-    Ok(ToolResult::text(msg))
+    Err(McpToolError::internal_error(
+        "apply_subtitles is handled by the host process (TS actor hybrid)".to_string(),
+        None,
+    ))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -416,59 +210,19 @@ pub(super) struct ImportMediaArgs {
     pub path: String,
 }
 
+/// `import_media` Rust handler is a stub — the tool routes through the hybrid
+/// orchestrator (probe_media napi compute → TS-actor write); the schema stays so
+/// `listTools` advertises it, but the TS host intercepts the call before dispatch
+/// reaches this handler. (Phase 4b — same pattern as `preview_motif_draft`.)
 #[cfg(feature = "jobs")]
 pub(super) async fn import_media(
-    b: &Backend,
-    args: ImportMediaArgs,
+    _b: &Backend,
+    _args: ImportMediaArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let path = std::path::PathBuf::from(&args.path);
-    let item = tokio::task::spawn_blocking(move || -> Result<MediaItem, String> {
-        let facts = probe::hash_and_stat(&path).map_err(|e| format!("{e:#}"))?;
-        let metadata = probe::probe_metadata(&path);
-        let kind: MediaKind = probe::detect_kind(&path, &metadata);
-        let label = path.file_name().map(|n| n.to_string_lossy().to_string());
-        Ok(MediaItem {
-            id: new_id(),
-            label,
-            path_abs: path,
-            path_rel: None,
-            kind,
-            metadata,
-            proxy_path: None,
-
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
-            waveform_path: None,
-            conform_path: None,
-            thumbnails_dir: None,
-            file_hash_blake3: facts.blake3_hex,
-            file_size: facts.size,
-            file_mtime: facts.mtime_secs,
-            imported_at: Utc::now(),
-        })
-    })
-    .await
-    .map_err(|e| McpToolError::internal_error(format!("import join: {e}"), None))?
-    .map_err(|e| McpToolError::invalid_params(format!("import: {e}"), None))?;
-    let item_for_jobs = item.clone();
-    let id = b
-        .project()?
-        .add_media_item(agent_actor(), item)
-        .await
-        .map_err(map_command_error)?;
-    // Fire-and-forget: enqueues thumbnails / proxy / waveform jobs via
-    // the global semaphore. UI listeners pick up `media:job_*` events;
-    // cached derivatives appear in subsequent `project://media` reads.
-    jobs::enqueue_for_media(
-        b.events.clone(),
-        b.cache.clone(),
-        b.project()?.clone(),
-        item_for_jobs,
-        b.read_mirror_handle(),
-    );
-    Ok(ToolResult::text(id.to_string()))
+    Err(McpToolError::internal_error(
+        "import_media is handled by the host process (TS actor hybrid)".to_string(),
+        None,
+    ))
 }
 
 // remove_media, undo, redo, lock_history, unlock_history, checkpoint,
@@ -685,48 +439,19 @@ pub(super) async fn preview_motif_draft(
     ))
 }
 
+/// `install_motif` Rust handler is a stub — the tool routes through the hybrid
+/// orchestrator (compute_motif_rebind napi compute → TS-actor rebind_motif write);
+/// the schema stays so `listTools` advertises it, but the TS host intercepts the
+/// call before dispatch reaches this handler. (Phase 4b.)
 #[cfg(feature = "motifs")]
 pub(super) async fn install_motif(
-    b: &Backend,
-    args: InstallMotifArgs,
+    _b: &Backend,
+    _args: InstallMotifArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let mode = match args.mode.as_str() {
-        "new" => crate::motifs::authoring_commands::InstallMode::New,
-        "update" => {
-            let target = b.motif_store.read_draft_target(&args.draft_id).ok_or_else(|| {
-                McpToolError::invalid_params(
-                    format!(
-                        "draft '{}' has no UPDATE target — install with mode 'new', or write it with `from`",
-                        args.draft_id
-                    ),
-                    None,
-                )
-            })?;
-            crate::motifs::authoring_commands::InstallMode::Update { target_id: target }
-        }
-        other => {
-            return Err(McpToolError::invalid_params(
-                format!("mode must be 'new' or 'update', got '{other}'"),
-                None,
-            ));
-        }
-    };
-    let install_args = crate::motifs::authoring_commands::InstallArgs {
-        draft_id: args.draft_id,
-        mode,
-    };
-    let published = crate::motifs::authoring_commands::install_motif_core(
-        &b.motif_store,
-        b.project()?,
-        &install_args,
-    )
-    .await
-    .map_err(|e| McpToolError::internal_error(e, None))?;
-    b.events.emit(
-        crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
-        serde_json::json!({}),
-    );
-    Ok(ToolResult::text(published))
+    Err(McpToolError::internal_error(
+        "install_motif is handled by the host process (TS actor hybrid)".to_string(),
+        None,
+    ))
 }
 
 #[cfg(feature = "motifs")]
@@ -896,42 +621,10 @@ mod tests {
         assert_eq!(regions.len(), 1);
     }
 
-    // Tests for audio-role tools (set_role_gain_tool_changes_project,
-    // set_role_flags_tool_changes_project) and add_track_via_backend_grows_track_count
-    // are deleted along with their handlers (Phase 4b T3).
-
-    // ============================================================
-    // Regression: shift_srt(offset=5s) → apply_subtitles → caption
-    // track with first layer at t_start_us == 5_000_000.
-    //
-    // Offset choice: 5_000_000µs × 30fps = 150 whole frames — exactly
-    // frame-aligned at the default 30fps composition, so snap_frame_round
-    // is a no-op and the assertion can be exact without a tolerance band.
-    // ============================================================
-
-    #[cfg(feature = "cloud")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn shifted_srt_applies_as_caption_track() {
-        use std::sync::Arc;
-        let b = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
-        b.init().await.unwrap();
-        let slice_relative = "1\n00:00:00,000 --> 00:00:01,000\nHi\n";
-        let shifted = crate::cloud::srt::shift_srt(slice_relative, 5_000_000);
-        let args = serde_json::json!({ "body": shifted, "t_end_us": 1 }).to_string();
-        let _ = crate::mcp::catalog::dispatch_tool(&b, "apply_subtitles", &args)
-            .await
-            .unwrap();
-        let snap = b.project().unwrap().snapshot().await;
-        let track = snap
-            .tracks
-            .iter()
-            .find(|t| t.role == Some(crate::state::TrackRole::Caption))
-            .expect("a Caption-role track must exist after apply_subtitles");
-        assert_eq!(
-            track.layers[0].t_start_us, 5_000_000,
-            "shifted cue must land at t=5s on the timeline"
-        );
-    }
+    // Tests for audio-role tools, add_track, and the apply_subtitles caption-track
+    // build are deleted along with their handlers (Phase 4b): those tools are now
+    // TS-served or hybrid stubs. The subtitle cue-shift + parse path is covered by
+    // the subtitles module tests + the TS-side hybrid e2e.
 }
 
 // ============================================================
@@ -974,19 +667,6 @@ pub(crate) struct SynthesizeSpeechArgs {
     /// current `duration_us` so the voiceover appends at the end.
     #[serde(default)]
     pub t_start_us: Option<i64>,
-}
-
-#[cfg(feature = "cloud")]
-#[derive(Debug, Serialize, JsonSchema)]
-pub(super) struct SynthesizeSpeechResult {
-    pub layer_id: String,
-    pub media_id: String,
-    pub t_start_us: i64,
-    pub t_end_us: i64,
-    /// True when the result came from the content-addressed cache and no API
-    /// call was made. Surfaced so the agent knows whether to expect any
-    /// provider-side billing.
-    pub cached: bool,
 }
 
 /// Resolved source-audio coordinates for a `transcribe_clip` call.
@@ -1366,61 +1046,19 @@ pub(crate) async fn synthesize_speech_audio(
     Ok((media_item, cached))
 }
 
+/// `synthesize_speech` Rust handler is a stub — the tool routes through the
+/// hybrid orchestrator (synthesize_speech_compute napi compute → TS-actor
+/// add_media_item + add Audio layer write); the schema stays so `listTools`
+/// advertises it, but the TS host intercepts the call before dispatch reaches
+/// this handler. The compute half (`synthesize_speech_audio`) stays — the napi
+/// `synthesize_speech_compute` calls it. (Phase 4b.)
 #[cfg(feature = "cloud")]
 pub(super) async fn synthesize_speech(
-    b: &Backend,
-    args: SynthesizeSpeechArgs,
+    _b: &Backend,
+    _args: SynthesizeSpeechArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let (media_item, cached) = synthesize_speech_audio(b, &args).await?;
-
-    let duration_us = media_item.metadata.duration_us.unwrap_or(0);
-    let media_item_for_jobs = media_item.clone();
-    let media_id = b
-        .project()?
-        .add_media_item(agent_actor(), media_item)
-        .await
-        .map_err(map_command_error)?;
-    // Fan out background jobs (waveform; thumbnails skip on audio-only).
-    crate::jobs::enqueue_for_media(
-        b.events.clone(),
-        b.cache.clone(),
-        b.project()?.clone(),
-        media_item_for_jobs,
-        b.read_mirror_handle(),
-    );
-
-    let snap = b.project()?.snapshot().await;
-    let t_start_us = args.t_start_us.unwrap_or(snap.composition.duration_us);
-    let t_end_us = t_start_us + duration_us;
-
-    let track_id = match args.target_track_id.as_deref() {
-        Some(s) => parse_uuid(s, "target_track_id")?,
-        None => ensure_audio_track(b).await?,
-    };
-
-    let params = LayerParams::Audio(AudioParams {
-        media: media_id,
-        src_in_us: 0,
-        src_out_us: duration_us,
-        gain_db: Animated::Static(0.0),
-        pan: Animated::Static(0.0),
-        fade_in_us: 0,
-        fade_out_us: 0,
-        mute: false,
-        // TTS narration → Voiceover bus (`docs/audio.md`).
-        role: AudioRole::Voiceover,
-    });
-    let layer_id = b
-        .project()?
-        .add_layer(agent_actor(), track_id, params, t_start_us, t_end_us)
-        .await
-        .map_err(map_command_error)?;
-
-    ToolResult::json(&SynthesizeSpeechResult {
-        layer_id: layer_id.to_string(),
-        media_id: media_id.to_string(),
-        t_start_us,
-        t_end_us,
-        cached,
-    })
+    Err(McpToolError::internal_error(
+        "synthesize_speech is handled by the host process (TS actor hybrid)".to_string(),
+        None,
+    ))
 }

@@ -3,7 +3,6 @@
 //! On-disk layout, versioning rules: `docs/data-model.md`
 //! ("On-disk format: workspace folder" and "Versioning").
 
-pub mod autosave;
 pub mod migrate;
 #[cfg(feature = "jobs")]
 pub mod probe;

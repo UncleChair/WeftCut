@@ -41,8 +41,9 @@ use tracing::{info, warn};
 use crate::cache::{self, CacheLayout};
 use crate::io::probe::FileFacts;
 use crate::logs;
+use crate::napi_backend::ReadMirror;
 use crate::state::ids::MediaId;
-use crate::state::{MediaDerivativesPatch, ProjectHandle};
+use crate::state::MediaDerivativesPatch;
 
 const MEDIA_DIR: &str = "Media";
 const COPY_BUFFER: usize = 1024 * 1024; // 1 MB
@@ -79,6 +80,9 @@ pub struct ImportQueue {
     inner: Arc<Mutex<ImportQueueInner>>,
     events: Arc<dyn EventSink>,
     log_slot: LogBusSlot,
+    /// TS read-mirror (the sole project source post-4b) — read by
+    /// `patch_derivative_paths_after_hash_migration` to rewrite `pending-` paths.
+    mirror: Arc<Mutex<Option<ReadMirror>>>,
 }
 
 struct ImportQueueInner {
@@ -92,7 +96,6 @@ struct PendingImport {
     media_id: MediaId,
     source: PathBuf,
     workspace_root: PathBuf,
-    handle: ProjectHandle,
     cache: CacheLayout,
 }
 
@@ -103,7 +106,11 @@ struct RunningImport {
 }
 
 impl ImportQueue {
-    pub fn new(events: Arc<dyn EventSink>, log_slot: LogBusSlot) -> Self {
+    pub fn new(
+        events: Arc<dyn EventSink>,
+        log_slot: LogBusSlot,
+        mirror: Arc<Mutex<Option<ReadMirror>>>,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ImportQueueInner {
                 pending: VecDeque::new(),
@@ -113,6 +120,7 @@ impl ImportQueue {
             })),
             events,
             log_slot,
+            mirror,
         }
     }
 
@@ -120,7 +128,6 @@ impl ImportQueue {
     /// enqueues just append.
     pub fn enqueue(
         &self,
-        handle: ProjectHandle,
         cache: CacheLayout,
         media_id: MediaId,
         source: PathBuf,
@@ -132,7 +139,6 @@ impl ImportQueue {
                 media_id,
                 source: source.clone(),
                 workspace_root,
-                handle,
                 cache,
             });
             guard.history.push(ImportEntry {
@@ -271,14 +277,11 @@ impl ImportQueue {
                     {
                         warn!("import: cache migrate failed for {media_id}: {e:#}");
                     }
-                    // Route the path/hash write-back through the shared seam: under
-                    // WEFTCUT_TS_ACTOR it emits `media:workspace_paths` (the TS host
-                    // applies the write) instead of touching the frozen Rust actor;
-                    // flag-off it falls back to the direct `set_media_workspace_paths`
-                    // call. Mirrors the `commit_media_derivatives` derivative seam.
+                    // Route the path/hash write-back through the shared seam: it
+                    // emits `media:workspace_paths` for the TS host to apply (the
+                    // sole writer). Mirrors the `commit_media_derivatives` seam.
                     if let Err(e) = crate::jobs::commit_media_workspace_paths(
                         &self.events,
-                        &next.handle,
                         media_id,
                         dest_abs.clone(),
                         copy.dest_rel.clone(),
@@ -311,7 +314,7 @@ impl ImportQueue {
                     } else {
                         patch_derivative_paths_after_hash_migration(
                             &self.events,
-                            &next.handle,
+                            &self.mirror,
                             media_id,
                             &pending_hash,
                             &copy.facts.blake3_hex,
@@ -429,9 +432,12 @@ fn rewrite_hash_in_path(path: &Path, old_hash: &str, new_hash: &str) -> Option<P
 
 /// Derivative jobs may have committed paths containing the temporary
 /// `pending-{media_id}` cache key before the workspace copy finished hashing.
+/// Reads the TS read-mirror (the sole project source post-4b) for the item's
+/// current derivative paths; best-effort (no-op if the mirror is unset or the
+/// item isn't present yet).
 async fn patch_derivative_paths_after_hash_migration(
     events: &Arc<dyn EventSink>,
-    handle: &ProjectHandle,
+    mirror: &Arc<Mutex<Option<ReadMirror>>>,
     media_id: MediaId,
     old_hash: &str,
     new_hash: &str,
@@ -439,7 +445,13 @@ async fn patch_derivative_paths_after_hash_migration(
     if old_hash == new_hash {
         return;
     }
-    let snap = handle.snapshot().await;
+    let snap = {
+        let guard = mirror.lock().expect("read_mirror poisoned");
+        match guard.as_ref() {
+            Some(m) => m.project.clone(),
+            None => return,
+        }
+    };
     let Some(item) = snap.media_pool.get(&media_id) else {
         return;
     };
@@ -482,13 +494,10 @@ async fn patch_derivative_paths_after_hash_migration(
         return;
     }
 
-    // Route through the shared derivative seam (same F4 fix as the workspace-paths
-    // write above): under WEFTCUT_TS_ACTOR it emits `media:derivatives` (applied to
-    // the TS actor by Electron main's existing onEvent), else writes the Rust actor
-    // as today. The Rust-mode write stamps `actor_for_jobs()` (Agent{jobs}) vs the
-    // former `Actor::User` — a broadcast-actor-kind-only difference; the media-pool
-    // state is identical (set_media_derivatives is UNRECORDED, no undo entry).
-    if let Err(e) = crate::jobs::commit_media_derivatives(events, handle, media_id, patch).await {
+    // Route through the shared derivative seam: it emits `media:derivatives`
+    // (applied to the TS actor by Electron main's onEvent). The TS actor's
+    // set_media_derivatives is UNRECORDED (no undo entry).
+    if let Err(e) = crate::jobs::commit_media_derivatives(events, media_id, patch).await {
         warn!("import: derivative path patch failed for {media_id}: {e}");
     }
 }

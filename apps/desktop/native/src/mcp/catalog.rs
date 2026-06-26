@@ -43,13 +43,8 @@ macro_rules! tool_table {
 
 tool_table! {
     "ping" => ("Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.", super::EmptyArgs, tools::ping),
-    "begin_agent_session" => ("Enter agent mode: flip the human's UI to a simplified preview / scrub / \
-                          record-only layout while the agent makes changes. `reason` is a short \
-                          free-text label shown in the record panel header (e.g. 'cutting filler \
-                          words'). Creates an automatic checkpoint named 'Pre-agent: {reason}' so \
-                          the human can revert the entire session in one click. Calling this while \
-                          already in agent mode replaces the session. The human exits via the UI; \
-                          there is no end_agent_session tool.", tools::BeginAgentSessionArgs, tools::begin_agent_session),
+    // begin_agent_session routes to the TS actor ('ts' MCP tool) and is supplied
+    // by the TS def; mergeMcpCatalog filters it out of the Rust side (Phase 4b).
     "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as a caption track of editable Text layers. \
                           Cue timings come from the body. `format` is sniffed when omitted. \
                           Advanced ASS styling (karaoke, drawings) is simplified. \
@@ -183,20 +178,22 @@ mod tests {
         }
     }
 
-    /// apply_subtitles must build a Caption-role track (not a Subtitles layer).
+    /// apply_subtitles is a hybrid in Phase 4b: its Rust handler is a stub that
+    /// returns an error (the TS host intercepts the real call). The catalog entry
+    /// stays (asserted above); dispatch reaching the Rust stub errors cleanly.
     #[tokio::test]
-    async fn apply_subtitles_builds_caption_track() {
+    async fn apply_subtitles_rust_handler_is_a_host_stub() {
         use std::sync::Arc;
         let b = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
         let args = serde_json::json!({
             "body": "1\n00:00:01,000 --> 00:00:02,000\nHi\n", "t_end_us": 2_000_000
         }).to_string();
-        let r = dispatch_tool(&b, "apply_subtitles", &args).await.unwrap();
-        let v = serde_json::to_value(&r).unwrap();
-        let track_id = v["content"][0]["text"].as_str().unwrap();
-        let snap = b.project().unwrap().snapshot().await;
-        assert!(snap.tracks.iter().any(|t| t.id.to_string() == track_id
-            && t.role == Some(crate::state::TrackRole::Caption)));
+        let err = dispatch_tool(&b, "apply_subtitles", &args).await.unwrap_err();
+        assert!(
+            err.message.contains("host process"),
+            "apply_subtitles Rust handler must be a host stub, got: {}",
+            err.message,
+        );
     }
 }

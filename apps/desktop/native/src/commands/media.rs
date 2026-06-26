@@ -7,17 +7,7 @@ use chrono::Utc;
 use crate::io;
 use crate::jobs::import::ImportEntry;
 use crate::napi_backend::Backend;
-use crate::state::{self, Actor, MediaItem, MediaKind};
-
-/// True for subtitle file extensions (.srt / .ass / .vtt), case-insensitive.
-/// Used as a routing gate at the top of `import_media` to bypass the media
-/// pool entirely — subtitles are CONSUMED into caption tracks, not pooled.
-fn is_subtitle_ext(p: &std::path::Path) -> bool {
-    matches!(
-        p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
-        Some("srt") | Some("ass") | Some("vtt")
-    )
-}
+use crate::state::{self, MediaItem, MediaKind};
 
 /// Probe + hash a source file into a `MediaItem` (no actor write). Pure compute:
 /// stat (+ deferred `pending-{id}` hash when a workspace will copy the file in,
@@ -59,58 +49,12 @@ pub fn probe_media_item(source_buf: PathBuf, has_workspace: bool) -> Result<Medi
     })
 }
 
-/// Probe + hash a source file, insert a `MediaItem`, fan out derivative jobs,
-/// and queue the background workspace copy. Returns the media id.
-pub async fn import_media(backend: &Backend, path: String) -> Result<String, String> {
-    let handle = backend.project()?;
-    let source_buf = PathBuf::from(&path);
-
-    // Subtitles are CONSUMED at import: parsed into a caption track of Text
-    // layers, never pooled as media. (Q13 — MediaKind::Subtitle is no longer a
-    // pool kind; the extension is only a routing signal here.)
-    if is_subtitle_ext(&source_buf) {
-        let body = std::fs::read_to_string(&source_buf)
-            .map_err(|e| format!("read subtitle: {e}"))?;
-        let label = source_buf.file_name().map(|n| n.to_string_lossy().to_string());
-        let (track_id, _simplified) =
-            crate::commands::mutations::import_subtitles(backend, body, None, label).await?;
-        // _simplified is surfaced via the apply path; file import just returns the
-        // track id (the renderer refreshes off project:changed).
-        return Ok(track_id);
-    }
-
-    let cache = backend.cache.clone();
-    let workspace_root = backend.workspace.current();
-    let has_workspace = workspace_root.is_some();
-
-    let item = tokio::task::spawn_blocking({
-        let source_buf = source_buf.clone();
-        move || probe_media_item(source_buf, has_workspace)
-    })
-    .await
-    .map_err(|e| format!("import join: {e}"))??;
-
-    let media_id = item.id;
-    let item_for_jobs = item.clone();
-    let id = handle
-        .add_media_item(Actor::User, item)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    crate::jobs::enqueue_for_media(backend.events.clone(), cache.clone(), handle.clone(), item_for_jobs, backend.read_mirror_handle());
-
-    if let Some(ws) = workspace_root {
-        backend
-            .import_queue
-            .enqueue(handle.clone(), cache.clone(), media_id, source_buf, ws);
-    } else {
-        tracing::warn!(
-            "import_media: no workspace set; MediaItem stays referencing the original source."
-        );
-    }
-
-    Ok(id.to_string())
-}
+// `import_media` (the monolithic flag-off importer that wrote the Rust actor and
+// fanned out jobs in one call) was deleted in Phase 4b: the renderer + MCP route
+// `import_media` through the hybrid (probe_media / parse_subtitles napi compute →
+// TS-actor write), and the workspace copy + derivative jobs are kicked separately
+// (enqueue_workspace_copy / enqueue_jobs_for_media napi). `probe_media_item`
+// above stays — it is the compute half the `probe_media` napi reuses.
 
 pub async fn import_cancel(backend: &Backend, media_id: String) -> Result<bool, String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;
@@ -177,19 +121,17 @@ pub async fn ensure_full_proxy(backend: &Backend, media_id: String) -> Result<()
     if item.proxy_path.as_ref().map(|p| p.is_file()).unwrap_or(false) {
         return Ok(());
     }
-    let handle = backend.project()?;
     crate::jobs::commit_media_derivatives(
-        &backend.events, handle, id,
+        &backend.events, id,
         state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
     ).await.map_err(|e| format!("route-correct {media_id}: {e}"))?;
-    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), handle.clone(), item, backend.read_mirror_handle());
+    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), item, backend.read_mirror_handle());
     Ok(())
 }
 
 pub async fn ensure_conform(backend: &Backend, media_id: String) -> Result<(), String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
     let snap = backend.snapshot_for_read().await?;
-    let handle = backend.project()?;
     let Some(item) = snap.media_pool.get(&id).cloned() else {
         return Err(format!("no media {media_id}"));
     };
@@ -199,7 +141,7 @@ pub async fn ensure_conform(backend: &Backend, media_id: String) -> Result<(), S
     if crate::cache::cached_ok(&backend.cache.audio_conform(&item.file_hash_blake3)) {
         return Ok(());
     }
-    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), handle.clone(), item, backend.read_mirror_handle());
+    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), item, backend.read_mirror_handle());
     Ok(())
 }
 
@@ -238,51 +180,36 @@ mod mirror_tests {
         }
     }
 
-    /// `get_media_thumbnail` must read from the mirror, not the frozen actor.
-    /// Without the re-point the blank actor has no such media → "media … not
-    /// found"; with it the mirror finds the item and returns "not_ready"
-    /// (thumbnails_dir is None), proving mirror resolution succeeded.
+    /// `get_media_thumbnail` resolves media from the read-mirror (the sole
+    /// project source post-4b). The item lives only in the pushed mirror;
+    /// `thumbnails_dir` is None → "not_ready" proves mirror resolution found it.
     #[cfg(feature = "jobs")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn get_media_thumbnail_reads_mirror_not_actor() {
+    async fn get_media_thumbnail_reads_mirror() {
         let sink = Arc::new(crate::events::VecEventSink::new());
         let b = crate::napi_backend::Backend::new_for_test(sink as Arc<dyn crate::events::EventSink>);
         b.init().await.unwrap();
-        // A media item present ONLY in the mirror (actor stays blank).
-        let mut p = (*b.project().unwrap().snapshot().await).clone();
+        let mut p = crate::state::Project::new_blank("mirror");
         let id = uuid::Uuid::now_v7();
         p.media_pool.insert(id, mirror_only_item(id));
         b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
-        // thumbnails_dir is None → "not_ready" proves the item was FOUND via the
-        // mirror.  A blank-actor read would error "media … not found".
         let err = b.dispatch("get_media_thumbnail", &format!("{{\"mediaId\":\"{id}\"}}")).await.unwrap_err();
         assert_eq!(err, "not_ready", "expected not_ready from mirror item, got: {err}");
     }
 
-    /// `ensure_full_proxy` must route the derivative write through the seam
-    /// (`commit_media_derivatives`) rather than calling `set_media_derivatives`
-    /// on the actor directly.  Under TS authority the seam emits
-    /// `media:derivatives`; under the old code `set_media_derivatives` on the
-    /// blank actor would error "media … not found" and return Err.
+    /// `ensure_full_proxy` routes the derivative write through the seam
+    /// (`commit_media_derivatives`), which always emits `media:derivatives` for
+    /// the TS host to apply (the Rust-write arm is gone post-4b).
     #[cfg(feature = "jobs")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ensure_full_proxy_routes_through_seam() {
-        // Serialize against the other TS_DERIVATIVE_AUTHORITY toggle tests; the
-        // guard's Drop resets the flag to false even on an early `expect` panic.
-        let _authority = crate::jobs::AuthorityTestGuard::acquire();
         let sink = Arc::new(crate::events::VecEventSink::new());
         let b = crate::napi_backend::Backend::new_for_test(sink.clone() as Arc<dyn crate::events::EventSink>);
         b.init().await.unwrap();
-        // Populate mirror with an item that has no proxy yet.
-        let mut p = (*b.project().unwrap().snapshot().await).clone();
+        let mut p = crate::state::Project::new_blank("mirror");
         let id = uuid::Uuid::now_v7();
         p.media_pool.insert(id, mirror_only_item(id));
         b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
-        // Activate TS derivative authority so commit_media_derivatives emits
-        // the event rather than writing the actor.
-        crate::jobs::set_ts_derivative_authority(true);
-        // The seam path returns Ok; the old direct-actor path returns Err on a
-        // mirror-only item because the blank actor has no such media.
         b.dispatch("ensure_full_proxy", &format!("{{\"mediaId\":\"{id}\"}}"))
             .await
             .expect("ensure_full_proxy must succeed via the seam");

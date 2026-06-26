@@ -101,22 +101,6 @@ export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_c
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
 motifs = []      # Motif capture (S5)
-replay = []      # differential-harness replay driver (test tooling)
-
-[[bin]]
-name = "replay_driver"
-path = "src/bin/replay_driver.rs"
-required-features = ["replay"]
-
-[[bin]]
-name = "prod_driver"
-path = "src/bin/prod_driver.rs"
-required-features = ["replay"]
-
-[[bin]]
-name = "mcp_driver"
-path = "src/bin/mcp_driver.rs"
-required-features = ["replay"]
 
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 # (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).

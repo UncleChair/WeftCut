@@ -3,10 +3,10 @@
 //! Each `enqueue_*` spawns a tokio task that runs ffmpeg under a global
 //! semaphore (default 2 concurrent ffmpeg children — importing 10 files at
 //! once shouldn't fork-bomb the host). On completion, the task routes the
-//! `MediaItem`'s derivative patch through `commit_media_derivatives` — the
-//! Rust actor's `set_media_derivatives` when it's authoritative, or a
-//! `media:derivatives` event to the TS actor when it is — so subscribers
-//! (UI, hot-reload, MCP change feed) re-fetch.
+//! `MediaItem`'s derivative patch through `commit_media_derivatives`, which
+//! always emits a `media:derivatives` event the TS state actor (the sole
+//! writer, applied by Electron main) consumes — so subscribers (UI,
+//! hot-reload, MCP change feed) re-fetch.
 //!
 //! Atomicity: all writes go through `cache::temp_path` + `promote_temp`. A
 //! killed ffmpeg leaves a `<dest>.tmp` that the next run discards, never a
@@ -34,7 +34,6 @@ pub use thumbnails::run as run_thumbnails;
 pub use waveform::{read_peaks_file, run as run_waveform};
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use std::sync::Arc;
@@ -44,63 +43,34 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::cache::CacheLayout;
-use crate::state::{Actor, CommandError, MediaDerivativesPatch, MediaId, MediaItem, MediaKind, ProjectHandle};
+use crate::state::{CommandError, MediaDerivativesPatch, MediaId, MediaItem, MediaKind};
 
-/// Which engine owns the project state's media-pool, for job-completion
-/// write-back. `false` (default) = the Rust actor is authoritative (jobs
-/// call `set_media_derivatives` directly). `true` = the TS actor in Electron
-/// main is authoritative; completion emits a `media:derivatives` event the
-/// main process applies to the TS actor. `Backend::init` sets this from the
-/// `WEFTCUT_TS_ACTOR` env flag; otherwise only tests flip it. Process-global
-/// by the same rationale as the det-id toggle (`state/ids.rs`): jobs spawn
-/// from many sites and a global avoids threading an engine handle through
-/// every signature.
-static TS_DERIVATIVE_AUTHORITY: AtomicBool = AtomicBool::new(false);
-
-/// Set the derivative write-back authority (see `TS_DERIVATIVE_AUTHORITY`).
-pub fn set_ts_derivative_authority(on: bool) {
-    TS_DERIVATIVE_AUTHORITY.store(on, Ordering::SeqCst);
-}
-
-pub(crate) fn ts_derivative_authority() -> bool {
-    TS_DERIVATIVE_AUTHORITY.load(Ordering::SeqCst)
-}
-
-/// Apply a completed job's derivative patch to whichever engine is
-/// authoritative. Rust mode: the actor command (unchanged). TS mode: emit
-/// `media:derivatives {media_id, patch}` — the patch serializes with the
-/// absent/null/string tri-state for the `Option<Option<PathBuf>>` proxy fields
-/// (mutations/media.ts:67). Returns `Ok` in TS mode (fire-and-forget; the TS
-/// actor's `set_media_derivatives` is `MediaNotFound`-tolerant and the caller
-/// only logs failures). `pub(crate)` so the napi open-time derivative
+/// Emit a completed job's derivative patch as `media:derivatives {media_id,
+/// patch}` for the TS state actor (the sole writer, applied by Electron main)
+/// to consume. The patch serializes with the absent/null/string tri-state for
+/// the `Option<Option<PathBuf>>` proxy fields. Always `Ok` (fire-and-forget;
+/// the TS actor's `set_media_derivatives` is `MediaNotFound`-tolerant and the
+/// caller only logs failures). `pub(crate)` so the napi open-time derivative
 /// fan-out can reuse the same seam for stale-proxy clearing.
 pub(crate) async fn commit_media_derivatives(
     events: &Arc<dyn EventSink>,
-    project: &ProjectHandle,
     media_id: MediaId,
     patch: MediaDerivativesPatch,
 ) -> Result<(), CommandError> {
-    if ts_derivative_authority() {
-        events.emit(
-            "media:derivatives",
-            serde_json::json!({ "media_id": media_id.to_string(), "patch": patch }),
-        );
-        Ok(())
-    } else {
-        project.set_media_derivatives(actor_for_jobs(), media_id, patch).await
-    }
+    events.emit(
+        "media:derivatives",
+        serde_json::json!({ "media_id": media_id.to_string(), "patch": patch }),
+    );
+    Ok(())
 }
 
-/// Apply the workspace-copy job's path/hash result to whichever engine is
-/// authoritative (same `TS_DERIVATIVE_AUTHORITY` flag as derivatives). TS mode:
-/// emit `media:workspace_paths` → the TS host applies `set_media_workspace_paths`.
-/// Carries `file_size`/`file_mtime` so the TS `WorkspacePaths` is fully populated
-/// (mirrors the Rust actor's 7-arg `set_media_workspace_paths`, actor.rs:1720).
-/// `pub(crate)`, mirroring `commit_media_derivatives`.
+/// Emit the workspace-copy job's path/hash result as `media:workspace_paths` →
+/// the TS host applies `set_media_workspace_paths`. Carries `file_size`/
+/// `file_mtime` so the TS `WorkspacePaths` is fully populated. `pub(crate)`,
+/// mirroring `commit_media_derivatives`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn commit_media_workspace_paths(
     events: &Arc<dyn EventSink>,
-    project: &ProjectHandle,
     media_id: MediaId,
     path_abs: std::path::PathBuf,
     path_rel: std::path::PathBuf,
@@ -108,32 +78,18 @@ pub(crate) async fn commit_media_workspace_paths(
     file_size: u64,
     file_mtime: u64,
 ) -> Result<(), CommandError> {
-    if ts_derivative_authority() {
-        events.emit(
-            "media:workspace_paths",
-            serde_json::json!({
-                "media_id": media_id.to_string(),
-                "path_abs": path_abs,
-                "path_rel": path_rel,
-                "file_hash_blake3": file_hash_blake3,
-                "file_size": file_size,
-                "file_mtime": file_mtime,
-            }),
-        );
-        Ok(())
-    } else {
-        project
-            .set_media_workspace_paths(
-                actor_for_jobs(),
-                media_id,
-                path_abs,
-                path_rel,
-                file_hash_blake3,
-                file_size,
-                file_mtime,
-            )
-            .await
-    }
+    events.emit(
+        "media:workspace_paths",
+        serde_json::json!({
+            "media_id": media_id.to_string(),
+            "path_abs": path_abs,
+            "path_rel": path_rel,
+            "file_hash_blake3": file_hash_blake3,
+            "file_size": file_size,
+            "file_mtime": file_mtime,
+        }),
+    );
+    Ok(())
 }
 
 pub const EVENT_STARTED: &str = "media:job_started";
@@ -223,11 +179,10 @@ struct JobError {
 pub fn enqueue_full_proxy(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
-    spawn_proxy(events, cache, project, media, mirror);
+    spawn_proxy(events, cache, media, mirror);
 }
 
 /// Look at a freshly imported `MediaItem` and fan out the appropriate
@@ -235,7 +190,6 @@ pub fn enqueue_full_proxy(
 pub fn enqueue_for_media(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
@@ -247,14 +201,14 @@ pub fn enqueue_for_media(
                 .map(|p| p.is_file())
                 .unwrap_or(false);
             if proxy_ready || media.proxy_bypassed {
-                spawn_decorations(events, cache, project, media, mirror);
+                spawn_decorations(events, cache, media, mirror);
             } else {
-                spawn_proxy_decision(events, cache, project, media, mirror);
+                spawn_proxy_decision(events, cache, media, mirror);
             }
         }
         MediaKind::Audio => {
-            spawn_waveform(events.clone(), cache.clone(), project.clone(), media.clone());
-            spawn_conform(events, cache, project, media, mirror);
+            spawn_waveform(events.clone(), cache.clone(), media.clone());
+            spawn_conform(events, cache, media, mirror);
         }
         MediaKind::Image | MediaKind::Subtitle => {
             // No derivatives needed.
@@ -265,16 +219,15 @@ pub fn enqueue_for_media(
 fn spawn_decorations(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
     if matches!(media.kind, MediaKind::Video) {
-        spawn_thumbnails(events.clone(), cache.clone(), project.clone(), media.clone());
+        spawn_thumbnails(events.clone(), cache.clone(), media.clone());
     }
     if media.metadata.audio.is_some() {
-        spawn_waveform(events.clone(), cache.clone(), project.clone(), media.clone());
-        spawn_conform(events, cache, project, media, mirror);
+        spawn_waveform(events.clone(), cache.clone(), media.clone());
+        spawn_conform(events, cache, media, mirror);
     }
 }
 
@@ -283,17 +236,15 @@ fn spawn_decorations(
 pub fn enqueue_conform(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
-    spawn_conform(events, cache, project, media, mirror);
+    spawn_conform(events, cache, media, mirror);
 }
 
 fn spawn_conform(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
@@ -319,7 +270,7 @@ fn spawn_conform(
             warn!("conform job: semaphore closed; skipping {media_id}");
             return;
         }
-        let media = fresh_media_item(&project, &mirror, media_id, media).await;
+        let media = fresh_media_item(&mirror, media_id, media).await;
         let result = conform::run(&cache, &media).await;
         drop(permit);
 
@@ -330,7 +281,7 @@ fn spawn_conform(
                     conform_path: Some(conform_path),
                     ..Default::default()
                 };
-                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("conform commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -373,7 +324,6 @@ fn spawn_conform(
 fn spawn_proxy_decision(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
@@ -408,7 +358,7 @@ fn spawn_proxy_decision(
                     proxy_bypassed: Some(true),
                     ..Default::default()
                 };
-                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("proxy bypass commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -431,7 +381,7 @@ fn spawn_proxy_decision(
                         path: Some(media.path_abs.display().to_string()),
                     },
                 );
-                spawn_decorations(events, cache, project, media, mirror);
+                spawn_decorations(events, cache, media, mirror);
             }
             proxy_decision::ProxyJob::QuickOnly => {
                 emit(
@@ -448,7 +398,7 @@ fn spawn_proxy_decision(
                     export_uses_original: Some(true),
                     ..Default::default()
                 };
-                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("direct-export commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -473,17 +423,17 @@ fn spawn_proxy_decision(
                 );
                 // Thumbnails + waveform off the original; preview proxy in the
                 // background WITHOUT chaining a full proxy.
-                spawn_decorations(events.clone(), cache.clone(), project.clone(), media.clone(), mirror.clone());
-                spawn_quick_proxy(events, cache, project, media, false, source_gop_secs, mirror);
+                spawn_decorations(events.clone(), cache.clone(), media.clone(), mirror.clone());
+                spawn_quick_proxy(events, cache, media, false, source_gop_secs, mirror);
             }
             proxy_decision::ProxyJob::QuickThenFull => {
-                spawn_quick_proxy(events, cache, project, media, true, source_gop_secs, mirror);
+                spawn_quick_proxy(events, cache, media, true, source_gop_secs, mirror);
             }
         }
     });
 }
 
-fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
@@ -510,7 +460,7 @@ fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, project: Pro
                     thumbnails_dir: Some(thumbs_dir),
                     ..Default::default()
                 };
-                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("thumbnail commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -553,7 +503,6 @@ fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, project: Pro
 fn spawn_quick_proxy(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     then_full: bool,
     source_gop_secs: Option<f64>,
@@ -575,7 +524,7 @@ fn spawn_quick_proxy(
             warn!("quick proxy job: semaphore closed; skipping {media_id}");
             return;
         }
-        let media = fresh_media_item(&project, &mirror, media_id, media).await;
+        let media = fresh_media_item(&mirror, media_id, media).await;
         let result = quick_proxy::run(&cache, &media, source_gop_secs).await;
         drop(permit);
 
@@ -587,7 +536,7 @@ fn spawn_quick_proxy(
                     proxy_bypassed: Some(false),
                     ..Default::default()
                 };
-                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("quick proxy commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -628,8 +577,8 @@ fn spawn_quick_proxy(
         if then_full {
             // Full proxy chains after the quick proxy; refresh hash/paths in
             // case the workspace copy + blake3 landed while the quick proxy was queued.
-            let media = fresh_media_item(&project, &mirror, media_id, media).await;
-            spawn_proxy(events, cache, project, media, mirror);
+            let media = fresh_media_item(&mirror, media_id, media).await;
+            spawn_proxy(events, cache, media, mirror);
         }
     });
 }
@@ -637,7 +586,6 @@ fn spawn_quick_proxy(
 fn spawn_proxy(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
-    project: ProjectHandle,
     media: MediaItem,
     mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
@@ -657,7 +605,7 @@ fn spawn_proxy(
             warn!("proxy job: semaphore closed; skipping {media_id}");
             return;
         }
-        let media = fresh_media_item(&project, &mirror, media_id, media).await;
+        let media = fresh_media_item(&mirror, media_id, media).await;
         let result = proxy::run(&cache, &media).await;
         drop(permit);
 
@@ -678,7 +626,7 @@ fn spawn_proxy(
                     proxy_bypassed: Some(false),
                     ..Default::default()
                 };
-                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("proxy commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -701,7 +649,7 @@ fn spawn_proxy(
                         path: Some(path_str),
                     },
                 );
-                spawn_decorations(events, cache, project, thumbnail_media, mirror);
+                spawn_decorations(events, cache, thumbnail_media, mirror);
             }
             Err(e) => {
                 warn!("proxy job failed for {media_id}: {e:#}");
@@ -719,7 +667,7 @@ fn spawn_proxy(
     });
 }
 
-fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
@@ -746,7 +694,7 @@ fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, project: Proje
                     waveform_path: Some(waveform_path),
                     ..Default::default()
                 };
-                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
                     warn!("waveform commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -790,13 +738,11 @@ fn emit<T: Serialize>(events: &Arc<dyn EventSink>, event: &str, payload: &T) {
     events.emit(event, serde_json::to_value(payload).unwrap_or(serde_json::Value::Null));
 }
 
-/// Re-read the latest `MediaItem` before ffmpeg starts so a background
-/// import hash finalize doesn't leave jobs writing to stale `pending-*`
-/// cache keys. When the read-mirror is populated (WEFTCUT_TS_ACTOR mode),
-/// reads the mirror's committed snapshot; otherwise falls back to a live
-/// actor snapshot.
+/// Re-read the latest `MediaItem` before ffmpeg starts so a background import
+/// hash finalize doesn't leave jobs writing to stale `pending-*` cache keys.
+/// Reads the TS read-mirror (the sole project source post-4b); falls back to the
+/// passed-in item when the mirror is unset or doesn't yet hold the id.
 async fn fresh_media_item(
-    project: &ProjectHandle,
     mirror: &std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
     media_id: MediaId,
     fallback: MediaItem,
@@ -804,49 +750,7 @@ async fn fresh_media_item(
     if let Some(m) = mirror.lock().expect("read_mirror poisoned").as_ref() {
         return m.project.media_pool.get(&media_id).cloned().unwrap_or(fallback);
     }
-    project
-        .snapshot()
-        .await
-        .media_pool
-        .get(&media_id)
-        .cloned()
-        .unwrap_or(fallback)
-}
-
-/// Stamp every job-driven mutation with a stable Agent actor so history /
-/// activity reads can distinguish background work from user / external-MCP
-/// edits.
-fn actor_for_jobs() -> Actor {
-    Actor::Agent {
-        client: "jobs".to_string(),
-    }
-}
-
-/// Serializes the process-global `TS_DERIVATIVE_AUTHORITY` toggle tests and
-/// resets the flag to `false` on drop (panic-safe). Two tests flipping the global
-/// in parallel — or a panic between `set(true)` and a manual reset — would leak
-/// `true` into other jobs tests in this binary. `pub(crate)` so the napi_backend
-/// test can share the same lock.
-#[cfg(test)]
-pub(crate) static AUTHORITY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(test)]
-pub(crate) struct AuthorityTestGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
-
-#[cfg(test)]
-impl AuthorityTestGuard {
-    pub(crate) fn acquire() -> Self {
-        let g = AUTHORITY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        set_ts_derivative_authority(false); // clean start regardless of any prior leak
-        AuthorityTestGuard(g)
-    }
-}
-
-#[cfg(test)]
-impl Drop for AuthorityTestGuard {
-    fn drop(&mut self) {
-        set_ts_derivative_authority(false);
-    }
+    fallback
 }
 
 #[cfg(test)]
@@ -891,11 +795,11 @@ mod tests {
     }
 
     /// `fresh_media_item` reads the mirror when it is populated, and falls back
-    /// to the project actor snapshot when the mirror is None.
+    /// to the passed-in item when the mirror is None.
     #[tokio::test]
     async fn fresh_media_item_reads_mirror() {
         use crate::napi_backend::ReadMirror;
-        use crate::state::{spawn, Project};
+        use crate::state::Project;
         use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
         use std::sync::{Arc, Mutex};
 
@@ -923,11 +827,6 @@ mod tests {
             imported_at: chrono::Utc::now(),
         };
 
-        // The actor project does NOT have this media_id, so if we fell through
-        // to the actor, we'd get the fallback instead.
-        let actor_project = Project::new_blank("actor");
-        let actor_handle = spawn(actor_project);
-
         // Mirror project has the item.
         let mut mirror_project = Project::new_blank("mirror");
         mirror_project.media_pool.insert(media_id, mirror_item.clone());
@@ -936,7 +835,6 @@ mod tests {
             history_view: serde_json::Value::Null,
         })));
 
-        // With a populated mirror: should return the mirror's item.
         let fallback = MediaItem {
             id: media_id,
             label: Some("fallback".into()),
@@ -957,35 +855,34 @@ mod tests {
             file_mtime: 0,
             imported_at: chrono::Utc::now(),
         };
-        let result = fresh_media_item(&actor_handle, &mirror, media_id, fallback.clone()).await;
+        // With a populated mirror: should return the mirror's item.
+        let result = fresh_media_item(&mirror, media_id, fallback.clone()).await;
         assert_eq!(result.file_hash_blake3, "aabbcc-mirror", "mirror item must be returned");
 
-        // With None mirror: should return the fallback (actor has no such item).
+        // With None mirror: should return the fallback.
         let no_mirror: Arc<Mutex<Option<ReadMirror>>> = Arc::new(Mutex::new(None));
-        let result = fresh_media_item(&actor_handle, &no_mirror, media_id, fallback.clone()).await;
+        let result = fresh_media_item(&no_mirror, media_id, fallback.clone()).await;
         assert_eq!(result.file_hash_blake3, "fallback-hash", "fallback must be returned when mirror is None");
     }
 
+    /// `commit_media_derivatives` always emits a `media:derivatives` event for the
+    /// TS state actor (the sole writer) to apply — no engine-authority branch.
     #[tokio::test]
-    async fn commit_derivatives_emits_event_when_ts_authoritative() {
+    async fn commit_derivatives_emits_event() {
         use crate::events::VecEventSink;
-        use crate::state::{spawn, MediaDerivativesPatch, Project};
+        use crate::state::MediaDerivativesPatch;
         use std::sync::Arc;
-
-        let _authority = AuthorityTestGuard::acquire();
 
         let sink = Arc::new(VecEventSink::new());
         let events: Arc<dyn crate::events::EventSink> = sink.clone();
-        let handle = spawn(Project::new_blank("ts-auth"));
         let media_id = uuid::Uuid::now_v7();
 
-        set_ts_derivative_authority(true);
         let patch = MediaDerivativesPatch { proxy_path: Some(None), conform_path: Some("c.bin".into()), ..Default::default() };
-        commit_media_derivatives(&events, &handle, media_id, patch).await.unwrap();
+        commit_media_derivatives(&events, media_id, patch).await.unwrap();
 
         let recorded = sink.events.lock().unwrap().clone();
         let (name, payload) = recorded.iter().find(|(n, _)| n == "media:derivatives")
-            .expect("a media:derivatives event must be emitted in TS mode");
+            .expect("a media:derivatives event must be emitted");
         assert_eq!(name, "media:derivatives");
         assert_eq!(payload.get("media_id").unwrap(), &serde_json::json!(media_id.to_string()));
         let patch_v = payload.get("patch").unwrap();

@@ -1,17 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
-  HYBRID_CHANNELS, MIRROR_BACKED_READS, PURE_NATIVE, PERSISTENCE, DEBUG_ONLY,
+  HYBRID_CHANNELS, MIRROR_BACKED_READS, PURE_NATIVE, PERSISTENCE,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
 // ── Partition gate manifest ──────────────────────────────────────────────────
-// Every `cmd` string the Rust `Backend::dispatch` matches (napi_backend.rs
-// :557-883). KEEP IN SYNC: adding a dispatch arm in napi_backend.rs requires
-// adding it here AND classifying it into exactly one router bucket, or the gate
-// below fails (an unclassified channel routes to {kind:'reject'}). This is the
-// single-writer safety backstop: no project-touching channel may reach Rust
-// under WEFTCUT_TS_ACTOR.
+// Every renderer `cmd` string the router classifies. KEEP IN SYNC: adding a
+// channel requires adding it here AND classifying it into exactly one router
+// bucket, or the gate below fails (an unclassified channel routes to
+// {kind:'reject'}). This is the single-writer safety backstop: no
+// project-touching channel may reach Rust.
 const ALL_CHANNELS: readonly string[] = [
   // category-A mutations → PRODUCTION_OPS (command) or BLOCKED_UNDER_FLAG (reject)
   'add_track', 'separate_audio_to_new_track', 'add_demo_color_layer', 'add_color_layer',
@@ -42,15 +41,13 @@ const ALL_CHANNELS: readonly string[] = [
   'recents_last_new_project_parent', 'keybindings_get', 'keybindings_set', 'keybindings_reset_all',
   'keybindings_export', 'keybindings_import', 'agent_session_get', 'log_list', 'log_clear',
   'log_emit', 'log_dir_path',
-  // debug_assertions-only, project-touching dev tooling
-  'debug_lock_history', 'debug_unlock_history', 'debug_simulate_agent_session',
 ]
 
 /** Curated set of channels allowed to route to {kind:'rust'}: read-only +
- *  config-store + pure-native + dev-only — NONE touch the project actor for
- *  writes. The gate asserts no channel routes to rust outside this set. */
+ *  config-store + pure-native — NONE touch the project actor for writes. The
+ *  gate asserts no channel routes to rust outside this set. */
 const RUST_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  ...PURE_NATIVE, ...PERSISTENCE, ...MIRROR_BACKED_READS, ...DEBUG_ONLY,
+  ...PURE_NATIVE, ...PERSISTENCE, ...MIRROR_BACKED_READS,
 ])
 
 describe('router partition gate', () => {
@@ -81,7 +78,7 @@ describe('router partition gate', () => {
     ])
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
-      ['MIRROR_BACKED_READS', MIRROR_BACKED_READS], ['DEBUG_ONLY', DEBUG_ONLY],
+      ['MIRROR_BACKED_READS', MIRROR_BACKED_READS],
       ['HYBRID_CHANNELS', HYBRID_CHANNELS],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],
       ['SPECIAL', SPECIAL],

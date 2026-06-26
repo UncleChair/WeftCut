@@ -32,8 +32,6 @@ const URI_METER: &str = "composition://meter";
 const PREFIX_LAYERS: &str = "project://layers/";
 const PREFIX_MEDIA: &str = "media://";
 
-const HISTORY_LIMIT: usize = 100;
-
 #[cfg(feature = "motifs")]
 const URI_MOTIFS: &str = "motifs://current";
 
@@ -78,10 +76,15 @@ pub(crate) async fn read_resource(
         URI_MEDIA => serde_json::to_value(&snap.media_pool).map_err(serialize_err)?,
         URI_TRACKS => serde_json::to_value(&snap.tracks).map_err(serialize_err)?,
         URI_MARKERS => serde_json::to_value(&snap.markers).map_err(serialize_err)?,
-        URI_HISTORY => match b.mirror_history_view() {
-            Some(v) => v,
-            None => serde_json::to_value(&b.project()?.history_view(HISTORY_LIMIT).await).map_err(serialize_err)?,
-        },
+        // History lives in the TS state actor (the sole writer); its view is
+        // mirrored here via `set_project_mirror`. A clear error if unset — the
+        // TS host pushes the mirror at boot before any read can run.
+        URI_HISTORY => b
+            .mirror_history_view()
+            .ok_or_else(|| McpToolError::internal_error(
+                "history view not set (TS host must push the read-mirror first)".to_string(),
+                None,
+            ))?,
         URI_METER => meter_payload(b),
         URI_COMPILED => {
             // The audio mix plan IS the compiled view of the export

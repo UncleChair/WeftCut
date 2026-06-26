@@ -104,7 +104,6 @@ pub async fn ensure_export_audio_conform(
     end_us: Option<i64>,
 ) -> Result<Vec<String>, String> {
     let snap = backend.snapshot_for_read().await?;
-    let handle = backend.project()?;
     let window = match (start_us, end_us) {
         (Some(s), Some(e)) => Some((s, e)),
         _ => None,
@@ -117,7 +116,6 @@ pub async fn ensure_export_audio_conform(
         crate::jobs::enqueue_conform(
             backend.events.clone(),
             backend.cache.clone(),
-            handle.clone(),
             item,
             backend.read_mirror_handle(),
         );

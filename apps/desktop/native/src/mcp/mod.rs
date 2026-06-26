@@ -24,53 +24,24 @@ mod wire;
 
 pub(crate) use wire::*;
 
-pub(crate) use catalog::{
-    catalog, prompt_catalog, resource_catalog, tool_catalog,
-};
-// `dispatch_tool` is `pub` (catalog.rs macro) so lib.rs can re-export it for the
-// mcp_driver differential bin; the `mcp` mod itself is private so this is not a
-// production API-surface widening. napi_backend uses `crate::mcp::dispatch_tool`.
+pub(crate) use catalog::catalog;
+// `dispatch_tool` is `pub` (catalog.rs macro); napi_backend uses
+// `crate::mcp::dispatch_tool`. The `mcp` mod itself is private.
 pub use catalog::dispatch_tool;
 // synthesize_speech hybrid (Phase 3d-e): napi_backend's `synthesize_speech_compute`
 // calls the TTS compute half + needs the args type. Re-exported here (the `tools`
 // mod is private) — same precedent as `dispatch_tool` above; not a public widening.
 #[cfg(feature = "cloud")]
 pub(crate) use tools::{SynthesizeSpeechArgs, synthesize_speech_audio};
-#[cfg(feature = "replay")]
-pub use wire::reply;
 pub(crate) use prompts::{catalog as list_prompts, expand as get_prompt};
 pub(crate) use resources::read_resource;
 
-use serde::Serialize;
+// The `mcp:change` notification is emitted by the TS host (the TS actor's
+// `mcpCall` notifies via `mcpNotify`) post-4b; the Rust `ChangeEventSummary`
+// wire-projection + its `From<&ChangeEvent>` impl went with the deleted actor.
 
 /// Empty arg shape for tools that take no parameters. The dispatch table
 /// deserializes `{}` (or any object) into this; `schemars` advertises it as an
 /// empty object schema.
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema, Default)]
 pub(crate) struct EmptyArgs {}
-
-/// Snapshot-free projection of a `ChangeEvent` — the wire shape for the
-/// `mcp:change` event the napi `Backend` emits. The event rides the EventSink
-/// like every other notification.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct ChangeEventSummary {
-    pub op_id: crate::state::OpId,
-    pub actor: crate::state::Actor,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub summary: String,
-    pub affected: Vec<crate::state::EntityRef>,
-    pub diff_hint: crate::state::DiffHint,
-}
-
-impl From<&crate::state::actor::ChangeEvent> for ChangeEventSummary {
-    fn from(e: &crate::state::actor::ChangeEvent) -> Self {
-        Self {
-            op_id: e.op_id,
-            actor: e.actor.clone(),
-            timestamp: e.timestamp,
-            summary: e.summary.clone(),
-            affected: e.affected.clone(),
-            diff_hint: e.diff_hint,
-        }
-    }
-}

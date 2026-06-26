@@ -289,8 +289,6 @@ app.whenReady().then(async () => {
     listMotifs: () => backend!.invoke('list_motifs', '{}'),
   })
   tsHost.start()
-  // Tell the jobs subsystem the TS actor is now authoritative for derivative write-back.
-  backend!.setTsDerivativeAuthority(true)
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')
 
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.

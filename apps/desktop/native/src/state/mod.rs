@@ -7,7 +7,6 @@
 // in the lib build but are intentionally public.
 #![allow(unused_imports)]
 
-pub mod actor;
 pub mod animated;
 pub mod audio_role;
 pub mod color;
@@ -16,7 +15,6 @@ pub mod effect;
 pub mod keyframe_edits;
 pub mod composition;
 pub mod group;
-pub mod history;
 pub mod ids;
 pub mod layer;
 pub mod marker;
@@ -26,20 +24,17 @@ pub mod time;
 pub mod track;
 pub mod transform;
 pub mod transition;
-pub mod validate;
 
+// The actor machinery (single-writer `ProjectActor`/`ProjectHandle`/history/
+// validators) was deleted in Phase 4b — the TS state actor is the only writer.
+// The shared command/error/patch types it used were extracted to `command` in
+// Phase 4a and stay here; the model serde modules below are untouched.
 pub use command::{
     Actor, AudioPatch, CaptionStylePatch, ColorPatch, CommandError, CompositionPatch, DiffHint,
     EntityRef, ImageOverlayPatch, LayerEdge, LayerParamsPatch, LayerPatch, MarkerPatch,
     MediaDerivativesPatch, MotifPatch, MotifRebindEntry, TextPatch, ValidationError,
     VideoClipPatch,
 };
-pub use actor::{
-    ChangeEvent, DryRunOp, DryRunOutput, HistoryStatus, ProjectActor, ProjectHandle,
-    spawn,
-};
-pub use history::{HistoryEntry, HistoryEntrySummary, HistoryView, NamedCheckpoint, NamedCheckpointSummary};
-pub use validate::validate as validate_project;
 
 pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};

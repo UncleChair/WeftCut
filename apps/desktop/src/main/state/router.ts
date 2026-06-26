@@ -2,9 +2,9 @@
 // Pure splitter: the TS actor is authoritative; this splits every renderer channel.
 // SAFETY INVARIANT (router.test.ts partition gate): every renderer channel is
 // classified into exactly one bucket, and no project-touching channel routes to
-// 'rust' (the curated PURE_NATIVE ∪ PERSISTENCE ∪ MIRROR_BACKED_READS ∪
-// DEBUG_ONLY allowlist is read-only / config-store / pure-native / dev-only).
-// An unclassified channel routes to {kind:'reject'} so the gate fails loud.
+// 'rust' (the curated PURE_NATIVE ∪ PERSISTENCE ∪ MIRROR_BACKED_READS allowlist is
+// read-only / config-store / pure-native). An unclassified channel routes to
+// {kind:'reject'} so the gate fails loud.
 import { PRODUCTION_OPS } from './commands'
 
 export type Route =
@@ -41,9 +41,6 @@ export const PERSISTENCE: ReadonlySet<string> = new Set([
   'keybindings_export', 'keybindings_import', 'agent_session_get', 'log_list', 'log_clear', 'log_emit', 'log_dir_path',
 ])
 
-/** debug_assertions-only, project-touching; dev tooling, not a release/flag-default-on risk. Phase-4. */
-export const DEBUG_ONLY: ReadonlySet<string> = new Set(['debug_lock_history', 'debug_unlock_history', 'debug_simulate_agent_session'])
-
 export function routeChannel(channel: string): Route {
   if (PRODUCTION_OPS.has(channel)) return { kind: 'command' }
   if (HYBRID_CHANNELS.has(channel)) return { kind: 'hybrid', tool: channel }
@@ -56,7 +53,7 @@ export function routeChannel(channel: string): Route {
     case 'project_save': return { kind: 'save' }
     case 'agent_session_end': return { kind: 'agentSessionEnd' }
   }
-  if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || MIRROR_BACKED_READS.has(channel) || DEBUG_ONLY.has(channel))
+  if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || MIRROR_BACKED_READS.has(channel))
     return { kind: 'rust' }
-  return { kind: 'reject', reason: 'unclassified channel under WEFTCUT_TS_ACTOR — classify in router.ts' }
+  return { kind: 'reject', reason: 'unclassified channel — classify in router.ts' }
 }

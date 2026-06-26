@@ -73,3 +73,22 @@ pub fn parse(body: &str, format: SubFormat) -> ParsedSubtitles {
         SubFormat::Ass => ass::parse(body),
     }
 }
+
+/// Pure parse half of the subtitle chokepoint: validate the body, sniff/apply
+/// the format, run the parser, and return the cues + simplified flag. No actor
+/// write — the caller (the `parse_subtitles` napi hybrid-compute half) applies
+/// the caption-track write via the TS actor. `None` format → `sniff`.
+pub fn parse_subtitle_cues(
+    body: &str,
+    format: Option<SubFormat>,
+) -> Result<(Vec<Cue>, bool), String> {
+    if body.trim().is_empty() {
+        return Err("subtitle body is empty".into());
+    }
+    let fmt = format.unwrap_or_else(|| sniff(body));
+    let parsed = parse(body, fmt);
+    if parsed.cues.is_empty() {
+        return Err("no cues parsed from subtitle body".into());
+    }
+    Ok((parsed.cues, parsed.simplified))
+}
