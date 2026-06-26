@@ -1,0 +1,5 @@
+{ "name": "countdown-clamp", "commands": [
+  { "op": "add_track", "ref": "T" },
+  { "op": "add_layer", "track": "@T", "kind": "Motif", "motif_id": "countdown", "motif_version": 1, "props": { "seconds": 10 }, "t_start_us": 0, "t_end_us": 10000000, "ref": "M" },
+  { "op": "update_layer_params", "layer": "@M", "patch": { "kind": "Motif", "props": { "seconds": 3 } } }
+] }

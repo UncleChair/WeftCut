@@ -648,3 +648,19 @@ absent and so is not deterministic to assert synchronously.
 **Still blocked (Phase 4):** `add_motif` (needs motif catalog in TS) and
 `project_restore_checkpoint` (no TS command-surface create path) remain in
 `BLOCKED_UNDER_FLAG` / `MCP_BLOCKED_UNDER_FLAG`.
+
+### add_motif and countdown-clamp sequences (Phase 4a-ii)
+
+`sequences-prod/add-motif-no-track.json`, `sequences-prod/add-motif-existing-track.json`,
+`sequences-mcp/add-motif-no-track.json`, and `sequences-mcp/add-motif-existing-track.json`
+exercise the `add_motif` command through the production and MCP channels. Both the Rust
+prod/mcp drivers and the TS differential gate resolve `countdown` from the default built-in
+catalog (`catalog.builtins()`) — no user-motif seeding is required or performed.
+
+`sequences/countdown-clamp.json` (replay path) and `sequences-prod/countdown-clamp.json`
+exercise the Motif content-window clamp: a `countdown` layer placed at 10s width with
+`seconds=10` (cap 10s, no clamp) is then shrunk via `update_layer_params props.seconds=3`
+(cap 3s, clamp: `t_end` trims to 3s, `src_in` stays 0). The TS replay resolves
+`resolve_motif_max_dur_us` from the same built-in catalog, so the clamp result is
+byte-identical on both engines. These sequences close the deferred "Motif
+`update_layer_params` content-window clamp (motif_cap_us)" item in the gaps list above.

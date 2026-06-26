@@ -109,7 +109,10 @@ fn extract_ref_id(op: &str, ret_json: &str) -> Option<String> {
         | "duplicate_layer"
         | "separate_audio_to_new_track"
         | "add_caption_track"
-        | "add_marker" => {
+        | "add_marker"
+        // The no-track_id case mints the Overlay track FIRST then the layer
+        // (two commits); we capture the LAYER id, matching the TS two-commit order.
+        | "add_motif" => {
             // The dispatch ser() call JSON-encodes the UUID string, so the result
             // is `"\"<uuid>\""` — parse the outer JSON string to get the raw UUID.
             serde_json::from_str::<String>(ret_json).ok()

@@ -1,0 +1,4 @@
+{ "name": "countdown-clamp", "commands": [
+  { "op": "add_motif", "motifId": "countdown", "tStartUs": 0, "tEndUs": 10000000, "props": { "seconds": 10 }, "ref": "M" },
+  { "op": "update_layer_params", "layerId": "@M", "patch": { "kind": "Motif", "props": { "seconds": 3 } } }
+] }
