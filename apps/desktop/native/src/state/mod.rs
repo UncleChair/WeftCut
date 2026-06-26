@@ -1,5 +1,5 @@
 //! Project state model: the document types, their serde, and the shared
-//! command-surface types (errors, media/motif patches, `Actor`) that outlive
+//! command-surface types (errors, media patches, `Actor`) that outlive
 //! the deleted Rust state actor.
 //!
 //! Design: `docs/data-model.md`.
@@ -31,7 +31,7 @@ pub mod transition;
 // validators) was deleted in Phase 4b — the TS state actor is the only writer.
 // The shared command/error/patch types it used were extracted to `command` in
 // Phase 4a and stay here; the model serde modules below are untouched.
-pub use command::{CommandError, MediaDerivativesPatch, MotifRebindEntry, ValidationError};
+pub use command::{CommandError, MediaDerivativesPatch, ValidationError};
 
 pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};

@@ -2,7 +2,7 @@
 //!
 //! The Rust actor (`state/actor.rs`) is being decommissioned in Phase 4b.
 //! These types must survive that deletion because kept code in `jobs/`,
-//! `commands/`, `mcp/`, `motifs/`, and the napi layer depend on them.
+//! `commands/`, `mcp/`, and the napi layer depend on them.
 //!
 //! Phase 4b T4a: moved here verbatim from `actor.rs` (L45–457) and from
 //! `validate.rs` (ValidationError). The actor still compiles this task —
@@ -133,16 +133,6 @@ pub enum ValidationError {
     #[error("group {group} has fewer than 2 members — should have been auto-dissolved")]
     GroupBelowMinSize { group: GroupId, members: usize },
 
-}
-
-/// One layer's retarget for `rebind_motif`. The caller (install_motif) precomputes
-/// the target id/version + migrated props per affected layer; the actor applies by id.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MotifRebindEntry {
-    pub layer_id: LayerId,
-    pub motif_id: String,
-    pub motif_version: u32,
-    pub props: imbl::HashMap<String, serde_json::Value>,
 }
 
 /// Patch for a media item's derivative paths (proxy / thumbnails / waveform).

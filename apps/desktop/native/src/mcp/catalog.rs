@@ -84,38 +84,6 @@ tool_table! {
                           'Voiceover' track), optional `t_start_us` (defaults to the composition's \
                           current duration so the voiceover appends at the end). Returns \
                           `{ layer_id, media_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech),
-    #[cfg(feature = "motifs")]
-    "list_motifs" => ("List every motif available to add via `add_motif` — built-ins PLUS installed and \
-                          draft user motifs. Returns an array of `{ id, name, version, size: [w,h], \
-                          default_duration_s, props_schema, status, content_hash, target_id? }` where \
-                          `status` is `builtin` | `installed` | `draft`. Inspect `props_schema` before \
-                          `add_motif` to know what keys + types each motif accepts; unknown keys reject. \
-                          Drafts (status `draft`) are placeable immediately for preview.", super::EmptyArgs, tools::list_motifs),
-    #[cfg(feature = "motifs")]
-    "get_motif_source" => ("Read a Motif's source { manifest, html } — any built-in, installed, or draft. \
-                          Read this before editing so you can base your changes on the current source. \
-                          `id` comes from `list_motifs`.", tools::MotifIdArgs, tools::get_motif_source),
-    #[cfg(feature = "motifs")]
-    "write_motif_draft" => ("Write a Motif draft from { manifest, html }. Returns the draft id. The draft is \
-                          placeable immediately (via `add_motif`) for preview, and re-writable. `from` \
-                          (optional) records an existing Motif id as the draft's UPDATE target so a later \
-                          `install_motif {mode:'update'}` republishes over it; omit `from` for a brand-new \
-                          Motif (installs as new). The manifest's `id`/`version` are ignored — app-assigned. \
-                          Expose tweakable controls via `props_schema`.", tools::WriteMotifDraftArgs, tools::write_motif_draft),
-    #[cfg(feature = "motifs")]
-    "preview_motif_draft" => ("Render one frame of a Motif (draft / installed / built-in) and return it as a \
-                          base64-encoded PNG, so you can SEE your output and self-correct. Args: `id`, \
-                          `t_sec` (content time), optional `width`/`height` (default = the motif's size), \
-                          optional `props`. Requires the app's preview runtime to be live; returns an error \
-                          (rather than hanging) if it isn't ready.", tools::PreviewMotifDraftArgs, tools::preview_motif_draft),
-    #[cfg(feature = "motifs")]
-    "install_motif" => ("Install a draft. mode 'new' publishes under the draft's own id; 'update' \
-                          republishes over the draft's recorded UPDATE target (set via `write_motif_draft`'s \
-                          `from`) — bumping its version so every placement re-renders, and rebinding + \
-                          migrating current-project layers. Returns the published id.", tools::InstallMotifArgs, tools::install_motif),
-    #[cfg(feature = "motifs")]
-    "delete_motif" => ("Delete an installed or draft user Motif by id. Built-ins are rejected. Placed \
-                          layers referencing it degrade to an error placeholder.", tools::MotifIdArgs, tools::delete_motif),
 }
 
 pub(crate) fn resource_catalog() -> Vec<ResourceDef> {

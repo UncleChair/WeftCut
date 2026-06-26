@@ -18,7 +18,7 @@
     "test": "vitest run --exclude '**/*.browser.test.ts'",
     "pretest": "npm run build:wasm",
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
-    "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native --features jobs,export,mcp,cloud,motifs",
+    "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native --features jobs,export,mcp,cloud",
     "e2e:electron": "playwright test -c playwright.config.ts",
     "fetch-ffmpeg": "node scripts/fetch-ffmpeg.mjs",
     "package": "npm run napi:build && npm run build && electron-builder --publish never"

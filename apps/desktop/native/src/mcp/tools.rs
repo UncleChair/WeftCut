@@ -5,13 +5,11 @@
 //!
 //! Phase 4b T3: only the native/compute/hybrid-compute tool handlers remain.
 //! The ~47 TS-executed mutation handlers are deleted; the TS actor serves them.
-//! Cloud tools (transcribe/synthesize) are gated on `feature = "cloud"`; motif
-//! tools on `feature = "motifs"`.
+//! Cloud tools (transcribe/synthesize) are gated on `feature = "cloud"`.
 
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[cfg(feature = "cloud")]
 use crate::cloud;
@@ -213,7 +211,7 @@ pub(super) struct ImportMediaArgs {
 /// `import_media` Rust handler is a stub — the tool routes through the hybrid
 /// orchestrator (probe_media napi compute → TS-actor write); the schema stays so
 /// `listTools` advertises it, but the TS host intercepts the call before dispatch
-/// reaches this handler. (Phase 4b — same pattern as `preview_motif_draft`.)
+/// reaches this handler. (Phase 4b hybrid pattern.)
 #[cfg(feature = "jobs")]
 pub(super) async fn import_media(
     _b: &Backend,
@@ -310,168 +308,6 @@ fn push_if_long_enough(
         t_start_us: t_start,
         t_end_us: t_end,
     });
-}
-
-// ============================================================
-// Motif tools
-// ============================================================
-
-/// schemars 0.8 renders `serde_json::Value` as the boolean schema `true`, which
-/// the MCP TS-SDK Zod validator rejects (it requires object schemas). Emit `{}`
-/// (an unconstrained OBJECT schema) so `client.listTools()` accepts the catalog.
-/// Moved here from the deleted `keyframes.rs` (Phase 4b T3).
-fn any_object_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-    schemars::schema::Schema::Object(schemars::schema::SchemaObject::default())
-}
-
-// add_motif is deleted — it calls b.project()? (project mutation), served by
-// the TS actor (Phase 4b T3).
-
-/// Shared single-id arg for `get_motif_source` + `delete_motif`.
-#[cfg(feature = "motifs")]
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(super) struct MotifIdArgs {
-    /// The Motif id (from `list_motifs`).
-    pub id: String,
-}
-
-#[cfg(feature = "motifs")]
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(super) struct WriteMotifDraftArgs {
-    /// Optional id of an existing Motif this draft will UPDATE on install (records
-    /// it as the draft's target). Omit for a brand-new Motif (installs as new).
-    pub from: Option<String>,
-    /// The manifest as a JSON object (its `id`/`version` are ignored — app-assigned).
-    /// Shape: `{ name, size:[w,h], default_duration_s, props_schema, ... }` — inspect
-    /// a built-in via `get_motif_source` for an exact example. Rejected if malformed.
-    #[schemars(schema_with = "any_object_schema")]
-    pub manifest: Value,
-    /// The HTML body. The manifest island is injected by the app; a
-    /// `<script>motif.define({...})</script>` drives the render.
-    pub html: String,
-}
-
-#[cfg(feature = "motifs")]
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(super) struct InstallMotifArgs {
-    /// The draft id (from `write_motif_draft`).
-    pub draft_id: String,
-    /// "new" (publish under the draft's own id) or "update" (republish over the
-    /// draft's recorded target; fails if the draft has no target).
-    pub mode: String,
-}
-
-#[cfg(feature = "motifs")]
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(super) struct PreviewMotifDraftArgs {
-    /// Motif id (draft / installed / built-in).
-    pub id: String,
-    /// Content time in seconds to render (e.g. 0 = first frame).
-    pub t_sec: f64,
-    /// Optional render width (default = the motif's manifest width).
-    pub width: Option<u32>,
-    /// Optional render height (default = the motif's manifest height).
-    pub height: Option<u32>,
-    /// Optional props (JSON object); defaults to the manifest defaults.
-    #[schemars(schema_with = "any_object_schema")]
-    pub props: Option<Value>,
-}
-
-#[cfg(feature = "motifs")]
-pub(super) async fn list_motifs(
-    b: &Backend,
-    _args: super::EmptyArgs,
-) -> Result<ToolResult, McpToolError> {
-    let payload: Vec<Value> = crate::commands::motifs::list_motifs_inner(&b.motif_store)
-        .into_iter()
-        .map(|mut entry| {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.remove("html");
-            }
-            entry
-        })
-        .collect();
-    ToolResult::json(&payload)
-}
-
-#[cfg(feature = "motifs")]
-pub(super) async fn get_motif_source(
-    b: &Backend,
-    args: MotifIdArgs,
-) -> Result<ToolResult, McpToolError> {
-    let source = crate::motifs::authoring_commands::get_motif_source_core(&b.motif_store, &args.id)
-        .map_err(|e| McpToolError::invalid_params(e, None))?;
-    ToolResult::json(&serde_json::json!({ "manifest": source.manifest, "html": source.html }))
-}
-
-#[cfg(feature = "motifs")]
-pub(super) async fn write_motif_draft(
-    b: &Backend,
-    args: WriteMotifDraftArgs,
-) -> Result<ToolResult, McpToolError> {
-    let manifest: crate::motifs::catalog::Manifest = serde_json::from_value(args.manifest)
-        .map_err(|e| McpToolError::invalid_params(format!("invalid manifest: {e}"), None))?;
-    let id = crate::motifs::authoring_commands::write_motif_draft_core(
-        &b.motif_store,
-        manifest,
-        &args.html,
-        args.from.as_deref(),
-    )
-    .map_err(|e| McpToolError::invalid_params(e, None))?;
-    b.events.emit(
-        crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
-        serde_json::json!({}),
-    );
-    Ok(ToolResult::text(id))
-}
-
-/// `preview_motif_draft` Rust handler is a stub — capture lives in the JS host.
-/// The schema is still advertised so `listTools` includes the tool; the JS
-/// server intercepts the call before dispatch reaches this handler.
-#[cfg(feature = "motifs")]
-pub(super) async fn preview_motif_draft(
-    _b: &Backend,
-    _args: PreviewMotifDraftArgs,
-) -> Result<ToolResult, McpToolError> {
-    Err(McpToolError::internal_error(
-        "preview_motif_draft is handled by the host process".to_string(),
-        None,
-    ))
-}
-
-/// `install_motif` Rust handler is a stub — the tool routes through the hybrid
-/// orchestrator (compute_motif_rebind napi compute → TS-actor rebind_motif write);
-/// the schema stays so `listTools` advertises it, but the TS host intercepts the
-/// call before dispatch reaches this handler. (Phase 4b.)
-#[cfg(feature = "motifs")]
-pub(super) async fn install_motif(
-    _b: &Backend,
-    _args: InstallMotifArgs,
-) -> Result<ToolResult, McpToolError> {
-    Err(McpToolError::internal_error(
-        "install_motif is handled by the host process (TS actor hybrid)".to_string(),
-        None,
-    ))
-}
-
-#[cfg(feature = "motifs")]
-pub(super) async fn delete_motif(
-    b: &Backend,
-    args: MotifIdArgs,
-) -> Result<ToolResult, McpToolError> {
-    if crate::motifs::catalog::BUILTIN_IDS.contains(&args.id.as_str()) {
-        return Err(McpToolError::invalid_params(
-            format!("cannot delete the built-in Motif '{}'", args.id),
-            None,
-        ));
-    }
-    crate::motifs::authoring_commands::delete_motif_core(&b.motif_store, &args.id)
-        .map_err(|e| McpToolError::internal_error(e, None))?;
-    b.events.emit(
-        crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
-        serde_json::json!({}),
-    );
-    Ok(ToolResult::empty())
 }
 
 // ============================================================

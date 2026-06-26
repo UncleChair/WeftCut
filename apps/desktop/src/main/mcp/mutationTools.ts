@@ -11,9 +11,8 @@ export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 /** Motif catalog-read + authoring + install + staleness tools, served in TS by
- *  runMotifTool (Phase 2/3). Their defs stay Rust-advertised this phase
- *  (mergeMcpCatalog keeps non-'ts' routes); Phase 4 moves the defs to TS and
- *  deletes the Rust arms. */
+ *  runMotifTool. Their 6 MCP-advertised defs come from TS MOTIF_TOOL_DEFS
+ *  (mcpCatalog dedups by name); the Rust arms are gone (Phase 4). */
 export const MOTIF_TOOLS: ReadonlySet<string> = new Set([
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif',
   'motif_staleness_report', 'acknowledge_motif_staleness',

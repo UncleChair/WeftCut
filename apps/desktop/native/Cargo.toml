@@ -44,9 +44,6 @@ uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
 blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 parking_lot = "0.12"
-# Stage-5 Motif hot-reload: watches `<app_config_dir>/motifs/` and coalesces
-# disk changes into `motifs:changed` (src/motifs/watcher.rs).
-notify = "8"
 
 # Errors / logs
 anyhow = "1"
@@ -100,7 +97,6 @@ jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg
 export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_conform/io::probe
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
-motifs = []      # Motif capture (S5)
 
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 # (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).

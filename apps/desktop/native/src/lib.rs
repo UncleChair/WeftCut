@@ -32,19 +32,6 @@ mod export_settings_store;
 mod cloud;
 #[cfg(feature = "mcp")]
 mod mcp;
-#[cfg(feature = "motifs")]
-mod motifs;
-// The Motif *catalog* (manifest schema + built-ins) is pure serde data with no
-// capture dependency, and the core `state` actor reaches it to clamp
-// Motif-layer content windows. Keep it reachable as `crate::motifs::catalog`
-// even when the capture subsystem (the rest of `motifs`) is gated off.
-#[cfg(not(feature = "motifs"))]
-mod motifs {
-    // `#[path]` on a submodule of an inline module resolves relative to the
-    // inline module's directory (`src/motifs/`), so name the file bare.
-    #[path = "catalog.rs"]
-    pub mod catalog;
-}
 
 mod keybindings;
 mod logs;

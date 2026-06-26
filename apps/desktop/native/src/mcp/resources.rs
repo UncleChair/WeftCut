@@ -32,9 +32,6 @@ const URI_METER: &str = "composition://meter";
 const PREFIX_LAYERS: &str = "project://layers/";
 const PREFIX_MEDIA: &str = "media://";
 
-#[cfg(feature = "motifs")]
-const URI_MOTIFS: &str = "motifs://current";
-
 const APP_JSON: &str = "application/json";
 #[cfg(feature = "jobs")]
 const APP_OCTET: &str = "application/octet-stream";
@@ -115,20 +112,6 @@ pub(crate) async fn read_resource(
                     "error": e.to_string(),
                 }),
             }
-        }
-        #[cfg(feature = "motifs")]
-        URI_MOTIFS => {
-            let payload: Vec<serde_json::Value> =
-                crate::commands::motifs::list_motifs_inner(&b.motif_store)
-                    .into_iter()
-                    .map(|mut entry| {
-                        if let Some(obj) = entry.as_object_mut() {
-                            obj.remove("html");
-                        }
-                        entry
-                    })
-                    .collect();
-            serde_json::to_value(&payload).map_err(serialize_err)?
         }
         other if other.starts_with(PREFIX_LAYERS) => {
             let tail = &other[PREFIX_LAYERS.len()..];
@@ -392,7 +375,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
 
 /// The advertised resource catalog (`resources/list`).
 pub(super) fn static_resources() -> Vec<ResourceDef> {
-    let mut out: Vec<ResourceDef> = STATIC_RESOURCES
+    let out: Vec<ResourceDef> = STATIC_RESOURCES
         .iter()
         .map(|d| ResourceDef {
             uri: d.uri.to_string(),
@@ -401,13 +384,6 @@ pub(super) fn static_resources() -> Vec<ResourceDef> {
             mime_type: APP_JSON.to_string(),
         })
         .collect();
-    #[cfg(feature = "motifs")]
-    out.push(ResourceDef {
-        uri: URI_MOTIFS.to_string(),
-        name: "Motif catalog".to_string(),
-        description: "Built-in, installed, and draft Motifs (html stripped). Re-fetch after motifs:changed events.".to_string(),
-        mime_type: APP_JSON.to_string(),
-    });
     out
 }
 

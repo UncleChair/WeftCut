@@ -1,10 +1,10 @@
 //! `Backend` — the napi entry point. Holds the TS-fed read-mirror + managed
-//! stores, exposes a single `invoke` dispatcher and an `init` that warms up the
-//! motif watcher + ffmpeg. The TS state actor is the sole project writer; this
-//! boundary owns no actor (Phase 4b).
+//! stores, exposes a single `invoke` dispatcher and an `init` that warms up
+//! ffmpeg. The TS state actor is the sole project writer; this boundary owns
+//! no actor (Phase 4b).
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -63,10 +63,6 @@ pub struct Backend {
     /// See ReadMirror. Behind an Arc<Mutex> so background jobs can hold a
     /// handle to the same mirror without borrowing the Backend across await.
     read_mirror: std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>>,
-    #[cfg(feature = "motifs")]
-    pub(crate) motif_store: crate::motifs::store::UserMotifStore,
-    #[cfg(feature = "motifs")]
-    pub(crate) motif_watcher: OnceLock<crate::motifs::watcher::MotifWatcher>,
 }
 
 /// Build the config-dir-rooted stores + cache layout + log slot, install the
@@ -89,9 +85,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
     #[cfg(feature = "jobs")]
     let import_queue =
         crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone(), read_mirror.clone());
-    #[cfg(feature = "motifs")]
-    let motif_store = crate::motifs::store::UserMotifStore::new(config_path.clone().join("motifs"));
-
     // Forward our crate's `tracing` events into whichever LogBus is current.
     // `try_init` (vs `init`) so constructing multiple Backends — e.g. in the
     // test suite — never panics on a double global-subscriber install.
@@ -126,10 +119,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
         read_mirror,
-        #[cfg(feature = "motifs")]
-        motif_store,
-        #[cfg(feature = "motifs")]
-        motif_watcher: OnceLock::new(),
     }
 }
 
@@ -141,27 +130,13 @@ impl Backend {
         build_backend(events, app_config_dir, app_cache_dir)
     }
 
-    /// Warm up the motif watcher + ffmpeg sidecar. Must be awaited once before
-    /// any `invoke`. The project itself lives in the TS state actor (the sole
-    /// writer); the `project:changed` UI bridge + autosave moved to the TS host
-    /// in Phase 4b, so this no longer spawns a Rust actor.
+    /// Warm up ffmpeg sidecar. Must be awaited once before any `invoke`. The
+    /// project itself lives in the TS state actor (the sole writer); the
+    /// `project:changed` UI bridge + autosave moved to the TS host in Phase 4b,
+    /// so this no longer spawns a Rust actor.
     /// Runs inside napi's tokio runtime, so `tokio::spawn` has a runtime.
     #[napi]
     pub async fn init(&self) -> napi::Result<()> {
-        // S5: watch <config_dir>/motifs/ so external edits + agent writes resync
-        // the renderer catalog (motifs:changed → syncCatalog → ?v= host buster).
-        #[cfg(feature = "motifs")]
-        {
-            let events = self.events.clone();
-            let root = std::path::PathBuf::from(&self.config_dir).join("motifs");
-            match crate::motifs::watcher::spawn(root, move || {
-                events.emit("motifs:changed", serde_json::json!({}));
-            }) {
-                Ok(w) => { let _ = self.motif_watcher.set(w); }
-                Err(e) => tracing::warn!("motif watcher failed to start: {e:#}"),
-            }
-        }
-
         // S3: warm up ffmpeg-sidecar (resolve / auto-download the binary) off
         // the init path so the first media job doesn't pay the download.
         #[cfg(any(feature = "jobs", feature = "export"))]
@@ -379,55 +354,6 @@ impl Backend {
     }
 }
 
-// Motif-compute napi methods live in their OWN cfg-gated `#[napi] impl` block:
-// the block-level `#[napi]` macro generates a module-level `*_c_callback` for
-// every method but does NOT propagate a method's `#[cfg]` to that callback, so a
-// `#[cfg]`-on-method inside an unconditional `#[napi] impl` leaves a dangling
-// callback when the feature is off (E0425 under `--features jobs,export`).
-// Gating the WHOLE block removes methods AND callbacks together. (Attribute
-// reorder does not help — the block macro expands before the method cfg.)
-#[cfg(feature = "motifs")]
-#[napi]
-impl Backend {
-    /// install_motif hybrid compute (Phase 3d-e): publish the draft (store side)
-    /// + extract motif layers from the READ-MIRROR snapshot + build_rebind_updates.
-    /// Returns JSON `{ published_id: string, updates: MotifRebindEntry[] }`.
-    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
-    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
-    #[napi]
-    pub async fn compute_motif_rebind(&self, install_args_json: String) -> napi::Result<String> {
-        let args: crate::motifs::authoring_commands::InstallArgs =
-            serde_json::from_str(&install_args_json).map_err(|e| Error::from_reason(e.to_string()))?;
-        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
-        let (published_id, updates) =
-            crate::motifs::authoring_commands::install_motif_compute(&self.motif_store, &snap, &args)
-                .await
-                .map_err(Error::from_reason)?;
-        // Emit motifs:changed — the store was just mutated (draft installed).
-        self.events.emit(
-            crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
-            serde_json::json!({}),
-        );
-        serde_json::to_string(&serde_json::json!({ "published_id": published_id, "updates": updates }))
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    /// acknowledge_motif_staleness hybrid compute (Phase 3d-e): read the READ-MIRROR
-    /// snapshot, build ack entries, and return JSON `{ count: number, updates: MotifRebindEntry[] }`.
-    /// NO actor write — the TS host applies the rebind via `actor.dispatch('rebind_motif', {updates})`.
-    /// Reads `snapshot_for_read()` (the mirror) so the frozen Rust actor is never consulted.
-    #[napi]
-    pub async fn compute_ack_motif_rebind(&self) -> napi::Result<String> {
-        let snap = self.snapshot_for_read().await.map_err(Error::from_reason)?;
-        let (count, updates) =
-            crate::commands::motif_authoring::acknowledge_motif_compute(&self.motif_store, &snap)
-                .await
-                .map_err(Error::from_reason)?;
-        serde_json::to_string(&serde_json::json!({ "count": count, "updates": updates }))
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-}
-
 // synthesize_speech compute is `cloud`-gated for the same reason — its own block.
 #[cfg(feature = "cloud")]
 #[napi]
@@ -483,51 +409,6 @@ impl Backend {
     pub async fn mcp_get_prompt(&self, name: String, args_json: String) -> napi::Result<String> {
         let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
         Ok(crate::mcp::reply(crate::mcp::get_prompt(&name, args.as_object())))
-    }
-}
-
-/// A `motif:` file resolved for the Electron `protocol.handle('motif')` handler.
-#[cfg(feature = "motifs")]
-#[napi(object)]
-pub struct MotifFile {
-    pub bytes: napi::bindgen_prelude::Buffer,
-    pub content_type: String,
-}
-
-#[cfg(feature = "motifs")]
-#[napi]
-impl Backend {
-    /// Resolve a `motif://<id>/<rest>` file to bytes + content-type for the main
-    /// process's `protocol.handle`. Built-ins first, then the on-disk user store.
-    /// `None` → main returns 404.
-    #[napi]
-    pub fn motif_resolve_file(&self, id: String, rest: String) -> Option<MotifFile> {
-        let bytes = crate::motifs::builtin::resolve_bytes(Some(&self.motif_store), &id, &rest)?;
-        Some(MotifFile {
-            content_type: crate::motifs::builtin::content_type_for(&rest).to_string(),
-            bytes: bytes.into(),
-        })
-    }
-
-    /// Resolve the capture `ctx.duration` (seconds) for a Motif + instance props.
-    /// Backs the JS capture orchestrator's `meta.duration` (the frozen renderer
-    /// shim can't pass it). Built-ins resolve without touching disk.
-    #[napi]
-    pub fn motif_ctx_duration_s(&self, id: String, props_json: String) -> f64 {
-        let props: serde_json::Value =
-            serde_json::from_str(&props_json).unwrap_or(serde_json::Value::Null);
-        crate::motifs::resolve_capture_duration(
-            &id,
-            &crate::motifs::catalog::builtins(),
-            || {
-                self.motif_store
-                    .get_motif(&id)
-                    .into_iter()
-                    .map(|m| m.manifest)
-                    .collect()
-            },
-            &props,
-        )
     }
 }
 
@@ -593,7 +474,7 @@ impl Backend {
         // actor. The kept set mirrors the router's 'rust' allowlist (PURE_NATIVE ∪
         // PERSISTENCE ∪ MIRROR_BACKED_READS); the hybrid compute halves are
         // dispatched via dedicated napi methods (probe_media / parse_subtitles /
-        // compute_motif_rebind / …), not this match.
+        // synthesize_speech_compute / …), not this match.
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
             // ---- prefs / settings / recents / keybindings / logs / agent ----
@@ -723,46 +604,6 @@ impl Backend {
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::cloud::settings_test_provider(self, a.provider).await)
             }
-            #[cfg(feature = "motifs")]
-            "list_motifs" => ser(crate::commands::motifs::list_motifs(self).await),
-            #[cfg(feature = "motifs")]
-            "get_motif_source" => {
-                #[derive(serde::Deserialize)] struct A { id: String }
-                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motif_authoring::get_motif_source(self, a.id).await)
-            }
-            #[cfg(feature = "motifs")]
-            "write_motif_draft" => {
-                #[derive(serde::Deserialize)] struct A { args: crate::motifs::authoring_commands::WriteDraftArgs }
-                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motif_authoring::write_motif_draft(self, a.args).await)
-            }
-            #[cfg(feature = "motifs")]
-            "amend_motif_draft" => {
-                #[derive(serde::Deserialize)] #[serde(rename_all = "camelCase")] struct A { draft_id: String, source: String }
-                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motif_authoring::amend_motif_draft(self, a.draft_id, a.source).await)
-            }
-            #[cfg(feature = "motifs")]
-            "create_edit_draft" => {
-                #[derive(serde::Deserialize)] #[serde(rename_all = "camelCase")] struct A { source_id: String }
-                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motif_authoring::create_edit_draft(self, a.source_id).await)
-            }
-            #[cfg(feature = "motifs")]
-            "import_motif" => {
-                #[derive(serde::Deserialize)] struct A { path: String }
-                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motif_authoring::import_motif(self, a.path).await)
-            }
-            #[cfg(feature = "motifs")]
-            "delete_motif" => {
-                #[derive(serde::Deserialize)] struct A { id: String }
-                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::motif_authoring::delete_motif(self, a.id).await)
-            }
-            #[cfg(feature = "motifs")]
-            "motif_staleness_report" => ser(crate::commands::motif_authoring::motif_staleness_report(self).await),
             other => Err(format!("unknown command: '{other}'")),
         }
     }
@@ -792,8 +633,8 @@ mod tests {
     }
 
     /// Push a blank project as the read-mirror so the mirror-backed read handlers
-    /// (`get_*`, `ensure_*`, `motif_staleness_report`, `transcribe`/`detect`) have
-    /// a project source — the TS host does this at boot in production.
+    /// (`get_*`, `ensure_*`, `transcribe`/`detect`) have a project source — the
+    /// TS host does this at boot in production.
     fn push_blank_mirror(b: &Backend) {
         let p = crate::state::Project::new_blank("test-mirror");
         b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
@@ -948,15 +789,6 @@ mod tests {
         assert!(err.contains("Settings"), "missing-key error should hint Settings, got: {err}");
     }
 
-    #[cfg(feature = "motifs")]
-    #[test]
-    fn motif_store_resolves_builtin_bytes() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        let bytes = crate::motifs::builtin::resolve_bytes(Some(&b.motif_store), "countdown", "index.html")
-            .expect("countdown index resolves");
-        assert!(std::str::from_utf8(&bytes).unwrap().contains("motif.define"));
-    }
-
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn mcp_call_tool_unknown_is_not_found() {
@@ -1014,40 +846,6 @@ mod tests {
             "log:entry must reach the sink; saw {:?}",
             sink.names()
         );
-    }
-
-    #[cfg(feature = "motifs")]
-    #[tokio::test]
-    async fn staleness_report_arm_is_empty_on_blank_project() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        push_blank_mirror(&b);
-        let json = b.dispatch("motif_staleness_report", "{}").await.unwrap();
-        assert_eq!(json, "[]"); // no motif layers placed → empty report
-    }
-
-    #[cfg(feature = "motifs")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn list_motifs_arm_returns_builtins() {
-        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
-        b.init().await.unwrap();
-        let json = b.invoke("list_motifs".into(), "{}".into()).await.unwrap();
-        assert!(json.contains("countdown"));
-        assert!(json.contains("lower-third"));
-    }
-
-    #[cfg(feature = "motifs")]
-    #[tokio::test]
-    async fn write_draft_arm_returns_id_and_emits_changed() {
-        let sink = std::sync::Arc::new(crate::events::VecEventSink::default());
-        let b = Backend::new_for_test_with_sink(sink.clone());
-        b.init().await.unwrap();
-        let manifest = r#"{"id":"x","name":"My Draft","version":1,"size":[200,80],"default_duration_s":2,"props_schema":{}}"#;
-        let body = r#"<head></head><body><script>motif.define({setup(){}})</script></body>"#;
-        let arg = format!(r#"{{"args":{{"manifest":{manifest},"html":{}}}}}"#, serde_json::to_string(body).unwrap());
-        let id = b.dispatch("write_motif_draft", &arg).await.unwrap();
-        assert!(!id.is_empty());
-        assert!(sink.names().iter().any(|n| n == "motifs:changed"));
     }
 
     #[cfg(feature = "cloud")]
@@ -1119,14 +917,11 @@ mod tests {
             .expect("commands/media.rs must be readable");
         let export = std::fs::read_to_string(format!("{root}/src/commands/export.rs"))
             .expect("commands/export.rs must be readable");
-        let motif = std::fs::read_to_string(format!("{root}/src/commands/motif_authoring.rs"))
-            .expect("commands/motif_authoring.rs must be readable");
 
         // No file may contain the deleted stale-actor snapshot read.
         for (name, src) in [
             ("commands/media.rs", &media),
             ("commands/export.rs", &export),
-            ("commands/motif_authoring.rs", &motif),
         ] {
             assert!(
                 !src.contains(".project()?.snapshot()"),
@@ -1139,7 +934,6 @@ mod tests {
         for (name, src) in [
             ("commands/media.rs", &media),
             ("commands/export.rs", &export),
-            ("commands/motif_authoring.rs", &motif),
         ] {
             assert!(
                 src.contains("snapshot_for_read"),
