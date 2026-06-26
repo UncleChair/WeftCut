@@ -182,7 +182,6 @@ weftcut/
         events.rs             ← EventSink + thread-safe-function bridge to main
         keybindings.rs        ← keybinding registry + persistence
         view_state.rs         ← per-workspace UI view state
-        app_settings.rs       ← global preferences
         agent_session.rs      ← agent-mode session lifecycle
         recents.rs            ← startup-screen recents.json + prefs
         workspace.rs          ← WorkspaceSlot tracking current workspace
@@ -199,11 +198,13 @@ weftcut/
         mcp/                 ←   streamable-HTTP MCP host (SDK + bearer)
         motif/               ←   offscreen-CDP capture host + motif: protocol
         keys.ts              ←   safeStorage cloud-key persistence
+        app-settings.ts      ←   app-level preferences (app_settings.json)
         windows.ts fsGuard.ts
       preload/                ← contextBridge surface (api.backend / fs / window / …)
         index.ts
       shared/                 ← IPC types shared between main + renderer
         ipc.ts
+        app-settings.ts       ← AppSettings types (main owns persistence)
       renderer/               ← React + TypeScript UI (PixiJS + WebCodecs)
         startup/              ← Create / Open / Recent screen
         preview/              ← <PreviewSurface> mounting the Pixi compositor

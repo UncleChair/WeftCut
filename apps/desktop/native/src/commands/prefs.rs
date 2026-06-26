@@ -18,26 +18,6 @@ pub fn ping() -> &'static str {
 // renderer routes `get_project_settings`/`update_project_settings`/
 // `agent_session_end` to the TS actor, so these are gone (Phase 4b).
 
-// ---- App-level settings -------------------------------------------------
-
-pub async fn app_settings_get(
-    backend: &Backend,
-) -> Result<crate::app_settings::AppSettings, String> {
-    Ok(backend.app_settings.get())
-}
-
-pub async fn app_settings_set(
-    backend: &Backend,
-    patch: crate::app_settings::AppSettingsPatch,
-) -> Result<crate::app_settings::AppSettings, String> {
-    let after = backend.app_settings.apply(patch).map_err(|e| format!("{e:#}"))?;
-    backend.events.emit(
-        "app_settings:changed",
-        serde_json::to_value(&after).unwrap_or(serde_json::Value::Null),
-    );
-    Ok(after)
-}
-
 // ---- View state (per-workspace) -----------------------------------------
 
 pub async fn view_state_get(
@@ -226,14 +206,6 @@ pub async fn log_dir_path(backend: &Backend) -> Result<Option<String>, String> {
 }
 
 // ---- Args structs -------------------------------------------------------
-
-/// `app_settings_set` — `{ patch: AppSettingsPatch }` (camelCase; matches
-/// the TS `invoke("app_settings_set", { patch })` call site in `ipc/index.ts`).
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppSettingsSetArgs {
-    pub patch: crate::app_settings::AppSettingsPatch,
-}
 
 /// `view_state_set` — `{ state: ViewState }`. No TS wrapper found that
 /// would use a different key, so "state" matches the legacy param name.

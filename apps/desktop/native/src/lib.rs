@@ -7,7 +7,6 @@
 // nested `Arc<Project>`.
 #![recursion_limit = "512"]
 
-mod app_settings;
 // `audio::{conform_reader, mix}` read the VCONF conform format produced by
 // `jobs`, and the `export` mixer consumes `audio`. With both deferred features
 // off there is no consumer, so gate the whole module to keep the base build lean.

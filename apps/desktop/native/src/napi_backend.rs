@@ -16,7 +16,6 @@ use serde::Serialize;
 use chrono::Utc;
 
 use crate::agent_session::AgentSessionSlot;
-use crate::app_settings::AppSettingsStore;
 use crate::cache::CacheLayout;
 use crate::events::{EventSink, TsfnEventSink};
 use crate::keybindings::KeybindingsStore;
@@ -39,7 +38,6 @@ pub struct Backend {
     pub(crate) events: Arc<dyn EventSink>,
     pub(crate) recents: RecentsStore,
     pub(crate) keybindings: KeybindingsStore,
-    pub(crate) app_settings: AppSettingsStore,
     pub(crate) cache: CacheLayout,
     #[cfg(feature = "jobs")]
     pub(crate) import_queue: crate::jobs::import::ImportQueue,
@@ -101,8 +99,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
     Backend {
         events,
         recents: RecentsStore::new(config_path.clone()),
-        keybindings: KeybindingsStore::new(config_path.clone()),
-        app_settings: AppSettingsStore::new(config_path),
+        keybindings: KeybindingsStore::new(config_path),
         cache,
         #[cfg(feature = "jobs")]
         import_queue,
@@ -478,11 +475,6 @@ impl Backend {
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
             // ---- prefs / settings / recents / keybindings / logs / agent ----
-            "app_settings_get" => ser(crate::commands::prefs::app_settings_get(self).await),
-            "app_settings_set" => {
-                let a: crate::commands::prefs::AppSettingsSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::app_settings_set(self, a.patch).await)
-            }
             "view_state_get" => ser(crate::commands::prefs::view_state_get(self).await),
             "view_state_set" => {
                 let a: crate::commands::prefs::ViewStateSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -659,25 +651,6 @@ mod tests {
         let args = r#"{"report":{"rmsDb":-12.0,"peakDb":-3.0}}"#;
         let out = b.dispatch("report_audio_meter", args).await.unwrap();
         assert_eq!(out, "null", "report_audio_meter returns unit/null");
-    }
-
-    /// S2 prefs: `app_settings_set` must fire `app_settings:changed`.
-    #[tokio::test]
-    async fn app_settings_set_emits_changed() {
-        let sink = VecEventSink::new();
-        let b = Backend::new_for_test(Arc::new(sink.clone()));
-        b.init().await.unwrap();
-        let cur = b.dispatch("app_settings_get", "{}").await.unwrap();
-        assert!(!cur.is_empty());
-        // Empty patch — all fields optional, so `{}` deserializes fine.
-        b.dispatch("app_settings_set", r#"{"patch":{}}"#)
-            .await
-            .expect("app_settings_set must succeed");
-        assert!(
-            sink.names().iter().any(|n| n == "app_settings:changed"),
-            "app_settings:changed must be emitted; got: {:?}",
-            sink.names()
-        );
     }
 
     /// Blank project has no audio layers, so the export-audio gate returns an

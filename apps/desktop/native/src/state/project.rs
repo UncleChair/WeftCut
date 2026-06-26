@@ -140,9 +140,8 @@ fn default_auto_delete_empty_tracks() -> bool {
     true
 }
 
-/// Patch shape for `update_project_settings`. Mirrors `AppSettingsPatch`:
-/// every field optional so the UI can send tiny diffs without echoing the
-/// rest of the struct.
+/// Patch shape for `update_project_settings` — every field optional so the UI
+/// can send tiny diffs without echoing the rest of the struct.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ProjectSettingsPatch {
     pub auto_delete_empty_tracks: Option<bool>,
