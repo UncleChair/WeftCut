@@ -197,9 +197,9 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   project_undo: () => ({ op: 'undo', args: {} }),
   project_redo: () => ({ op: 'redo', args: {} }),
   project_restore_checkpoint: (a) => ({ op: 'restore_checkpoint', args: { checkpoint_id: a.checkpointId } }),
-  // add_motif: renderer sends camelCase; dispatch arm handles the rich logic.
-  // parseMechanical returns null here so command() falls through to the rich arm.
-  // The entry exists only so PRODUCTION_OPS can include 'add_motif'.
+  // NOTE: add_motif is intentionally NOT a MECHANICAL entry — parseMechanical
+  // returns null for it, so command() falls through to the rich add_motif switch
+  // arm (canonicalize + two-commit). It is listed in PRODUCTION_OPS directly.
 }
 
 /** All production channels this adapter handles (mechanical + rich + meta). */

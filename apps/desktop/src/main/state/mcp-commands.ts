@@ -456,7 +456,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       motif_id: parseStr(a.motif_id, 'motif_id'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'),
       t_end_us: parseNumOpt(a.t_end_us, 't_end_us') ?? null,
-      track_id: a.track_id != null ? parseStr(a.track_id as string, 'track_id') : null,
+      track_id: a.track_id != null ? parseUuid(a.track_id, 'track_id') : null,
       props: a.props ?? null,
     }) },
   { name: 'checkpoint', exec: 'dedicated',

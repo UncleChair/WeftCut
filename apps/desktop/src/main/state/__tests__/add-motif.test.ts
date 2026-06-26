@@ -183,6 +183,12 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     const layer = layers.find((l) => l.id === text)
     expect(layer).toBeDefined()
     expect(layer!.params.kind).toBe('Motif')
+    // No-track MCP path mints the Overlay track FIRST, then the layer — so the
+    // returned layer id is ordered AFTER the minted track id (idGen call order).
+    // This mirrors the command-path id-order assertion and guards the Task 7 MCP differential.
+    const overlayTrack = snap.tracks.find((t) => t.label === 'Overlay' && t.role === null)
+    expect(overlayTrack).toBeDefined()
+    expect(overlayTrack!.id < text!).toBe(true)
   })
 
   it('MCP bad motif_id → ok:false invalid_params', () => {
