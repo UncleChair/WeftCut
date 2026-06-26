@@ -283,6 +283,21 @@ app.whenReady().then(async () => {
   const { builtinMotifs } = await import('./motif/authoring.js')
   const motifBuiltins = builtinMotifs(motifBuiltinDir)
 
+  // App-level prefs: TS-owned (was native/src/app_settings.rs). Same on-disk
+  // file (<userData>/app_settings.json) so existing settings carry over.
+  const { createAppSettingsStore } = await import('./app-settings.js')
+  const appSettings = createAppSettingsStore({
+    fs: {
+      exists: (p: string) => fs.existsSync(p),
+      readFile: (p: string) => fs.readFileSync(p, 'utf8'),
+      writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
+      rename: (a: string, b: string) => fs.renameSync(a, b),
+      mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
+    },
+    path: path.join(app.getPath('userData'), 'app_settings.json'),
+    dir: app.getPath('userData'),
+  })
+
   tsHost = createTsActorHost({
     send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
@@ -301,6 +316,7 @@ app.whenReady().then(async () => {
     listMotifs: () => backend!.invoke('list_motifs', '{}'),
     motifStore,
     motifBuiltins,
+    appSettings,
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')
