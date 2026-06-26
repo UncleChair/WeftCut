@@ -28,10 +28,10 @@ describe('MOTIF_TOOL_DEFS', () => {
     it(`${name}: description and inputSchema deep-equal the frozen snapshot`, () => {
       const def = MOTIF_TOOL_DEFS.find((d) => d.name === name)
       expect(def, `${name} not found in MOTIF_TOOL_DEFS`).toBeDefined()
-      const snap = snapByName.get(name)
-      expect(snap, `${name} not in snapshot`).toBeDefined()
-      expect(def!.description).toEqual(snap!.description)
-      expect(def!.inputSchema).toEqual(snap!.inputSchema)
+      const entry = snapByName.get(name)
+      expect(entry, `${name} not in snapshot`).toBeDefined()
+      expect(def!.description).toEqual(entry!.description)
+      expect(def!.inputSchema).toEqual(entry!.inputSchema)
     })
   }
 })
