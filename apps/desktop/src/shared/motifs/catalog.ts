@@ -285,6 +285,41 @@ export function resolveMotifContentDurationUs(
   return null;
 }
 
+/** Reserved built-in ids; a user/uploaded Motif may never take one. */
+export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx"];
+const DRAFTS_DIR = "drafts";
+
+/** Slugify a name → safe single path-segment id. Mirrors Rust `sanitize_id`. */
+export function sanitizeId(name: string): string {
+  let out = "";
+  let prevDash = false;
+  for (const c of name) {
+    if (/[a-zA-Z0-9]/.test(c)) {
+      out += c.toLowerCase();
+      prevDash = false;
+    } else if (!prevDash) {
+      out += "-";
+      prevDash = true;
+    }
+  }
+  const trimmed = out.replace(/^-+|-+$/g, "");
+  return trimmed === "" ? "motif" : trimmed;
+}
+
+/** Unique id from `name`, avoiding `taken`, built-ins, and `drafts`. Mirrors `assign_unique_id`. */
+export function assignUniqueId(name: string, taken: string[]): string {
+  const base = sanitizeId(name);
+  const reserved = (id: string): boolean =>
+    BUILTIN_IDS.includes(id) || id === DRAFTS_DIR || taken.includes(id);
+  if (!reserved(base)) return base;
+  let n = 2;
+  for (;;) {
+    const candidate = `${base}-${n}`;
+    if (!reserved(candidate)) return candidate;
+    n += 1;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Built-in manifests
 // ---------------------------------------------------------------------------

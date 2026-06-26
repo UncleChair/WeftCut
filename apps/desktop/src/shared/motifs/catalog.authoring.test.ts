@@ -3,6 +3,9 @@ import {
   parseManifestIsland,
   stripManifestIsland,
   composeMotifHtml,
+  sanitizeId,
+  assignUniqueId,
+  BUILTIN_IDS,
   type Manifest,
 } from "./catalog";
 
@@ -73,5 +76,29 @@ describe("composeMotifHtml", () => {
     const composed = composeMotifHtml(m, seed);
     expect(parseManifestIsland(composed).id).toBe("new-id");
     expect((composed.match(/id="motif-manifest"/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("sanitizeId", () => {
+  it("slugifies display names", () => {
+    expect(sanitizeId("My Cool Motif!")).toBe("my-cool-motif");
+    expect(sanitizeId("  Trailing--dashes  ")).toBe("trailing-dashes");
+    expect(sanitizeId("___")).toBe("motif");
+    expect(sanitizeId("Lower/Third")).toBe("lower-third");
+  });
+});
+
+describe("assignUniqueId", () => {
+  it("avoids collisions, built-ins, and the reserved drafts dir", () => {
+    expect(assignUniqueId("My Motif", ["my-motif", "my-motif-2"])).toBe("my-motif-3");
+    expect(assignUniqueId("countdown", [])).toBe("countdown-2");
+    expect(assignUniqueId("Drafts", [])).toBe("drafts-2");
+    expect(assignUniqueId("Fresh", ["my-motif", "my-motif-2"])).toBe("fresh");
+  });
+});
+
+describe("BUILTIN_IDS", () => {
+  it("is the three built-ins", () => {
+    expect([...BUILTIN_IDS].sort()).toEqual(["countdown", "lower-third", "text-fx"]);
   });
 });
