@@ -18,28 +18,6 @@ pub fn ping() -> &'static str {
 // renderer routes `get_project_settings`/`update_project_settings`/
 // `agent_session_end` to the TS actor, so these are gone (Phase 4b).
 
-// ---- Export settings (per-workspace) ------------------------------------
-
-pub async fn export_settings_get(
-    backend: &Backend,
-) -> Result<Option<serde_json::Value>, String> {
-    let Some(ws) = backend.workspace.current() else {
-        return Ok(None);
-    };
-    Ok(crate::export_settings_store::load(&ws))
-}
-
-pub async fn export_settings_set(
-    backend: &Backend,
-    settings: serde_json::Value,
-) -> Result<(), String> {
-    let Some(ws) = backend.workspace.current() else {
-        // Pre-workspace (blank-on-boot): silently drop.
-        return Ok(());
-    };
-    crate::export_settings_store::save(&ws, &settings).map_err(|e| format!("{e:#}"))
-}
-
 // ---- Workspace dir -------------------------------------------------------
 
 /// Absolute path of the current workspace (= project) directory, or null when
@@ -183,13 +161,6 @@ pub async fn log_dir_path(backend: &Backend) -> Result<Option<String>, String> {
 }
 
 // ---- Args structs -------------------------------------------------------
-
-/// `export_settings_set` — `{ settings: Value }`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportSettingsSetArgs {
-    pub settings: serde_json::Value,
-}
 
 /// `recents_remove` — `{ path: String }`.
 #[derive(serde::Deserialize)]

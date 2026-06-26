@@ -475,11 +475,6 @@ impl Backend {
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
             // ---- prefs / settings / recents / keybindings / logs / agent ----
-            "export_settings_get" => ser(crate::commands::prefs::export_settings_get(self).await),
-            "export_settings_set" => {
-                let a: crate::commands::prefs::ExportSettingsSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::prefs::export_settings_set(self, a.settings).await)
-            }
             "workspace_dir" => ser(crate::commands::prefs::workspace_dir(self).await),
             "recents_list" => ser(crate::commands::prefs::recents_list(self).await),
             "recents_remove" => {

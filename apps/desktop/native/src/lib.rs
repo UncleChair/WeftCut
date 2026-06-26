@@ -24,9 +24,6 @@ mod io;
 mod jobs;
 #[cfg(feature = "export")]
 mod export;
-// Plain JSON store, no `export`/ffmpeg dependency — kept ungated so the prefs
-// command group can reach `export_settings_get/set` without `export`.
-mod export_settings_store;
 #[cfg(feature = "cloud")]
 mod cloud;
 #[cfg(feature = "mcp")]
