@@ -645,9 +645,11 @@ gate reads the mirror's audio layers via `snapshot_for_read()` (F1/F2). It does 
 call `export_project_audio_only`, which (correctly) throws when the conform cache is
 absent and so is not deterministic to assert synchronously.
 
-**Still blocked (Phase 4):** `add_motif` (needs motif catalog in TS) and
-`project_restore_checkpoint` (no TS command-surface create path) remain in
-`BLOCKED_UNDER_FLAG` / `MCP_BLOCKED_UNDER_FLAG`.
+**Slice 4a complete — nothing blocked under the flag.** As of Phase 4a-ii both
+`BLOCKED_UNDER_FLAG` (`router.ts`) and `MCP_BLOCKED_UNDER_FLAG` (`mutationTools.ts`)
+are EMPTY (∅): `project_restore_checkpoint` was wired in Phase 4a-i (§2.1) and
+`add_motif` is a pure TS mutation as of Phase 4a-ii (§2.2). Every renderer- and
+MCP-reachable category-A channel now has a TS path under `WEFTCUT_TS_ACTOR`.
 
 ### add_motif and countdown-clamp sequences (Phase 4a-ii)
 
