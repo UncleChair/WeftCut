@@ -204,46 +204,6 @@ describe('runHybrid: install_motif (motif hybrid)', () => {
   })
 })
 
-describe('runHybrid: acknowledge_motif_staleness (motif hybrid)', () => {
-  it('rebinds stale motif layers and returns the count', async () => {
-    const actor = freshActor()
-    const aRoll = actor.snapshot().tracks[0].id
-    const addR = actor.dispatch('add_layer', {
-      track: aRoll, kind: 'Motif', motif_id: 'motif-a', motif_version: 1,
-      props: {}, t_start_us: 0, t_end_us: 1_000_000,
-    })
-    expect(addR.ok).toBe(true)
-    if (!addR.ok) throw new Error(JSON.stringify(addR.error))
-    const layerId = addR.value as string
-
-    const deps = makeDeps(actor)
-    deps.compute.computeAckMotifRebind = vi.fn(async () =>
-      JSON.stringify({
-        count: 1,
-        updates: [{ layer_id: layerId, motif_id: 'motif-a', motif_version: 3, props: {} }],
-      }),
-    )
-
-    const result = await runHybrid('acknowledge_motif_staleness', {}, deps)
-    expect(result).toBe(1)
-
-    const snap = actor.snapshot()
-    const layer = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!
-    expect((layer.params as import('../model').MotifParams).motif_version).toBe(3)
-  })
-
-  it('returns 0 and skips dispatch when there are no stale layers', async () => {
-    const actor = freshActor()
-    const deps = makeDeps(actor)
-    deps.compute.computeAckMotifRebind = vi.fn(async () =>
-      JSON.stringify({ count: 0, updates: [] }),
-    )
-
-    const result = await runHybrid('acknowledge_motif_staleness', {}, deps)
-    expect(result).toBe(0)
-  })
-})
-
 describe('runHybrid: unhandled tool', () => {
   it('throws for a tool with no arm', async () => {
     const actor = freshActor()

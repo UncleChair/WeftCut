@@ -20,6 +20,15 @@ describe('shapeMotifMcpResult', () => {
   it('delete_motif returns empty content', () => {
     expect(shapeMotifMcpResult('delete_motif', null).content).toEqual([])
   })
+  it('motif_staleness_report → json array', () => {
+    const r = shapeMotifMcpResult('motif_staleness_report', [{ motif_id: 'a', name: 'A', placed_version: 1, current_version: 2, layer_count: 1 }])
+    expect(r.content[0].type).toBe('text')              // toolJson serializes to a text block
+    expect(JSON.parse((r.content[0] as { text: string }).text)).toHaveLength(1)
+  })
+  it('acknowledge_motif_staleness → text count', () => {
+    const r = shapeMotifMcpResult('acknowledge_motif_staleness', 3)
+    expect(r.content[0]).toMatchObject({ type: 'text', text: '3' })
+  })
   it('throws on an unhandled tool', () => {
     expect(() => shapeMotifMcpResult('nope', 1)).toThrow(/unhandled tool/)
   })

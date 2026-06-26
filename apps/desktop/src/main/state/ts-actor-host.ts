@@ -287,11 +287,6 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return null
       case 'hybrid': {
         const hybridResult = await runHybrid(route.tool, args, hybridDeps)
-        // acknowledge_motif_staleness: refresh the actor's motif catalog so the
-        // content-window clamp in applyUpdateLayerParams sees the updated manifests.
-        if (channel === 'acknowledge_motif_staleness') {
-          refreshMotifCatalog()
-        }
         return hybridResult
       }
       case 'motif':

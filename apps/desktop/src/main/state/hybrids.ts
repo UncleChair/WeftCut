@@ -146,18 +146,6 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       }
       return published_id
     }
-    case 'acknowledge_motif_staleness': {
-      // Rust: read the mirror + build ack entries.
-      // TS: apply the rebind write via the authoritative actor.
-      const { count, updates } = JSON.parse(
-        await deps.compute.computeAckMotifRebind(),
-      ) as { count: number; updates: unknown[] }
-      if (updates.length) {
-        const r = deps.actor.dispatch('rebind_motif', { updates })
-        if (!r.ok) throw new Error(JSON.stringify(r.error))
-      }
-      return count
-    }
     case 'synthesize_speech': {
       // Rust: TTS compute (validate text → pick synthesizer → cache key →
       // synthesize+write → spawn_blocking probe → build MediaItem). Returns

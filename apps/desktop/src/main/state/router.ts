@@ -19,20 +19,22 @@ export type Route =
   | { kind: 'rust' }
 
 /** Hybrid Rust-compute → TS-write channels (Phase 3d-e). install_motif moved to
- *  the motif route (Phase 2); acknowledge_motif_staleness stays here (Phase 3). */
-export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media', 'acknowledge_motif_staleness'])
+ *  the motif route (Phase 2); acknowledge_motif_staleness moved to the motif
+ *  route (Phase 3). */
+export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media'])
 
-/** Motif catalog-read + authoring + install channels, served in TS by
- *  runMotifTool (Phase 2). */
+/** Motif catalog-read + authoring + install + staleness channels, served in TS by
+ *  runMotifTool (Phase 2/3). */
 export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
   'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',
+  'motif_staleness_report', 'acknowledge_motif_staleness',
 ])
 
 /** Read-only native handlers re-pointed to the read-mirror (Group A) — safe on rust. */
 export const MIRROR_BACKED_READS: ReadonlySet<string> = new Set([
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
-  'get_media_thumbnail', 'get_waveform_peaks', 'motif_staleness_report',
+  'get_media_thumbnail', 'get_waveform_peaks',
 ])
 
 /** Native compute with NO project actor access. */

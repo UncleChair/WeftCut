@@ -5,15 +5,18 @@ export type McpRoute = 'ts' | 'rust' | 'hybrid' | 'motif'
 /** MCP tools served by the native-compute → TS-write hybrid orchestrator. */
 export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
   'import_media', 'apply_subtitles',
-  'acknowledge_motif_staleness',   // install_motif moved to the 'motif' route (Phase 2)
+  // install_motif moved to the 'motif' route (Phase 2);
+  // acknowledge_motif_staleness moved to the 'motif' route (Phase 3).
   'synthesize_speech',
 ])
 
-/** Motif catalog-read + authoring + install tools, served in TS by runMotifTool
- *  (Phase 2). Their defs stay Rust-advertised this phase (mergeMcpCatalog keeps
- *  non-'ts' routes); Phase 4 moves the defs to TS and deletes the Rust arms. */
+/** Motif catalog-read + authoring + install + staleness tools, served in TS by
+ *  runMotifTool (Phase 2/3). Their defs stay Rust-advertised this phase
+ *  (mergeMcpCatalog keeps non-'ts' routes); Phase 4 moves the defs to TS and
+ *  deletes the Rust arms. */
 export const MOTIF_TOOLS: ReadonlySet<string> = new Set([
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif',
+  'motif_staleness_report', 'acknowledge_motif_staleness',
 ])
 
 /** Where an MCP tool runs. motif → tsHost.motifTool (then shapeMotifMcpResult);

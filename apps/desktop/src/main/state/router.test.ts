@@ -24,18 +24,19 @@ const ALL_CHANNELS: readonly string[] = [
   // router special-cases (summary / settings / persistence seam / agent-session)
   'project_summary', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end',
-  // motif route (TS authoring + read + install — Phase 2)
+  // motif route (TS authoring + read + install + staleness — Phase 2/3)
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
   'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',
+  'motif_staleness_report', 'acknowledge_motif_staleness',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
   'settings_get_api_key_status', 'settings_test_provider',
   // hybrids (native-compute → TS-write)
-  'import_media', 'acknowledge_motif_staleness',
+  'import_media',
   // mirror-backed reads (re-pointed to the read-mirror in Group A)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
-  'get_media_thumbnail', 'get_waveform_peaks', 'motif_staleness_report',
+  'get_media_thumbnail', 'get_waveform_peaks',
   // backend stores (config-dir, not the project actor)
   'app_settings_get', 'app_settings_set', 'view_state_get', 'view_state_set', 'export_settings_get',
   'export_settings_set', 'workspace_dir', 'recents_list', 'recents_remove',
@@ -61,7 +62,7 @@ describe('router partition gate', () => {
       expect(r.kind, `${ch} unclassified (reject default)`).not.toBe('reject')
       if (r.kind === 'rust') expect(RUST_ALLOWLIST.has(ch), `${ch} routes to rust`).toBe(true)
     }
-    for (const ch of ['import_media', 'acknowledge_motif_staleness'])
+    for (const ch of ['import_media'])
       expect(routeChannel(ch).kind, ch).toBe('hybrid')
     for (const ch of MOTIF_CHANNELS)
       expect(routeChannel(ch).kind, ch).toBe('motif')
@@ -120,12 +121,11 @@ describe('routeChannel', () => {
     for (const ch of ['app_settings_get','app_settings_set','view_state_get','export_settings_get','recents_list','keybindings_get','agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
       expect(routeChannel(ch).kind).toBe('rust')
   })
-  it('routes the two hybrid channels to hybrid', () => {
-    for (const ch of ['import_media', 'acknowledge_motif_staleness'])
-      expect(routeChannel(ch).kind).toBe('hybrid')
+  it('routes the one remaining hybrid channel to hybrid', () => {
+    expect(routeChannel('import_media').kind).toBe('hybrid')
   })
-  it('routes motif authoring/read/install channels to the motif route (Phase 2)', () => {
-    for (const ch of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif'])
+  it('routes motif authoring/read/install/staleness channels to the motif route (Phase 2/3)', () => {
+    for (const ch of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif', 'motif_staleness_report', 'acknowledge_motif_staleness'])
       expect(routeChannel(ch).kind, ch).toBe('motif')
   })
   it('never routes a category-A state mutation to rust', () => {
