@@ -51,7 +51,7 @@ mod logs;
 mod preview;
 mod agent_session;
 mod recents;
-pub mod state; // pub: consumed by the replay_driver differential-harness bin
+pub mod state;
 pub mod subtitles;
 mod view_state;
 mod workspace;

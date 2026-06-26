@@ -52,10 +52,3 @@ impl EventSink for VecEventSink {
     }
 }
 
-/// Discards all events. For the replay harness, which evolves state only.
-#[cfg(feature = "replay")]
-pub struct NullEventSink;
-#[cfg(feature = "replay")]
-impl EventSink for NullEventSink {
-    fn emit(&self, _event: &str, _payload: Value) {}
-}
