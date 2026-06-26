@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { hardenWindow } from '../windows'
-
-type Backend = import('@weftcut/core').Backend
+import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
+import type { UserMotifStore } from './store.js'
 
 interface CaptureArgs {
   motifId: string
@@ -22,6 +22,13 @@ let runtimeSource: string | null = null
 /// (`motif_register_runtime`); main injects it via addScriptToEvaluateOnNewDocument.
 export function setRuntimeSource(src: string): void {
   runtimeSource = src
+}
+
+let motifStore: UserMotifStore | null = null
+/// Set once at boot (after UserMotifStore is constructed in index.ts), mirrors
+/// the setRuntimeSource singleton pattern so MCP and IPC call sites stay thin.
+export function setMotifStore(s: UserMotifStore): void {
+  motifStore = s
 }
 
 interface Host {
@@ -116,7 +123,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
   throw new Error(`motif '${motifId}' never became ready (window.__motifRender undefined, document not complete, or wrong host page loaded)`)
 }
 
-async function doCapture(backend: Backend, a: CaptureArgs): Promise<string> {
+async function doCapture(a: CaptureArgs): Promise<string> {
   let h: Host
   try {
     h = await ensureHost(a.motifId, a.contentHash)
@@ -125,8 +132,10 @@ async function doCapture(backend: Backend, a: CaptureArgs): Promise<string> {
     teardownHost()
     throw e
   }
-  const duration = backend.motifCtxDurationS(a.motifId, a.propsJson)
-  const props = JSON.parse(a.propsJson)
+  const manifest: Manifest | undefined =
+    BUILTIN_MANIFESTS.get(a.motifId) ?? motifStore?.getMotif(a.motifId)?.manifest
+  const props = JSON.parse(a.propsJson) as Record<string, unknown>
+  const duration = manifest ? motifCtxDurationS(manifest, props) : 5
   const meta = { duration, width: a.width, height: a.height, fps: 30, settleRafs: a.settleRafs }
   const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(meta)})`
   try {
@@ -149,8 +158,8 @@ async function doCapture(backend: Backend, a: CaptureArgs): Promise<string> {
   }
 }
 
-export function captureMotifFrameB64(backend: Backend, a: CaptureArgs): Promise<string> {
-  const run = chain.then(() => doCapture(backend, a))
+export function captureMotifFrameB64(a: CaptureArgs): Promise<string> {
+  const run = chain.then(() => doCapture(a))
   // Keep the chain alive even if this capture rejects.
   chain = run.then(() => undefined, () => undefined)
   return run

@@ -65,7 +65,7 @@ export async function handleCallTool(
   if (name === 'preview_motif_draft') {
     const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; width?: number; height?: number }
     const motifId = a.id ?? a.motif_id ?? ''
-    const b64 = await captureMotifFrameB64(backend, {
+    const b64 = await captureMotifFrameB64({
       motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(a.props ?? {}),
       width: a.width ?? 480, height: a.height ?? 480, settleRafs: null, contentHash: '',
     })

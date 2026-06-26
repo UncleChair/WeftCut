@@ -1,6 +1,6 @@
 import { protocol } from 'electron'
-
-type Backend = import('@weftcut/core').Backend
+import { resolveMotifFile } from './builtinAssets.js'
+import type { UserMotifStore } from './store.js'
 
 /// CSP served with every Motif document.
 /// `default-src 'none'` denies network (no connect-src); inline script/style for
@@ -16,20 +16,20 @@ export const MOTIF_SCHEME_ENTRY = {
   privileges: { standard: true, secure: true, supportFetchAPI: true },
 } as const
 
-/// Serve motif://<id>/<rest> from the Rust brain (built-ins + user store). The
+/// Serve motif://<id>/<rest> from TS (built-in assets + the user store). The
 /// `?v=<content_hash>` query is ignored by resolution (it only busts the host
 /// page cache). No caching headers — the host reloads each id on navigate.
 ///
 /// With `standard:true`, `motif://countdown/index.html` parses with
 /// `hostname === 'countdown'` and `pathname === '/index.html'`.
-export function registerMotifProtocol(backend: Backend): void {
+export function registerMotifProtocol(builtinDir: string, store: UserMotifStore): void {
   protocol.handle('motif', async (request) => {
     const url = new URL(request.url) // motif://<id>/<rest>
     const id = url.hostname
     const rest = decodeURIComponent(url.pathname.replace(/^\/+/, '')) || 'index.html'
-    const file = backend.motifResolveFile(id, rest)
+    const file = resolveMotifFile(builtinDir, store, id, rest)
     if (!file) return new Response('not found: ' + id + '/' + rest, { status: 404 })
-    return new Response(Buffer.from(file.bytes), {
+    return new Response(new Uint8Array(file.bytes), {
       status: 200,
       headers: { 'Content-Type': file.contentType, 'Content-Security-Policy': MOTIF_CSP },
     })
