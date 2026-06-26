@@ -5,7 +5,7 @@
 // Mirrors native/src/mcp/{tools.rs,wire.rs}.
 import type { CommandError } from './errors'
 import type { Animated, Interpolation, Keyframe, Rgba } from './model'
-import { canonicalize } from './canonical'
+import { sortKeys } from './canonical'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
 export type McpToolErrorJson = { code: McpErrorCode; message: string; data?: unknown }
@@ -142,8 +142,12 @@ function asArray(v: unknown, field: string): string[] {
 export function toolText(s: string): ToolResultJson { return { content: [{ type: 'text', text: s }] } }
 export function toolEmpty(): ToolResultJson { return { content: [] } }
 /** json results travel as a text block whose text is the SERIALIZED JSON with
- *  alpha-sorted keys (Rust serde_json preserve_order OFF → BTreeMap). */
-export function toolJson(v: unknown): ToolResultJson { return { content: [{ type: 'text', text: JSON.stringify(canonicalize(v)) }] } }
+ *  alpha-sorted keys (Rust serde_json preserve_order OFF → BTreeMap). Uses
+ *  sortKeys (NOT canonicalize): wall-clock fields must stay real here — Rust
+ *  returned real DateTime<Utc> (e.g. list_checkpoints.created_at), so the
+ *  harness sentinel must not leak to MCP agents. The differential gate compares
+ *  via its own canonicalize() of both sides, so this stays green. */
+export function toolJson(v: unknown): ToolResultJson { return { content: [{ type: 'text', text: JSON.stringify(sortKeys(v)) }] } }
 
 /** native/src/mcp/keyframes.rs:165 get_param_track result shape (NOT the raw
  *  Animated serde): Static → {mode,value}; Keyframed → {mode, keyframes:[{id,

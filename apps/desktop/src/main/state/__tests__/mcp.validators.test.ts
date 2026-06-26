@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, parseRgba, parseNum, McpArgError } from '../mcp-commands'
+import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, parseRgba, parseNum, McpArgError, toolJson } from '../mcp-commands'
 
 describe('parseInterp', () => {
   it('accepts the simple kinds', () => {
@@ -71,5 +71,24 @@ describe('parseNum', () => {
   it('rejects undefined / null', () => {
     expect(() => parseNum(undefined, 't_us')).toThrow(McpArgError)
     expect(() => parseNum(null, 't_us')).toThrow(McpArgError)
+  })
+})
+
+describe('toolJson', () => {
+  const text = (r: ReturnType<typeof toolJson>) => (r.content[0] as { type: 'text'; text: string }).text
+  // Regression: toolJson must NOT sentinel wall-clock fields. The Rust MCP path
+  // (NamedCheckpointSummary etc.) returned real DateTime<Utc> in tool results;
+  // reusing the differential-harness canonicalize() leaked '<TS>' to MCP agents
+  // (list_checkpoints.created_at, begin_agent_session.started_at).
+  it('preserves real wall-clock timestamps (does not emit the <TS> sentinel)', () => {
+    const out = toolJson([{ id: 'x', label: 'cp', actor: { client: 'mcp', kind: 'Agent' }, created_at: '2026-06-26T07:42:46.605Z' }])
+    const parsed = JSON.parse(text(out)) as Array<{ created_at: string }>
+    expect(parsed[0].created_at).toBe('2026-06-26T07:42:46.605Z')
+  })
+  it('still sorts object keys recursively (Rust serde_json BTreeMap parity)', () => {
+    expect(text(toolJson({ b: 1, a: { d: 2, c: 3 } }))).toBe('{"a":{"c":3,"d":2},"b":1}')
+  })
+  it('leaves array order intact (order is semantic for tracks/layers/keyframes)', () => {
+    expect(text(toolJson({ list: [3, 1, 2] }))).toBe('{"list":[3,1,2]}')
   })
 })
