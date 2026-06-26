@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   BUILTIN_IDS, BUILTIN_MANIFESTS, type Manifest,
+  parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId,
 } from '../../shared/motifs/catalog'
 import { motifContentHash } from './contentHash'
 import type { UserMotifStore } from './store'
@@ -77,4 +78,78 @@ export function listMotifsInner(store: UserMotifStore, builtins: BuiltinMotif[])
     out.push(entry)
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Authoring cores (Task 2) — write / amend / create-edit / import / delete
+// ---------------------------------------------------------------------------
+
+/** Final-ready unique id minted vs published ∪ drafts. The id a draft is born
+ *  with is the one it keeps when published (install-New needs no rebind). */
+function takenIds(store: UserMotifStore): string[] {
+  return [...store.publishedIds(), ...store.listDraftIds()]
+}
+
+/** Validate + mint id + compose + write the draft. Identity is app-owned: id is
+ *  minted from the name and version forced to 1 (any id/version in `manifest` is
+ *  ignored). `from` (when set) is recorded as the draft's Update target. Mirrors
+ *  `write_motif_draft_core`. */
+export function writeMotifDraftCore(store: UserMotifStore, manifest: Manifest, html: string, from: string | null): string {
+  validateManifest(manifest)
+  const draftId = assignUniqueId(manifest.name, takenIds(store))
+  const finalManifest: Manifest = { ...manifest, id: draftId, version: 1 }
+  store.writeDraft(draftId, composeMotifHtml(finalManifest, html))
+  if (from) store.writeDraftTarget(draftId, from)
+  return draftId
+}
+
+/** Parse the island out of an edited full-source doc, force the draft's stable
+ *  identity (id + version 1), re-validate, overwrite the SAME draft. Amend never
+ *  CREATES. Mirrors `amend_draft_html`. */
+export function amendDraftHtml(store: UserMotifStore, draftId: string, source: string): void {
+  if (store.getDraft(draftId) === null) throw new Error(`unknown draft '${draftId}'`)
+  const parsed = parseManifestIsland(source)
+  const manifest: Manifest = { ...parsed, id: draftId, version: 1 }
+  validateManifest(manifest)
+  // compose strips the edited island + re-injects a canonical one; body round-trips.
+  store.writeDraft(draftId, composeMotifHtml(manifest, source))
+}
+
+/** Non-throwing source lookup (built-in first, then installed). */
+function getMotifSourceOrNull(store: UserMotifStore, builtins: BuiltinMotif[], id: string): MotifSourceTs | null {
+  const b = builtins.find((x) => x.id === id)
+  if (b) return { manifest: b.manifest, html: b.html }
+  return store.getMotif(id)
+}
+
+/** Seed a NEW working draft from a built-in or installed source; for an INSTALLED
+ *  source, record it as the draft's Update target (built-ins can't update in place,
+ *  so a built-in fork records no target). Mirrors `create_edit_draft_core`. */
+export function createEditDraftCore(store: UserMotifStore, builtins: BuiltinMotif[], sourceId: string): string {
+  const isBuiltin = BUILTIN_IDS.includes(sourceId)
+  const source = getMotifSourceOrNull(store, builtins, sourceId)
+  if (!source) throw new Error(`unknown source motif '${sourceId}'`)
+  const draftId = assignUniqueId(source.manifest.name, takenIds(store))
+  const manifest: Manifest = { ...source.manifest, id: draftId, version: 1 }
+  store.writeDraft(draftId, composeMotifHtml(manifest, source.html))
+  if (!isBuiltin) store.writeDraftTarget(draftId, sourceId)
+  return draftId
+}
+
+/** Parse + validate the island from an external .html, mint a FRESH unique id
+ *  (ignoring any claimed id/version), write as a from-scratch draft (no target →
+ *  installs as new). Mirrors `import_motif_from_source`. */
+export function importMotifFromSource(store: UserMotifStore, source: string): string {
+  const parsed = parseManifestIsland(source)
+  const draftId = assignUniqueId(parsed.name, takenIds(store))
+  const manifest: Manifest = { ...parsed, id: draftId, version: 1 }
+  validateManifest(manifest)
+  store.writeDraft(draftId, composeMotifHtml(manifest, source))
+  return draftId
+}
+
+/** Delete a published user Motif (built-ins rejected). Mirrors `delete_motif_core`. */
+export function deleteMotifCore(store: UserMotifStore, id: string): void {
+  if (BUILTIN_IDS.includes(id)) throw new Error(`cannot delete the built-in Motif '${id}'`)
+  store.deleteUserMotif(id)
 }

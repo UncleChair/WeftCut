@@ -93,3 +93,90 @@ describe('builtinMotifs', () => {
     rmSync(bdir, { recursive: true, force: true })
   })
 })
+
+import {
+  writeMotifDraftCore, amendDraftHtml, createEditDraftCore, importMotifFromSource, deleteMotifCore,
+} from './authoring'
+import { BUILTIN_IDS } from '../../shared/motifs/catalog'
+
+describe('writeMotifDraftCore', () => {
+  it('mints a unique final-ready id, forces version 1, ignores claimed id', () => {
+    const man = { ...m('Foo', 'claimed'), version: 9 }
+    const id = writeMotifDraftCore(store, man, '<head></head><body>B<script>motif.define({setup(){}})</script></body>', null)
+    expect(id).not.toBe('claimed')
+    const d = store.getDraft(id)!
+    expect(d.manifest.id).toBe(id); expect(d.manifest.version).toBe(1); expect(d.html).toContain('B')
+  })
+  it('records the Update target when `from` is provided', () => {
+    const id = writeMotifDraftCore(store, m('Foo'), '<head></head><body>x</body>', 'countdown')
+    expect(store.readDraftTarget(id)).toBe('countdown')
+  })
+  it('rejects an invalid manifest (zero size)', () => {
+    expect(() => writeMotifDraftCore(store, { ...m('Bad'), size: [0, 0] }, '<body>x</body>', null)).toThrow()
+  })
+  it('draft id is unique vs published AND drafts', () => {
+    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    const id = writeMotifDraftCore(store, m('Foo'), '<head></head><body>x</body>', null)
+    expect(id).not.toBe('foo'); expect(id).toBe('foo-2')
+  })
+})
+
+describe('amendDraftHtml', () => {
+  it('overwrites the SAME draft id and forces id back to the draft id', () => {
+    store.writeDraft('d1', doc(m('Draft One', 'd1'), 'one'))
+    const edited = doc({ ...m('Renamed', 'hacker') }, 'TWO')
+    amendDraftHtml(store, 'd1', edited)
+    expect(store.listDraftIds()).toEqual(['d1'])      // no new draft minted
+    const got = store.getDraft('d1')!
+    expect(got.manifest.id).toBe('d1')                // id forced back
+    expect(got.html).toContain('TWO')                 // body persisted
+  })
+  it('rejects an unknown draft and an invalid manifest island', () => {
+    expect(() => amendDraftHtml(store, 'nope', doc(m('X')))).toThrow(/unknown draft/)
+    store.writeDraft('d1', doc(m('D', 'd1')))
+    expect(() => amendDraftHtml(store, 'd1', doc({ ...m('D'), size: [0, 0] }))).toThrow()
+  })
+})
+
+describe('createEditDraftCore', () => {
+  it('seeds a unique id and records target for an INSTALLED source', () => {
+    store.writeDraft('foo', doc(m('Foo', 'foo'), 'FOO')); store.installDraft('foo', 'foo')
+    const id = createEditDraftCore(store, BUILTINS, 'foo')
+    expect(id).not.toBe('foo')
+    const d = store.getDraft(id)!
+    expect(d.html).toContain('FOO'); expect(d.manifest.id).toBe(id)
+    expect(store.readDraftTarget(id)).toBe('foo')
+  })
+  it('records NO target for a built-in source; rejects unknown source', () => {
+    const id = createEditDraftCore(store, BUILTINS, 'countdown')
+    expect(store.getDraft(id)).not.toBeNull()
+    expect(store.readDraftTarget(id)).toBeNull()
+    expect(() => createEditDraftCore(store, BUILTINS, 'nope')).toThrow()
+  })
+})
+
+describe('importMotifFromSource', () => {
+  it('mints a fresh id, ignores the claimed id, records NO target', () => {
+    const source = doc(m('Imported', 'countdown'), 'IMPORTED') // island claims a built-in id
+    const id = importMotifFromSource(store, source)
+    expect(id).not.toBe('countdown')
+    const d = store.getDraft(id)!
+    expect(d.manifest.id).toBe(id); expect(d.html).toContain('IMPORTED')
+    expect(store.readDraftTarget(id)).toBeNull()
+  })
+  it('rejects a missing island and an invalid manifest', () => {
+    expect(() => importMotifFromSource(store, '<html><body>no island</body></html>')).toThrow()
+    expect(() => importMotifFromSource(store, doc({ ...m('Bad'), size: [0, 0] }))).toThrow()
+  })
+})
+
+describe('deleteMotifCore', () => {
+  it('deletes a published user motif', () => {
+    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    deleteMotifCore(store, 'foo')
+    expect(store.getMotif('foo')).toBeNull()
+  })
+  it('rejects deleting a built-in', () => {
+    expect(() => deleteMotifCore(store, BUILTIN_IDS[0])).toThrow(/cannot delete the built-in/)
+  })
+})
