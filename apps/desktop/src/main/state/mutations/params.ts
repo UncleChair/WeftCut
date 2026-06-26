@@ -120,6 +120,13 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
   // geometry. Growing never resizes. Mirrors mutations.rs:391-453.
   if (layer.params.kind === 'Motif') {
     const params = layer.params as MotifParams
+    // TWIN DIVERGENCE (intentional): Rust mutations.rs:401 resolves the clamp cap
+    // from `catalog::builtins()` ONLY; this `catalog` is the actor's full MotifCatalog
+    // (built-ins + user layer). So a USER motif with a cap clamps here but not in Rust.
+    // Bounded + invisible to the differential gate (corpus is built-in `countdown` only,
+    // and there is no shipped user-motif clamp path under the flag yet). Do NOT "fix" this
+    // to built-ins-only to match Rust — clamping user motifs is the desired behavior once
+    // TS becomes sole owner (4b deletes the Rust twin). Closes with the deferred authoring port.
     const manifest = catalog.get(params.motif_id)
     if (manifest === undefined) return // unknown motif → no clamp
     const contentDur = resolveMotifMaxDurUs(manifest, params.props)
