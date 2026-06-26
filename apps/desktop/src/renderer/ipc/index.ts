@@ -614,11 +614,11 @@ export async function keybindingsImport(src: string): Promise<KeybindingsMap> {
 // defaults and set silently no-ops.
 // ============================================================
 
-export interface ViewState {
-  timeline_px_per_sec: number;
-  track_heights: Record<string, number>;
-  expanded_tracks: string[];
-}
+// Single-sourced in src/shared/view-state.ts (main owns persistence; renderer
+// consumes). Imported locally for the wrappers below + re-exported so existing
+// `import { ViewState } from "../ipc"` call sites keep working.
+import type { ViewState } from "../../shared/view-state";
+export type { ViewState };
 
 export async function viewStateGet(): Promise<ViewState> {
   return invoke<ViewState>("view_state_get");
