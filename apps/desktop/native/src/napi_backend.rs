@@ -86,9 +86,8 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         .with(tracing_subscriber::fmt::layer())
         .with(logs::LogBusLayer::new(log_slot.clone()))
         .try_init();
-    // config_dir is passed through from the caller (app userData dir); not
-    // stored as a field (config stores moved to TS) but kept as a parameter for
-    // backward-compat with the `new` constructor signature that Electron main calls.
+    // config_dir is passed through from the caller (app userData dir) to keep
+    // the `new` constructor signature stable; not stored (config stores are TS-owned).
     let _ = config_dir;
 
     Backend {
@@ -119,11 +118,8 @@ impl Backend {
         build_backend(events, app_config_dir, app_cache_dir)
     }
 
-    /// Warm up ffmpeg sidecar. Must be awaited once before any `invoke`. The
-    /// project itself lives in the TS state actor (the sole writer); the
-    /// `project:changed` UI bridge + autosave moved to the TS host in Phase 4b,
-    /// so this no longer spawns a Rust actor.
-    /// Runs inside napi's tokio runtime, so `tokio::spawn` has a runtime.
+    /// Warm up ffmpeg sidecar off the critical path. Must be awaited once before
+    /// any `invoke`. Runs inside napi's tokio runtime so `tokio::spawn` has a runtime.
     #[napi]
     pub async fn init(&self) -> napi::Result<()> {
         // S3: warm up ffmpeg-sidecar (resolve / auto-download the binary) off
@@ -450,8 +446,6 @@ impl Backend {
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
             // ---- prefs / settings / logs / agent ----
-            // Recents moved to TS (src/main/recents.ts); keybindings already
-            // moved to TS (src/main/keybindings.ts). These arms are gone.
             "workspace_dir" => ser(crate::commands::prefs::workspace_dir(self).await),
             "agent_session_get" => ser(crate::commands::prefs::agent_session_get(self).await),
             "log_list" => ser(crate::commands::prefs::log_list(self).await),
@@ -779,8 +773,7 @@ mod tests {
     }
 
     /// `commit_workspace` re-points cache + workspace slot — both are observable
-    /// via kept dispatch arms. push_recent and recents_list moved to TS
-    /// (src/main/recents.ts) and are no longer tested here.
+    /// via kept dispatch arms (`workspace_dir`, `cache.set_workspace`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn commit_workspace_sets_workspace_and_cache() {
         use std::sync::Arc;

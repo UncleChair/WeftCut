@@ -1,9 +1,7 @@
-//! Prefs/settings/logs/agent commands — re-signed from `commands_legacy.rs`.
-//! Bodies are copied verbatim; only the signature changes (the napi `Backend`
-//! carries the managed state) and the managed-state side effects are re-pointed
-//! at the matching `Backend` fields.
-//! Keybindings moved to TS (src/main/keybindings.ts; native/src/keybindings.rs deleted).
-//! Recents moved to TS (src/main/recents.ts; native/src/recents.rs deleted).
+//! Prefs/settings/logs/agent commands. Owns: ping, workspace_dir, agent_session_get,
+//! log_list/clear/emit/dir_path. Config stores (keybindings, recents, app_settings,
+//! view_state, export_settings) are TS-owned; Rust compute and read-mirror paths live
+//! in `commands/media.rs` and `commands/export.rs`.
 
 use crate::napi_backend::Backend;
 
@@ -12,11 +10,6 @@ use crate::napi_backend::Backend;
 pub fn ping() -> &'static str {
     "pong"
 }
-
-// Project-settings get/update + agent_session_end were renderer-fallback
-// wrappers over the deleted Rust actor; under the always-on TS host the
-// renderer routes `get_project_settings`/`update_project_settings`/
-// `agent_session_end` to the TS actor, so these are gone (Phase 4b).
 
 // ---- Workspace dir -------------------------------------------------------
 
@@ -37,10 +30,6 @@ pub async fn agent_session_get(
 ) -> Result<Option<crate::agent_session::AgentSession>, String> {
     Ok(backend.agent_session.current())
 }
-
-// `agent_session_end` (the user-side "Exit to editor" handler) routed through
-// the deleted actor's `unlock_history`; the TS host now owns the
-// `agentSessionEnd` seam (endSlot + unlockHistory), so it's gone (Phase 4b).
 
 // ---- Logs ---------------------------------------------------------------
 

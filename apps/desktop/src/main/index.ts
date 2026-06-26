@@ -242,10 +242,8 @@ app.whenReady().then(async () => {
     rm: (p: string) => { fs.rmSync(p, { force: true }) },
   }
 
-  // Napi facade for workspace bookkeeping — delegates to the Backend instance,
-  // except pushRecent and setLastNewProjectParent which are now owned by the TS
-  // recents store (was native/src/recents.rs #[napi] methods push_recent /
-  // set_last_new_project_parent; deleted from Rust as part of the recents migration).
+  // Napi facade for workspace bookkeeping — delegates workspace/job ops to the
+  // Backend instance; recents ops delegate to the TS recents store.
   const napiFacade = {
     commitWorkspace: (p: string) => backend!.commitWorkspace(p),
     pushRecent: (p: string, n: string) => recents.push(p, n),
@@ -295,28 +293,23 @@ app.whenReady().then(async () => {
     rename: (a: string, b: string) => fs.renameSync(a, b),
     mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
   }
-  // App-level prefs: TS-owned (was native/src/app_settings.rs). Same on-disk
-  // file (<userData>/app_settings.json) so existing settings carry over.
+  // App-level prefs store — persists <userData>/app_settings.json.
   const { createAppSettingsStore } = await import('./app-settings.js')
   const appSettings = createAppSettingsStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'app_settings.json'), dir: app.getPath('userData') })
-  // Per-workspace view.json: TS-owned (was native/src/view_state.rs). The host
-  // resolves the workspace dir per call; pre-workspace it skips this store.
+  // Per-workspace view state — resolves the workspace dir per call; no-op pre-workspace.
   const { createViewStateStore } = await import('./view-state.js')
   const viewState = createViewStateStore({ fs: atomicFs, join: path.join })
-  // Per-workspace export.json: TS-owned (was native/src/export_settings_store.rs).
-  // Value is opaque unknown — the renderer owns the schema.
+  // Per-workspace export settings — opaque JSON, renderer owns the schema.
   const { createExportSettingsStore } = await import('./export-settings.js')
   const exportSettings = createExportSettingsStore({ fs: atomicFs, join: path.join })
-  // Per-user keybinding overrides: TS-owned (was native/src/keybindings.rs). Same
-  // on-disk file (<userData>/keybindings.json) so existing overrides carry over.
+  // Per-user keybinding overrides — persists <userData>/keybindings.json.
   const { createKeybindingsStore } = await import('./keybindings.js')
   const keybindings = createKeybindingsStore({
     fs: atomicFs,
     path: path.join(app.getPath('userData'), 'keybindings.json'),
     dir: app.getPath('userData'),
   })
-  // Recent-projects list + startup prefs: TS-owned (was native/src/recents.rs). Same
-  // on-disk file (<userData>/recents.json) so existing users' recents carry over.
+  // Recent-projects list + startup prefs — persists <userData>/recents.json.
   const { createRecentsStore } = await import('./recents.js')
   const recents = createRecentsStore({
     fs: atomicFs,

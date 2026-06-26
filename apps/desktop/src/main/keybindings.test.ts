@@ -64,7 +64,7 @@ describe('keybindings store', () => {
   })
 
   it('export and reimport round-trips (export → reset → import restores)', () => {
-    const { fs, files } = memFs()
+    const { fs } = memFs()
     const s = createKeybindingsStore({ fs, path: PATH, dir: DIR })
     const BACKUP = '/tmp/backup.json'
     s.set('undo', ['F3'])
@@ -75,20 +75,16 @@ describe('keybindings store', () => {
     expect(restored['undo']).toEqual(['F3'])
     // The store reflects the imported file, not just the return value.
     expect(s.get()['undo']).toEqual(['F3'])
-    // Confirm files map used (no unused-var warning)
-    expect(files.size).toBeGreaterThan(0)
   })
 
   it('import rejects invalid JSON without touching the current file', () => {
-    const { fs, files } = memFs({ '/tmp/broken.json': '{ not json' })
+    const { fs } = memFs({ '/tmp/broken.json': '{ not json' })
     const s = createKeybindingsStore({ fs, path: PATH, dir: DIR })
     // Pre-existing override survives a failed import.
     s.set('undo', ['F3'])
     expect(() => s.importFrom('/tmp/broken.json')).toThrow()
     // Override must still be present after the failed import.
     expect(s.get()['undo']).toEqual(['F3'])
-    // Confirm files map used
-    expect(files.size).toBeGreaterThan(0)
   })
 
   it('tolerates an empty file', () => {
