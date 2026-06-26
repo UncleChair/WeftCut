@@ -9,7 +9,7 @@ import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type 
 import { serializeProjectToJson } from './persistence'
 import { agentSessionEnd } from './agent-session-seam'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
-import type { Manifest } from '../../shared/motifs/catalog'
+import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import type { UserMotifStore } from '../motif/store'
 import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
 import type { BuiltinMotif, MotifLayerRef } from '../motif/authoring'
@@ -124,7 +124,12 @@ function manifestsFromList(entries: unknown[]): Manifest[] {
 export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // Single shared idGen: used for blankProject, createActor, and orchestratorDeps.
   const idGen = uuidV7Gen()
-  const actor = createActor({ initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString() })
+  // The actor catalog's user layer is a watcher-refreshed cache. Back it with a
+  // store fallback so add_motif resolves a disk-written Motif the instant
+  // list_motifs (disk-backed) sees it, without waiting for the debounced refresh.
+  const store = deps.motifStore
+  const motifCatalog = new MotifCatalog(store ? (id) => store.getMotif(id)?.manifest ?? null : undefined)
+  const actor = createActor({ initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog })
   let unsub: (() => void) | null = null
 
   const autosave: AutosaveController = createAutosave({

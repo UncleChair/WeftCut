@@ -504,9 +504,19 @@ export function motifCtxDurationS(manifest: Manifest, props: Record<string, unkn
 export class MotifCatalog {
   private _user: Map<string, Manifest> = new Map();
 
+  /**
+   * @param resolveMissing optional source-of-truth fallback for a cache miss.
+   *   The in-memory user layer is a cache refreshed asynchronously by the file
+   *   watcher (debounced); a Motif written to disk is visible to the disk-backed
+   *   `list_motifs` before that refresh lands. Wiring this to the store
+   *   (`store.getMotif(id)?.manifest`) lets `add_motif` resolve such a Motif
+   *   without losing the watcher race. Omitted in tests/renderer → cache-only.
+   */
+  constructor(private readonly resolveMissing?: (id: string) => Manifest | null) {}
+
   get(id: string): Manifest | undefined {
-    // Built-ins take priority.
-    return BUILTIN_MANIFESTS.get(id) ?? this._user.get(id);
+    // Built-ins win, then the cached user layer, then the store fallback.
+    return BUILTIN_MANIFESTS.get(id) ?? this._user.get(id) ?? this.resolveMissing?.(id) ?? undefined;
   }
 
   setUserManifests(ms: Manifest[]): void {

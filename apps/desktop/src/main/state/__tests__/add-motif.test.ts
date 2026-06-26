@@ -238,3 +238,41 @@ describe('actor.mcpCall("add_motif") — MCP dedicated arm', () => {
     expect(actor.snapshot().tracks.length).toBe(trackCountBefore)
   })
 })
+
+// ── e. store-fallback resolver ────────────────────────────────────────────────
+// A Motif written to disk externally (e.g. an editor save) is visible to
+// list_motifs (disk-backed) immediately, but the in-memory catalog is only
+// refreshed asynchronously by the file watcher (debounced). add_motif must still
+// resolve it via the store-fallback resolver so placement never loses that race.
+describe('actor.command("add_motif") — store-fallback resolver', () => {
+  function diskManifest(id: string): import('../../../shared/motifs/catalog').Manifest {
+    return { id, name: 'Disk Motif', version: 1, size: [100, 100], default_duration_s: 2, fonts: [], props_schema: {} }
+  }
+
+  it('resolves a cache-miss id via the resolver (disk write before watcher refresh)', () => {
+    const idGen = seededGen()
+    const catalog = new MotifCatalog((id) => (id === 'disk-x' ? diskManifest('disk-x') : null))
+    const actor = createActor({ initial: blankProject(idGen, 'p'), idGen, motifCatalog: catalog })
+    const r = actor.command('add_motif', { motifId: 'disk-x', tStartUs: 0 })
+    expect(r.ok).toBe(true)
+  })
+
+  it('still rejects an id absent from builtins, cache, AND resolver', () => {
+    const idGen = seededGen()
+    const catalog = new MotifCatalog(() => null)
+    const actor = createActor({ initial: blankProject(idGen, 'p'), idGen, motifCatalog: catalog })
+    const r = actor.command('add_motif', { motifId: 'ghost', tStartUs: 0 })
+    expect(r.ok).toBe(false)
+  })
+
+  it('cache/builtins win over the resolver (resolver is only a miss fallback)', () => {
+    const idGen = seededGen()
+    let resolverCalls = 0
+    const catalog = new MotifCatalog((id) => { resolverCalls++; return diskManifest(id) })
+    const actor = createActor({ initial: blankProject(idGen, 'p'), idGen, motifCatalog: catalog })
+    // 'countdown' is a built-in → resolver must not be consulted.
+    const r = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
+    expect(r.ok).toBe(true)
+    expect(resolverCalls).toBe(0)
+  })
+})
