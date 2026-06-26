@@ -307,6 +307,91 @@ export const BUILTIN_MANIFESTS: ReadonlyMap<string, Manifest> = new Map([
 ]);
 
 // ---------------------------------------------------------------------------
+// Manifest island parse / compose (ports native/src/motifs/{catalog,authoring}.rs)
+// ---------------------------------------------------------------------------
+
+const ISLAND_MARKER = 'id="motif-manifest"';
+
+/**
+ * Extract + JSON-parse the `<script type="application/json" id="motif-manifest">`
+ * island from a Motif's HTML, WITHOUT executing the page. Mirrors Rust
+ * `parse_manifest_island`. Throws MotifPropError on a missing island or bad JSON.
+ */
+export function parseManifestIsland(html: string): Manifest {
+  const idMarker = html.indexOf(ISLAND_MARKER);
+  if (idMarker < 0) throw new MotifPropError("no motif-manifest island found in HTML");
+  // End of the opening <script ...> tag: first '>' at or after the marker.
+  const gt = html.indexOf(">", idMarker);
+  if (gt < 0) throw new MotifPropError("no motif-manifest island found in HTML");
+  const tagEnd = gt + 1;
+  const closeRel = html.indexOf("</script>", tagEnd);
+  if (closeRel < 0) throw new MotifPropError("no motif-manifest island found in HTML");
+  const json = html.slice(tagEnd, closeRel).trim();
+  try {
+    return JSON.parse(json) as Manifest;
+  } catch (e) {
+    throw new MotifPropError(`manifest island is not valid JSON: ${String(e)}`);
+  }
+}
+
+/** Remove the existing manifest island (its owning <script>..</script>) if present. */
+export function stripManifestIsland(html: string): string {
+  const idMarker = html.indexOf(ISLAND_MARKER);
+  if (idMarker < 0) return html;
+  const open = html.lastIndexOf("<script", idMarker);
+  if (open < 0) return html;
+  const closeRel = html.indexOf("</script>", idMarker);
+  if (closeRel < 0) return html;
+  const close = closeRel + "</script>".length;
+  return html.slice(0, open) + html.slice(close);
+}
+
+function findCi(haystack: string, needle: string): number {
+  return haystack.toLowerCase().indexOf(needle.toLowerCase());
+}
+
+/**
+ * The core manifest fields that live in the on-disk island — the ONLY fields the
+ * composed island and the content hash serialize. Excludes payload-decoration
+ * fields (`status`, `content_hash`, `target_id`, `settle_rafs`) so the island +
+ * hash are stable. Keys emitted in a fixed order for deterministic JSON.
+ * (Consumed here by `composeMotifHtml` and in Task 4 by `motifContentHash`.)
+ */
+export function coreManifestForHash(m: Manifest): Record<string, unknown> {
+  return {
+    id: m.id,
+    name: m.name,
+    version: m.version,
+    size: m.size,
+    default_duration_s: m.default_duration_s,
+    max_duration_s: m.max_duration_s ?? null,
+    max_duration_prop: m.max_duration_prop ?? null,
+    content_duration_s: m.content_duration_s ?? null,
+    fonts: m.fonts ?? [],
+    props_schema: m.props_schema,
+  };
+}
+
+/**
+ * Compose the canonical single-file Motif HTML: strip any existing island, then
+ * inject a fresh pretty-JSON island (with `<` escaped as < so a string
+ * field can't close the island early) right after the opening <head> (or at the
+ * top if none). Mirrors Rust `compose_motif_html`. Round-trips through
+ * `parseManifestIsland`.
+ */
+export function composeMotifHtml(manifest: Manifest, html: string): string {
+  const stripped = stripManifestIsland(html);
+  const json = JSON.stringify(coreManifestForHash(manifest), null, 2).replaceAll("<", "\\u003c");
+  const island = `<script type="application/json" id="motif-manifest">\n${json}\n</script>\n`;
+  const headPos = findCi(stripped, "<head>");
+  if (headPos >= 0) {
+    const at = headPos + "<head>".length;
+    return stripped.slice(0, at) + "\n" + island + stripped.slice(at);
+  }
+  return island + stripped;
+}
+
+// ---------------------------------------------------------------------------
 // MotifCatalog class
 // ---------------------------------------------------------------------------
 
