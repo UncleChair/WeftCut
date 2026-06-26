@@ -10,6 +10,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
 import { routeMcpTool } from './mutationTools.js'
+import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import { mergeMcpCatalog } from './mcpCatalog.js'
@@ -59,6 +60,12 @@ export async function handleCallTool(
       // id; shape it as the Rust tool does (ToolResult::text(id) → text content).
       const result = await runHybrid(name, args, tsHost.hybridDeps)
       return { content: [{ type: 'text', text: String(result) }] } as unknown as ServerResult
+    }
+    if (route === 'motif') {
+      // Catalog-read + authoring + install, served in TS (Phase 2). The raw value
+      // is shaped to the Rust-faithful ToolResult (list_motifs strips html, etc.).
+      const raw = tsHost.motifTool(name, args)
+      return shapeMotifMcpResult(name, raw) as unknown as ServerResult
     }
     // route === 'rust' → fall through (reads are mirror-backed).
   }

@@ -1,0 +1,30 @@
+// apps/desktop/src/main/mcp/motifResult.ts
+// Shape a runMotifTool raw value into the Rust-faithful MCP ToolResult for the
+// 5 advertised motif tools. Mirrors the Rust handlers in native/src/mcp/tools.rs:
+//   list_motifs    → json(payload with `html` removed)
+//   get_motif_source → json({manifest, html})
+//   write_motif_draft → text(id)
+//   install_motif  → text(published_id)
+//   delete_motif   → empty
+import { toolJson, toolText, toolEmpty, type ToolResultJson } from '../state/mcp-commands.js'
+
+export function shapeMotifMcpResult(name: string, raw: unknown): ToolResultJson {
+  switch (name) {
+    case 'list_motifs': {
+      const stripped = (raw as Array<Record<string, unknown>>).map((e) => {
+        const { html: _html, ...rest } = e
+        return rest
+      })
+      return toolJson(stripped)
+    }
+    case 'get_motif_source':
+      return toolJson(raw)
+    case 'write_motif_draft':
+    case 'install_motif':
+      return toolText(raw as string)
+    case 'delete_motif':
+      return toolEmpty()
+    default:
+      throw new Error(`shapeMotifMcpResult: unhandled tool ${name}`)
+  }
+}

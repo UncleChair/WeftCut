@@ -72,6 +72,9 @@ export interface TsActorHost {
   /** Hybrid deps (native-compute → TS-write). Exposed so the MCP host's hybrid
    *  branch can `runHybrid(name, args, tsHost.hybridDeps)` (server.ts). */
   hybridDeps: HybridDeps
+  /** Host-level Motif tool dispatch (catalog read + authoring + install). Both
+   *  the renderer `handleInvoke('motif')` and the MCP `route==='motif'` path use it. */
+  motifTool: (name: string, args: Record<string, unknown>) => unknown
   beginAgentSessionSlot: (reason: string) => void
   start: () => void
   stop: () => void
@@ -271,6 +274,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     handleInvoke,
     mcpCall,
     hybridDeps,
+    // Task 6 replaces this stub with the real runMotifTool dispatch.
+    motifTool(_name: string, _args: Record<string, unknown>): unknown { throw new Error('motifTool: not yet implemented (Task 6)') },
     beginAgentSessionSlot(reason: string) { deps.beginAgentSessionSlot?.(reason) },
     start() {
       if (!unsub) unsub = actor.subscribe(emitChange)

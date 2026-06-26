@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { routeMcpTool, HYBRID_TOOLS } from './mutationTools'
+import { routeMcpTool, HYBRID_TOOLS, MOTIF_TOOLS } from './mutationTools'
 import { MCP_TOOLS, MCP_TOOL_DEFS } from '../state/mcp-commands'
 import { mergeMcpCatalog } from './mcpCatalog'
 
@@ -8,18 +8,24 @@ describe('routeMcpTool', () => {
     for (const t of ['add_color_layer', 'set_keyframe', 'undo', 'get_param_track', 'list_checkpoints', 'dry_run'])
       expect(routeMcpTool(t), t).toBe('ts')
   })
-  it('routes import_media + apply_subtitles + install_motif + acknowledge_motif_staleness + synthesize_speech to the native-compute → TS-write hybrid', () => {
+  it('routes import_media + apply_subtitles + acknowledge_motif_staleness + synthesize_speech to the native-compute → TS-write hybrid', () => {
     expect(routeMcpTool('import_media')).toBe('hybrid')
     expect(routeMcpTool('apply_subtitles')).toBe('hybrid')
-    expect(routeMcpTool('install_motif')).toBe('hybrid')
     expect(routeMcpTool('acknowledge_motif_staleness')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
   })
   it('add_motif routes to ts (pure TS mutation, Phase 4a-ii §2.2)', () => {
     expect(routeMcpTool('add_motif')).toBe('ts')
   })
+  it('routes the 5 MCP motif tools to the motif route (Phase 2)', () => {
+    for (const t of ['list_motifs', 'get_motif_source', 'write_motif_draft', 'delete_motif', 'install_motif'])
+      expect(routeMcpTool(t), t).toBe('motif')
+  })
+  it('preview_motif_draft stays rust (special-cased capture in server.ts)', () => {
+    expect(routeMcpTool('preview_motif_draft')).toBe('rust')
+  })
   it('routes reads + native-read tools to rust (including motif_staleness_report)', () => {
-    for (const t of ['groups_list', 'groups_get', 'ping', 'list_motifs', 'get_motif_source', 'preview_motif_draft', 'detect_silences', 'transcribe_clip', 'motif_staleness_report'])
+    for (const t of ['groups_list', 'groups_get', 'ping', 'detect_silences', 'transcribe_clip', 'motif_staleness_report'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
   it('single-writer invariant: every TS-adapter tool routes to ts, never rust', () => {
@@ -55,6 +61,7 @@ describe('merged ListTools is a clean catalog↔handler bijection', () => {
       const r = routeMcpTool(t.name)
       if (r === 'ts') expect(MCP_TOOLS.has(t.name)).toBe(true)
       if (r === 'hybrid') expect(HYBRID_TOOLS.has(t.name)).toBe(true)
+      if (r === 'motif') expect(MOTIF_TOOLS.has(t.name)).toBe(true)
     }
   })
 })
