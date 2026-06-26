@@ -177,7 +177,7 @@ pub async fn install_motif_compute(
     store: &UserMotifStore,
     snap: &std::sync::Arc<crate::state::Project>,
     args: &InstallArgs,
-) -> Result<(String, Vec<crate::state::actor::MotifRebindEntry>), String> {
+) -> Result<(String, Vec<crate::state::MotifRebindEntry>), String> {
     let draft = store
         .get_draft(&args.draft_id)
         .ok_or_else(|| format!("unknown draft '{}'", args.draft_id))?;
@@ -291,7 +291,7 @@ pub fn build_rebind_updates(
     layers: &[(crate::state::ids::LayerId, String, serde_json::Value)],
     working_id: &str,
     target: &crate::motifs::catalog::Manifest,
-) -> Vec<crate::state::actor::MotifRebindEntry> {
+) -> Vec<crate::state::MotifRebindEntry> {
     let probe = crate::motifs::catalog::Motif { manifest: target.clone(), html: String::new() };
     layers
         .iter()
@@ -308,7 +308,7 @@ pub fn build_rebind_updates(
                 .as_object()
                 .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                 .unwrap_or_default();
-            crate::state::actor::MotifRebindEntry {
+            crate::state::MotifRebindEntry {
                 layer_id: *layer_id,
                 motif_id: target.id.clone(),
                 motif_version: target.version,

@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::Serialize;
 
 use super::store::UserMotifStore;
-use crate::state::actor::MotifRebindEntry;
+use crate::state::MotifRebindEntry;
 use crate::state::ids::LayerId;
 
 /// One row of the on-open staleness report, grouped by motif id.

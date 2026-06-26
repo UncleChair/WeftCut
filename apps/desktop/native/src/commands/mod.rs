@@ -679,7 +679,7 @@ pub struct SeparateAudioToNewTrackArgs {
 #[serde(rename_all = "camelCase")]
 pub struct RestyleCaptionTrackArgs {
     pub track_id: String,
-    pub patch: crate::state::actor::CaptionStylePatch,
+    pub patch: crate::state::CaptionStylePatch,
 }
 
 #[derive(serde::Deserialize)]
@@ -714,14 +714,14 @@ pub struct AddTextLayerArgs {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateLayerArgs {
     pub layer_id: String,
-    pub patch: crate::state::actor::LayerPatch,
+    pub patch: crate::state::LayerPatch,
 }
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateLayerParamsArgs {
     pub layer_id: String,
-    pub patch: crate::state::actor::LayerParamsPatch,
+    pub patch: crate::state::LayerParamsPatch,
 }
 
 #[derive(serde::Deserialize)]
@@ -825,7 +825,7 @@ pub struct DeleteLayerArgs {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetCompositionArgs {
-    pub patch: crate::state::actor::CompositionPatch,
+    pub patch: crate::state::CompositionPatch,
 }
 
 #[derive(serde::Deserialize)]

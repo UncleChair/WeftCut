@@ -58,8 +58,8 @@ pub(crate) struct ChangeEventSummary {
     pub actor: crate::state::Actor,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub summary: String,
-    pub affected: Vec<crate::state::actor::EntityRef>,
-    pub diff_hint: crate::state::actor::DiffHint,
+    pub affected: Vec<crate::state::EntityRef>,
+    pub diff_hint: crate::state::DiffHint,
 }
 
 impl From<&crate::state::actor::ChangeEvent> for ChangeEventSummary {

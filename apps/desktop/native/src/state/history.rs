@@ -15,7 +15,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::actor::{Actor, EntityRef};
+use super::command::{Actor, EntityRef};
 use super::composition::Composition;
 use super::ids::{CheckpointId, MediaId, OpId, TrackId, new_id};
 use super::media::MediaItem;

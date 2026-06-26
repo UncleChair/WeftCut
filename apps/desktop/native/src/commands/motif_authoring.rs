@@ -109,7 +109,7 @@ pub async fn acknowledge_motif_staleness(b: &Backend) -> Result<usize, String> {
 pub async fn acknowledge_motif_compute(
     store: &crate::motifs::store::UserMotifStore,
     snap: &std::sync::Arc<crate::state::Project>,
-) -> Result<(usize, Vec<crate::state::actor::MotifRebindEntry>), String> {
+) -> Result<(usize, Vec<crate::state::MotifRebindEntry>), String> {
     let current = st::current_versions(store);
     let layers: Vec<(LayerId, String, u32, imbl::HashMap<String, serde_json::Value>)> = snap
         .tracks

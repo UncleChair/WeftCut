@@ -11,6 +11,7 @@ pub mod actor;
 pub mod animated;
 pub mod audio_role;
 pub mod color;
+pub mod command;
 pub mod effect;
 pub mod keyframe_edits;
 pub mod composition;
@@ -27,14 +28,18 @@ pub mod transform;
 pub mod transition;
 pub mod validate;
 
+pub use command::{
+    Actor, AudioPatch, CaptionStylePatch, ColorPatch, CommandError, CompositionPatch, DiffHint,
+    EntityRef, ImageOverlayPatch, LayerEdge, LayerParamsPatch, LayerPatch, MarkerPatch,
+    MediaDerivativesPatch, MotifPatch, MotifRebindEntry, TextPatch, ValidationError,
+    VideoClipPatch,
+};
 pub use actor::{
-    Actor, AudioPatch, ChangeEvent, ColorPatch, CommandError, CompositionPatch, DiffHint,
-    DryRunOp, DryRunOutput, EntityRef, HistoryStatus, ImageOverlayPatch, LayerParamsPatch,
-    LayerPatch, MarkerPatch, MediaDerivativesPatch, MotifPatch, ProjectActor, ProjectHandle,
-    TextPatch, VideoClipPatch, spawn,
+    ChangeEvent, DryRunOp, DryRunOutput, HistoryStatus, ProjectActor, ProjectHandle,
+    spawn,
 };
 pub use history::{HistoryEntry, HistoryEntrySummary, HistoryView, NamedCheckpoint, NamedCheckpointSummary};
-pub use validate::{ValidationError, validate as validate_project};
+pub use validate::validate as validate_project;
 
 pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};

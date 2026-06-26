@@ -7,132 +7,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-
 use super::animated::Animated;
+use super::command::ValidationError;
 use super::ids::{GroupId, KeyframeId, LayerId, MediaId, TrackId, TransitionId};
 use super::layer::{Layer, LayerParams};
 use super::project::Project;
 use super::time::TimeUs;
 use super::track::Track;
 use super::transform::Transform;
-
-#[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum ValidationError {
-    #[error("composition width and height must be positive; got {width}x{height}")]
-    InvalidCanvas { width: u32, height: u32 },
-
-    #[error("composition fps must be positive on both axes; got {num}/{den}")]
-    InvalidFps { num: u32, den: u32 },
-
-    #[error("layer {layer} time range invalid: t_start={t_start} must be < t_end={t_end}")]
-    InvalidLayerRange {
-        layer: LayerId,
-        t_start: TimeUs,
-        t_end: TimeUs,
-    },
-
-    #[error(
-        "layer {b} would overlap layer {a} on track {track} at [{a_start}, {a_end}) vs [{b_start}, {b_end})"
-    )]
-    LayerOverlap {
-        track: TrackId,
-        a: LayerId,
-        a_start: TimeUs,
-        a_end: TimeUs,
-        b: LayerId,
-        b_start: TimeUs,
-        b_end: TimeUs,
-    },
-
-    #[error("layer {layer} references missing media {media}")]
-    MissingMedia { layer: LayerId, media: MediaId },
-
-    #[error(
-        "layer {layer} src range invalid: src_in={src_in} must be in [0, src_out) and src_out={src_out}"
-    )]
-    InvalidSrcRange {
-        layer: LayerId,
-        src_in: TimeUs,
-        src_out: TimeUs,
-    },
-
-    #[error(
-        "layer {layer} src range [{src_in}, {src_out}) exceeds media duration {media_duration}"
-    )]
-    SrcRangeExceedsMedia {
-        layer: LayerId,
-        src_in: TimeUs,
-        src_out: TimeUs,
-        media_duration: TimeUs,
-    },
-
-    #[error("duplicate layer id {layer}")]
-    DuplicateLayerId { layer: LayerId },
-
-    #[error("transition {transition} references unknown layer {layer}")]
-    TransitionLayerMissing {
-        transition: TransitionId,
-        layer: LayerId,
-    },
-
-    #[error("transition {transition} from_layer and to_layer must be distinct ({layer})")]
-    TransitionSelfReference {
-        transition: TransitionId,
-        layer: LayerId,
-    },
-
-    #[error(
-        "transition {transition} from_layer {from} and to_layer {to} are on different tracks"
-    )]
-    TransitionCrossTrack {
-        transition: TransitionId,
-        from: LayerId,
-        to: LayerId,
-    },
-
-    #[error(
-        "transition {transition} duration {duration}us must equal layer overlap {overlap}us"
-    )]
-    TransitionDurationMismatch {
-        transition: TransitionId,
-        duration: TimeUs,
-        overlap: TimeUs,
-    },
-
-    #[error(
-        "transition {transition} duration {duration}us must be positive and not exceed either layer's length"
-    )]
-    TransitionDurationOutOfRange {
-        transition: TransitionId,
-        duration: TimeUs,
-    },
-
-    #[error("layer {layer} is in more than one transition on the same side")]
-    LayerInMultipleTransitions { layer: LayerId },
-
-    #[error("duplicate transition id {transition}")]
-    DuplicateTransitionId { transition: TransitionId },
-
-    #[error("group {group} references unknown layer {layer}")]
-    GroupMemberMissing { group: GroupId, layer: LayerId },
-
-    #[error("layer {layer} appears in more than one group ({first} and {second})")]
-    LayerInMultipleGroups {
-        layer: LayerId,
-        first: GroupId,
-        second: GroupId,
-    },
-
-    #[error("duplicate group id {group}")]
-    DuplicateGroupId { group: GroupId },
-
-    #[error("group {group} has fewer than 2 members — should have been auto-dissolved")]
-    GroupBelowMinSize { group: GroupId, members: usize },
-
-}
 
 pub fn validate(project: &Project) -> Result<(), ValidationError> {
     validate_composition(project)?;

@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use crate::napi_backend::Backend;
 use crate::state::{
-    self, Actor, ColorParams, CommandError, LayerParams, MediaKind, Rgba, TrackFlagsPatch,
-    actor::{CompositionPatch, LayerEdge, LayerParamsPatch, LayerPatch},
+    self, Actor, ColorParams, CommandError, CompositionPatch, LayerEdge, LayerParamsPatch,
+    LayerPatch, LayerParams, MediaKind, Rgba, TrackFlagsPatch,
     animated::Animated,
     audio_role::AudioRole,
     time::TimeUs,
@@ -693,7 +693,7 @@ fn demo_color(idx: usize) -> Rgba {
 pub async fn restyle_caption_track(
     backend: &Backend,
     track_id: String,
-    patch: crate::state::actor::CaptionStylePatch,
+    patch: crate::state::CaptionStylePatch,
 ) -> Result<(), String> {
     let handle = backend.project()?;
     let id = Uuid::parse_str(&track_id).map_err(|e| format!("track_id: {e}"))?;

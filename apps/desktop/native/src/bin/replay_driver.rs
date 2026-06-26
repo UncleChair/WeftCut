@@ -9,7 +9,7 @@ use weftcut_lib::state::effect::{Effect, EffectPatch};
 use weftcut_lib::state::transition::TransitionKind;
 use serde_json::{json, Value};
 use weftcut_lib::state::{self, Actor, LayerParams, ColorParams, Rgba, ProjectHandle};
-use weftcut_lib::state::actor::{LayerEdge, CompositionPatch, LayerPatch};
+use weftcut_lib::state::{LayerEdge, CompositionPatch, LayerPatch};
 use weftcut_lib::state::animated::Animated;
 use weftcut_lib::state::ids::det;
 
@@ -199,7 +199,7 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
         "undo" => h.undo(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "redo" => h.redo(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "update_marker" => {
-            let patch = weftcut_lib::state::actor::MarkerPatch {
+            let patch = weftcut_lib::state::MarkerPatch {
                 t_us: cmd["t_us"].as_i64(),
                 end_t_us: cmd["end_t_us"].as_i64(),
                 label: cmd["label"].as_str().map(str::to_string),
@@ -249,7 +249,7 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}")),
         "set_media_derivatives" => {
             let p = &cmd["patch"];
-            let patch = weftcut_lib::state::actor::MediaDerivativesPatch {
+            let patch = weftcut_lib::state::MediaDerivativesPatch {
                 proxy_path: opt_opt_path(p, "proxy_path"),
                 proxy_format_version: p.get("proxy_format_version").and_then(|v| v.as_u64()).map(|n| n as u32),
                 quick_proxy_path: opt_opt_path(p, "quick_proxy_path"),
@@ -277,7 +277,7 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
         "remove_media" => h.remove_media(u, resolve_id(refs, cmd["media"].as_str().unwrap()), cmd["force"].as_bool().unwrap_or(false)).await
             .map(|_| None).map_err(|e| format!("{e:?}")),
         "update_layer_params" => {
-            let patch: weftcut_lib::state::actor::LayerParamsPatch =
+            let patch: weftcut_lib::state::LayerParamsPatch =
                 serde_json::from_value(cmd["patch"].clone()).map_err(|e| e.to_string())?;
             h.update_layer_params(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), patch).await
                 .map(|_| None).map_err(|e| format!("{e:?}"))
@@ -314,18 +314,18 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
                 .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}"))
         }
         "restyle_caption_track" => {
-            let patch: weftcut_lib::state::actor::CaptionStylePatch =
+            let patch: weftcut_lib::state::CaptionStylePatch =
                 serde_json::from_value(cmd["patch"].clone()).map_err(|e| e.to_string())?;
             h.restyle_caption_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), patch).await
                 .map(|_| None).map_err(|e| format!("{e:?}"))
         }
         "rebind_motif" => {
-            let updates: Vec<weftcut_lib::state::actor::MotifRebindEntry> = cmd["updates"]
+            let updates: Vec<weftcut_lib::state::MotifRebindEntry> = cmd["updates"]
                 .as_array().unwrap().iter().map(|u| {
                     let props: imbl::HashMap<String, Value> = u["props"].as_object()
                         .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                         .unwrap_or_default();
-                    weftcut_lib::state::actor::MotifRebindEntry {
+                    weftcut_lib::state::MotifRebindEntry {
                         layer_id: resolve_id(refs, u["layer_id"].as_str().unwrap()),
                         motif_id: u["motif_id"].as_str().unwrap().to_string(),
                         motif_version: u["motif_version"].as_u64().unwrap() as u32,
