@@ -25,9 +25,9 @@ All five stores are independent subsystems; each lands as its own working, commi
 
 | # | Store | On-disk file | Scope | New wrinkle vs. previous | Status |
 |---|-------|--------------|-------|--------------------------|--------|
-| 1 | **app_settings** | `<userData>/app_settings.json` | config-dir | baseline: clamping + `:changed` event + kills a Rust↔TS struct twin | **THIS PLAN — full tasks below** |
-| 2 | **view_state** | `<workspace>/view.json` | workspace | workspace-scoped (use `deps.workspaceDir()`); pre-workspace = silent drop; no event | scope block below |
-| 3 | **export_settings** | `<workspace>/export.json` | workspace | opaque `unknown` JSON value (no typed struct) | scope block below |
+| 1 | **app_settings** | `<userData>/app_settings.json` | config-dir | baseline: clamping + `:changed` event + kills a Rust↔TS struct twin | ✅ DONE (local main) |
+| 2 | **view_state** | `<workspace>/view.json` | workspace | workspace-scoped (use `deps.workspaceDir()`); pre-workspace = silent drop; no event | ✅ DONE (local main) |
+| 3 | **export_settings** | `<workspace>/export.json` | workspace | opaque `unknown` JSON value (no typed struct) | scope block below — NEXT |
 | 4 | **keybindings** | `<userData>/keybindings.json` | config-dir | multi-channel (get/set/reset_all/export/import); file-dialog import/export paths | scope block below |
 | 5 | **recents** | `<userData>/recents.json` | config-dir | **dual writer**: the workspace orchestrator also writes it via `napiFacade.pushRecent`/`setLastNewProjectParent` — those must move to the TS store too | scope block below |
 
