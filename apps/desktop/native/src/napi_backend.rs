@@ -67,13 +67,12 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         tracing::warn!("cache dir setup failed: {e:#}");
     }
     let log_slot = LogBusSlot::new();
-    // The TS read-mirror is the sole project source; the import queue reads it
-    // to rewrite `pending-` derivative paths, so share the one Arc.
+    // The TS read-mirror is written by set_project_mirror; no Rust read path
+    // consumes it after Phase 4 (deleted wholesale in Phase 5).
     let read_mirror: std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>> =
         std::sync::Arc::new(std::sync::Mutex::new(None));
     #[cfg(feature = "jobs")]
-    let import_queue =
-        crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone(), read_mirror.clone());
+    let import_queue = crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone());
     // Forward our crate's `tracing` events into whichever LogBus is current.
     // `try_init` (vs `init`) so constructing multiple Backends — e.g. in the
     // test suite — never panics on a double global-subscriber install.
@@ -221,7 +220,7 @@ impl Backend {
                 let patch = crate::state::MediaDerivativesPatch { proxy_path: Some(None), ..Default::default() };
                 let _ = crate::jobs::commit_media_derivatives(&self.events, item.id, patch).await;
             }
-            crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), item, self.read_mirror_handle());
+            crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), item);
         }
         Ok(())
     }
@@ -236,8 +235,7 @@ impl Backend {
     #[cfg(feature = "jobs")]
     pub async fn probe_media(&self, path: String) -> napi::Result<String> {
         let buf = std::path::PathBuf::from(&path);
-        let has_workspace = self.workspace.current().is_some();
-        let item = tokio::task::spawn_blocking(move || crate::commands::media::probe_media_item(buf, has_workspace))
+        let item = tokio::task::spawn_blocking(move || crate::commands::media::probe_media_item(buf))
             .await
             .map_err(|e| Error::from_reason(format!("probe join: {e}")))?
             .map_err(Error::from_reason)?;
@@ -403,12 +401,6 @@ impl Backend {
 // is `napi::Error`. The plain-Rust dispatch surface below speaks
 // `std::result::Result<_, String>`, so spell it out fully to dodge that alias.
 impl Backend {
-    /// Clone the Arc handle so background jobs can read the mirror without
-    /// borrowing `Backend` across an await point.
-    pub(crate) fn read_mirror_handle(&self) -> std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>> {
-        self.read_mirror.clone()
-    }
-
     /// Project snapshot for READ-ONLY consumers. Caller-less after Phase 3
     /// (stateless-compute-service): `commands/media.rs` (Phase 1), the export +
     /// clip-audio tools (Phase 2), and `mcp/resources.rs` (Phase 3) all take their
@@ -887,6 +879,10 @@ mod tests {
             .expect("mcp/tools.rs must be readable");
         let resources = std::fs::read_to_string(format!("{root}/src/mcp/resources.rs"))
             .expect("mcp/resources.rs must be readable");
+        let jobs_mod = std::fs::read_to_string(format!("{root}/src/jobs/mod.rs"))
+            .expect("jobs/mod.rs must be readable");
+        let jobs_import = std::fs::read_to_string(format!("{root}/src/jobs/import.rs"))
+            .expect("jobs/import.rs must be readable");
 
         // No file may contain the deleted stale-actor snapshot read.
         for (name, src) in [
@@ -931,6 +927,28 @@ mod tests {
         assert!(
             !resources.contains("snapshot_for_read"),
             "mcp/resources.rs: resource reads must NOT read the mirror — TS serves state views + injects compute slices (Phase 3)"
+        );
+
+        // Phase 4 (stateless-compute-service): the import / derivative-jobs path is
+        // mirror-free — the hash-first import bakes the real content hash into the
+        // enqueued MediaItem, so no job re-reads the mirror (fresh_media_item gone)
+        // and the workspace copy no longer migrates a pending alias. `read_mirror_handle`
+        // is deleted; only `set_project_mirror` + the two dead-code readers remain
+        // (deleted in Phase 5).
+        for (name, src) in [
+            ("commands/media.rs", &media),
+            ("commands/export.rs", &export),
+            ("jobs/mod.rs", &jobs_mod),
+            ("jobs/import.rs", &jobs_import),
+        ] {
+            assert!(
+                !src.contains("read_mirror_handle") && !src.contains("fresh_media_item"),
+                "{name}: the jobs/enqueue path must be mirror-free (no read_mirror_handle / fresh_media_item) — hash-first import (Phase 4)"
+            );
+        }
+        assert!(
+            !jobs_import.contains("migrate_hash_artifacts") && !jobs_import.contains("pending_hash_for"),
+            "jobs/import.rs: the pending-hash / migrate machinery is deleted (Phase 4)"
         );
 
         // Phase 1 (stateless-compute-service): the four single-media channels no

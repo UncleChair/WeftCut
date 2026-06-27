@@ -233,66 +233,6 @@ pub fn discard_temp(dest: &Path) {
     let _ = fs::remove_file(tmp);
 }
 
-/// Rename derivative artifacts keyed by `old_hash` to `new_hash`. Used when
-/// import finishes hashing after derivative jobs started against a temporary
-/// `pending-{media_id}` cache key. Missing entries are ignored.
-pub fn migrate_hash_artifacts(cache: &CacheLayout, old_hash: &str, new_hash: &str) -> Result<()> {
-    if old_hash == new_hash {
-        return Ok(());
-    }
-
-    let rename_file = |from: PathBuf, to: PathBuf| -> Result<()> {
-        if !from.is_file() {
-            return Ok(());
-        }
-        if to.is_file() {
-            let _ = fs::remove_file(&from);
-            return Ok(());
-        }
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create {}", parent.display()))?;
-        }
-        fs::rename(&from, &to).with_context(|| {
-            format!(
-                "migrate cache {} -> {}",
-                from.display(),
-                to.display()
-            )
-        })
-    };
-
-    let rename_dir = |from: PathBuf, to: PathBuf| -> Result<()> {
-        if !from.is_dir() {
-            return Ok(());
-        }
-        if to.exists() {
-            let _ = fs::remove_dir_all(&from);
-            return Ok(());
-        }
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create {}", parent.display()))?;
-        }
-        fs::rename(&from, &to).with_context(|| {
-            format!(
-                "migrate cache dir {} -> {}",
-                from.display(),
-                to.display()
-            )
-        })
-    };
-
-    rename_file(cache.proxy(old_hash), cache.proxy(new_hash))?;
-    rename_file(cache.quick_proxy(old_hash), cache.quick_proxy(new_hash))?;
-    rename_dir(cache.thumbnails(old_hash), cache.thumbnails(new_hash))?;
-    rename_file(cache.waveform(old_hash), cache.waveform(new_hash))?;
-    rename_file(cache.audio_conform(old_hash), cache.audio_conform(new_hash))?;
-    rename_dir(cache.frames(old_hash), cache.frames(new_hash))?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,35 +361,5 @@ mod tests {
         assert!(!temp2.exists());
         // discard on missing is fine
         discard_temp(&dest2);
-    }
-
-    #[test]
-    fn migrate_hash_artifacts_renames_proxy_and_waveform() {
-        let tmp = TempDir::new().unwrap();
-        let layout = CacheLayout::new(tmp.path().join("cache"));
-        layout.ensure_dirs().unwrap();
-
-        let old = "pending-old";
-        let new = "realhash";
-        std::fs::write(layout.proxy(old), b"proxy").unwrap();
-        std::fs::write(layout.waveform(old), b"peaks").unwrap();
-        std::fs::write(layout.audio_conform(old), b"pcm").unwrap();
-
-        migrate_hash_artifacts(&layout, old, new).unwrap();
-
-        assert!(layout.proxy(new).is_file());
-        assert!(layout.waveform(new).is_file());
-        assert!(layout.audio_conform(new).is_file());
-        assert!(!layout.proxy(old).exists());
-        assert!(!layout.waveform(old).exists());
-        assert!(!layout.audio_conform(old).exists());
-    }
-
-    #[test]
-    fn migrate_hash_artifacts_noop_for_same_hash() {
-        let tmp = TempDir::new().unwrap();
-        let layout = CacheLayout::new(tmp.path().join("cache"));
-        layout.ensure_dirs().unwrap();
-        migrate_hash_artifacts(&layout, "abc", "abc").unwrap();
     }
 }

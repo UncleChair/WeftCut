@@ -180,9 +180,8 @@ pub fn enqueue_full_proxy(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
     media: MediaItem,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
-    spawn_proxy(events, cache, media, mirror);
+    spawn_proxy(events, cache, media);
 }
 
 /// Look at a freshly imported `MediaItem` and fan out the appropriate
@@ -191,7 +190,6 @@ pub fn enqueue_for_media(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
     media: MediaItem,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
     match media.kind {
         MediaKind::Video => {
@@ -201,14 +199,14 @@ pub fn enqueue_for_media(
                 .map(|p| p.is_file())
                 .unwrap_or(false);
             if proxy_ready || media.proxy_bypassed {
-                spawn_decorations(events, cache, media, mirror);
+                spawn_decorations(events, cache, media);
             } else {
-                spawn_proxy_decision(events, cache, media, mirror);
+                spawn_proxy_decision(events, cache, media);
             }
         }
         MediaKind::Audio => {
             spawn_waveform(events.clone(), cache.clone(), media.clone());
-            spawn_conform(events, cache, media, mirror);
+            spawn_conform(events, cache, media);
         }
         MediaKind::Image | MediaKind::Subtitle => {
             // No derivatives needed.
@@ -220,14 +218,13 @@ fn spawn_decorations(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
     media: MediaItem,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
     if matches!(media.kind, MediaKind::Video) {
         spawn_thumbnails(events.clone(), cache.clone(), media.clone());
     }
     if media.metadata.audio.is_some() {
         spawn_waveform(events.clone(), cache.clone(), media.clone());
-        spawn_conform(events, cache, media, mirror);
+        spawn_conform(events, cache, media);
     }
 }
 
@@ -237,16 +234,14 @@ pub fn enqueue_conform(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
     media: MediaItem,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
-    spawn_conform(events, cache, media, mirror);
+    spawn_conform(events, cache, media);
 }
 
 fn spawn_conform(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
     media: MediaItem,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
     if !try_begin_conform(media.id) {
         // Already conforming — that job's complete/error event serves this
@@ -270,7 +265,6 @@ fn spawn_conform(
             warn!("conform job: semaphore closed; skipping {media_id}");
             return;
         }
-        let media = fresh_media_item(&mirror, media_id, media).await;
         let result = conform::run(&cache, &media).await;
         drop(permit);
 
@@ -325,7 +319,6 @@ fn spawn_proxy_decision(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
     media: MediaItem,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
@@ -381,7 +374,7 @@ fn spawn_proxy_decision(
                         path: Some(media.path_abs.display().to_string()),
                     },
                 );
-                spawn_decorations(events, cache, media, mirror);
+                spawn_decorations(events, cache, media);
             }
             proxy_decision::ProxyJob::QuickOnly => {
                 emit(
@@ -423,11 +416,11 @@ fn spawn_proxy_decision(
                 );
                 // Thumbnails + waveform off the original; preview proxy in the
                 // background WITHOUT chaining a full proxy.
-                spawn_decorations(events.clone(), cache.clone(), media.clone(), mirror.clone());
-                spawn_quick_proxy(events, cache, media, false, source_gop_secs, mirror);
+                spawn_decorations(events.clone(), cache.clone(), media.clone());
+                spawn_quick_proxy(events, cache, media, false, source_gop_secs);
             }
             proxy_decision::ProxyJob::QuickThenFull => {
-                spawn_quick_proxy(events, cache, media, true, source_gop_secs, mirror);
+                spawn_quick_proxy(events, cache, media, true, source_gop_secs);
             }
         }
     });
@@ -506,7 +499,6 @@ fn spawn_quick_proxy(
     media: MediaItem,
     then_full: bool,
     source_gop_secs: Option<f64>,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
@@ -524,7 +516,6 @@ fn spawn_quick_proxy(
             warn!("quick proxy job: semaphore closed; skipping {media_id}");
             return;
         }
-        let media = fresh_media_item(&mirror, media_id, media).await;
         let result = quick_proxy::run(&cache, &media, source_gop_secs).await;
         drop(permit);
 
@@ -575,10 +566,9 @@ fn spawn_quick_proxy(
         }
 
         if then_full {
-            // Full proxy chains after the quick proxy; refresh hash/paths in
-            // case the workspace copy + blake3 landed while the quick proxy was queued.
-            let media = fresh_media_item(&mirror, media_id, media).await;
-            spawn_proxy(events, cache, media, mirror);
+            // Full proxy chains after the quick proxy. The media's hash is real
+            // (baked at enqueue — hash-first import), so no re-read is needed.
+            spawn_proxy(events, cache, media);
         }
     });
 }
@@ -587,7 +577,6 @@ fn spawn_proxy(
     events: Arc<dyn EventSink>,
     cache: CacheLayout,
     media: MediaItem,
-    mirror: std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
@@ -605,7 +594,6 @@ fn spawn_proxy(
             warn!("proxy job: semaphore closed; skipping {media_id}");
             return;
         }
-        let media = fresh_media_item(&mirror, media_id, media).await;
         let result = proxy::run(&cache, &media).await;
         drop(permit);
 
@@ -649,7 +637,7 @@ fn spawn_proxy(
                         path: Some(path_str),
                     },
                 );
-                spawn_decorations(events, cache, thumbnail_media, mirror);
+                spawn_decorations(events, cache, thumbnail_media);
             }
             Err(e) => {
                 warn!("proxy job failed for {media_id}: {e:#}");
@@ -738,21 +726,6 @@ fn emit<T: Serialize>(events: &Arc<dyn EventSink>, event: &str, payload: &T) {
     events.emit(event, serde_json::to_value(payload).unwrap_or(serde_json::Value::Null));
 }
 
-/// Re-read the latest `MediaItem` before ffmpeg starts so a background import
-/// hash finalize doesn't leave jobs writing to stale `pending-*` cache keys.
-/// Reads the TS read-mirror (the sole project source post-4b); falls back to the
-/// passed-in item when the mirror is unset or doesn't yet hold the id.
-async fn fresh_media_item(
-    mirror: &std::sync::Arc<std::sync::Mutex<Option<crate::napi_backend::ReadMirror>>>,
-    media_id: MediaId,
-    fallback: MediaItem,
-) -> MediaItem {
-    if let Some(m) = mirror.lock().expect("read_mirror poisoned").as_ref() {
-        return m.project.media_pool.get(&media_id).cloned().unwrap_or(fallback);
-    }
-    fallback
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,77 +765,6 @@ mod tests {
         let p = MediaDerivativesPatch { proxy_bypassed: Some(true), ..Default::default() };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v.get("proxy_bypassed").unwrap(), &json!(true));
-    }
-
-    /// `fresh_media_item` reads the mirror when it is populated, and falls back
-    /// to the passed-in item when the mirror is None.
-    #[tokio::test]
-    async fn fresh_media_item_reads_mirror() {
-        use crate::napi_backend::ReadMirror;
-        use crate::state::Project;
-        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
-        use std::sync::{Arc, Mutex};
-
-        let media_id = uuid::Uuid::now_v7();
-
-        // Build a minimal MediaItem that lives in the mirror's project.
-        let mirror_item = MediaItem {
-            id: media_id,
-            label: Some("mirror.mp4".into()),
-            path_abs: std::path::PathBuf::from("/mirror/mirror.mp4"),
-            path_rel: None,
-            kind: MediaKind::Video,
-            metadata: MediaMetadata::default(),
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
-            waveform_path: None,
-            conform_path: None,
-            thumbnails_dir: None,
-            file_hash_blake3: "aabbcc-mirror".into(),
-            file_size: 100,
-            file_mtime: 0,
-            imported_at: chrono::Utc::now(),
-        };
-
-        // Mirror project has the item.
-        let mut mirror_project = Project::new_blank("mirror");
-        mirror_project.media_pool.insert(media_id, mirror_item.clone());
-        let mirror: Arc<Mutex<Option<ReadMirror>>> = Arc::new(Mutex::new(Some(ReadMirror {
-            project: Arc::new(mirror_project),
-            history_view: serde_json::Value::Null,
-        })));
-
-        let fallback = MediaItem {
-            id: media_id,
-            label: Some("fallback".into()),
-            path_abs: std::path::PathBuf::from("/fallback"),
-            path_rel: None,
-            kind: MediaKind::Video,
-            metadata: MediaMetadata::default(),
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
-            waveform_path: None,
-            conform_path: None,
-            thumbnails_dir: None,
-            file_hash_blake3: "fallback-hash".into(),
-            file_size: 0,
-            file_mtime: 0,
-            imported_at: chrono::Utc::now(),
-        };
-        // With a populated mirror: should return the mirror's item.
-        let result = fresh_media_item(&mirror, media_id, fallback.clone()).await;
-        assert_eq!(result.file_hash_blake3, "aabbcc-mirror", "mirror item must be returned");
-
-        // With None mirror: should return the fallback.
-        let no_mirror: Arc<Mutex<Option<ReadMirror>>> = Arc::new(Mutex::new(None));
-        let result = fresh_media_item(&no_mirror, media_id, fallback.clone()).await;
-        assert_eq!(result.file_hash_blake3, "fallback-hash", "fallback must be returned when mirror is None");
     }
 
     /// `commit_media_derivatives` always emits a `media:derivatives` event for the

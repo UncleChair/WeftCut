@@ -1,29 +1,24 @@
-//! Background-copy import worker for `import_media`.
+//! Background-copy import worker.
 //!
-//! Per `docs/data-model.md` Q6 the import flow is:
+//! The import hybrid (TS `hybrids.ts` `import_media`) computes the real BLAKE3
+//! content hash BEFORE enqueuing derivative jobs (stateless-compute Phase 4), so
+//! every derivative is keyed on the final content hash from the start. This
+//! worker only copies the source into `<workspace>/Media/<filename>` (hash-prefix
+//! collision handling), then routes the path/hash result through the
+//! `media:workspace_paths` seam (`commit_media_workspace_paths`) for the TS actor
+//! (the sole writer) to flip `path_abs` to the workspace copy and populate
+//! `path_rel`. Derivative jobs read the source until the copy lands; because they
+//! are content-addressed, source vs the workspace copy is equivalent.
 //!
-//!   1. napi command `import_media` probes + hashes the source synchronously
-//!      (fast), inserts a MediaItem with `path_abs = original source`, kicks
-//!      derivative jobs (proxy / thumbnails / waveform — they're content-
-//!      addressed by hash, so they don't care whether they read from the
-//!      original or the workspace copy), and pushes a copy job to this
-//!      queue.
-//!   2. This worker pops the job, copies the original to
-//!      `<workspace>/Media/<filename>` (with hash-prefix collision
-//!      handling), then calls
-//!      `ProjectHandle::set_media_workspace_paths` to flip the MediaItem's
-//!      `path_abs` to the workspace copy and populate `path_rel`.
-//!   3. napi events surface progress to the UI:
-//!      - `import:queue`   → full list, fires on every state change
-//!      - `import:started` → media_id, fires when copy begins
-//!      - `import:complete`→ media_id + path_rel, fires on success
-//!      - `import:error`   → media_id + detail, fires on failure
+//! napi events surface progress to the UI:
+//!   - `import:queue`    → full list, on every state change
+//!   - `import:started`  → media_id, when copy begins
+//!   - `import:complete` → media_id + path_rel, on success
+//!   - `import:error`    → media_id + detail, on failure
 //!
-//! Single-worker FIFO — disk write bandwidth is the bottleneck, parallel
-//! workers thrash. Cancellation between jobs is
-//! supported (a pending job that hasn't started yet gets dropped and its
-//! MediaItem removed); cancellation **mid-copy** is best-effort via a
-//! shared atomic flag the chunked copy checks per buffer.
+//! Single-worker FIFO — disk write bandwidth is the bottleneck. Cancellation
+//! between jobs drops a pending job + its MediaItem; mid-copy cancellation is
+//! best-effort via a shared atomic flag the chunked copy checks per buffer.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -38,12 +33,10 @@ use crate::logs::LogBusSlot;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
-use crate::cache::{self, CacheLayout};
+use crate::cache::CacheLayout;
 use crate::io::probe::FileFacts;
 use crate::logs;
-use crate::napi_backend::ReadMirror;
 use crate::state::ids::MediaId;
-use crate::state::MediaDerivativesPatch;
 
 const MEDIA_DIR: &str = "Media";
 const COPY_BUFFER: usize = 1024 * 1024; // 1 MB
@@ -80,9 +73,6 @@ pub struct ImportQueue {
     inner: Arc<Mutex<ImportQueueInner>>,
     events: Arc<dyn EventSink>,
     log_slot: LogBusSlot,
-    /// TS read-mirror (the sole project source post-4b) — read by
-    /// `patch_derivative_paths_after_hash_migration` to rewrite `pending-` paths.
-    mirror: Arc<Mutex<Option<ReadMirror>>>,
 }
 
 struct ImportQueueInner {
@@ -106,11 +96,7 @@ struct RunningImport {
 }
 
 impl ImportQueue {
-    pub fn new(
-        events: Arc<dyn EventSink>,
-        log_slot: LogBusSlot,
-        mirror: Arc<Mutex<Option<ReadMirror>>>,
-    ) -> Self {
+    pub fn new(events: Arc<dyn EventSink>, log_slot: LogBusSlot) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ImportQueueInner {
                 pending: VecDeque::new(),
@@ -120,7 +106,6 @@ impl ImportQueue {
             })),
             events,
             log_slot,
-            mirror,
         }
     }
 
@@ -271,15 +256,11 @@ impl ImportQueue {
             match outcome {
                 Ok(Some(copy)) => {
                     let dest_abs = next.workspace_root.join(&copy.dest_rel);
-                    let pending_hash = pending_hash_for(media_id);
-                    if let Err(e) =
-                        cache::migrate_hash_artifacts(&next.cache, &pending_hash, &copy.facts.blake3_hex)
-                    {
-                        warn!("import: cache migrate failed for {media_id}: {e:#}");
-                    }
                     // Route the path/hash write-back through the shared seam: it
                     // emits `media:workspace_paths` for the TS host to apply (the
-                    // sole writer). Mirrors the `commit_media_derivatives` seam.
+                    // sole writer). The hash matches the standalone hash pass the
+                    // import already ran (same bytes), so this is idempotent — no
+                    // migrate/patch needed (hash-first; ADR 0007 superseded).
                     if let Err(e) = crate::jobs::commit_media_workspace_paths(
                         &self.events,
                         media_id,
@@ -312,15 +293,6 @@ impl ImportQueue {
                             ..Default::default()
                         });
                     } else {
-                        patch_derivative_paths_after_hash_migration(
-                            &self.events,
-                            &self.mirror,
-                            media_id,
-                            &pending_hash,
-                            &copy.facts.blake3_hex,
-                        )
-                        .await;
-
                         info!(
                             "import: {} -> {}",
                             next.source.display(),
@@ -415,91 +387,6 @@ impl ImportQueue {
 struct CopyResult {
     dest_rel: PathBuf,
     facts: FileFacts,
-}
-
-fn pending_hash_for(media_id: MediaId) -> String {
-    format!("pending-{media_id}")
-}
-
-fn rewrite_hash_in_path(path: &Path, old_hash: &str, new_hash: &str) -> Option<PathBuf> {
-    let s = path.to_string_lossy();
-    if s.contains(old_hash) {
-        Some(PathBuf::from(s.replace(old_hash, new_hash)))
-    } else {
-        None
-    }
-}
-
-/// Derivative jobs may have committed paths containing the temporary
-/// `pending-{media_id}` cache key before the workspace copy finished hashing.
-/// Reads the TS read-mirror (the sole project source post-4b) for the item's
-/// current derivative paths; best-effort (no-op if the mirror is unset or the
-/// item isn't present yet).
-async fn patch_derivative_paths_after_hash_migration(
-    events: &Arc<dyn EventSink>,
-    mirror: &Arc<Mutex<Option<ReadMirror>>>,
-    media_id: MediaId,
-    old_hash: &str,
-    new_hash: &str,
-) {
-    if old_hash == new_hash {
-        return;
-    }
-    let snap = {
-        let guard = mirror.lock().expect("read_mirror poisoned");
-        match guard.as_ref() {
-            Some(m) => m.project.clone(),
-            None => return,
-        }
-    };
-    let Some(item) = snap.media_pool.get(&media_id) else {
-        return;
-    };
-
-    let mut patch = MediaDerivativesPatch::default();
-    let mut touched = false;
-
-    if let Some(ref p) = item.proxy_path {
-        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
-            patch.proxy_path = Some(Some(next));
-            touched = true;
-        }
-    }
-    if let Some(ref p) = item.quick_proxy_path {
-        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
-            patch.quick_proxy_path = Some(Some(next));
-            touched = true;
-        }
-    }
-    if let Some(ref p) = item.thumbnails_dir {
-        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
-            patch.thumbnails_dir = Some(next);
-            touched = true;
-        }
-    }
-    if let Some(ref p) = item.waveform_path {
-        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
-            patch.waveform_path = Some(next);
-            touched = true;
-        }
-    }
-    if let Some(ref p) = item.conform_path {
-        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
-            patch.conform_path = Some(next);
-            touched = true;
-        }
-    }
-
-    if !touched {
-        return;
-    }
-
-    // Route through the shared derivative seam: it emits `media:derivatives`
-    // (applied to the TS actor by Electron main's onEvent). The TS actor's
-    // set_media_derivatives is UNRECORDED (no undo entry).
-    if let Err(e) = crate::jobs::commit_media_derivatives(events, media_id, patch).await {
-        warn!("import: derivative path patch failed for {media_id}: {e}");
-    }
 }
 
 /// Pick a destination filename in `<workspace>/Media/`. Prefers the source
@@ -650,25 +537,6 @@ mod tests {
             picked.file_name().unwrap().to_string_lossy(),
             "deadbeef-clip.mp4"
         );
-    }
-
-    #[test]
-    fn pending_hash_is_media_id_prefixed() {
-        let id = crate::state::new_id();
-        assert_eq!(pending_hash_for(id), format!("pending-{id}"));
-    }
-
-    #[test]
-    fn rewrite_hash_replaces_pending_token() {
-        let p = Path::new("/cache/proxies/pending-abc123.quick.mp4");
-        let out = rewrite_hash_in_path(p, "pending-abc123", "deadbeef").unwrap();
-        assert_eq!(out, PathBuf::from("/cache/proxies/deadbeef.quick.mp4"));
-    }
-
-    #[test]
-    fn rewrite_hash_returns_none_when_token_absent() {
-        let p = Path::new("/cache/proxies/sourcehash.mp4");
-        assert!(rewrite_hash_in_path(p, "pending-abc123", "deadbeef").is_none());
     }
 
     #[tokio::test]

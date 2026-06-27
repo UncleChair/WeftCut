@@ -9,21 +9,16 @@ use crate::jobs::import::ImportEntry;
 use crate::napi_backend::Backend;
 use crate::state::{self, MediaItem, MediaKind};
 
-/// Probe + hash a source file into a `MediaItem` (no actor write). Pure compute:
-/// stat (+ deferred `pending-{id}` hash when a workspace will copy the file in,
-/// or full blake3 hash otherwise), metadata probe, kind detection. Mints the
-/// media id internally. Extracted from `import_media`'s `spawn_blocking` body so
-/// the `probe_media` napi (Phase 3d-e hybrid: Rust computes, the TS host writes)
-/// reuses the EXACT same probe; `import_media` (flag-off path) calls it unchanged.
-pub fn probe_media_item(source_buf: PathBuf, has_workspace: bool) -> Result<MediaItem, String> {
+/// Probe a source file into a `MediaItem` (no actor write). Stat-only +
+/// metadata probe + kind detection — NO blake3 (instant timeline appearance).
+/// `file_hash_blake3` is a PROVISIONAL sentinel (`pending-{id}`) that is never
+/// used as a cache key: the TS host runs the standalone `hash_media_source` pass
+/// and sets the real hash via `set_media_hash` BEFORE enqueuing any derivative
+/// (stateless-compute Phase 4 — ADR 0007 superseded). Mints the media id
+/// internally. The `probe_media` napi reuses this exact body.
+pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
     let media_id = uuid::Uuid::new_v4();
-    let (file_size, file_mtime, file_hash_blake3) = if has_workspace {
-        let (size, mtime) = io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
-        (size, mtime, format!("pending-{media_id}"))
-    } else {
-        let facts = io::probe::hash_and_stat(&source_buf).map_err(|e| format!("{e:#}"))?;
-        (facts.size, facts.mtime_secs, facts.blake3_hex)
-    };
+    let (file_size, file_mtime) = io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
     let metadata = io::probe::probe_metadata(&source_buf);
     let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
     let label = source_buf.file_name().map(|n| n.to_string_lossy().to_string());
@@ -42,7 +37,7 @@ pub fn probe_media_item(source_buf: PathBuf, has_workspace: bool) -> Result<Medi
         waveform_path: None,
         conform_path: None,
         thumbnails_dir: None,
-        file_hash_blake3,
+        file_hash_blake3: format!("pending-{media_id}"),
         file_size,
         file_mtime,
         imported_at: Utc::now(),
@@ -115,7 +110,7 @@ pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(),
         &backend.events, id,
         state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
     ).await.map_err(|e| format!("route-correct {id}: {e}"))?;
-    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), item, backend.read_mirror_handle());
+    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), item);
     Ok(())
 }
 
@@ -126,7 +121,7 @@ pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), St
     if crate::cache::cached_ok(&backend.cache.audio_conform(&item.file_hash_blake3)) {
         return Ok(());
     }
-    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), item, backend.read_mirror_handle());
+    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), item);
     Ok(())
 }
 
