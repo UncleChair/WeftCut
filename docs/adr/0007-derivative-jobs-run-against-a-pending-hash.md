@@ -1,6 +1,16 @@
 ---
-status: accepted
+status: superseded
 ---
+
+> **Superseded (2026-06-27, stateless-compute-service Phase 4):** The import
+> pipeline now computes the real BLAKE3 content hash *before* enqueuing derivative
+> jobs (the "hash-first" rework). Jobs bake the final content-hash cache key at
+> enqueue time, so the `pending-{media_id}` alias, `cache::migrate_hash_artifacts`,
+> `patch_derivative_paths_after_hash_migration`, and the per-job `fresh_media_item`
+> re-read are all gone. The clip still appears instantly (a stat-only probe); a
+> lightweight standalone hash pass sets the real hash, then derivatives enqueue,
+> while the workspace copy runs in parallel. See `docs/data-model.md` (import
+> flow). Retained for historical context.
 
 # Derivative jobs run against a pending hash before the content hash is final
 

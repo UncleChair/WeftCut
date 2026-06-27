@@ -195,9 +195,11 @@ the quick proxy once it exists. The import optimization dialog classifies the
 same states as `checking`, `bridged`, `transcoding`, `failed`, `ready`, or
 `direct`; it is an informational, non-blocking surface.
 
-Background derivative jobs may start before `file_hash_blake3` is final, keyed
-on a temporary `pending-{media_id}` hash that migrates to the content hash when
-the import copy finishes (ADR 0007).
+On import the clip appears immediately from a stat-only probe (the item carries
+a provisional `file_hash_blake3`); a lightweight standalone BLAKE3 pass then sets
+the real content hash before any derivative job is enqueued, so jobs are always
+keyed on the final content hash and the workspace copy runs in parallel.
+(Supersedes the former pending-hash/migrate scheme, ADR 0007.)
 
 ### Media kinds & import classification
 
