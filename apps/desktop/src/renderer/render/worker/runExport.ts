@@ -13,7 +13,7 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
-import { exportPlaybackPathFor } from "../../state/projectStore";
+import { resolveDecode } from "../decodeRoute";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { tenBitExportCapable } from "../exportSettings";
@@ -115,7 +115,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // bt709/limited resolution default that misread full-range/601 proxies.
   const mediaColor: Record<string, VideoColorSpaceInit | undefined> = {};
   for (const m of init.mediaById.values()) {
-    const exportPath = exportPlaybackPathFor(m);
+    const exportPath = resolveDecode(m).exportPath;
     if (m.kind === "Video" && referenced.has(m.id) && !exportPath) {
       throw new Error(
         `Internal: "${m.label}" has no export-ready source (the readiness gate should have prevented this).`,

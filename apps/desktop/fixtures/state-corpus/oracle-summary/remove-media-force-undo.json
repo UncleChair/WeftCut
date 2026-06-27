@@ -59,16 +59,15 @@
             "color_transfer": null,
             "conform_path": null,
             "duration_us": 4000000,
-            "export_uses_original": false,
+            "decode_route": {
+              "route": "bypass"
+            },
             "height": null,
             "id": "00000000-0000-0000-0000-0000000000aa",
             "kind": "Video",
             "label": "clip.bin",
             "path": "media/clip.bin",
             "pix_fmt": null,
-            "proxy_bypassed": false,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "size_bytes": 0,
             "width": null
           }
@@ -162,16 +161,15 @@
             "color_transfer": null,
             "conform_path": null,
             "duration_us": 4000000,
-            "export_uses_original": false,
+            "decode_route": {
+              "route": "bypass"
+            },
             "height": null,
             "id": "00000000-0000-0000-0000-0000000000aa",
             "kind": "Video",
             "label": "clip.bin",
             "path": "media/clip.bin",
             "pix_fmt": null,
-            "proxy_bypassed": false,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "size_bytes": 0,
             "width": null
           }
@@ -389,16 +387,15 @@
             "color_transfer": null,
             "conform_path": null,
             "duration_us": 4000000,
-            "export_uses_original": false,
+            "decode_route": {
+              "route": "bypass"
+            },
             "height": null,
             "id": "00000000-0000-0000-0000-0000000000aa",
             "kind": "Video",
             "label": "clip.bin",
             "path": "media/clip.bin",
             "pix_fmt": null,
-            "proxy_bypassed": false,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "size_bytes": 0,
             "width": null
           }

@@ -2,31 +2,31 @@
   "name": "set-media-derivatives-missing-media",
   "steps": [
     {
-      "error": "MediaNotFound { media: 00000000-0000-0000-0000-0000000000ff }",
-      "ok": false,
       "op": "set_media_derivatives",
+      "ok": false,
+      "error": "MediaNotFound",
       "summary": {
         "audio_roles": [
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "dialogue",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "music",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "sfx",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "voiceover",
             "solo": false
@@ -82,31 +82,31 @@
       }
     },
     {
-      "error": null,
-      "ok": true,
       "op": "add_track",
+      "ok": true,
+      "error": null,
       "summary": {
         "audio_roles": [
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "dialogue",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "music",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "sfx",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "voiceover",
             "solo": false

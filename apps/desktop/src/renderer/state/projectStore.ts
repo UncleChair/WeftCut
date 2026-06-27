@@ -99,9 +99,9 @@ export async function wireProjectStore(): Promise<UnlistenFn> {
   // `project:changed` fires a re-fetch, and `project_summary` is an async IPC
   // whose responses can resolve out of order (the actor services calls on a
   // threadpool). Without a guard, a slow response that captured OLDER actor
-  // state can land AFTER a fresher one and clobber it — e.g. an import sets
-  // `export_uses_original = true`, then a stale in-flight summary applies the
-  // pre-decision `false`, leaving the media transiently export-routeless. The
+  // state can land AFTER a fresher one and clobber it — e.g. an import decides
+  // a direct-export route, then a stale in-flight summary applies the
+  // pre-decision route, leaving the media transiently export-routeless. The
   // export-readiness gate then reads that regressed state and fails with
   // "no export-ready source". Drop any response older than the newest already
   // applied (last-write-wins by dispatch order).
@@ -160,45 +160,6 @@ export const useMediaById = (id: string | null | undefined): MediaSummary | unde
 /// to look up its own params each render without re-walking tracks.
 export const useLayerById = (id: string | null | undefined): LayerSummary | undefined =>
   useProjectStore((s) => (id ? s.layerById.get(id) : undefined));
-
-/// Returns the effective preview path for a media item. Preview may use a
-/// quick proxy while the full proxy is still rendering; export must not.
-/// `opts.previewDecodable` is the session bridge flag: when this machine's
-/// WebCodecs confirmed it can decode the original (import probe), preview reads
-/// the original directly until a proxy lands. Session-scoped, never persisted.
-export function previewPlaybackPathFor(
-  media: MediaSummary | undefined,
-  opts?: { previewDecodable?: boolean },
-): string | null {
-  if (!media) return null;
-  if (media.kind === "Video") {
-    // Prefer the light quick proxy for preview. The full proxy is a
-    // source-resolution EXPORT master (heavy to scrub); last-resort preview
-    // source only if no quick proxy exists (ADR 0011).
-    if (media.quick_proxy_path) return media.quick_proxy_path;
-    if (media.proxy_path) return media.proxy_path;
-    // Preview from the original for DirectBoth (proxy_bypassed = H.264) OR,
-    // via the bridge, any source this machine probed as decodable (incl.
-    // HEVC/AV1/Hi10P) while its proxy is still building.
-    if (media.proxy_bypassed) return media.path;
-    if (opts?.previewDecodable) return media.path;
-    return null;
-  }
-  return media.path;
-}
-
-/// Returns the effective export path for a media item. Quick proxies are
-/// intentionally excluded because they are low-quality preview artifacts.
-export function exportPlaybackPathFor(media: MediaSummary | undefined): string | null {
-  if (!media) return null;
-  if (media.kind === "Video") {
-    if (media.proxy_path) return media.proxy_path;
-    return media.proxy_bypassed || media.export_uses_original
-      ? media.path
-      : null;
-  }
-  return media.path;
-}
 
 // Reused empty sentinels so `?? []` doesn't allocate a fresh array on
 // every render (which would defeat referential-equality short-circuits

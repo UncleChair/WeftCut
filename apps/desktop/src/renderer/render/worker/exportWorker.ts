@@ -198,10 +198,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         height: d.height,
         size_bytes: 0,
         available: true,
-        proxy_path: null,
-        quick_proxy_path: null,
-        proxy_bypassed: false,
-        export_uses_original: false,
+        decode_route: { route: "bypass" },
         codec: null,
         pix_fmt: null,
       };

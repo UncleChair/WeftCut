@@ -1,4 +1,5 @@
 import type { MediaSummary } from "../ipc";
+import { previewPathLive } from "../render/decodeRoute";
 
 /// Per-video proxy lifecycle, session-scoped. Driven by `media:job_*`
 /// events filtered to proxy-like jobs. The map only carries entries
@@ -23,9 +24,10 @@ export interface MediaReadinessOptions {
 /// Single source of truth for "may the user act on this media?" Used by
 /// the Media Pool card (drag source) and by the Timeline drop handler
 /// (defence in depth). For video, "ready" means there is a preview source
-/// right now: quick/full proxy, bypassed original, or a session bridge.
-/// `export_uses_original` alone is not enough because preview intentionally
-/// waits for a quick proxy unless the bridge probe succeeded.
+/// right now: a quick/full proxy on the route, a bypassed original, or a
+/// session bridge — exactly what `previewPathLive` resolves. A DirectExport
+/// route with no quick proxy is NOT enough on its own, because preview
+/// intentionally waits for a quick proxy unless the bridge probe succeeded.
 export function mediaReadiness(
   media: MediaSummary,
   importingIds: ReadonlySet<string>,
@@ -39,12 +41,7 @@ export function mediaReadiness(
     return { ready: false, reason: "missing" };
   }
   if (media.kind === "Video") {
-    if (
-      media.proxy_path ||
-      media.quick_proxy_path ||
-      media.proxy_bypassed ||
-      options.previewDecodable === true
-    ) {
+    if (previewPathLive(media, { previewDecodable: options.previewDecodable ?? false }) != null) {
       return { ready: true };
     }
     const s = proxyState.get(media.id);

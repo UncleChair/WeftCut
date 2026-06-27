@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MediaSummary } from "../ipc";
+import type { DecodeRoute } from "../render/decodeRoute";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
 
 const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
@@ -12,17 +13,20 @@ const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   height: 1080,
   size_bytes: 10_000_000,
   available: true,
-  proxy_path: null,
-  quick_proxy_path: null,
-  proxy_bypassed: false,
-  export_uses_original: false,
+  decode_route: { route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 },
   codec: "h264",
   pix_fmt: "yuv420p",
   ...over,
 });
 
+// Route helpers, named for the preview readiness they encode.
+const proxied = (over: Partial<{ quick_proxy: string | null; full_proxy: string | null }> = {}): DecodeRoute => ({
+  route: "proxied", quick_proxy: over.quick_proxy ?? null, full_proxy: over.full_proxy ?? null, format_version: 1,
+});
+const bypass: DecodeRoute = { route: "bypass" };
+
 const baseAudio = (over: Partial<MediaSummary> = {}): MediaSummary => ({
-  ...baseVideo({ kind: "Audio", width: null, height: null, proxy_path: null }),
+  ...baseVideo({ kind: "Audio", width: null, height: null, decode_route: bypass }),
   ...over,
 });
 
@@ -30,16 +34,27 @@ const emptyImporting = new Set<string>();
 const emptyProxyState = new Map<string, ProxyState>();
 
 describe("mediaReadiness", () => {
-  it("video is ready when proxy_path is set", () => {
+  it("video is ready when the quick proxy on the route is set", () => {
     const r = mediaReadiness(
-      baseVideo({ proxy_path: "C:/m/clip.proxy.mp4" }),
+      baseVideo({ decode_route: proxied({ quick_proxy: "C:/m/clip.quick.mp4", full_proxy: "C:/m/clip.proxy.mp4" }) }),
       emptyImporting,
       emptyProxyState,
     );
     expect(r).toEqual({ ready: true });
   });
 
-  it("video is ready when proxy state map says ready, even without proxy_path", () => {
+  it("video waits when only the full export master is on disk (preview needs the quick proxy)", () => {
+    // resolveDecode previews from the quick proxy, never the heavy full master,
+    // so a Proxied source with only a full proxy is not preview-ready yet.
+    const r = mediaReadiness(
+      baseVideo({ decode_route: proxied({ full_proxy: "C:/m/clip.proxy.mp4" }) }),
+      emptyImporting,
+      emptyProxyState,
+    );
+    expect(r).toEqual({ ready: false, reason: "proxy_pending" });
+  });
+
+  it("video is ready when proxy state map says ready, even without a route path", () => {
     const r = mediaReadiness(
       baseVideo(),
       emptyImporting,
@@ -48,27 +63,27 @@ describe("mediaReadiness", () => {
     expect(r).toEqual({ ready: true });
   });
 
-  it("video is ready when quick_proxy_path is set", () => {
+  it("video is ready when the route's quick proxy is set", () => {
     const r = mediaReadiness(
-      baseVideo({ quick_proxy_path: "C:/m/clip.quick.mp4" }),
+      baseVideo({ decode_route: proxied({ quick_proxy: "C:/m/clip.quick.mp4" }) }),
       emptyImporting,
       emptyProxyState,
     );
     expect(r).toEqual({ ready: true });
   });
 
-  it("video is ready when proxy is bypassed", () => {
+  it("video is ready when the route is bypass (original decodes directly)", () => {
     const r = mediaReadiness(
-      baseVideo({ proxy_bypassed: true }),
+      baseVideo({ decode_route: bypass }),
       emptyImporting,
       emptyProxyState,
     );
     expect(r).toEqual({ ready: true });
   });
 
-  it("video waits when export_uses_original has no preview source yet", () => {
+  it("video waits when a DirectExport route has no quick proxy yet", () => {
     const r = mediaReadiness(
-      baseVideo({ export_uses_original: true }),
+      baseVideo({ decode_route: { route: "direct-export", quick_proxy: null } }),
       emptyImporting,
       emptyProxyState,
     );
@@ -77,7 +92,7 @@ describe("mediaReadiness", () => {
 
   it("video is ready when the preview bridge probe succeeded", () => {
     const r = mediaReadiness(
-      baseVideo({ export_uses_original: true }),
+      baseVideo({ decode_route: { route: "direct-export", quick_proxy: null } }),
       emptyImporting,
       emptyProxyState,
       { previewDecodable: true },
@@ -110,7 +125,7 @@ describe("mediaReadiness", () => {
 
   it("importing takes precedence over proxy state", () => {
     const r = mediaReadiness(
-      baseVideo({ proxy_path: "C:/m/clip.proxy.mp4" }),
+      baseVideo({ decode_route: proxied({ quick_proxy: "C:/m/clip.quick.mp4" }) }),
       new Set(["m1"]),
       new Map([["m1", "ready"]]),
     );
@@ -151,7 +166,7 @@ describe("mediaReadiness", () => {
 
   it("image is ready once copy is done", () => {
     const r = mediaReadiness(
-      baseVideo({ kind: "Image", duration_us: null }),
+      baseVideo({ kind: "Image", duration_us: null, decode_route: bypass }),
       emptyImporting,
       emptyProxyState,
     );
@@ -160,7 +175,7 @@ describe("mediaReadiness", () => {
 
   it("subtitle is ready once copy is done", () => {
     const r = mediaReadiness(
-      baseVideo({ kind: "Subtitle", duration_us: null }),
+      baseVideo({ kind: "Subtitle", duration_us: null, decode_route: bypass }),
       emptyImporting,
       emptyProxyState,
     );

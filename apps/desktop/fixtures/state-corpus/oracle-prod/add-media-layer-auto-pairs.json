@@ -31,7 +31,9 @@
         "media_pool": {
           "11111111-1111-1111-1111-111111111111": {
             "conform_path": null,
-            "export_uses_original": false,
+            "decode_route": {
+              "route": "bypass"
+            },
             "file_hash_blake3": "0",
             "file_mtime": 0,
             "file_size": 0,
@@ -51,10 +53,6 @@
             },
             "path_abs": "media/clip.bin",
             "path_rel": null,
-            "proxy_bypassed": false,
-            "proxy_format_version": 0,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "thumbnails_dir": null,
             "waveform_path": null
           }
@@ -66,7 +64,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -144,7 +142,9 @@
         "media_pool": {
           "11111111-1111-1111-1111-111111111111": {
             "conform_path": null,
-            "export_uses_original": false,
+            "decode_route": {
+              "route": "bypass"
+            },
             "file_hash_blake3": "0",
             "file_mtime": 0,
             "file_size": 0,
@@ -164,10 +164,6 @@
             },
             "path_abs": "media/clip.bin",
             "path_rel": null,
-            "proxy_bypassed": false,
-            "proxy_format_version": 0,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "thumbnails_dir": null,
             "waveform_path": null
           }
@@ -179,7 +175,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -339,7 +335,9 @@
         "media_pool": {
           "11111111-1111-1111-1111-111111111111": {
             "conform_path": null,
-            "export_uses_original": false,
+            "decode_route": {
+              "route": "bypass"
+            },
             "file_hash_blake3": "0",
             "file_mtime": 0,
             "file_size": 0,
@@ -359,10 +357,6 @@
             },
             "path_abs": "media/clip.bin",
             "path_rel": null,
-            "proxy_bypassed": false,
-            "proxy_format_version": 0,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "thumbnails_dir": null,
             "waveform_path": null
           }
@@ -374,7 +368,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,

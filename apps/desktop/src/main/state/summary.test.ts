@@ -117,7 +117,7 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     expect(s.media.map((m) => m.id)).toEqual([ // descending by id string
       '00000000-0000-0000-0000-0000000000bb', '00000000-0000-0000-0000-0000000000aa',
     ])
-    expect(s.media[0]).toMatchObject({ label: 'clip.bin', kind: 'Audio', available: false, proxy_path: null })
+    expect(s.media[0]).toMatchObject({ label: 'clip.bin', kind: 'Audio', available: false, decode_route: { route: 'bypass' } })
     const t0 = s.tracks[0]
     expect(t0.kind).toBe('Video')
     expect(t0.layers[0].kind).toBe('Color')

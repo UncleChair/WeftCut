@@ -13,14 +13,16 @@ const posixJoin = (...parts: string[]) => parts.join('/').replace(/\/+/g, '/')
 describe('persistence: Rust-serialized project.json round-trips through the TS loader (FULL corpus)', () => {
   const files = readdirSync(ORACLE).filter((f) => f.endsWith('.json'))
   // loadProjectFromJson INTENTIONALLY transforms two media fields: clearSessionQuickProxies
-  // nulls quick_proxy_path, and reconcileMediaPaths recomputes path_abs from path_rel. The
-  // identity assertion below therefore only holds for media whose quick_proxy_path AND path_rel
-  // are both null. Sequences that set either field (Phase 3c-i set_media_derivatives /
+  // nulls the route's quick_proxy slot, and reconcileMediaPaths recomputes path_abs from
+  // path_rel. The identity assertion below therefore only holds for media whose route carries
+  // no quick proxy AND whose path_rel is null. Sequences that set either (set_media_derivatives /
   // set_media_workspace_paths) exercise those transforms and are unit-gated in
-  // persistence.test.ts — skip them here so this stays a pure Rust-writes/TS-reads field-fidelity gate.
+  // persistence.test.ts — skip them here so this stays a pure on-disk field-fidelity gate.
+  const routeQuick = (r: { route?: string; quick_proxy?: unknown } | undefined): unknown =>
+    r && (r.route === 'direct-export' || r.route === 'proxied') ? r.quick_proxy : null
   const identityEligible = (final: Record<string, unknown>): boolean => {
-    const pool = (final?.media_pool ?? {}) as Record<string, { quick_proxy_path: unknown; path_rel: unknown }>
-    return Object.values(pool).every((m) => m.quick_proxy_path == null && m.path_rel == null)
+    const pool = (final?.media_pool ?? {}) as Record<string, { decode_route?: { route?: string; quick_proxy?: unknown }; path_rel: unknown }>
+    return Object.values(pool).every((m) => routeQuick(m.decode_route) == null && m.path_rel == null)
   }
   const checked = files.filter((f) => identityEligible(JSON.parse(readFileSync(join(ORACLE, f), 'utf8')).steps.at(-1).state))
   for (const f of checked) {

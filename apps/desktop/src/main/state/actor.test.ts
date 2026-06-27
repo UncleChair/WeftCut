@@ -560,15 +560,17 @@ describe('media-pool mutations dispatch (Phase 3c-i)', () => {
   }
 
   it('set_media_derivatives: MediaNotFound on bad id', () => {
-    const r = actorWithMedia().dispatch('set_media_derivatives', { media: '00000000-0000-0000-0000-0000000000ff', patch: { proxy_path: 'media/p.mp4' } })
+    const r = actorWithMedia().dispatch('set_media_derivatives', { media: '00000000-0000-0000-0000-0000000000ff', patch: { set_route: { route: 'bypass' } } })
     expect(r.ok).toBe(false)
     expect(!r.ok && r.error.error).toBe('MediaNotFound')
   })
-  it('set_media_derivatives: success patches the pool item', () => {
+  it('set_media_derivatives: success folds the route on the pool item', () => {
     const a = actorWithMedia()
-    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { proxy_path: 'media/p.mp4', proxy_bypassed: true } }).ok).toBe(true)
-    expect(a.snapshot().media_pool[MID].proxy_path).toBe('media/p.mp4')
-    expect(a.snapshot().media_pool[MID].proxy_bypassed).toBe(true)
+    // set_route promotes the bypass default to Proxied, then a full master folds in.
+    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { set_route: { route: 'proxied', quick_proxy: null, full_proxy: null, format_version: 0 } } }).ok).toBe(true)
+    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { full_proxy_landed: { path: 'media/p.mp4', format_version: 7 } } }).ok).toBe(true)
+    expect(a.snapshot().media_pool[MID].decode_route)
+      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: 'media/p.mp4', format_version: 7 })
   })
   it('set_media_workspace_paths: success sets path_rel + hash', () => {
     const a = actorWithMedia()

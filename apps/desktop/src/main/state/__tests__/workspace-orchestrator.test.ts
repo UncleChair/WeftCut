@@ -74,8 +74,8 @@ describe('openProject', () => {
       id: 'm1', label: null,
       path_abs: '/ws/Media/clip.mp4', path_rel: null, kind: 'Video',
       metadata: { duration_us: 1_000_000 }, file_hash_blake3: 'deadbeef', file_size: 0, file_mtime: 0,
-      imported_at: '2026-01-01T00:00:00Z', proxy_path: null, quick_proxy_path: quickProxyPath,
-      proxy_bypassed: false, export_uses_original: false, proxy_format_version: 0,
+      imported_at: '2026-01-01T00:00:00Z',
+      decode_route: { route: 'direct-export', quick_proxy: quickProxyPath },
       conform_path: null, waveform_path: null, thumbnails_dir: null,
     }
     const withProxy = { ...project, media_pool: { m1: item } }

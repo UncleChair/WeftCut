@@ -133,10 +133,10 @@ import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { wireLogStream, useLogStore } from "./logs/store";
 import {
-  exportPlaybackPathFor,
   useProjectStore,
   wireProjectStore,
 } from "./state/projectStore";
+import { resolveDecode } from "./render/decodeRoute";
 import {
   setMediaPoolDrawerOpen,
   toggleDisplayMode,
@@ -229,7 +229,7 @@ export function App({ onCloseProject }: AppProps) {
   // `media:job_*` listener below (proxy / quick_proxy / proxy_bypass)
   // and consulted by
   // `mediaReadiness` to decide whether a video clip is usable on the
-  // timeline. `MediaSummary.proxy_path` from the next summary refresh is
+  // timeline. `MediaSummary.decode_route` from the next summary refresh is
   // the durable source of truth; this map is the fast, session-scoped
   // reflection so the UI flips the moment the event fires instead of
   // waiting on the project:changed round-trip.
@@ -238,8 +238,8 @@ export function App({ onCloseProject }: AppProps) {
   );
   // Session decodability probe memo, shared by the import-time sweep and the
   // export-readiness gate. id → "ok" (decoded a key frame this session) /
-  // "pending" (probe in flight). A decodable DirectExport source stays
-  // export_uses_original forever, so this memo is what stops re-probing it.
+  // "pending" (probe in flight). A decodable DirectExport source keeps its
+  // direct-export route forever, so this memo is what stops re-probing it.
   const decodeProbeMemo = useRef<Map<string, ProbeState>>(new Map());
   // Fast mirror of proxyState for use inside callbacks (stale-closure-proof).
   const proxyStateRef = useRef(proxyState);
@@ -616,7 +616,7 @@ export function App({ onCloseProject }: AppProps) {
   // proxy_bypass only. We do NOT gate the UI on thumbnails / waveform;
   // those are decorations.
   // The listener owns transitions started → pending, complete → ready,
-  // error → failed. `MediaSummary.proxy_path` from the next summary
+  // error → failed. `MediaSummary.decode_route` from the next summary
   // refresh is the durable source of truth; this map is the fast,
   // session-scoped reflection so the UI flips the moment the event
   // fires instead of waiting on the project:changed round-trip.
@@ -682,7 +682,7 @@ export function App({ onCloseProject }: AppProps) {
 
   // Import-time decodability sweep. For every DirectExport video source not yet
   // probed this session, decode one key frame in the background; on failure
-  // route-correct it (ensureFullProxy clears export_uses_original + enqueues a
+  // route-correct it (ensureFullProxy promotes the route to Proxied + enqueues a
   // full proxy). Capable machines pay one sub-second probe and generate no
   // master proxy. Sequential to avoid competing with preview decoders. Reads
   // the fresh Zustand pool; re-runs when `summary` changes (every project:changed).
@@ -727,7 +727,7 @@ export function App({ onCloseProject }: AppProps) {
           // pointing export at an original this machine can't decode). A
           // full-proxy source that fails the probe already routes correctly;
           // it just gets no bridge — preview waits for its proxy as before.
-          if (m.export_uses_original) {
+          if (resolveDecode(m).route === "direct-export") {
             routeCorrected.current.add(m.id);
             try {
               await ensureFullProxy(m.id);
@@ -1122,10 +1122,10 @@ export function App({ onCloseProject }: AppProps) {
         });
         try {
           await waitForProxies(prep.waiting, {
-            pathReady: (id) =>
-              exportPlaybackPathFor(
-                useProjectStore.getState().mediaById.get(id),
-              ) != null,
+            pathReady: (id) => {
+              const m = useProjectStore.getState().mediaById.get(id);
+              return m != null && resolveDecode(m).exportPath != null;
+            },
             subscribeStore: (cb) => useProjectStore.subscribe(cb),
             onProxyError: (cb) => {
               // `listen` is async; guard against it resolving after cleanup

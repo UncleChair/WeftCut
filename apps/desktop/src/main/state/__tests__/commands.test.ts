@@ -98,7 +98,7 @@ describe('demoColor', () => {
 // ── prodMediaLayer ────────────────────────────────────────────────────────
 function makeProject(overrides?: Partial<Project>): Project {
   const base: Project = {
-    schema_version: 9, project_id: 'proj',
+    schema_version: 10, project_id: 'proj',
     metadata: { name: 'test', created_at: '', modified_at: '', description: null },
     composition: { width: 1920, height: 1080, fps: { num: 30, den: 1 }, duration_us: 0,
       duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',
@@ -116,8 +116,7 @@ describe('prodMediaLayer', () => {
     const p = makeProject({ media_pool: { 'vid': { id: 'vid', label: null, path_abs: '', path_rel: null,
       kind: 'Video', metadata: { duration_us: 5_000_000, video: null, audio: null, container_format: null },
       file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
-      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
-      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } } })
     const r = prodMediaLayer({ mediaId: 'vid' }, p)
     expect(r.durationUs).toBe(5_000_000)
@@ -128,8 +127,7 @@ describe('prodMediaLayer', () => {
     const p = makeProject({ media_pool: { 'vid': { id: 'vid', label: null, path_abs: '', path_rel: null,
       kind: 'Video', metadata: { duration_us: null, video: null, audio: null, container_format: null },
       file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
-      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
-      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } } })
     const r = prodMediaLayer({ mediaId: 'vid' }, p)
     expect(r.durationUs).toBe(2_000_000)
@@ -139,8 +137,7 @@ describe('prodMediaLayer', () => {
     const p = makeProject({ media_pool: { 'aud': { id: 'aud', label: null, path_abs: '', path_rel: null,
       kind: 'Audio', metadata: { duration_us: 3_000_000, video: null, audio: null, container_format: null },
       file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
-      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
-      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } } })
     const r = prodMediaLayer({ mediaId: 'aud' }, p)
     expect(r.params.kind).toBe('Audio')
@@ -151,8 +148,7 @@ describe('prodMediaLayer', () => {
     const p = makeProject({ media_pool: { 'img': { id: 'img', label: null, path_abs: '', path_rel: null,
       kind: 'Image', metadata: { duration_us: null, video: null, audio: null, container_format: null },
       file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
-      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
-      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } } })
     const r = prodMediaLayer({ mediaId: 'img' }, p)
     expect(r.params.kind).toBe('ImageOverlay')
@@ -263,8 +259,7 @@ describe('add_media_layer auto-pair', () => {
       kind: 'Video', metadata: { duration_us: 4_000_000, video: null,
         audio: { sample_rate: 0, channels: 0, codec: '' }, container_format: null },
       file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
-      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
-      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } } })
     const r1 = prodMediaLayer({ mediaId: 'vid' }, p1)
     expect(r1.autoPairAudio).not.toBeNull()
@@ -276,8 +271,7 @@ describe('add_media_layer auto-pair', () => {
     const p2 = makeProject({ media_pool: { 'vid': { id: 'vid', label: null, path_abs: '', path_rel: null,
       kind: 'Video', metadata: { duration_us: 4_000_000, video: null, audio: null, container_format: null },
       file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
-      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
-      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } } })
     const r2 = prodMediaLayer({ mediaId: 'vid' }, p2)
     expect(r2.autoPairAudio).toBeNull()
@@ -287,8 +281,7 @@ describe('add_media_layer auto-pair', () => {
       kind: 'Video', metadata: { duration_us: 4_000_000, video: null,
         audio: { sample_rate: 0, channels: 0, codec: '' }, container_format: null },
       file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
-      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
-      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } },
       settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
         history_capacity: 200, auto_pair_audio_on_import: false, auto_delete_empty_tracks: true } })

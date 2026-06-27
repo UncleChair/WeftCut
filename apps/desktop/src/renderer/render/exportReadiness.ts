@@ -6,6 +6,7 @@
 // See docs/data-model.md#mediaitem and docs/render.md#export-source-resolution.
 
 import { MEDIA_JOB_EVENTS, type MediaJobEvent, type MediaSummary } from "../ipc";
+import { resolveDecode } from "./decodeRoute";
 
 /// Session probe memo value. "ok" = decoded a key frame this session (cache
 /// hit, skip re-probe). "pending" = a probe is in flight (avoid double-probe).
@@ -27,35 +28,32 @@ export class ExportProxyFailed extends Error {
   }
 }
 
-/// Video sources whose export path is the ORIGINAL via DirectExport
-/// (export_uses_original, no full proxy yet). DirectBoth (proxy_bypassed) is
-/// H.264 and universally decodable, so it is skipped. Used by BOTH the import
-/// sweep (whole pool) and the export gate (referenced-scoped via filtering).
+/// Video sources whose export path is the ORIGINAL via DirectExport (no full
+/// export master — that's the Proxied route). DirectBoth (Bypass) is H.264 and
+/// universally decodable, so it is skipped. Used by BOTH the import sweep (whole
+/// pool) and the export gate (referenced-scoped via filtering).
 export function sourcesNeedingPreflight(
   mediaById: ReadonlyMap<string, MediaSummary>,
 ): MediaSummary[] {
   return [...mediaById.values()].filter(
-    (m) => m.kind === "Video" && m.export_uses_original && !m.proxy_path,
+    (m) => m.kind === "Video" && resolveDecode(m).route === "direct-export",
   );
 }
 
-/// Video sources that would show a BLANK preview right now (no quick proxy, no
-/// full proxy, not bypassed) — candidates for the preview-from-original bridge.
-/// A SUPERSET of `sourcesNeedingPreflight`: it also includes full-proxy/10-bit
-/// sources, so a decodable Hi10P/HEVC gets a verdict in the shared memo and can
-/// bridge while its proxy builds. The import sweep probes these; the export gate
-/// keeps using the narrower `sourcesNeedingPreflight`.
+/// Video sources that would show a BLANK preview right now (no preview path on
+/// the route yet, and not bypassed) — candidates for the preview-from-original
+/// bridge. A SUPERSET of `sourcesNeedingPreflight`: it also includes
+/// full-proxy/10-bit sources, so a decodable Hi10P/HEVC gets a verdict in the
+/// shared memo and can bridge while its proxy builds. The import sweep probes
+/// these; the export gate keeps using the narrower `sourcesNeedingPreflight`.
 export function sourcesNeedingPreviewProbe(
   mediaById: ReadonlyMap<string, MediaSummary>,
 ): MediaSummary[] {
-  return [...mediaById.values()].filter(
-    (m) =>
-      m.kind === "Video" &&
-      m.available &&
-      !m.quick_proxy_path &&
-      !m.proxy_path &&
-      !m.proxy_bypassed,
-  );
+  return [...mediaById.values()].filter((m) => {
+    if (m.kind !== "Video" || !m.available) return false;
+    const r = resolveDecode(m);
+    return r.route !== "bypass" && r.previewPath == null;
+  });
 }
 
 export interface PrepareDeps {
@@ -79,9 +77,10 @@ export interface PrepareResult {
 }
 
 /// For each referenced VIDEO source, confirm an export-decode path exists.
-/// Mirrors `exportPlaybackPathFor`: proxy_path / proxy_bypassed are ready;
-/// export_uses_original is "ready" only if it actually decodes (probe);
-/// otherwise the source is mid-proxy (wait) or failed.
+/// Mirrors `resolveDecode(m).exportPath`: a non-null export path (Bypass
+/// original, or a landed Proxied master) is ready; a DirectExport route is
+/// "ready" only if the original actually decodes (probe); otherwise the source
+/// is mid-proxy (wait) or failed.
 export async function prepareExportMedia(
   referencedMedia: MediaSummary[],
   deps: PrepareDeps,
@@ -92,9 +91,14 @@ export async function prepareExportMedia(
   // decoders for the WebCodecs buffer pool (see webcodecs-buffer-pool).
   for (const m of referencedMedia) {
     if (m.kind !== "Video") continue;
-    if (m.proxy_path || m.proxy_bypassed) continue; // export path ready
-    if (m.export_uses_original) {
-      // DirectExport: exportPlaybackPathFor returns the original — confirm it
+    const { route, exportPath } = resolveDecode(m);
+    // DirectExport must be probed BEFORE the exportPath short-circuit: its
+    // exportPath is the ORIGINAL (always non-null), but the original may be
+    // undecodable on this machine, so "ready" can't be assumed from the path
+    // alone. Bypass/Proxied export paths are trustworthy (universal H.264, or a
+    // generated master), so a non-null exportPath there means ready.
+    if (route === "direct-export") {
+      // DirectExport: resolveDecode's exportPath is the original — confirm it
       // actually decodes before committing.
       if (deps.memo.get(m.id) === "ok") continue; // cached decodable
       if (deps.memo.get(m.id) === "pending") {
@@ -104,8 +108,8 @@ export async function prepareExportMedia(
         // for the ~13 slots, the probe never gets a frame before its deadline,
         // and a decodable source gets a false-negative → needless route-
         // correction → "no export-ready source". Defer to the sweep's verdict
-        // instead of re-probing. `export_uses_original` is still true here, so
-        // `exportPlaybackPathFor` returns the original and `waitForProxies`
+        // instead of re-probing. The route is still direct-export here, so
+        // `resolveDecode(m).exportPath` returns the original and `waitForProxies`
         // resolves on its first check; the export's own decoder is the real
         // backstop. If the sweep later route-corrects this source, a subsequent
         // export sees the proxy.
@@ -123,8 +127,9 @@ export async function prepareExportMedia(
       waiting.push(m.id);
       continue;
     }
-    // No proxy, not bypassed, not DirectExport ⇒ exportPlaybackPathFor null:
-    // the source was route-corrected and its proxy is in flight, or failed.
+    if (exportPath != null) continue; // Bypass / landed Proxied master — export path ready
+    // Proxied with no master yet ⇒ resolveDecode exportPath null: the source
+    // was route-corrected and its proxy is in flight, or failed.
     if (deps.proxyStateOf(m.id) === "failed") failed.push(m.id);
     else waiting.push(m.id);
   }
@@ -133,7 +138,7 @@ export async function prepareExportMedia(
 
 export interface WaitDeps {
   /// True once the DURABLE store shows a usable export path for this id
-  /// (i.e. `exportPlaybackPathFor(store.mediaById.get(id)) != null`). Keying
+  /// (i.e. `resolveDecode(store.mediaById.get(id)).exportPath != null`). Keying
   /// off the store — not the media:job_complete event — guarantees the store
   /// runExport reads is already fresh when the wait resolves.
   pathReady: (mediaId: string) => boolean;

@@ -29,7 +29,8 @@ import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
 import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
-import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
+import { useProjectStore } from "../state/projectStore";
+import { resolveDecode } from "../render/decodeRoute";
 import { exists, readDir } from "@/bridge/fs";
 import { join as pathJoin } from "@/bridge/path";
 import { MotifSprite } from "../render/sprite/MotifSprite";
@@ -94,7 +95,7 @@ export interface E2EHook {
     mediaId: string;
     tStartUs?: number;
   }): Promise<{ layerId: string }>;
-  /// Resolve once `exportPlaybackPathFor` is non-null for the media — for a
+  /// Resolve once `resolveDecode(media).exportPath` is non-null — for a
   /// Video source that means the proxy/bypass route has been decided AND any
   /// needed proxy has landed. The animated-gif spec uses this to prove the
   /// gif routes through the video pipeline to an export-ready state.
@@ -556,8 +557,8 @@ export function installMotifTestHooks(): void {
 }
 
 /// Resolve once the just-imported media has a decided export route in the UI
-/// store — i.e. `exportPlaybackPathFor(media) != null`, the EXACT condition the
-/// export-readiness gate reads.
+/// store — i.e. `resolveDecode(media).exportPath != null`, the EXACT condition
+/// the export-readiness gate reads.
 ///
 /// `importMedia`/`addMediaLayer` mutate the actor; those changes reach this
 /// store asynchronously (via the `project:changed` bridge), and the
@@ -572,8 +573,10 @@ export function installMotifTestHooks(): void {
 /// fix — a sequence guard in `wireProjectStore` — keeps the route from being
 /// clobbered back to undecided after this wait resolves.)
 function waitForMediaExportReady(mediaId: string, timeoutMs: number): Promise<void> {
-  const ready = () =>
-    exportPlaybackPathFor(useProjectStore.getState().mediaById.get(mediaId)) != null;
+  const ready = () => {
+    const m = useProjectStore.getState().mediaById.get(mediaId);
+    return m != null && resolveDecode(m).exportPath != null;
+  };
   if (ready()) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     let unsub = () => {};

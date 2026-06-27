@@ -22,7 +22,8 @@ import {
   releaseTransport,
   setTransportPlaying,
 } from "../state/playbackStore";
-import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
+import { useProjectStore } from "../state/projectStore";
+import { previewPathLive } from "./decodeRoute";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor } from "./Compositor";
@@ -122,11 +123,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       const proxyAssetUrl = (mediaId: string): string | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
+        if (!m) return null;
         // Bridge flag is session-scoped (App's decodeProbeMemo via the prop);
         // read live each call so a mid-session probe flip takes effect on the
         // next ensureClip.
         const previewDecodable = previewDecodableOf?.(mediaId) ?? false;
-        const path = previewPlaybackPathFor(m, { previewDecodable });
+        const path = previewPathLive(m, { previewDecodable });
         return path ? convertFileSrc(path) : null;
       };
       const originalAssetUrl = (mediaId: string): string | null => {

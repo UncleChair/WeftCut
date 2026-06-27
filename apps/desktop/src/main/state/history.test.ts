@@ -154,8 +154,7 @@ describe('History.replaceMediaPoolEverywhere', () => {
     id, label: null, path_abs: 'media/clip.bin', path_rel: null, kind: 'Video',
     metadata: { duration_us: 4_000_000, video: null, audio: null, container_format: null },
     file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '2026-01-01T00:00:00Z',
-    proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false,
-    proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null,
+    decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null,
   })
   it('sets the pool on every snapshot, leaving the cursor put and surviving undo', () => {
     const gen = seededGen()

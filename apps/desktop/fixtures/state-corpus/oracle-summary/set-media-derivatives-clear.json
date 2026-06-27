@@ -2,31 +2,31 @@
   "name": "set-media-derivatives-clear",
   "steps": [
     {
-      "error": null,
-      "ok": true,
       "op": "add_media",
+      "ok": true,
+      "error": null,
       "summary": {
         "audio_roles": [
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "dialogue",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "music",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "sfx",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "voiceover",
             "solo": false
@@ -58,17 +58,16 @@
             "color_range": null,
             "color_transfer": null,
             "conform_path": null,
+            "decode_route": {
+              "route": "bypass"
+            },
             "duration_us": 4000000,
-            "export_uses_original": false,
             "height": null,
             "id": "00000000-0000-0000-0000-0000000000aa",
             "kind": "Video",
             "label": "clip.bin",
             "path": "media/clip.bin",
             "pix_fmt": null,
-            "proxy_bypassed": false,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "size_bytes": 0,
             "width": null
           }
@@ -105,31 +104,31 @@
       }
     },
     {
-      "error": null,
-      "ok": true,
       "op": "set_media_derivatives",
+      "ok": true,
+      "error": null,
       "summary": {
         "audio_roles": [
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "dialogue",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "music",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "sfx",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "voiceover",
             "solo": false
@@ -161,17 +160,19 @@
             "color_range": null,
             "color_transfer": null,
             "conform_path": null,
+            "decode_route": {
+              "format_version": 3,
+              "full_proxy": null,
+              "quick_proxy": null,
+              "route": "proxied"
+            },
             "duration_us": 4000000,
-            "export_uses_original": false,
             "height": null,
             "id": "00000000-0000-0000-0000-0000000000aa",
             "kind": "Video",
             "label": "clip.bin",
             "path": "media/clip.bin",
             "pix_fmt": null,
-            "proxy_bypassed": false,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "size_bytes": 0,
             "width": null
           }
@@ -208,31 +209,31 @@
       }
     },
     {
-      "error": null,
-      "ok": true,
       "op": "set_media_derivatives",
+      "ok": true,
+      "error": null,
       "summary": {
         "audio_roles": [
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "dialogue",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "music",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "sfx",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "voiceover",
             "solo": false
@@ -264,17 +265,19 @@
             "color_range": null,
             "color_transfer": null,
             "conform_path": null,
+            "decode_route": {
+              "format_version": 3,
+              "full_proxy": null,
+              "quick_proxy": null,
+              "route": "proxied"
+            },
             "duration_us": 4000000,
-            "export_uses_original": false,
             "height": null,
             "id": "00000000-0000-0000-0000-0000000000aa",
             "kind": "Video",
             "label": "clip.bin",
             "path": "media/clip.bin",
             "pix_fmt": null,
-            "proxy_bypassed": false,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "size_bytes": 0,
             "width": null
           }
@@ -311,31 +314,31 @@
       }
     },
     {
-      "error": null,
-      "ok": true,
       "op": "add_track",
+      "ok": true,
+      "error": null,
       "summary": {
         "audio_roles": [
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "dialogue",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "music",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "sfx",
             "solo": false
           },
           {
-            "gain_db": 0.0,
+            "gain_db": 0,
             "muted": false,
             "role": "voiceover",
             "solo": false
@@ -367,17 +370,19 @@
             "color_range": null,
             "color_transfer": null,
             "conform_path": null,
+            "decode_route": {
+              "format_version": 3,
+              "full_proxy": null,
+              "quick_proxy": null,
+              "route": "proxied"
+            },
             "duration_us": 4000000,
-            "export_uses_original": false,
             "height": null,
             "id": "00000000-0000-0000-0000-0000000000aa",
             "kind": "Video",
             "label": "clip.bin",
             "path": "media/clip.bin",
             "pix_fmt": null,
-            "proxy_bypassed": false,
-            "proxy_path": null,
-            "quick_proxy_path": null,
             "size_bytes": 0,
             "width": null
           }

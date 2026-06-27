@@ -11,10 +11,16 @@ import {
 } from "./exportReadiness";
 import { MEDIA_JOB_EVENTS, type MediaSummary } from "../ipc";
 
+// Route helpers, named for the readiness state they encode.
+const directExport = (quick: string | null = null) =>
+  ({ route: "direct-export", quick_proxy: quick }) as const;
+const bypass = { route: "bypass" } as const;
+const proxied = (over: { quick_proxy?: string | null; full_proxy?: string | null } = {}) =>
+  ({ route: "proxied", quick_proxy: over.quick_proxy ?? null, full_proxy: over.full_proxy ?? null, format_version: 1 }) as const;
+
 const vid = (over: Record<string, unknown>) => ({
   id: "m", label: "clip", kind: "Video", path: "/o.mov",
-  proxy_path: null, quick_proxy_path: null,
-  proxy_bypassed: false, export_uses_original: false,
+  decode_route: proxied(), // proxied, nothing ready (the common "not yet" default)
   width: 1920, height: 1080,
   ...over,
 } as unknown);
@@ -22,10 +28,10 @@ const vid = (over: Record<string, unknown>) => ({
 describe("sourcesNeedingPreflight", () => {
   it("selects DirectExport-from-original video sources only", () => {
     const pool = new Map<string, any>([
-      ["m1", vid({ id: "m1", export_uses_original: true })],
-      ["m2", vid({ id: "m2", proxy_bypassed: true })],
-      ["m3", vid({ id: "m3", export_uses_original: true, proxy_path: "/p.mp4" })],
-      ["m4", vid({ id: "m4", kind: "Audio" })],
+      ["m1", vid({ id: "m1", decode_route: directExport() })],
+      ["m2", vid({ id: "m2", decode_route: bypass })],
+      ["m3", vid({ id: "m3", decode_route: proxied({ full_proxy: "/p.mp4" }) })], // has a master ⇒ proxied, not direct
+      ["m4", vid({ id: "m4", kind: "Audio", decode_route: bypass })],
     ]);
     expect(sourcesNeedingPreflight(pool as any).map((m) => m.id)).toEqual(["m1"]);
   });
@@ -39,10 +45,7 @@ describe("sourcesNeedingPreviewProbe", () => {
       label: "",
       path: "/o.mp4",
       available: true,
-      proxy_path: null,
-      quick_proxy_path: null,
-      proxy_bypassed: false,
-      export_uses_original: false,
+      decode_route: proxied(), // proxied, nothing ready
       codec: "hevc",
       pix_fmt: "yuv420p",
       ...over,
@@ -52,7 +55,7 @@ describe("sourcesNeedingPreviewProbe", () => {
     new Map(items.map((m) => [m.id, m]));
 
   it("includes a would-be-blank DirectExport source", () => {
-    const out = sourcesNeedingPreviewProbe(map(v({ id: "a", export_uses_original: true })));
+    const out = sourcesNeedingPreviewProbe(map(v({ id: "a", decode_route: directExport() })));
     expect(out.map((m) => m.id)).toEqual(["a"]);
   });
 
@@ -64,9 +67,9 @@ describe("sourcesNeedingPreviewProbe", () => {
   it("excludes sources that already have a preview path or are bypassed", () => {
     const out = sourcesNeedingPreviewProbe(
       map(
-        v({ id: "q", quick_proxy_path: "/q.mp4" }),
-        v({ id: "p", proxy_path: "/p.mp4" }),
-        v({ id: "byp", proxy_bypassed: true }),
+        v({ id: "q", decode_route: proxied({ quick_proxy: "/q.mp4" }) }),
+        v({ id: "dq", decode_route: directExport("/q.mp4") }),
+        v({ id: "byp", decode_route: bypass }),
         v({ id: "gone", available: false }),
       ),
     );
@@ -84,10 +87,10 @@ describe("prepareExportMedia", () => {
     ...over,
   });
 
-  it("ready: proxy_path or proxy_bypassed sources need nothing", async () => {
+  it("ready: a landed master or a bypass original needs nothing", async () => {
     const d = deps();
     const r = await prepareExportMedia(
-      [vid({ id: "p", proxy_path: "/p.mp4" }), vid({ id: "b", proxy_bypassed: true })] as any,
+      [vid({ id: "p", decode_route: proxied({ full_proxy: "/p.mp4" }) }), vid({ id: "b", decode_route: bypass })] as any,
       d,
     );
     expect(r).toEqual({ waiting: [], failed: [] });
@@ -96,7 +99,7 @@ describe("prepareExportMedia", () => {
 
   it("decodable DirectExport source probes once and proceeds (export from original)", async () => {
     const d = deps({ probe: vi.fn().mockResolvedValue(true) });
-    const r = await prepareExportMedia([vid({ id: "ok", export_uses_original: true })] as any, d);
+    const r = await prepareExportMedia([vid({ id: "ok", decode_route: directExport() })] as any, d);
     expect(r).toEqual({ waiting: [], failed: [] });
     expect(d.probe).toHaveBeenCalledTimes(1);
     expect(d.memo.get("ok")).toBe("ok");
@@ -105,23 +108,23 @@ describe("prepareExportMedia", () => {
   it("memo skips re-probing a known-decodable source", async () => {
     const memo = new Map<string, ProbeState>([["ok", "ok"]]);
     const d = deps({ memo, probe: vi.fn() });
-    const r = await prepareExportMedia([vid({ id: "ok", export_uses_original: true })] as any, d);
+    const r = await prepareExportMedia([vid({ id: "ok", decode_route: directExport() })] as any, d);
     expect(r).toEqual({ waiting: [], failed: [] });
     expect(d.probe).not.toHaveBeenCalled();
   });
 
   it("undecodable DirectExport source route-corrects and waits", async () => {
     const d = deps({ probe: vi.fn().mockResolvedValue(false) });
-    const r = await prepareExportMedia([vid({ id: "bad", export_uses_original: true })] as any, d);
+    const r = await prepareExportMedia([vid({ id: "bad", decode_route: directExport() })] as any, d);
     expect(r.waiting).toEqual(["bad"]);
     expect(r.failed).toEqual([]);
     expect(d.ensureFullProxy).toHaveBeenCalledWith("bad");
   });
 
-  it("encoding-in-flight source (no path, proxyState pending) waits; failed source fails", async () => {
+  it("encoding-in-flight source (Proxied, no master, proxyState pending) waits; failed source fails", async () => {
     const d = deps({ proxyStateOf: (id: string) => (id === "f" ? "failed" : "pending") });
     const r = await prepareExportMedia(
-      [vid({ id: "w" }), vid({ id: "f" })] as any, // both: not bypassed, no proxy, not export_uses_original
+      [vid({ id: "w" }), vid({ id: "f" })] as any, // both: Proxied with no master yet
       d,
     );
     expect(r.waiting).toEqual(["w"]);
@@ -154,7 +157,7 @@ describe("waitForProxies", () => {
     await expect(waitForProxies(["a"], h.deps)).resolves.toBeUndefined();
   });
 
-  it("resolves once the store reflects every proxy_path", async () => {
+  it("resolves once the store reflects every export path", async () => {
     const h = makeDeps();
     const p = waitForProxies(["a", "b"], h.deps);
     h.ready.add("a"); h.fire();

@@ -36,7 +36,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -111,7 +111,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -211,7 +211,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -335,7 +335,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -539,7 +539,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -743,7 +743,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -956,7 +956,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
@@ -1169,7 +1169,7 @@
           "name": "replay"
         },
         "project_id": "00000000-0000-0000-0000-000000000003",
-        "schema_version": 9,
+        "schema_version": 10,
         "settings": {
           "auto_delete_empty_tracks": true,
           "auto_pair_audio_on_import": true,
