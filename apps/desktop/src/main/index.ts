@@ -19,6 +19,7 @@ import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
 import { SINGLE_MEDIA_CHANNELS, resolveSingleMediaArgs } from './state/single-media-forward.js'
+import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -401,6 +402,13 @@ app.whenReady().then(async () => {
       const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
       const resolved = resolveSingleMediaArgs((args ?? {}) as { mediaId?: string }, pool)
       const json = await backend!.invoke(channel, JSON.stringify(resolved))
+      return JSON.parse(json)
+    }
+    // Audio export: the TS actor owns state, so inject the full project here and
+    // forward it — the Rust fns no longer read the mirror (Phase 2).
+    if (tsHost && EXPORT_PROJECT_CHANNELS.has(channel)) {
+      const merged = injectProjectArgs((args ?? {}) as Record<string, unknown>, tsHost.actor.snapshot())
+      const json = await backend!.invoke(channel, JSON.stringify(merged))
       return JSON.parse(json)
     }
     // TS actor splitter: route non-Rust channels into the TS host.
