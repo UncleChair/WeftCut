@@ -244,6 +244,24 @@ impl Backend {
         serde_json::to_string(&item).map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// Standalone BLAKE3 hash of a source file — the "lightweight hash step" of
+    /// the hash-first import (stateless-compute Phase 4). The probe is stat-only
+    /// (instant timeline appearance) and the item carries a provisional hash; the
+    /// TS host runs this pass next, sets the real hash, THEN enqueues derivatives,
+    /// so jobs bake the final cache key and never touch a pending alias. Pure
+    /// compute (path → hex); reuses io::probe::hash_and_stat. spawn_blocking — the
+    /// full read is blocking I/O.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn hash_media_source(&self, path: String) -> napi::Result<String> {
+        let buf = std::path::PathBuf::from(&path);
+        let facts = tokio::task::spawn_blocking(move || crate::io::probe::hash_and_stat(&buf))
+            .await
+            .map_err(|e| Error::from_reason(format!("hash join: {e}")))?
+            .map_err(|e| Error::from_reason(format!("{e:#}")))?;
+        Ok(facts.blake3_hex)
+    }
+
     /// Pure parse half of the `apply_subtitles` hybrid (Phase 3d-e). Validates
     /// the body, sniffs/applies the format, runs the parser, and returns a JSON
     /// string `{ cues: Cue[], simplified: boolean }`. NO actor write — the TS
@@ -800,6 +818,27 @@ mod tests {
             msg.contains("not found") && !msg.contains("read-mirror"),
             "detect_silences must resolve from the injected layer, not the mirror; got: {msg}"
         );
+    }
+
+    /// hash_media_source returns the BLAKE3 hex of the file's bytes — the
+    /// standalone hash pass the import hybrid runs before enqueuing derivatives
+    /// (stateless-compute Phase 4). Asserts against blake3's known hash of the
+    /// content so the value, not just non-emptiness, is pinned.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn hash_media_source_returns_blake3_of_file() {
+        let sink = std::sync::Arc::new(crate::events::VecEventSink::new());
+        let b = Backend::new_for_test(sink as std::sync::Arc<dyn crate::events::EventSink>);
+        let dir = std::env::temp_dir().join(format!("weftcut-hashsrc-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("clip.bin");
+        std::fs::write(&f, b"hello weftcut").unwrap();
+
+        let got = b.hash_media_source(f.to_string_lossy().to_string()).await.unwrap();
+        let want = blake3::hash(b"hello weftcut").to_hex().to_string();
+        assert_eq!(got, want, "hash_media_source must return the blake3 hex of the file bytes");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `commit_workspace` re-points cache + workspace slot — both are observable
