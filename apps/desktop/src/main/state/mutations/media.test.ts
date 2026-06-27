@@ -33,7 +33,7 @@ describe('mediaItemTemplate', () => {
   it('builds a fixed-defaults pool item with an explicit-null metadata trio', () => {
     const it1 = mediaItemTemplate(MID, 'Video', 4_000_000)
     expect(it1.metadata).toEqual({ duration_us: 4_000_000, video: null, audio: null, container_format: null })
-    expect([it1.path_abs, it1.file_hash_blake3, it1.proxy_bypassed, it1.proxy_format_version]).toEqual(['media/clip.bin', '0', false, 0])
+    expect([it1.path_abs, it1.file_hash_blake3, it1.decode_route]).toEqual(['media/clip.bin', '0', { route: 'bypass' }])
   })
 })
 
@@ -76,28 +76,59 @@ function pool1(): Record<string, MediaItem> {
   return { [MID]: mediaItemTemplate(MID, 'Video', 4_000_000) }
 }
 
-describe('applySetMediaDerivatives', () => {
+// A bare pool item carrying just an explicit decode_route (other MediaItem
+// fields omitted via cast — the fold only touches decode_route + the plain
+// path options).
+const base = (route: any) => ({
+  m1: { id: 'm1', decode_route: route } as any,
+})
+
+describe('applySetMediaDerivatives — route fold', () => {
   it('MediaNotFound when id absent (throws CommandFailure)', () => {
-    expectCmd(() => applySetMediaDerivatives({}, MID, { proxy_path: 'media/p.mp4' }), 'MediaNotFound')
+    expectCmd(() => applySetMediaDerivatives({}, MID, { set_route: { route: 'bypass' } }), 'MediaNotFound')
   })
-  it('sets every field; tri-state proxy keys set when string', () => {
+  it('set_route replaces the variant', () => {
+    const out = applySetMediaDerivatives(base({ route: 'bypass' }), 'm1', {
+      set_route: { route: 'direct-export', quick_proxy: null },
+    })
+    expect(out.m1.decode_route).toEqual({ route: 'direct-export', quick_proxy: null })
+  })
+  it('quick_proxy_landed folds into DirectExport', () => {
+    const out = applySetMediaDerivatives(base({ route: 'direct-export', quick_proxy: null }), 'm1', {
+      quick_proxy_landed: 'q.mp4',
+    })
+    expect(out.m1.decode_route).toEqual({ route: 'direct-export', quick_proxy: 'q.mp4' })
+  })
+  it('full_proxy_landed folds into Proxied with version', () => {
+    const out = applySetMediaDerivatives(
+      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null, format_version: 0 }),
+      'm1',
+      { full_proxy_landed: { path: 'f.mp4', format_version: 3 } },
+    )
+    expect(out.m1.decode_route).toEqual({
+      route: 'proxied', quick_proxy: 'q.mp4', full_proxy: 'f.mp4', format_version: 3,
+    })
+  })
+  it('quick_proxy_landed on Bypass is ignored', () => {
+    const out = applySetMediaDerivatives(base({ route: 'bypass' }), 'm1', {
+      quick_proxy_landed: 'q.mp4',
+    })
+    expect(out.m1.decode_route).toEqual({ route: 'bypass' })
+  })
+  it('null quick_proxy_landed clears the slot on Proxied (tri-state)', () => {
+    const out = applySetMediaDerivatives(
+      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null, format_version: 0 }),
+      'm1',
+      { quick_proxy_landed: null },
+    )
+    expect(out.m1.decode_route).toEqual({ route: 'proxied', quick_proxy: null, full_proxy: null, format_version: 0 })
+  })
+  it('plain path options (waveform/conform/thumbnails) set alongside the route', () => {
     const out = applySetMediaDerivatives(pool1(), MID, {
-      proxy_path: 'media/p.mp4', quick_proxy_path: 'media/q.mp4', proxy_format_version: 3,
-      proxy_bypassed: true, export_uses_original: true,
-      waveform_path: 'media/w.bin', conform_path: 'media/c.wav', thumbnails_dir: 'media/t' })[MID]
-    expect([out.proxy_path, out.quick_proxy_path, out.proxy_format_version, out.proxy_bypassed,
-      out.export_uses_original, out.waveform_path, out.conform_path, out.thumbnails_dir])
-      .toEqual(['media/p.mp4', 'media/q.mp4', 3, true, true, 'media/w.bin', 'media/c.wav', 'media/t'])
-  })
-  it('null clears the tri-state proxy fields', () => {
-    const set = applySetMediaDerivatives(pool1(), MID, { proxy_path: 'media/p.mp4', quick_proxy_path: 'media/q.mp4' })
-    const out = applySetMediaDerivatives(set, MID, { proxy_path: null, quick_proxy_path: null })[MID]
-    expect([out.proxy_path, out.quick_proxy_path]).toEqual([null, null])
-  })
-  it('absent proxy key leaves the existing value (does not clear)', () => {
-    const set = applySetMediaDerivatives(pool1(), MID, { proxy_path: 'media/p.mp4' })
-    const out = applySetMediaDerivatives(set, MID, { proxy_format_version: 5 })[MID]
-    expect([out.proxy_path, out.proxy_format_version]).toEqual(['media/p.mp4', 5])
+      waveform_path: 'media/w.bin', conform_path: 'media/c.wav', thumbnails_dir: 'media/t',
+    })[MID]
+    expect([out.waveform_path, out.conform_path, out.thumbnails_dir, out.decode_route])
+      .toEqual(['media/w.bin', 'media/c.wav', 'media/t', { route: 'bypass' }])
   })
 })
 

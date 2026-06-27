@@ -1,4 +1,5 @@
 import type { AudioParams, LayerParams, MediaItem, Project, Track, Uuid } from '../model'
+import type { DecodeRoute } from '../../../shared/decode-route'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
@@ -38,20 +39,24 @@ export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs:
       audio: withAudio ? { sample_rate: 0, channels: 0, codec: '' } : null,
       container_format: null },
     file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '2026-01-01T00:00:00Z',
-    proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false,
-    proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null,
+    decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null,
   }
 }
 
-/** actor.rs:269-286 MediaDerivativesPatch. proxy_path/quick_proxy_path are
- *  Option<Option<PathBuf>> — tri-state: key absent = leave, null = clear, string
- *  = set. The rest are plain Option<T> (set-or-leave; never cleared here). */
+/** state/command.rs MediaDerivativesPatch — the wire patch a completed Rust job
+ *  emits (`media:derivatives`). The route signals fold into `decode_route`:
+ *   - `set_route` authoritatively replaces the variant (import decision /
+ *     route-correction).
+ *   - `quick_proxy_landed` is the tri-state quick-proxy slot (Option<Option<P>>
+ *     in Rust → `'quick_proxy_landed' in patch` here; null = cleared); folded
+ *     into DirectExport/Proxied, ignored on Bypass.
+ *   - `full_proxy_landed` is a NAMED object `{ path, format_version }` (Rust
+ *     `FullProxyLanded`, not a tuple/array); folded into Proxied only.
+ *  waveform/conform/thumbnails are plain Option<T> (set-or-leave; never cleared). */
 export interface MediaDerivativesPatch {
-  proxy_path?: string | null
-  quick_proxy_path?: string | null
-  proxy_format_version?: number
-  proxy_bypassed?: boolean
-  export_uses_original?: boolean
+  set_route?: DecodeRoute
+  quick_proxy_landed?: string | null
+  full_proxy_landed?: { path: string; format_version: number } | null
   waveform_path?: string | null
   conform_path?: string | null
   thumbnails_dir?: string | null
@@ -67,12 +72,23 @@ export function applySetMediaDerivatives(pool: Record<string, MediaItem>, id: Uu
   const item = pool[id]
   if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
   const next: MediaItem = { ...item }
-  // tri-state (Option<Option<PathBuf>>): presence distinguishes leave from clear.
-  if ('proxy_path' in patch) next.proxy_path = patch.proxy_path ?? null
-  if ('quick_proxy_path' in patch) next.quick_proxy_path = patch.quick_proxy_path ?? null
-  if (patch.proxy_format_version !== undefined) next.proxy_format_version = patch.proxy_format_version
-  if (patch.proxy_bypassed !== undefined) next.proxy_bypassed = patch.proxy_bypassed
-  if (patch.export_uses_original !== undefined) next.export_uses_original = patch.export_uses_original
+  // Fold the route signals into decode_route (the locality hub): set_route
+  // replaces the variant outright; the landings fold into whatever variant is
+  // current. `'key' in patch` mirrors the Rust Option<Option<…>> tri-state.
+  let route: DecodeRoute = next.decode_route
+  if ('set_route' in patch && patch.set_route) route = patch.set_route
+  if ('quick_proxy_landed' in patch) {
+    const q = patch.quick_proxy_landed ?? null
+    if (route.route === 'direct-export' || route.route === 'proxied') route = { ...route, quick_proxy: q }
+    // Bypass: no quick slot — ignore (Rust never emits this; defensive).
+  }
+  if ('full_proxy_landed' in patch) {
+    const f = patch.full_proxy_landed
+    if (route.route === 'proxied') {
+      route = { ...route, full_proxy: f?.path ?? null, format_version: f?.format_version ?? route.format_version }
+    }
+  }
+  next.decode_route = route
   // plain Option<PathBuf> (Rust `if let Some(p)`): set only when present-and-non-null.
   if (patch.waveform_path != null) next.waveform_path = patch.waveform_path
   if (patch.conform_path != null) next.conform_path = patch.conform_path
