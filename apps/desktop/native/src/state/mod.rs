@@ -32,7 +32,7 @@ pub mod transition;
 // validators) was deleted in Phase 4b — the TS state actor is the only writer.
 // The shared command/error/patch types it used were extracted to `command` in
 // Phase 4a and stay here; the model serde modules below are untouched.
-pub use command::{CommandError, MediaDerivativesPatch, ValidationError};
+pub use command::{CommandError, FullProxyLanded, MediaDerivativesPatch, ValidationError};
 pub use decode_route::DecodeRoute;
 
 pub use animated::{Animated, Interpolation, Keyframe};

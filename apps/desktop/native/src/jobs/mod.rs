@@ -43,7 +43,7 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::cache::CacheLayout;
-use crate::state::{CommandError, DecodeRoute, MediaDerivativesPatch, MediaId, MediaItem, MediaKind};
+use crate::state::{CommandError, DecodeRoute, FullProxyLanded, MediaDerivativesPatch, MediaId, MediaItem, MediaKind};
 
 /// Emit a completed job's derivative patch as `media:derivatives {media_id,
 /// patch}` for the TS state actor (the sole writer, applied by Electron main)
@@ -583,7 +583,10 @@ fn spawn_proxy(
                 let mut thumbnail_media = media.clone();
                 thumbnail_media.path_abs = proxy_path.clone();
                 let patch = MediaDerivativesPatch {
-                    full_proxy_landed: Some(Some((proxy_path, proxy::PROXY_FORMAT_VERSION))),
+                    full_proxy_landed: Some(Some(FullProxyLanded {
+                        path: proxy_path,
+                        format_version: proxy::PROXY_FORMAT_VERSION,
+                    })),
                     ..Default::default()
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
@@ -714,7 +717,7 @@ mod tests {
 
     #[test]
     fn derivatives_patch_serializes_tristate() {
-        use crate::state::{DecodeRoute, MediaDerivativesPatch};
+        use crate::state::{DecodeRoute, FullProxyLanded, MediaDerivativesPatch};
         use serde_json::json;
 
         // absent: outer None → key omitted entirely.
@@ -733,13 +736,13 @@ mod tests {
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v.get("quick_proxy_landed").unwrap(), &json!("q.mp4"));
 
-        // a full proxy landed → Some(Some((path, version))) → [string, number].
+        // a full proxy landed → Some(Some(FullProxyLanded)) → self-describing object.
         let p = MediaDerivativesPatch {
-            full_proxy_landed: Some(Some(("full.mp4".into(), 7))),
+            full_proxy_landed: Some(Some(FullProxyLanded { path: "full.mp4".into(), format_version: 7 })),
             ..Default::default()
         };
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(v.get("full_proxy_landed").unwrap(), &json!(["full.mp4", 7]));
+        assert_eq!(v.get("full_proxy_landed").unwrap(), &json!({ "path": "full.mp4", "format_version": 7 }));
 
         // set_route: an authoritative route replacement serializes the variant.
         let p = MediaDerivativesPatch { set_route: Some(DecodeRoute::Bypass), ..Default::default() };
