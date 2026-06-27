@@ -362,8 +362,11 @@ impl Backend {
     }
 
     #[napi]
-    pub async fn mcp_read_resource(&self, uri: String) -> napi::Result<String> {
-        Ok(crate::mcp::reply(crate::mcp::read_resource(self, &uri).await))
+    pub async fn mcp_read_resource(&self, uri: String, state_json: Option<String>) -> napi::Result<String> {
+        // The TS MCP host injects the { project } / { media } slice the Rust
+        // compute resources need (Phase 3); empty for stateless reads (meter).
+        let state = state_json.as_deref().unwrap_or("{}");
+        Ok(crate::mcp::reply(crate::mcp::read_resource(self, &uri, state).await))
     }
 
     #[napi]
@@ -388,11 +391,12 @@ impl Backend {
         self.read_mirror.clone()
     }
 
-    /// Project snapshot for READ-ONLY consumers (resources, detect_silences,
-    /// transcribe_clip, the compute hybrids). Returns the TS read-mirror — the
-    /// sole project source post-4b. A clear error if the mirror is unset: the TS
-    /// host pushes the initial mirror at boot before any read can run (bring-up
-    /// order), so an unset mirror is a wiring bug, never an actor fallback.
+    /// Project snapshot for READ-ONLY consumers. Caller-less after Phase 3
+    /// (stateless-compute-service): `commands/media.rs` (Phase 1), the export +
+    /// clip-audio tools (Phase 2), and `mcp/resources.rs` (Phase 3) all take their
+    /// state slice at the call boundary now. Kept until Phase 5 deletes the mirror
+    /// wholesale. Returns the TS read-mirror; a clear error if it is unset.
+    #[allow(dead_code)]
     pub(crate) async fn snapshot_for_read(&self) -> std::result::Result<std::sync::Arc<crate::state::Project>, String> {
         self.read_mirror
             .lock()
@@ -403,6 +407,9 @@ impl Backend {
     }
 
     /// The mirrored history view (project://history), or None when unset.
+    /// Caller-less after Phase 3 — the TS host serves project://history from
+    /// `actor.historyView`; deleted in Phase 5 with the rest of the mirror.
+    #[allow(dead_code)]
     pub(crate) fn mirror_history_view(&self) -> Option<serde_json::Value> {
         self.read_mirror.lock().expect("read_mirror poisoned").as_ref().map(|m| m.history_view.clone())
     }
@@ -839,12 +846,15 @@ mod tests {
             .expect("commands/export.rs must be readable");
         let tools = std::fs::read_to_string(format!("{root}/src/mcp/tools.rs"))
             .expect("mcp/tools.rs must be readable");
+        let resources = std::fs::read_to_string(format!("{root}/src/mcp/resources.rs"))
+            .expect("mcp/resources.rs must be readable");
 
         // No file may contain the deleted stale-actor snapshot read.
         for (name, src) in [
             ("commands/media.rs", &media),
             ("commands/export.rs", &export),
             ("mcp/tools.rs", &tools),
+            ("mcp/resources.rs", &resources),
         ] {
             assert!(
                 !src.contains(".project()?.snapshot()"),
@@ -855,8 +865,6 @@ mod tests {
 
         // Phase 2 (stateless-compute-service): the export-audio channels no longer
         // read the mirror — the TS host passes the full project in the request.
-        // (mcp/tools.rs gets the same treatment in Phase 2 Task 3; resources.rs
-        // still reads the mirror until Phase 3.)
         assert!(
             !export.contains("snapshot_for_read"),
             "commands/export.rs: export channels must NOT read the mirror — they take a `project` arg (Phase 2)"
@@ -871,11 +879,19 @@ mod tests {
 
         // Phase 2 (stateless-compute-service): detect_silences / transcribe_clip
         // no longer read the mirror — the TS MCP host passes the { layer, media }
-        // slice resolve_clip_audio_source needs. (resources.rs still reads the
-        // mirror until Phase 3.)
+        // slice resolve_clip_audio_source needs.
         assert!(
             !tools.contains("snapshot_for_read"),
             "mcp/tools.rs: clip-audio compute tools must NOT read the mirror — they take an injected slice (Phase 2)"
+        );
+
+        // Phase 3 (stateless-compute-service): MCP resource reads no longer touch
+        // the mirror — the TS host serves the project:// state views directly and
+        // injects the project / MediaItem the Rust compute resources need
+        // (project://compiled, media://*). composition://meter reads live Rust state.
+        assert!(
+            !resources.contains("snapshot_for_read"),
+            "mcp/resources.rs: resource reads must NOT read the mirror — TS serves state views + injects compute slices (Phase 3)"
         );
 
         // Phase 1 (stateless-compute-service): the four single-media channels no

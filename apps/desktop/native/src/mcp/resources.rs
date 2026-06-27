@@ -10,7 +10,6 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::napi_backend::Backend;
-use crate::state::LayerId;
 
 #[cfg(feature = "jobs")]
 use crate::cache::cached_ok;
@@ -29,7 +28,6 @@ const URI_MARKERS: &str = "project://markers";
 const URI_HISTORY: &str = "project://history";
 const URI_COMPILED: &str = "project://compiled";
 const URI_METER: &str = "composition://meter";
-const PREFIX_LAYERS: &str = "project://layers/";
 const PREFIX_MEDIA: &str = "media://";
 
 const APP_JSON: &str = "application/json";
@@ -37,6 +35,20 @@ const APP_JSON: &str = "application/json";
 const APP_OCTET: &str = "application/octet-stream";
 #[cfg(feature = "jobs")]
 const IMAGE_JPEG: &str = "image/jpeg";
+
+/// The state slice the TS MCP host injects for the resources that stay Rust
+/// compute (Phase 3): `project://compiled` needs the full project (audio mix
+/// plan); `media://*` needs the `MediaItem` resolved by id. `composition://meter`
+/// reads live Rust state and needs neither. Both fields `serde(default)` so a
+/// stateless read (`{}`) parses cleanly. The `project://*` state views are served
+/// directly by the TS host and never reach this reader.
+#[derive(Default, serde::Deserialize)]
+struct ResourceState {
+    #[serde(default)]
+    project: Option<crate::state::Project>,
+    #[serde(default)]
+    media: Option<crate::state::MediaItem>,
+}
 
 fn serialize_err(e: serde_json::Error) -> McpToolError {
     McpToolError::internal_error(format!("serialize: {e}"), None)
@@ -57,40 +69,36 @@ fn text_resource(uri: &str, body: &Value) -> Result<ResourceResult, McpToolError
 pub(crate) async fn read_resource(
     b: &Backend,
     uri: &str,
+    state_json: &str,
 ) -> Result<ResourceResult, McpToolError> {
-    let snap = b.snapshot_for_read().await?;
+    let state: ResourceState = serde_json::from_str(state_json).map_err(|e| {
+        McpToolError::internal_error(format!("resource state injection: {e}"), None)
+    })?;
 
-    // media://* paths return binary content (image bytes, peaks file). We
-    // peel them off here so the rest of `read_resource` can stay
-    // text/JSON oriented.
+    // media://* paths return binary content (image bytes, peaks file) and need the
+    // MediaItem the TS host resolved by id (Phase 3 — TS owns state). We peel them
+    // off here so the rest of `read_resource` can stay text/JSON oriented.
     if let Some(tail) = uri.strip_prefix(PREFIX_MEDIA) {
-        return read_media_resource(b, uri, tail, &snap).await;
+        return read_media_resource(b, uri, tail, state.media).await;
     }
 
     let body: Value = match uri {
-        URI_PROJECT => serde_json::to_value(&*snap).map_err(serialize_err)?,
-        URI_COMPOSITION => serde_json::to_value(&snap.composition).map_err(serialize_err)?,
-        URI_MEDIA => serde_json::to_value(&snap.media_pool).map_err(serialize_err)?,
-        URI_TRACKS => serde_json::to_value(&snap.tracks).map_err(serialize_err)?,
-        URI_MARKERS => serde_json::to_value(&snap.markers).map_err(serialize_err)?,
-        // History lives in the TS state actor (the sole writer); its view is
-        // mirrored here via `set_project_mirror`. A clear error if unset — the
-        // TS host pushes the mirror at boot before any read can run.
-        URI_HISTORY => b
-            .mirror_history_view()
-            .ok_or_else(|| McpToolError::internal_error(
-                "history view not set (TS host must push the read-mirror first)".to_string(),
-                None,
-            ))?,
+        // The preview master-bus meter is live Rust state (no project needed).
         URI_METER => meter_payload(b),
         URI_COMPILED => {
-            // The audio mix plan IS the compiled view of the export
-            // audio pipeline (the lavfi IR it replaced is gone; ADR
-            // 0019). Envelope point COUNTS, not values — keyframed
-            // gain on a long layer would be hundreds of thousands of
-            // floats. A transient ConformMissing state reports inline
-            // instead of failing the read.
-            match crate::audio::mix::plan_for_project(&snap, None) {
+            // The audio mix plan IS the compiled view of the export audio pipeline
+            // (the lavfi IR it replaced is gone; ADR 0019). Envelope point COUNTS,
+            // not values — keyframed gain on a long layer would be hundreds of
+            // thousands of floats. A transient ConformMissing state reports inline
+            // instead of failing the read. The TS host injects the full project
+            // (Phase 3) — this resource is agent-triggered and infrequent.
+            let project = state.project.ok_or_else(|| {
+                McpToolError::internal_error(
+                    "project://compiled requires the injected project (TS host)".to_string(),
+                    None,
+                )
+            })?;
+            match crate::audio::mix::plan_for_project(&project, None) {
                 Ok(plan) => serde_json::json!({
                     "kind": "audio_mix_plan",
                     "sample_rate": crate::audio::mix::MIX_SAMPLE_RATE,
@@ -113,39 +121,14 @@ pub(crate) async fn read_resource(
                 }),
             }
         }
-        other if other.starts_with(PREFIX_LAYERS) => {
-            let tail = &other[PREFIX_LAYERS.len()..];
-            let id_part = match tail.split_once('/') {
-                Some((_, suffix)) => {
-                    return Err(McpToolError::resource_not_found(
-                        format!("unsupported layer sub-resource '{suffix}'"),
-                        None,
-                    ));
-                }
-                None => tail,
-            };
-            let layer_id: LayerId = Uuid::parse_str(id_part).map_err(|_| {
-                McpToolError::resource_not_found(
-                    format!("layer URI has invalid UUID: {id_part}"),
-                    None,
-                )
-            })?;
-            let layer = snap
-                .tracks
-                .iter()
-                .flat_map(|t| t.layers.iter())
-                .find(|l| l.id == layer_id)
-                .ok_or_else(|| {
-                    McpToolError::resource_not_found(
-                        format!("layer {layer_id} not found"),
-                        None,
-                    )
-                })?;
-            serde_json::to_value(layer).map_err(serialize_err)?
-        }
+        // Phase 3 (stateless-compute-service): project://current / composition /
+        // media / tracks / markers / history / layers/{id} are served directly by
+        // the TS MCP host (the sole state owner) and never reach this reader.
         other => {
             return Err(McpToolError::resource_not_found(
-                format!("unknown resource URI: {other}"),
+                format!(
+                    "unknown or TS-served resource URI: {other} (project://* state views are served by the TS MCP host since Phase 3)",
+                ),
                 None,
             ));
         }
@@ -186,7 +169,7 @@ async fn read_media_resource(
     b: &Backend,
     uri: &str,
     tail: &str,
-    snap: &crate::state::Project,
+    media: Option<MediaItem>,
 ) -> Result<ResourceResult, McpToolError> {
     // tail = "{id}/thumbnail" | "{id}/frame/{t_us}" | "{id}/waveform"
     let (id_part, sub) = tail.split_once('/').ok_or_else(|| {
@@ -201,16 +184,14 @@ async fn read_media_resource(
             None,
         )
     })?;
-    let media = snap
-        .media_pool
-        .get(&media_id)
-        .cloned()
-        .ok_or_else(|| {
-            McpToolError::resource_not_found(
-                format!("media {media_id} not found"),
-                None,
-            )
-        })?;
+    // The MediaItem is resolved by the TS host (the sole state owner) and injected
+    // in the request (Phase 3). `None` → the id was absent from the project state.
+    let media = media.ok_or_else(|| {
+        McpToolError::resource_not_found(
+            format!("media {media_id} not found"),
+            None,
+        )
+    })?;
 
     if sub == "thumbnail" {
         serve_thumbnail(b, uri, &media).await
@@ -237,7 +218,7 @@ async fn read_media_resource(
     _b: &Backend,
     uri: &str,
     _tail: &str,
-    _snap: &crate::state::Project,
+    _media: Option<crate::state::MediaItem>,
 ) -> Result<ResourceResult, McpToolError> {
     Err(McpToolError::resource_not_found(
         format!("media resources require the jobs feature: {uri}"),
@@ -388,26 +369,79 @@ pub(super) fn static_resources() -> Vec<ResourceDef> {
 }
 
 #[cfg(test)]
-mod read_mirror_tests {
+mod stateless_tests {
     use super::*;
     use crate::napi_backend::Backend;
 
+    /// project://compiled computes the audio mix plan from the INJECTED project
+    /// (Phase 3), not the mirror. A blank project has no audio layers, so the plan
+    /// is an empty layer list — proving the arm read `state.project`.
+    #[cfg(feature = "export")]
     #[tokio::test]
-    async fn read_resource_serves_the_mirror_when_set() {
-        // new_for_test: see napi_backend.rs:457 for the exact constructor args.
+    async fn compiled_uses_injected_project() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
-        let p = crate::state::Project::new_blank("mirror-test");
-        let original_id = p.project_id.to_string();
-        let project_json = serde_json::to_string(&p).unwrap();
-        let history_json = r#"{"ops":[],"cursor":0,"len":1,"checkpoints":[]}"#.to_string();
-        b.set_project_mirror(project_json, history_json).unwrap();
-
-        let r = read_resource(&b, "project://current").await.unwrap();
+        let p = crate::state::Project::new_blank("compiled-test");
+        let state = serde_json::json!({ "project": p }).to_string();
+        let r = read_resource(&b, URI_COMPILED, &state).await.unwrap();
         let text = match &r.contents[0] {
             ResourceContent::Text { text, .. } => text.clone(),
             _ => panic!("expected text"),
         };
         let body: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(body["project_id"].as_str().unwrap(), original_id, "served the mirrored project");
+        assert_eq!(body["kind"], "audio_mix_plan");
+        assert_eq!(body["layers"].as_array().unwrap().len(), 0, "blank project has no audio layers");
+    }
+
+    /// composition://meter reads live Rust state and needs no injected slice — an
+    /// empty state JSON resolves to `live: false` (nothing has played).
+    #[tokio::test]
+    async fn meter_needs_no_state() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        let r = read_resource(&b, URI_METER, "{}").await.unwrap();
+        let text = match &r.contents[0] {
+            ResourceContent::Text { text, .. } => text.clone(),
+            _ => panic!("expected text"),
+        };
+        let body: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(body["live"], false);
+    }
+
+    /// project://* state views are now served by the TS MCP host — the Rust reader
+    /// no longer handles them and returns a clear not-found.
+    #[tokio::test]
+    async fn project_views_are_not_served_by_rust() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        let err = read_resource(&b, "project://current", "{}").await.unwrap_err();
+        assert!(
+            err.message.contains("TS-served") || err.message.contains("unknown"),
+            "project://current must report it is TS-served; got: {}", err.message
+        );
+    }
+
+    /// media://* resolves from the INJECTED MediaItem (Phase 3). With a fabricated
+    /// item whose thumbnail cache is empty, the reader reports "not generated yet"
+    /// — proving it read `state.media` (it never touched the mirror).
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn media_resource_uses_injected_item() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let id = uuid::Uuid::now_v7();
+        let item = serde_json::json!({
+            "id": id, "label": null, "path_abs": "/nonexistent", "path_rel": null,
+            "kind": "Video", "metadata": crate::state::MediaMetadata::default(),
+            "proxy_path": null, "proxy_format_version": 0, "quick_proxy_path": null,
+            "proxy_bypassed": false, "export_uses_original": false, "waveform_path": null,
+            "conform_path": null, "thumbnails_dir": null,
+            "file_hash_blake3": format!("test-{id}"), "file_size": 0, "file_mtime": 0,
+            "imported_at": chrono::Utc::now(),
+        });
+        let state = serde_json::json!({ "media": item }).to_string();
+        let uri = format!("media://{id}/thumbnail");
+        let err = read_resource(&b, &uri, &state).await.unwrap_err();
+        assert!(
+            err.message.contains("not generated yet"),
+            "media:// must read the injected item (cache empty → not generated yet); got: {}", err.message
+        );
     }
 }
