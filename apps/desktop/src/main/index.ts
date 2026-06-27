@@ -18,6 +18,7 @@ import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
+import { SINGLE_MEDIA_CHANNELS, resolveSingleMediaArgs } from './state/single-media-forward.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -393,6 +394,14 @@ app.whenReady().then(async () => {
       clearKey(provider)
       backend!.clearCloudKey(provider)
       return null
+    }
+    // Single-media compute: the TS actor owns state, so resolve the MediaItem
+    // here and forward it — the Rust fns no longer read the mirror (Phase 1).
+    if (tsHost && SINGLE_MEDIA_CHANNELS.has(channel)) {
+      const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
+      const resolved = resolveSingleMediaArgs((args ?? {}) as { mediaId?: string }, pool)
+      const json = await backend!.invoke(channel, JSON.stringify(resolved))
+      return JSON.parse(json)
     }
     // TS actor splitter: route non-Rust channels into the TS host.
     // Consulted AFTER main-only intercepts above, BEFORE the Rust fallthrough.
