@@ -1,7 +1,8 @@
 // apps/desktop/src/main/state/model.ts
 import type { IdGen } from './ids'
+import type { DecodeRoute } from '../../shared/decode-route'
 
-export const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 10
 
 export type Uuid = string
 export type TimeUs = number
@@ -89,8 +90,10 @@ export interface MediaMetadata { duration_us: TimeUs | null; [k: string]: unknow
 export interface MediaItem {
   id: Uuid; label: string | null; path_abs: string; path_rel: string | null; kind: 'Video' | 'Audio' | 'Image' | 'Subtitle'
   metadata: MediaMetadata; file_hash_blake3: string; file_size: number; file_mtime: number
-  imported_at: string; proxy_path: string | null; quick_proxy_path: string | null
-  proxy_bypassed: boolean; export_uses_original: boolean; proxy_format_version: number
+  imported_at: string
+  /** Where preview/export decode from + proxy readiness. Mirrors Rust
+   *  `MediaItem.decode_route`; see ../../shared/decode-route. */
+  decode_route: DecodeRoute
   conform_path: string | null; waveform_path: string | null; thumbnails_dir: string | null
 }
 export interface ProjectMetadata { name: string; created_at: string; modified_at: string; description: string | null }

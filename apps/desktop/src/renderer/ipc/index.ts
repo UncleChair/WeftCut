@@ -2,6 +2,7 @@ import { invoke } from "@/bridge/ipc";
 
 import type { ExportSettings } from "../render/exportSettings";
 import type { MotifManifest } from "../render/motifs/catalog";
+import type { DecodeRoute } from "../render/decodeRoute";
 import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
 
@@ -40,18 +41,8 @@ export interface MediaSummary {
   /// to a real file. UI surfaces a "missing source" badge; project still
   /// opens; layers referencing the missing item render placeholders.
   available: boolean;
-  /// Absolute path of the 540p proxy MP4 (H.264 + AAC, 1 s GOP) once the
-  /// background job has produced it. `null` while pending or for media
-  /// kinds that don't get proxied (audio-only sources). DOM preview
-  /// falls back to `path` when null. See `docs/preview.md`.
-  proxy_path: string | null;
-  /// Preview-only fast proxy. Export must not use this path.
-  quick_proxy_path: string | null;
-  /// True when the original workspace copy can be decoded directly.
-  proxy_bypassed: boolean;
-  /// True when export may decode the original directly (preview still uses a
-  /// generated proxy). Export and preview resolvers treat it like a bypass.
-  export_uses_original: boolean;
+  /// Where preview/export decode from + proxy readiness. See decodeRoute.ts.
+  decode_route: DecodeRoute;
   /// Source video codec ("h264"/"hevc"/"prores"/…), null for audio/image.
   codec: string | null;
   /// Source pixel format ("yuv420p"/"yuv420p10le"/…), null for audio/image.

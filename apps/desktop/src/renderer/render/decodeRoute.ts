@@ -1,17 +1,12 @@
-// The per-source Decode Route — persisted source of truth, hand-mirrored from
-// the Rust enum (native/src/state/decode_route.rs). Variants fold in their
-// readiness paths so route↔path contradictions are unrepresentable.
-// See docs/adr/0028 and CONTEXT.md. resolveDecode (below) is added in Task 8.
+// Decode-path resolvers over the per-source Decode Route. The DecodeRoute TYPE
+// itself lives in src/shared/decode-route.ts (carried by both the main-process
+// MediaItem and the renderer MediaSummary); it is re-exported here so existing
+// renderer imports (`from "./decodeRoute"`) keep working. resolveDecode is the
+// one place the route maps to decode paths. See docs/adr/0028 and CONTEXT.md.
 
-export type DecodeRoute =
-  | { route: "bypass" }
-  | { route: "direct-export"; quick_proxy: string | null }
-  | {
-      route: "proxied";
-      quick_proxy: string | null;
-      full_proxy: string | null;
-      format_version: number;
-    };
+import type { DecodeRoute } from "../../shared/decode-route";
+
+export type { DecodeRoute } from "../../shared/decode-route";
 
 export interface ResolvedDecode {
   route: DecodeRoute["route"];

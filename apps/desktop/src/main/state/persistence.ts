@@ -60,23 +60,27 @@ export function reconcileMediaPaths(p: Project, dir: string, join: (...parts: st
   return { ...p, media_pool }
 }
 
-/** io/mod.rs:112 — quick proxies are session-scoped preview accelerators; never
- *  trust serialized paths across launches. Null every `quick_proxy_path` and
- *  return the files for the caller (Phase 3c) to delete best-effort — staying
- *  pure (no node:fs), the way 3a injected `fileExists`. */
+/** Quick proxies are session-scoped preview accelerators; never trust
+ *  serialized paths across launches. Null the `quick_proxy` slot of every
+ *  decode route that carries one (DirectExport/Proxied — Bypass has none) and
+ *  return the dropped files for the caller (Phase 3c) to delete best-effort —
+ *  staying pure (no node:fs), the way 3a injected `fileExists`. */
 export function clearSessionQuickProxies(p: Project): { project: Project; quickProxiesToDelete: string[] } {
   const quickProxiesToDelete: string[] = []
   const media_pool: Record<string, MediaItem> = {}
   for (const [id, item] of Object.entries(p.media_pool)) {
-    if (item.quick_proxy_path) { quickProxiesToDelete.push(item.quick_proxy_path); media_pool[id] = { ...item, quick_proxy_path: null } }
-    else media_pool[id] = item
+    const r = item.decode_route
+    if ((r.route === 'direct-export' || r.route === 'proxied') && r.quick_proxy) {
+      quickProxiesToDelete.push(r.quick_proxy)
+      media_pool[id] = { ...item, decode_route: { ...r, quick_proxy: null } }
+    } else media_pool[id] = item
   }
   return { project: { ...p, media_pool }, quickProxiesToDelete }
 }
 
 /** io/mod.rs:49 load_from_dir — the pure half: parse + schema-gate + media path
- *  reconcile + quick-proxy clear. NOTE: stale-proxy (proxy_format_version)
- *  invalidation is `#[cfg(feature = "jobs")]` in Rust and rides the Phase-3c
+ *  reconcile + quick-proxy clear. NOTE: stale-proxy invalidation (the Proxied
+ *  route's format_version) is `#[cfg(feature = "jobs")]` in Rust and rides the
  *  jobs-callback re-point; it is deliberately NOT done here. */
 export function loadProjectFromJson(text: string, opts: { dir: string; join: (...parts: string[]) => string }): { project: Project; quickProxiesToDelete: string[] } {
   const parsed = parseProjectJson(text)

@@ -1,6 +1,7 @@
 // apps/desktop/src/main/state/summary.ts
 import type { Animated, Effect, Group, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, Uuid } from './model'
 import type { HistoryStatus } from './history'
+import type { DecodeRoute } from '../../shared/decode-route'
 
 // ── per-kind view structs (mirror commands/mod.rs:150-238; field names verbatim) ──
 export interface VideoClipView {
@@ -151,7 +152,7 @@ export interface MarkerSummary { id: string; t_us: number; end_t_us: number | nu
 export interface MediaSummary {
   id: string; label: string; path: string; kind: string; duration_us: number | null
   width: number | null; height: number | null; size_bytes: number; available: boolean
-  proxy_path: string | null; quick_proxy_path: string | null; proxy_bypassed: boolean; export_uses_original: boolean
+  decode_route: DecodeRoute
   codec: string | null; pix_fmt: string | null; color_matrix: string | null; color_range: string | null
   color_primaries: string | null; color_transfer: string | null; conform_path: string | null
 }
@@ -182,14 +183,26 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   const layer_count = p.tracks.reduce((n, t) => n + t.layers.length, 0)
 
   const fileOrNull = (path: string | null | undefined): string | null => (path && fileExists(path) ? path : null)
+  // The decode route's readiness paths are existence-gated the same way the
+  // flat proxy fields were: a serialized-but-deleted proxy must read as "not
+  // ready" (null), never as a stale path. Gate each variant's slots in place.
+  const routeForSummary = (r: DecodeRoute): DecodeRoute => {
+    switch (r.route) {
+      case 'bypass': return r
+      case 'direct-export': return { route: 'direct-export', quick_proxy: fileOrNull(r.quick_proxy) }
+      case 'proxied': return {
+        route: 'proxied', quick_proxy: fileOrNull(r.quick_proxy),
+        full_proxy: fileOrNull(r.full_proxy), format_version: r.format_version,
+      }
+    }
+  }
   const media: MediaSummary[] = Object.values(p.media_pool).map((m: MediaItem) => {
     const video = m.metadata.video as Record<string, unknown> | null | undefined
     return {
       id: m.id, label: mediaLabel(m), path: m.path_abs, kind: m.kind, duration_us: m.metadata.duration_us,
       width: (video?.width as number | undefined) ?? null, height: (video?.height as number | undefined) ?? null,
       size_bytes: m.file_size, available: fileExists(m.path_abs),
-      proxy_path: fileOrNull(m.proxy_path), quick_proxy_path: fileOrNull(m.quick_proxy_path),
-      proxy_bypassed: m.proxy_bypassed, export_uses_original: m.export_uses_original,
+      decode_route: routeForSummary(m.decode_route),
       codec: (video?.codec as string | undefined) ?? null, pix_fmt: (video?.pix_fmt as string | undefined) ?? null,
       color_matrix: (video?.color_matrix as string | undefined) ?? null, color_range: (video?.color_range as string | undefined) ?? null,
       color_primaries: (video?.color_primaries as string | undefined) ?? null, color_transfer: (video?.color_transfer as string | undefined) ?? null,
