@@ -3,9 +3,10 @@
 WeftCut is an Electron desktop video editor (Electron + napi-rs). The
 Electron **main** process (TypeScript) owns project state, persistence, and
 the agent/MCP surface; the Rust core (an in-process napi addon) is
-compute-only — media jobs, the audio mixer, ffmpeg, and a deserialized
-read-mirror of project state those paths read. The renderer hosts a
-PixiJS-based compositor and a React UI; external agents connect over MCP.
+compute-only — media jobs, the audio mixer, ffmpeg — taking the
+project/MediaItem slice each call needs as an argument; it holds no
+project state. The renderer hosts a PixiJS-based compositor and a React
+UI; external agents connect over MCP.
 The workspace folder *is* the project — opening a folder = opening the
 project; auto-save means closing the app loses nothing.
 
@@ -60,9 +61,9 @@ Runtime choice and rationale: see [ADR 0024](adr/0024-desktop-runtime-electron-n
 
 Within the single app process, the project **actor, history, autosave, the
 UI/MCP event bridges, the config stores, and the MCP host are TypeScript**
-(Electron main); the **background jobs, audio mixer, ffmpeg, and the
-read-mirror of project state are the Rust napi core**. The boundary between
-the two is the napi `Backend.invoke` dispatch.
+(Electron main); the **background jobs, audio mixer, ffmpeg, and export are
+the Rust napi core** (stateless — each compute call takes its state slice as
+an argument). The boundary between the two is the napi `Backend.invoke` dispatch.
 
 ## Three load-bearing principles
 
@@ -72,8 +73,9 @@ All mutations — UI edits and MCP tool calls — funnel through one
 TypeScript actor in the Electron main process (`src/main/state/`) that
 holds the authoritative project snapshot + history. Reads are cheap
 immutable-snapshot clones. Concurrency is solved by serialization, not by
-locks scattered through the code. The Rust core keeps a deserialized
-read-mirror of the committed state for its compute paths; it never writes.
+locks scattered through the code. The Rust core holds no project state: each
+compute call receives the exact state slice it needs as an argument, and it
+never writes.
 
 ### 2. Preview = export pipeline
 
@@ -164,9 +166,9 @@ weftcut/
                               ←   linked natively here + compiled to wasm for
                               ←   the renderer (ADR 0025)
       src/
-        state/                ← project state data types — the read-mirror
-                              ←   model Rust compute deserializes (the actor,
-                              ←   history, validation, autosave live in TS main)
+        state/                ← project state data types — the model Rust
+                              ←   compute deserializes from the slice it is
+                              ←   handed (actor/history/validation/autosave in TS)
         audio/                ← envelope contract + export block mixer
                               ←   (conform_reader, mix; docs/audio.md)
         export/               ← export_audio_only (mix + encode tail) +
@@ -185,8 +187,8 @@ weftcut/
                               ←   Transcriber / Synthesizer traits,
                               ←   keyring-backed key storage,
                               ←   providers/openai.rs (Whisper + tts-1)
-        io/                   ← project.json (de)serialize for the read-mirror +
-                              ←   io/migrate.rs (schema migrations)
+        io/                   ← project.json (de)serialize for the per-call
+                              ←   project/MediaItem slices + io/migrate.rs (migrations)
         logs/                 ← LogBus actor, JSONL writer, tracing bridge
         preview/              ← preview-orchestrator state on the Rust side
         commands/             ← the command surface dispatched by Backend.invoke

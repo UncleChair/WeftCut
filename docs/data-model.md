@@ -2,10 +2,11 @@
 
 The project state is the single source of truth, authored by the
 single-writer actor in the Electron **main** process (TypeScript,
-`src/main/state/`); the Rust core deserializes the same shapes into a
-read-mirror for its compute paths. UI, MCP server, and persistence are all
-clients of it — the struct syntax throughout this doc describes the shared
-model, not a Rust-exclusive owner.
+`src/main/state/`); the Rust core holds no resident copy — it deserializes
+the same shapes from the slice it is handed per compute call (audio export,
+`project://compiled`, single-media reads). UI, MCP server, and persistence
+are all clients of the actor — the struct syntax throughout this doc
+describes the shared model, not a Rust-exclusive owner.
 
 ## Foundational decisions
 
