@@ -134,6 +134,24 @@ mod tests {
         assert!(cat.prompts.iter().any(|p| p.name == "cut-silences"));
     }
 
+    /// Phase 2 (stateless-compute-service): detect_silences / transcribe_clip gain
+    /// serde-deserialized `layer` / `media` slice fields the TS host injects.
+    /// `#[schemars(skip)]` MUST keep them out of the advertised tool schema so
+    /// agents never see (or try to fill) them.
+    #[cfg(all(feature = "jobs", feature = "cloud"))]
+    #[test]
+    fn injected_slice_fields_are_not_advertised() {
+        let cat = catalog();
+        for name in ["detect_silences", "transcribe_clip"] {
+            let tool = cat.tools.iter().find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("{name} must be advertised"));
+            if let Some(props) = tool.input_schema.get("properties").and_then(|p| p.as_object()) {
+                assert!(!props.contains_key("layer"), "{name}: `layer` must not be advertised (schemars skip)");
+                assert!(!props.contains_key("media"), "{name}: `media` must not be advertised (schemars skip)");
+            }
+        }
+    }
+
     #[cfg(feature = "cloud")]
     #[test]
     fn catalog_advertises_cloud_tools() {

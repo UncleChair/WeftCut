@@ -98,6 +98,16 @@ pub(super) struct DetectSilencesArgs {
     /// Minimum contiguous silence duration (microseconds) to surface.
     /// Default 500000 (0.5 seconds).
     pub min_silence_us: Option<i64>,
+    /// Injected by the TS MCP host (sole state owner) — the layer resolved by
+    /// `layer_id` and its `MediaItem`. `#[schemars(skip)]` keeps them OUT of the
+    /// advertised tool schema; serde still deserializes them. `None` on a direct
+    /// Rust call → the handler produces the same not-found error (Phase 2).
+    #[serde(default)]
+    #[schemars(skip)]
+    pub layer: Option<crate::state::Layer>,
+    #[serde(default)]
+    #[schemars(skip)]
+    pub media: Option<crate::state::MediaItem>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -112,15 +122,9 @@ pub(super) async fn detect_silences(
     args: DetectSilencesArgs,
 ) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let snap = b.snapshot_for_read().await?;
-    let layer = snap
-        .tracks
-        .iter()
-        .flat_map(|t| t.layers.iter())
-        .find(|l| l.id == layer_id)
-        .ok_or_else(|| {
-            McpToolError::invalid_params(format!("layer {layer_id} not found"), None)
-        })?;
+    let layer = args.layer.as_ref().ok_or_else(|| {
+        McpToolError::invalid_params(format!("layer {layer_id} not found"), None)
+    })?;
 
     let media_id = match &layer.params {
         LayerParams::VideoClip(p) => p.media,
@@ -134,7 +138,7 @@ pub(super) async fn detect_silences(
             ));
         }
     };
-    let media = snap.media_pool.get(&media_id).ok_or_else(|| {
+    let media = args.media.as_ref().ok_or_else(|| {
         McpToolError::invalid_params(
             format!("layer {layer_id} references missing media {media_id}"),
             None,
@@ -483,6 +487,14 @@ pub(super) struct TranscribeClipArgs {
     /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
     #[serde(default)]
     pub language: Option<String>,
+    /// Injected by the TS MCP host (sole state owner) — see DetectSilencesArgs.
+    /// `skip_serializing` keeps the slice out of the tool's log details (Phase 2).
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub layer: Option<crate::state::Layer>,
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub media: Option<crate::state::MediaItem>,
 }
 
 #[cfg(feature = "cloud")]
@@ -525,24 +537,17 @@ struct ResolvedClipAudio {
 /// source media's coordinate space.
 #[cfg(feature = "cloud")]
 fn resolve_clip_audio_source(
-    snap: &crate::state::Project,
+    layer: Option<&crate::state::Layer>,
+    media: Option<&crate::state::MediaItem>,
     layer_id: LayerId,
     t_start_arg: Option<i64>,
     t_end_arg: Option<i64>,
 ) -> Result<ResolvedClipAudio, McpToolError> {
     use crate::state::{AudioParams, VideoClipParams};
 
-    let layer = snap
-        .tracks
-        .iter()
-        .flat_map(|t| t.layers.iter())
-        .find(|l| l.id == layer_id)
-        .ok_or_else(|| {
-            McpToolError::invalid_params(
-                format!("layer {layer_id} not found"),
-                None,
-            )
-        })?;
+    let layer = layer.ok_or_else(|| {
+        McpToolError::invalid_params(format!("layer {layer_id} not found"), None)
+    })?;
 
     let (media_id, src_in_us, src_out_us) = match &layer.params {
         LayerParams::VideoClip(VideoClipParams {
@@ -576,7 +581,7 @@ fn resolve_clip_audio_source(
         }
     };
 
-    let media = snap.media_pool.get(&media_id).ok_or_else(|| {
+    let media = media.ok_or_else(|| {
         McpToolError::invalid_params(
             format!(
                 "layer {layer_id} references missing media {media_id} (project state is inconsistent)",
@@ -729,9 +734,9 @@ async fn transcribe_clip_inner(
     args: TranscribeClipArgs,
 ) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let snap = b.snapshot_for_read().await?;
     let resolved = resolve_clip_audio_source(
-        &snap,
+        args.layer.as_ref(),
+        args.media.as_ref(),
         layer_id,
         args.t_start_us,
         args.t_end_us,

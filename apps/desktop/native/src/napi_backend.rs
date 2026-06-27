@@ -557,14 +557,6 @@ mod tests {
         sink.names().iter().any(|n| n == name)
     }
 
-    /// Push a blank project as the read-mirror so the mirror-backed read handlers
-    /// (`get_*`, `ensure_*`, `transcribe`/`detect`) have a project source — the
-    /// TS host does this at boot in production.
-    fn push_blank_mirror(b: &Backend) {
-        let p = crate::state::Project::new_blank("test-mirror");
-        b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
-    }
-
     #[cfg(feature = "jobs")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_waveform_peaks_rejects_malformed_args() {
@@ -761,8 +753,8 @@ mod tests {
     async fn transcribe_clip_without_key_is_clean_error() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
-        push_blank_mirror(&b);
-        // Bogus layer id; the layer lookup fails on the blank mirror → ok:false.
+        // No mirror, no injected layer → "layer not found" (resolves from
+        // args.layer == None, Phase 2). Old mirror-backed code: "read-mirror not set".
         let reply: serde_json::Value = serde_json::from_str(
             &b.mcp_call_tool("transcribe_clip".into(), r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into())
                 .await
@@ -770,6 +762,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reply["ok"], false);
+        let msg = reply["error"]["message"].as_str().unwrap_or("");
+        assert!(
+            msg.contains("not found") && !msg.contains("read-mirror"),
+            "transcribe_clip must resolve from the injected layer, not the mirror; got: {msg}"
+        );
+    }
+
+    /// Phase 2: `detect_silences` resolves from the injected `layer` arg, NOT the
+    /// mirror. With no mirror pushed and no injected layer, the new code reports
+    /// "layer not found" (it read `args.layer == None`); the old mirror-backed
+    /// code would report "read-mirror not set" instead.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn detect_silences_resolves_injected_layer_not_mirror() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let reply: serde_json::Value = serde_json::from_str(
+            &b.mcp_call_tool(
+                "detect_silences".into(),
+                r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into(),
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reply["ok"], false);
+        let msg = reply["error"]["message"].as_str().unwrap_or("");
+        assert!(
+            msg.contains("not found") && !msg.contains("read-mirror"),
+            "detect_silences must resolve from the injected layer, not the mirror; got: {msg}"
+        );
     }
 
     /// `commit_workspace` re-points cache + workspace slot — both are observable
@@ -814,11 +837,14 @@ mod tests {
             .expect("commands/media.rs must be readable");
         let export = std::fs::read_to_string(format!("{root}/src/commands/export.rs"))
             .expect("commands/export.rs must be readable");
+        let tools = std::fs::read_to_string(format!("{root}/src/mcp/tools.rs"))
+            .expect("mcp/tools.rs must be readable");
 
         // No file may contain the deleted stale-actor snapshot read.
         for (name, src) in [
             ("commands/media.rs", &media),
             ("commands/export.rs", &export),
+            ("mcp/tools.rs", &tools),
         ] {
             assert!(
                 !src.contains(".project()?.snapshot()"),
@@ -842,6 +868,15 @@ mod tests {
             assert!(!body.contains("snapshot_for_read"),
                 "{name}: must NOT read the mirror — it takes a `project` arg (Phase 2)");
         }
+
+        // Phase 2 (stateless-compute-service): detect_silences / transcribe_clip
+        // no longer read the mirror — the TS MCP host passes the { layer, media }
+        // slice resolve_clip_audio_source needs. (resources.rs still reads the
+        // mirror until Phase 3.)
+        assert!(
+            !tools.contains("snapshot_for_read"),
+            "mcp/tools.rs: clip-audio compute tools must NOT read the mirror — they take an injected slice (Phase 2)"
+        );
 
         // Phase 1 (stateless-compute-service): the four single-media channels no
         // longer read the mirror — the TS host passes the resolved MediaItem.
