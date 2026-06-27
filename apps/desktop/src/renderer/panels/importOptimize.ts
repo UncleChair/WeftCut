@@ -5,6 +5,7 @@
 // See docs/data-model.md#mediaitem.
 
 import type { MediaSummary } from "../ipc";
+import { resolveDecode } from "../render/decodeRoute";
 import type { ProbeState, ProxyJobState } from "../render/exportReadiness";
 
 export type OptimizeStatus =
@@ -26,15 +27,18 @@ export interface OptimizeDeps {
 
 export function importOptimizeStatus(m: MediaSummary, deps: OptimizeDeps): OptimizeStatus {
   if (m.kind !== "Video") return "direct";
-  if (m.proxy_path) return "ready";
-  if (m.proxy_bypassed) return "direct";
-  // DirectExport whose preview proxy has landed: optimization is complete
-  // (export reads the original, preview reads the quick proxy), so settle to
-  // silent — otherwise a decodable DirectExport source would be terminally
-  // "bridged" and keep the import dialog open forever. The FULL-proxy path
-  // (QuickThenFull / 10-bit) still waits for `proxy_path` (handled above), so
-  // it correctly stays "bridged" until its export master lands.
-  if (m.export_uses_original && m.quick_proxy_path) return "direct";
+  const { route, exportPath } = resolveDecode(m);
+  // Bypass: the H.264 original decodes everywhere — nothing to optimize.
+  if (route === "bypass") return "direct";
+  // Proxied with its full export master on disk: optimization is complete.
+  if (route === "proxied" && exportPath) return "ready";
+  // DirectExport whose preview (quick) proxy has landed: optimization is
+  // complete (export reads the original, preview reads the quick proxy), so
+  // settle to silent — otherwise a decodable DirectExport source would be
+  // terminally "bridged" and keep the import dialog open forever. The FULL
+  // export master (Proxied) still waits for `exportPath` (handled above), so it
+  // correctly stays "bridged" until its master lands.
+  if (route === "direct-export" && resolveDecode(m).previewPath) return "direct";
   const decodable = deps.memo.get(m.id) === "ok";
   const ps = deps.proxyStateOf(m.id);
   if (ps === "failed") return "failed";
@@ -42,7 +46,7 @@ export function importOptimizeStatus(m: MediaSummary, deps: OptimizeDeps): Optim
   // proxy is building is a background scroll/export upgrade.
   if (decodable) return "bridged";
   // DirectExport whose probe hasn't resolved yet.
-  if (m.export_uses_original) return "checking";
+  if (route === "direct-export") return "checking";
   // Confirmed undecodable here (or route-corrected); blank until the proxy.
   if (ps === "pending") return "transcoding";
   return "checking"; // pre-decision window — resolves shortly

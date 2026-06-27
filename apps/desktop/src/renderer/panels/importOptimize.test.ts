@@ -13,8 +13,7 @@ import {
 const vid = (over: Record<string, unknown>) => ({
   id: "m", label: "clip", kind: "Video", path: "/o.mov",
   duration_us: 1, width: 1920, height: 1080, size_bytes: 1, available: true,
-  proxy_path: null, quick_proxy_path: null,
-  proxy_bypassed: false, export_uses_original: false,
+  decode_route: { route: "bypass" },
   codec: "hevc", pix_fmt: "yuv420p",
   ...over,
 } as unknown);
@@ -26,92 +25,45 @@ const deps = (over: Partial<OptimizeDeps> = {}): OptimizeDeps => ({
   ...over,
 });
 
-describe("importOptimizeStatus", () => {
-  it("ready when proxy_path set", () => {
-    expect(importOptimizeStatus(vid({ proxy_path: "/p.mp4" }) as any, deps())).toBe("ready");
-  });
-  it("direct when proxy_bypassed", () => {
-    expect(importOptimizeStatus(vid({ proxy_bypassed: true }) as any, deps())).toBe("direct");
-  });
-  it("classifies a decodable source (memo ok) as bridged", () => {
-    expect(
-      importOptimizeStatus(vid({ export_uses_original: true }) as any, {
-        memo: new Map([["m", "ok"]]),
-        proxyStateOf: () => "pending",
-        routeCorrected: new Set(),
-      }),
-    ).toBe("bridged");
-  });
+// ── importOptimizeStatus (frozen behavior, route-driven) ──
+// The six output states and the precedence are IDENTICAL to the pre-decode-route
+// implementation; only the inputs moved from flat flags to the decode route.
+const depsT = (over: Partial<{ memo: Map<string, "ok" | "pending">; ps: any; rc: Set<string> }> = {}) => ({
+  memo: over.memo ?? new Map(),
+  proxyStateOf: () => over.ps,
+  routeCorrected: over.rc ?? new Set<string>(),
+});
+const V = (decode_route: any, extra: any = {}) =>
+  ({ id: "m1", kind: "Video", path: "o.mp4", decode_route, ...extra } as any);
 
-  it("settles a decodable DirectExport source to direct once its quick proxy lands", () => {
-    // Regression: a QuickOnly/DirectExport source only ever gets quick_proxy_path
-    // (never proxy_path). Without settling it would be terminally "bridged" and
-    // keep the import dialog open forever (a regression vs the old "direct").
-    expect(
-      importOptimizeStatus(
-        vid({ export_uses_original: true, quick_proxy_path: "/q.mp4" }) as any,
-        { memo: new Map([["m", "ok"]]), proxyStateOf: () => undefined, routeCorrected: new Set() },
-      ),
-    ).toBe("direct");
-  });
+describe("importOptimizeStatus (frozen behavior, route-driven)", () => {
+  it("proxied + full ready ⇒ ready", () =>
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: "q", full_proxy: "f", format_version: 1 }), depsT())).toBe("ready"));
+  it("bypass ⇒ direct", () =>
+    expect(importOptimizeStatus(V({ route: "bypass" }), depsT())).toBe("direct"));
+  it("direct-export + quick ready ⇒ direct", () =>
+    expect(importOptimizeStatus(V({ route: "direct-export", quick_proxy: "q" }), depsT())).toBe("direct"));
+  it("decodable this machine ⇒ bridged", () =>
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT({ memo: new Map([["m1", "ok"]]) }))).toBe("bridged"));
+  it("undecodable + proxy pending ⇒ transcoding", () =>
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT({ ps: "pending" }))).toBe("transcoding"));
+  it("proxy failed ⇒ failed", () =>
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT({ ps: "failed" }))).toBe("failed"));
 
-  it("keeps a decodable full-proxy (10-bit) source bridged when only the quick proxy has landed", () => {
-    // QuickThenFull: the quick proxy lands first, but proxy_path (the export
-    // master) is the real terminal. export_uses_original is false, so the
-    // DirectExport early-settle must NOT fire — stays bridged until proxy_path.
-    expect(
-      importOptimizeStatus(
-        vid({ export_uses_original: false, quick_proxy_path: "/q.mp4", pix_fmt: "yuv420p10le" }) as any,
-        { memo: new Map([["m", "ok"]]), proxyStateOf: () => "pending", routeCorrected: new Set() },
-      ),
-    ).toBe("bridged");
-  });
-
-  it("classifies a decodable 10-bit full-proxy source as bridged", () => {
-    expect(
-      importOptimizeStatus(vid({ pix_fmt: "yuv420p10le" }) as any, {
-        memo: new Map([["m", "ok"]]),
-        proxyStateOf: () => "pending",
-        routeCorrected: new Set(),
-      }),
-    ).toBe("bridged");
-  });
-
-  it("classifies an undecodable, proxy-building source as transcoding", () => {
-    expect(
-      importOptimizeStatus(vid({ export_uses_original: false }) as any, {
-        memo: new Map(),
-        proxyStateOf: () => "pending",
-        routeCorrected: new Set(),
-      }),
-    ).toBe("transcoding");
-  });
-
-  it("keeps a DirectExport source checking while its probe is in flight", () => {
-    expect(
-      importOptimizeStatus(vid({ export_uses_original: true }) as any, {
-        memo: new Map([["m", "pending"]]),
-        proxyStateOf: () => undefined,
-        routeCorrected: new Set(),
-      }),
-    ).toBe("checking");
-  });
-
-  it("keeps bypass silent and a finished proxy ready", () => {
-    const d = { memo: new Map(), proxyStateOf: () => undefined, routeCorrected: new Set<string>() };
-    expect(importOptimizeStatus(vid({ proxy_bypassed: true }) as any, d)).toBe("direct");
-    expect(importOptimizeStatus(vid({ proxy_path: "/p.mp4" }) as any, d)).toBe("ready");
-  });
-  it("checking in the pre-decision window (no routing, no proxyState)", () => {
-    expect(importOptimizeStatus(vid({}) as any, deps())).toBe("checking");
-  });
-  it("failed when the proxy job failed", () => {
-    const d = deps({ proxyStateOf: () => "failed" });
-    expect(importOptimizeStatus(vid({}) as any, d)).toBe("failed");
-  });
-  it("direct for non-video media", () => {
-    expect(importOptimizeStatus(vid({ kind: "Audio" }) as any, deps())).toBe("direct");
-  });
+  // Additional frozen-precedence coverage carried over from the pre-route suite.
+  it("keeps a decodable DirectExport source checking while its probe is in flight (memo pending)", () =>
+    expect(importOptimizeStatus(V({ route: "direct-export", quick_proxy: null }), depsT({ memo: new Map([["m1", "pending"]]) }))).toBe("checking"));
+  it("keeps a decodable full-proxy (10-bit) source bridged when only the quick proxy has landed", () =>
+    // QuickThenFull: the quick proxy lands first, but the full master is the real
+    // terminal. The DirectExport early-settle must NOT fire — stays bridged.
+    expect(importOptimizeStatus(
+      V({ route: "proxied", quick_proxy: "q", full_proxy: null, format_version: 0 }, { pix_fmt: "yuv420p10le" }),
+      depsT({ memo: new Map([["m1", "ok"]]), ps: "pending" }),
+    )).toBe("bridged"));
+  it("checking in the pre-decision window (proxied, nothing ready, no memo/proxyState)", () =>
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT())).toBe("checking"));
+  it("direct for non-video media", () =>
+    expect(importOptimizeStatus(V({ route: "bypass" }, { kind: "Audio" }), depsT())).toBe("direct"));
 });
 
 describe("codecDisplayName", () => {
@@ -141,7 +93,7 @@ describe("is10bit", () => {
 describe("optimizeReason", () => {
   it("gives a reassuring reason for a bridged clip", () => {
     expect(
-      optimizeReason(vid({ export_uses_original: true }) as any, {
+      optimizeReason(vid({ decode_route: { route: "direct-export", quick_proxy: null } }) as any, {
         memo: new Map([["m", "ok"]]),
         proxyStateOf: () => "pending",
         routeCorrected: new Set(),
