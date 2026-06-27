@@ -135,41 +135,31 @@ pub enum ValidationError {
 
 }
 
-/// Patch for a media item's derivative paths (proxy / thumbnails / waveform).
-/// Background jobs apply these when generation completes. `Some(path)` sets
-/// the field; `None` leaves it alone. There's no clear-path here because once
-/// a derivative exists, it persists — content-addressed cache invalidation
-/// happens by hash mismatch on re-import, not by clearing fields.
+/// Patch for a media item's derivative paths and decode route. Background jobs
+/// apply these when generation completes. The route fields are FOLD SIGNALS:
+/// rather than overwriting flat fields, they describe a change the TS state
+/// actor folds into the source's current `DecodeRoute` variant (so a
+/// route↔path contradiction stays unrepresentable). The plain derivative paths
+/// (`waveform_path` / `conform_path` / `thumbnails_dir`) just set the field —
+/// once a derivative exists it persists (content-addressed invalidation happens
+/// by hash mismatch on re-import). See `docs/preview.md` and docs/adr/0028.
 ///
-/// EXCEPT: `proxy_path` IS clearable. `Some(None)` clears it (used by the
-/// workspace-open invalidation pass when an existing proxy is stale per
-/// `proxy_format_version`); `None` leaves it alone (the common path for
-/// fresh-generation patches that don't touch proxies). See
-/// `docs/preview.md`.
+/// Each route field keeps `skip_serializing_if = "Option::is_none"` so the TS
+/// `'key' in patch` contract (mutations/media.ts) reads absent vs present.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct MediaDerivativesPatch {
-    /// Tri-state (Option<Option<PathBuf>>): outer None = absent (leave), Some(None)
-    /// = null (clear), Some(Some(p)) = string (set). `skip_serializing_if` on the
-    /// OUTER Option is what produces the absent/null/string the TS `'key' in patch`
-    /// contract reads (mutations/media.ts:67). DO NOT change to a plain Option.
+    /// Authoritative route replacement: the import decision, or a
+    /// route-correction. Carries the variant's known payload at the time.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub proxy_path: Option<Option<std::path::PathBuf>>,
-    /// Set when the proxy job completes successfully; the workspace-open
-    /// invalidation pass uses it to decide whether the cached proxy
-    /// matches the current `jobs::proxy::PROXY_FORMAT_VERSION`.
+    pub set_route: Option<crate::state::DecodeRoute>,
+    /// A quick proxy landed (`Some(Some(p))`) or was cleared (`Some(None)`);
+    /// folded into whatever the current variant is. Ignored on Bypass.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub proxy_format_version: Option<u32>,
-    /// Same tri-state contract as `proxy_path`.
-    /// `Some(Some(path))` sets a fast preview proxy; `Some(None)` clears it.
+    pub quick_proxy_landed: Option<Option<std::path::PathBuf>>,
+    /// A full export master landed (`Some(Some((p, version)))`) or was cleared.
+    /// Folded into the current Proxied variant; ignored otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub quick_proxy_path: Option<Option<std::path::PathBuf>>,
-    /// Marks the original workspace copy as safe for direct WebCodecs use.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub proxy_bypassed: Option<bool>,
-    /// Marks the original as the export decode source (preview still uses a
-    /// generated proxy). `None` leaves the flag unchanged.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub export_uses_original: Option<bool>,
+    pub full_proxy_landed: Option<Option<(std::path::PathBuf, u32)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waveform_path: Option<std::path::PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
