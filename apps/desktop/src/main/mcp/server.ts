@@ -13,6 +13,7 @@ import { routeMcpTool } from './mutationTools.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs } from '../state/clip-slice-forward.js'
+import { serveProjectResource, buildResourceInjection } from '../state/resource-views.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
@@ -90,6 +91,32 @@ export async function handleCallTool(
   return unwrap(await backend.mcpCallTool(name, JSON.stringify(args))) as ServerResult
 }
 
+/** ReadResource routing (tsHost present): project:// state views served in TS from
+ *  the actor (sole state owner); the Rust-compute resources (project://compiled,
+ *  media://*, composition://meter) forwarded to the backend with an injected slice.
+ *  Stateless-compute Phase 3. */
+export async function handleReadResource(
+  backend: Backend,
+  getTsHost: () => TsActorHost | null,
+  uri: string,
+): Promise<ServerResult> {
+  const tsHost = getTsHost()
+  if (tsHost) {
+    if (uri === 'motifs://current') {
+      const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>
+      const list = raw.map((e) => { const { html: _html, ...rest } = e; return rest })
+      return { contents: [{ uri: 'motifs://current', mimeType: 'application/json', text: JSON.stringify(list) }] } as unknown as ServerResult
+    }
+    const served = serveProjectResource(uri, tsHost.actor)
+    if (served) return served
+    // project://compiled / media://* / composition://meter stay Rust compute —
+    // inject the project / MediaItem / nothing the stateless reader now needs.
+    const injection = buildResourceInjection(uri, tsHost.actor.snapshot())
+    return unwrap(await backend.mcpReadResource(uri, injection)) as ServerResult
+  }
+  return unwrap(await backend.mcpReadResource(uri)) as ServerResult
+}
+
 export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | null = () => null): Server {
   const server = new Server(
     { name: 'weftcut', version: '0.1.0' },
@@ -107,15 +134,9 @@ export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | 
     const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }
     return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult
   })
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
-    const tsHost = getTsHost()
-    if (req.params.uri === 'motifs://current' && tsHost) {
-      const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>
-      const list = raw.map((e) => { const { html: _html, ...rest } = e; return rest })
-      return { contents: [{ uri: 'motifs://current', mimeType: 'application/json', text: JSON.stringify(list) }] } as unknown as ServerResult
-    }
-    return unwrap(await backend.mcpReadResource(req.params.uri)) as ServerResult
-  })
+  server.setRequestHandler(ReadResourceRequestSchema, async (req) =>
+    handleReadResource(backend, getTsHost, req.params.uri),
+  )
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
     return { prompts: JSON.parse(await backend.mcpListPrompts()) } as unknown as ServerResult
   })
