@@ -177,18 +177,24 @@ impl Backend {
         use crate::jobs::proxy::PROXY_FORMAT_VERSION;
         let items: Vec<crate::state::MediaItem> = serde_json::from_str(&media_items_json)
             .map_err(|e| Error::from_reason(format!("parse media list: {e}")))?;
-        for mut item in items {
-            let stale = item.proxy_path.is_some() && item.proxy_format_version < PROXY_FORMAT_VERSION;
-            if stale {
-                if let Some(path) = item.proxy_path.take() {
-                    let _ = std::fs::remove_file(&path); // best-effort; logged-only in prod
+        for item in items {
+            // A Proxied source whose full master predates the current encoder
+            // version is stale: delete the cached file and clear the full proxy
+            // through the same seam as job completion, so the TS actor's pool
+            // drops it (the seam emits `media:derivatives`, which Electron main
+            // applies) and the enqueue below re-decides instead of seeing a stale
+            // file as "ready". We're in an async napi → tokio runtime is present.
+            if let crate::state::DecodeRoute::Proxied { full_proxy: Some(path), format_version, .. } =
+                &item.decode_route
+            {
+                if *format_version < PROXY_FORMAT_VERSION {
+                    let _ = std::fs::remove_file(path); // best-effort; logged-only in prod
+                    let patch = crate::state::MediaDerivativesPatch {
+                        full_proxy_landed: Some(None),
+                        ..Default::default()
+                    };
+                    let _ = crate::jobs::commit_media_derivatives(&self.events, item.id, patch).await;
                 }
-                // Clear the stale proxy through the same seam as job completion, so
-                // the TS actor's pool drops it (the seam emits `media:derivatives`,
-                // which Electron main applies). We're in an async napi → tokio
-                // runtime is present, so `.await` directly.
-                let patch = crate::state::MediaDerivativesPatch { proxy_path: Some(None), ..Default::default() };
-                let _ = crate::jobs::commit_media_derivatives(&self.events, item.id, patch).await;
             }
             crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), item);
         }

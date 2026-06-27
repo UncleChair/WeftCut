@@ -43,7 +43,7 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::cache::CacheLayout;
-use crate::state::{CommandError, MediaDerivativesPatch, MediaId, MediaItem, MediaKind};
+use crate::state::{CommandError, DecodeRoute, MediaDerivativesPatch, MediaId, MediaItem, MediaKind};
 
 /// Emit a completed job's derivative patch as `media:derivatives {media_id,
 /// patch}` for the TS state actor (the sole writer, applied by Electron main)
@@ -193,12 +193,17 @@ pub fn enqueue_for_media(
 ) {
     match media.kind {
         MediaKind::Video => {
-            let proxy_ready = media
-                .proxy_path
-                .as_ref()
-                .map(|p| p.is_file())
-                .unwrap_or(false);
-            if proxy_ready || media.proxy_bypassed {
+            // Already-decided sources whose proxy (if any) is on disk only need
+            // their decorations re-fanned; everything else re-runs the routing
+            // decision. Bypass needs no proxy; a Proxied source is ready only
+            // when its full master exists on disk (a stale-version proxy was
+            // already cleared by the open-time invalidation pass).
+            let proxy_ready = match &media.decode_route {
+                DecodeRoute::Bypass => true,
+                DecodeRoute::Proxied { full_proxy: Some(p), .. } => p.is_file(),
+                _ => false,
+            };
+            if proxy_ready {
                 spawn_decorations(events, cache, media);
             } else {
                 spawn_proxy_decision(events, cache, media);
@@ -335,6 +340,14 @@ fn spawn_proxy_decision(
             .flatten()
         };
         let route = proxy_decision::decide(&media, source_gop_secs);
+        // Commit the authoritative initial route FIRST (it replaces the old
+        // per-branch bypass / export-uses-original flag commits), then spawn the
+        // jobs the route implies.
+        let initial = DecodeRoute::from_proxy_route(route);
+        let patch = MediaDerivativesPatch { set_route: Some(initial), ..Default::default() };
+        if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
+            warn!("route decision commit failed for {media_id}: {e}");
+        }
         match proxy_decision::job_for(route) {
             proxy_decision::ProxyJob::None => {
                 emit(
@@ -345,25 +358,6 @@ fn spawn_proxy_decision(
                         kind: JobKind::ProxyBypass,
                     },
                 );
-                let patch = MediaDerivativesPatch {
-                    proxy_path: Some(None),
-                    quick_proxy_path: Some(None),
-                    proxy_bypassed: Some(true),
-                    ..Default::default()
-                };
-                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
-                    warn!("proxy bypass commit failed for {media_id}: {e}");
-                    emit(
-                        &events,
-                        EVENT_ERROR,
-                        &JobError {
-                            media_id: media_id.to_string(),
-                            kind: JobKind::ProxyBypass,
-                            error: format!("commit: {e}"),
-                        },
-                    );
-                    return;
-                }
                 info!("proxy bypass accepted for {media_id}");
                 emit(
                     &events,
@@ -385,25 +379,6 @@ fn spawn_proxy_decision(
                         kind: JobKind::ProxyBypass,
                     },
                 );
-                let patch = MediaDerivativesPatch {
-                    proxy_path: Some(None),
-                    proxy_bypassed: Some(false),
-                    export_uses_original: Some(true),
-                    ..Default::default()
-                };
-                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
-                    warn!("direct-export commit failed for {media_id}: {e}");
-                    emit(
-                        &events,
-                        EVENT_ERROR,
-                        &JobError {
-                            media_id: media_id.to_string(),
-                            kind: JobKind::ProxyBypass,
-                            error: format!("commit: {e}"),
-                        },
-                    );
-                    return;
-                }
                 info!("direct-export accepted for {media_id}; preview proxy queued");
                 emit(
                     &events,
@@ -523,8 +498,7 @@ fn spawn_quick_proxy(
             Ok(quick_proxy_path) => {
                 let path_str = quick_proxy_path.display().to_string();
                 let patch = MediaDerivativesPatch {
-                    quick_proxy_path: Some(Some(quick_proxy_path)),
-                    proxy_bypassed: Some(false),
+                    quick_proxy_landed: Some(Some(quick_proxy_path)),
                     ..Default::default()
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
@@ -609,9 +583,7 @@ fn spawn_proxy(
                 let mut thumbnail_media = media.clone();
                 thumbnail_media.path_abs = proxy_path.clone();
                 let patch = MediaDerivativesPatch {
-                    proxy_path: Some(Some(proxy_path)),
-                    proxy_format_version: Some(proxy::PROXY_FORMAT_VERSION),
-                    proxy_bypassed: Some(false),
+                    full_proxy_landed: Some(Some((proxy_path, proxy::PROXY_FORMAT_VERSION))),
                     ..Default::default()
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
@@ -742,29 +714,37 @@ mod tests {
 
     #[test]
     fn derivatives_patch_serializes_tristate() {
-        use crate::state::MediaDerivativesPatch;
+        use crate::state::{DecodeRoute, MediaDerivativesPatch};
         use serde_json::json;
 
         // absent: outer None → key omitted entirely.
         let p = MediaDerivativesPatch { conform_path: Some("c.bin".into()), ..Default::default() };
         let v = serde_json::to_value(&p).unwrap();
-        assert!(v.get("proxy_path").is_none(), "absent proxy_path must be omitted");
+        assert!(v.get("full_proxy_landed").is_none(), "absent full_proxy_landed must be omitted");
         assert_eq!(v.get("conform_path").unwrap(), &json!("c.bin"));
 
         // clear: Some(None) → null.
-        let p = MediaDerivativesPatch { proxy_path: Some(None), ..Default::default() };
+        let p = MediaDerivativesPatch { full_proxy_landed: Some(None), ..Default::default() };
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(v.get("proxy_path").unwrap(), &serde_json::Value::Null);
+        assert_eq!(v.get("full_proxy_landed").unwrap(), &serde_json::Value::Null);
 
-        // set: Some(Some(path)) → string.
-        let p = MediaDerivativesPatch { quick_proxy_path: Some(Some("q.mp4".into())), ..Default::default() };
+        // set: a quick proxy landed → Some(Some(path)) → string.
+        let p = MediaDerivativesPatch { quick_proxy_landed: Some(Some("q.mp4".into())), ..Default::default() };
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(v.get("quick_proxy_path").unwrap(), &json!("q.mp4"));
+        assert_eq!(v.get("quick_proxy_landed").unwrap(), &json!("q.mp4"));
 
-        // plain bool field skips when None, emits when Some.
-        let p = MediaDerivativesPatch { proxy_bypassed: Some(true), ..Default::default() };
+        // a full proxy landed → Some(Some((path, version))) → [string, number].
+        let p = MediaDerivativesPatch {
+            full_proxy_landed: Some(Some(("full.mp4".into(), 7))),
+            ..Default::default()
+        };
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(v.get("proxy_bypassed").unwrap(), &json!(true));
+        assert_eq!(v.get("full_proxy_landed").unwrap(), &json!(["full.mp4", 7]));
+
+        // set_route: an authoritative route replacement serializes the variant.
+        let p = MediaDerivativesPatch { set_route: Some(DecodeRoute::Bypass), ..Default::default() };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v.get("set_route").unwrap(), &json!({ "route": "bypass" }));
     }
 
     /// `commit_media_derivatives` always emits a `media:derivatives` event for the
@@ -779,7 +759,7 @@ mod tests {
         let events: Arc<dyn crate::events::EventSink> = sink.clone();
         let media_id = uuid::Uuid::now_v7();
 
-        let patch = MediaDerivativesPatch { proxy_path: Some(None), conform_path: Some("c.bin".into()), ..Default::default() };
+        let patch = MediaDerivativesPatch { full_proxy_landed: Some(None), conform_path: Some("c.bin".into()), ..Default::default() };
         commit_media_derivatives(&events, media_id, patch).await.unwrap();
 
         let recorded = sink.events.lock().unwrap().clone();
@@ -788,7 +768,7 @@ mod tests {
         assert_eq!(name, "media:derivatives");
         assert_eq!(payload.get("media_id").unwrap(), &serde_json::json!(media_id.to_string()));
         let patch_v = payload.get("patch").unwrap();
-        assert_eq!(patch_v.get("proxy_path").unwrap(), &serde_json::Value::Null); // cleared
+        assert_eq!(patch_v.get("full_proxy_landed").unwrap(), &serde_json::Value::Null); // cleared
         assert_eq!(patch_v.get("conform_path").unwrap(), &serde_json::json!("c.bin"));
     }
 }

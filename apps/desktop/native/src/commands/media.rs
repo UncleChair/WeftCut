@@ -29,11 +29,7 @@ pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
         path_rel: None,
         kind,
         metadata,
-        proxy_path: None,
-        proxy_format_version: 0,
-        quick_proxy_path: None,
-        proxy_bypassed: false,
-        export_uses_original: false,
+        decode_route: state::DecodeRoute::Bypass,
         waveform_path: None,
         conform_path: None,
         thumbnails_dir: None,
@@ -103,12 +99,13 @@ pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String
 
 pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(), String> {
     let id = item.id;
-    if item.proxy_path.as_ref().map(|p| p.is_file()).unwrap_or(false) {
+    if matches!(item.decode_route, state::DecodeRoute::Proxied { full_proxy: Some(ref p), .. } if p.is_file()) {
         return Ok(());
     }
+    let corrected = item.decode_route.clone().route_corrected();
     crate::jobs::commit_media_derivatives(
         &backend.events, id,
-        state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
+        state::MediaDerivativesPatch { set_route: Some(corrected), ..Default::default() },
     ).await.map_err(|e| format!("route-correct {id}: {e}"))?;
     crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), item);
     Ok(())
@@ -135,7 +132,7 @@ pub async fn report_audio_meter(backend: &Backend, report: AudioMeterReport) -> 
 mod mirror_tests {
     use std::sync::Arc;
     use chrono::Utc;
-    use crate::state::{MediaItem, MediaKind, MediaMetadata};
+    use crate::state::{DecodeRoute, MediaItem, MediaKind, MediaMetadata};
 
     fn mirror_only_item(id: uuid::Uuid) -> MediaItem {
         MediaItem {
@@ -145,11 +142,7 @@ mod mirror_tests {
             path_rel: None,
             kind: MediaKind::Video,
             metadata: MediaMetadata::default(),
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
