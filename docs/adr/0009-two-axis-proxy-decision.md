@@ -60,6 +60,10 @@ GOP rather than remuxed.
   `proxy_path`, `quick_proxy_path` and the TS resolvers are untouched. The
   `DecodeCaps` oracle is unchanged. (Both are revisited in the later
   oracle-removal work.)
+  **Superseded by [ADR 0028](0028-persist-decode-route-as-folded-enum.md):**
+  the route is now persisted as a folded `DecodeRoute` enum (readiness paths
+  inside the variants), and the four flat flags plus the ad-hoc TS resolvers
+  are replaced by one `resolveDecode`.
 - Existing `proxy_bypassed` imports are not re-routed on open
   (`enqueue_for_media` short-circuits them); pre-release, a stale frozen
   import is resolved by re-import or cache wipe.
