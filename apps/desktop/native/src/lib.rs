@@ -30,7 +30,6 @@ mod cloud;
 mod mcp;
 
 mod logs;
-mod preview;
 mod agent_session;
 pub mod state;
 pub mod subtitles;
