@@ -99,12 +99,7 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            proxy_path: None,
-
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,

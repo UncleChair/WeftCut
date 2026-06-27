@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::decode_route::DecodeRoute;
 use super::ids::MediaId;
 use super::time::TimeUs;
 
@@ -17,28 +18,9 @@ pub struct MediaItem {
     pub path_rel: Option<PathBuf>,
     pub kind: MediaKind,
     pub metadata: MediaMetadata,
-    pub proxy_path: Option<PathBuf>,
-    /// Format-version of the cached proxy at `proxy_path` — compared
-    /// against `jobs::proxy::PROXY_FORMAT_VERSION` on workspace open
-    /// to invalidate stale proxies. See `docs/preview.md`.
-    /// `#[serde(default)]` keeps older `.vproj` files loadable as
-    /// version 0.
-    #[serde(default)]
-    pub proxy_format_version: u32,
-    /// Fast preview-first proxy produced before the full proxy is ready.
-    /// Preview may use this; export must ignore it.
-    #[serde(default)]
-    pub quick_proxy_path: Option<PathBuf>,
-    /// True when the original workspace copy is safe enough for direct
-    /// WebCodecs use and no generated proxy is required.
-    #[serde(default)]
-    pub proxy_bypassed: bool,
-    /// True when the export path may decode the ORIGINAL workspace copy
-    /// directly (WebCodecs can decode it) even though a preview proxy is
-    /// still generated for scrubbing. Distinct from `proxy_bypassed`, which
-    /// means *no proxy at all* (original for preview AND export).
-    #[serde(default)]
-    pub export_uses_original: bool,
+    /// Where preview and export each decode this source from, plus the
+    /// readiness of any proxy. Replaces the former flat proxy flags. v10.
+    pub decode_route: DecodeRoute,
     pub waveform_path: Option<PathBuf>,
     /// Canonical conformed PCM (VCONF; see `jobs::conform`). `None` until
     /// the conform job lands. Serde-defaulted so pre-conform projects load.
@@ -115,28 +97,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn export_uses_original_defaults_false_for_old_projects() {
-        // A `.vproj` MediaItem written before this field existed must load
-        // as `export_uses_original: false`.
-        let json = r#"{
+    fn media_item_round_trips_decode_route() {
+        let json = serde_json::json!({
             "id": "00000000-0000-0000-0000-000000000000",
-            "label": null,
-            "path_abs": "clip.mp4",
-            "path_rel": null,
-            "kind": "Video",
+            "label": null, "path_abs": "clip.mp4", "path_rel": null, "kind": "Video",
             "metadata": { "duration_us": null, "video": null, "audio": null },
-            "proxy_path": null,
-            "quick_proxy_path": null,
-            "proxy_bypassed": true,
-            "waveform_path": null,
-            "thumbnails_dir": null,
-            "file_hash_blake3": "abc",
-            "file_size": 1,
-            "file_mtime": 0,
+            "decode_route": { "route": "direct-export", "quick_proxy": null },
+            "waveform_path": null, "conform_path": null, "thumbnails_dir": null,
+            "file_hash_blake3": "abc", "file_size": 1, "file_mtime": 0,
             "imported_at": "2026-05-29T00:00:00Z"
-        }"#;
-        let item: MediaItem = serde_json::from_str(json).unwrap();
-        assert!(!item.export_uses_original);
-        assert!(item.proxy_bypassed);
+        });
+        let item: MediaItem = serde_json::from_value(json).unwrap();
+        assert_eq!(item.decode_route, DecodeRoute::DirectExport { quick_proxy: None });
     }
 }

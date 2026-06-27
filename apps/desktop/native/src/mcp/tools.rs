@@ -786,7 +786,7 @@ pub(crate) async fn synthesize_speech_audio(
     args: &SynthesizeSpeechArgs,
 ) -> Result<(crate::state::MediaItem, bool), McpToolError> {
     use crate::cache::cached_ok;
-    use crate::state::{MediaItem, MediaKind, new_id};
+    use crate::state::{DecodeRoute, MediaItem, MediaKind, new_id};
     use crate::io::probe;
 
     if args.text.trim().is_empty() {
@@ -859,11 +859,7 @@ pub(crate) async fn synthesize_speech_audio(
             path_rel: None,
             kind: MediaKind::Audio,
             metadata,
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,

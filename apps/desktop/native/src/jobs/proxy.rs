@@ -168,7 +168,7 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{MediaKind, MediaMetadata, VideoStreamMeta, new_id};
+    use crate::state::{DecodeRoute, MediaKind, MediaMetadata, VideoStreamMeta, new_id};
 
     fn video_with_color(
         matrix: Option<&str>,
@@ -200,11 +200,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -314,12 +310,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -433,11 +424,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -513,12 +500,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -573,11 +555,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,

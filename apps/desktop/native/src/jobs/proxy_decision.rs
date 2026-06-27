@@ -189,7 +189,7 @@ fn estimated_bitrate_bps(media: &MediaItem) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{new_id, MediaKind, MediaMetadata, VideoStreamMeta};
+    use crate::state::{new_id, DecodeRoute, MediaKind, MediaMetadata, VideoStreamMeta};
     use chrono::Utc;
 
     fn video(over: impl FnOnce(&mut MediaItem)) -> MediaItem {
@@ -217,11 +217,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,

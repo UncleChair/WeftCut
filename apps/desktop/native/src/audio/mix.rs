@@ -269,6 +269,7 @@ mod tests {
     use crate::state::animated::Animated;
     use crate::state::audio_role::{AudioRole, RoleMixSettings};
     use crate::state::layer::{AudioParams, Layer, LayerParams};
+    use crate::state::decode_route::DecodeRoute;
     use crate::state::media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
     use crate::state::track::Track;
@@ -398,11 +399,7 @@ mod tests {
                         }),
                         ..Default::default()
                     },
-                    proxy_path: None,
-                    proxy_format_version: 0,
-                    quick_proxy_path: None,
-                    proxy_bypassed: false,
-                    export_uses_original: false,
+                    decode_route: DecodeRoute::Bypass,
                     waveform_path: None,
                     conform_path: Some(conform),
                     thumbnails_dir: None,

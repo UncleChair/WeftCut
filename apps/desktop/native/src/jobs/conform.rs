@@ -193,7 +193,7 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{AudioStreamMeta, MediaKind, MediaMetadata, new_id};
+    use crate::state::{AudioStreamMeta, DecodeRoute, MediaKind, MediaMetadata, new_id};
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")
@@ -240,11 +240,7 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,

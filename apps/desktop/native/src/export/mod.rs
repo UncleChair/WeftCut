@@ -519,6 +519,7 @@ mod tests {
         use crate::state::{
             animated::Animated,
             audio_role::AudioRole,
+            decode_route::DecodeRoute,
             layer::{AudioParams, Layer, LayerParams},
             media::{MediaItem, MediaKind, MediaMetadata},
             project::Project,
@@ -556,11 +557,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: Some(conform.to_path_buf()),
             thumbnails_dir: None,

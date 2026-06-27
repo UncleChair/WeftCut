@@ -430,8 +430,7 @@ mod stateless_tests {
         let item = serde_json::json!({
             "id": id, "label": null, "path_abs": "/nonexistent", "path_rel": null,
             "kind": "Video", "metadata": crate::state::MediaMetadata::default(),
-            "proxy_path": null, "proxy_format_version": 0, "quick_proxy_path": null,
-            "proxy_bypassed": false, "export_uses_original": false, "waveform_path": null,
+            "decode_route": { "route": "bypass" }, "waveform_path": null,
             "conform_path": null, "thumbnails_dir": null,
             "file_hash_blake3": format!("test-{id}"), "file_size": 0, "file_mtime": 0,
             "imported_at": chrono::Utc::now(),

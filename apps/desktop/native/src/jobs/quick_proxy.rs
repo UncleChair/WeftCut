@@ -180,7 +180,7 @@ async fn run_fast_transcode(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{new_id, MediaKind, MediaMetadata, VideoStreamMeta};
+    use crate::state::{new_id, DecodeRoute, MediaKind, MediaMetadata, VideoStreamMeta};
     use chrono::Utc;
 
     fn video(
@@ -215,11 +215,7 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
+            decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
