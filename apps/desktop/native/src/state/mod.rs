@@ -13,6 +13,7 @@ pub mod animated;
 pub mod audio_role;
 pub mod color;
 pub mod command;
+pub mod decode_route;
 pub mod effect;
 pub mod keyframe_edits;
 pub mod composition;
@@ -32,6 +33,7 @@ pub mod transition;
 // The shared command/error/patch types it used were extracted to `command` in
 // Phase 4a and stay here; the model serde modules below are untouched.
 pub use command::{CommandError, MediaDerivativesPatch, ValidationError};
+pub use decode_route::DecodeRoute;
 
 pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};

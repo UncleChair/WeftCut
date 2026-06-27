@@ -20,7 +20,7 @@ use super::transition::Transition;
 /// older `.vproj` folders must be re-created. The Rust read-mirror only
 /// deserializes already-gated JSON. Per-version history lives in git / the ADRs.
 // Bumped for captions-as-Text-layers: pre-bump projects with Subtitles layers are unsupported (hard break).
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
