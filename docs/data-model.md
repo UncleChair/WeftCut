@@ -140,11 +140,7 @@ struct MediaItem {
     path_rel: Option<PathBuf>,        // authoritative; relative to workspace root
     kind: MediaKind,                  // Video | Audio | Image (subtitle files are consumed at import)
     metadata: MediaMetadata,
-    proxy_path: Option<PathBuf>,      // export master: source-res (≤4K) H.264 in Cache/proxies/
-    proxy_format_version: u32,        // a bump forces proxy regen on next load
-    quick_proxy_path: Option<PathBuf>,// 720p short-GOP scrub proxy; the preview source
-    proxy_bypassed: bool,             // source decodes directly for preview+export; no proxy
-    export_uses_original: bool,       // export decodes the original; preview uses the quick proxy
+    decode_route: DecodeRoute,        // where preview and export each read their pixels; see below
     waveform_path: Option<PathBuf>,
     conform_path: Option<PathBuf>,    // canonical 48 kHz PCM (VCONF); see docs/audio.md
     thumbnails_dir: Option<PathBuf>,
@@ -153,40 +149,60 @@ struct MediaItem {
     file_mtime: u64,
     imported_at: Timestamp,
 }
+
+enum DecodeRoute {
+    // Preview and export both read the original source directly; no proxy is generated.
+    Bypass,
+    // Export reads the original source; preview reads a 720p short-GOP quick proxy.
+    // quick_proxy is None until the derivative lands.
+    DirectExport { quick_proxy: Option<PathBuf> },
+    // Preview reads the quick proxy; export reads the source-resolution export master.
+    // Both Option fields represent readiness: None = derivative not yet generated.
+    Proxied {
+        quick_proxy: Option<PathBuf>,
+        full_proxy: Option<PathBuf>,
+        format_version: u32,          // bump forces proxy regen on next load
+    },
+}
 ```
 
 `path_rel` is the on-disk anchor (workspace-relative, e.g. `Media/clip.mp4`). On load, `io::load_from_dir` rewrites `path_abs = workspace.join(path_rel)` so workspace moves between machines don't break references. `path_abs` is the in-memory convenience path consumed by the IR compiler + background jobs. If `path_rel` is missing (legacy v1 project before migration) or the resolved file doesn't exist, the pool item gets a "missing media" badge — the project still loads.
 
-The proxy fields encode a video's decode routing, decided per source on
-two independent axes (ADR 0009): an **export source** axis (can the export
-Worker decode this source directly?) and a **preview source** axis (does the
-original scrub acceptably — friendly H.264, <=1080p, moderate bitrate, known
-short GOP?). The combinations:
+`decode_route` is the **persisted source of truth** for where preview and
+where export each read their pixels (ADR 0009, ADR 0028; see also
+[`CONTEXT.md`](../CONTEXT.md#decode-routing) for canonical term definitions).
+The route is decided per source on two axes: whether the export worker can
+decode the original directly and whether the original scrubs acceptably as a
+preview source. The three legal routes, all represented by distinct variants:
 
-- **Bypass** (`proxy_bypassed = true`): a friendly short-GOP H.264 source;
-  no proxy generated — preview and export both read the original.
-- **DirectExport** (`export_uses_original = true`): export reads the original
-  at full quality, while a 720p short-GOP `quick_proxy_path` is generated as
-  the preview scrub source.
-- **Proxied** (neither flag; `proxy_path` set): a source WebCodecs can't
-  decode directly (non-H.264-family codec, or 10-bit/HDR) — a 720p
-  `quick_proxy_path` is the preview source and a source-resolution
-  `proxy_path` is the export master.
+- **`Bypass`**: a friendly short-GOP H.264 source; no proxy generated —
+  preview and export both read the original.
+- **`DirectExport { quick_proxy }`**: export reads the original at full
+  quality; preview reads a 720p short-GOP quick proxy. `quick_proxy` is
+  `None` until the derivative lands.
+- **`Proxied { quick_proxy, full_proxy, format_version }`**: a source
+  WebCodecs cannot decode directly (non-H.264-family codec, or 10-bit/HDR)
+  — preview reads the quick proxy; export reads the source-resolution
+  export master (`full_proxy`). Both fields are `None` while the respective
+  derivative is pending. `format_version` forces proxy regeneration when bumped.
 
-`proxy_path` is a pure **export master** at source resolution (≤4K,
-ADR 0011) — never used for preview. `quick_proxy_path` is the **permanent
-preview source**: it is NOT cleared when the master lands, and preview
-prefers it over `proxy_path`. Preview readiness is therefore
-`quick_proxy_path || proxy_path || proxy_bypassed || export_uses_original`;
-export readiness is `proxy_path || proxy_bypassed || export_uses_original`.
+The `Option` payloads express **readiness**: preview is ready when
+`quick_proxy` is `Some`, or the route is `Bypass`; export is ready when
+`full_proxy` is `Some`, or the route is `DirectExport` or `Bypass`. The
+illegal combination — FullProxy export with Original preview — is
+unrepresentable by construction. `resolveDecode(media)` is the single
+resolver that maps a `DecodeRoute` and optional session bridge to
+`{ previewPath, exportPath }`, replacing ad-hoc flag reads at every call
+site. See [ADR 0028](adr/0028-persist-decode-route-as-folded-enum.md).
 
 The static import route is intentionally narrow. H.264 and AV1 8-bit,
 browser-friendly sources can be marked DirectExport; HEVC, VP9, ProRes, and
 10-bit/HDR sources route to a full export master. The renderer still verifies
 DirectExport sources with a real `probeSourceDecodable` key-frame decode before
 export. If the probe fails on the current machine, `ensure_full_proxy`
-route-corrects the media by clearing `export_uses_original` and enqueueing a
-full proxy, and the export waits for the store to show a usable path.
+route-corrects the media by transitioning the route from `DirectExport` to
+`Proxied` and enqueueing a full proxy, and the export waits for the store to
+show a usable path.
 
 Import also runs a session-scoped preview decodability sweep for sources that
 would otherwise be blank until a proxy lands. A successful probe lets preview
@@ -231,7 +247,7 @@ extension fallback recognizes them plus `tif`/`tiff`:
 
 | Kind | Dialog extensions | Notes |
 | --- | --- | --- |
-| Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the proxy axes above. |
+| Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the `DecodeRoute` above. |
 | Audio | wav, mp3, flac, aac, m4a, ogg, opus | Anything ffmpeg decodes conforms; the VCONF cache is the only contract (docs/audio.md). |
 | Image | png, jpg/jpeg, gif, webp, bmp, avif | Rendered from the ORIGINAL with no derivatives. Still images use `createImageBitmap` (single frame, 3 s default duration). Animated formats (GIF, animated WebP, APNG, animated AVIF) decode all frames once via WebCodecs `ImageDecoder` (downscaled to composition size, cached per media) and loop at native speed to fill the layer; a freshly-placed animated image defaults to one native loop. APNG files are named with the `.png` extension. |
 
@@ -249,7 +265,7 @@ path) but Electron/Chromium's `createImageBitmap` cannot decode it — the layer
 composites nothing — so the dialog doesn't offer it. SVG is unsupported:
 unlisted extensions default to `Video` and won't produce a usable layer.
 
-Derivative jobs follow the kind: `Video` gets the proxy axes + waveform +
+Derivative jobs follow the kind: `Video` gets decode-route derivatives + waveform +
 conform + thumbnails; `Audio` gets waveform + conform only (ready as soon as
 the workspace copy lands — no proxy wait); `Image` gets none.
 
