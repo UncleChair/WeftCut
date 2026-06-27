@@ -128,7 +128,7 @@ async fn get_waveform_peaks_rejects_malformed_args() {
 Expected: PASS (both).
 
 - [ ] **Step 8: Full native suite.** Run: `cargo test --manifest-path apps/desktop/native/Cargo.toml --features export,mcp,cloud`
-Expected: PASS, 0 failed. (If the source-guard test at `napi_backend.rs:828-835` fails because it still requires `get_media_thumbnail`/`get_waveform_peaks` to call `snapshot_for_read`, that is fixed in Task 3 — note the failure and proceed; do not commit until Task 3 if it fails here. If it passes, the guard does not cover these two — proceed.)
+Expected: PASS, 0 failed. The whole-file source-guard (`mirror_backed_reads_use_the_mirror_not_an_actor`, ~`:808`) still passes here: `ensure_full_proxy` / `ensure_conform` are untouched in this task and still contain `snapshot_for_read`, so `commands/media.rs` still satisfies the "must contain `snapshot_for_read`" check. (That check is relaxed in Task 2, where the last two conversions remove the final occurrence from `media.rs`.)
 
 - [ ] **Step 9: Commit.**
 
@@ -139,9 +139,9 @@ git commit -m "refactor(stateless): get_media_thumbnail/get_waveform_peaks take 
 
 ---
 
-## Task 2: Rust — `ensure_full_proxy` + `ensure_conform` take a `MediaItem`
+## Task 2: Rust — `ensure_full_proxy` + `ensure_conform` take a `MediaItem` (+ relax the mirror source-guard)
 
-These two enqueue jobs. They keep `backend` (for `events`, `cache`, and `read_mirror_handle()` — the latter stays until Phase 4) but stop calling `snapshot_for_read`.
+These two enqueue jobs. They keep `backend` (for `events`, `cache`, and `read_mirror_handle()` — the latter stays until Phase 4) but stop calling `snapshot_for_read`. Converting them removes the **last** `snapshot_for_read` from `commands/media.rs`, so the whole-file source-guard in `napi_backend.rs` must be relaxed in the **same commit** (Steps 6–8) — otherwise the full native suite goes red and the per-task green invariant breaks. (This folds in what was a separate guard task; the guard is whole-file, not per-fn, so it cannot be split across two commits without a red window.)
 
 **Files:**
 - Modify: `apps/desktop/native/src/commands/media.rs:115-146` (the two fns) and the `ensure_full_proxy` seam test (~`:200+`)
@@ -209,52 +209,41 @@ pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), St
 - [ ] **Step 5: Run the changed test.** Run: `cargo test --manifest-path apps/desktop/native/Cargo.toml --features export,mcp,cloud ensure_full_proxy`
 Expected: PASS.
 
-- [ ] **Step 6: Commit.**
+- [ ] **Step 6: Relax the source-guard (same commit).** Converting the two fns above removed the **last** `snapshot_for_read` from `commands/media.rs`, so the whole-file guard `mirror_backed_reads_use_the_mirror_not_an_actor` (`apps/desktop/native/src/napi_backend.rs`, ~`:808-851`) now fails for `media.rs`. The guard is **whole-file** (`src.contains("snapshot_for_read")`), NOT a per-`fn` scan — first read it to confirm its exact shape. Then: (a) drop `commands/media.rs` from the "must contain `snapshot_for_read`" loop, leaving only `commands/export.rs` (its channels read the mirror until Phase 2); (b) KEEP the `.project()?.snapshot()` prohibition for both files; (c) KEEP the `ensure_full_proxy` → `commit_media_derivatives` sub-check; (d) ADD a per-`fn` negative assertion. Replace the "must call `snapshot_for_read`" loop with:
+
+```rust
+        // The export channels still read the mirror via `snapshot_for_read`
+        // (Phase 2 converts them). media.rs no longer does — Phase 1 moved its
+        // four read channels to take a `MediaItem` arg; see the per-fn check below.
+        assert!(
+            export.contains("snapshot_for_read"),
+            "commands/export.rs: mirror-backed reads must call `snapshot_for_read`"
+        );
+
+        // Phase 1 (stateless-compute-service): the four single-media channels no
+        // longer read the mirror — the TS host passes the resolved MediaItem.
+        for name in ["get_media_thumbnail", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform"] {
+            let start = media.find(&format!("fn {name}"))
+                .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));
+            let body = &media[start..(start + 600).min(media.len())];
+            assert!(!body.contains("snapshot_for_read"),
+                "{name}: must NOT read the mirror — it takes a MediaItem arg (Phase 1)");
+        }
+```
+
+- [ ] **Step 7: Full native suite (must be green before commit).** Run: `cargo test --manifest-path apps/desktop/native/Cargo.toml --features export,mcp,cloud`
+Expected: PASS, 0 failed. The relaxed guard now passes; `commands/media.rs` has zero `snapshot_for_read`.
+
+- [ ] **Step 8: Commit (the two fns + dispatch arms + the guard relaxation, together).**
 
 ```bash
 git add apps/desktop/native/src/commands/media.rs apps/desktop/native/src/napi_backend.rs
-git commit -m "refactor(stateless): ensure_full_proxy/ensure_conform take MediaItem"
+git commit -m "refactor(stateless): ensure_full_proxy/ensure_conform take MediaItem; relax mirror guard for media.rs"
 ```
 
 ---
 
-## Task 3: Rust — relax the `snapshot_for_read` source-guard for the four channels
-
-`napi_backend.rs` has a source-grep guard test (~`:804-849`) asserting that "mirror-backed reads" call `snapshot_for_read` and never `.project()?.snapshot()`. The four converted channels are no longer mirror-backed, so the guard must stop requiring `snapshot_for_read` for them (it still applies to the export channels until Phase 2).
-
-**Files:**
-- Modify: `apps/desktop/native/src/napi_backend.rs:804-849` (the guard test)
-
-**Interfaces:** none (test-only).
-
-- [ ] **Step 1: Read the guard test** at `apps/desktop/native/src/napi_backend.rs:804-849` to see which fn names it scans (it greps `commands/media.rs` source for `fn <name>` then asserts the body contains `snapshot_for_read`).
-
-- [ ] **Step 2: Narrow the guard's name set.** Edit the guard so its "must call `snapshot_for_read`" assertion no longer includes `get_media_thumbnail`, `get_waveform_peaks`, `ensure_full_proxy`, `ensure_conform`. Keep the `.project()?.snapshot()` prohibition (that stale-actor read must never appear). Add a positive assertion that these four now take a `MediaItem`:
-
-```rust
-// Phase 1 (stateless-compute-service): these four no longer read the mirror —
-// the TS host passes the resolved MediaItem. Assert they DON'T call snapshot_for_read.
-for name in ["get_media_thumbnail", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform"] {
-    let start = media.find(&format!("fn {name}")).unwrap_or_else(|| panic!("{name} must exist"));
-    let body = &media[start..(start + 600).min(media.len())];
-    assert!(!body.contains("snapshot_for_read"),
-        "{name}: must NOT read the mirror — it takes a MediaItem arg (Phase 1)");
-}
-```
-
-- [ ] **Step 3: Run the guard + full native suite.** Run: `cargo test --manifest-path apps/desktop/native/Cargo.toml --features export,mcp,cloud`
-Expected: PASS, 0 failed.
-
-- [ ] **Step 4: Commit.**
-
-```bash
-git add apps/desktop/native/src/napi_backend.rs
-git commit -m "test(stateless): guard the four channels do NOT read the mirror"
-```
-
----
-
-## Task 4: Main — resolve the `MediaItem` and forward `{ item }`
+## Task 3: Main — resolve the `MediaItem` and forward `{ item }`
 
 The renderer keeps calling `invoke("<channel>", { mediaId })`. `index.ts`'s `backend:invoke` handler must, for these four channels, resolve the item from the TS actor snapshot and forward `{ item }` to the napi backend. A missing item returns the same "not found" error the renderer expects.
 
@@ -346,7 +335,7 @@ git commit -m "refactor(stateless): main resolves MediaItem for single-media cha
 
 ---
 
-## Task 5: Integration verification
+## Task 4: Integration verification
 
 **Files:** none (verification only).
 
@@ -368,5 +357,5 @@ Expected: no matches in `media.rs` (export.rs, mcp/tools.rs, resources.rs still 
 
 - Phase 1 leaves `read_mirror` / `set_project_mirror` / `snapshot_for_read` in place — by design. Do not delete them here.
 - `ensure_full_proxy` / `ensure_conform` still pass `backend.read_mirror_handle()` to `enqueue_*`; the background job's `fresh_media_item` re-read is removed in Phase 4 (it needs the hash-first guarantee).
-- If `actor.snapshot().media_pool` is a `Map` rather than a plain object in the current model, adjust `resolveSingleMediaArgs` to take a `Map` and the handler to pass it; the test and helper must agree. Verify against `model.ts` before Step 3.
+- `actor.snapshot().media_pool` is a plain object — `Project.media_pool: Record<string, MediaItem>` (`model.ts`), and `serialize.ts` applies no per-item transform — so `pool[id]` (the helper as written) is correct and the resolved `MediaItem` forwards verbatim into Rust serde. (Confirmed against `model.ts` / `serialize.ts`; no `Map` handling needed.)
 - Next phases (own plan files): Phase 2 (export audio + detect_silences/transcribe_clip slices), Phase 3 (MCP resources → TS), Phase 4 (import hash-first rework + delete `fresh_media_item`/`pending`/migrate), Phase 5 (delete the mirror + the per-commit push).
