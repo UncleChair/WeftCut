@@ -1,19 +1,17 @@
-// Shared TS motif catalog — consumed by both Electron-main and the renderer.
-// Mirrors the Rust logic in:
-//   native/src/motifs/catalog.rs   (canonicalize_props, resolve_motif_max_dur_us)
-//   native/src/commands/motifs.rs  (resolve_motif_t_end_us)
-// Any change to those files must be reflected here (and vice-versa) to preserve
-// byte-for-byte equivalence on valid inputs (the Phase 4a-ii differential gate).
+// Shared TS motif catalog — the single source of motif validation + duration
+// resolution, consumed by both Electron-main and the renderer. (The Rust motif
+// modules this once mirrored were deleted when motifs moved fully to TS.)
 //
-// Fidelity notes:
-//   - Key order: BTreeMap in Rust → Object.keys sorted ascending here.
+// Canonicalization rules (load-bearing — motif capture and the catalog must
+// agree on these for a draft to validate + render identically):
+//   - Key order: prop maps emitted with Object.keys sorted ascending.
 //   - String max_length: counted as UNICODE SCALAR VALUES (Array.from(s).length),
-//     not UTF-16 code units (str.length). Matches Rust str::chars().count().
+//     not UTF-16 code units (str.length).
 //   - Color regex: ^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$
 //   - Number min/max: inclusive on both ends. Values must be finite JS numbers.
-//   - resolveMotifTEndUs None-branch: Math.trunc (mirrors Rust `as i64` truncation).
-//   - resolveMotifMaxDurUs: EXCLUDES content_duration_s (the layer cap resolver).
-//     resolveMotifContentDurationUs: INCLUDES content_duration_s (seek span).
+//   - resolveMotifTEndUs None-branch: Math.trunc.
+//   - resolveMotifMaxDurUs EXCLUDES content_duration_s (the layer cap resolver);
+//     resolveMotifContentDurationUs INCLUDES it (seek span).
 
 import countdownJson from "./builtin/countdown/manifest.json";
 import lowerThirdJson from "./builtin/lower-third/manifest.json";
