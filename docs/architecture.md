@@ -1,7 +1,10 @@
 # Architecture
 
 WeftCut is an Electron desktop video editor (Electron + napi-rs). The
-Rust core owns all state and side effects; the renderer hosts a
+Electron **main** process (TypeScript) owns project state, persistence, and
+the agent/MCP surface; the Rust core (an in-process napi addon) is
+compute-only — media jobs, the audio mixer, ffmpeg, and a deserialized
+read-mirror of project state those paths read. The renderer hosts a
 PixiJS-based compositor and a React UI; external agents connect over MCP.
 The workspace folder *is* the project — opening a folder = opening the
 project; auto-save means closing the app loses nothing.
@@ -48,21 +51,29 @@ Runtime choice and rationale: see [ADR 0024](adr/0024-desktop-runtime-electron-n
 │                                     │ ┌─────────────────────────┐ │  │
 │                                     │ │ MCP host (main, TS)     │ │  │
 │                                     │ │  • streamable-HTTP +    │ │  │
-│                                     │ │    bearer; tool catalog │ │  │
-│                                     │ │    + resources via Rust │ │  │
+│                                     │ │    bearer; merged TS+   │ │  │
+│                                     │ │    Rust tool catalog    │ │  │
 │                                     │ └─────────────────────────┘ │  │
 │                                     └─────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+Within the single app process, the project **actor, history, autosave, the
+UI/MCP event bridges, the config stores, and the MCP host are TypeScript**
+(Electron main); the **background jobs, audio mixer, ffmpeg, and the
+read-mirror of project state are the Rust napi core**. The boundary between
+the two is the napi `Backend.invoke` dispatch.
+
 ## Three load-bearing principles
 
 ### 1. Single-writer state
 
-All mutations — UI edits and MCP tool calls — funnel through one Rust
-actor that holds `Arc<Project>`. Reads are lock-free `Arc` clones.
-Concurrency is solved by serialization, not by locks scattered through
-the code.
+All mutations — UI edits and MCP tool calls — funnel through one
+TypeScript actor in the Electron main process (`src/main/state/`) that
+holds the authoritative project snapshot + history. Reads are cheap
+immutable-snapshot clones. Concurrency is solved by serialization, not by
+locks scattered through the code. The Rust core keeps a deserialized
+read-mirror of the committed state for its compute paths; it never writes.
 
 ### 2. Preview = export pipeline
 
@@ -72,11 +83,12 @@ Preview pixels equal export pixels by construction; there's no
 "preview engine" to drift from export. See [`render.md`](render.md) for
 the renderer architecture.
 
-The deterministic "what-you-see/hear" MATH both the renderer and the Rust
-actor/export need — frame snap, keyframe interpolation, the audio envelope
-curve, the role mute/solo gate — lives once in the `weftcut-eval` leaf crate,
-compiled natively for the actor + export and to wasm for the renderer. One
-source of truth instead of hand-mirrored Rust + TS copies that could drift.
+The deterministic "what-you-see/hear" MATH both the renderer and Rust's
+compute/export paths need — frame snap, keyframe interpolation, the audio
+envelope curve, the role mute/solo gate — lives once in the `weftcut-eval`
+leaf crate, compiled natively for the Rust compute + export paths and to
+wasm for the renderer (and the TS main-process actor). One source of truth
+instead of hand-mirrored Rust + TS copies that could drift.
 See [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md).
 
 ### 3. ffmpeg shrinks to audio + mux
@@ -107,23 +119,22 @@ PixiJS migration.
 3. Actor produces a new `Arc<Project>`, pushes the prior one onto
    history, broadcasts a `ChangeEvent`.
 4. Subscribers react:
-   - **UI event bridge** emits `project:changed` (the Rust core fires its
-     thread-safe event callback into the Electron main process, which
-     relays it to the renderer as `evt:project:changed`) so React panels
-     re-fetch `projectSummary()`. The `<PreviewSurface>` compositor
+   - **UI event bridge** emits `project:changed` (the TS host sends it from
+     the main process to the renderer as `evt:project:changed`) so React
+     panels re-fetch `projectSummary()`. The `<PreviewSurface>` compositor
      receives the updated project and updates its sprite tree in
      place (no recompile). The re-fetch is **ordering-guarded**:
-     `project_summary` responses can resolve out of order (the actor
-     services queries on a threadpool), so a response older than the
-     newest already applied is dropped — last-write-wins by dispatch
-     order, preventing a slow stale summary from clobbering fresher
-     state (e.g. resetting a just-decided export route).
+     `project_summary` responses can resolve out of order over async IPC,
+     so a response older than the newest already applied is dropped —
+     last-write-wins by dispatch order, preventing a slow stale summary
+     from clobbering fresher state (e.g. resetting a just-decided export
+     route).
    - **Autosave subscriber** debounces 500 ms, writes
      `<workspace>/project.json` (atomic `.tmp` + rename). Every 50
      commits or 5 min, copies to `Backups/<ISO>.json`.
-   - **MCP change feed** — the core fires a `mcp:change` event, which the
-     main process intercepts (it never reaches the renderer) and the MCP
-     host relays to subscribed agents as a streamable-HTTP notification.
+   - **MCP change feed** — the TS host notifies the in-process MCP host,
+     which relays to subscribed agents as a streamable-HTTP notification
+     (it never reaches the renderer).
 
 Round-trip from commit to preview pixels: next animation frame
 (~16 ms at 60 Hz). The PixiJS compositor reads the new project state
@@ -133,11 +144,11 @@ directly; no encode-and-swap step.
 
 | From → To | Mechanism |
 |---|---|
-| Renderer → Rust core | The contextBridge preload exposes named capabilities (not raw channels); the generic `api.backend.invoke(channel, args)` rides an `ipcRenderer.invoke('backend:invoke', …)` into the main process, which calls the napi addon's `Backend.invoke(cmd, argsJson)` dispatcher (sync queries, RPC-style mutations). |
-| Rust core → Renderer | The core fires its thread-safe event callback into main; main forwards each as `webContents.send('evt:<event>', payload)` — `project:changed`, `import:*`, `media:job_*` — surfaced to the renderer via `api.on(event, …)`. |
+| Renderer → main (→ Rust core) | The contextBridge preload exposes named capabilities (not raw channels); the generic `api.backend.invoke(channel, args)` rides an `ipcRenderer.invoke('backend:invoke', …)` into the main process, where the TS host's `routeChannel` dispatches it — state / config / MCP channels are served in TS; compute channels forward to the napi addon's `Backend.invoke(cmd, argsJson)` dispatcher. |
+| Main → Renderer | The main process forwards events as `webContents.send('evt:<event>', payload)` — `project:changed` from the TS actor/host; `import:*`, `media:job_*` from the Rust core via its thread-safe-function callback — surfaced to the renderer via `api.on(event, …)`. |
 | Renderer → workspace files | The `weftcut-media://localhost/<encoded-abs-path>` custom protocol (registered privileged + `supportFetchAPI`/`stream`; HTTP `Range`, served from main) — used by the Pixi decoder pool to fetch proxies and originals. The `fs:*` IPC surface (confined to temp / userData / active-workspace roots) handles export-scratch writes and reads. |
-| External agent → Rust core | MCP over streamable-HTTP on localhost (`@modelcontextprotocol/sdk` host in the main process; bearer enforced by main, token in `app_config_dir/mcp_auth.json`). The tool catalog + resources are produced by the Rust core. |
-| Rust core → External agent | The core's `mcp:change` event, intercepted in main and relayed by the MCP host as a streamable-HTTP notification. |
+| External agent → main (MCP host) | MCP over streamable-HTTP on localhost (`@modelcontextprotocol/sdk` host in the main process; bearer enforced by main, token in `app_config_dir/mcp_auth.json`). The tool catalog + resources are merged in TS — the TS-routed tool defs plus the Rust compute/hybrid tools. |
+| Main → External agent | The TS host's change notification, relayed by the in-process MCP host as a streamable-HTTP notification. |
 | Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for cloud transcription, and the final stream-copy mux. |
 
 ## Repository layout
@@ -153,7 +164,9 @@ weftcut/
                               ←   linked natively here + compiled to wasm for
                               ←   the renderer (ADR 0025)
       src/
-        state/                ← project state types, actor, history, validation
+        state/                ← project state data types — the read-mirror
+                              ←   model Rust compute deserializes (the actor,
+                              ←   history, validation, autosave live in TS main)
         audio/                ← envelope contract + export block mixer
                               ←   (conform_reader, mix; docs/audio.md)
         export/               ← export_audio_only (mix + encode tail) +
@@ -165,24 +178,22 @@ weftcut/
         cache/                ← workspace-scoped derivative cache
                               ←   (workspace/Cache/{proxies, thumbnails,
                               ←    waveforms, audio, frames, voiceover, …})
-        motifs/               ← built-in motif catalog + CDP capture host
-                              ←   (manifests + index.html, embedded)
-        mcp/                  ← tool catalog + wire + resources + prompts
-                              ←   (the HTTP host lives in src/main/mcp)
+        mcp/                  ← compute/hybrid tool defs + wire + resources
+                              ←   (TS owns the merged catalog; HTTP host in
+                              ←   src/main/mcp)
         cloud/                ← provider-agnostic cloud APIs:
                               ←   Transcriber / Synthesizer traits,
                               ←   keyring-backed key storage,
                               ←   providers/openai.rs (Whisper + tts-1)
-        io/                   ← project.json save/load + autosave task +
+        io/                   ← project.json (de)serialize for the read-mirror +
                               ←   io/migrate.rs (schema migrations)
         logs/                 ← LogBus actor, JSONL writer, tracing bridge
         preview/              ← preview-orchestrator state on the Rust side
         commands/             ← the command surface dispatched by Backend.invoke
                               ←   (query, mutations, media, export, history, …)
         events.rs             ← EventSink + thread-safe-function bridge to main
-        keybindings.rs        ← keybinding registry + persistence
+        subtitles/            ← caption/subtitle parse + compute (docs/captions.md)
         agent_session.rs      ← agent-mode session lifecycle
-        recents.rs            ← startup-screen recents.json + prefs
         workspace.rs          ← WorkspaceSlot tracking current workspace
         bin/                  ← media_conformance analyzer binary
         napi_backend.rs       ← the Backend napi type (invoke + init)
@@ -194,18 +205,23 @@ weftcut/
         index.ts             ←   app bootstrap: loads @weftcut/core, wires the
                              ←   backend:invoke / fs:* / window:* / dialog:* IPC,
                              ←   registers the weftcut-media:// protocol
+        state/               ←   project actor + history + validation + autosave
+                             ←   + workspace orchestrator + MCP commands
+                             ←   (THE sole state writer; ts-actor-host + router)
         mcp/                 ←   streamable-HTTP MCP host (SDK + bearer)
         motif/               ←   offscreen-CDP capture host + motif: protocol
         keys.ts              ←   safeStorage cloud-key persistence
-        app-settings.ts      ←   app-level preferences (app_settings.json)
-        view-state.ts        ←   per-workspace view.json (timeline zoom/heights)
+        app-settings.ts view-state.ts export-settings.ts keybindings.ts
+        recents.ts           ←   config/preference stores (TS-owned; persist the
+                             ←   same JSON files the Rust stores used to)
         windows.ts fsGuard.ts
       preload/                ← contextBridge surface (api.backend / fs / window / …)
         index.ts
       shared/                 ← IPC types shared between main + renderer
         ipc.ts
-        app-settings.ts       ← AppSettings types (main owns persistence)
-        view-state.ts         ← ViewState types (main owns persistence)
+        app-settings.ts view-state.ts keybindings.ts recents.ts
+                              ←   config-store types (main owns persistence)
+        motifs/               ← motif types shared main↔renderer
       renderer/               ← React + TypeScript UI (PixiJS + WebCodecs)
         startup/              ← Create / Open / Recent screen
         preview/              ← <PreviewSurface> mounting the Pixi compositor
@@ -250,7 +266,8 @@ weftcut/
 - **electron-vite** — bundles main / preload / renderer; **electron-builder**
   produces the per-OS installers.
 - **@modelcontextprotocol/sdk** + **express** — the streamable-HTTP MCP
-  host that runs in the main process and fronts the Rust tool catalog.
+  host that runs in the main process and fronts the merged tool catalog
+  (TS-routed tool defs + the Rust compute/hybrid tools).
 - **ffmpeg-sidecar** — auto-downloads ffmpeg on first run.
 - **imbl** — persistent immutable collections (state snapshots with
   structural sharing).
@@ -258,8 +275,6 @@ weftcut/
 - **serde** / **serde_json** / **schemars** — serialization, JSON
   Schema generation shared between the MCP tool catalog and the
   `Backend.invoke` command bridge.
-- **ts-rs** — emit TypeScript types from Rust state types so the UI
-  doesn't drift.
 - **uuid** — v7 IDs for all addressable entities.
 - **blake3** — content hashing (cache keys, file dedup).
 - **keyring** — OS-native credential storage for cloud-provider API

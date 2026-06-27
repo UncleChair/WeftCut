@@ -214,4 +214,4 @@ Each grouped layer gets:
 - `Ctrl+Shift+G`: `groups_dissolve` on every group represented in the
   current selection.
 
-Bound via the existing `keybindings.rs` config so users can rebind.
+Bound via the TS keybindings store (`src/main/keybindings.ts`) so users can rebind.

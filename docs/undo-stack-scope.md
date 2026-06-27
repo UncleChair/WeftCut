@@ -4,7 +4,7 @@ What records into the editing undo stack and what doesn't. Tightens the
 boundary so non-editing operations (project load, media library, canvas
 setup) stop polluting the history that Ctrl-Z walks.
 
-This document is implemented in the actor/history layer.
+This document is implemented in the actor/history layer (TypeScript, `src/main/state/`).
 
 ---
 

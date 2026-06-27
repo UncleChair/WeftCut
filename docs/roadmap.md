@@ -1,7 +1,7 @@
 # Roadmap
 
-The foundation is in place: project state actor + history, workspace
-on-disk format, media import with proxy / thumbnail / waveform jobs,
+The foundation is in place: the project state actor + history (TypeScript,
+Electron main), the workspace on-disk format, media import with proxy / thumbnail / waveform jobs,
 audio IR + ffmpeg export + final mux, PixiJS + WebCodecs renderer
 (preview and export share one compositor), the Motif catalog
 (built-in + user-authored, with an agent authoring loop over MCP),

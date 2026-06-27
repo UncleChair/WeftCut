@@ -1,7 +1,11 @@
 # Data Model
 
-The project state is the single source of truth. UI, audio IR
-compiler, MCP server, and persistence are all clients of it.
+The project state is the single source of truth, authored by the
+single-writer actor in the Electron **main** process (TypeScript,
+`src/main/state/`); the Rust core deserializes the same shapes into a
+read-mirror for its compute paths. UI, MCP server, and persistence are all
+clients of it — the struct syntax throughout this doc describes the shared
+model, not a Rust-exclusive owner.
 
 ## Foundational decisions
 
@@ -507,6 +511,9 @@ struct NamedCheckpoint {
 - **Several mutation classes sit outside the undo stack** — see `docs/undo-stack-scope.md` for the full per-op table. The pattern: patch every snapshot (and checkpoint) in place via `replace_media_pool_everywhere` or `replace_composition_canvas_everywhere`, broadcast a non-recorded `ChangeEvent`, cursor unchanged. Covers media imports/removals of unreferenced media, derivative and workspace-path updates, canvas setup fields, and project open/new (`replace_state` resets history instead). Timeline edits, duration changes, and cascade media removals still record normally.
 
 ## Concurrency: single-writer actor
+
+The actor runs in the Electron **main** process (TypeScript, `src/main/state/`)
+and is the sole writer; the shape below is illustrative of what it holds.
 
 ```rust
 struct ProjectActor {
