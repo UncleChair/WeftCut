@@ -12,6 +12,7 @@ import { captureMotifFrameB64 } from '../motif/capture.js'
 import { routeMcpTool } from './mutationTools.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
+import { CLIP_SLICE_TOOLS, resolveClipSliceArgs } from '../state/clip-slice-forward.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS } from '../state/mcp-commands.js'
@@ -68,7 +69,14 @@ export async function handleCallTool(
       const raw = tsHost.motifTool(name, args)
       return shapeMotifMcpResult(name, raw) as unknown as ServerResult
     }
-    // route === 'rust' → fall through (reads are mirror-backed).
+    // Clip-audio compute (detect_silences / transcribe_clip) routes to 'rust', but
+    // the Rust core no longer holds state (stateless-compute Phase 2): resolve the
+    // { layer, media } slice from the actor (sole state owner) and forward it.
+    if (CLIP_SLICE_TOOLS.has(name)) {
+      const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
+      return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
+    }
+    // route === 'rust' → fall through (other reads are served by the backend).
   }
   if (name === 'preview_motif_draft') {
     const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; width?: number; height?: number }

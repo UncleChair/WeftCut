@@ -71,6 +71,22 @@ describe('handleCallTool flip routing', () => {
     await handleCallTool(fakeBackend(spy), () => null, 'add_color_layer', {})
     expect(spy).toHaveBeenCalled()
   })
+  it('resolves the { layer, media } slice for a clip-audio tool and forwards it to the backend', async () => {
+    const ts = tsHostStub()
+    const spy = vi.fn((_name: string, _args: string) =>
+      Promise.resolve('{"ok":true,"result":{"content":[{"type":"text","text":"[]"}]}}'),
+    )
+    await handleCallTool(fakeBackend(spy), () => ts, 'detect_silences', { layer_id: 'gone' })
+    expect(spy).toHaveBeenCalledTimes(1)
+    const merged = JSON.parse(spy.mock.calls[0][1])
+    // The slice was resolved + merged (the intercept ran); 'gone' is not in the
+    // blank project, so both are null — Rust then produces "layer not found".
+    expect('layer' in merged).toBe(true)
+    expect('media' in merged).toBe(true)
+    expect(merged.layer).toBeNull()
+    expect(merged.media).toBeNull()
+    expect(merged.layer_id).toBe('gone')
+  })
   it('flips the agent-session slot after a successful begin_agent_session', async () => {
     const ts = tsHostStub()
     const spy = vi.fn()
