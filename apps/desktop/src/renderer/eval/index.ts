@@ -8,6 +8,7 @@ import { EVAL_WASM_BASE64 } from './evalWasm.generated'
 interface Exports {
   snap_round(tUs: number, num: number, den: number): number
   snap_floor(tUs: number, num: number, den: number): number
+  us_to_frame(us: number, rate: number): number
   set_n(n: number): void
   set_kf(
     i: number,
@@ -66,6 +67,13 @@ export function snapFrameRound(tUs: number, num: number, den: number): number {
 export function snapFrameFloor(tUs: number, num: number, den: number): number {
   if (num <= 0 || den <= 0) return tUs
   return E().snap_floor(tUs, num, den)
+}
+
+/** µs → sample-frame index at `rate` Hz (half-up). Shared with the export mixer
+ * (`audio/mix.rs::us_to_frame`) through the leaf so preview + export place audio
+ * on one grid. */
+export function usToFrame(us: number, rate: number): number {
+  return E().us_to_frame(us, rate)
 }
 
 /** Keyframe shape from the IPC AnimTrack (renderer/render/animated.ts). */

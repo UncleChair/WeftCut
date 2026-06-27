@@ -19,10 +19,12 @@ use crate::state::layer::{AudioParams, Layer, LayerParams};
 pub const MIX_SAMPLE_RATE: i64 = 48_000;
 pub const MIX_BLOCK_FRAMES: usize = 65_536;
 
-/// µs → 48 kHz frame index, round-half-up. 48 000 frames / 1 000 000 µs
-/// reduces to 48/1000, so this is exact on the grid.
+/// µs → 48 kHz frame index, round-half-up. Single-sourced in the `weftcut-eval`
+/// leaf (shared with the renderer's preview scheduler `chunkSchedule.ts` via
+/// wasm) so export and preview place audio on the same grid; `MIX_SAMPLE_RATE`
+/// is the conform rate.
 pub fn us_to_frame(us: i64) -> i64 {
-    (us * 48 + 500).div_euclid(1000)
+    weftcut_eval::us_to_frame(us, MIX_SAMPLE_RATE as u32)
 }
 
 #[derive(Debug)]

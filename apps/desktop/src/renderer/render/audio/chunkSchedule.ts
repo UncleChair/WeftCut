@@ -7,6 +7,8 @@
 // 48 kHz frame grid. Chunks are aligned to CHUNK_FRAMES on the SOURCE
 // axis so chunk identity is stable across re-anchors.
 
+import { usToFrame } from "../../eval";
+
 export const SAMPLE_RATE = 48_000;
 export const CHUNK_FRAMES = 48_000; // 1 s
 export const LOOKAHEAD_S = 3;
@@ -32,11 +34,11 @@ export function compUsAtCtxTime(a: ClockAnchor, ctxTime: number): number {
   return a.compUs + (ctxTime - a.ctxTime) * 1_000_000;
 }
 
-/// µs ↔ 48 kHz frames. 48 000 frames / 1 000 000 µs reduces to 48/1000,
-/// so the conversion is exact on the frame grid (mirrors Rust
-/// `audio::mix::us_to_frame`).
+/// µs → 48 kHz frames, single-sourced via the weftcut-eval wasm leaf (the SAME
+/// `us_to_frame` the export mixer calls natively) so preview and export place
+/// audio on one grid. The reverse `framesToUs` stays local — it has no export twin.
 export function usToFrames(us: number): number {
-  return Math.round((us * 48) / 1000);
+  return usToFrame(us, SAMPLE_RATE);
 }
 
 export function framesToUs(frames: number): number {

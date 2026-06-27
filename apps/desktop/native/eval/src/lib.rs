@@ -107,6 +107,17 @@ pub fn snap_frame_round(t_us: i64, num: u32, den: u32) -> i64 {
     snapped as i64
 }
 
+/// µs → sample-frame index at `rate` Hz, round half-up. The frames-per-µs ratio
+/// (48 000 / 1 000 000 = 48/1000 at 48 kHz) is exact on the grid; `i128`
+/// internally so hour-plus timelines don't overflow. Shared by the export mixer
+/// (`audio/mix.rs`) and the renderer's preview scheduler
+/// (`render/audio/chunkSchedule.ts`) so both place audio on one frame grid.
+pub fn us_to_frame(us: i64, rate: u32) -> i64 {
+    let prod = (us as i128) * (rate as i128);
+    let frame = (prod + (US_PER_SEC as i128) / 2).div_euclid(US_PER_SEC as i128);
+    frame as i64
+}
+
 // ===========================================================================
 // Keyframe evaluation. `Interpolation` + `unit_bezier` + the slice-form
 // evaluator `eval_f64` are shared with the renderer (wasm) so preview, export,
@@ -315,6 +326,36 @@ mod tests {
         assert!(any_role_solo([false, true, false]));
         assert!(!any_role_solo([false, false]));
         assert!(!any_role_solo(core::iter::empty::<bool>()));
+    }
+
+    // ---- audio sample-frame conversion (us_to_frame) ----
+    #[test]
+    fn us_to_frame_48k_grid() {
+        assert_eq!(us_to_frame(0, 48_000), 0);
+        assert_eq!(us_to_frame(1_000_000, 48_000), 48_000); // 1 s
+        assert_eq!(us_to_frame(20_833, 48_000), 1_000); // 20833.33 µs ≈ frame 1000
+    }
+
+    /// The conversion reduces to `(us*48 + 500)/1000` (the inlined form it
+    /// replaced in `audio/mix.rs` + `chunkSchedule.ts`). Assert against it across
+    /// a range incl. negatives — the preview playhead can sit before a layer's
+    /// start, so `us` (composition µs − layer start) is sometimes negative.
+    #[test]
+    fn us_to_frame_matches_reduced_form() {
+        for us in [
+            -3_600_000_000_i64,
+            -20_833,
+            -1,
+            0,
+            1,
+            17,
+            20_833,
+            1_000_000,
+            3_600_000_000,
+        ] {
+            let reduced = (us * 48 + 500).div_euclid(1000);
+            assert_eq!(us_to_frame(us, 48_000), reduced, "us={us}");
+        }
     }
 
     // ---- keyframe eval (eval_f64) ----

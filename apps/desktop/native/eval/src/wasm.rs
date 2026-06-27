@@ -9,7 +9,7 @@
 //! the snap fn takes `(num, den)` primitives (it stays in the napi crate).
 use crate::{
     db_to_linear as db_to_linear_impl, eval_f64, role_audible as role_audible_impl,
-    snap_frame_floor, snap_frame_round, Interpolation, Kf,
+    snap_frame_floor, snap_frame_round, us_to_frame as us_to_frame_impl, Interpolation, Kf,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -36,6 +36,14 @@ pub extern "C" fn snap_round(t_us: f64, num: i32, den: i32) -> f64 {
 #[no_mangle]
 pub extern "C" fn snap_floor(t_us: f64, num: i32, den: i32) -> f64 {
     snap_frame_floor(t_us as i64, num as u32, den as u32) as f64
+}
+
+/// `us_to_frame(us, rate)` — µs → sample-frame index at `rate` Hz (half-up).
+/// Callers pass integer-valued µs (the preview playhead is frame-snapped), so the
+/// `as i64` cast is lossless — same f64→i64 convention as `snap_round` above.
+#[no_mangle]
+pub extern "C" fn us_to_frame(us: f64, rate: i32) -> f64 {
+    us_to_frame_impl(us as i64, rate as u32) as f64
 }
 
 /// Set the resident track length (number of keyframes uploaded via `set_kf`).
