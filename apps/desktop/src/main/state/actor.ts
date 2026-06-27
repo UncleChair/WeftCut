@@ -121,9 +121,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
     for (const cb of subs) {
       try { cb(e) }
       catch (err) {
-        // A throwing subscriber (e.g. pushMirror on a transient Rust-deserialize
-        // error) must not starve later subscribers (autosave / mcpNotify). Warn
-        // and continue — cf. feedback_ui_actor_bridge, feedback_async_block_on_in_async.
+        // A throwing subscriber (e.g. the autosave serialize, or the mcpNotify
+        // relay) must not starve later subscribers. Warn and continue — cf.
+        // feedback_ui_actor_bridge, feedback_async_block_on_in_async.
         console.warn('[actor] change subscriber threw; continuing', err)
       }
     }

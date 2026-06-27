@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   routeChannel,
-  HYBRID_CHANNELS, MIRROR_BACKED_READS, PURE_NATIVE, PERSISTENCE, MOTIF_CHANNELS,
+  HYBRID_CHANNELS, SLICE_INJECTED_READS, PURE_NATIVE, PERSISTENCE, MOTIF_CHANNELS,
 } from './router'
 import { PRODUCTION_OPS } from './commands'
 
@@ -34,7 +34,7 @@ const ALL_CHANNELS: readonly string[] = [
   'settings_get_api_key_status', 'settings_test_provider',
   // hybrids (native-compute → TS-write)
   'import_media',
-  // mirror-backed reads (re-pointed to the read-mirror in Group A)
+  // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'get_media_thumbnail', 'get_waveform_peaks',
   // backend stores (config-dir, not the project actor)
@@ -50,7 +50,7 @@ const ALL_CHANNELS: readonly string[] = [
  *  config-store + pure-native — NONE touch the project actor for writes. The
  *  gate asserts no channel routes to rust outside this set. */
 const RUST_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  ...PURE_NATIVE, ...PERSISTENCE, ...MIRROR_BACKED_READS,
+  ...PURE_NATIVE, ...PERSISTENCE, ...SLICE_INJECTED_READS,
 ])
 
 describe('router partition gate', () => {
@@ -83,7 +83,7 @@ describe('router partition gate', () => {
     ])
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
-      ['MIRROR_BACKED_READS', MIRROR_BACKED_READS],
+      ['SLICE_INJECTED_READS', SLICE_INJECTED_READS],
       ['HYBRID_CHANNELS', HYBRID_CHANNELS],
       ['MOTIF_CHANNELS', MOTIF_CHANNELS],
       ['PRODUCTION_OPS', PRODUCTION_OPS as ReadonlySet<string>],

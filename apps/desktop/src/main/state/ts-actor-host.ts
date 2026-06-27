@@ -43,9 +43,6 @@ export interface TsActorHostDeps {
   readFile: (p: string) => string
   /** Current workspace directory (cached from backend). Null before first open/newWorkspace. */
   workspaceDir: () => string | null
-  /** Push the TS-serialized project + history view into the Rust read-mirror
-   *  (backend.setProjectMirror). Optional → omitted/no-op flag-off + in tests. */
-  setProjectMirror?: (projectJson: string, historyViewJson: string) => void
   /** Flip the Rust agent-session slot ON/OFF (backend.beginAgentSessionSlot / endAgentSessionSlot). */
   beginAgentSessionSlot?: (reason: string) => void
   endAgentSessionSlot?: () => void
@@ -214,13 +211,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return runMotifTool(name, args, motifToolDeps)
   }
 
-  function pushMirror(): void {
-    if (!deps.setProjectMirror) return
-    deps.setProjectMirror(serializeProjectToJson(actor.snapshot()), JSON.stringify(actor.historyView(100)))
-  }
-
   function emitChange(e: ChangeEvent): void {
-    pushMirror()
     const payload = mapChangeEvent(e)
     deps.send('project:changed', payload)
     deps.mcpNotify(payload)
@@ -395,7 +386,6 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     start() {
       if (!unsub) unsub = actor.subscribe(emitChange)
       autosave.start()
-      pushMirror()
       refreshMotifCatalog()
     },
     stop() {

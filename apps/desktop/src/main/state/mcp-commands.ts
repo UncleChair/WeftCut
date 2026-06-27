@@ -84,8 +84,8 @@ export function parseRole(v: unknown): string {
 /** Validate an Rgba (color.rs: four u8 fields). Rust serde rejects a non-object
  *  or out-of-range value at the deserialize boundary → invalid_params; the
  *  dedicated mcpCall arms (add_marker/add_color_layer) previously cast `a.color
- *  as Rgba` raw, so a string like "#fff" committed to the actor and then broke
- *  the read-mirror push. Mirror Rust's contract here so it never commits. */
+ *  as Rgba` raw, so a string like "#fff" committed garbage to the actor and
+ *  wedged it. Mirror Rust's contract here so it never commits. */
 export function parseRgba(v: unknown, field: string): Rgba {
   if (v === null || typeof v !== 'object') throw new McpArgError(`${field} must be an {r,g,b,a} color object`, field)
   const o = v as Record<string, unknown>

@@ -43,7 +43,7 @@ function unwrapEnvelope(env: Envelope): unknown {
 function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) as Envelope) }
 
 /** CallTool routing (tsHost present): mutations → TS actor.mcpCall, hybrid →
- *  runHybrid, rust → backend (mirror-backed reads). */
+ *  runHybrid, rust → backend (native reads/compute that take an injected state slice). */
 export async function handleCallTool(
   backend: Backend,
   getTsHost: () => TsActorHost | null,

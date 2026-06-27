@@ -5,9 +5,9 @@ import { createTsActorHost } from '../ts-actor-host'
 // (add_marker / add_color_layer / add_video_layer) cast non-uuid wire args with a
 // raw `as` (color/numbers/label) and committed garbage to the actor instead of
 // rejecting invalid_params before the commit. A struct-shaped bad arg (a string
-// `color`) then broke the read-mirror push and wedged the actor. These assert the
-// malformed input is rejected at the arg boundary with NO state mutation.
-function makeDeps(setProjectMirror: (p: string, h: string) => void = () => {}) {
+// `color`) then wedged the actor. These assert the malformed input is rejected at
+// the arg boundary with NO state mutation.
+function makeDeps() {
   const noopFs = { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} }
   return {
     send: () => {}, mcpNotify: () => {}, fileExists: () => false,
@@ -17,21 +17,17 @@ function makeDeps(setProjectMirror: (p: string, h: string) => void = () => {}) {
     enqueueWorkspaceCopy: async () => {},
     readFile: () => '',
     workspaceDir: () => null as string | null,
-    setProjectMirror,
   }
 }
 
 describe('mcpCall rejects malformed args before commit (soak finding)', () => {
   it('add_marker with a string color → invalid_params, no marker committed', () => {
-    const pushes: number[] = []
-    const host = createTsActorHost(makeDeps(() => pushes.push(1)))
+    const host = createTsActorHost(makeDeps())
     host.start()
-    const pushesAtStart = pushes.length
     const r = host.actor.mcpCall('add_marker', JSON.stringify({ color: '#fff', label: 'x', t_us: 1_000_000 }))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('invalid_params')
     expect(host.actor.snapshot().markers.length, 'no garbage marker committed').toBe(0)
-    expect(pushes.length, 'a rejected call must not push the mirror').toBe(pushesAtStart)
     host.stop()
   })
 

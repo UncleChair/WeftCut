@@ -220,11 +220,11 @@ app.whenReady().then(async () => {
   const motifBuiltinDir = builtinAssetDir()
   setMotifStore(motifStore)
 
-  // TS actor host: constructed unconditionally; must start (pushing the initial
-  // read-mirror via setProjectMirror) BEFORE startMcpHost so that
-  // snapshot_for_read() has the mirror populated before any compute/MCP read
-  // can run (spec §4.3/§4.6). mcpNotify uses mcpHostRef?.notifyChange (optional)
-  // so the pre-MCP initial mirror push is a safe no-op for the notify path.
+  // TS actor host: constructed unconditionally; must start BEFORE startMcpHost so
+  // the actor (the sole owner of project state — it serves every MCP state view and
+  // injects the slice each Rust compute call needs) is ready before any MCP read can
+  // run. mcpNotify uses mcpHostRef?.notifyChange (optional), so the host wires up
+  // cleanly before the MCP host exists.
   const { createTsActorHost } = await import('./state/ts-actor-host.js')
 
   // The TS actor snaps frame edges via the wasm eval leaf (snap.ts → renderer/eval).
@@ -331,7 +331,6 @@ app.whenReady().then(async () => {
     enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     workspaceDir: () => wsCache,
-    setProjectMirror: (pj, hv) => backend!.setProjectMirror(pj, hv),
     beginAgentSessionSlot: (reason) => backend!.beginAgentSessionSlot(reason),
     endAgentSessionSlot: () => backend!.endAgentSessionSlot(),
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
@@ -345,7 +344,7 @@ app.whenReady().then(async () => {
     recents,
   })
   tsHost.start()
-  console.log('[main] TS state actor authoritative — mirror pushed before MCP host start')
+  console.log('[main] TS state actor authoritative; MCP host starting')
 
   // Stage-5 file watch (TS): on any disk change under <userData>/motifs/,
   // refresh the actor catalog (so a disk-written Motif is placeable via
@@ -358,8 +357,8 @@ app.whenReady().then(async () => {
   })
 
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
-  // Started AFTER tsHost.start() so the read-mirror is populated before any
-  // MCP compute read can run (spec §4.3/§4.6).
+  // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
+  // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend, () => tsHost)
   mcpHostRef = mcpHost
@@ -398,7 +397,7 @@ app.whenReady().then(async () => {
       return null
     }
     // Single-media compute: the TS actor owns state, so resolve the MediaItem
-    // here and forward it — the Rust fns no longer read the mirror (Phase 1).
+    // here and forward it — the Rust fns take it as a call argument (Phase 1).
     if (tsHost && SINGLE_MEDIA_CHANNELS.has(channel)) {
       const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
       const resolved = resolveSingleMediaArgs((args ?? {}) as { mediaId?: string }, pool)
@@ -406,7 +405,7 @@ app.whenReady().then(async () => {
       return JSON.parse(json)
     }
     // Audio export: the TS actor owns state, so inject the full project here and
-    // forward it — the Rust fns no longer read the mirror (Phase 2).
+    // forward it — the Rust fns take it as a call argument (Phase 2).
     if (tsHost && EXPORT_PROJECT_CHANNELS.has(channel)) {
       const merged = injectProjectArgs((args ?? {}) as Record<string, unknown>, tsHost.actor.snapshot())
       const json = await backend!.invoke(channel, JSON.stringify(merged))

@@ -2,10 +2,10 @@ import { test, expect, _electron as electron, type Page } from '@playwright/test
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Phase 4b §4.3/§4.6 — after the Rust actor is deleted, snapshot_for_read() has
-// NO actor fallback. Bring-up MUST push the mirror before any compute/MCP read.
-// This boots the DEFAULT path (no WEFTCUT_TS_ACTOR env) and confirms an early
-// renderer summary reflects the project — i.e. the mirror was populated first.
+// Bring-up smoke: the TS state actor + production bridge are up immediately after
+// boot, so an early renderer `project_summary` (served by the TS actor) reflects
+// the project. This boots the DEFAULT path and confirms the actor is ready before
+// the renderer asks for state.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MAIN = path.resolve(__dirname, '../../out/main/index.js')
@@ -28,8 +28,8 @@ test('bring-up: project summary is available immediately after boot (no flag)', 
     await page.waitForFunction(() => !!(window as any).api?.backend?.invoke, undefined, { timeout: 30_000 })
 
     // The renderer summary is served by the TS actor; a blank project still has
-    // the two reserved tracks. If the mirror/actor were not ready before MCP host
-    // started, snapshot_for_read() would fail with no fallback.
+    // the two reserved tracks. If the actor were not ready at boot, this summary
+    // pull would fail.
     const summary = await invoke<Summary>(page, 'project_summary')
     expect(summary.tracks.length).toBeGreaterThanOrEqual(2)
   } finally {

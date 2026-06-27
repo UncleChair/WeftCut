@@ -126,8 +126,9 @@ export function blankProject(idGen: IdGen, name: string): Project {
   const projectId = idGen()
   // LANDMINE: real RFC3339 timestamps, NOT the '<TS>' sentinel. canonicalize()
   // normalizes these away for differential comparison, so a sentinel would pass
-  // the gates — but the live read-mirror round-trips this JSON through Rust
-  // `DateTime<Utc>` deserialization (set_project_mirror), which rejects a
+  // the gates — but this JSON still round-trips through Rust `DateTime<Utc>`
+  // deserialization (`serde_json::from_str::<Project>`) in the export-audio
+  // channels and the `project://compiled` MCP resource, which reject a
   // non-timestamp. Mirrors Rust `Project::new_blank`'s `Utc::now()`.
   const now = new Date().toISOString()
   return {

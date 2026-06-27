@@ -2,7 +2,7 @@
 // Pure splitter: the TS actor is authoritative; this splits every renderer channel.
 // SAFETY INVARIANT (router.test.ts partition gate): every renderer channel is
 // classified into exactly one bucket, and no project-touching channel routes to
-// 'rust' (the curated PURE_NATIVE ∪ PERSISTENCE ∪ MIRROR_BACKED_READS allowlist is
+// 'rust' (the curated PURE_NATIVE ∪ PERSISTENCE ∪ SLICE_INJECTED_READS allowlist is
 // read-only / config-store / pure-native). An unclassified channel routes to
 // {kind:'reject'} so the gate fails loud.
 import { PRODUCTION_OPS } from './commands'
@@ -36,8 +36,10 @@ export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
   'motif_staleness_report', 'acknowledge_motif_staleness',
 ])
 
-/** Read-only native handlers re-pointed to the read-mirror (Group A) — safe on rust. */
-export const MIRROR_BACKED_READS: ReadonlySet<string> = new Set([
+/** Native read/compute handlers that receive their project state slice (a MediaItem
+ *  or the full Project) as an injected call argument — the TS host forwards it
+ *  before the rust dispatch. Safe on rust: they hold no resident state. */
+export const SLICE_INJECTED_READS: ReadonlySet<string> = new Set([
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
   'get_media_thumbnail', 'get_waveform_peaks',
 ])
@@ -83,7 +85,7 @@ export function routeChannel(channel: string): Route {
     case 'recents_most_recent':
     case 'recents_last_new_project_parent': return { kind: 'recents' }
   }
-  if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || MIRROR_BACKED_READS.has(channel))
+  if (PURE_NATIVE.has(channel) || PERSISTENCE.has(channel) || SLICE_INJECTED_READS.has(channel))
     return { kind: 'rust' }
   return { kind: 'reject', reason: 'unclassified channel — classify in router.ts' }
 }
