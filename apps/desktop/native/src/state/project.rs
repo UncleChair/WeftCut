@@ -19,7 +19,7 @@ use super::transition::Transition;
 /// anything below `SCHEMA_VERSION` with a clear error rather than migrating —
 /// older `.vproj` folders must be re-created. The Rust read-mirror only
 /// deserializes already-gated JSON. Per-version history lives in git / the ADRs.
-// Bumped for captions-as-Text-layers: pre-bump projects with Subtitles layers are unsupported (hard break).
+// v10: proxy fields replaced by a single `decode_route: DecodeRoute` enum on MediaItem.
 pub const SCHEMA_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

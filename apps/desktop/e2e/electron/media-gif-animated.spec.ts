@@ -20,8 +20,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-gif-proj')
 interface MediaEntry {
   id: string
   kind: string
-  proxy_path: string | null
-  proxy_bypassed: boolean
+  decode_route: { route: string }
 }
 interface LayerEntry {
   id: string
@@ -56,7 +55,7 @@ test.describe('animated gif is a looping Image (Electron)', () => {
       const entry = sum.media.find((m) => m.id === mediaId)
       expect(entry, `media ${mediaId} present in pool`).toBeTruthy()
       expect(entry!.kind).toBe('Image')
-      expect(entry!.proxy_path, 'animated image must NOT get a proxy').toBeNull()
+      expect(entry!.decode_route, 'animated image must use bypass route (no proxy)').toEqual({ route: 'bypass' })
 
       // Placed layer is an ImageOverlay spanning exactly one native loop.
       const layer = sum.tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)

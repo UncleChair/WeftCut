@@ -165,7 +165,7 @@ impl Backend {
     /// Re-fan-out background derivative jobs for a media list (open-time
     /// regeneration of proxies / thumbnails / waveforms), orchestrated by the
     /// TS host after it loads a project. First invalidates stale-format proxies:
-    /// a proxy whose `proxy_format_version` predates the encoder's current
+    /// a `Proxied` variant whose `format_version` predates the encoder's current
     /// version is cleared (through the derivative write-back seam, so the
     /// authoritative engine's pool drops it) and its cached file best-effort
     /// deleted, so the enqueue below doesn't see a stale file as "ready".
