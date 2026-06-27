@@ -89,22 +89,16 @@ pub struct AudioMeterState(
     pub std::sync::Arc<std::sync::Mutex<Option<(std::time::Instant, AudioMeterReport)>>>,
 );
 
-pub async fn get_media_thumbnail(backend: &Backend, media_id: String) -> Result<String, String> {
-    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
-    let snap = backend.snapshot_for_read().await?;
-    let media = snap.media_pool.get(&id).ok_or_else(|| format!("media {media_id} not found"))?;
-    let dir = media.thumbnails_dir.clone().ok_or_else(|| "not_ready".to_string())?;
+pub async fn get_media_thumbnail(item: MediaItem) -> Result<String, String> {
+    let dir = item.thumbnails_dir.clone().ok_or_else(|| "not_ready".to_string())?;
     let path = dir.join("004.jpg");
     let bytes = tokio::fs::read(&path).await.map_err(|e| format!("read thumbnail: {e}"))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:image/jpeg;base64,{b64}"))
 }
 
-pub async fn get_waveform_peaks(backend: &Backend, media_id: String) -> Result<WaveformPeaks, String> {
-    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
-    let snap = backend.snapshot_for_read().await?;
-    let media = snap.media_pool.get(&id).ok_or_else(|| format!("media {media_id} not found"))?;
-    let path = media.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String> {
+    let path = item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
     let peaks = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
         .await
         .map_err(|e| format!("join error: {e}"))?
@@ -180,21 +174,19 @@ mod mirror_tests {
         }
     }
 
-    /// `get_media_thumbnail` resolves media from the read-mirror (the sole
-    /// project source post-4b). The item lives only in the pushed mirror;
-    /// `thumbnails_dir` is None → "not_ready" proves mirror resolution found it.
+    /// `get_media_thumbnail` resolves from the passed-in item (no mirror).
+    /// `thumbnails_dir` is None → "not_ready" proves it read the arg.
     #[cfg(feature = "jobs")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn get_media_thumbnail_reads_mirror() {
+    async fn get_media_thumbnail_uses_passed_item() {
         let sink = Arc::new(crate::events::VecEventSink::new());
         let b = crate::napi_backend::Backend::new_for_test(sink as Arc<dyn crate::events::EventSink>);
         b.init().await.unwrap();
-        let mut p = crate::state::Project::new_blank("mirror");
         let id = uuid::Uuid::now_v7();
-        p.media_pool.insert(id, mirror_only_item(id));
-        b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
-        let err = b.dispatch("get_media_thumbnail", &format!("{{\"mediaId\":\"{id}\"}}")).await.unwrap_err();
-        assert_eq!(err, "not_ready", "expected not_ready from mirror item, got: {err}");
+        let item = mirror_only_item(id); // thumbnails_dir: None
+        let args = serde_json::json!({ "item": item }).to_string();
+        let err = b.dispatch("get_media_thumbnail", &args).await.unwrap_err();
+        assert_eq!(err, "not_ready", "expected not_ready from passed item, got: {err}");
     }
 
     /// `ensure_full_proxy` routes the derivative write through the seam

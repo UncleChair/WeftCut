@@ -462,13 +462,13 @@ impl Backend {
             "import_queue_list" => ser(crate::commands::media::import_queue_list(self).await),
             #[cfg(feature = "jobs")]
             "get_media_thumbnail" => {
-                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::get_media_thumbnail(self, a.media_id).await)
+                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_media_thumbnail(a.item).await)
             }
             #[cfg(feature = "jobs")]
             "get_waveform_peaks" => {
-                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::get_waveform_peaks(self, a.media_id).await)
+                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_waveform_peaks(a.item).await)
             }
             #[cfg(feature = "jobs")]
             "ensure_full_proxy" => {
@@ -566,14 +566,14 @@ mod tests {
     }
 
     #[cfg(feature = "jobs")]
-    #[tokio::test]
-    async fn get_waveform_peaks_unknown_media_errors() {
-        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_waveform_peaks_rejects_malformed_args() {
+        let sink = std::sync::Arc::new(crate::events::VecEventSink::new());
+        let b = Backend::new_for_test(sink as std::sync::Arc<dyn crate::events::EventSink>);
         b.init().await.unwrap();
-        push_blank_mirror(&b);
-        let args = serde_json::json!({ "mediaId": uuid::Uuid::new_v4().to_string() }).to_string();
-        let err = b.dispatch("get_waveform_peaks", &args).await.unwrap_err();
-        assert!(err.contains("not found"), "unknown media → not found, got: {err}");
+        // No `item` field → serde deserialize fails.
+        let err = b.dispatch("get_waveform_peaks", "{}").await.unwrap_err();
+        assert!(err.contains("item") || err.contains("missing"), "expected a parse error, got: {err}");
     }
 
     #[cfg(feature = "jobs")]

@@ -33,6 +33,14 @@ pub struct MediaIdArgs {
     pub media_id: String,
 }
 
+/// Args for the single-media compute channels that now receive the resolved
+/// `MediaItem` from the TS host (the sole state owner) instead of a bare id.
+#[cfg(feature = "jobs")]
+#[derive(serde::Deserialize)]
+pub struct MediaItemArgs {
+    pub item: crate::state::MediaItem,
+}
+
 #[cfg(feature = "export")]
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
