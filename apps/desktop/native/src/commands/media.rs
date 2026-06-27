@@ -106,29 +106,20 @@ pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String
     Ok(WaveformPeaks { peaks, peaks_per_second: crate::jobs::waveform::PEAKS_PER_SECOND })
 }
 
-pub async fn ensure_full_proxy(backend: &Backend, media_id: String) -> Result<(), String> {
-    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
-    let snap = backend.snapshot_for_read().await?;
-    let Some(item) = snap.media_pool.get(&id).cloned() else {
-        return Err(format!("no media {media_id}"));
-    };
+pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(), String> {
+    let id = item.id;
     if item.proxy_path.as_ref().map(|p| p.is_file()).unwrap_or(false) {
         return Ok(());
     }
     crate::jobs::commit_media_derivatives(
         &backend.events, id,
         state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
-    ).await.map_err(|e| format!("route-correct {media_id}: {e}"))?;
+    ).await.map_err(|e| format!("route-correct {id}: {e}"))?;
     crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), item, backend.read_mirror_handle());
     Ok(())
 }
 
-pub async fn ensure_conform(backend: &Backend, media_id: String) -> Result<(), String> {
-    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
-    let snap = backend.snapshot_for_read().await?;
-    let Some(item) = snap.media_pool.get(&id).cloned() else {
-        return Err(format!("no media {media_id}"));
-    };
+pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), String> {
     if item.metadata.audio.is_none() {
         return Ok(());
     }
@@ -198,11 +189,10 @@ mod mirror_tests {
         let sink = Arc::new(crate::events::VecEventSink::new());
         let b = crate::napi_backend::Backend::new_for_test(sink.clone() as Arc<dyn crate::events::EventSink>);
         b.init().await.unwrap();
-        let mut p = crate::state::Project::new_blank("mirror");
         let id = uuid::Uuid::now_v7();
-        p.media_pool.insert(id, mirror_only_item(id));
-        b.set_project_mirror(serde_json::to_string(&p).unwrap(), "{}".into()).unwrap();
-        b.dispatch("ensure_full_proxy", &format!("{{\"mediaId\":\"{id}\"}}"))
+        let item = mirror_only_item(id);
+        let args = serde_json::json!({ "item": item }).to_string();
+        b.dispatch("ensure_full_proxy", &args)
             .await
             .expect("ensure_full_proxy must succeed via the seam");
         assert!(

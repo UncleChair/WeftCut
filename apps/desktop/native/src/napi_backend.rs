@@ -472,13 +472,13 @@ impl Backend {
             }
             #[cfg(feature = "jobs")]
             "ensure_full_proxy" => {
-                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::ensure_full_proxy(self, a.media_id).await)
+                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::ensure_full_proxy(self, a.item).await)
             }
             #[cfg(feature = "jobs")]
             "ensure_conform" => {
-                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::media::ensure_conform(self, a.media_id).await)
+                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::ensure_conform(self, a.item).await)
             }
             #[cfg(feature = "jobs")]
             "report_audio_meter" => {
@@ -825,15 +825,22 @@ mod tests {
             );
         }
 
-        // The mirror-backed read handlers must call `snapshot_for_read`.
-        for (name, src) in [
-            ("commands/media.rs", &media),
-            ("commands/export.rs", &export),
-        ] {
-            assert!(
-                src.contains("snapshot_for_read"),
-                "{name}: mirror-backed reads must call `snapshot_for_read`"
-            );
+        // The export channels still read the mirror via `snapshot_for_read`
+        // (Phase 2 converts them). media.rs no longer does — Phase 1 moved its
+        // four read channels to take a `MediaItem` arg; see the per-fn check below.
+        assert!(
+            export.contains("snapshot_for_read"),
+            "commands/export.rs: mirror-backed reads must call `snapshot_for_read`"
+        );
+
+        // Phase 1 (stateless-compute-service): the four single-media channels no
+        // longer read the mirror — the TS host passes the resolved MediaItem.
+        for name in ["get_media_thumbnail", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform"] {
+            let start = media.find(&format!("fn {name}"))
+                .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));
+            let body = &media[start..(start + 600).min(media.len())];
+            assert!(!body.contains("snapshot_for_read"),
+                "{name}: must NOT read the mirror — it takes a MediaItem arg (Phase 1)");
         }
 
         // `ensure_full_proxy` routes its derivative write through the seam.
