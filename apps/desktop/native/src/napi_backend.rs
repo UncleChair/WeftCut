@@ -1,7 +1,8 @@
-//! `Backend` — the napi entry point. Holds the TS-fed read-mirror + managed
-//! stores, exposes a single `invoke` dispatcher and an `init` that warms up
-//! ffmpeg. The TS state actor is the sole project writer; this boundary owns
-//! no actor (Phase 4b).
+//! `Backend` — the napi entry point. Holds the managed stores (cache, workspace,
+//! log, cloud keys) + the job queue, exposes a single `invoke` dispatcher and an
+//! `init` that warms up ffmpeg. The TS state actor is the sole project writer and
+//! owner; this boundary holds NO project state — every compute call takes the
+//! state slice it needs as an argument (stateless-compute-service).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,16 +21,6 @@ use crate::cache::CacheLayout;
 use crate::events::{EventSink, TsfnEventSink};
 use crate::logs::{self, LogBusSlot};
 use crate::workspace::WorkspaceSlot;
-
-/// A TS-fed read-replica of the project: the TS state actor is the sole writer,
-/// so the Rust read paths (resources, detect_silences, transcribe_clip, the
-/// Phase-3d-e compute hybrids) serve fresh state from this mirror. Set only from
-/// TS via `set_project_mirror`; never mutated by Rust handlers. The TS host
-/// pushes the initial mirror at boot before any read can run (bring-up order).
-pub(crate) struct ReadMirror {
-    pub(crate) project: std::sync::Arc<crate::state::Project>,
-    pub(crate) history_view: serde_json::Value,
-}
 
 #[napi]
 pub struct Backend {
@@ -53,9 +44,6 @@ pub struct Backend {
     /// Always compiled (cache is feature-independent) so main can push keys
     /// regardless of the addon's feature set.
     pub(crate) cloud_keys: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    /// See ReadMirror. Behind an Arc<Mutex> so background jobs can hold a
-    /// handle to the same mirror without borrowing the Backend across await.
-    read_mirror: std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>>,
 }
 
 /// Build the config-dir-rooted stores + cache layout + log slot, install the
@@ -67,10 +55,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         tracing::warn!("cache dir setup failed: {e:#}");
     }
     let log_slot = LogBusSlot::new();
-    // The TS read-mirror is written by set_project_mirror; no Rust read path
-    // consumes it after Phase 4 (deleted wholesale in Phase 5).
-    let read_mirror: std::sync::Arc<std::sync::Mutex<Option<ReadMirror>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(None));
     #[cfg(feature = "jobs")]
     let import_queue = crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone());
     // Forward our crate's `tracing` events into whichever LogBus is current.
@@ -105,7 +89,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         log_slot,
         cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
-        read_mirror,
     }
 }
 
@@ -154,19 +137,6 @@ impl Backend {
     #[napi]
     pub fn clear_cloud_key(&self, provider: String) {
         self.cloud_keys.lock().expect("cloud_keys poisoned").remove(&provider);
-    }
-
-    /// Replace the read-mirror with a TS-serialized project + history view.
-    /// Called by the TS host on every project:changed under WEFTCUT_TS_ACTOR.
-    #[napi]
-    pub fn set_project_mirror(&self, project_json: String, history_view_json: String) -> napi::Result<()> {
-        let project: crate::state::Project = serde_json::from_str(&project_json)
-            .map_err(|e| Error::from_reason(format!("set_project_mirror: invalid project json: {e}")))?;
-        let history_view: serde_json::Value = serde_json::from_str(&history_view_json)
-            .map_err(|e| Error::from_reason(format!("set_project_mirror: invalid history json: {e}")))?;
-        *self.read_mirror.lock().expect("read_mirror poisoned") =
-            Some(ReadMirror { project: std::sync::Arc::new(project), history_view });
-        Ok(())
     }
 
     /// Re-point cache + workspace, end any in-flight agent session, and rotate
@@ -401,29 +371,6 @@ impl Backend {
 // is `napi::Error`. The plain-Rust dispatch surface below speaks
 // `std::result::Result<_, String>`, so spell it out fully to dodge that alias.
 impl Backend {
-    /// Project snapshot for READ-ONLY consumers. Caller-less after Phase 3
-    /// (stateless-compute-service): `commands/media.rs` (Phase 1), the export +
-    /// clip-audio tools (Phase 2), and `mcp/resources.rs` (Phase 3) all take their
-    /// state slice at the call boundary now. Kept until Phase 5 deletes the mirror
-    /// wholesale. Returns the TS read-mirror; a clear error if it is unset.
-    #[allow(dead_code)]
-    pub(crate) async fn snapshot_for_read(&self) -> std::result::Result<std::sync::Arc<crate::state::Project>, String> {
-        self.read_mirror
-            .lock()
-            .expect("read_mirror poisoned")
-            .as_ref()
-            .map(|m| m.project.clone())
-            .ok_or_else(|| "read-mirror not set (TS host must push it before any read)".to_string())
-    }
-
-    /// The mirrored history view (project://history), or None when unset.
-    /// Caller-less after Phase 3 — the TS host serves project://history from
-    /// `actor.historyView`; deleted in Phase 5 with the rest of the mirror.
-    #[allow(dead_code)]
-    pub(crate) fn mirror_history_view(&self) -> Option<serde_json::Value> {
-        self.read_mirror.lock().expect("read_mirror poisoned").as_ref().map(|m| m.history_view.clone())
-    }
-
     /// Plain (non-napi) constructor for tests: roots config + cache in an
     /// instance-unique temp dir and runs the identical store/tracing setup as
     /// the napi `new`. No `ThreadsafeFunction` / napi env required.
@@ -450,14 +397,15 @@ impl Backend {
     }
 
     pub async fn dispatch(&self, cmd: &str, args: &str) -> std::result::Result<String, String> {
-        // Phase 4b: only native / persistence-store / mirror-backed-read channels
-        // reach here. Every project mutation, history op, project-summary read, and
+        // Only native / persistence-store / slice-injected-read channels reach
+        // here. Every project mutation, history op, project-summary read, and
         // project_open/save persistence op routes to the TS state actor (the sole
         // writer) in Electron main; their Rust fallback arms were deleted with the
         // actor. The kept set mirrors the router's 'rust' allowlist (PURE_NATIVE ∪
-        // PERSISTENCE ∪ MIRROR_BACKED_READS); the hybrid compute halves are
-        // dispatched via dedicated napi methods (probe_media / parse_subtitles /
-        // synthesize_speech_compute / …), not this match.
+        // PERSISTENCE ∪ SLICE_INJECTED_READS — the latter take their state slice as
+        // a call argument); the hybrid compute halves are dispatched via dedicated
+        // napi methods (probe_media / parse_subtitles / synthesize_speech_compute /
+        // …), not this match.
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
             // ---- prefs / settings / logs / agent ----
@@ -863,13 +811,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Durable guard: the mirror-backed read handlers must read from the
-    /// read-mirror (`snapshot_for_read`) and never the deleted Rust actor
-    /// (`.project()?.snapshot()`), and `ensure_full_proxy` must route its
-    /// derivative write through the `commit_media_derivatives` seam.
+    /// Durable guard for the stateless-compute boundary: the read/compute handlers
+    /// take their state slice at the call boundary (Phases 1–3) and the jobs path
+    /// bakes the real hash at enqueue (Phase 4), so no file reads a resident mirror
+    /// or the deleted Rust actor (`.project()?.snapshot()`). `ensure_full_proxy`
+    /// must route its derivative write through the `commit_media_derivatives` seam.
     /// A MECHANICAL source-scan — no Backend / tokio runtime.
     #[test]
-    fn mirror_backed_reads_use_the_mirror_not_an_actor() {
+    fn compute_paths_take_slices_not_the_mirror_or_stale_actor() {
         let root = env!("CARGO_MANIFEST_DIR");
         let media = std::fs::read_to_string(format!("{root}/src/commands/media.rs"))
             .expect("commands/media.rs must be readable");
@@ -894,7 +843,8 @@ mod tests {
             assert!(
                 !src.contains(".project()?.snapshot()"),
                 "{name}: stale-actor snapshot read `.project()?.snapshot()` is present — \
-                 the Rust actor was deleted; re-point to `snapshot_for_read()`"
+                 the Rust actor (and the read-mirror) were deleted; take the state \
+                 slice as a call argument instead"
             );
         }
 
@@ -932,9 +882,9 @@ mod tests {
         // Phase 4 (stateless-compute-service): the import / derivative-jobs path is
         // mirror-free — the hash-first import bakes the real content hash into the
         // enqueued MediaItem, so no job re-reads the mirror (fresh_media_item gone)
-        // and the workspace copy no longer migrates a pending alias. `read_mirror_handle`
-        // is deleted; only `set_project_mirror` + the two dead-code readers remain
-        // (deleted in Phase 5).
+        // and the workspace copy no longer migrates a pending alias. The read-mirror
+        // itself was deleted wholesale in Phase 5 (no read_mirror / set_project_mirror
+        // / snapshot_for_read / ReadMirror anywhere).
         for (name, src) in [
             ("commands/media.rs", &media),
             ("commands/export.rs", &export),
