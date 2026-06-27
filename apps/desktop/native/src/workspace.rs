@@ -9,9 +9,9 @@
 //! The slot is updated by `project_save_as` / `project_open` in commands/persistence.rs
 //! and read wherever a job or command needs the workspace root (cache
 //! layout, import copies, fs-scope grants). Media paths themselves don't
-//! route through here: `io::load_from_dir` reconciles `MediaItem.path_abs`
-//! from the workspace-relative `path_rel` at load time, so consumers read
-//! `path_abs` directly.
+//! route through here: the TS project loader (`persistence.ts`) reconciles
+//! `MediaItem.path_abs` from the workspace-relative `path_rel` at load time,
+//! so consumers read `path_abs` directly.
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};

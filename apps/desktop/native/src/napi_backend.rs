@@ -172,11 +172,10 @@ impl Backend {
 
     /// Re-point cache + workspace, end any in-flight agent session, and rotate
     /// the per-workspace LogBus — the pre-broadcast workspace bundle shared by
-    /// open / save-as / new-workspace. This is the verbatim head of
-    /// `commands::persistence` (cache.set_workspace → workspace.set →
+    /// open / save-as / new-workspace (cache.set_workspace → workspace.set →
     /// agent_session::end_and_emit → log_slot.install). The TS persistence
-    /// orchestrator (Phase 3c-ii-b) calls this BEFORE `replace_state` so any
-    /// `project:changed` consumer sees the new workspace first.
+    /// orchestrator calls this BEFORE `replace_state` so any `project:changed`
+    /// consumer sees the new workspace first.
     ///
     /// Async: `LogBus::spawn` starts background tasks via `tokio::spawn`, which
     /// needs napi's tokio runtime — a sync `#[napi]` runs on the JS thread with
@@ -195,15 +194,14 @@ impl Backend {
     }
 
     /// Re-fan-out background derivative jobs for a media list (open-time
-    /// regeneration of proxies / thumbnails / waveforms) — the TS-orchestrated
-    /// analogue of `commands::persistence::project_open`'s post-load enqueue loop
-    /// (persistence.rs:92-105). First invalidates stale-format proxies (the
-    /// `load_from_dir` `invalidate_stale_proxies` pass, io/mod.rs:151): a proxy
-    /// whose `proxy_format_version` predates the encoder's current version is
-    /// cleared (through the derivative write-back seam, so the authoritative
-    /// engine's pool drops it) and its cached file best-effort deleted, so the
-    /// enqueue below doesn't see a stale file as "ready". `media_items_json` is a
-    /// JSON array of serialized `MediaItem` (the TS actor's pool values).
+    /// regeneration of proxies / thumbnails / waveforms), orchestrated by the
+    /// TS host after it loads a project. First invalidates stale-format proxies:
+    /// a proxy whose `proxy_format_version` predates the encoder's current
+    /// version is cleared (through the derivative write-back seam, so the
+    /// authoritative engine's pool drops it) and its cached file best-effort
+    /// deleted, so the enqueue below doesn't see a stale file as "ready".
+    /// `media_items_json` is a JSON array of serialized `MediaItem` (the TS
+    /// actor's pool values).
     #[napi]
     #[cfg(feature = "jobs")]
     pub async fn enqueue_jobs_for_media(&self, media_items_json: String) -> napi::Result<()> {

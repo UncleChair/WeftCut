@@ -9,8 +9,8 @@
 //!      original or the workspace copy), and pushes a copy job to this
 //!      queue.
 //!   2. This worker pops the job, copies the original to
-//!      `<workspace>/Media/<filename>` (hash-prefix collision handling
-//!      shared in spirit with `io::migrate`), then calls
+//!      `<workspace>/Media/<filename>` (with hash-prefix collision
+//!      handling), then calls
 //!      `ProjectHandle::set_media_workspace_paths` to flip the MediaItem's
 //!      `path_abs` to the workspace copy and populate `path_rel`.
 //!   3. napi events surface progress to the UI:

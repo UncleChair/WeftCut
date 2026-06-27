@@ -15,9 +15,10 @@ use super::track::{Track, TrackRole};
 use super::transition::Transition;
 
 /// `.vproj` schema version. Bump on any breaking change to the on-disk
-/// `Project` shape. Pre-release: `io::load_from_dir` rejects anything below
-/// `SCHEMA_VERSION` with a clear error rather than migrating — older `.vproj`
-/// folders must be re-created. Per-version history lives in git / the ADRs.
+/// `Project` shape. Pre-release: the TS loader (`persistence.ts`) rejects
+/// anything below `SCHEMA_VERSION` with a clear error rather than migrating —
+/// older `.vproj` folders must be re-created. The Rust read-mirror only
+/// deserializes already-gated JSON. Per-version history lives in git / the ADRs.
 // Bumped for captions-as-Text-layers: pre-bump projects with Subtitles layers are unsupported (hard break).
 pub const SCHEMA_VERSION: u32 = 9;
 

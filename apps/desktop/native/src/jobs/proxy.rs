@@ -33,8 +33,9 @@ const PROXY_HEIGHT_CAP: u32 = 2160;
 pub const PROXY_GOP_FRAMES: u32 = 6;
 
 /// Bump whenever the proxy ffmpeg args change in a way that affects playback,
-/// scrub, or color: `io::load_from_dir` invalidates any proxy whose stored
-/// `proxy_format_version` is older, and the background job re-encodes it.
+/// scrub, or color: the open-time `Backend::enqueue_jobs_for_media` pass
+/// invalidates any proxy whose stored `proxy_format_version` is older, and the
+/// background job re-encodes it.
 ///
 /// Current format: export master, source-resolution H.264 capped at 2160p,
 /// High profile, `-bf 0` (PTS=DTS), short fixed GOP (`PROXY_GOP_FRAMES`), and
