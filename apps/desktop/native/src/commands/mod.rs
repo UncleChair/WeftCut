@@ -45,6 +45,8 @@ pub struct MediaItemArgs {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportAudioOnlyArgs {
+    /// Full project, injected by the TS host (sole state owner) — Phase 2.
+    pub project: crate::state::Project,
     pub output_path: String,
     pub audio: crate::export::AudioEncodeSpec,
     pub start_us: Option<i64>,
@@ -65,6 +67,8 @@ pub struct MuxExportArgs {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportConformArgs {
+    /// Full project, injected by the TS host (sole state owner) — Phase 2.
+    pub project: crate::state::Project,
     pub start_us: Option<i64>,
     pub end_us: Option<i64>,
 }

@@ -23,16 +23,16 @@ pub struct TranscodeSpec {
 
 /// Audio-only export → `output_path` (.m4a AAC / .mka Opus). The mix is Rust
 /// (sample-accurate over conform PCM); ffmpeg is the encode tail. Emits no
-/// events; the JS orchestrator drives the panel.
+/// events; the JS orchestrator drives the panel. The TS host passes the full
+/// project (Phase 2) — export is user-triggered and infrequent, so a one-shot
+/// full serialize is fine.
 pub async fn export_project_audio_only(
-    backend: &Backend,
+    project: crate::state::Project,
     output_path: String,
     audio: AudioEncodeSpec,
     start_us: Option<i64>,
     end_us: Option<i64>,
 ) -> Result<bool, String> {
-    let snap = backend.snapshot_for_read().await?;
-    let project = (*snap).clone();
     let path = PathBuf::from(output_path);
     let window = match (start_us, end_us) {
         (Some(s), Some(e)) => Some((s, e)),
@@ -97,20 +97,21 @@ pub async fn mux_export(
 
 /// Export-readiness audio gate: media ids of audible in-window audio layers
 /// whose conform cache is absent/invalid, each with a conform job kicked.
-/// Selection mirrors the mix plan exactly (mute/solo/lock/window).
+/// Selection mirrors the mix plan exactly (mute/solo/lock/window). The TS host
+/// passes the full project (Phase 2).
 pub async fn ensure_export_audio_conform(
     backend: &Backend,
+    project: crate::state::Project,
     start_us: Option<i64>,
     end_us: Option<i64>,
 ) -> Result<Vec<String>, String> {
-    let snap = backend.snapshot_for_read().await?;
     let window = match (start_us, end_us) {
         (Some(s), Some(e)) => Some((s, e)),
         _ => None,
     };
-    let waiting = crate::audio::mix::conform_waiting_media(&snap, window);
+    let waiting = crate::audio::mix::conform_waiting_media(&project, window);
     for id in &waiting {
-        let Some(item) = snap.media_pool.get(id).cloned() else {
+        let Some(item) = project.media_pool.get(id).cloned() else {
             continue;
         };
         crate::jobs::enqueue_conform(

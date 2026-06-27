@@ -490,7 +490,7 @@ impl Backend {
             #[cfg(feature = "export")]
             "export_project_audio_only" => {
                 let a: crate::commands::ExportAudioOnlyArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::export::export_project_audio_only(self, a.output_path, a.audio, a.start_us, a.end_us).await)
+                ser(crate::commands::export::export_project_audio_only(a.project, a.output_path, a.audio, a.start_us, a.end_us).await)
             }
             #[cfg(feature = "export")]
             "mux_export" => {
@@ -500,7 +500,7 @@ impl Backend {
             #[cfg(feature = "export")]
             "ensure_export_audio_conform" => {
                 let a: crate::commands::ExportConformArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::export::ensure_export_audio_conform(self, a.start_us, a.end_us).await)
+                ser(crate::commands::export::ensure_export_audio_conform(self, a.project, a.start_us, a.end_us).await)
             }
             #[cfg(feature = "export")]
             "export_video_sink_start" => {
@@ -587,15 +587,17 @@ mod tests {
     }
 
     /// Blank project has no audio layers, so the export-audio gate returns an
-    /// empty waiting list with no ffmpeg involvement — proves the arm is wired.
+    /// empty waiting list with no ffmpeg involvement — proves the arm reads the
+    /// project from the request (Phase 2), not the mirror.
     #[cfg(feature = "export")]
     #[tokio::test]
     async fn ensure_export_audio_conform_blank_is_empty() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
-        push_blank_mirror(&b);
+        let p = crate::state::Project::new_blank("test");
+        let args = serde_json::json!({ "project": p, "startUs": 0, "endUs": 1_000_000 }).to_string();
         let out = b
-            .dispatch("ensure_export_audio_conform", r#"{"startUs":0,"endUs":1000000}"#)
+            .dispatch("ensure_export_audio_conform", &args)
             .await
             .unwrap();
         assert_eq!(out, "[]", "blank project has no audio layers to conform");
@@ -825,13 +827,21 @@ mod tests {
             );
         }
 
-        // The export channels still read the mirror via `snapshot_for_read`
-        // (Phase 2 converts them). media.rs no longer does — Phase 1 moved its
-        // four read channels to take a `MediaItem` arg; see the per-fn check below.
+        // Phase 2 (stateless-compute-service): the export-audio channels no longer
+        // read the mirror — the TS host passes the full project in the request.
+        // (mcp/tools.rs gets the same treatment in Phase 2 Task 3; resources.rs
+        // still reads the mirror until Phase 3.)
         assert!(
-            export.contains("snapshot_for_read"),
-            "commands/export.rs: mirror-backed reads must call `snapshot_for_read`"
+            !export.contains("snapshot_for_read"),
+            "commands/export.rs: export channels must NOT read the mirror — they take a `project` arg (Phase 2)"
         );
+        for name in ["export_project_audio_only", "ensure_export_audio_conform"] {
+            let start = export.find(&format!("fn {name}"))
+                .unwrap_or_else(|| panic!("{name} must exist in commands/export.rs"));
+            let body = &export[start..(start + 600).min(export.len())];
+            assert!(!body.contains("snapshot_for_read"),
+                "{name}: must NOT read the mirror — it takes a `project` arg (Phase 2)");
+        }
 
         // Phase 1 (stateless-compute-service): the four single-media channels no
         // longer read the mirror — the TS host passes the resolved MediaItem.
