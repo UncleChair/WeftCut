@@ -22,7 +22,7 @@ import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition } from './mutations/transitions'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate,
-  applySetMediaDerivatives, applySetMediaWorkspacePaths, referencingLayers,
+  applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, referencingLayers,
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
@@ -283,6 +283,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media workspace paths', current())
   }
+  // ── set_media_hash — UNRECORDED. Hash-first import (stateless-compute Phase 4):
+  //    the standalone BLAKE3 pass sets the real source hash on the pool item
+  //    before derivatives enqueue. Durable across undo (a content fact, not an
+  //    edit). MediaNotFound first (no id); else patch + replace EVERYWHERE. ──
+  function setMediaHash(id: Uuid, hash: string): void {
+    const nextPool = applySetMediaHash(current().media_pool, id, hash) // throws MediaNotFound
+    history.replaceMediaPoolEverywhere(nextPool)
+    broadcastUnrecorded('Updated media hash', current())
+  }
   // ── remove_media (do_remove_media:3428) — HYBRID. MediaNotFound → MediaInUse
   //    (when referenced && !force) → unused path (validate probe BEFORE broadcast,
   //    durable, 1 broadcast id) | force-cascade (RAW inline layer removal +
@@ -446,6 +455,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'separate_audio': return { ok: true, value: commit('Separated audio', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
+        case 'set_media_hash': setMediaHash(a.media as Uuid, a.file_hash_blake3 as string); return { ok: true, value: null }
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }

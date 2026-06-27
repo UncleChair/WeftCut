@@ -15,6 +15,7 @@ function tsHostStub() {
     actor,
     compute: {
       probeMedia: vi.fn(async () => JSON.stringify(mediaItemTemplate(MID, 'Video', 4_000_000))),
+      hashMediaSource: vi.fn(async () => 'h'),
       parseSubtitles: vi.fn(), synthesizeSpeechCompute: vi.fn(),
     },
     enqueueDerivatives: vi.fn(async () => {}),

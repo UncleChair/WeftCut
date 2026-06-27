@@ -89,6 +89,16 @@ export function applySetMediaWorkspacePaths(pool: Record<string, MediaItem>, id:
     file_hash_blake3: paths.file_hash_blake3, file_size: paths.file_size, file_mtime: paths.file_mtime } }
 }
 
+/** Set ONLY the source content hash on a pool item — used by the hash-first
+ *  import (stateless-compute Phase 4): the standalone BLAKE3 pass result replaces
+ *  the provisional probe hash BEFORE any derivative job is enqueued. UNRECORDED,
+ *  no validation (mirrors the sibling setters). MediaNotFound if absent. */
+export function applySetMediaHash(pool: Record<string, MediaItem>, id: Uuid, hash: string): Record<string, MediaItem> {
+  const item = pool[id]
+  if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
+  return { ...pool, [id]: { ...item, file_hash_blake3: hash } }
+}
+
 /** do_remove_media (actor.rs:3439-3451) — layer ids referencing this media,
  *  scanned in track-then-layer order. VideoClip/Audio/ImageOverlay only. */
 export function referencingLayers(p: Project, id: Uuid): Uuid[] {

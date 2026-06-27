@@ -8,13 +8,19 @@
 // (router.ts `{kind:'hybrid'}`) and the MCP handler (server.ts) call via the
 // host's `hybridDeps`. One arm per hybrid tool; the rest land in later tasks.
 import type { ActorHandle } from './actor'
+import type { MediaItem } from './model'
 
 /** Rust compute facade — each method runs a native (no-actor-write) computation
  *  and returns a serialized result. Built in index.ts from the Backend napi; the
  *  later-task methods are wired as their hybrids land (Tasks 4-6). */
 export interface ComputeNapi {
-  /** Probe + hash a media file → serialized MediaItem JSON. (import_media) */
+  /** Probe a media file → serialized MediaItem JSON. Stat-only (instant
+   *  appearance); the item carries a PROVISIONAL hash. (import_media) */
   probeMedia(path: string): Promise<string>
+  /** Standalone BLAKE3 of a source file — the hash-first import's hash pass
+   *  (stateless-compute Phase 4). Run AFTER the stat-only probe + insert, BEFORE
+   *  derivative enqueue, so jobs bake the real cache key. (Backend.hashMediaSource) */
+  hashMediaSource(path: string): Promise<string>
   /** Parse a subtitle body → {cues, simplified, label} JSON. (apply_subtitles, Task 4) */
   parseSubtitles(body: string, format: string | null): Promise<string>
   /** synthesize_speech: TTS + cache + probe → {media_item, …} JSON. (Task 6) */
@@ -100,16 +106,29 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
         const label = path.replace(/\\/g, '/').split('/').pop() ?? null
         return (await applySubtitleBody(body, null, label, deps)).track_id
       }
-      const item = JSON.parse(await deps.compute.probeMedia(path)) as { id: string }
+      // Hash-first import (stateless-compute Phase 4). probeMedia is stat-only, so
+      // the item carries a PROVISIONAL hash; insert it first so the clip appears in
+      // the timeline immediately.
+      const item = JSON.parse(await deps.compute.probeMedia(path)) as MediaItem
       const r = deps.actor.dispatch('add_media_item', { media: item })
       if (!r.ok) throw new Error(JSON.stringify(r.error))
-      // Derivative jobs (proxy/conform/thumb/waveform) — content-addressed, so
-      // they read the original until the workspace copy completes.
-      await deps.enqueueDerivatives([item])
-      // Workspace copy: copies the source into <workspace>/Media, rehashes (the
-      // probe deferred the hash to "pending-{id}" when a workspace exists), and
-      // writes set_media_workspace_paths back via the media:workspace_paths seam
-      // (commit_media_workspace_paths). No-op napi if no workspace.
+      // Compute the REAL content hash (a lightweight standalone read pass), set it
+      // on the pool item, THEN enqueue derivatives — so every job bakes the final
+      // cache key and no derivative ever touches a pending alias (ADR 0007
+      // superseded). One extra full read of the source, accepted to start
+      // derivatives promptly instead of waiting for the workspace copy.
+      const hash = await deps.compute.hashMediaSource(path)
+      const hr = deps.actor.dispatch('set_media_hash', { media: item.id, file_hash_blake3: hash })
+      // Benign if the media was removed during hashing — nothing left to enqueue.
+      if (!hr.ok) return item.id
+      const hashedItem: MediaItem = { ...item, file_hash_blake3: hash }
+      // Derivative jobs read the SOURCE (hashedItem.path_abs is still the original);
+      // content-addressed by the real hash, so source vs the workspace copy is
+      // equivalent.
+      await deps.enqueueDerivatives([hashedItem])
+      // Workspace copy runs in PARALLEL: copies the source into <workspace>/Media,
+      // re-confirms the same hash, and flips path_abs via the media:workspace_paths
+      // seam. No-op napi when no workspace.
       if (deps.workspaceDir()) await deps.enqueueWorkspaceCopy(item.id, path)
       return item.id
     }

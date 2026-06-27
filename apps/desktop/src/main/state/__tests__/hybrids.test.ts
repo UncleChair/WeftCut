@@ -35,12 +35,14 @@ function twoCuePayload() {
 /** Build HybridDeps with a fake compute + spies; `workspaceDir` is overridable. */
 function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; fileContent?: string } = {}): HybridDeps & {
   _probeMedia: ReturnType<typeof vi.fn>
+  _hashMediaSource: ReturnType<typeof vi.fn>
   _parseSubtitles: ReturnType<typeof vi.fn>
   _enqueueDerivatives: ReturnType<typeof vi.fn>
   _enqueueWorkspaceCopy: ReturnType<typeof vi.fn>
   _readFile: ReturnType<typeof vi.fn>
 } {
   const probeMedia = vi.fn(async () => JSON.stringify(probedItem()))
+  const hashMediaSource = vi.fn(async () => 'realhash-deadbeef')
   const parseSubtitles = vi.fn(async () => twoCuePayload())
   const enqueueDerivatives = vi.fn(async () => {})
   const enqueueWorkspaceCopy = vi.fn(async () => {})
@@ -49,6 +51,7 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
     actor,
     compute: {
       probeMedia,
+      hashMediaSource,
       parseSubtitles,
       synthesizeSpeechCompute: vi.fn(async () => '{}'),
     },
@@ -60,6 +63,7 @@ function makeDeps(actor: ActorHandle, opts: { workspaceDir?: string | null; file
   }
   return Object.assign(deps, {
     _probeMedia: probeMedia,
+    _hashMediaSource: hashMediaSource,
     _parseSubtitles: parseSubtitles,
     _enqueueDerivatives: enqueueDerivatives,
     _enqueueWorkspaceCopy: enqueueWorkspaceCopy,
@@ -77,14 +81,37 @@ describe('runHybrid: import_media', () => {
     expect(actor.snapshot().media_pool[MID].kind).toBe('Video')
   })
 
-  it('kicks derivative jobs with the probed item', async () => {
+  it('kicks derivative jobs with the REAL-hash item (hash-first, not the provisional probe hash)', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor)
     await runHybrid('import_media', { path: 'C:/x.mp4' }, deps)
+    expect(deps._hashMediaSource).toHaveBeenCalledWith('C:/x.mp4')
     expect(deps._enqueueDerivatives).toHaveBeenCalledTimes(1)
     const arg = deps._enqueueDerivatives.mock.calls[0][0] as MediaItem[]
     expect(arg).toHaveLength(1)
     expect(arg[0].id).toBe(MID)
+    // The provisional probe hash ('0' from probedItem) must NEVER reach enqueue —
+    // derivatives bake the real content hash (ADR 0007 superseded).
+    expect(arg[0].file_hash_blake3).toBe('realhash-deadbeef')
+  })
+
+  it('sets the real content hash on the pool item before returning', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    await runHybrid('import_media', { path: 'C:/x.mp4' }, deps)
+    expect(actor.snapshot().media_pool[MID].file_hash_blake3).toBe('realhash-deadbeef')
+  })
+
+  it('inserts the item BEFORE hashing (instant appearance), then hashes, then enqueues', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    const order: string[] = []
+    deps._probeMedia.mockImplementation(async () => { order.push('probe'); return JSON.stringify(probedItem()) })
+    deps._hashMediaSource.mockImplementation(async () => { order.push('hash'); return 'realhash-deadbeef' })
+    deps._enqueueDerivatives.mockImplementation(async () => { order.push('enqueue') })
+    await runHybrid('import_media', { path: 'C:/x.mp4' }, deps)
+    // probe (stat-only) → hash pass → enqueue: the real hash is known before any job.
+    expect(order).toEqual(['probe', 'hash', 'enqueue'])
   })
 
   it('enqueues the workspace copy when a workspace exists', async () => {

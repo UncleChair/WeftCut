@@ -277,6 +277,7 @@ app.whenReady().then(async () => {
   // Rust probes/hashes/parses (no actor write); the TS host applies the write.
   const computeFacade = {
     probeMedia: (p: string) => backend!.probeMedia(p),
+    hashMediaSource: (p: string) => backend!.hashMediaSource(p),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
   }

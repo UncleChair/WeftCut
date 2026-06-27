@@ -10,7 +10,7 @@ function makeDeps(overrides: {
     send: () => {}, mcpNotify: () => {}, fileExists: () => false,
     fs: noopFs as any, join: (...p: string[]) => p.join('/'),
     napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: () => {} } as any,
-    compute: { probeMedia: async () => '{}', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
+    compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
     enqueueWorkspaceCopy: async () => {},
     readFile: () => '',
     workspaceDir: () => null as string | null,

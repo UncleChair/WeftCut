@@ -575,6 +575,12 @@ describe('media-pool mutations dispatch (Phase 3c-i)', () => {
     expect(a.dispatch('set_media_workspace_paths', { media: MID, paths: { path_abs: 'ws/c.bin', path_rel: 'media/c.bin', file_hash_blake3: 'abc', file_size: 9, file_mtime: 7 } }).ok).toBe(true)
     expect(a.snapshot().media_pool[MID].path_rel).toBe('media/c.bin')
   })
+  it('set_media_hash: replaces the pool item hash (unrecorded); MediaNotFound for absent id', () => {
+    const a = actorWithMedia()
+    expect(a.dispatch('set_media_hash', { media: MID, file_hash_blake3: 'realhash-abc' }).ok).toBe(true)
+    expect(a.snapshot().media_pool[MID].file_hash_blake3).toBe('realhash-abc')
+    expect(a.dispatch('set_media_hash', { media: '00000000-0000-0000-0000-0000000000ff', file_hash_blake3: 'x' }).ok).toBe(false)
+  })
   it('remove_media: MediaInUse when referenced and !force; lists the layer', () => {
     const a = actorWithMedia()
     const lid = (a.dispatch('add_layer', { track: a.snapshot().tracks[0].id, kind: 'video', media: MID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }) as { ok: true; value: unknown }).value as string
