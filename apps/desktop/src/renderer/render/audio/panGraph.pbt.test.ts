@@ -7,6 +7,7 @@
 import { describe, it } from 'vitest'
 import fc from 'fast-check'
 import { panCoeffsAt } from './panGraph'
+import { type Envelope } from './envelope'
 import { panCoeff } from '../../eval'
 
 const PBT_SEED = 0x5747_4354
@@ -29,9 +30,12 @@ describe('twin-PBT: panCoeffsAt matches the independent reference', () => {
       fc.array(fc.double({ min: -1, max: 1, noNaN: true }), { minLength: 1, maxLength: 8 }),
       fc.constantFrom(10_000, 20_000),
       fc.constantFrom(1, 2),
-      fc.integer({ min: -50_000, max: 200_000 }),
+      // Fractional query times (not integers): exercises lerp fractions near 0/1,
+      // where interpolation-direction drift would hide. pos = tUs/stepUs.
+      fc.double({ min: -50_000, max: 200_000, noNaN: true }),
       (values, stepUs, channels, tUs) => {
-        const got = panCoeffsAt({ values, stepUs } as any, channels, tUs)
+        const spanUs = stepUs * Math.max(values.length - 1, 0)
+        const got = panCoeffsAt({ values, stepUs, spanUs } as Envelope, channels, tUs)
         const exp = reference(values, stepUs, channels, tUs)
         for (let k = 0; k < 4; k++) if (Math.abs((got[k] ?? 0) - (exp[k] ?? 0)) > 1e-6) return false
         return true
