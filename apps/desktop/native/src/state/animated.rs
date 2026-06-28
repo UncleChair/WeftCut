@@ -625,6 +625,64 @@ mod tests {
         assert!(super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) < 0.5);
     }
 
+    /// Externally-anchored OkLab color golden. Expected mixed values were read back
+    /// from Chromium 149 `color-mix(in oklab)` (external authority). The SAME
+    /// fixture is asserted by TS in Task 4; a drift between the two sides indicates
+    /// a real math divergence, not a tolerance issue.
+    #[test]
+    fn golden_color_vectors_match_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Sample {
+            t_us: TimeUs,
+            expect: Rgba,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            track: Animated<Rgba>,
+            samples: Vec<Sample>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            default: Rgba,
+            cases: Vec<Case>,
+        }
+
+        let fixture: Fixture = serde_json::from_str(include_str!(
+            "../../../src/renderer/render/animatedColorGolden.fixture.json"
+        ))
+        .expect("color fixture parses as Animated<Rgba> wire shape");
+        assert!(!fixture.cases.is_empty());
+        for case in &fixture.cases {
+            for s in &case.samples {
+                let got = case.track.value_at(s.t_us, fixture.default);
+                // ±1 tolerance: golden is anchored to Chromium/V8 math while Rust
+                // uses `libm` (last-ULP rounding may differ by one count).
+                // native↔wasm exactness is covered separately in Task 4.
+                assert!(
+                    (got.r as i32 - s.expect.r as i32).abs() <= 1,
+                    "case `{}` t_us={}: r got={}, expect={}",
+                    case.name, s.t_us, got.r, s.expect.r
+                );
+                assert!(
+                    (got.g as i32 - s.expect.g as i32).abs() <= 1,
+                    "case `{}` t_us={}: g got={}, expect={}",
+                    case.name, s.t_us, got.g, s.expect.g
+                );
+                assert!(
+                    (got.b as i32 - s.expect.b as i32).abs() <= 1,
+                    "case `{}` t_us={}: b got={}, expect={}",
+                    case.name, s.t_us, got.b, s.expect.b
+                );
+                assert!(
+                    (got.a as i32 - s.expect.a as i32).abs() <= 1,
+                    "case `{}` t_us={}: a got={}, expect={}",
+                    case.name, s.t_us, got.a, s.expect.a
+                );
+            }
+        }
+    }
+
     /// Cross-language golden vectors. The SAME fixture is asserted by
     /// `render/animated.golden.test.ts` against the TS `resolveAnimated`;
     /// a change that passes one side and fails the other is an engine

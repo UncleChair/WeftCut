@@ -1,0 +1,86 @@
+{
+  "comment": "Golden vectors for Animated<Rgba>::value_at. Expected mixed-color values are anchored to Chromium 149 color-mix(in oklab) output (external authority). Rust native/src/state/animated.rs::golden_color_vectors_match_fixture and TS (Task 4) both assert this fixture. Edit only with a matching change on BOTH sides.",
+  "default": { "r": 0, "g": 0, "b": 0, "a": 255 },
+  "cases": [
+    {
+      "name": "static_color",
+      "track": { "mode": "Static", "value": { "r": 0, "g": 255, "b": 0, "a": 255 } },
+      "samples": [
+        { "t_us": 0,      "expect": { "r": 0, "g": 255, "b": 0, "a": 255 } },
+        { "t_us": 999999, "expect": { "r": 0, "g": 255, "b": 0, "a": 255 } }
+      ]
+    },
+    {
+      "name": "single_key",
+      "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": { "r": 0, "g": 0, "b": 255, "a": 255 }, "interp": { "kind": "Linear" } }
+      ]},
+      "samples": [
+        { "t_us": 500000, "expect": { "r": 0, "g": 0, "b": 255, "a": 255 } }
+      ]
+    },
+    {
+      "name": "clamp_before_and_after",
+      "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 5000000,  "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": { "r": 0, "g": 255, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } }
+      ]},
+      "samples": [
+        { "t_us": 0,        "expect": { "r": 255, "g": 0,   "b": 0, "a": 255 } },
+        { "t_us": 15000000, "expect": { "r": 0,   "g": 255, "b": 0, "a": 255 } }
+      ]
+    },
+    {
+      "name": "hold_left",
+      "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "interp": { "kind": "Hold" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 0, "g": 255, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } }
+      ]},
+      "samples": [
+        { "t_us": 500000, "expect": { "r": 255, "g": 0, "b": 0, "a": 255 } }
+      ]
+    },
+    {
+      "name": "red_to_green",
+      "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 255, "g": 0,   "b": 0, "a": 255 }, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 0,   "g": 255, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } }
+      ]},
+      "samples": [
+        { "t_us": 250000, "expect": { "r": 237, "g": 115, "b": 0, "a": 255 } },
+        { "t_us": 500000, "expect": { "r": 208, "g": 168, "b": 0, "a": 255 } },
+        { "t_us": 750000, "expect": { "r": 160, "g": 213, "b": 0, "a": 255 } }
+      ]
+    },
+    {
+      "name": "blue_to_yellow",
+      "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 0,   "g": 0,   "b": 255, "a": 255 }, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 255, "g": 255, "b": 0,   "a": 255 }, "interp": { "kind": "Linear" } }
+      ]},
+      "samples": [
+        { "t_us": 500000, "expect": { "r": 108, "g": 171, "b": 199, "a": 255 } }
+      ]
+    },
+    {
+      "name": "red_to_transparent",
+      "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 255, "g": 0, "b": 0, "a": 255 }, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 0,   "g": 0, "b": 0, "a": 0   }, "interp": { "kind": "Linear" } }
+      ]},
+      "samples": [
+        { "t_us": 500000, "expect": { "r": 255, "g": 0, "b": 0, "a": 128 } }
+      ]
+    },
+    {
+      "name": "gray_to_white",
+      "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0,       "value": { "r": 128, "g": 128, "b": 128, "a": 255 }, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 1000000, "value": { "r": 255, "g": 255, "b": 255, "a": 255 }, "interp": { "kind": "Linear" } }
+      ]},
+      "samples": [
+        { "t_us": 500000, "expect": { "r": 189, "g": 189, "b": 189, "a": 255 } }
+      ]
+    }
+  ]
+}
