@@ -48,8 +48,13 @@ What remains:
   `update_layer_param_tracks` actor command exists but no UI rides it yet.
   Add marquee box-select and cross-property/cross-layer multi-drag (one undo
   via that batch surface).
-- **`Animated<Rgba>` + a color stopwatch** — needs a Rust `value_at` twin for
-  `Rgba` first (the dual-engine mirror rule forbids a TS-only interpolator).
+- **A color stopwatch + MCP color keyframing.** `Animated<Rgba>` now
+  interpolates end-to-end — OkLab + premultiplied alpha in the shared
+  `weftcut-eval` engine (a native `value_at` twin plus a wasm packed-i32 preview
+  shim, locked by a Chromium `color-mix(in oklab)` golden), wired through
+  `resolveView` so keyframed text and color-fill color render in preview and
+  export. What remains is the authoring surface: a color stopwatch in the
+  inspector and the MCP color-keyframe tools.
 
 See [`data-model.md`](data-model.md).
 
@@ -70,8 +75,9 @@ rows on every visual kind). See
   `effectRegistry.ts` entry, classified `f16-verified` or
   `precision-reduced` by the GL-parity gate.
 - **Non-scalar params** — a `ParamValue` sum type (color / bool / enum);
-  v1 is scalar-only. Animated color params additionally need
-  `Animated<Rgba>` (its Rust `value_at` twin first).
+  v1 is scalar-only. Animated color params can now reuse the `Animated<Rgba>`
+  interpolation engine (OkLab, shared `weftcut-eval`); what's missing is the
+  `ParamValue` lowering through the effect-param surface.
 - **Preview-effects LOD toggle UI** — the inspector effect editor (chain
   list / filter picker / per-param keyframable rows) ships; what remains is a
   UI control for the `preview_effects_enabled` toggle (still AppSetting /

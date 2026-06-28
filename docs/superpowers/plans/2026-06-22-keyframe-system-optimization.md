@@ -40,21 +40,22 @@ The geometry is sound and worth preserving as-is:
   `KeyframeCurveGraph.test.tsx` ("commits a tangent-handle drag as a single
   deferred onSetInterp"). _Shipped 2026-06-22._
 
+- **P1 — the generic is real: `Interpolate` trait + `Animated<Rgba>` (OkLab).**
+  Folded the locked scalar evaluator into a generic `eval<T: Interpolate>` in
+  `weftcut-eval` (`eval_f64` is now a thin wrapper; the existing scalar golden
+  passes byte-unchanged), keeping `Animated<T>` generic + type-safe (no
+  `ParamValue` enum, no hand-copied evaluators). Added `Rgba8: Interpolate` —
+  OkLab interpolation with premultiplied alpha, `libm`-only so native and wasm
+  agree bit-for-bit (color is a transient eval space; storage stays sRGB u8,
+  ADR 0021 untouched). The wasm preview crosses the scalars-only ABI via a
+  packed-i32 color shim; the renderer's `resolveView` now interpolates keyframed
+  text + color-fill color in both preview and export. A color golden fixture
+  anchored to Chromium's `color-mix(in oklab)` locks the native `value_at` and the
+  wasm path (byte-identical). Engine only — the authoring color stopwatch + MCP
+  color tools, and `Vec2`/spatial motion paths (P5), stay open. Commits
+  `f8c1cc42..86db1655`. _Shipped 2026-06-28._
+
 ## Backlog (prioritized)
-
-### P1 — Make the generic real: `Interpolate` trait + `Animated<Rgba>`
-
-**Designed — see
-[`2026-06-28-animated-generic-interpolate.md`](./2026-06-28-animated-generic-interpolate.md).**
-Resolved shape: an `Interpolate` two-endpoint-lerp trait + generic
-`eval<T: Interpolate>` *folded* into the locked scalar engine (golden fixture is
-the safety net); `Animated<T>` stays generic + type-safe (no `ParamValue` enum,
-no hand-copied evaluators). Color interpolates in **OkLab + premultiplied alpha**
-(transient eval math; storage stays sRGB u8, ADR 0021 untouched). wasm crosses
-the scalar-only boundary via a **packed-i32** color shim; `Vec2` rides the scalar
-path. Scope is **engine only** (no authoring UI / MCP this round). Spatial motion
-paths stay a separate layer above the trait (P5); no schema change now (spatial
-tangents = documented commitment + P5-owned migration).
 
 ### P2 — Extrapolation modes (loop / cycle / ping-pong / continue)
 
