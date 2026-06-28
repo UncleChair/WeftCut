@@ -1,0 +1,17 @@
+{
+  "coeff_cases": [
+    { "name": "stereo center",      "pan": 0.0,  "channels": 2, "expect": [1.0, 0.0, 0.0, 1.0] },
+    { "name": "stereo hard left",   "pan": -1.0, "channels": 2, "expect": [1.0, 1.0, 0.0, 0.0] },
+    { "name": "stereo hard right",  "pan": 1.0,  "channels": 2, "expect": [0.0, 0.0, 1.0, 1.0] },
+    { "name": "stereo pan -0.8",    "pan": -0.8, "channels": 2, "expect": [1.0, 0.95105654, 0.0, 0.309017] },
+    { "name": "stereo pan 0.5",     "pan": 0.5,  "channels": 2, "expect": [0.70710677, 0.0, 0.70710677, 1.0] },
+    { "name": "mono center",        "pan": 0.0,  "channels": 1, "expect": [0.70710677, 0.0, 0.70710677, 0.0] },
+    { "name": "mono hard left",     "pan": -1.0, "channels": 1, "expect": [1.0, 0.0, 0.0, 0.0] },
+    { "name": "clamp below -1",     "pan": -5.0, "channels": 2, "expect": [1.0, 1.0, 0.0, 0.0] }
+  ],
+  "apply_cases": [
+    { "name": "stereo center identity", "pan": 0.0,  "channels": 2, "in": [0.3, 0.7], "expect": [0.3, 0.7] },
+    { "name": "stereo hard left fold",  "pan": -1.0, "channels": 2, "in": [0.3, 0.7], "expect": [1.0, 0.0] },
+    { "name": "mono center split",      "pan": 0.0,  "channels": 1, "in": [1.0, 0.0], "expect": [0.70710677, 0.70710677] }
+  ]
+}

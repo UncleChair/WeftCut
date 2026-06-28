@@ -372,6 +372,40 @@ mod tests {
         assert_eq!(pan_coeffs(-5.0, 2), pan_coeffs(-1.0, 2));
     }
 
+    /// Cross-language golden for the pan law. The SAME fixture is asserted by
+    /// `render/audio/panLaw.golden.test.ts` against the wasm `pan_coeff` shim; a
+    /// value passing one side and failing the other is pan-law drift. Also the
+    /// native↔wasm `libm::cos/sin` determinism proof.
+    #[test]
+    fn pan_law_golden_matches_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Coeff { name: String, pan: f64, channels: i32, expect: [f32; 4] }
+        #[derive(serde::Deserialize)]
+        struct Apply { name: String, pan: f64, channels: i32, r#in: [f32; 2], expect: [f32; 2] }
+        #[derive(serde::Deserialize)]
+        struct Fixture { coeff_cases: Vec<Coeff>, apply_cases: Vec<Apply> }
+
+        let f: Fixture = serde_json::from_str(include_str!(
+            "../../../src/renderer/render/audio/panLawGolden.fixture.json"
+        )).expect("pan law fixture parses");
+        for c in &f.coeff_cases {
+            let got = pan_coeffs(c.pan, c.channels);
+            for i in 0..4 {
+                assert!((got[i] - c.expect[i]).abs() < 1e-5,
+                    "coeff `{}` idx {i}: got {}, expect {}", c.name, got[i], c.expect[i]);
+            }
+        }
+        for a in &f.apply_cases {
+            let [ka, kb, kc, kd] = pan_coeffs(a.pan, a.channels);
+            let (l, r) = (a.r#in[0], a.r#in[1]);
+            let out = [ka * l + kb * r, kc * l + kd * r];
+            for i in 0..2 {
+                assert!((out[i] - a.expect[i]).abs() < 1e-5,
+                    "apply `{}` ch {i}: got {}, expect {}", a.name, out[i], a.expect[i]);
+            }
+        }
+    }
+
     // ---- audio: db_to_linear + role gate ----
     #[test]
     fn db_to_linear_unity_double_and_tenth() {
