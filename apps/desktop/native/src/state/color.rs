@@ -23,6 +23,19 @@ impl Rgba {
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
     }
+
+    /// Convert to the eval leaf's POD color type for keyframe interpolation.
+    /// The leaf holds the OkLab/premultiplied-alpha math (and is the wasm-shared
+    /// crate); `Rgba` stays the serde/schemars storage type. Plain methods, not
+    /// `From`, to avoid the orphan rule (the leaf type is foreign here).
+    pub fn to_eval(self) -> weftcut_eval::Rgba8 {
+        weftcut_eval::Rgba8 { r: self.r, g: self.g, b: self.b, a: self.a }
+    }
+
+    /// Inverse of `to_eval` — rewrap an interpolated leaf color as storage `Rgba`.
+    pub fn from_eval(c: weftcut_eval::Rgba8) -> Self {
+        Self { r: c.r, g: c.g, b: c.b, a: c.a }
+    }
 }
 
 impl Default for Rgba {

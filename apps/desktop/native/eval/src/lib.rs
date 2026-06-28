@@ -155,6 +155,145 @@ impl Interpolate for f64 {
     fn lerp(a: f64, b: f64, u: f64) -> f64 { a + (b - a) * u }
 }
 
+// ===========================================================================
+// Color (`Rgba8`) interpolation in OkLab + premultiplied alpha.
+//
+// This is a LEAF-LOCAL color type ON PURPOSE: the wasm preview build (the only
+// std-free shipped artifact) compiles this crate as a cdylib and does NOT depend
+// on the napi crate, so `eval::<Rgba8>` can only monomorphize in wasm if the
+// color type, its `Interpolate` impl, AND the OkLab math all live here. The napi
+// `Rgba` storage/wire type stays in `native/src/state/color.rs` and converts to
+// this via `Rgba::to_eval` / `Rgba::from_eval` (a plain method pair, not `From`,
+// to dodge the orphan rule). Keep this type dependency-light — NO serde, NO
+// schemars.
+//
+// All math is f64 and uses `libm::pow` / `libm::cbrt` (NEVER `f64::powf` /
+// `f64::cbrt` — std is unavailable in the no_std wasm build AND would break
+// native↔wasm bit-identity, same rule as `db_to_linear`). `x^3` is `x*x*x`.
+// OkLab matrices are Björn Ottosson's reference; the premultiplied lerp follows
+// CSS Color 4 §12.3.
+// ===========================================================================
+
+/// 8-bit-per-channel sRGB color, the value type for color keyframes. Plain POD
+/// (`Copy`), no serde/schemars — the napi `Rgba` is the storage/wire type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rgba8 {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+/// u8 channel → f64 in [0,1].
+#[inline]
+fn u8_to_f(c: u8) -> f64 {
+    c as f64 / 255.0
+}
+
+/// f64 → u8: round half-up, clamp. Pure arithmetic so it is deterministic
+/// across native + wasm (no `f64::round`, which is std-only).
+#[inline]
+fn f_to_u8(c: f64) -> u8 {
+    (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+#[inline]
+fn srgb_to_linear(c: f64) -> f64 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        libm::pow((c + 0.055) / 1.055, 2.4)
+    }
+}
+
+#[inline]
+fn linear_to_srgb(c: f64) -> f64 {
+    if c <= 0.0031308 {
+        12.92 * c
+    } else {
+        1.055 * libm::pow(c, 1.0 / 2.4) - 0.055
+    }
+}
+
+/// linear sRGB → OkLab (Björn Ottosson reference matrices).
+fn linear_to_oklab(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    let m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+    let s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+    let l_ = libm::cbrt(l);
+    let m_ = libm::cbrt(m);
+    let s_ = libm::cbrt(s);
+    (
+        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    )
+}
+
+/// OkLab → linear sRGB (inverse of `linear_to_oklab`; `x^3` is `x*x*x`).
+fn oklab_to_linear(ll: f64, aa: f64, bb: f64) -> (f64, f64, f64) {
+    let l_ = ll + 0.3963377774 * aa + 0.2158037573 * bb;
+    let m_ = ll - 0.1055613458 * aa - 0.0638541728 * bb;
+    let s_ = ll - 0.0894841775 * aa - 1.2914855480 * bb;
+    let l = l_ * l_ * l_;
+    let m = m_ * m_ * m_;
+    let s = s_ * s_ * s_;
+    (
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    )
+}
+
+impl Interpolate for Rgba8 {
+    /// Premultiplied-alpha OkLab interpolation (CSS Color 4 §12.3): convert each
+    /// endpoint sRGB→linear→OkLab, premultiply (L,a,b) by that endpoint's alpha,
+    /// lerp the premultiplied components and alpha straight, un-premultiply by the
+    /// result alpha, then OkLab→linear→sRGB. Premultiplication is why a fade to
+    /// transparent keeps its hue instead of darkening toward black. `u==0.0`
+    /// returns `a` and `u==1.0` returns `b` exactly (the scalar lerp gives this).
+    fn lerp(a: Rgba8, b: Rgba8, u: f64) -> Rgba8 {
+        // Endpoint → (L,a,b) in OkLab + alpha in [0,1].
+        let to_lab = |c: Rgba8| -> (f64, f64, f64, f64) {
+            let (lr, lg, lb) = (
+                srgb_to_linear(u8_to_f(c.r)),
+                srgb_to_linear(u8_to_f(c.g)),
+                srgb_to_linear(u8_to_f(c.b)),
+            );
+            let (ll, aa, bb) = linear_to_oklab(lr, lg, lb);
+            (ll, aa, bb, u8_to_f(c.a))
+        };
+        let (al, aa, ab, aalpha) = to_lab(a);
+        let (bl, ba, bb, balpha) = to_lab(b);
+
+        // Premultiply (L,a,b) by alpha.
+        let (apl, apa, apb) = (al * aalpha, aa * aalpha, ab * aalpha);
+        let (bpl, bpa, bpb) = (bl * balpha, ba * balpha, bb * balpha);
+
+        // Scalar lerp the premultiplied components + alpha.
+        let lerp = |x: f64, y: f64| x + (y - x) * u;
+        let pl = lerp(apl, bpl);
+        let pa = lerp(apa, bpa);
+        let pb = lerp(apb, bpb);
+        let ar = lerp(aalpha, balpha);
+
+        // Un-premultiply by the result alpha (zero alpha → zero color).
+        let (ll, oa, ob) = if ar > 0.0 {
+            (pl / ar, pa / ar, pb / ar)
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+
+        let (lr, lg, lb) = oklab_to_linear(ll, oa, ob);
+        Rgba8 {
+            r: f_to_u8(linear_to_srgb(lr)),
+            g: f_to_u8(linear_to_srgb(lg)),
+            b: f_to_u8(linear_to_srgb(lb)),
+            a: f_to_u8(ar),
+        }
+    }
+}
+
 /// POD keyframe — the input to `eval_f64`. The actor's imbl-backed
 /// `Keyframe<T>` collects into a `&[Kf]` before evaluating (`eval_kfs`).
 /// `Copy` so the wasm shim can stage a fixed-size `[Kf; N]` buffer.
@@ -547,6 +686,73 @@ mod tests {
         ];
         let expected = unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
         assert!((eval_f64(&kfs, 5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
+
+    // ---- color: Rgba8 OkLab + premultiplied-alpha lerp ----
+    // Structural / endpoint / gamma-sanity only; exact OkLab golden values are
+    // Task 3.
+
+    #[test]
+    fn rgba8_lerp_endpoints_return_inputs() {
+        let pairs = [
+            (
+                Rgba8 { r: 255, g: 0, b: 0, a: 255 },
+                Rgba8 { r: 0, g: 255, b: 0, a: 255 },
+            ),
+            (
+                Rgba8 { r: 12, g: 34, b: 56, a: 200 },
+                Rgba8 { r: 200, g: 100, b: 50, a: 80 },
+            ),
+        ];
+        for (a, b) in pairs {
+            assert_eq!(Rgba8::lerp(a, b, 0.0), a, "u=0 must return a exactly");
+            assert_eq!(Rgba8::lerp(a, b, 1.0), b, "u=1 must return b exactly");
+        }
+    }
+
+    #[test]
+    fn rgba8_lerp_red_to_green_midpoint_is_brighter_than_naive() {
+        // OkLab (perceptual) interpolation of opaque red → green keeps luminance
+        // up: both channels exceed the naive sRGB midpoint of 127/128. (A naive
+        // per-channel sRGB lerp would yield r≈g≈127.)
+        let red = Rgba8 { r: 255, g: 0, b: 0, a: 255 };
+        let green = Rgba8 { r: 0, g: 255, b: 0, a: 255 };
+        let mid = Rgba8::lerp(red, green, 0.5);
+        assert!(mid.r > 128, "r={} should exceed naive sRGB midpoint", mid.r);
+        assert!(mid.g > 128, "g={} should exceed naive sRGB midpoint", mid.g);
+        assert_eq!(mid.a, 255, "opaque endpoints stay opaque");
+    }
+
+    #[test]
+    fn rgba8_lerp_fade_to_transparent_keeps_hue() {
+        // Premultiplied alpha: opaque red → transparent black at the midpoint
+        // stays clearly red (no black-halo darkening), with alpha ~128.
+        let red = Rgba8 { r: 255, g: 0, b: 0, a: 255 };
+        let clear = Rgba8 { r: 0, g: 0, b: 0, a: 0 };
+        let mid = Rgba8::lerp(red, clear, 0.5);
+        assert!(
+            mid.r > 100 && mid.g < 40 && mid.b < 40,
+            "expected red-dominant hue, got {mid:?}"
+        );
+        assert!(
+            (mid.a as i32 - 128).abs() <= 1,
+            "alpha should be ~128, got {}",
+            mid.a
+        );
+    }
+
+    #[test]
+    fn rgba8_lerp_equal_alpha_gray_midpoint_is_between() {
+        // Equal opaque alpha reduces to a plain OkLab lerp; the gray midpoint
+        // sits between the two endpoints and stays neutral (r≈g≈b).
+        let dark = Rgba8 { r: 64, g: 64, b: 64, a: 255 };
+        let light = Rgba8 { r: 192, g: 192, b: 192, a: 255 };
+        let mid = Rgba8::lerp(dark, light, 0.5);
+        assert!(mid.r > 64 && mid.r < 192, "r={} between endpoints", mid.r);
+        let max = mid.r.max(mid.g).max(mid.b);
+        let min = mid.r.min(mid.g).min(mid.b);
+        assert!(max - min <= 1, "gray stays neutral, got {mid:?}");
+        assert_eq!(mid.a, 255);
     }
 
     // 30 fps = (30, 1); 29.97 fps = (30_000, 1001).

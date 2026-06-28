@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::color::Rgba;
 use super::ids::KeyframeId;
 use super::time::TimeUs;
 
@@ -252,6 +253,44 @@ impl Animated<f64> {
     }
 }
 
+impl Animated<Rgba> {
+    /// Materialize the keyframes as POD `weftcut_eval::Kf<Rgba8>` for slice
+    /// evaluation (empty for `Static`). Parallels `Animated<f64>::eval_kfs`;
+    /// each `Rgba` value crosses to the leaf via `Rgba::to_eval`.
+    pub fn eval_kfs(&self) -> Vec<weftcut_eval::Kf<weftcut_eval::Rgba8>> {
+        match self {
+            Animated::Static(_) => Vec::new(),
+            Animated::Keyframed(kfs) => kfs
+                .iter()
+                .map(|k| weftcut_eval::Kf {
+                    t_us: k.t_us,
+                    value: k.value.to_eval(),
+                    interp: k.interp,
+                })
+                .collect(),
+        }
+    }
+
+    /// Resolve the color at owner-local `t_us`. `Static(v)` → `v`; otherwise
+    /// delegates to the shared generic `weftcut_eval::eval::<Rgba8>` over a
+    /// `Kf<Rgba8>` slice, which interpolates in OkLab + premultiplied alpha (see
+    /// `Rgba8::lerp`). Same empty/single/clamp/segment/interp semantics as
+    /// `Animated<f64>::value_at`.
+    pub fn value_at(&self, t_us: TimeUs, default: Rgba) -> Rgba {
+        match self {
+            Animated::Static(v) => *v,
+            Animated::Keyframed(_) => {
+                let out = weftcut_eval::eval::<weftcut_eval::Rgba8>(
+                    &self.eval_kfs(),
+                    t_us,
+                    default.to_eval(),
+                );
+                Rgba::from_eval(out)
+            }
+        }
+    }
+}
+
 impl<T: Clone + Default> Default for Animated<T> {
     fn default() -> Self {
         Self::Static(T::default())
@@ -369,6 +408,48 @@ mod tests {
     fn value_at_empty_keyframed_returns_default() {
         let a: Animated<f64> = Animated::Keyframed(imbl::Vector::new());
         assert!((a.value_at(0, 4.2) - 4.2).abs() < 1e-9);
+    }
+
+    // ---- Animated<Rgba>::value_at structural shape (exact OkLab values = Task 3) ----
+
+    fn color_kf(t_us: TimeUs, value: Rgba, interp: Interpolation) -> Keyframe<Rgba> {
+        Keyframe { id: new_id(), t_us, value, interp }
+    }
+
+    #[test]
+    fn color_value_at_static_returns_value() {
+        let a: Animated<Rgba> = Animated::Static(Rgba::rgb(10, 20, 30));
+        assert_eq!(a.value_at(0, Rgba::BLACK), Rgba::rgb(10, 20, 30));
+        assert_eq!(a.value_at(999_999, Rgba::BLACK), Rgba::rgb(10, 20, 30));
+    }
+
+    #[test]
+    fn color_value_at_empty_keyframed_returns_default() {
+        let a: Animated<Rgba> = Animated::Keyframed(imbl::Vector::new());
+        assert_eq!(a.value_at(0, Rgba::WHITE), Rgba::WHITE);
+    }
+
+    #[test]
+    fn color_value_at_clamps_to_endpoints() {
+        let red = Rgba::rgb(255, 0, 0);
+        let green = Rgba::rgb(0, 255, 0);
+        let a: Animated<Rgba> = Animated::Keyframed(
+            vec![
+                color_kf(5_000_000, red, Interpolation::Linear),
+                color_kf(10_000_000, green, Interpolation::Linear),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        // Endpoint clamp must be exact (delegates to the same eval clamp).
+        assert_eq!(a.value_at(0, Rgba::BLACK), red);
+        assert_eq!(a.value_at(15_000_000, Rgba::BLACK), green);
+        // Midpoint just has to land strictly between (perceptual blend); exact
+        // values are pinned in Task 3.
+        let mid = a.value_at(7_500_000, Rgba::BLACK);
+        assert!(mid.r > 0 && mid.r < 255, "r={} interpolated", mid.r);
+        assert!(mid.g > 0 && mid.g < 255, "g={} interpolated", mid.g);
+        assert_eq!(mid.a, 255);
     }
 
     #[test]
