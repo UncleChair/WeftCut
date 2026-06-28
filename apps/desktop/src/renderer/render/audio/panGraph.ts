@@ -6,7 +6,7 @@
 // law. Coefficient curves are sampled on the 10 ms grid and lerped by
 // setValueCurveAtTime (the X parity contract; twin of mix.rs::pan_coeffs_at).
 import { panCoeff } from "../../eval";
-import { type Envelope, evalEnvelope } from "./envelope";
+import { type Envelope } from "./envelope";
 
 export interface PanGraph {
   input: AudioNode;
@@ -56,8 +56,10 @@ export function panCurves(
   const coeffIdx = channels <= 1 ? [0, 2] : [0, 1, 2, 3];
   for (let i = 0; i < n; i++) {
     const t = localStartUs + ((localEndUs - localStartUs) * i) / (n - 1);
-    const pan = evalEnvelope(env, t);
-    for (let s = 0; s < slots; s++) curves[s]![i] = panCoeff(pan, channels, coeffIdx[s]!);
+    // X parity: lerp the COEFFICIENTS (panCoeffsAt) — NOT the pan value then
+    // cos/sin — so the preview curve matches export's per-sample pan_coeffs_at.
+    const coeffs = panCoeffsAt(env, channels, t);
+    for (let s = 0; s < slots; s++) curves[s]![i] = coeffs[coeffIdx[s]!]!;
   }
   return curves;
 }
