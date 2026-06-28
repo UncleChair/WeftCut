@@ -301,9 +301,58 @@ pub fn role_gain_linear(gain_db: f64) -> f32 {
     db_to_linear(gain_db)
 }
 
+/// Equal-power pan law as a 2×2 mix matrix `[a, b, c, d]`, applied as
+/// `out_l = a·l + b·r`, `out_r = c·l + d·r`. Branch-matched to Chromium's
+/// `StereoPannerNode` (`third_party/blink/.../stereo_panner.cc`), the node the
+/// renderer used to delegate to. `channels <= 1` (mono) routes the single input
+/// through the `l` slot: `[cos, 0, sin, 0]`. `libm` trig in f64→f32 so native +
+/// wasm agree bit-for-bit (see `db_to_linear`). Shared by the export mixer
+/// (`audio/mix.rs`) and the renderer's preview matrix mixer (`render/audio/
+/// panGraph.ts`, via the wasm `pan_coeff` shim).
+///
+/// mono:          x=(pan+1)/2; a=cos(xπ/2), c=sin(xπ/2), b=d=0
+/// stereo pan≤0:  x=pan+1;     a=1, b=cos(xπ/2), c=0, d=sin(xπ/2)
+/// stereo pan>0:  x=pan;       a=cos(xπ/2), b=0, c=sin(xπ/2), d=1
+pub fn pan_coeffs(pan: f64, channels: i32) -> [f32; 4] {
+    let p = pan.clamp(-1.0, 1.0);
+    let fp2 = core::f64::consts::FRAC_PI_2;
+    // Cast f64→f32 and clamp any rounding residue at the trig-exact zeros
+    // (libm::cos(π/2) ≈ 6.12e-17 in f64; as f32 that is non-zero, breaking the
+    // exact-boundary assertions and diverging from the StereoPannerNode spec).
+    let zf = |v: f32| if v.abs() < 1e-7 { 0.0 } else { v };
+    let cs = |x: f64| (zf(libm::cos(x * fp2) as f32), zf(libm::sin(x * fp2) as f32));
+    if channels <= 1 {
+        let (c, s) = cs((p + 1.0) / 2.0);
+        [c, 0.0, s, 0.0]
+    } else if p <= 0.0 {
+        let (c, s) = cs(p + 1.0);
+        [1.0, c, 0.0, s]
+    } else {
+        let (c, s) = cs(p);
+        [c, 0.0, s, 1.0]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- audio: equal-power pan law ----
+    #[test]
+    fn pan_coeffs_branches() {
+        // stereo center (pan<=0 branch, x=1): cos(pi/2)=0, sin(pi/2)=1 -> identity
+        assert_eq!(pan_coeffs(0.0, 2), [1.0, 0.0, 0.0, 1.0]);
+        // stereo hard-left (x=0): cos(0)=1, sin(0)=0 -> L=l+r, R=0
+        assert_eq!(pan_coeffs(-1.0, 2), [1.0, 1.0, 0.0, 0.0]);
+        // stereo hard-right (pan>0, x=1): L=0, R=l+r
+        assert_eq!(pan_coeffs(1.0, 2), [0.0, 0.0, 1.0, 1.0]);
+        // mono center (x=0.5): cos(pi/4)=sin(pi/4)=0.70710677
+        let m = pan_coeffs(0.0, 1);
+        assert!((m[0] - 0.70710677).abs() < 1e-6 && m[1] == 0.0);
+        assert!((m[2] - 0.70710677).abs() < 1e-6 && m[3] == 0.0);
+        // clamp out-of-range
+        assert_eq!(pan_coeffs(-5.0, 2), pan_coeffs(-1.0, 2));
+    }
 
     // ---- audio: db_to_linear + role gate ----
     #[test]

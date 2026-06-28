@@ -8,8 +8,9 @@
 //! `static mut` track buffer needs no synchronization. `Rational` is NOT here —
 //! the snap fn takes `(num, den)` primitives (it stays in the napi crate).
 use crate::{
-    db_to_linear as db_to_linear_impl, eval_f64, role_audible as role_audible_impl,
-    snap_frame_floor, snap_frame_round, us_to_frame as us_to_frame_impl, Interpolation, Kf,
+    db_to_linear as db_to_linear_impl, eval_f64, pan_coeffs as pan_coeffs_impl,
+    role_audible as role_audible_impl, snap_frame_floor, snap_frame_round,
+    us_to_frame as us_to_frame_impl, Interpolation, Kf,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -119,6 +120,15 @@ pub extern "C" fn db_to_linear(db: f64) -> f32 {
 #[no_mangle]
 pub extern "C" fn role_audible(muted: i32, solo: i32, any_solo: i32) -> i32 {
     role_audible_impl(muted != 0, solo != 0, any_solo != 0) as i32
+}
+
+/// `pan_coeffs(pan, channels)[idx]` — equal-power pan law, one coefficient per
+/// call (scalar ABI; the renderer reads idx 0..3 to build the matrix curves).
+#[no_mangle]
+pub extern "C" fn pan_coeff(pan: f64, channels: i32, idx: i32) -> f32 {
+    let c = pan_coeffs_impl(pan, channels);
+    let i = (idx as usize).min(3);
+    c[i]
 }
 
 /// Liveness probe for the loader.
