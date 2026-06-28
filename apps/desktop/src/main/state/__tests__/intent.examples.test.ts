@@ -37,13 +37,19 @@ describe('timeline mutation intent', () => {
   // ── (b) Mined from: add-color-on-A.json + ADR 0005 ────────────────────────
   it('autofits unpinned composition duration to the last layer end (ADR 0005)', () => {
     const a = freshActor()
-    a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 2_500_000 })
+    const firstAdd = a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 2_500_000 })
+    expect(firstAdd.ok).toBe(true)
     const snap = wireSnapshot(a)
     // Duration must equal the layer end, and must NOT be pinned.
     expect(snap.composition.duration_us).toBe(2_500_000)
     expect(snap.composition.duration_pinned).toBe(false)
     // Adding a shorter layer does NOT shrink duration (high-water mark).
-    a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    // It goes on B-roll: a same-track [0,1s] add on A-roll would overlap the
+    // existing [0,2.5s] layer and be rejected by the linear-NLE rule, leaving
+    // the duration unchanged for the WRONG reason (vacuous). On B-roll the
+    // short layer is genuinely present, so the 2.5s high-water mark is exercised.
+    const shortAdd = a.dispatch('add_layer', { track: bRollId(a), kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(shortAdd.ok).toBe(true)
     expect(wireSnapshot(a).composition.duration_us).toBe(2_500_000)
   })
 
@@ -73,8 +79,11 @@ describe('timeline mutation intent', () => {
     // Record position before the move.
     const beforeMove = wireSnapshot(a).tracks.flatMap((tr) => tr.layers).find((l) => l.id === lid)
     expect(beforeMove?.t_start_us).toBe(0)
-    // Move the layer to a different position.
-    a.dispatch('move_layer', { layer: lid, to_track: t, t_start_us: 5_000_000 })
+    // Move the layer to a different position. Assert success — a silently
+    // rejected move would leave t_start at 0 and make the post-undo "restored
+    // to 0" assertion vacuously pass.
+    const moveResult = a.dispatch('move_layer', { layer: lid, to_track: t, t_start_us: 5_000_000 })
+    expect(moveResult.ok).toBe(true)
     expect(wireSnapshot(a).tracks.flatMap((tr) => tr.layers).find((l) => l.id === lid)?.t_start_us).toBe(5_000_000)
     // Undo must restore exactly.
     const undoResult = a.dispatch('undo', {})
