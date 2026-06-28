@@ -27,6 +27,7 @@ target/
 
 # Editor / IDE
 .claude/
+.agents/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.recommended.json
