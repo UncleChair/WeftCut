@@ -5,8 +5,8 @@
 //
 // Node chain per layer:
 //   AudioBufferSourceNode (chunk) → GainNode (envelope automation)
-//     → StereoPannerNode (pan) → GainNode (trim: micro-fades, re-anchor
-//       masking) → AudioGraph.input
+//     → PanGraph (matrix: ChannelSplitter → 4×GainNode → ChannelMerger)
+//       → GainNode (trim: micro-fades, re-anchor masking) → AudioGraph.input
 //
 // The gain/pan envelopes are the sampled-envelope contract
 // (`envelope.ts` ↔ Rust `audio::envelope`): identical control points,
@@ -27,6 +27,7 @@ import {
   sampleGain,
   samplePan,
 } from "./envelope";
+import { buildPanGraph, constantPanGains, panCurves, type PanGraph } from "./panGraph";
 import { ConformSource } from "./conformSource";
 import {
   type ClockAnchor,
@@ -53,8 +54,9 @@ export class AudioMixer {
 
   private readonly graph: AudioGraph;
   private readonly gainNode: GainNode;
-  private readonly panner: StereoPannerNode;
   private readonly trim: GainNode;
+  private panGraph: PanGraph | null = null;
+  private panChannels = 0;
 
   private source: ConformSource | null = null;
   private sourcePending = false;
@@ -93,10 +95,8 @@ export class AudioMixer {
 
     const ctx = graph.ctx;
     this.gainNode = ctx.createGain();
-    this.panner = ctx.createStereoPanner();
     this.trim = ctx.createGain();
-    this.gainNode.connect(this.panner);
-    this.panner.connect(this.trim);
+    this.gainNode.connect(this.trim);
     this.trim.connect(graph.input);
 
     this.gainEnv = { stepUs: 10_000, spanUs: 0, values: [1] };
@@ -111,6 +111,8 @@ export class AudioMixer {
     this.sourcePending = true;
     try {
       this.source = await ConformSource.open(url);
+      this.installPanGraph(this.source.header.channels);
+      this.deriveFromView();
     } catch (e) {
       console.warn(
         `[weftcut/audio] conform open failed for layer ${this.layerId}:`,
@@ -119,6 +121,24 @@ export class AudioMixer {
     } finally {
       this.sourcePending = false;
     }
+  }
+
+  /// Splice the pan matrix graph between gainNode and trim, sized to the
+  /// conform channel count. Idempotent for a given channel count.
+  private installPanGraph(channels: number): void {
+    if (this.panGraph && this.panChannels === channels) return;
+    const ctx = this.graph.ctx;
+    try {
+      this.gainNode.disconnect();
+    } catch {
+      // not yet connected — fine
+    }
+    this.panGraph?.input.disconnect();
+    this.panGraph?.gains.forEach((g) => g.disconnect());
+    this.panGraph = buildPanGraph(ctx, channels);
+    this.panChannels = channels;
+    this.gainNode.connect(this.panGraph.input);
+    this.panGraph.output.connect(this.trim);
   }
 
   private deriveFromView(): void {
@@ -143,8 +163,9 @@ export class AudioMixer {
     if (this.gainEnv.values.length === 1) {
       this.gainNode.gain.value = this.gainEnv.values[0]!;
     }
-    if (this.panEnv.values.length === 1) {
-      this.panner.pan.value = this.panEnv.values[0]!;
+    if (this.panEnv.values.length === 1 && this.panGraph) {
+      const g = constantPanGains(this.panEnv, this.panChannels);
+      this.panGraph.gains.forEach((node, i) => (node.gain.value = g[i] ?? 0));
     }
   }
 
@@ -350,9 +371,18 @@ export class AudioMixer {
       if (gainCurve) {
         this.gainNode.gain.setValueCurveAtTime(gainCurve, when, curveDurationS);
       }
-      const panCurve = cut(this.panEnv);
-      if (panCurve) {
-        this.panner.pan.setValueCurveAtTime(panCurve, when, curveDurationS);
+      if (this.panGraph && this.panEnv.values.length > 1) {
+        const curves = panCurves(
+          this.panEnv,
+          this.panChannels,
+          localStartUs,
+          localEndUs,
+        );
+        curves.forEach((curve, i) => {
+          if (curve) {
+            this.panGraph!.gains[i]!.gain.setValueCurveAtTime(curve, when, curveDurationS);
+          }
+        });
       }
     } catch (e) {
       // Overlap rejection here means a scheduling bug upstream — surface
@@ -399,7 +429,7 @@ export class AudioMixer {
     this.liveChunks.clear();
     try {
       this.gainNode.gain.cancelScheduledValues(0);
-      this.panner.pan.cancelScheduledValues(0);
+      this.panGraph?.gains.forEach((g) => g.gain.cancelScheduledValues(0));
     } catch {
       // ignored
     }
@@ -407,8 +437,9 @@ export class AudioMixer {
     if (this.gainEnv.values.length === 1) {
       this.gainNode.gain.value = this.gainEnv.values[0]!;
     }
-    if (this.panEnv.values.length === 1) {
-      this.panner.pan.value = this.panEnv.values[0]!;
+    if (this.panEnv.values.length === 1 && this.panGraph) {
+      const g = constantPanGains(this.panEnv, this.panChannels);
+      this.panGraph.gains.forEach((node, i) => (node.gain.value = g[i] ?? 0));
     }
   }
 
@@ -416,7 +447,9 @@ export class AudioMixer {
     this.teardown(false);
     try {
       this.gainNode.disconnect();
-      this.panner.disconnect();
+      this.panGraph?.input.disconnect();
+      this.panGraph?.gains.forEach((g) => g.disconnect());
+      this.panGraph?.output.disconnect();
       this.trim.disconnect();
     } catch {
       // ignored
