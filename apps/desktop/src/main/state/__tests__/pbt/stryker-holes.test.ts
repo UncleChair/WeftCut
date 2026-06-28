@@ -123,38 +123,45 @@ describe('validate: srcOut vs media duration allows null duration', () => {
   })
 })
 
-// ── validate.ts: prevVisual / prevAudio tracking (longest-reaching) ──────────
-// Mutants: >= replaced with > / < — wrong max-end tracking lets a later layer
-// escape the overlap check against a long clip that started earlier.
-describe('validate: prevVisual longest-reaching clip tracking', () => {
-  it('catches overlap with a long clip even when a shorter one precedes the later layer', () => {
-    // Layout: long [0, 2000) and short [0, 500) both start at 0.
-    // Sorted by t_start = [long, short] (or [short, long] — same t_start, stable?).
-    // After long, prev = long. Then short. Then late [400, 1200) starts < long.t_end_us.
-    // If prevVisual doesn't track the longest-reaching, it would use short.t_end=500
-    // and would NOT detect the overlap of late at 400. With correct tracking it uses
-    // long.t_end=2000 and detects the overlap.
+// ── validate.ts: stacked unauthorized overlaps on one lane ───────────────────
+// This asserts a REAL property: a track with multiple unauthorized same-lane
+// overlaps is rejected. It does NOT exercise the prevVisual "longest-reaching"
+// branch (validate.ts:96-97 `prevVisual.t_end_us >= layer.t_end_us`): because
+// `long` and `short` both start at 0 they already overlap, so the validator
+// throws on the long-vs-short pair before `late` is ever reached. The
+// longest-reaching `>=`→`>`/`<` mutants therefore SURVIVE and are treated as
+// effectively equivalent/hard: under the linear-NLE rule any unauthorized
+// same-lane overlap throws on first contact, and an *authorized* overlap (the
+// only way two clips coexist) requires `duration < both layer lengths`, which
+// is impossible for two clips sharing a t_start — so no clean fixture forces the
+// traversal through the longest-reaching path. See task-8-report.md.
+describe('validate: stacked unauthorized overlaps on one lane', () => {
+  it('rejects a track with multiple unauthorized same-lane overlaps', () => {
     const p = mkProject()
     p.tracks[0].layers = [
       colorLayer('long', 0, 2_000_000),
       colorLayer('short', 0, 500_000),   // same start, ends earlier
-      colorLayer('late', 400_000, 1_200_000), // overlaps long but starts after short ends
+      colorLayer('late', 400_000, 1_200_000),
     ]
     p.composition.duration_us = 2_000_000
-    // All three are visual; short and late are unauthorized overlaps with long.
     expect(() => validate(p)).toThrow(ValidationFailure)
   })
 })
 
-// ── validate.ts: pairKey ordering ────────────────────────────────────────────
-// Mutants: a < b → a <= b / a >= b — wrong ordering means key('x','y') ≠ key('y','x').
-// We need a test where both orderings of a pair are produced.
-describe('validate: pairKey symmetry (authorized overlap lookup)', () => {
-  it('looks up the authorized overlap regardless of from/to ID ordering', () => {
+// ── validate.ts: pairKey lookup (authorized overlap) ─────────────────────────
+// Asserts a REAL property: an authorized transition overlap is accepted when the
+// stored key and the per-track lookup key agree. NOTE: this does NOT kill the
+// pairKey ordering mutants (`a < b` → `a <= b` / `a >= b`, validate.ts:12). Those
+// are EQUIVALENT here — pairKey is used symmetrically (the same comparator builds
+// both the stored key and the lookup key), so flipping the comparator flips both
+// sides identically and the keys still match. The empty-string template mutant
+// (`${a}|${b}` → '') IS killed separately by the "non-empty canonical key" test
+// below. See task-8-report.md.
+describe('validate: pairKey lookup (authorized overlap)', () => {
+  it('accepts an authorized overlap regardless of from/to ID ordering', () => {
     // Use IDs where 'id-b' < 'id-a' lexicographically, so the authorized pair
-    // is stored as 'id-b|id-a' but the overlap check queries 'id-a' + 'id-b'.
-    // With a <= b mutant the key('id-a','id-b') would be 'id-a|id-b' but the
-    // authorized key is 'id-b|id-a', causing a mismatch and a false-positive error.
+    // is stored from the (from,to) order but the per-track check sees (prev,layer)
+    // in t_start order. Both go through the same pairKey, so they agree.
     const p = mkProject()
     // Ensure 'id-b' < 'id-a' lexicographically.
     const fromId = 'id-b-from'
@@ -593,17 +600,19 @@ describe('validate: ImageOverlay missing media', () => {
   })
 })
 
-// ── validate.ts: validateTrack sort + overlap check with out-of-order layers ─
-// Mutants on sort: layers are sorted before checking; if sort is dropped,
-// out-of-order layers may escape the overlap check.
-describe('validate: validateTrack sorts layers before overlap check', () => {
-  it('detects overlap between layers even if they are stored out of t_start order', () => {
+// ── validate.ts: overlap detection is storage-order-independent ──────────────
+// Asserts a REAL property: an unauthorized overlap is caught no matter what order
+// the layers are stored in. NOTE: this does NOT kill the sort-removal mutant
+// (validate.ts:78 `[...track.layers].sort(...)` → no-op). With this 2-layer
+// geometry (l1=[0,800k), l2=[600k,1.4M)) the validator catches the overlap with
+// or without the sort — whichever layer is processed first, the second is seen to
+// start inside the first's range. The sort-removal mutant is therefore treated as
+// equivalent for the overlap check (it would only matter for a >2-layer ordering
+// that the linear-NLE rule rejects anyway). See task-8-report.md.
+describe('validate: overlap detection is storage-order-independent', () => {
+  it('detects an unauthorized overlap regardless of layer storage order', () => {
     const p = mkProject()
-    // Store layers in reverse order: l2 first, then l1.
-    // l1=[0,800) l2=[600,1400) → 200µs overlap. If sort is dropped, the check
-    // processes l2 (prev=l2) then l1 (l1.start=0 < l2.end=1400) → same result.
-    // But with stable UUIDs the pairKey lookup matches regardless.
-    // Key: the test proves that unsorted storage still gets caught.
+    // Store layers in reverse t_start order: l2 first, then l1.
     p.tracks[0].layers = [
       colorLayer('l2', 600_000, 1_400_000),
       colorLayer('l1', 0, 800_000),
