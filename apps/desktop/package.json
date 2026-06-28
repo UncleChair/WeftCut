@@ -3,7 +3,10 @@
   "version": "0.0.0",
   "description": "WeftCut video editor desktop app",
   "homepage": "https://github.com/UncleChair/WeftCut",
-  "author": { "name": "UncleChair", "email": "voidgun1998@gmail.com" },
+  "author": {
+    "name": "UncleChair",
+    "email": "voidgun1998@gmail.com"
+  },
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -60,6 +63,7 @@
     "electron": "42.4.1",
     "electron-builder": "26.15.3",
     "electron-vite": "6.0.0-beta.1",
+    "fast-check": "^4.8.0",
     "jsdom": "^25.0.1",
     "pngjs": "^7.0.0",
     "typescript": "^6.0.3",
