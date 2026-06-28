@@ -333,6 +333,24 @@ pub fn pan_coeffs(pan: f64, channels: i32) -> [f32; 4] {
     }
 }
 
+/// Fade multiplier at layer-local `t_us`: linear 0→1 over `fade_in_us` from the
+/// layer start, 1→0 over `fade_out_us` into the layer end, multiplied where they
+/// overlap. Zero-length fades are identity. Shared by the export mixer and the
+/// renderer's gain sampler (wasm `fade_mul`).
+pub fn fade_multiplier(t_us: i64, span_us: i64, fade_in_us: i64, fade_out_us: i64) -> f64 {
+    let mut m = 1.0f64;
+    if fade_in_us > 0 && t_us < fade_in_us {
+        m *= (t_us.max(0) as f64) / fade_in_us as f64;
+    }
+    if fade_out_us > 0 {
+        let from_end = span_us - t_us;
+        if from_end < fade_out_us {
+            m *= (from_end.max(0) as f64) / fade_out_us as f64;
+        }
+    }
+    m
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,6 +393,20 @@ mod tests {
         assert!(any_role_solo([false, true, false]));
         assert!(!any_role_solo([false, false]));
         assert!(!any_role_solo(core::iter::empty::<bool>()));
+    }
+
+    // ---- audio: fade ramp ----
+    #[test]
+    fn fade_multiplier_ramps() {
+        // no fades -> identity
+        assert_eq!(fade_multiplier(500_000, 1_000_000, 0, 0), 1.0);
+        // 1 s fade-in over a 10 s span
+        assert!((fade_multiplier(0, 10_000_000, 1_000_000, 0) - 0.0).abs() < 1e-9);
+        assert!((fade_multiplier(500_000, 10_000_000, 1_000_000, 0) - 0.5).abs() < 1e-9);
+        assert!((fade_multiplier(1_000_000, 10_000_000, 1_000_000, 0) - 1.0).abs() < 1e-9);
+        // 1 s fade-out ramps to 0 at the end
+        assert!((fade_multiplier(9_500_000, 10_000_000, 0, 1_000_000) - 0.5).abs() < 1e-9);
+        assert!((fade_multiplier(10_000_000, 10_000_000, 0, 1_000_000) - 0.0).abs() < 1e-9);
     }
 
     // ---- audio sample-frame conversion (us_to_frame) ----

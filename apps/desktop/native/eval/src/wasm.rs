@@ -8,9 +8,9 @@
 //! `static mut` track buffer needs no synchronization. `Rational` is NOT here —
 //! the snap fn takes `(num, den)` primitives (it stays in the napi crate).
 use crate::{
-    db_to_linear as db_to_linear_impl, eval_f64, pan_coeffs as pan_coeffs_impl,
-    role_audible as role_audible_impl, snap_frame_floor, snap_frame_round,
-    us_to_frame as us_to_frame_impl, Interpolation, Kf,
+    db_to_linear as db_to_linear_impl, eval_f64, fade_multiplier as fade_multiplier_impl,
+    pan_coeffs as pan_coeffs_impl, role_audible as role_audible_impl, snap_frame_floor,
+    snap_frame_round, us_to_frame as us_to_frame_impl, Interpolation, Kf,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -129,6 +129,13 @@ pub extern "C" fn pan_coeff(pan: f64, channels: i32, idx: i32) -> f32 {
     let c = pan_coeffs_impl(pan, channels);
     let i = (idx as usize).min(3);
     c[i]
+}
+
+/// `fade_multiplier(t_us, span_us, fade_in_us, fade_out_us)` — fade ramp. Times
+/// as f64 µs (frame/grid-aligned integers, lossless `as i64`).
+#[no_mangle]
+pub extern "C" fn fade_mul(t_us: f64, span_us: f64, fade_in_us: f64, fade_out_us: f64) -> f64 {
+    fade_multiplier_impl(t_us as i64, span_us as i64, fade_in_us as i64, fade_out_us as i64)
 }
 
 /// Liveness probe for the loader.
