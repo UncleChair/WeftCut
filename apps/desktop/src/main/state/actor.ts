@@ -109,6 +109,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // produce: a throw inside the recipe aborts and discards the draft (Rust:
     // the clone is dropped on error → authoritative state untouched).
     const next = produce(current(), (draft) => { value = recipe(draft) })
+    // No-op guard: if the recipe left the draft unmodified, immer returns the
+    // original object by reference. Recording an identical snapshot would waste
+    // a history slot and an op_id, and would fool the undo-unwind property's
+    // state-change detector (two entries with the same state look like "bottom").
+    // Mirrors the intent of applyTrimLayer's requestedDelta===0 early return.
+    if (next === current()) return value
     runValidate(next)
     const opId = idGen() // AFTER validate — failed validate consumes no op_id
     const ts = clock()
