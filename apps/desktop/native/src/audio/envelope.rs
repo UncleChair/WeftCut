@@ -171,6 +171,68 @@ pub fn pan_coeffs_at(pan: &Envelope, channels: i32, t_us: i64) -> [f32; 4] {
     ]
 }
 
+/// Property-based twin test: pins `pan_coeffs_at` to the same spec as the TS
+/// twin `panCoeffsAt` (render/audio/panGraph.ts). The reference is derived
+/// independently — it must NOT call `pan_coeffs_at` itself.
+#[cfg(test)]
+mod pbt {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    proptest! {
+        #[test]
+        fn pan_coeffs_at_matches_reference(
+            values in proptest::collection::vec(-1.0f64..=1.0, 1usize..8),
+            step_us in select(vec![10_000i64, 20_000]),
+            channels in select(vec![1i32, 2]),
+            t_us in -50_000i64..200_000,
+        ) {
+            // Build an Envelope directly from the generated grid — same shape
+            // that sample_pan produces (values already clamped f64→f32).
+            let env = Envelope {
+                step_us,
+                span_us: (values.len() as i64 - 1) * step_us,
+                values: values.iter().map(|&v| v as f32).collect(),
+            };
+
+            let got = pan_coeffs_at(&env, channels, t_us);
+
+            // --- Independent reference (mirrors Task 9 TS reference exactly) ---
+            // coeff(p) = pan_coeffs(p, channels) → [f32; 4]
+            let coeff = |p: f64| weftcut_eval::pan_coeffs(p, channels);
+            let last = values.len() - 1;
+            let exp: [f32; 4] = if last == 0 {
+                coeff(values[0])
+            } else {
+                let pos = (t_us.max(0) as f64) / step_us as f64;
+                let i = (pos.floor() as usize).min(last);
+                if i >= last {
+                    coeff(values[last])
+                } else {
+                    let frac = (pos - i as f64) as f32;
+                    let a = coeff(values[i]);
+                    let b = coeff(values[i + 1]);
+                    [
+                        a[0] + (b[0] - a[0]) * frac,
+                        a[1] + (b[1] - a[1]) * frac,
+                        a[2] + (b[2] - a[2]) * frac,
+                        a[3] + (b[3] - a[3]) * frac,
+                    ]
+                }
+            };
+
+            for k in 0..4 {
+                prop_assert!(
+                    (got[k] - exp[k]).abs() < 1e-6,
+                    "k={} got={} exp={} (t_us={} step_us={} channels={} values={:?})",
+                    k, got[k], exp[k], t_us, step_us, channels, values
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
