@@ -6,7 +6,7 @@
 // keep those in step; the golden (audioEnvelopeGolden.fixture.json) guards them.
 
 import { type AnimTrack, resolveAnimated } from "../animated";
-import { dbToLinear } from "../../eval";
+import { dbToLinear, fadeMul } from "../../eval";
 
 export const ENVELOPE_STEP_US = 10_000;
 
@@ -23,22 +23,16 @@ export interface Envelope {
 // contract keep a single source.
 export { dbToLinear };
 
-/// Fade multiplier at layer-local `tUs`: linear 0→1 over fadeIn from the
-/// layer start, 1→0 over fadeOut into the layer end, multiplied when they
-/// overlap. Zero-length fades are identity. Mirrors `fade_multiplier`.
+/// Fade multiplier at layer-local `tUs` — now the leaf `fade_mul` (wasm), the
+/// single source shared with `audio/mix.rs`. Kept as a named export so callers
+/// and docs/audio.md's envelope contract keep one entry point.
 export function fadeMultiplier(
   tUs: number,
   spanUs: number,
   fadeInUs: number,
   fadeOutUs: number,
 ): number {
-  let m = 1;
-  if (fadeInUs > 0 && tUs < fadeInUs) m *= Math.max(0, tUs) / fadeInUs;
-  if (fadeOutUs > 0) {
-    const fromEnd = spanUs - tUs;
-    if (fromEnd < fadeOutUs) m *= Math.max(0, fromEnd) / fadeOutUs;
-  }
-  return m;
+  return fadeMul(tUs, spanUs, fadeInUs, fadeOutUs);
 }
 
 function isAnimated(track: AnimTrack<number>): boolean {
