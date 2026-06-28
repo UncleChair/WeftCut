@@ -1,8 +1,7 @@
 // Color layer — a flat rectangle of `(width, height)` at the
 // composition origin, filled with the layer's `Rgba`. The IPC ships the
-// full `Animated<Rgba>` track; the Compositor resolves it statically
-// (`resolveColorView`) until the Rust `Animated<Rgba>::value_at` twin
-// exists to mirror per-frame color interpolation.
+// full `Animated<Rgba>` track; the Compositor resolves it per-frame via
+// `resolveColorView` (OkLab interpolation through the wasm eval twin).
 //
 // See docs/render.md (color layers).
 

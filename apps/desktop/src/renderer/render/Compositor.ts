@@ -803,7 +803,7 @@ export class Compositor {
         } else if (kind === "Color") {
           const color = this.ensureColor(layer);
           if (!color) continue;
-          this.updateColor(color, layer, z++);
+          this.updateColor(color, layer, z++, tInLayerUs);
           this.stageVisual(color.sprite, color.effects, layer, tInLayerUs, effectOpts);
         } else if (kind === "Text") {
           const text = this.ensureText(layer);
@@ -1702,9 +1702,9 @@ export class Compositor {
     return color;
   }
 
-  private updateColor(color: ActiveColor, layer: LayerSummary, z: number): void {
+  private updateColor(color: ActiveColor, layer: LayerSummary, z: number, tInLayerUs: number): void {
     if (layer.params.kind !== "Color") return;
-    color.sprite.update(resolveColorView(layer.params));
+    color.sprite.update(resolveColorView(layer.params, tInLayerUs));
     color.sprite.graphics.zIndex = z;
   }
 

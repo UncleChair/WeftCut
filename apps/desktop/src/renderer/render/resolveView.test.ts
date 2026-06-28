@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AnimTrack, Rgba, TextView, VideoClipView } from "../ipc";
-import { resolveTextView, resolveVideoClipView } from "./resolveView";
+import type { AnimTrack, ColorView, Rgba, TextView, VideoClipView } from "../ipc";
+import { resolveColorView, resolveTextView, resolveVideoClipView } from "./resolveView";
 
 const stat = (v: number): AnimTrack<number> => ({ mode: "Static", value: v });
 const ramp: AnimTrack<number> = {
@@ -31,7 +31,7 @@ describe("resolveView", () => {
     expect(resolveVideoClipView(raw, 500_000).x).toBeCloseTo(0.5, 9);
     expect(resolveVideoClipView(raw, 500_000).opacity).toBeCloseTo(0.5, 9);
   });
-  it("text color resolves statically until the Rgba engine twin exists", () => {
+  it("text color Static track resolves to its value (resolveAnimatedColor short-circuit)", () => {
     const raw: TextView = {
       content: "hi", font_family: "Arial", font_size_px: 16,
       weight: 400, italic: false, align: "Left",
@@ -41,6 +41,29 @@ describe("resolveView", () => {
       outline: null, shadow: null,
     };
     expect(resolveTextView(raw, 0).color).toEqual(white);
+  });
+  it("keyframed color-fill interpolates via OkLab wasm (not first-keyframe only)", () => {
+    const red: Rgba = { r: 255, g: 0, b: 0, a: 255 };
+    const green: Rgba = { r: 0, g: 255, b: 0, a: 255 };
+    const colorTrack: AnimTrack<Rgba> = {
+      mode: "Keyframed",
+      value: [
+        { id: "k0", t_us: 0, value: red, interp: { kind: "Linear" } },
+        { id: "k1", t_us: 1_000_000, value: green, interp: { kind: "Linear" } },
+      ],
+    };
+    const v: ColorView = { color: colorTrack, width: 1920, height: 1080 };
+    const resolved = resolveColorView(v, 500_000);
+    // OkLab midpoint red→green: anchored Task-3 value {208,168,0,255}, ±1 per channel.
+    // Crucially, it must NOT be the first keyframe red {255,0,0,255}.
+    expect(resolved.color.r).not.toBe(255);
+    expect(resolved.color.r).toBeGreaterThanOrEqual(207);
+    expect(resolved.color.r).toBeLessThanOrEqual(209);
+    expect(resolved.color.g).toBeGreaterThanOrEqual(167);
+    expect(resolved.color.g).toBeLessThanOrEqual(169);
+    expect(resolved.color.b).toBeGreaterThanOrEqual(0);
+    expect(resolved.color.b).toBeLessThanOrEqual(1);
+    expect(resolved.color.a).toBe(255);
   });
   it("passes weight/italic/align/anchor/outline/shadow through", () => {
     const v = resolveTextView(

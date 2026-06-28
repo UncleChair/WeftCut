@@ -4,10 +4,6 @@
 // resolution point — preview and the export Worker share it, so
 // keyframed properties hold preview==export by construction.
 //
-// Rgba tracks resolve via trackStatic: Rust has no Animated<Rgba>::value_at
-// yet, and the engine-pair rule (state/animated.rs <-> render/animated.ts)
-// forbids a TS-only interpolator. Wire the Rust twin first, then upgrade.
-//
 // Fallback constants mirror the Rust view builder's per-property defaults
 // when a track is absent (x/y -> 0, scale -> 1, opacity -> 1, gain/pan -> 0,
 // text WHITE, color BLACK).
@@ -20,8 +16,7 @@ import type {
   TextView,
   VideoClipView,
 } from "../ipc";
-import { trackStatic } from "../ipc";
-import { resolveAnimated } from "./animated";
+import { resolveAnimated, resolveAnimatedColor } from "./animated";
 
 export interface ResolvedVideoClipView
   extends Omit<VideoClipView, "x" | "y" | "scale_x" | "scale_y" | "opacity"> {
@@ -92,15 +87,15 @@ export function resolveImageOverlayView(
 export function resolveTextView(v: TextView, tInLayerUs: number): ResolvedTextView {
   return {
     ...v,
-    color: trackStatic(v.color, WHITE),
+    color: resolveAnimatedColor(v.color, tInLayerUs, WHITE),
     x: resolveAnimated(v.x, tInLayerUs, 0),
     y: resolveAnimated(v.y, tInLayerUs, 0),
     opacity: resolveAnimated(v.opacity, tInLayerUs, 1),
   };
 }
 
-export function resolveColorView(v: ColorView): ResolvedColorView {
-  return { ...v, color: trackStatic(v.color, BLACK) };
+export function resolveColorView(v: ColorView, tInLayerUs: number): ResolvedColorView {
+  return { ...v, color: resolveAnimatedColor(v.color, tInLayerUs, BLACK) };
 }
 
 export function resolveAudioView(v: AudioView, tInLayerUs: number): ResolvedAudioView {
