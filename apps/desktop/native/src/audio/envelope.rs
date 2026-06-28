@@ -171,37 +171,6 @@ pub fn pan_coeffs_at(pan: &Envelope, channels: i32, t_us: i64) -> [f32; 4] {
     ]
 }
 
-/// Web Audio StereoPannerNode equal-power pan law. Verified branch-for-branch
-/// against Chromium's implementation (the engine Electron actually runs):
-/// third_party/blink/renderer/platform/audio/stereo_panner.cc — mono
-/// pan_radian=(pan·0.5+0.5)·π/2; stereo pan≤0 pan_radian=(pan+1)·π/2 with
-/// out_l = l + r·gain_l; stereo pan>0 pan_radian=pan·π/2 with
-/// out_r = r + l·gain_r. Returns the (L, R) output frame.
-///
-/// mono:   x = (pan+1)/2;  L = in·cos(xπ/2),       R = in·sin(xπ/2)
-/// stereo, pan≤0: x = pan+1; L = l + r·cos(xπ/2),  R = r·sin(xπ/2)
-/// stereo, pan>0: x = pan;   L = l·cos(xπ/2),      R = r + l·sin(xπ/2)
-pub fn pan_frame(pan: f32, ch: &[f32]) -> (f32, f32) {
-    use std::f32::consts::FRAC_PI_2;
-    let p = pan.clamp(-1.0, 1.0);
-    match ch.len() {
-        1 => {
-            let x = (p + 1.0) / 2.0;
-            (ch[0] * (x * FRAC_PI_2).cos(), ch[0] * (x * FRAC_PI_2).sin())
-        }
-        _ => {
-            let (l, r) = (ch[0], ch[1]);
-            if p <= 0.0 {
-                let x = p + 1.0;
-                (l + r * (x * FRAC_PI_2).cos(), r * (x * FRAC_PI_2).sin())
-            } else {
-                let x = p;
-                (l * (x * FRAC_PI_2).cos(), r + l * (x * FRAC_PI_2).sin())
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,29 +245,6 @@ mod tests {
         let e = sample_gain(&Animated::Static(0.0), 0, 100_000, 25_000);
         // span 25 ms → points at 0, 10, 20, 25 ms = 4 points
         assert_eq!(e.values.len(), 4);
-    }
-
-    #[test]
-    fn pan_law_center_mono_is_equal_power() {
-        let (l, r) = pan_frame(0.0, &[1.0]);
-        let half = (std::f32::consts::FRAC_PI_4).cos(); // = sin(π/4) ≈ 0.7071
-        assert!((l - half).abs() < 1e-6);
-        assert!((r - half).abs() < 1e-6);
-    }
-
-    #[test]
-    fn pan_law_stereo_center_is_identity() {
-        // pan = 0, stereo: x = 1 ⇒ cos(π/2)=0, so L = l + r·0 = l; R = r·1 = r.
-        let (l, r) = pan_frame(0.0, &[0.3, 0.7]);
-        assert!((l - 0.3).abs() < 1e-6);
-        assert!((r - 0.7).abs() < 1e-6);
-    }
-
-    #[test]
-    fn pan_law_hard_left_stereo_folds_right_into_left() {
-        let (l, r) = pan_frame(-1.0, &[0.3, 0.7]);
-        assert!((l - 1.0).abs() < 1e-6); // 0.3 + 0.7·cos(0) = 1.0
-        assert!(r.abs() < 1e-6);
     }
 
     /// Cross-language golden vectors. The SAME fixture is asserted by

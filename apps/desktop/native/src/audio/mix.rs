@@ -11,7 +11,7 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::audio::conform_reader::ConformReader;
-use crate::audio::envelope::{Envelope, pan_frame, sample_gain, sample_pan};
+use crate::audio::envelope::{Envelope, pan_coeffs_at, sample_gain, sample_pan};
 use crate::state::Project;
 use crate::state::audio_role::RoleMixSettings;
 use crate::state::layer::{AudioParams, Layer, LayerParams};
@@ -248,15 +248,16 @@ pub fn mix_block(
             let local_f = comp_f - layer.start_frame;
             let local_us = local_f * 1_000_000 / MIX_SAMPLE_RATE;
             let g = layer.gain.eval(local_us);
-            let p = layer.pan.eval(local_us);
+            let [a, b, c, d] = pan_coeffs_at(&layer.pan, ch as i32, local_us);
             let frame = &data[k * ch..k * ch + ch];
-            let scaled: [f32; 2] = match ch {
-                1 => [frame[0] * g, frame[0] * g],
-                _ => [frame[0] * g, frame[1] * g],
+            let (l, r) = match ch {
+                1 => (frame[0] * g, 0.0),
+                _ => (frame[0] * g, frame[1] * g),
             };
-            let (l, r) = pan_frame(p, &scaled[..ch.min(2)]);
-            out[k * 2] += l;
-            out[k * 2 + 1] += r;
+            // mono: pan_coeffs(channels=1) puts in→L in a, in→R in c (b=d=0), and
+            // the single input sits in `l`, so a*l + b*0 and c*l + d*0 are correct.
+            out[k * 2] += a * l + b * r;
+            out[k * 2 + 1] += c * l + d * r;
         }
     }
     Ok(())
