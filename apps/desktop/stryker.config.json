@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "concurrency": 4,
+  "timeoutMS": 60000,
+  "mutate": [
+    "src/main/state/validate.ts",
+    "src/main/state/mutations/move.ts",
+    "src/main/state/mutations/trim.ts",
+    "!src/main/state/**/*.test.ts",
+    "!src/main/state/**/__tests__/**"
+  ],
+  "thresholds": { "high": 90, "low": 80, "break": null }
+}
