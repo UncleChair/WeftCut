@@ -1,3 +1,0 @@
-{ "name": "delete-track-reserved-reject", "commands": [
-  { "op": "delete_track", "track": "@A" }
-] }

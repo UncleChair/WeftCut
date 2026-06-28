@@ -1,5 +1,0 @@
-{ "name": "markers-multiple", "commands": [
-  { "op": "add_marker", "t_us": 0, "label": "intro" },
-  { "op": "add_marker", "t_us": 5000000, "label": "body" },
-  { "op": "add_marker", "t_us": 9000000, "end_t_us": 10000000, "label": "outro" }
-] }

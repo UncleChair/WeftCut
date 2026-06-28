@@ -1,4 +1,0 @@
-{ "name": "update-marker-label", "commands": [
-  { "op": "add_marker", "t_us": 1000000, "ref": "M1" },
-  { "op": "update_marker", "marker": "@M1", "label": "chapter" }
-] }

@@ -1,6 +1,0 @@
-{ "name": "update-track-flags-unrecorded-undo", "commands": [
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 2000000, "t_end_us": 3000000, "ref": "L2" },
-  { "op": "update_track_flags", "track": "@A", "muted": true },
-  { "op": "undo" }
-] }

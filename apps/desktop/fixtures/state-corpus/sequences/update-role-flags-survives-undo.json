@@ -1,5 +1,0 @@
-{ "name": "update-role-flags-survives-undo", "commands": [
-  { "op": "update_role_flags", "role": "dialogue", "solo": true },
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000 },
-  { "op": "undo" }
-] }

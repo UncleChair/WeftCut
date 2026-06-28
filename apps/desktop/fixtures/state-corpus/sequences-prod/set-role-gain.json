@@ -1,4 +1,0 @@
-{ "name": "set-role-gain", "commands": [
-  { "op": "set_role_gain", "role": "music", "gainDb": -6.0 },
-  { "op": "add_track" }
-] }

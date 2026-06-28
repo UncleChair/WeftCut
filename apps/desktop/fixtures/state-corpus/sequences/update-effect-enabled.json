@@ -1,5 +1,0 @@
-{ "name": "update-effect-enabled", "commands": [
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
-  { "op": "add_effect", "layer": "@L1", "kind": "blur", "ref": "E1" },
-  { "op": "update_effect", "layer": "@L1", "effect": "@E1", "enabled": false }
-] }

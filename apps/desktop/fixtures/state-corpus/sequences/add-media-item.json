@@ -1,4 +1,0 @@
-{ "name": "add-media-item", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000, "ref": "M1" },
-  { "op": "add_layer", "track": "@B", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" }
-] }

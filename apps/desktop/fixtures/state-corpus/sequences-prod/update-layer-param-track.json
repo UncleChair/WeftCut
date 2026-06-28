@@ -1,5 +1,0 @@
-{ "name": "update-layer-param-track", "commands": [
-  { "op": "add_text_layer", "trackId": "@A", "tStartUs": 0, "ref": "L1" },
-  { "op": "update_layer_param_track", "layerId": "@L1", "paramKey": "opacity", "track": { "mode": "Static", "value": 0.5 } },
-  { "op": "add_track" }
-] }

@@ -1,7 +1,0 @@
-{ "name": "restore-checkpoint", "commands": [
-  { "op": "add_color_layer", "track_id": "@A", "color": { "r": 255, "g": 0, "b": 0, "a": 255 }, "t_start_us": 0, "t_end_us": 1000000 },
-  { "op": "checkpoint", "label": "before edits", "ref": "CP" },
-  { "op": "add_color_layer", "track_id": "@A", "color": { "r": 0, "g": 0, "b": 255, "a": 255 }, "t_start_us": 2000000, "t_end_us": 3000000 },
-  { "op": "restore_checkpoint", "checkpoint_id": "@CP" },
-  { "op": "add_track", "label": "after restore" }
-]}

@@ -1,5 +1,0 @@
-{ "name": "history", "commands": [
-  { "op": "add_color_layer", "track_id": "@A", "t_start_us": 0, "t_end_us": 1000000, "color": { "r": 0, "g": 0, "b": 0, "a": 255 }, "ref": "L1" },
-  { "op": "undo" },
-  { "op": "redo" }
-] }

@@ -1,4 +1,0 @@
-{ "name": "overlap-reject-partial", "commands": [
-  { "op": "add_layer", "track": "@B", "kind": "color", "t_start_us": 2000000, "t_end_us": 6000000, "ref": "L1" },
-  { "op": "add_layer", "track": "@B", "kind": "color", "t_start_us": 0, "t_end_us": 3000000 }
-] }

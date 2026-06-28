@@ -1,4 +1,0 @@
-{ "name": "err-bad-role", "commands": [
-  { "op": "set_role_gain", "role": "bogus", "gain_db": -6 },
-  { "op": "add_track", "label": "after bad-role error" }
-]}

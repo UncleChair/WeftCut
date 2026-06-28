@@ -1,4 +1,0 @@
-{ "name": "add-caption-track-pos", "commands": [
-  { "op": "add_caption_track", "comp_w": 1920, "comp_h": 1080, "label": null,
-    "cues": [ { "start_us": 0, "end_us": 1000000, "text": "p", "style": { "size_px": 54, "outline_px": 3, "shadow_px": 2, "align": 5, "pos": [100, 200] } } ] }
-] }

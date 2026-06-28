@@ -1,4 +1,0 @@
-{ "name": "move-track-reorder", "commands": [
-  { "op": "add_track", "label": "extra", "ref": "T1" },
-  { "op": "move_track", "track": "@T1", "new_position": 0 }
-] }

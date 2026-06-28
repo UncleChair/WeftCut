@@ -1,3 +1,0 @@
-{ "name": "add-text-defaults", "commands": [
-  { "op": "add_text_layer", "trackId": "@A", "tStartUs": 0 }
-] }

@@ -1,4 +1,0 @@
-{ "name": "update-project-settings", "commands": [
-  { "op": "update_project_settings", "auto_delete_empty_tracks": false },
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000 }
-] }

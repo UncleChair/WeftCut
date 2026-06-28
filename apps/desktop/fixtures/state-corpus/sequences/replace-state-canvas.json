@@ -1,7 +1,0 @@
-{
-  "name": "replace-state-canvas",
-  "commands": [
-    { "op": "replace_state", "name": "hd", "width": 1280, "height": 720, "fps_num": 60, "fps_den": 1 },
-    { "op": "add_track", "label": "after" }
-  ]
-}

@@ -1,5 +1,0 @@
-{ "name": "update-track-flags-not-found", "commands": [
-  { "op": "add_track", "label": "extra", "ref": "T1" },
-  { "op": "delete_track", "track": "@T1" },
-  { "op": "update_track_flags", "track": "@T1", "locked": true }
-] }

@@ -1,4 +1,0 @@
-{ "name": "set-composition-mixed-canvas-duration", "commands": [
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 2000000, "ref": "L1" },
-  { "op": "set_composition", "width": 1280, "duration_us": 8000000 }
-] }

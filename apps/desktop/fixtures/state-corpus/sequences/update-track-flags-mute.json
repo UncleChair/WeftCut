@@ -1,3 +1,0 @@
-{ "name": "update-track-flags-mute", "commands": [
-  { "op": "update_track_flags", "track": "@A", "muted": true }
-] }

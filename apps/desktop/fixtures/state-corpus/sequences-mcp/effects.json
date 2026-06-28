@@ -1,7 +1,0 @@
-{ "name": "effects", "commands": [
-  { "op": "add_color_layer", "track_id": "@A", "t_start_us": 0, "t_end_us": 1000000, "color": { "r": 0, "g": 0, "b": 255, "a": 255 }, "ref": "L1" },
-  { "op": "add_effect", "layer_id": "@L1", "kind": "blur", "ref": "E1" },
-  { "op": "update_effect", "layer_id": "@L1", "effect_id": "@E1", "patch": { "enabled": false } },
-  { "op": "move_effect", "layer_id": "@L1", "effect_id": "@E1", "new_index": 0 },
-  { "op": "remove_effect", "layer_id": "@L1", "effect_id": "@E1" }
-] }

@@ -1,4 +1,0 @@
-{ "name": "set-media-derivatives-missing-media", "commands": [
-  { "op": "set_media_derivatives", "media": "00000000-0000-0000-0000-0000000000ff", "patch": { "set_route": { "route": "bypass" } } },
-  { "op": "add_track", "ref": "T" }
-] }

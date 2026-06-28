@@ -1,5 +1,0 @@
-{ "name": "move-layer", "commands": [
-  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 1000000, "ref": "L1" },
-  { "op": "move_layer", "layerId": "@L1", "newTrackId": "@B", "newTStartUs": 2000000 },
-  { "op": "add_track" }
-] }

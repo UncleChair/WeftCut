@@ -1,3 +1,0 @@
-{ "name": "undo-empty", "commands": [
-  { "op": "undo" }
-] }

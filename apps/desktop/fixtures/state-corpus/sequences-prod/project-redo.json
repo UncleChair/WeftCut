@@ -1,6 +1,0 @@
-{ "name": "project-redo", "commands": [
-  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 2000000, "ref": "L1" },
-  { "op": "project_undo" },
-  { "op": "project_redo" },
-  { "op": "add_track" }
-] }

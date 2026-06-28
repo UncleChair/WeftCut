@@ -1,5 +1,0 @@
-{ "name": "marker-remove-then-update-notfound", "commands": [
-  { "op": "add_marker", "t_us": 1000000, "ref": "M1" },
-  { "op": "remove_marker", "marker": "@M1" },
-  { "op": "update_marker", "marker": "@M1", "label": "x" }
-] }

@@ -1,7 +1,0 @@
-{ "name": "param-track-effect", "commands": [
-  { "op": "add_layer", "track": "@B", "kind": "text", "t_start_us": 0, "t_end_us": 2000000, "ref": "L1" },
-  { "op": "add_effect", "layer": "@L1", "kind": "blur", "ref": "E1" },
-  { "op": "update_layer_param_track", "layer": "@L1", "param_key": "effects[@E1].params[intensity]", "track": { "mode": "Keyframed", "value": [
-    { "id": "00000000-0000-0000-0000-0000000000f1", "t_us": 0, "value": 0, "interp": { "kind": "Linear" } },
-    { "id": "00000000-0000-0000-0000-0000000000f2", "t_us": 1000000, "value": 1, "interp": { "kind": "Linear" } } ] } }
-] }

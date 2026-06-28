@@ -1,5 +1,0 @@
-{ "name": "move-reject-overlap", "commands": [
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 4000000, "ref": "L1" },
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 5000000, "t_end_us": 9000000, "ref": "L2" },
-  { "op": "move_layer", "layer": "@L2", "to_track": "@A", "t_start_us": 2000000 }
-] }

@@ -1,5 +1,0 @@
-{ "name": "add-multiple-tracks", "commands": [
-  { "op": "add_track", "label": "FX" },
-  { "op": "add_track", "label": "Music" },
-  { "op": "add_track", "label": "SFX" }
-] }

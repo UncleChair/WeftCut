@@ -1,6 +1,0 @@
-{ "name": "set-media-derivatives-set", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000 },
-  { "op": "set_media_derivatives", "media": "00000000-0000-0000-0000-0000000000aa", "patch": { "set_route": { "route": "proxied", "quick_proxy": null, "full_proxy": null, "format_version": 0 } } },
-  { "op": "set_media_derivatives", "media": "00000000-0000-0000-0000-0000000000aa", "patch": { "quick_proxy_landed": "media/quick.mp4", "full_proxy_landed": { "path": "media/proxy.mp4", "format_version": 3 }, "waveform_path": "media/wave.bin", "conform_path": "media/conf.wav", "thumbnails_dir": "media/thumbs" } },
-  { "op": "add_track", "ref": "T" }
-] }

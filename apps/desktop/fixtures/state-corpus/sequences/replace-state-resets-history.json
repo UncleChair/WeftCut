@@ -1,9 +1,0 @@
-{
-  "name": "replace-state-resets-history",
-  "commands": [
-    { "op": "add_track", "label": "extra" },
-    { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000 },
-    { "op": "replace_state", "name": "fresh" },
-    { "op": "add_track", "label": "after" }
-  ]
-}

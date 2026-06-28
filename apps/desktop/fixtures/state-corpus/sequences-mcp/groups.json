@@ -1,9 +1,0 @@
-{ "name": "groups", "commands": [
-  { "op": "add_color_layer", "track_id": "@A", "t_start_us": 0, "t_end_us": 1000000, "color": { "r": 255, "g": 0, "b": 0, "a": 255 }, "ref": "L1" },
-  { "op": "add_color_layer", "track_id": "@A", "t_start_us": 1000000, "t_end_us": 2000000, "color": { "r": 0, "g": 255, "b": 0, "a": 255 }, "ref": "L2" },
-  { "op": "groups_create", "layer_ids": ["@L1", "@L2"], "label": "g", "reassign": false, "ref": "G1" },
-  { "op": "groups_rename", "group_id": "@G1", "label": "renamed" },
-  { "op": "groups_remove_members", "group_id": "@G1", "layer_ids": ["@L2"] },
-  { "op": "groups_add_members", "group_id": "@G1", "layer_ids": ["@L2"], "reassign": false },
-  { "op": "groups_dissolve", "group_id": "@G1" }
-] }

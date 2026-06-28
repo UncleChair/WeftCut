@@ -1,4 +1,0 @@
-{ "name": "add-audio-layer", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000bb", "kind": "Audio", "duration_us": 3000000, "ref": "M1" },
-  { "op": "add_layer", "track": "@A", "kind": "audio", "media": "@M1", "src_in_us": 0, "src_out_us": 3000000, "t_start_us": 0, "t_end_us": 3000000, "ref": "L1" }
-] }

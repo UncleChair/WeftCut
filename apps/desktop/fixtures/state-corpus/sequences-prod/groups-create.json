@@ -1,6 +1,0 @@
-{ "name": "groups-create", "commands": [
-  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 2000000, "ref": "L1" },
-  { "op": "add_color_layer", "trackId": "@B", "tStartUs": 0, "durationUs": 2000000, "ref": "L2" },
-  { "op": "groups_create", "layerIds": ["@L1", "@L2"], "label": "grp", "ref": "G1" },
-  { "op": "add_track" }
-] }

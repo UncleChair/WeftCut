@@ -1,8 +1,0 @@
-{
-  "name": "add-media-layer-auto-pairs",
-  "commands": [
-    { "op": "add_media", "id": "11111111-1111-1111-1111-111111111111", "kind": "Video", "duration_us": 4000000, "with_audio": true, "ref": "m" },
-    { "op": "add_media_layer", "trackId": "@A", "mediaId": "@m", "tStartUs": 0, "ref": "vid" },
-    { "op": "add_text_layer", "tStartUs": 0 }
-  ]
-}

@@ -1,5 +1,0 @@
-{ "name": "add-caption-track-undo", "commands": [
-  { "op": "add_caption_track", "comp_w": 1920, "comp_h": 1080, "label": "Captions",
-    "cues": [ { "start_us": 0, "end_us": 1000000, "text": "x", "style": { "size_px": 54, "outline_px": 3, "shadow_px": 2 } } ] },
-  { "op": "undo" }
-] }

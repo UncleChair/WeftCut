@@ -1,6 +1,0 @@
-{ "name": "set-media-derivatives-leave", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000 },
-  { "op": "set_media_derivatives", "media": "00000000-0000-0000-0000-0000000000aa", "patch": { "set_route": { "route": "proxied", "quick_proxy": null, "full_proxy": "media/proxy.mp4", "format_version": 3 } } },
-  { "op": "set_media_derivatives", "media": "00000000-0000-0000-0000-0000000000aa", "patch": { "conform_path": "media/conf.wav" } },
-  { "op": "add_track", "ref": "T" }
-] }

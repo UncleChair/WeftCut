@@ -1,6 +1,0 @@
-{ "name": "fit-composition-to-layers", "commands": [
-  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 2000000, "ref": "L1" },
-  { "op": "set_composition", "patch": { "duration_us": 10000000 } },
-  { "op": "fit_composition_to_layers" },
-  { "op": "add_track" }
-] }

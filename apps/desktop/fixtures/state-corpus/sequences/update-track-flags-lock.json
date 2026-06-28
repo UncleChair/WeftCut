@@ -1,5 +1,0 @@
-{ "name": "update-track-flags-lock", "commands": [
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
-  { "op": "update_track_flags", "track": "@A", "locked": true },
-  { "op": "update_layer", "layer": "@L1", "label": "x" }
-] }

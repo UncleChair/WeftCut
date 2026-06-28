@@ -1,5 +1,0 @@
-{ "name": "set-media-workspace-paths", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000 },
-  { "op": "set_media_workspace_paths", "media": "00000000-0000-0000-0000-0000000000aa", "paths": { "path_abs": "ws/media/clip.bin", "path_rel": "media/clip.bin", "file_hash_blake3": "abc123", "file_size": 1024, "file_mtime": 1700000000 } },
-  { "op": "add_track", "ref": "T" }
-] }

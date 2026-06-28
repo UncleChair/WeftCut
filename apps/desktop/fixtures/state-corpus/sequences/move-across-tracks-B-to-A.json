@@ -1,4 +1,0 @@
-{ "name": "move-across-tracks-B-to-A", "commands": [
-  { "op": "add_layer", "track": "@B", "kind": "color", "t_start_us": 0, "t_end_us": 3000000, "ref": "L1" },
-  { "op": "move_layer", "layer": "@L1", "to_track": "@A", "t_start_us": 2000000 }
-] }

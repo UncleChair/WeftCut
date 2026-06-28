@@ -1,7 +1,0 @@
-{ "name": "dry-run-split", "commands": [
-  { "op": "add_color_layer", "track_id": "@A", "t_start_us": 0, "t_end_us": 4000000, "color": { "r": 0, "g": 0, "b": 0, "a": 255 }, "ref": "L1" },
-  { "op": "dry_run", "operations": [
-    { "kind": "split_layer", "layer_id": "@L1", "at_t_us": 2000000 }
-  ] },
-  { "op": "add_color_layer", "track_id": "@B", "t_start_us": 0, "t_end_us": 1000000, "color": { "r": 0, "g": 0, "b": 0, "a": 255 } }
-]}

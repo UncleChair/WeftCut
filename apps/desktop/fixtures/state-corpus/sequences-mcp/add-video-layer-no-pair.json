@@ -1,4 +1,0 @@
-{ "name": "add-video-layer-no-pair", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000a1", "kind": "Video", "duration_us": 5000000, "ref": "M1" },
-  { "op": "add_video_layer", "track_id": "@A", "media_id": "@M1", "t_start_us": 0, "t_end_us": 5000000, "src_in_us": 0, "src_out_us": 5000000, "ref": "VL" }
-] }

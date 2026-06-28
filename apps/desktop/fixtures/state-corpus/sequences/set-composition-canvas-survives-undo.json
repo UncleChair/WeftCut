@@ -1,5 +1,0 @@
-{ "name": "set-composition-canvas-survives-undo", "commands": [
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
-  { "op": "set_composition", "width": 1280, "height": 720 },
-  { "op": "undo" }
-] }

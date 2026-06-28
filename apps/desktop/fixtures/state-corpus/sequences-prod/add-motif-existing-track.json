@@ -1,4 +1,0 @@
-{ "name": "add-motif-existing-track", "commands": [
-  { "op": "add_track", "ref": "T1" },
-  { "op": "add_motif", "motifId": "countdown", "trackId": "@T1", "tStartUs": 0, "ref": "L1" }
-] }

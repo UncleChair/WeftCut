@@ -1,5 +1,0 @@
-{ "name": "duplicate-layer", "commands": [
-  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 2000000, "ref": "L1" },
-  { "op": "duplicate_layer", "layerId": "@L1", "tOffsetUs": 3000000, "ref": "L2" },
-  { "op": "add_track" }
-] }

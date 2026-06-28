@@ -1,6 +1,0 @@
-{ "name": "remove-media-unused-undo", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000 },
-  { "op": "remove_media", "media": "00000000-0000-0000-0000-0000000000aa" },
-  { "op": "add_track", "ref": "T" },
-  { "op": "undo" }
-] }

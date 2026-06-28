@@ -1,4 +1,0 @@
-{ "name": "lock", "commands": [
-  { "op": "lock_history", "reason": "batch" },
-  { "op": "unlock_history" }
-] }

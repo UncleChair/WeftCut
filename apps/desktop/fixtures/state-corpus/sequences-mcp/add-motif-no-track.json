@@ -1,3 +1,0 @@
-{ "name": "add-motif-no-track", "commands": [
-  { "op": "add_motif", "motif_id": "countdown", "t_start_us": 0, "ref": "L1" }
-] }

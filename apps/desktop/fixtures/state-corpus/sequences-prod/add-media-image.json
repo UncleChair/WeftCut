@@ -1,4 +1,0 @@
-{ "name": "add-media-image", "commands": [
-  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000cc", "kind": "Image", "duration_us": null },
-  { "op": "add_media_layer", "trackId": "@A", "mediaId": "00000000-0000-0000-0000-0000000000cc", "tStartUs": 0, "ref": "L1" }
-] }

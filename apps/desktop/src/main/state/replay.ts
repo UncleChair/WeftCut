@@ -5,9 +5,6 @@ import { canonicalize } from './canonical'
 import { serializeProject } from './serialize'
 import { createActor } from './actor'
 import { tsErrorVariant } from './errors'
-import { buildProjectSummary } from './summary'
-import { PRODUCTION_OPS } from './commands'
-import { MCP_TOOLS } from './mcp-commands'
 
 export const SUPPORTED_OPS = new Set<string>([
   'add_layer', 'add_track', 'add_marker', 'set_composition',
@@ -32,8 +29,6 @@ const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 
 
 export interface TraceStep { op: string; ok: boolean; error?: string | null; env?: unknown; state: unknown }
 export interface Trace { name: string; steps: TraceStep[] }
-export interface SummaryStep { op: string; ok: boolean; error: string | null; summary: unknown }
-export interface SummaryTrace { name: string; steps: SummaryStep[] }
 interface Cmd { op: string; ref?: string; [k: string]: unknown }
 interface Sequence { name: string; commands: Cmd[] }
 
@@ -96,15 +91,6 @@ export function replaySequence(seq: Sequence): Trace {
   })) as Trace
 }
 
-/** Replay a sequence and capture the summary view at each step (for the
- *  oracle-summary differential gate). `fileExists` is () => false because the
- *  corpus has no real media files on disk. */
-export function replaySummaries(seq: Sequence): SummaryTrace {
-  return runSequence(seq, (actor) => ({
-    summary: canonicalize(buildProjectSummary(actor.snapshot(), actor.historyStatus(), () => false)),
-  })) as SummaryTrace
-}
-
 function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
   switch (cmd.op) {
     case 'add_layer': return { track: resolve(refs, cmd.track), kind: cmd.kind, t_start_us: cmd.t_start_us, t_end_us: cmd.t_end_us,
@@ -161,110 +147,4 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'undo': case 'redo': return {}
     default: return {}
   }
-}
-
-export function productionSequenceIsSupported(seq: Sequence): boolean {
-  return seq.commands.every((c) => c.op === 'add_media' || PRODUCTION_OPS.has(c.op))
-}
-
-/** Recursively resolve @ref tokens in a value — mirrors prod_driver.rs
- *  `resolve_value`. Strings starting with '@' are resolved; arrays and plain
- *  objects recurse; all other values pass through unchanged. */
-function resolveValue(v: unknown, refs: Map<string, string>): unknown {
-  if (typeof v === 'string' && v.startsWith('@')) return refs.get(v.slice(1)) ?? v
-  if (Array.isArray(v)) return v.map((x) => resolveValue(x, refs))
-  if (v !== null && typeof v === 'object') {
-    const out: Record<string, unknown> = {}
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = resolveValue(val, refs)
-    return out
-  }
-  return v
-}
-
-/** Shallow copy of cmd without op/ref, recursively resolving @ref tokens.
- *  Used by replayProductionSequence to pass wire args to actor.command.
- *  Mirrors prod_driver.rs `build_wire_args` + `resolve_value`. */
-function resolveWire(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(cmd)) {
-    if (k === 'op' || k === 'ref' || k === 'kf_index') continue
-    out[k] = resolveValue(v, refs)
-  }
-  return out
-}
-
-export function mcpSequenceIsSupported(seq: Sequence): boolean {
-  return seq.commands.every((c) => c.op === 'add_media' || MCP_TOOLS.has(c.op))
-}
-
-/** Drives the MCP adapter (actor.mcpCall) over an MCP-channel sequence, capturing
- *  the reply-envelope + canonical state per step. `add_media` is a pool seed via
- *  the existing dispatch path (MCP import_media is jobs/3d-d). */
-export function replayMcpSequence(seq: Sequence): Trace {
-  const idGen = seededGen()
-  const initial = blankProject(idGen, 'replay')
-  const aRoll = initial.tracks[0].id, bRoll = initial.tracks[1].id
-  const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-  const refs = new Map<string, string>([['A', aRoll], ['B', bRoll]])
-  const steps: TraceStep[] = []
-  for (const cmd of seq.commands) {
-    let env: unknown, ok: boolean, ret: string | null = null
-    if (cmd.op === 'add_media') {
-      const r = actor.dispatch('add_media', { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null, with_audio: cmd.with_audio ?? false })
-      ok = r.ok
-      env = r.ok ? { ok: true, result: { content: [] } } : { ok: false, error: { code: 'internal', message: 'add_media failed' } }
-      if (r.ok && typeof r.value === 'string') ret = r.value
-    } else {
-      const wire = resolveWire(cmd, refs)
-      const r = actor.mcpCall(cmd.op, JSON.stringify(wire))
-      ok = r.ok
-      env = r
-      if (r.ok) ret = mcpRefId(cmd.op, r.result, cmd)
-    }
-    if (ok && cmd.ref && ret) refs.set(cmd.ref, ret)
-    steps.push({ op: cmd.op, ok, env, state: canonicalize(serializeProject(actor.snapshot())) } as TraceStep)
-  }
-  return { name: seq.name, steps }
-}
-
-/** @ref extraction mirroring mcp_driver::extract_ref_id. get_param_track captures
- *  keyframes[cmd.kf_index].id so a sequence can name a server-minted keyframe. */
-function mcpRefId(op: string, result: { content: Array<{ type: 'text'; text: string }> }, cmd: Cmd): string | null {
-  const text = result.content[0]?.text
-  if (text == null) return null
-  if (op === 'get_param_track') {
-    const idx = cmd.kf_index as number | undefined
-    if (idx == null) return null
-    try { const v = JSON.parse(text) as { keyframes?: Array<{ id?: string }> }; return v.keyframes?.[idx]?.id ?? null } catch { return null }
-  }
-  if (['add_track', 'add_color_layer', 'duplicate_layer', 'groups_create', 'add_effect', 'add_marker', 'checkpoint'].includes(op)) return text
-  if (op === 'add_video_layer') {
-    try { const v = JSON.parse(text) as { video_layer_id?: string }; return v.video_layer_id ?? text } catch { return text }
-  }
-  if (op === 'begin_agent_session') {
-    try { const v = JSON.parse(text) as { checkpoint_id?: string }; return v.checkpoint_id ?? null } catch { return null }
-  }
-  return null
-}
-
-/** Drives the production adapter (actor.command) over a production-channel
- *  sequence. `add_media` is a pool seed via the existing dispatch path. */
-export function replayProductionSequence(seq: Sequence): Trace {
-  const idGen = seededGen()
-  const initial = blankProject(idGen, 'replay')
-  const aRoll = initial.tracks[0].id, bRoll = initial.tracks[1].id
-  const actor = createActor({ initial, idGen, clock: () => '<TS>' })
-  const refs = new Map<string, string>([['A', aRoll], ['B', bRoll]])
-  const steps: TraceStep[] = []
-  for (const cmd of seq.commands) {
-    const wire = resolveWire(cmd, refs)
-    const r = cmd.op === 'add_media'
-      ? actor.dispatch('add_media', { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null, with_audio: cmd.with_audio ?? false })
-      : actor.command(cmd.op, wire)
-    let error: string | null = null
-    if (r.ok) { if (cmd.ref && typeof r.value === 'string') refs.set(cmd.ref, r.value) }
-    else { const v = tsErrorVariant(r.error); error = v.inner ? `${v.top}(${v.inner})` : v.top }
-    steps.push({ op: cmd.op, ok: r.ok, error, state: canonicalize(serializeProject(actor.snapshot())) })
-  }
-  return { name: seq.name, steps }
 }

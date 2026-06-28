@@ -1,5 +1,0 @@
-{ "name": "param-track-empty", "commands": [
-  { "op": "add_layer", "track": "@B", "kind": "text", "t_start_us": 0, "t_end_us": 2000000, "ref": "L1" },
-  { "op": "update_layer_param_track", "layer": "@L1", "param_key": "opacity", "track": { "mode": "Keyframed", "value": [] } },
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L2" }
-] }

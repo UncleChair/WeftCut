@@ -1,6 +1,0 @@
-{ "name": "update-effect", "commands": [
-  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 2000000, "ref": "L1" },
-  { "op": "add_effect", "layerId": "@L1", "kind": "Blur", "ref": "E1" },
-  { "op": "update_effect", "layerId": "@L1", "effectId": "@E1", "patch": { "enabled": false } },
-  { "op": "add_track" }
-] }

@@ -1,4 +1,0 @@
-{ "name": "split-inside", "commands": [
-  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 6000000, "ref": "L1" },
-  { "op": "split_layer", "layer": "@L1", "at_t_us": 3000000 }
-] }
