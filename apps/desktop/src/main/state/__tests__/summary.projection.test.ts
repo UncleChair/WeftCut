@@ -125,17 +125,58 @@ describe('ProjectSummary projection', () => {
     expect(before.history.can_redo).toBe(false)
     expect(before.history.cursor).toBe(0)
 
-    // After a mutation: can undo, cannot redo
+    // After a mutation: can undo, cannot redo; cursor advanced off Initial
     a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
     const after = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
     expect(after.history.can_undo).toBe(true)
     expect(after.history.can_redo).toBe(false)
     expect(after.history.len).toBeGreaterThan(before.history.len)
+    expect(after.history.cursor).toBeGreaterThan(0)
 
-    // After undo: cursor moves back; can_redo becomes true
+    // After undo: cursor returns to the Initial entry (0); can_redo becomes true
     a.dispatch('undo', {})
     const undone = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
     expect(undone.history.can_undo).toBe(false)
     expect(undone.history.can_redo).toBe(true)
+    expect(undone.history.cursor).toBe(0)
+  })
+
+  it('nullifies a proxied route\'s readiness slots when the media is missing, keeps them when present', () => {
+    // routeForSummary (summary.ts:189-197) existence-gates the proxy readiness
+    // paths: a serialized-but-deleted proxy must project as null, not a stale path.
+    // format_version is NOT a path and passes through unchanged.
+    const mediaId = 'cccccccc-0000-0000-0000-000000000003'
+    const proxiedRoute = {
+      route: 'proxied' as const,
+      quick_proxy: 'workspace/quick.mp4',
+      full_proxy: 'workspace/full.mp4',
+      format_version: 7,
+    }
+
+    const buildWith = (fileExists: (p: string) => boolean) => {
+      const a = freshActor()
+      const item = mediaItemTemplate(mediaId, 'Video', 6_000_000)
+      item.decode_route = { ...proxiedRoute }
+      a.dispatch('add_media_item', { media: item })
+      return buildProjectSummary(a.snapshot(), a.historyStatus(), fileExists)
+    }
+
+    // Missing media → both readiness slots nullified; format_version preserved.
+    const missing = buildWith(() => false)
+    expect(missing.media[0].decode_route).toEqual({
+      route: 'proxied',
+      quick_proxy: null,
+      full_proxy: null,
+      format_version: 7,
+    })
+
+    // Present media → both readiness paths survive intact.
+    const present = buildWith(() => true)
+    expect(present.media[0].decode_route).toEqual({
+      route: 'proxied',
+      quick_proxy: 'workspace/quick.mp4',
+      full_proxy: 'workspace/full.mp4',
+      format_version: 7,
+    })
   })
 })
