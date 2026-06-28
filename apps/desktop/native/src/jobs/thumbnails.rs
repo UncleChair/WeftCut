@@ -13,6 +13,8 @@ use anyhow::{Context, Result, anyhow};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::process::Command;
 
+use crate::process::NoConsoleWindow;
+
 use crate::cache::{CacheLayout, cached_ok};
 use crate::state::MediaItem;
 
@@ -68,6 +70,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // per thumbnail at 320px. -vsync vfr / -fps_mode passthrough so the fps
     // filter's output isn't second-guessed.
     let status = Command::new(ffmpeg_path())
+        .no_console_window()
         .args([
             "-y",
             "-hide_banner",

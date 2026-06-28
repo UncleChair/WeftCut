@@ -6,6 +6,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin};
+
+use crate::process::NoConsoleWindow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -128,6 +130,7 @@ pub async fn export_video_sink_start(
             hw.encoder_for_10bit(codec).await.as_ref().clone()
         };
         let mut cmd = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path());
+        cmd.no_console_window();
         cmd.args(["-y", "-hide_banner", "-loglevel", "error"]);
         cmd.args(["-f", "rawvideo", "-pix_fmt", "yuv420p10le"]);
         cmd.arg("-video_size").arg(format!("{}x{}", args.width, args.height));

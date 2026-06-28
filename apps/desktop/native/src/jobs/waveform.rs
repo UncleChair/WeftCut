@@ -23,6 +23,8 @@ use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
+use crate::process::NoConsoleWindow;
+
 use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
 use crate::state::{MediaItem, MediaKind};
 
@@ -55,6 +57,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let _ = tokio::fs::remove_file(&tmp).await;
 
     let mut child = Command::new(ffmpeg_path())
+        .no_console_window()
         .args([
             "-hide_banner",
             "-nostats",

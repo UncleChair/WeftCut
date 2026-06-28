@@ -13,6 +13,8 @@ use anyhow::{Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::process::Command;
 
+use crate::process::NoConsoleWindow;
+
 use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
 use crate::state::{MediaItem, MediaKind, TimeUs};
 
@@ -57,6 +59,7 @@ pub async fn extract(
     // to overwrite a single output (otherwise it complains about the lack
     // of a `%d` pattern).
     let output = Command::new(ffmpeg_path())
+        .no_console_window()
         .args([
             "-y",
             "-hide_banner",

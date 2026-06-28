@@ -17,6 +17,8 @@ use std::time::Duration;
 use ffmpeg_sidecar::paths::ffmpeg_path;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+
+use crate::process::NoConsoleWindow;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
@@ -219,6 +221,7 @@ async fn run_probe(mut cmd: Command, encoder_name: &str) -> bool {
 /// Time-boxed at 4s (some HW init can hang).
 async fn probe_encoder(encoder_name: &str) -> bool {
     let mut cmd = Command::new(ffmpeg_path());
+    cmd.no_console_window();
     cmd.args([
         "-y", "-hide_banner", "-loglevel", "error",
         "-f", "lavfi", "-i", "color=c=black:s=128x128:d=0.1:r=30",
@@ -231,6 +234,7 @@ async fn probe_encoder(encoder_name: &str) -> bool {
 /// Uses a yuv420p10le lavfi source + the encoder's 10-bit pixel-format flags.
 async fn probe_encoder_10bit(encoder_name: &str) -> bool {
     let mut cmd = Command::new(ffmpeg_path());
+    cmd.no_console_window();
     cmd.args([
         "-y", "-hide_banner", "-loglevel", "error",
         "-f", "lavfi", "-i", "color=c=black:s=128x128:d=0.1:r=30,format=yuv420p10le",

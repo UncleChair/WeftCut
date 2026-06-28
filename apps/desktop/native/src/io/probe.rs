@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+
+use crate::process::NoConsoleWindow;
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
@@ -68,6 +70,7 @@ pub fn probe_metadata(path: &Path) -> MediaMetadata {
     }
 
     let output = Command::new(ffprobe_path())
+        .no_console_window()
         .args(["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams"])
         .arg(path)
         .stdout(Stdio::piped())
@@ -118,6 +121,7 @@ pub fn probe_max_keyframe_gap_secs(path: &Path) -> Option<f64> {
         return None;
     }
     let output = Command::new(ffprobe_path())
+        .no_console_window()
         .args([
             "-v", "error",
             "-select_streams", "v:0",

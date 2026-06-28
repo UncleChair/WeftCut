@@ -20,6 +20,8 @@ use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use crate::events::EventSink;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+use crate::process::NoConsoleWindow;
 use tracing::{info, warn};
 
 use crate::state::Project;
@@ -107,6 +109,7 @@ async fn mix_and_encode(
     }
 
     let mut cmd = Command::new(ffmpeg_path());
+    cmd.no_console_window();
     cmd.args(["-y", "-hide_banner", "-nostats"])
         .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])
         // −1 dB sample-peak ceiling answers overlap summing past full scale;
@@ -236,6 +239,7 @@ pub async fn mux_to_file(
     }
     let has_audio = audio_path.exists();
     let mut cmd = Command::new(ffmpeg_path());
+    cmd.no_console_window();
     cmd.args(mux_args(video_path, audio_path, output));
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -304,6 +308,7 @@ pub async fn transcode_and_mux(
     }
     let has_audio = audio_path.exists();
     let mut cmd = Command::new(ffmpeg_path());
+    cmd.no_console_window();
     cmd.arg("-y").arg("-hide_banner").arg("-nostats");
     cmd.arg("-i").arg(video_path);
     if has_audio {

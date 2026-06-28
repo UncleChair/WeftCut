@@ -16,6 +16,9 @@ mod cache;
 mod commands;
 mod events;
 mod napi_backend;
+// Always compiled: `io::probe` spawns ffprobe even in the base build, so the
+// console-window suppression trait can't live behind a feature gate.
+mod process;
 
 #[cfg(any(feature = "jobs", feature = "export"))]
 mod ffmpeg;

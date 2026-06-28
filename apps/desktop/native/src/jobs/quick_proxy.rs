@@ -11,6 +11,8 @@ use anyhow::{Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::process::Command;
 
+use crate::process::NoConsoleWindow;
+
 use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::jobs::hwaccel;
 use crate::state::MediaItem;
@@ -74,6 +76,7 @@ fn can_remux(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
 
 async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
     let output = Command::new(ffmpeg_path())
+        .no_console_window()
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([

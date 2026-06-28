@@ -9,6 +9,8 @@ use std::process::Output;
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::paths::ffmpeg_path;
 use tokio::process::Command;
+
+use crate::process::NoConsoleWindow;
 use tracing::{info, warn};
 
 /// Native ffmpeg `-hwaccel` name for the current OS, if any.
@@ -51,6 +53,7 @@ where
 {
     if preferred_hwaccel().is_some() {
         let mut cmd = Command::new(ffmpeg_path());
+        cmd.no_console_window();
         build(true, &mut cmd);
         let output = cmd
             .output()
@@ -68,6 +71,7 @@ where
     }
 
     let mut cmd = Command::new(ffmpeg_path());
+    cmd.no_console_window();
     build(false, &mut cmd);
     if preferred_hwaccel().is_some() {
         info!("{label}: software decode fallback");
