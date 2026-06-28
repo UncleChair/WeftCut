@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkAllInvariants, invNoUnauthorizedOverlap, invDurationAutofit, invGroupsWellFormed, InvariantError } from './invariants'
+import { checkAllInvariants, invNoUnauthorizedOverlap, invGroupsWellFormed, InvariantError } from './invariants'
 import type { WireProject } from './harness'
 
 const base: WireProject = {
@@ -28,20 +28,6 @@ describe('structural invariants', () => {
       transitions: [{ id: 'x', from_layer: 'l1', to_layer: 'l2', duration_us: 200 }],
       composition: { ...base.composition, duration_us: 1800 } }
     expect(() => invNoUnauthorizedOverlap(ok)).not.toThrow()
-  })
-
-  it('accepts duration shorter than max-end when unpinned (update_layer skips autofit)', () => {
-    // update_layer intentionally does not call applyDurationAutofit in both Rust
-    // and TS actors, so duration_us can legitimately fall behind max layer end on
-    // unpinned projects. Confirmed by oracle states: update-layer-times.json and
-    // update-layer-undo.json. The invariant cannot assert strict equality here.
-    const ok: WireProject = { ...base, composition: { ...base.composition, duration_us: 999, duration_pinned: false } }
-    expect(() => invDurationAutofit(ok)).not.toThrow()
-  })
-
-  it('ignores duration when pinned (overflow guard is write-time, not a read invariant)', () => {
-    const ok: WireProject = { ...base, composition: { ...base.composition, duration_us: 999, duration_pinned: true } }
-    expect(() => invDurationAutofit(ok)).not.toThrow()
   })
 
   it('rejects a layer in two groups', () => {

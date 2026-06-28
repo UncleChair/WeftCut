@@ -1,9 +1,11 @@
 // Independently re-derived structural invariants over the serialized wire
 // project. DELIBERATELY does NOT import src/main/state/validate.ts — asserting
 // against the production validator would be tautological. The rules below are a
-// fresh statement of the same domain laws (ADR 0005 autofit; linear-NLE overlap;
-// group well-formedness), written so a mutation that forgot to call validate, or
-// two mutations that interact to break a law, surfaces here.
+// fresh statement of the same domain laws (linear-NLE overlap; group
+// well-formedness), written so a mutation that forgot to call validate, or two
+// mutations that interact to break a law, surfaces here. Duration-autofit is
+// deliberately NOT here — it is per-operation behavior, not a state invariant
+// (see checkAllInvariants).
 import type { WireProject, WireLayer } from './harness'
 
 export class InvariantError extends Error {}
@@ -54,20 +56,6 @@ export function invNoUnauthorizedOverlap(p: WireProject): void {
   }
 }
 
-export function invDurationAutofit(p: WireProject): void {
-  // ADR 0005: duration_us === max_end holds only AFTER operations that call
-  // applyDurationAutofit (add, delete, move, trim, duplicate). update_layer
-  // intentionally skips autofit — both Rust and TS actors document this — so a
-  // state produced by update_layer on an unpinned project may have
-  // duration_us < max_end. No universally-safe equality check exists here;
-  // omitting the unpinned equality prevents false positives on legitimate states.
-  //
-  // Pinned projects carry the user's explicit choice; the overflow guard
-  // (duration_us >= max_end when pinned) is enforced at write-time by each
-  // mutation, not re-asserted as a structural read invariant here.
-  void p // intentional no-op: invariant cannot be tightened beyond non-negative duration (implicit)
-}
-
 export function invGroupsWellFormed(p: WireProject): void {
   const known = new Set<string>()
   for (const t of p.tracks) for (const l of t.layers) known.add(l.id)
@@ -89,6 +77,9 @@ export function checkAllInvariants(p: WireProject): void {
   invUniqueLayerIds(p)
   invLayerRanges(p)
   invNoUnauthorizedOverlap(p)
-  invDurationAutofit(p)
+  // NOTE: duration-autofit is a per-operation behavior (add/move/trim/delete/fit
+  // autofit; update_layer intentionally does NOT), NOT a universal state invariant
+  // — so it is not checked here. See the update_layer intent example in
+  // intent.examples.test.ts.
   invGroupsWellFormed(p)
 }
