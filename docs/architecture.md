@@ -2,11 +2,13 @@
 
 WeftCut is an Electron desktop video editor (Electron + napi-rs). The
 Electron **main** process (TypeScript) owns project state, persistence, and
-the agent/MCP surface; the Rust core (an in-process napi addon) is
-compute-only — media jobs, the audio mixer, ffmpeg — taking the
-project/MediaItem slice each call needs as an argument; it holds no
-project state. The renderer hosts a PixiJS-based compositor and a React
-UI; external agents connect over MCP.
+the agent/MCP surface. The Rust core (an in-process napi addon) owns
+native runtime services — media jobs, cache/workspace slots, import queue,
+logs, cloud-provider calls, the audio mixer, export video sink, and ffmpeg —
+but it does **not** own the authoritative `Project`. Project-shaped Rust
+code is a serde/compute model: each compute call receives the exact
+`Project`/`MediaItem` slice it needs as an argument. The renderer hosts a
+PixiJS-based compositor and a React UI; external agents connect over MCP.
 The workspace folder *is* the project — opening a folder = opening the
 project; auto-save means closing the app loses nothing.
 
@@ -28,16 +30,17 @@ Runtime choice and rationale: see [ADR 0024](adr/0024-desktop-runtime-electron-n
 │  │  via preload bridge    │         │                             │  │
 │  │ • Startup screen       │         │ ┌─────────────────────────┐ │  │
 │  │ • Timeline             │         │ │ Project actor (state)   │ │  │
-│  │ • Property panels      │         │ │  • Arc<Project>+history │ │  │
-│  │ • PreviewSurface       │         │ │  • single-writer queue  │ │  │
-│  │   - PixiJS Application │         │ └────────────┬────────────┘ │  │
-│  │   - audio-master clock │         │ ┌────────────▼────────────┐ │  │
-│  │   - WebCodecs decoder  │         │ │ Subscriber tasks        │ │  │
-│  │     pool               │         │ │  • Autosave (debounce)  │ │  │
-│  │   - Web Audio mixer    │         │ │  • UI event bridge      │ │  │
-│  │ • Export Worker        │         │ └────────────┬────────────┘ │  │
-│  │   (OffscreenCanvas)    │         │ ┌────────────▼────────────┐ │  │
-│  └────────────────────────┘         │ │ Background jobs         │ │  │
+│  │ • Property panels      │         │ │  • snapshots + history  │ │  │
+│  │ • PreviewSurface       │         │ │  • serialized dispatch  │ │  │
+│  │   - PixiJS Application │         │ │                         │ │  │
+│  │   - audio-master clock │         │ └────────────┬────────────┘ │  │
+│  │   - WebCodecs decoder  │         │ ┌────────────▼────────────┐ │  │
+│  │     pool               │         │ │ Subscriber tasks        │ │  │
+│  │   - Web Audio mixer    │         │ │  • Autosave (debounce)  │ │  │
+│  │ • Export Worker        │         │ │  • UI event bridge      │ │  │
+│  │   (OffscreenCanvas)    │         │ └────────────┬────────────┘ │  │
+│  └────────────────────────┘         │ ┌────────────▼────────────┐ │  │
+│                                     │ │ Background jobs         │ │  │
 │                                     │ │  • proxy / thumbnails / │ │  │
 │                                     │ │    waveform / conform / │ │  │
 │                                     │ │    import               │ │  │
@@ -62,8 +65,10 @@ Runtime choice and rationale: see [ADR 0024](adr/0024-desktop-runtime-electron-n
 Within the single app process, the project **actor, history, autosave, the
 UI/MCP event bridges, the config stores, and the MCP host are TypeScript**
 (Electron main); the **background jobs, audio mixer, ffmpeg, and export are
-the Rust napi core** (stateless — each compute call takes its state slice as
-an argument). The boundary between the two is the napi `Backend.invoke` dispatch.
+the Rust napi core**. Rust is project-state stateless: it keeps runtime slots
+for cache/workspace/jobs/logs/session, but every project compute/export path
+takes its state slice as a call argument. The boundary between the two is the
+napi `Backend.invoke` dispatch.
 
 ## Three load-bearing principles
 
@@ -73,9 +78,10 @@ All mutations — UI edits and MCP tool calls — funnel through one
 TypeScript actor in the Electron main process (`src/main/state/`) that
 holds the authoritative project snapshot + history. Reads are cheap
 immutable-snapshot clones. Concurrency is solved by serialization, not by
-locks scattered through the code. The Rust core holds no project state: each
-compute call receives the exact state slice it needs as an argument, and it
-never writes.
+locks scattered through the code. The Rust core never mutates the
+authoritative project directly: each compute call receives the exact state
+slice it needs as an argument, and derivative jobs emit write-back events
+that the TS actor folds into state.
 
 ### 2. Preview = export pipeline
 
@@ -89,8 +95,9 @@ The deterministic "what-you-see/hear" MATH both the renderer and Rust's
 compute/export paths need — frame snap, keyframe interpolation, the audio
 envelope curve, the role mute/solo gate — lives once in the `weftcut-eval`
 leaf crate, compiled natively for the Rust compute + export paths and to
-wasm for the renderer (and the TS main-process actor). One source of truth
-instead of hand-mirrored Rust + TS copies that could drift.
+wasm for the renderer and the TS main-process actor where main-process state
+logic needs it (notably frame snapping). One source of truth instead of
+hand-mirrored Rust + TS copies that could drift.
 See [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md).
 
 ### 3. ffmpeg shrinks to audio + mux
@@ -118,8 +125,8 @@ PixiJS migration.
 1. UI command or MCP tool call sends a `Command` to the project actor.
 2. Actor validates invariants. Reject on failure with a structured
    error.
-3. Actor produces a new `Arc<Project>`, pushes the prior one onto
-   history, broadcasts a `ChangeEvent`.
+3. Actor produces a new frozen `Project` snapshot, records it in history,
+   and broadcasts a `ChangeEvent`.
 4. Subscribers react:
    - **UI event bridge** emits `project:changed` (the TS host sends it from
      the main process to the renderer as `evt:project:changed`) so React
@@ -132,8 +139,8 @@ PixiJS migration.
      from clobbering fresher state (e.g. resetting a just-decided export
      route).
    - **Autosave subscriber** debounces 500 ms, writes
-     `<workspace>/project.json` (atomic `.tmp` + rename). Every 50
-     commits or 5 min, copies to `Backups/<ISO>.json`.
+     `<workspace>/project.json`. Every 50 flushed autosaves or 5 min,
+     copies the current project file to `Backups/<ISO>.json`.
    - **MCP change feed** — the TS host notifies the in-process MCP host,
      which relays to subscribed agents as a streamable-HTTP notification
      (it never reaches the renderer).
@@ -151,7 +158,7 @@ directly; no encode-and-swap step.
 | Renderer → workspace files | The `weftcut-media://localhost/<encoded-abs-path>` custom protocol (registered privileged + `supportFetchAPI`/`stream`; HTTP `Range`, served from main) — used by the Pixi decoder pool to fetch proxies and originals. The `fs:*` IPC surface (confined to temp / userData / active-workspace roots) handles export-scratch writes and reads. |
 | External agent → main (MCP host) | MCP over streamable-HTTP on localhost (`@modelcontextprotocol/sdk` host in the main process; bearer enforced by main, token in `app_config_dir/mcp_auth.json`). The tool catalog + resources are merged in TS — the TS-routed tool defs plus the Rust compute/hybrid tools. |
 | Main → External agent | The TS host's change notification, relayed by the in-process MCP host as a streamable-HTTP notification. |
-| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for cloud transcription, and the final stream-copy mux. |
+| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for cloud transcription, and final mux/transcode. |
 
 ## Repository layout
 
@@ -179,20 +186,23 @@ weftcut/
                               ←   frame, import (workspace copy worker)
         cache/                ← workspace-scoped derivative cache
                               ←   (workspace/Cache/{proxies, thumbnails,
-                              ←    waveforms, audio, frames, voiceover, …})
+                              ←    waveforms, audio, frames, transcribe-audio,
+                              ←    voiceover, …})
         mcp/                  ← compute/hybrid tool defs + wire + resources
                               ←   (TS owns the merged catalog; HTTP host in
                               ←   src/main/mcp)
         cloud/                ← provider-agnostic cloud APIs:
                               ←   Transcriber / Synthesizer traits,
-                              ←   keyring-backed key storage,
+                              ←   in-memory key cache populated from
+                              ←   Electron safeStorage,
                               ←   providers/openai.rs (Whisper + tts-1)
-        io/                   ← project.json (de)serialize for the per-call
-                              ←   project/MediaItem slices + io/migrate.rs (migrations)
+        io/                   ← media probe helpers; project.json load/save
+                              ←   and schema-version gate live in TS
+                              ←   state/persistence.ts
         logs/                 ← LogBus actor, JSONL writer, tracing bridge
-        preview/              ← preview-orchestrator state on the Rust side
         commands/             ← the command surface dispatched by Backend.invoke
-                              ←   (query, mutations, media, export, history, …)
+                              ←   (native compute/read handlers; TS owns
+                              ←   mutation/history/query/persistence)
         events.rs             ← EventSink + thread-safe-function bridge to main
         subtitles/            ← caption/subtitle parse + compute (docs/captions.md)
         agent_session.rs      ← agent-mode session lifecycle
@@ -228,7 +238,8 @@ weftcut/
         startup/              ← Create / Open / Recent screen
         preview/              ← <PreviewSurface> mounting the Pixi compositor
         render/               ← PixiJS + WebCodecs renderer
-          Compositor.ts       ←   PixiJS Application owner
+          Compositor.ts       ←   scene graph + per-frame compositor
+                              ←   (the host owns the PixiJS Application)
           clock.ts            ←   audio-master clock (anchor-derived;
                               ←   wall fallback while suspended)
           PlaybackEngine.ts   ←   transport
@@ -271,16 +282,15 @@ weftcut/
   host that runs in the main process and fronts the merged tool catalog
   (TS-routed tool defs + the Rust compute/hybrid tools).
 - **ffmpeg-sidecar** — auto-downloads ffmpeg on first run.
-- **imbl** — persistent immutable collections (state snapshots with
-  structural sharing).
+- **immer** — TS actor drafts and frozen immutable project snapshots.
+- **imbl** — Rust project model collections used when deserializing
+  per-call project slices for native compute/export paths.
 - **tokio** — async runtime, channels.
 - **serde** / **serde_json** / **schemars** — serialization, JSON
   Schema generation shared between the MCP tool catalog and the
   `Backend.invoke` command bridge.
 - **uuid** — v7 IDs for all addressable entities.
 - **blake3** — content hashing (cache keys, file dedup).
-- **keyring** — OS-native credential storage for cloud-provider API
-  keys.
 - **reqwest** (rustls) — HTTP client for cloud-provider integrations.
 - **pixi.js** v8 — renderer-side compositor.
 - **mediabunny** — renderer-side demuxer / muxer for the WebCodecs
