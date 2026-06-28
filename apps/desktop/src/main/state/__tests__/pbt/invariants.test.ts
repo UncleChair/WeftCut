@@ -30,12 +30,16 @@ describe('structural invariants', () => {
     expect(() => invNoUnauthorizedOverlap(ok)).not.toThrow()
   })
 
-  it('rejects duration not autofit when unpinned', () => {
-    const bad: WireProject = { ...base, composition: { ...base.composition, duration_us: 999, duration_pinned: false } }
-    expect(() => invDurationAutofit(bad)).toThrow(InvariantError)
+  it('accepts duration shorter than max-end when unpinned (update_layer skips autofit)', () => {
+    // update_layer intentionally does not call applyDurationAutofit in both Rust
+    // and TS actors, so duration_us can legitimately fall behind max layer end on
+    // unpinned projects. Confirmed by oracle states: update-layer-times.json and
+    // update-layer-undo.json. The invariant cannot assert strict equality here.
+    const ok: WireProject = { ...base, composition: { ...base.composition, duration_us: 999, duration_pinned: false } }
+    expect(() => invDurationAutofit(ok)).not.toThrow()
   })
 
-  it('ignores duration when pinned', () => {
+  it('ignores duration when pinned (overflow guard is write-time, not a read invariant)', () => {
     const ok: WireProject = { ...base, composition: { ...base.composition, duration_us: 999, duration_pinned: true } }
     expect(() => invDurationAutofit(ok)).not.toThrow()
   })

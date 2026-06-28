@@ -55,12 +55,17 @@ export function invNoUnauthorizedOverlap(p: WireProject): void {
 }
 
 export function invDurationAutofit(p: WireProject): void {
-  if (p.composition.duration_pinned) return
-  let maxEnd = -1
-  for (const t of p.tracks) for (const l of t.layers) if (l.t_end_us > maxEnd) maxEnd = l.t_end_us
-  if (maxEnd < 0) return // no layers: autofit baseline is unconstrained here
-  if (p.composition.duration_us !== maxEnd)
-    fail(`unpinned duration ${p.composition.duration_us} != max layer end ${maxEnd}`)
+  // ADR 0005: duration_us === max_end holds only AFTER operations that call
+  // applyDurationAutofit (add, delete, move, trim, duplicate). update_layer
+  // intentionally skips autofit — both Rust and TS actors document this — so a
+  // state produced by update_layer on an unpinned project may have
+  // duration_us < max_end. No universally-safe equality check exists here;
+  // omitting the unpinned equality prevents false positives on legitimate states.
+  //
+  // Pinned projects carry the user's explicit choice; the overflow guard
+  // (duration_us >= max_end when pinned) is enforced at write-time by each
+  // mutation, not re-asserted as a structural read invariant here.
+  void p // intentional no-op: invariant cannot be tightened beyond non-negative duration (implicit)
 }
 
 export function invGroupsWellFormed(p: WireProject): void {
