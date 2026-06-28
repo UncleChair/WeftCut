@@ -143,15 +143,25 @@ pub enum Interpolation {
     },
 }
 
+/// Two-endpoint blend at eased progress `u` ∈ [0,1]. `u` is ALREADY remapped
+/// by the segment's `Interpolation` before lerp sees it, so easing stays
+/// orthogonal to the value type. (Spatial motion paths are NOT this trait —
+/// they need the whole keyframe sequence; a separate future layer.)
+pub trait Interpolate: Copy {
+    fn lerp(a: Self, b: Self, u: f64) -> Self;
+}
+impl Interpolate for f64 {
+    #[inline]
+    fn lerp(a: f64, b: f64, u: f64) -> f64 { a + (b - a) * u }
+}
+
 /// POD keyframe — the input to `eval_f64`. The actor's imbl-backed
 /// `Keyframe<T>` collects into a `&[Kf]` before evaluating (`eval_kfs`).
 /// `Copy` so the wasm shim can stage a fixed-size `[Kf; N]` buffer.
+/// Default type param `T = f64` so existing `Kf`, `[Kf; N]`, `Vec<Kf>` sites
+/// keep meaning `Kf<f64>` without any edits.
 #[derive(Clone, Copy, Debug)]
-pub struct Kf {
-    pub t_us: i64,
-    pub value: f64,
-    pub interp: Interpolation,
-}
+pub struct Kf<T = f64> { pub t_us: i64, pub value: T, pub interp: Interpolation }
 
 /// `f64::abs` is std-only; the wasm (no_std) build needs a core-only abs.
 #[inline]
@@ -224,13 +234,15 @@ pub fn unit_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
     sample_y(t)
 }
 
-/// Slice form of `Animated<f64>::value_at`. Empty slice ⇒ `default`; one key ⇒
+/// Generic slice-form keyframe evaluator. Empty slice ⇒ `default`; one key ⇒
 /// that key's value; `t_us` before-first/after-last clamps to the end key; else
 /// locate the segment `kf[i].t_us <= t < kf[i+1].t_us` and apply `kf[i].interp`
 /// (Hold → left value; Linear → lerp; EaseIn/EaseOut → CSS cubic eases; Bezier →
 /// `unit_bezier(p1, p2)`). Keyframes must be sorted by `t_us` (the actor stores
 /// them normalized). MIRRORS `render/animated.ts::resolveAnimated`.
-pub fn eval_f64(kfs: &[Kf], t_us: i64, default: f64) -> f64 {
+/// The only type-specific operation is `T::lerp` at the very tail; all segment
+/// search, clamp, and easing logic is shared across value types.
+pub fn eval<T: Interpolate>(kfs: &[Kf<T>], t_us: i64, default: T) -> T {
     if kfs.is_empty() {
         return default;
     }
@@ -263,7 +275,13 @@ pub fn eval_f64(kfs: &[Kf], t_us: i64, default: f64) -> f64 {
         Interpolation::EaseOut => u = unit_bezier(0.0, 0.0, 0.58, 1.0, u),
         Interpolation::Bezier { p1, p2 } => u = unit_bezier(p1.0, p1.1, p2.0, p2.1, u),
     }
-    a.value + (b.value - a.value) * u
+    T::lerp(a.value, b.value, u)
+}
+
+/// Thin wrapper — KEEP this exact public signature (audio envelope sampler
+/// calls it directly).
+pub fn eval_f64(kfs: &[Kf<f64>], t_us: i64, default: f64) -> f64 {
+    eval(kfs, t_us, default)
 }
 
 // ===========================================================================
