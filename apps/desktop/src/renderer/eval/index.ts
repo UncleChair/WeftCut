@@ -23,6 +23,8 @@ interface Exports {
   eval(tUs: number, def: number): number
   db_to_linear(db: number): number
   role_audible(muted: number, solo: number, anySolo: number): number
+  pan_coeff(pan: number, channels: number, idx: number): number
+  fade_mul(tUs: number, spanUs: number, fadeInUs: number, fadeOutUs: number): number
 }
 
 let ex: Exports | null = null
@@ -132,4 +134,20 @@ export function dbToLinear(db: number): number {
 
 export function roleAudible(muted: boolean, solo: boolean, anySolo: boolean): boolean {
   return E().role_audible(muted ? 1 : 0, solo ? 1 : 0, anySolo ? 1 : 0) !== 0
+}
+
+/** Equal-power pan coefficient `[a,b,c,d][idx]` for `(pan, channels)` — the
+ * leaf law shared with the export mixer. `channels` 1 (mono) or 2 (stereo). */
+export function panCoeff(pan: number, channels: number, idx: number): number {
+  return E().pan_coeff(pan, channels, idx)
+}
+
+/** Fade ramp multiplier — leaf-sourced twin of `audio/mix.rs` fade_multiplier. */
+export function fadeMul(
+  tUs: number,
+  spanUs: number,
+  fadeInUs: number,
+  fadeOutUs: number,
+): number {
+  return E().fade_mul(tUs, spanUs, fadeInUs, fadeOutUs)
 }
