@@ -183,20 +183,17 @@ describe('MCP adapter routing — add_track (table)', () => {
     expect(newTrack.label).toBe('VFX')
   })
 
-  // add_track has no required args (label is optional), so malformed-arg test
-  // targets an invalid label type instead.
+  // add_track has no required args (label is optional), so the malformed-arg test
+  // targets an invalid label type (number). parseStrOpt(42,'label') rejects since
+  // 42 is neither a string nor null/undefined → invalid_params, no track added.
   it('invalid label type (number) → structured error, no throw, no extra track', () => {
     const a = freshActor()
     const before = a.snapshot().tracks.length
     const r = a.mcpCall('add_track', JSON.stringify({ label: 42 }))
-    // parseStrOpt only rejects non-string non-null/undefined; 42 is a number → invalid_params
-    if (r.ok) {
-      // Some implementations may silently coerce; if ok, state must still be consistent
-      expect(a.snapshot().tracks.length).toBeGreaterThanOrEqual(before)
-    } else {
-      expect(r.error.code).toBe('invalid_params')
-      expect(a.snapshot().tracks.length).toBe(before)
-    }
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('invalid_params')
+    expect(a.snapshot().tracks.length).toBe(before)
   })
 })
 

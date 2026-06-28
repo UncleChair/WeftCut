@@ -44,17 +44,22 @@ describe('production adapter routing — add_color_layer (rich)', () => {
     expect(track.layers[0].t_end_us).toBe(5_000_000)
   })
 
-  it('tStartUs missing (not a number) → structured error, no throw, no layer added', () => {
+  it('tStartUs missing (not a number) → structured InvalidArgument error, no throw, no layer added', () => {
     const a = freshActor()
     const r = a.command('add_color_layer', { trackId: aRollId(a), tStartUs: 'now' })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    // parseNum('now','tStartUs') throws McpArgError → rich command() catch → InvalidArgument
+    expect(r.error.error).toBe('InvalidArgument')
     expect(totalLayerCount(a)).toBe(0)
   })
 
-  it('malformed trackId (non-UUID) → structured error, no throw, no layer added', () => {
+  it('malformed trackId (non-UUID) → structured InvalidArgument error, no throw, no layer added', () => {
     const a = freshActor()
     const r = a.command('add_color_layer', { trackId: 'bad', tStartUs: 0 })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('InvalidArgument')
     expect(totalLayerCount(a)).toBe(0)
   })
 })
@@ -80,11 +85,13 @@ describe('production adapter routing — add_text_layer (rich)', () => {
     expect(params.font.size_px).toBe(72)
   })
 
-  it('tStartUs missing (not a number) → structured error, no throw', () => {
+  it('tStartUs missing (not a number) → structured InvalidArgument error, no throw', () => {
     const a = freshActor()
-    // tStartUs absent → parseNum fails → structured error
+    // tStartUs absent → parseNum(undefined,'tStartUs') throws → rich command() catch → InvalidArgument
     const r = a.command('add_text_layer', { trackId: aRollId(a) })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('InvalidArgument')
     expect(totalLayerCount(a)).toBe(0)
   })
 })
@@ -156,10 +163,13 @@ describe('production adapter routing — update_layer (mechanical)', () => {
     expect(track.layers[0].label).toBe('Hero Clip')
   })
 
-  it('malformed layerId (absent) → structured error, no throw, layer unchanged', () => {
+  it('malformed layerId (absent) → structured LayerNotFound error, no throw, layer unchanged', () => {
     const a = freshActor()
     const r = a.command('update_layer', { patch: { label: 'x' } })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    // layerId forwarded as undefined → checkTrackLock can't locate it → LayerNotFound
+    expect(r.error.error).toBe('LayerNotFound')
     // No layers were mutated
     expect(totalLayerCount(a)).toBe(0)
   })
@@ -182,13 +192,16 @@ describe('production adapter routing — move_layer (mechanical)', () => {
     expect(src.layers.some((l) => l.id === layerId)).toBe(false)
   })
 
-  it('missing newTrackId → structured error, no throw, layer stays on original track', () => {
+  it('missing newTrackId → structured TrackNotFound error, no throw, layer stays on original track', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const layerId = addColorLayerCmd(a, trackId, 0, 2_000_000)
-    // newTrackId absent → dispatch receives undefined → actor rejects (LayerNotFound or InvalidArgument)
+    // newTrackId forwarded as undefined → applyMoveLayer locates the source layer
+    // (exists) then fails to find the destination track → TrackNotFound.
     const r = a.command('move_layer', { layerId, newTStartUs: 0 })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('TrackNotFound')
     // Layer must still be on the source track
     const src = a.snapshot().tracks.find((t) => t.id === trackId)!
     expect(src.layers.some((l) => l.id === layerId)).toBe(true)
@@ -214,9 +227,12 @@ describe('production adapter routing — trim_layer (mechanical)', () => {
     const trackId = aRollId(a)
     const layerId = addColorLayerCmd(a, trackId, 0, 4_000_000)
 
-    // newTUs absent → parseNum(undefined,'new_t_us') throws McpArgError → structured error
+    // newTUs absent → the dispatch core's parseNum(undefined,'new_t_us') throws an
+    // McpArgError that the dispatch catch maps to InvalidArgument.
     const r = a.command('trim_layer', { layerId, edge: 'out' })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('InvalidArgument')
     // Layer end must be unchanged
     const track = a.snapshot().tracks.find((t) => t.id === trackId)!
     expect(track.layers[0].t_end_us).toBe(4_000_000)
@@ -237,10 +253,12 @@ describe('production adapter routing — delete_layer (mechanical)', () => {
     expect(totalLayerCount(a)).toBe(0)
   })
 
-  it('non-existent layerId → structured error (LayerNotFound), no throw', () => {
+  it('non-existent layerId → structured LayerNotFound error, no throw', () => {
     const a = freshActor()
     const r = a.command('delete_layer', { layerId: '00000000-0000-0000-0000-000000000000' })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('LayerNotFound')
     expect(totalLayerCount(a)).toBe(0)
   })
 })
@@ -265,10 +283,14 @@ describe('production adapter routing — duplicate_layer (mechanical)', () => {
     expect(dup.t_start_us).toBe(2_000_000)
   })
 
-  it('non-existent layerId → structured error, no throw', () => {
+  it('non-existent layerId → structured LayerNotFound error, no throw, no layer added', () => {
     const a = freshActor()
     const r = a.command('duplicate_layer', { layerId: '00000000-0000-0000-0000-000000000000', tOffsetUs: 0 })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    // prod command() error envelope is a CommandError: the structured field is `error.error`
+    expect(r.error.error).toBe('LayerNotFound')
+    expect(totalLayerCount(a)).toBe(0)
   })
 })
 
@@ -290,13 +312,15 @@ describe('production adapter routing — groups_create (mechanical)', () => {
     expect(groups.some((g) => g.id === groupId && g.members.includes(id1) && g.members.includes(id2))).toBe(true)
   })
 
-  it('single layer id → structured error (groups need >=2 members), no throw', () => {
+  it('single layer id → structured GroupCreateNeedsTwoLayers error, no throw', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const id1 = addColorLayerCmd(a, trackId)
     // groups_create requires at least 2 distinct layer ids
     const r = a.command('groups_create', { layerIds: [id1] })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('GroupCreateNeedsTwoLayers')
     expect(a.snapshot().groups).toHaveLength(0)
   })
 })
@@ -312,11 +336,17 @@ describe('production adapter routing — set_role_gain (mechanical)', () => {
     expect(roles['dialogue']?.gain_db).toBe(-3)
   })
 
-  it('gainDb missing (undefined, non-parseable) → structured error, no throw', () => {
+  it('gainDb missing (undefined) → structured InvalidArgument error, no throw', () => {
     const a = freshActor()
-    // gainDb absent → parseNum(undefined,'gain_db') via the mechanical mapping → rejects
+    // The prod mechanical adapter does NOT parse-reject: it forwards gain_db: undefined
+    // straight through (commands.ts MECHANICAL.set_role_gain). The rejection happens
+    // DOWNSTREAM in the dispatch core, where parseNum(undefined,'gain_db') throws an
+    // McpArgError that the dispatch catch maps to InvalidArgument. (The MCP side, by
+    // contrast, parse-rejects at the adapter via parseNum in parseArgs.)
     const r = a.command('set_role_gain', { role: 'dialogue' })
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('InvalidArgument')
   })
 })
 
@@ -366,19 +396,24 @@ describe('production adapter routing — project_undo / project_redo (mechanical
     expect(totalLayerCount(a)).toBe(1)
   })
 
-  it('project_undo at origin → structured error (NothingToUndo), no throw', () => {
+  it('project_undo at origin → structured NothingToUndo error, no throw', () => {
     const a = freshActor()
     const r = a.command('project_undo', {})
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('NothingToUndo')
   })
 })
 
 // ── Unknown channel ───────────────────────────────────────────────────────────
 
 describe('production adapter routing — unknown channel', () => {
-  it('unknown channel → structured error, no throw', () => {
+  it('unknown channel → structured InvalidArgument error, no throw', () => {
     const a = freshActor()
     const r = a.command('does_not_exist', {})
     expect(r.ok).toBe(false)
+    if (r.ok) return
+    // command()'s default arm returns { error: 'InvalidArgument', field: 'op', ... }
+    expect(r.error.error).toBe('InvalidArgument')
   })
 })
