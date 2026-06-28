@@ -11,5 +11,5 @@
     "!src/main/state/**/*.test.ts",
     "!src/main/state/**/__tests__/**"
   ],
-  "thresholds": { "high": 90, "low": 80, "break": null }
+  "thresholds": { "high": 90, "low": 80, "break": 75 }
 }

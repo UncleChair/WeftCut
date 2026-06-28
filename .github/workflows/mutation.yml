@@ -1,0 +1,87 @@
+name: mutation
+
+# Mutation testing is a slow, PERIODIC quality gate — never a per-PR gate. It
+# mutates the state mutation/validation code (validate.ts + the move/trim
+# mutations, per stryker.config.json) and confirms the property-based test net
+# actually KILLS the mutants. Runs weekly and on manual dispatch only. A drop
+# below the break threshold (stryker.config.json `thresholds.break`) fails the
+# run, surfacing a real coverage regression.
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+# Read-only: this workflow builds + runs tests, never writes repo contents.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stryker:
+    # Mutation runs are long (a dry-run of the full suite + per-mutant covering
+    # tests across hundreds of mutants); cap well under the 6h default.
+    timeout-minutes: 60
+    # OS-independent: the mutated code is pure-TS state logic. One leg (Linux) is
+    # enough — Linux builds the napi addon fine (only standalone cargo TESTS fail
+    # there, which this job doesn't run).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.0'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # Stryker runs the vitest suite, which imports the napi addon
+      # (@weftcut/core) and the wasm eval leaf — so both must be built first.
+      # Action pins match electron-ci.yml (supply-chain hardening).
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: apps/desktop/native
+
+      # npm ci at the workspace root: the root package-lock.json covers all
+      # workspaces (there is no apps/desktop/package-lock.json).
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Build napi addon
+        run: npm run napi:build
+
+      # `stryker run` invokes vitest directly, so the `pretest`/`prebuild`
+      # build:wasm hook does NOT fire — build the wasm eval leaf explicitly.
+      - name: Build wasm eval leaf
+        run: npm run build:wasm
+
+      # WEFTCUT_PBT_RUNS=30 shrinks the property-based tests' fast-check runs for
+      # the mutation pass (every mutant re-runs its covering tests; fewer runs
+      # keeps the matrix tractable while staying broad enough to kill mutants).
+      # The mutation score (and the break threshold) live in stryker.config.json.
+      - name: Mutation tests (Stryker)
+        env:
+          WEFTCUT_PBT_RUNS: '30'
+        run: npm run pbt:stryker
+
+      # Keep the HTML/JSON mutation report for inspection (gitignored locally,
+      # uploaded here). if: always() so a threshold failure still publishes it.
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report
+          retention-days: 14
+          path: apps/desktop/reports/mutation/**
