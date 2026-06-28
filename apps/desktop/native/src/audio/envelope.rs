@@ -199,20 +199,23 @@ mod pbt {
             let got = pan_coeffs_at(&env, channels, t_us);
 
             // --- Independent reference (mirrors Task 9 TS reference exactly) ---
-            // coeff(p) = pan_coeffs(p, channels) → [f32; 4]
-            let coeff = |p: f64| weftcut_eval::pan_coeffs(p, channels);
+            // coeff(idx) reads the SAME f32-rounded grid value production reads
+            // from `env.values` (production round-trips f64→f32→f64), so the
+            // comparison is on identical inputs — not the raw proptest f64 vec.
+            // The outer loop (index/clamp/lerp) is still derived independently.
+            let coeff = |idx: usize| weftcut_eval::pan_coeffs(env.values[idx] as f64, channels);
             let last = values.len() - 1;
             let exp: [f32; 4] = if last == 0 {
-                coeff(values[0])
+                coeff(0)
             } else {
                 let pos = (t_us.max(0) as f64) / step_us as f64;
                 let i = (pos.floor() as usize).min(last);
                 if i >= last {
-                    coeff(values[last])
+                    coeff(last)
                 } else {
                     let frac = (pos - i as f64) as f32;
-                    let a = coeff(values[i]);
-                    let b = coeff(values[i + 1]);
+                    let a = coeff(i);
+                    let b = coeff(i + 1);
                     [
                         a[0] + (b[0] - a[0]) * frac,
                         a[1] + (b[1] - a[1]) * frac,
