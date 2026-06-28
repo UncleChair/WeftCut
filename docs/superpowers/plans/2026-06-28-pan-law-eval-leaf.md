@@ -121,7 +121,11 @@ Add to `native/eval/src/lib.rs`, in the audio section (after `role_gain_linear`)
 pub fn pan_coeffs(pan: f64, channels: i32) -> [f32; 4] {
     let p = pan.clamp(-1.0, 1.0);
     let fp2 = core::f64::consts::FRAC_PI_2;
-    let cs = |x: f64| (libm::cos(x * fp2) as f32, libm::sin(x * fp2) as f32);
+    // Cast f64→f32 and clamp rounding residue at the trig-exact zeros
+    // (libm::cos(π/2) ≈ 6.12e-17; as f32 that is non-zero, breaking the
+    // exact-boundary asserts and diverging from the StereoPannerNode spec).
+    let zf = |v: f32| if v.abs() < 1e-7 { 0.0 } else { v };
+    let cs = |x: f64| (zf(libm::cos(x * fp2) as f32), zf(libm::sin(x * fp2) as f32));
     if channels <= 1 {
         let (c, s) = cs((p + 1.0) / 2.0);
         [c, 0.0, s, 0.0]
