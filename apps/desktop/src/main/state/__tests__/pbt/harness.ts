@@ -34,7 +34,7 @@ export function aRollId(actor: ReturnType<typeof createActor>): string { return 
 export function bRollId(actor: ReturnType<typeof createActor>): string { return actor.snapshot().tracks[1].id }
 
 export function wireSnapshot(actor: ReturnType<typeof createActor>): WireProject {
-  return serializeProject(actor.snapshot()) as unknown as WireProject
+  return serializeProject(actor.snapshot()) as WireProject
 }
 export function canonicalSnapshot(actor: ReturnType<typeof createActor>): string {
   return canonicalString(serializeProject(actor.snapshot()))
