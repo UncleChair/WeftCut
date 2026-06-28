@@ -81,5 +81,31 @@
         { "t_us": 510000, "expect": 0.1 }
       ]
     }
+  ],
+  "pan_cases": [
+    {
+      "name": "static pan center",
+      "pan": { "mode": "Static", "value": 0.0 },
+      "span_us": 1000000,
+      "samples": [ { "t_us": 0, "expect": 0.0 }, { "t_us": 500000, "expect": 0.0 } ]
+    },
+    {
+      "name": "static pan -0.8 clamped passthrough",
+      "pan": { "mode": "Static", "value": -0.8 },
+      "span_us": 1000000,
+      "samples": [ { "t_us": 0, "expect": -0.8 }, { "t_us": 999000, "expect": -0.8 } ]
+    }
+  ],
+  "pan_coeff_env_cases": [
+    {
+      "name": "static pan -0.8 coeff envelope (stereo)",
+      "pan": { "mode": "Static", "value": -0.8 },
+      "channels": 2,
+      "span_us": 1000000,
+      "samples": [
+        { "t_us": 0,      "expect": [1.0, 0.95105654, 0.0, 0.309017] },
+        { "t_us": 500000, "expect": [1.0, 0.95105654, 0.0, 0.309017] }
+      ]
+    }
   ]
 }

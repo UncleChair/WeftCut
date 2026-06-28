@@ -719,7 +719,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "cloud")]
+    #[cfg(all(feature = "cloud", feature = "mcp"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn transcribe_clip_without_key_is_clean_error() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
@@ -744,7 +744,7 @@ mod tests {
     /// mirror. With no mirror pushed and no injected layer, the new code reports
     /// "layer not found" (it read `args.layer == None`); the old mirror-backed
     /// code would report "read-mirror not set" instead.
-    #[cfg(feature = "jobs")]
+    #[cfg(all(feature = "jobs", feature = "mcp"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn detect_silences_resolves_injected_layer_not_mirror() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));

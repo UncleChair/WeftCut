@@ -156,6 +156,33 @@ pub fn sample_pan(pan: &Animated<f64>, span_us: i64) -> Envelope {
     }
 }
 
+/// Lerped equal-power pan coefficients `[a,b,c,d]` at layer-local `t_us`, off a
+/// pan-VALUE envelope. Computes `pan_coeffs` at the two grid points straddling
+/// `t_us` (from the un-lerped grid values) and lerps the coefficients — the X
+/// parity contract: both export and the preview matrix mixer lerp COEFFICIENTS,
+/// not the pan value. Mirrors `render/audio/panGraph.ts::panCoeffsAt`.
+pub fn pan_coeffs_at(pan: &Envelope, channels: i32, t_us: i64) -> [f32; 4] {
+    use weftcut_eval::pan_coeffs;
+    if pan.values.len() <= 1 {
+        return pan_coeffs(*pan.values.first().unwrap_or(&0.0) as f64, channels);
+    }
+    let last = (pan.values.len() - 1) as i64;
+    let pos = (t_us.max(0) as f64) / pan.step_us as f64;
+    let i = (pos.floor() as i64).min(last);
+    let a = pan_coeffs(pan.values[i as usize] as f64, channels);
+    if i >= last {
+        return a;
+    }
+    let b = pan_coeffs(pan.values[(i + 1) as usize] as f64, channels);
+    let u = (pos - i as f64) as f32;
+    [
+        a[0] + (b[0] - a[0]) * u,
+        a[1] + (b[1] - a[1]) * u,
+        a[2] + (b[2] - a[2]) * u,
+        a[3] + (b[3] - a[3]) * u,
+    ]
+}
+
 /// Web Audio StereoPannerNode equal-power pan law. Verified branch-for-branch
 /// against Chromium's implementation (the engine Electron actually runs):
 /// third_party/blink/renderer/platform/audio/stereo_panner.cc — mono
@@ -327,6 +354,41 @@ mod tests {
                     s.t_us,
                     s.expect
                 );
+            }
+        }
+
+        #[derive(serde::Deserialize)]
+        struct PanSample { t_us: i64, expect: f64 }
+        #[derive(serde::Deserialize)]
+        struct PanCase { name: String, pan: Animated<f64>, span_us: i64, samples: Vec<PanSample> }
+        #[derive(serde::Deserialize)]
+        struct CoeffSample { t_us: i64, expect: [f32; 4] }
+        #[derive(serde::Deserialize)]
+        struct CoeffCase { name: String, pan: Animated<f64>, channels: i32, span_us: i64, samples: Vec<CoeffSample> }
+        #[derive(serde::Deserialize)]
+        struct Fixture2 {
+            #[serde(default)] pan_cases: Vec<PanCase>,
+            #[serde(default)] pan_coeff_env_cases: Vec<CoeffCase>,
+        }
+
+        let fx2: Fixture2 = serde_json::from_str(include_str!(
+            "../../../src/renderer/render/audio/audioEnvelopeGolden.fixture.json"
+        )).unwrap();
+        for c in &fx2.pan_cases {
+            let e = sample_pan(&c.pan, c.span_us);
+            for s in &c.samples {
+                assert!((e.eval(s.t_us) as f64 - s.expect).abs() < 1e-5,
+                    "pan `{}` t={}: got {}, expect {}", c.name, s.t_us, e.eval(s.t_us), s.expect);
+            }
+        }
+        for c in &fx2.pan_coeff_env_cases {
+            let e = sample_pan(&c.pan, c.span_us);
+            for s in &c.samples {
+                let got = pan_coeffs_at(&e, c.channels, s.t_us);
+                for i in 0..4 {
+                    assert!((got[i] - s.expect[i]).abs() < 1e-5,
+                        "coeff-env `{}` t={} idx{i}: got {}, expect {}", c.name, s.t_us, got[i], s.expect[i]);
+                }
             }
         }
     }
