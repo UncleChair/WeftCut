@@ -39,6 +39,7 @@ import { ImageOverlaySprite } from "../render/sprite/ImageOverlaySprite";
 import { decodeAnimatedImage } from "../render/sprite/animatedImageCache";
 import type { ResolvedImageOverlayView } from "../render/resolveView";
 import { convertFileSrc } from "@/bridge/ipc";
+import { buildPanGraph, constantPanGains } from "../render/audio/panGraph";
 
 type RunExport = (
   settings: ExportSettings,
@@ -251,6 +252,16 @@ export interface E2EHook {
   /// mounted. Dev/e2e only — this is what proves the countdown's CDP pixels
   /// reach the live compositor.
   weftcutSampleComposite(x: number, y: number): Promise<CompositeSample>;
+  /// Render the REAL buildPanGraph + constantPanGains in an OfflineAudioContext
+  /// and return the mean L/R RMS energy. Drives the actual Web Audio graph
+  /// wiring (splitter/4-gain/merger topology) that the headless math goldens
+  /// cannot reach — a constant-1.0 input lets each case verify the equal-power
+  /// matrix mix analytically. No media fixtures required. Dev/e2e only.
+  panRenderProbe(args: {
+    channels: number;
+    pan: number;
+    frames: number;
+  }): Promise<{ l: number; r: number }>;
 }
 
 /// Pixel + whole-frame diagnostics from the live composite readback. `r/g/b/a`
@@ -823,5 +834,40 @@ export function installExportHook(
     if (!(await exists(outputAbsPath))) {
       throw new Error(`export produced no output file at ${outputAbsPath}`);
     }
+  };
+}
+
+/// Root-side: install audio test hooks (preview pan-graph probe). Lives at Root
+/// level — no App/export state needed. Called once on boot from main.tsx.
+export function installAudioTestHooks(): void {
+  // Render the preview pan matrix graph offline and return mean L/R energy.
+  // Drives the REAL buildPanGraph so the e2e covers graph wiring, not math.
+  // Constant pan exercises the topology deterministically; the animated coeff
+  // path (panCurves) is covered by the envelope coeff-env golden.
+  hookSlot().panRenderProbe = async ({ channels, pan, frames }) => {
+    const sr = 48_000;
+    const ctx = new OfflineAudioContext(2, frames, sr);
+    const buf = ctx.createBuffer(channels, frames, sr);
+    for (let c = 0; c < channels; c++) buf.copyToChannel(new Float32Array(frames).fill(1), c);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const env = { stepUs: 10_000, spanUs: (frames / sr) * 1e6, values: [pan] };
+    const g = buildPanGraph(ctx, channels);
+    src.connect(g.input);
+    g.output.connect(ctx.destination);
+    // constant pan: set gains directly (mirrors AudioMixer fast path)
+    const cg = constantPanGains(env, channels);
+    g.gains.forEach((node, i) => (node.gain.value = cg[i] ?? 0));
+    src.start();
+    const rendered = await ctx.startRendering();
+    const lCh = rendered.getChannelData(0);
+    const rCh = rendered.getChannelData(1);
+    let l = 0;
+    let r = 0;
+    for (let i = 0; i < frames; i++) {
+      l += lCh[i]! * lCh[i]!;
+      r += rCh[i]! * rCh[i]!;
+    }
+    return { l: Math.sqrt(l / frames), r: Math.sqrt(r / frames) };
   };
 }
