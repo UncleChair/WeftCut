@@ -18,7 +18,8 @@ class AddColor implements fc.Command<Model, Real> {
     const res = r.dispatch('add_layer', { track: trackOf(m, this.track), kind: 'color', t_start_us: this.start, t_end_us: this.start + this.len })
     if (res.ok && typeof res.value === 'string') {
       m.layers.set(res.value, { id: res.value, track: trackOf(m, this.track), start: this.start, end: this.start + this.len })
-      const live = wireSnapshot(r).tracks.flatMap((t) => t.layers).find((l) => l.id === res.value)!
+      const live = wireSnapshot(r).tracks.flatMap((t) => t.layers).find((l) => l.id === res.value)
+      if (!live) throw new Error(`add returned ok but layer ${res.value} not found in snapshot`)
       if (live.t_start_us !== this.start || live.t_end_us !== this.start + this.len) throw new Error(`add landed wrong: ${live.t_start_us}..${live.t_end_us}`)
     }
     postcheck(r)
@@ -37,7 +38,8 @@ class Move implements fc.Command<Model, Real> {
       const dur = before.end - before.start
       const next = { id, track: trackOf(m, this.track), start: this.start, end: this.start + dur }
       m.layers.set(id, next)
-      const live = wireSnapshot(r).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
+      const live = wireSnapshot(r).tracks.flatMap((t) => t.layers).find((l) => l.id === id)
+      if (!live) throw new Error(`move returned ok but layer ${id} not found in snapshot`)
       if (live.t_start_us !== next.start || live.t_end_us !== next.end) throw new Error(`move landed wrong: ${live.t_start_us}..${live.t_end_us} expected ${next.start}..${next.end}`)
     }
     postcheck(r)
