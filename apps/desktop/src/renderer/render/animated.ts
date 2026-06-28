@@ -3,7 +3,15 @@
 // throughout to match the Rust side; callers convert at the seconds boundary.
 //
 // Plan: docs/render.md
-import { loadTrack, evalTrack, type Kf } from "../eval";
+import {
+  loadTrack,
+  evalTrack,
+  loadColorTrack,
+  evalRgbaPacked,
+  type Kf,
+  type KfColor,
+} from "../eval";
+import type { Rgba } from "../ipc";
 
 export type Interpolation =
   | { kind: "Hold" }
@@ -109,4 +117,24 @@ export function resolveAnimated<T extends number>(
   if (kfs.length === 1) return kfs[0]!.value;
   loadTrack(handleFor(kfs), kfs as unknown as Kf[]);
   return evalTrack(tCompUs, 0) as T;
+}
+
+/// Color twin of `resolveAnimated`. Genuinely-keyframed color tracks (≥2 keys)
+/// delegate to the wasm `weftcut-eval::eval::<Rgba8>` (OkLab + premultiplied
+/// alpha) — the SAME leaf math native export runs — so preview and export
+/// interpolate color identically. Reuses the shared `handleFor` WeakMap: handles
+/// are globally unique, so color/scalar never collide even though their resident
+/// buffers differ. Static / empty / single-key tracks short-circuit in JS.
+export function resolveAnimatedColor(
+  track: AnimTrack<Rgba> | null | undefined,
+  tCompUs: number,
+  defaultValue: Rgba,
+): Rgba {
+  if (!track) return defaultValue;
+  if (track.mode === "Static") return track.value;
+  const kfs = track.value;
+  if (!kfs || kfs.length === 0) return defaultValue;
+  if (kfs.length === 1) return kfs[0]!.value;
+  loadColorTrack(handleFor(kfs), kfs as unknown as KfColor[]);
+  return evalRgbaPacked(tCompUs, defaultValue) as Rgba;
 }

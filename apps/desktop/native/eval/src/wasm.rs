@@ -4,13 +4,20 @@
 //! (NEVER i64 — that would force BigInt marshaling at the JS boundary). Built
 //! only for wasm32; the native crate excludes this module.
 //!
+//! Color is the one carve-out: an `Rgba8` crosses as a PACKED i32 (RGBA8 in one
+//! scalar) via `set_kf_rgba`/`eval_rgba_packed` — still no BigInt and no memory
+//! reads, just one i32 per color instead of four channel scalars.
+//!
 //! Single-threaded by construction (one wasm instance, no threads), so the
 //! `static mut` track buffer needs no synchronization. `Rational` is NOT here —
 //! the snap fn takes `(num, den)` primitives (it stays in the napi crate).
+// NOTE: the generic `crate::eval` is NOT imported here — this module exports its
+// own `extern "C" fn eval` (the scalar shim), so the color path calls
+// `crate::eval::<Rgba8>` fully-qualified to dodge the name collision.
 use crate::{
     db_to_linear as db_to_linear_impl, eval_f64, fade_multiplier as fade_multiplier_impl,
     pan_coeffs as pan_coeffs_impl, role_audible as role_audible_impl, snap_frame_floor,
-    snap_frame_round, us_to_frame as us_to_frame_impl, Interpolation, Kf,
+    snap_frame_round, us_to_frame as us_to_frame_impl, Interpolation, Kf, Rgba8,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -26,6 +33,15 @@ static mut T: [i64; MAXKF] = [0; MAXKF];
 static mut V: [f64; MAXKF] = [0.0; MAXKF];
 static mut IT: [Interpolation; MAXKF] = [Interpolation::Linear; MAXKF];
 static mut N: usize = 0;
+
+// Resident COLOR track, PARALLEL to the scalar one above (independent buffer;
+// `loadColorTrack` in the TS layer caches it under its own handle). Values are
+// packed RGBA8 (`(r<<24)|(g<<16)|(b<<8)|a`, r in the HIGH byte) so a color
+// crosses the scalars-only ABI as one i32 — see the module header.
+static mut TC: [i64; MAXKF] = [0; MAXKF];
+static mut VC: [u32; MAXKF] = [0; MAXKF];
+static mut ITC: [Interpolation; MAXKF] = [Interpolation::Linear; MAXKF];
+static mut NC: usize = 0;
 
 /// `snap_frame_round(t_us, num/den)` — round to the nearest frame boundary.
 #[no_mangle]
@@ -107,6 +123,82 @@ pub extern "C" fn eval(t_us: f64, default: f64) -> f64 {
             };
         }
         eval_f64(&buf[..n], t_us as i64, default)
+    }
+}
+
+/// Set the resident COLOR track length (keyframes uploaded via `set_kf_rgba`).
+#[no_mangle]
+pub extern "C" fn set_n_rgba(n: i32) {
+    let n = (n as usize).min(MAXKF);
+    unsafe {
+        NC = n;
+    }
+}
+
+/// Upload one COLOR keyframe. `packed` is RGBA8 (`(r<<24)|(g<<16)|(b<<8)|a`).
+/// `interp` codes + p1/p2 semantics match `set_kf`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn set_kf_rgba(
+    i: i32,
+    t_us: f64,
+    packed: i32,
+    interp: i32,
+    p1x: f64,
+    p1y: f64,
+    p2x: f64,
+    p2y: f64,
+) {
+    let it = match interp {
+        0 => Interpolation::Hold,
+        1 => Interpolation::Linear,
+        2 => Interpolation::EaseIn,
+        3 => Interpolation::EaseOut,
+        _ => Interpolation::Bezier {
+            p1: (p1x, p1y),
+            p2: (p2x, p2y),
+        },
+    };
+    let i = (i as usize).min(MAXKF - 1);
+    unsafe {
+        TC[i] = t_us as i64;
+        VC[i] = packed as u32;
+        ITC[i] = it;
+    }
+}
+
+/// Evaluate the resident COLOR track at `t_us` through the SAME leaf
+/// `eval::<Rgba8>` (OkLab + premultiplied alpha) the native side runs, returning
+/// `default_packed` for an empty track. In/out are packed RGBA8 i32 — r in the
+/// HIGH byte, matching the TS `packRgba`/`unpackRgba` exactly.
+#[no_mangle]
+pub extern "C" fn eval_rgba_packed(t_us: f64, default_packed: i32) -> i32 {
+    unsafe {
+        let n = NC;
+        let unpack = |u: u32| Rgba8 {
+            r: (u >> 24) as u8,
+            g: (u >> 16) as u8,
+            b: (u >> 8) as u8,
+            a: u as u8,
+        };
+        let mut buf: [Kf<Rgba8>; MAXKF] = [Kf {
+            t_us: 0,
+            value: Rgba8 { r: 0, g: 0, b: 0, a: 0 },
+            interp: Interpolation::Linear,
+        }; MAXKF];
+        for i in 0..n {
+            buf[i] = Kf {
+                t_us: TC[i],
+                value: unpack(VC[i]),
+                interp: ITC[i],
+            };
+        }
+        let def = unpack(default_packed as u32);
+        let out = crate::eval::<Rgba8>(&buf[..n], t_us as i64, def);
+        (((out.r as u32) << 24)
+            | ((out.g as u32) << 16)
+            | ((out.b as u32) << 8)
+            | (out.a as u32)) as i32
     }
 }
 

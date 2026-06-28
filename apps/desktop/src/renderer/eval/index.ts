@@ -21,6 +21,18 @@ interface Exports {
     p2y: number,
   ): void
   eval(tUs: number, def: number): number
+  set_n_rgba(n: number): void
+  set_kf_rgba(
+    i: number,
+    tUs: number,
+    packed: number,
+    interp: number,
+    p1x: number,
+    p1y: number,
+    p2x: number,
+    p2y: number,
+  ): void
+  eval_rgba_packed(tUs: number, defPacked: number): number
   db_to_linear(db: number): number
   role_audible(muted: number, solo: number, anySolo: number): number
   pan_coeff(pan: number, channels: number, idx: number): number
@@ -126,6 +138,69 @@ export function loadTrack(handle: number, kfs: Kf[]): void {
 
 export function evalTrack(tUs: number, def: number): number {
   return E().eval(tUs, def)
+}
+
+// ---------------------------------------------------------------------------
+// Color keyframes. An `Rgba8` crosses the scalars-only ABI as ONE packed i32
+// (RGBA8). The resident color buffer is INDEPENDENT of the scalar one — its own
+// cache var below — but reuses MAX_KEYFRAMES + the same overflow-warn pattern.
+// ---------------------------------------------------------------------------
+
+/** Color value structurally compatible with the IPC `Rgba` (kept local so this
+ * layer stays dependency-light). */
+export interface RgbaLike {
+  r: number
+  g: number
+  b: number
+  a: number
+}
+
+/** Color keyframe shape (mirrors `Kf` for color values). */
+export interface KfColor {
+  t_us: number
+  value: RgbaLike
+  interp: { kind: string; p1?: [number, number]; p2?: [number, number] }
+}
+
+// Pack/unpack MUST be byte-identical to the Rust shim (`wasm.rs`): r in the HIGH
+// byte. `>>> 0` / `& 0xff` keep the values unsigned (JS `<<`/`>>` are signed).
+const packRgba = (c: RgbaLike) => (c.r << 24) | (c.g << 16) | (c.b << 8) | c.a
+const unpackRgba = (p: number): RgbaLike => {
+  const u = p >>> 0
+  return { r: (u >>> 24) & 0xff, g: (u >>> 16) & 0xff, b: (u >>> 8) & 0xff, a: u & 0xff }
+}
+
+let loadedColorHandle = -1
+let warnedColorOverflow = false
+/** Upload a color property's keyframes into the resident wasm COLOR buffer ONCE,
+ * cached by handle (twin of `loadTrack`; separate buffer + cache var). */
+export function loadColorTrack(handle: number, kfs: KfColor[]): void {
+  if (handle === loadedColorHandle) return
+  const e = E()
+  if (kfs.length > MAX_KEYFRAMES && !warnedColorOverflow) {
+    warnedColorOverflow = true
+    console.warn(
+      `weftcut-eval: an animated color property has ${kfs.length} keyframes; only ` +
+        `the first ${MAX_KEYFRAMES} are evaluated in the wasm preview. Native export ` +
+        `uses all of them, so preview may diverge from export. Known limit — see ` +
+        `docs/render.md.`,
+    )
+  }
+  const n = Math.min(kfs.length, MAX_KEYFRAMES)
+  for (let i = 0; i < n; i++) {
+    const k = kfs[i]!
+    const c = interpCode[k.interp.kind] ?? 1
+    const p1 = k.interp.p1 ?? [0, 0]
+    const p2 = k.interp.p2 ?? [0, 0]
+    e.set_kf_rgba(i, k.t_us, packRgba(k.value), c, p1[0], p1[1], p2[0], p2[1])
+  }
+  e.set_n_rgba(n)
+  loadedColorHandle = handle
+}
+
+/** Evaluate the resident color track at `tUs` (OkLab + premult, via the leaf). */
+export function evalRgbaPacked(tUs: number, def: RgbaLike): RgbaLike {
+  return unpackRgba(E().eval_rgba_packed(tUs, packRgba(def)))
 }
 
 export function dbToLinear(db: number): number {
