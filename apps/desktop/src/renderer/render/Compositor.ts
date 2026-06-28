@@ -637,11 +637,10 @@ export class Compositor {
   }
 
   /// Per-frame "filter + addChild" tail for every visual layer kind. Applies
-  /// the layer's resolved filters when it carries an effect chain, then stages
-  /// the node once it's ready. `effects` is omitted for kinds without a chain
-  /// (Motif today) → they stage unfiltered. That omission is the single seam a
-  /// future "Motif effects" change plugs into: give ActiveMotif an EffectChain
-  /// and pass it here.
+  /// the layer's resolved effect filters, then stages the node once it's ready.
+  /// All five visual kinds — including Motif — carry an EffectChain; `effects`
+  /// stays optional only as a defensive no-op (a chain-less caller would stage
+  /// unfiltered).
   private stageVisual(
     sprite: StageableSprite,
     effects: EffectChain | undefined,

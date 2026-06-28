@@ -37,9 +37,7 @@ MCP — `get_param_track`, `set_keyframe`, `remove_keyframe`,
 `clear_keyframes`, and a low-level `set_param_track` — over the
 `update_layer_param_track` write path (timeline-absolute times), with a
 shared Rust↔TS golden fixture locking the transform math (see
-[`mcp.md`](mcp.md)). Design:
-[`superpowers/specs/2026-06-14-keyframe-authoring-design.md`](superpowers/specs/2026-06-14-keyframe-authoring-design.md),
-[`superpowers/specs/2026-06-14-keyframe-sublanes-design.md`](superpowers/specs/2026-06-14-keyframe-sublanes-design.md).
+[`mcp.md`](mcp.md)).
 
 What remains:
 
@@ -234,9 +232,7 @@ lazy on the 720p proxy, content-addressed cache — behind a `SceneDetector`
 trait so a learned model (TransNetV2 via ONNX) can slot in later for
 gradual-transition accuracy. Deliberately *not* the renderer/GPU path (keeps
 analysis off the compositor the user is driving) and *not* a vision model
-(semantic "what's in the frame" stays the multimodal agent's job). Full
-design in
-[`superpowers/specs/2026-06-14-frame-analysis-mcp-design.md`](superpowers/specs/2026-06-14-frame-analysis-mcp-design.md).
+(semantic "what's in the frame" stays the multimodal agent's job).
 
 ### Transitions
 
