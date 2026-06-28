@@ -36,3 +36,8 @@ One intentional JS copy of `unit_bezier` remains in `render/animated.ts` — use
 - **−** A build step: the renderer now depends on a generated, gitignored wasm module, wired into `predev`/`prebuild`/`pretest` (so a Rust toolchain with the `wasm32-unknown-unknown` target is required to build or test the renderer).
 - **−** The Rust + TS engines were unified by moving the renderer onto wasm; the leaf's `no_std` discipline is enforced by the per-build wasm compile, not by review.
 - **−** The wasm resident buffer is a fixed 256 keyframes **per animated property** (no heap in the no_std build); beyond that the preview truncates while native export evaluates all keyframes, so they would diverge. Unreachable in manual authoring (a backstop, not a product limit); `loadTrack` warns once if hit. Revisit (an upstream per-property cap, or a linear-memory upload path) only if dense/programmatic keyframes are introduced.
+- **+** The audio pan law (`pan_coeffs`) and fade ramp (`fade_multiplier`)
+  later joined the leaf, finishing the migration: export and the renderer
+  now run one pan law. The renderer pans via a native coefficient matrix
+  mixer (`ChannelSplitter → 4×GainNode → ChannelMerger`) instead of the
+  browser `StereoPannerNode` — see `docs/audio.md` §Preview mixer.

@@ -88,7 +88,8 @@ consumers linearly interpolate between the same points**:
 
 - Web Audio applies the gain envelope with `setValueCurveAtTime` —
   whose semantics are exactly linear interpolation across the sampled
-  array — and the pan envelope on `StereoPannerNode.pan`.
+  array — and the pan coefficient curves via `setValueCurveAtTime` on
+  the matrix `GainNode`s.
 - The Rust mixer lerps per sample between the same points.
 
 Identical points, identical interpolation: parity holds by
@@ -99,17 +100,21 @@ Known quantization: a `Hold` keyframe's instant step becomes a ≤10 ms
 ramp between the two grid points that straddle it. Accepted; 10 ms is
 well under a frame.
 
-The envelope sampler's drift-prone math is single-sourced: `db_to_linear`
-(`10^(dB/20)`) and the keyframe interpolation it samples both run the
-`weftcut-eval` leaf (native for Rust, wasm for the renderer). The sampler
-STRUCTURE around them — the 10 ms grid loop, the fade ramps, the
-per-sample lerp — is still parallel Rust/TS code; its golden fixture
-(`audioEnvelopeGolden.fixture.json`) is now a single-source check that the
-shared math reproduces it, and still guards the parallel sampling shape.
+The envelope sampler's drift-prone math is single-sourced in the
+`weftcut-eval` leaf (native for Rust, wasm for the renderer): `db_to_linear`
+(`10^(dB/20)`), the keyframe interpolation it samples, the **fade ramp**
+(`fade_multiplier`), and the **equal-power pan law** (`pan_coeffs`). The
+sampler STRUCTURE around them — the 10 ms grid loop and the per-sample lerp —
+is still parallel Rust/TS code, guarded by `audioEnvelopeGolden.fixture.json`.
 
-Pan law: the Web Audio `StereoPannerNode` equal-power law (mono and
-stereo input variants, per spec). The Rust mixer implements the same
-formulas; the golden fixture covers both input layouts.
+Pan law: the equal-power law is a time-varying 2×2 mix matrix
+`[a,b,c,d]` (`out_l = a·l + b·r`, `out_r = c·l + d·r`), computed by
+`weftcut-eval::pan_coeffs`. The canonical pan control points are the
+COEFFICIENTS, sampled on the 10 ms grid; both consumers lerp coefficients
+(export per-sample, preview via `setValueCurveAtTime`) — the same grid →
+lerp discipline as gain, so parity holds by construction. The
+`panLawGolden.fixture.json` covers mono + stereo branches; the pan
+coefficient envelope is additionally covered in the envelope golden.
 
 ## Preview mixer
 
@@ -119,7 +124,10 @@ buffer-scheduled graph on one shared `AudioContext`:
 ```
 per layer:  AudioBufferSourceNode (chunk)
               → GainNode        (gain envelope via setValueCurveAtTime)
-              → StereoPannerNode (pan envelope)
+              → ChannelSplitter → 4×GainNode → ChannelMerger
+                                (pan matrix; coefficient curves from the
+                                 weftcut-eval pan law — mono uses 2 gains)
+              → trim GainNode   (micro-fades, re-anchor masking)
               → master.input
 master:     input → analyser (meter) → DynamicsCompressor
               (−1 dB, 20:1, 1 ms attack — soft overload protection)
@@ -131,7 +139,8 @@ master:     input → analyser (meter) → DynamicsCompressor
 count, the established Range discipline) and de-interleaved into
 `AudioBuffer`s — **no decode in the renderer, ever**. Chunk length 1 s, lookahead 3 s,
 at most 8 live chunks per layer (~3 MB). Mono conform produces mono
-buffers; the panner up-mixes.
+buffers; the pan matrix routes the single channel to both outputs via
+the mono pan law (2 gains).
 
 **Scheduling:** sample-accurate inside the audio clock domain —
 `when = ctxTimeAtCompUs(anchor, chunkCompUs)` against the engine's
@@ -245,7 +254,8 @@ for each output block (65 536 frames, 48 kHz f32 stereo):
     for each layer overlapping the block:
         map block window → source frames (t_start, src_in, clamped to src span)
         read frames from the conform file (seek = header + frame × ch × 4)
-        gain = lerp(envelope) per sample;  pan via the shared law
+        gain = lerp(envelope) per sample
+        pan  = lerp(pan_coeffs) per sample → 2×2 matrix (the shared leaf law)
         sum into the accumulator
     write the block, interleaved, to ffmpeg stdin
 ```
@@ -309,9 +319,16 @@ checks.
 
 ## Testing
 
-- **Cross-language goldens:** the envelope sampler fixture (control
-  points → per-sample gains) asserted by both the Rust and TS unit
-  suites; the pan-law fixture (mono + stereo).
+- **Cross-language goldens:** the envelope sampler fixture (gain control
+  points + pan values + pan coefficient envelope) and the pan-law fixture
+  (`pan_coeffs` mono + stereo branches + apply rows), each asserted by both
+  the Rust and TS suites against one checked-in fixture — also the
+  native↔wasm `libm` trig determinism proof.
+- **Preview pan graph:** an `OfflineAudioContext` render test
+  (`e2e/electron/audio-pan-preview.spec.ts`) drives the real
+  `buildPanGraph` + `panCurves` and checks output L/R against the
+  equal-power law — covering the matrix-mixer wiring the math goldens
+  cannot reach.
 - **Mixer unit tests:** pure f32-in/f32-out — placement, trim
   clamping, overlap summing, envelope application, block-boundary
   continuity.
@@ -321,10 +338,6 @@ checks.
   against the analytic envelope), fade-in/out, two-layer overlap
   (summing + limiter engagement), and pan (L/R energy ratio). The
   existing Goertzel tone/alignment suite continues to pass unchanged.
-- Preview-side audio capture assertions (via
-  `MediaStreamAudioDestinationNode` recording) are future work; in
-  this slice preview correctness rides the shared-contract unit
-  gates plus manual smoke.
 
 ## Out of scope here, designed elsewhere or later
 
