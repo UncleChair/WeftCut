@@ -30,7 +30,11 @@ export function resolveDecode(media: {
     case "direct-export":
       return { route: "direct-export", previewPath: r.quick_proxy, exportPath: media.path };
     case "proxied":
-      return { route: "proxied", previewPath: r.quick_proxy, exportPath: r.full_proxy };
+      // Preview prefers the lighter quick proxy, but falls back to the full
+      // master when the quick proxy is absent (a clean H.264 short-GOP source is
+      // perfectly previewable) — so a proxied source whose quick proxy was never
+      // built or has been cleaned up still previews instead of going blank.
+      return { route: "proxied", previewPath: r.quick_proxy ?? r.full_proxy, exportPath: r.full_proxy };
   }
 }
 

@@ -194,19 +194,17 @@ pub fn enqueue_for_media(
     match media.kind {
         MediaKind::Video => {
             // Already-decided sources whose proxy (if any) is on disk only need
-            // their decorations re-fanned; everything else re-runs the routing
-            // decision. Bypass needs no proxy; a Proxied source is ready only
-            // when its full master exists on disk (a stale-version proxy was
-            // already cleared by the open-time invalidation pass).
-            let proxy_ready = match &media.decode_route {
-                DecodeRoute::Bypass => true,
-                DecodeRoute::Proxied { full_proxy: Some(p), .. } => p.is_file(),
-                _ => false,
-            };
-            if proxy_ready {
-                spawn_decorations(events, cache, media);
-            } else {
+            // their decorations re-fanned; everything else (re-)runs the routing
+            // decision. A FRESH import starts on `initial_decode_route` (video →
+            // Proxied/unbuilt) so `route_needs_decision` is true and the decision
+            // runs; on RE-OPEN a persisted Bypass is an already-made decision
+            // (decorations only) and a Proxied source is ready only when its full
+            // master exists on disk (a stale-version proxy was already cleared by
+            // the open-time invalidation pass).
+            if proxy_decision::route_needs_decision(&media.decode_route) {
                 spawn_proxy_decision(events, cache, media);
+            } else {
+                spawn_decorations(events, cache, media);
             }
         }
         MediaKind::Audio => {
@@ -573,12 +571,11 @@ fn spawn_proxy(
 
         match result {
             Ok(proxy_path) => {
-                let quick_path = cache.quick_proxy(&media.file_hash_blake3);
-                if let Err(e) = tokio::fs::remove_file(&quick_path).await {
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        warn!("quick proxy cleanup failed for {media_id}: {e}");
-                    }
-                }
+                // Keep the quick proxy on disk: it is the PREVIEW source (lighter,
+                // height-capped — see proxy.rs), while this full master is the
+                // EXPORT source. Deleting it here left a proxied source with no
+                // preview path once the full proxy landed (the summary nulls a
+                // missing quick proxy and preview keys on it) → blank preview.
                 let path_str = proxy_path.display().to_string();
                 let mut thumbnail_media = media.clone();
                 thumbnail_media.path_abs = proxy_path.clone();

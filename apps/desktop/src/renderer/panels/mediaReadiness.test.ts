@@ -43,15 +43,17 @@ describe("mediaReadiness", () => {
     expect(r).toEqual({ ready: true });
   });
 
-  it("video waits when only the full export master is on disk (preview needs the quick proxy)", () => {
-    // resolveDecode previews from the quick proxy, never the heavy full master,
-    // so a Proxied source with only a full proxy is not preview-ready yet.
+  it("video is ready when only the full export master is on disk (preview falls back to it)", () => {
+    // resolveDecode prefers the lighter quick proxy but falls back to the full
+    // master when the quick proxy is absent (e.g. an older import whose quick was
+    // cleaned up) — the full proxy is a scrub-friendly H.264 source, so it's a
+    // valid preview path rather than a blank.
     const r = mediaReadiness(
       baseVideo({ decode_route: proxied({ full_proxy: "C:/m/clip.proxy.mp4" }) }),
       emptyImporting,
       emptyProxyState,
     );
-    expect(r).toEqual({ ready: false, reason: "proxy_pending" });
+    expect(r).toEqual({ ready: true });
   });
 
   it("video is ready when proxy state map says ready, even without a route path", () => {

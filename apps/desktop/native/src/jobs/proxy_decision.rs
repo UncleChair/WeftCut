@@ -5,7 +5,7 @@
 //! browser-friendly pixel format, and moderate bitrate. Everything else gets
 //! a generated proxy path so scrub/decode behavior stays predictable.
 
-use crate::state::{MediaItem, MediaKind};
+use crate::state::{DecodeRoute, MediaItem, MediaKind};
 
 const MAX_BYPASS_WIDTH: u32 = 1920;
 const MAX_BYPASS_HEIGHT: u32 = 1080;
@@ -78,6 +78,41 @@ pub fn decide(media: &MediaItem, source_gop_secs: Option<f64>) -> ProxyRoute {
         PreviewSource::Proxy
     };
     ProxyRoute { export, preview }
+}
+
+/// The decode route a freshly *probed* import starts with, BEFORE the async
+/// routing decision (`spawn_proxy_decision`) has run. A fresh **video** must NOT
+/// start on `Bypass`: `enqueue_for_media` reads `Bypass` as "routing already
+/// decided, proxy ready" (`route_needs_decision` → false) and only re-fans
+/// decorations, so the proxy decision would never run — leaving a non-WebCodecs
+/// source (qtrle / ProRes / MJPEG / …) stuck decoding an undecodable original
+/// with no proxy ever built. Starting video as "proxied, nothing built yet"
+/// makes `route_needs_decision` true so `spawn_proxy_decision` runs and commits
+/// the REAL route (which may itself be `Bypass` for a clean H.264 source).
+/// Non-video has no proxy concept → `Bypass`.
+pub fn initial_decode_route(kind: MediaKind) -> DecodeRoute {
+    match kind {
+        MediaKind::Video => DecodeRoute::Proxied {
+            quick_proxy: None,
+            full_proxy: None,
+            format_version: 0,
+        },
+        _ => DecodeRoute::Bypass,
+    }
+}
+
+/// Whether `enqueue_for_media` should run the (re-)routing decision
+/// (`spawn_proxy_decision`) for a source with this route, vs. only re-fanning
+/// decorations. Fresh imports start on a route that returns true here (see
+/// `initial_decode_route`); on project re-open a persisted `Bypass` is an
+/// already-made decision (decorations only) and a `Proxied` source is "ready"
+/// only once its full master exists on disk.
+pub fn route_needs_decision(route: &DecodeRoute) -> bool {
+    match route {
+        DecodeRoute::Bypass => false,
+        DecodeRoute::Proxied { full_proxy: Some(p), .. } => !p.is_file(),
+        _ => true,
+    }
 }
 
 /// Map a route to the background proxy job to run.
@@ -382,5 +417,42 @@ mod tests {
         // Every FullProxy-export source gets a quick proxy first (preview),
         // then the full master — no small-source skip-quick split.
         assert_eq!(job_for(BOTH_PROXY), ProxyJob::QuickThenFull);
+    }
+
+    // --- initial_decode_route + route_needs_decision: the fresh-import gate ---
+
+    #[test]
+    fn fresh_video_import_runs_the_routing_decision() {
+        // REGRESSION: a freshly probed video must NOT start on Bypass. enqueue_for_media
+        // reads Bypass as "routing already decided → decorations only", so a Bypass
+        // default means spawn_proxy_decision never runs and a non-WebCodecs source
+        // (qtrle/ProRes/MJPEG) is stuck decoding an undecodable original forever
+        // (no proxy ever built). The fresh-video route must trigger the decision.
+        assert!(route_needs_decision(&initial_decode_route(MediaKind::Video)));
+    }
+
+    #[test]
+    fn fresh_non_video_import_needs_no_decision() {
+        // Audio/image have no proxy concept; their fresh route is Bypass (and the
+        // decision gate isn't consulted for them in enqueue_for_media anyway).
+        assert!(!route_needs_decision(&initial_decode_route(MediaKind::Audio)));
+        assert_eq!(initial_decode_route(MediaKind::Audio), DecodeRoute::Bypass);
+    }
+
+    #[test]
+    fn persisted_bypass_skips_decision_on_reopen() {
+        // A deliberately-decided, persisted Bypass (project re-open) only re-fans
+        // decorations — the open-time GOP-rescan-avoidance optimization is preserved.
+        assert!(!route_needs_decision(&DecodeRoute::Bypass));
+    }
+
+    #[test]
+    fn proxied_with_missing_full_master_reruns_decision() {
+        // A Proxied source whose full master isn't on disk still needs the build.
+        assert!(route_needs_decision(&DecodeRoute::Proxied {
+            quick_proxy: None,
+            full_proxy: Some("/no/such/file.mp4".into()),
+            format_version: 0,
+        }));
     }
 }

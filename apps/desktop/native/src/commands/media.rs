@@ -29,7 +29,12 @@ pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
         path_rel: None,
         kind,
         metadata,
-        decode_route: state::DecodeRoute::Bypass,
+        // A fresh import's route is UNDECIDED — the real codec-based decision runs
+        // async in `spawn_proxy_decision` (kicked by `enqueue_for_media`). Video
+        // must start on a route that triggers that decision; a `Bypass` default
+        // would be read as "already decided" and silently skip it. See
+        // `proxy_decision::initial_decode_route`.
+        decode_route: crate::jobs::proxy_decision::initial_decode_route(kind),
         waveform_path: None,
         conform_path: None,
         thumbnails_dir: None,

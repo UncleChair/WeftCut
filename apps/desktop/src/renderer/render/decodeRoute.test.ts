@@ -14,6 +14,9 @@ describe("resolveDecode — full route × readiness matrix", () => {
     ["proxied, nothing ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), null, null],
     ["proxied, quick ready", M("Video", { route: "proxied", quick_proxy: "q.mp4", full_proxy: null, format_version: 0 }), "q.mp4", null],
     ["proxied, both ready", M("Video", { route: "proxied", quick_proxy: "q.mp4", full_proxy: "f.mp4", format_version: 3 }), "q.mp4", "f.mp4"],
+    // Quick proxy gone but full master present (e.g. an older import whose quick
+    // was cleaned up): preview must fall back to the full proxy, not go blank.
+    ["proxied, quick gone, full ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: "f.mp4", format_version: 3 }), "f.mp4", "f.mp4"],
     ["image is bypass-like", M("Image", { route: "bypass" }), "orig.mp4", "orig.mp4"],
   ])("%s", (_name, media, previewPath, exportPath) => {
     const r = resolveDecode(media);
