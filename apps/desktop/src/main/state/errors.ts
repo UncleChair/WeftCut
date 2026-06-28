@@ -79,18 +79,3 @@ export function isValidationFailure(e: unknown): e is ValidationFailure {
 export function isCommandFailure(e: unknown): e is CommandFailure {
   return e instanceof CommandFailure
 }
-
-/** {top, inner?} for a TS CommandError — inner is the wrapped rule name. */
-export function tsErrorVariant(e: CommandError): { top: string; inner?: string } {
-  if (e.error === 'ValidationFailed') return { top: 'ValidationFailed', inner: e.detail.rule }
-  return { top: e.error }
-}
-
-/** Extract {top, inner?} from a Rust `format!("{e:?}")` Debug string, e.g.
- *  "TrimEdgeOutOfRange { .. }" → {top}, "ValidationFailed(LayerOverlap { .. })"
- *  → {top, inner}. Rust renders the variant name as the leading identifier. */
-export function parseOracleErrorVariant(debug: string): { top: string; inner?: string } {
-  const m = /^([A-Za-z_]\w*)(?:\(([A-Za-z_]\w*))?/.exec(debug.trim())
-  if (!m) return { top: debug.trim() }
-  return m[2] ? { top: m[1], inner: m[2] } : { top: m[1] }
-}
