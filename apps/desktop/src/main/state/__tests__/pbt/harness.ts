@@ -40,10 +40,3 @@ export function canonicalSnapshot(actor: ReturnType<typeof createActor>): string
   return canonicalString(serializeProject(actor.snapshot()))
 }
 
-/** Flat view of every layer with its owning track id — the unit invariants and
- *  model commands target. */
-export function layerIds(p: WireProject): Array<{ id: string; track: string; kind: string; start: number; end: number }> {
-  const out: Array<{ id: string; track: string; kind: string; start: number; end: number }> = []
-  for (const t of p.tracks) for (const l of t.layers) out.push({ id: l.id, track: t.id, kind: l.params.kind, start: l.t_start_us, end: l.t_end_us })
-  return out
-}

@@ -431,14 +431,6 @@ export async function addTrack(): Promise<string> {
   return invoke<string>("add_track");
 }
 
-export async function addDemoColorLayer(): Promise<string> {
-  return invoke<string>("add_demo_color_layer");
-}
-
-export async function addDemoTextLayer(): Promise<string> {
-  return invoke<string>("add_demo_text_layer");
-}
-
 export async function addMediaLayer(
   trackId: string,
   mediaId: string,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen, type UnlistenFn } from "@/bridge/events";
-import { useLogStore, ERROR_STICKY_MS } from "./store";
+import { useLogStore } from "./store";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 
 /// Persistent ~28px status bar pinned to the bottom of the editor view.
@@ -207,7 +207,3 @@ function formatTime(iso: string): string {
     hour12: false,
   });
 }
-
-/// Re-export so a future "tick the error-sticky timer at expiry" effect
-/// can read the same constant from one place.
-export const _ERROR_STICKY_MS = ERROR_STICKY_MS;

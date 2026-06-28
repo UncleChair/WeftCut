@@ -1,0 +1,41 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  // Report an export only when it's used NOWHERE (truly dead). Exports that are
+  // referenced within their own file are live-but-over-exposed — a style nit,
+  // not dead code — so we don't flag them. Keeps the report to actionable signal.
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    "apps/desktop": {
+      "entry": [
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/renderer/main.tsx",
+        "src/renderer/index.html",
+        "src/renderer/public/render-play.html",
+        "src/main/mcp/**/*.ts",
+        "src/shared/motifs/builtin/**/*.{ts,html}",
+        "scripts/*.mjs",
+        "electron.vite.config.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}"],
+      // Ambient Vite type-augmentation file: consumed by tsc via `include`,
+      // never `import`ed, so Knip's static graph can't see its use.
+      "ignore": ["src/renderer/vite-env.d.ts"],
+      "ignoreDependencies": [
+        // napi-rs native module: `file:native` resolves to a .node binary
+        // Knip can't follow. Imported by main/index.ts + mcp/*.
+        "@weftcut/core",
+        // Tailwind v4 + animate plugin are pulled in via CSS `@import` in
+        // app.css, which Knip's dependency resolver doesn't trace.
+        "tailwindcss",
+        "tw-animate-css",
+        // Used by the e2e SSIM harness (e2e/lib/image-ssim.mjs), outside the
+        // src-only `project` scan scope.
+        "pngjs",
+        // shadcn/ui is a scaffolding CLI run on demand via `npx shadcn add`,
+        // not a runtime import. Kept as a devDependency to pin the version.
+        "shadcn"
+      ]
+    }
+  }
+}
