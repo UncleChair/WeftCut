@@ -42,32 +42,19 @@ The geometry is sound and worth preserving as-is:
 
 ## Backlog (prioritized)
 
-### P1 — Make the generic real: `Interpolate` trait + `Animated<Rgba>` in linear light
+### P1 — Make the generic real: `Interpolate` trait + `Animated<Rgba>`
 
-**Problem.** `Animated<T>` promises polymorphism the engine doesn't deliver.
-`eval_f64` is scalar-only (`native/eval/src/lib.rs:216`), so `Animated<Rgba>`
-exists in the type system and serializes but has **no `value_at`** — color
-"keyframes" resolve via `trackStatic` (first keyframe), i.e. type-present but
-functionally dead. `src/renderer/render/resolveView.ts:7-9` admits this and the
-dual-engine mirror rule forbids a TS-only interpolator. This is the one place
-the abstraction is genuinely *wrong* (leaky generic), and it gates both color
-keyframing and non-scalar effect params.
-
-**Recommended shape.** Introduce an `Interpolate`/`Lerp` trait in
-`weftcut-eval`, bound `T: Interpolate`, and dispatch `eval` over it. Implement
-for scalar, `Rgba` (**interpolate in linear light or OkLab — never lerp sRGB u8;
-that gives muddy mid-tones, the classic gamma-blending bug**; respect color
-model ADR 0021), and later `Vec2` (see P5). Wire the Rust `value_at` twin first,
-extend the golden fixture with color/vector cases, then the renderer + a color
-stopwatch follow.
-
-**Effort/risk.** Medium. Touches the locked engine pair → golden fixture must
-grow in lockstep. Unblocks the next two roadmap bullets.
-
-**Roadmap.** Already listed (narrowly) as "`Animated<Rgba>` + a color
-stopwatch" and "Non-scalar effect params (`ParamValue` sum type)" —
-[`roadmap.md`](../../roadmap.md) §Keyframes, §Effect subsystem. The trait
-generalization is the shared prerequisite neither bullet names.
+**Designed — see
+[`2026-06-28-animated-generic-interpolate.md`](./2026-06-28-animated-generic-interpolate.md).**
+Resolved shape: an `Interpolate` two-endpoint-lerp trait + generic
+`eval<T: Interpolate>` *folded* into the locked scalar engine (golden fixture is
+the safety net); `Animated<T>` stays generic + type-safe (no `ParamValue` enum,
+no hand-copied evaluators). Color interpolates in **OkLab + premultiplied alpha**
+(transient eval math; storage stays sRGB u8, ADR 0021 untouched). wasm crosses
+the scalar-only boundary via a **packed-i32** color shim; `Vec2` rides the scalar
+path. Scope is **engine only** (no authoring UI / MCP this round). Spatial motion
+paths stay a separate layer above the trait (P5); no schema change now (spatial
+tangents = documented commitment + P5-owned migration).
 
 ### P2 — Extrapolation modes (loop / cycle / ping-pong / continue)
 
