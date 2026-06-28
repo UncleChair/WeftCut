@@ -17,7 +17,11 @@ pub mod redact;
 pub mod tracing_layer;
 pub mod writer;
 
-pub use bus::{EVENT_LOG_ENTRY, LogBus, LogBusSlot};
+pub use bus::{LogBus, LogBusSlot};
+// The event-name constant is referenced only by the backend's event-bridge
+// tests; `bus` itself uses its own local copy.
+#[cfg(test)]
+pub use bus::EVENT_LOG_ENTRY;
 pub use entry::{LogCategory, LogEntry, LogEntryInput, LogLevel, LogSource, OpState};
 pub use tracing_layer::LogBusLayer;
 

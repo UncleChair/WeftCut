@@ -79,7 +79,7 @@ pub async fn extract_audio_window(
 
     // -ss AFTER -i for sample-accurate seek (input-side -ss is faster but
     // keyframe-aligned; transcription wants the actual requested window).
-    let mut child = Command::new(ffmpeg_path())
+    let child = Command::new(ffmpeg_path())
         .no_console_window()
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(source)

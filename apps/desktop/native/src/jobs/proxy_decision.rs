@@ -188,19 +188,8 @@ pub fn codec_is_h264(codec: &str) -> bool {
     matches!(c.as_str(), "h264" | "avc1" | "avc")
 }
 
-pub fn codec_is_hevc(codec: &str) -> bool {
-    matches!(
-        codec.to_ascii_lowercase().as_str(),
-        "hevc" | "h265" | "hvc1" | "hev1"
-    )
-}
-
 pub fn codec_is_av1(codec: &str) -> bool {
     matches!(codec.to_ascii_lowercase().as_str(), "av1" | "av01")
-}
-
-pub fn codec_is_vp9(codec: &str) -> bool {
-    matches!(codec.to_ascii_lowercase().as_str(), "vp9" | "vp09")
 }
 
 /// 8-bit 4:2:0 formats WebCodecs decodes on this pipeline. `yuvj420p` is

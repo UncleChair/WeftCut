@@ -10,7 +10,10 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use anyhow::{Context, Result};
-use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
+use ffmpeg_sidecar::command::ffmpeg_is_installed;
+// Only the test suite spawns ffmpeg/ffprobe via tokio's `Command`; the
+// non-test proxy path drives the encoder through `ffmpeg-sidecar`.
+#[cfg(test)]
 use tokio::process::Command;
 
 use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};

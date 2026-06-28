@@ -33,7 +33,6 @@ use crate::logs::LogBusSlot;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
-use crate::cache::CacheLayout;
 use crate::io::probe::FileFacts;
 use crate::logs;
 use crate::state::ids::MediaId;
@@ -86,12 +85,10 @@ struct PendingImport {
     media_id: MediaId,
     source: PathBuf,
     workspace_root: PathBuf,
-    cache: CacheLayout,
 }
 
 struct RunningImport {
     media_id: MediaId,
-    source: PathBuf,
     cancel: Arc<AtomicBool>,
 }
 
@@ -113,7 +110,6 @@ impl ImportQueue {
     /// enqueues just append.
     pub fn enqueue(
         &self,
-        cache: CacheLayout,
         media_id: MediaId,
         source: PathBuf,
         workspace_root: PathBuf,
@@ -124,7 +120,6 @@ impl ImportQueue {
                 media_id,
                 source: source.clone(),
                 workspace_root,
-                cache,
             });
             guard.history.push(ImportEntry {
                 media_id: media_id.to_string(),
@@ -212,7 +207,6 @@ impl ImportQueue {
                 let mut guard = self.inner.lock().expect("import queue poisoned");
                 guard.running = Some(RunningImport {
                     media_id,
-                    source: next.source.clone(),
                     cancel: cancel.clone(),
                 });
                 if let Some(entry) = guard

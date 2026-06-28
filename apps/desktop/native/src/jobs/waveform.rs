@@ -144,7 +144,6 @@ async fn compute_peaks(stdout: &mut tokio::process::ChildStdout) -> Result<Vec<f
                     current_max = 0.0;
                     samples_in_window = 0;
                 }
-                leftover_len = 0;
             }
         }
         let aligned_len = slice.len() - (slice.len() % 4);

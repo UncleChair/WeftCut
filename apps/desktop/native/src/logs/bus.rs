@@ -32,7 +32,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::events::EventSink;
 
 use super::entry::{LogEntry, LogEntryInput};
-use super::redact::redact_in_place;
+use super::redact::redact_and_cap;
 use super::writer;
 
 /// In-memory ring capacity. ~500 bytes/entry on average → ~500 KB.
@@ -111,12 +111,13 @@ impl LogBus {
         }
     }
 
-    /// Emit one entry. Non-blocking. The redactor pass runs on
-    /// `details` before broadcast + persistence.
+    /// Emit one entry. Non-blocking. The redact + size-cap pass runs on
+    /// `details` before broadcast + persistence: secrets are scrubbed and
+    /// payloads over ~4 KB are replaced with a truncated preview.
     pub fn emit(&self, input: LogEntryInput) {
         let mut entry = LogEntry::from_input(input);
-        if let Some(details) = entry.details.as_mut() {
-            redact_in_place(details);
+        if let Some(details) = entry.details.take() {
+            entry.details = Some(redact_and_cap(details));
         }
         // Ring: push back, evict front when over cap.
         {

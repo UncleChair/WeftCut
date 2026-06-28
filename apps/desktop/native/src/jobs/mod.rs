@@ -28,10 +28,7 @@ mod thumbnails;
 pub mod waveform;
 
 pub use frame::extract as extract_frame;
-pub use proxy::run as run_proxy;
-pub use quick_proxy::run as run_quick_proxy;
-pub use thumbnails::run as run_thumbnails;
-pub use waveform::{read_peaks_file, run as run_waveform};
+pub use waveform::read_peaks_file;
 
 use std::sync::OnceLock;
 

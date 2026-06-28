@@ -32,8 +32,8 @@ pub mod synthesizer;
 pub mod transcriber;
 
 pub use errors::CloudError;
-pub use synthesizer::{AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer};
-pub use transcriber::{TranscribeRequest, TranscribeResponse, Transcriber};
+pub use synthesizer::{AudioFormat, SynthesizeRequest, Synthesizer};
+pub use transcriber::{TranscribeRequest, Transcriber};
 
 /// Pick a transcription-capable provider that has a key in the cache.
 pub fn pick_transcriber(keys: &HashMap<String, String>) -> Option<Box<dyn Transcriber>> {

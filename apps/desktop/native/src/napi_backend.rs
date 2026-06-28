@@ -37,7 +37,6 @@ pub struct Backend {
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
-    pub(crate) cache_dir: String,
     /// Plaintext cloud-provider API keys, keyed by provider tag ("openai").
     /// Pushed in by Electron main (decrypted from safeStorage) via
     /// `set_cloud_key`; read synchronously by the cloud reqwest providers.
@@ -87,7 +86,6 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
-        cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
     }
 }
@@ -266,7 +264,7 @@ impl Backend {
     pub async fn enqueue_workspace_copy(&self, media_id: String, source_path: String) -> napi::Result<()> {
         let id = uuid::Uuid::parse_str(&media_id).map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
         let Some(ws) = self.workspace.current() else { return Ok(()); };
-        self.import_queue.enqueue(self.cache.clone(), id, std::path::PathBuf::from(source_path), ws);
+        self.import_queue.enqueue(id, std::path::PathBuf::from(source_path), ws);
         Ok(())
     }
 
