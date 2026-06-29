@@ -38,12 +38,15 @@ function buildTextureInfo(tex) {
 
 async function pushTexture(win) {
   const video = process.env.POC_VIDEO
+  const zeroCopy = process.env.POC_ZEROCOPY === '1'
   const tex = video
-    ? native.pocCreateTextureFromVideo(video)
+    ? zeroCopy
+      ? native.pocCreateTextureFromVideoZerocopy(video)
+      : native.pocCreateTextureFromVideo(video)
     : native.pocCreateSyntheticTexture(FORMAT)
   console.log(
     `[poc] native ${tex.pixelFormat} ${tex.width}x${tex.height} texture id=${tex.id} adapter="${tex.adapter}"` +
-      (video ? ` (decoded from ${video})` : '')
+      (video ? ` (${zeroCopy ? 'ZERO-COPY ' : ''}decoded from ${video})` : '')
   )
 
   const imported = sharedTexture.importSharedTexture({

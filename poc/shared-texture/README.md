@@ -45,18 +45,58 @@ shape the ffmpeg follow-up:
    pixels correctly even though the docs imply BGRA handles have no keyed mutex. So
    the keyed mutex is not a blocker for the import side.
 
+## Result 2 — real ffmpeg video, including TRUE zero-copy ✅ (2026-06-29)
+
+Extended from synthetic textures to actual ffmpeg decode (`ffmpeg-next` 8.1,
+`d3d11va` hardware decode), verified on a white-over-black H.264 clip — both paths
+displayed `format=NV12, lumaTop=235, lumaBottom=16, looksRight=true`:
+
+- **1a — synthetic NV12**: NV12 (YUV) shared texture round-trips byte-exact, proving
+  the importer handles NV12 + the keyed-mutex + YUV→RGB path (not just BGRA).
+- **1b-i — ffmpeg, CPU bounce**: HW-decode → `av_hwframe_transfer_data` (GPU→CPU
+  NV12) → `UpdateSubresource` into a shared NV12 texture → import → display.
+- **1b-ii — ffmpeg, TRUE zero-copy**: HW-decode → the decoded frame's
+  `ID3D11Texture2D` is `CopySubresourceRegion`'d (GPU→GPU, no CPU bounce) into a
+  shared NV12 texture **created on ffmpeg's own D3D11 device**, then shared. No CPU
+  frame copy, no IPC frame transfer.
+
+ffmpeg-path findings:
+- `ffmpeg-sys-next` does **not** bind `AVD3D11VADeviceContext`; its stable public
+  ABI is mirrored as a `repr(C)` struct to read ffmpeg's `ID3D11Device` /
+  `ID3D11DeviceContext`. ffmpeg's COM objects are wrapped with `from_raw_borrowed`
+  (no ownership) and the device is `clone()`d (AddRef) to outlive the decoder.
+- The decoder's NV12 frames are a `BIND_DECODER` texture **array** (`data[0]` =
+  array, `data[1]` = slice index) — not directly shareable, hence the intra-device
+  copy into a fresh `SHARED_NTHANDLE|KEYEDMUTEX` texture.
+- Still single-frame/static. A streaming preview must solve per-frame
+  producer/consumer sync (keyed mutex or a shared fence) and reuse one shared
+  texture across frames.
+
 ## Run (Windows only)
 
-From the repo root (where `node_modules` is hoisted):
+From the repo root (where `node_modules` is hoisted).
+
+**Synthetic texture** (no ffmpeg toolchain needed for the build):
 
 ```sh
-# 1. build the native addon (first build downloads the `windows` crate)
-cd poc/shared-texture/native
-../../../node_modules/.bin/napi build --platform
-cd ../../..
+node_modules/.bin/napi build --platform \
+  --manifest-path poc/shared-texture/native/Cargo.toml --output-dir poc/shared-texture/native
+node_modules/.bin/electron poc/shared-texture                 # NV12 by default
+POC_FORMAT=bgra node_modules/.bin/electron poc/shared-texture # BGRA checkerboard
+```
 
-# 2. launch
-./node_modules/.bin/electron poc/shared-texture
+**ffmpeg video paths** — build needs `FFMPEG_DIR` + `LIBCLANG_PATH`; run needs
+`$FFMPEG_DIR/bin` on `PATH` (see [[reference_ffmpeg_next_windows_setup]]):
+
+```sh
+export FFMPEG_DIR="…/Gyan.FFmpeg.Shared_…/ffmpeg-8.1.1-full_build-shared"
+export LIBCLANG_PATH="C:/Program Files/LLVM/bin"
+export PATH="$FFMPEG_DIR/bin:$PATH"
+node_modules/.bin/napi build --platform \
+  --manifest-path poc/shared-texture/native/Cargo.toml --output-dir poc/shared-texture/native
+
+POC_VIDEO=/path/to/clip.mp4 node_modules/.bin/electron poc/shared-texture                  # 1b-i (CPU bounce)
+POC_VIDEO=/path/to/clip.mp4 POC_ZEROCOPY=1 node_modules/.bin/electron poc/shared-texture    # 1b-ii (zero-copy)
 ```
 
 ## Success criteria

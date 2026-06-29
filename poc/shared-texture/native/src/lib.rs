@@ -31,7 +31,7 @@ use windows::Win32::Graphics::Direct3D::{
 };
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
-    D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
     D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION,
     D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
@@ -304,6 +304,106 @@ pub fn poc_create_texture_from_video(path: String) -> Result<PocSharedTexture> {
         &nv12,
         "nv12",
     )
+}
+
+/// Step 1b-ii: TRUE zero-copy. Hardware-decode the first frame to a D3D11
+/// surface, then `CopySubresourceRegion` it (GPU→GPU, no CPU bounce) into a
+/// shared NV12 texture created on ffmpeg's own device, and share that.
+#[napi]
+pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedTexture> {
+    let f = decoder::decode_first_d3d11_frame(&path)
+        .map_err(|e| napi::Error::from_reason(format!("d3d11 decode '{path}' failed: {e}")))?;
+    eprintln!(
+        "[poc-native] zero-copy: D3D11 frame {}x{}, src array index {}",
+        f.width,
+        f.height,
+        f.src_index()
+    );
+
+    unsafe {
+        // Borrow ffmpeg's COM objects WITHOUT taking ownership (ffmpeg frees them).
+        let device = ID3D11Device::from_raw_borrowed(&f.device)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device is null"))?;
+        let context = ID3D11DeviceContext::from_raw_borrowed(&f.device_context)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device context is null"))?;
+        let src_ptr = f.src_texture();
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&src_ptr)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+
+        // Shared NV12 destination on ffmpeg's device (so the copy is intra-device).
+        let nt_km =
+            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: f.width,
+            Height: f.height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_NV12,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: nt_km,
+        };
+        let mut dst: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&desc, None, Some(&mut dst))
+            .map_err(|e| win_err("CreateTexture2D(nv12 zerocopy)", e))?;
+        let dst = dst.ok_or_else(|| napi::Error::from_reason("CreateTexture2D: null"))?;
+
+        // GPU→GPU copy of just the coded region, bracketed by our keyed mutex and
+        // ffmpeg's device-context lock.
+        let dst_km: IDXGIKeyedMutex = dst.cast().map_err(|e| win_err("cast keyed mutex", e))?;
+        dst_km.AcquireSync(0, INFINITE).map_err(|e| win_err("AcquireSync", e))?;
+        if let Some(lock) = f.lock {
+            lock(f.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: f.width,
+            bottom: f.height,
+            back: 1,
+        };
+        context.CopySubresourceRegion(&dst, 0, 0, 0, 0, src_tex, f.src_index(), Some(&region));
+        context.Flush();
+        if let Some(unlock) = f.unlock {
+            unlock(f.lock_ctx);
+        }
+        dst_km.ReleaseSync(0).map_err(|e| win_err("ReleaseSync", e))?;
+
+        let resource: IDXGIResource1 = dst.cast().map_err(|e| win_err("cast IDXGIResource1", e))?;
+        let handle = resource
+            .CreateSharedHandle(None, DXGI_SHARED_RESOURCE_RW, PCWSTR::null())
+            .map_err(|e| win_err("CreateSharedHandle", e))?;
+
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let handle_value = handle.0 as isize as i64;
+        eprintln!(
+            "[poc-native] zero-copy shared nv12 id={id} {}x{}, NT handle={handle_value}",
+            f.width, f.height
+        );
+
+        // Clone (AddRef) ffmpeg's device so it outlives the decoder we're about to
+        // drop; the dst texture references it too.
+        REGISTRY
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(id, Holder { _device: device.clone(), _texture: dst, handle });
+
+        Ok(PocSharedTexture {
+            id,
+            handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+            width: f.width,
+            height: f.height,
+            adapter: "ffmpeg-d3d11".to_string(),
+            handle_value: handle_value.to_string(),
+            pixel_format: "nv12".to_string(),
+        })
+    }
+    // `f` (decoder/frame/hw_ctx) drops here, after the copy completed + flushed.
 }
 
 #[napi]
