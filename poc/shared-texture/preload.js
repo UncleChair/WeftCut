@@ -16,8 +16,7 @@ function drawAndVerify(frame) {
   const ctx = cv.getContext('2d')
   ctx.drawImage(frame, 0, 0)
 
-  // Read back two checkerboard cells. A correct frame: cell (8,8) ~ orange
-  // [255,102,51], cell (40,8) ~ dark [34,34,34].
+  // After drawImage the canvas is RGBA regardless of the source format.
   let sample = null
   try {
     const px = ctx.getImageData(0, 0, w, h).data
@@ -25,13 +24,27 @@ function drawAndVerify(frame) {
       const i = (y * w + x) * 4
       return [px[i], px[i + 1], px[i + 2], px[i + 3]]
     }
-    const a = at(8, 8)
-    const b = at(40, 8)
-    const near = (c, r, g, bl) => Math.abs(c[0] - r) < 40 && Math.abs(c[1] - g) < 40 && Math.abs(c[2] - bl) < 40
-    sample = {
-      cellA: a,
-      cellB: b,
-      checkerboardLooksRight: near(a, 255, 102, 51) && near(b, 34, 34, 34),
+    const luma = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+    const fmt = String(frame.format || '').toUpperCase()
+    if (fmt.includes('BGR') || fmt.includes('RGB')) {
+      // BGRA checkerboard: cell (8,8) ~ orange [255,102,51], (40,8) ~ dark.
+      const a = at(8, 8)
+      const b = at(40, 8)
+      const near = (c, r, g, bl) =>
+        Math.abs(c[0] - r) < 40 && Math.abs(c[1] - g) < 40 && Math.abs(c[2] - bl) < 40
+      sample = { mode: 'bgra', cellA: a, cellB: b, looksRight: near(a, 255, 102, 51) && near(b, 34, 34, 34) }
+    } else {
+      // NV12 luma bands: top half bright, bottom half dark.
+      const top = at(8, 8)
+      const bottom = at(8, h - 8)
+      sample = {
+        mode: 'nv12-luma',
+        top,
+        bottom,
+        lumaTop: Math.round(luma(top)),
+        lumaBottom: Math.round(luma(bottom)),
+        looksRight: luma(top) > luma(bottom) + 60,
+      }
     }
   } catch (e) {
     sample = { readbackError: String((e && e.message) || e) }
@@ -55,8 +68,8 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
     frame.close()
     imported.release()
     log(
-      (result.sample && result.sample.checkerboardLooksRight)
-        ? '✅ imported external D3D11 texture + displayed VideoFrame'
+      (result.sample && result.sample.looksRight)
+        ? `✅ imported external ${result.frame.format} texture + displayed VideoFrame`
         : '⚠️ frame received but pixels look off — see console'
     )
     ipcRenderer.send('poc-result', result)

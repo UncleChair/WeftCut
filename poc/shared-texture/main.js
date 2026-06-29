@@ -13,24 +13,32 @@ const { app, BrowserWindow, ipcMain, sharedTexture } = require('electron')
 const path = require('node:path')
 const native = require('./native')
 
+// Which synthetic format to share. NV12 is the format ffmpeg d3d11va decode
+// produces, so it's the one that matters for step 1b.
+const FORMAT = (process.env.POC_FORMAT || 'nv12').toLowerCase()
+
 // Required by importSharedTexture: codedSize + handle + pixelFormat. colorSpace /
 // visibleRect / timestamp are optional but we provide them for fidelity.
-const COLOR_SPACE = { primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' }
+function colorSpaceFor(format) {
+  return format === 'nv12'
+    ? { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', range: 'full' }
+    : { primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' }
+}
 
 function buildTextureInfo(tex) {
   return {
     codedSize: { width: tex.width, height: tex.height },
     visibleRect: { x: 0, y: 0, width: tex.width, height: tex.height },
-    pixelFormat: 'bgra',
-    colorSpace: COLOR_SPACE,
+    pixelFormat: tex.pixelFormat,
+    colorSpace: colorSpaceFor(tex.pixelFormat),
     timestamp: 0,
     handle: { ntHandle: tex.handle },
   }
 }
 
 async function pushTexture(win) {
-  const tex = native.pocCreateSyntheticTexture()
-  console.log(`[poc] native texture id=${tex.id} adapter="${tex.adapter}" handle=${tex.handleValue} (${tex.handle.length} bytes)`)
+  const tex = native.pocCreateSyntheticTexture(FORMAT)
+  console.log(`[poc] native ${tex.pixelFormat} texture id=${tex.id} adapter="${tex.adapter}" handle=${tex.handleValue} (${tex.handle.length} bytes)`)
 
   const imported = sharedTexture.importSharedTexture({
     textureInfo: buildTextureInfo(tex),

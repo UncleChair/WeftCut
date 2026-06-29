@@ -1,16 +1,18 @@
 //! Minimal POC native side.
 //!
-//! Creates a 256x256 BGRA D3D11 texture, fills it with a checkerboard, marks it
-//! `D3D11_RESOURCE_MISC_SHARED_NTHANDLE` (NO keyed mutex — Electron's
-//! `SharedTextureHandle` docs say rgba/bgra/rgbaf16 handles have no keyed mutex,
-//! only nv12 does), and returns its process-local NT HANDLE to JS.
+//! Creates a 256x256 synthetic shared D3D11 texture — `bgra` (checkerboard) or
+//! `nv12` (Y bright-top/dark-bottom, neutral chroma) — and returns its
+//! process-local NT HANDLE to JS so the main process can
+//! `sharedTexture.importSharedTexture()` it and display it in the renderer.
 //!
-//! The whole experiment hinges on one question: will Electron's
-//! `sharedTexture.importSharedTexture()` accept a handle for a texture that
-//! Chromium did NOT create? If yes, the renderer can display it as a VideoFrame.
+//! Step 1a of the ffmpeg path: prove an NV12 (YUV) shared texture round-trips,
+//! before wiring real ffmpeg d3d11va decode (which produces NV12).
 //!
-//! The texture is written once and never touched again, so there is no
-//! producer/consumer race and we need no synchronization for this probe.
+//! Raw `ID3D11Device::CreateTexture2D` only accepts a shareable NT-handle texture
+//! when created with `SHARED_NTHANDLE | SHARED_KEYEDMUTEX` together (proven by the
+//! earlier flag-combo probe), so every texture here carries a keyed mutex and the
+//! upload is bracketed in `AcquireSync(0)`/`ReleaseSync(0)`. The texture is written
+//! once and never mutated, so no further sync is needed for this probe.
 //!
 //! Windows-only by design.
 
@@ -33,7 +35,9 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION,
     D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC,
+};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1, IDXGIKeyedMutex, IDXGIResource1,
 };
@@ -73,6 +77,9 @@ pub struct PocSharedTexture {
     pub adapter: String,
     /// Raw handle value, decimal — for logging/diagnostics only.
     pub handle_value: String,
+    /// The shared texture's pixel format ("bgra" | "nv12") — JS passes this
+    /// straight into `textureInfo.pixelFormat`.
+    pub pixel_format: String,
 }
 
 fn win_err(ctx: &str, e: windows::core::Error) -> napi::Error {
@@ -92,6 +99,25 @@ fn checkerboard() -> Vec<u8> {
         }
     }
     px
+}
+
+/// NV12 plane buffer: Y plane (top half bright, bottom half dark) followed by a
+/// neutral chroma plane, so a correct frame shows two clearly different gray
+/// bands regardless of the exact YUV->RGB matrix.
+fn nv12_pattern() -> Vec<u8> {
+    let (w, h) = (SIZE as usize, SIZE as usize);
+    let mut buf = vec![0u8; w * h + w * h / 2];
+    for y in 0..h {
+        let luma = if y < h / 2 { 210u8 } else { 60u8 };
+        for x in 0..w {
+            buf[y * w + x] = luma;
+        }
+    }
+    // Interleaved UV at neutral 128 == no color tint.
+    for b in buf.iter_mut().skip(w * h) {
+        *b = 128;
+    }
+    buf
 }
 
 /// Pick the highest-VRAM adapter — on a laptop with iGPU + dGPU that is the
@@ -126,7 +152,7 @@ fn pick_adapter() -> windows::core::Result<(Option<IDXGIAdapter>, String)> {
 }
 
 #[napi]
-pub fn poc_create_synthetic_texture() -> Result<PocSharedTexture> {
+pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> {
     unsafe {
         let (adapter, adapter_name) = pick_adapter().map_err(|e| win_err("pick_adapter", e))?;
         // D3D11CreateDevice requires DRIVER_TYPE_UNKNOWN when an explicit adapter is
@@ -160,67 +186,61 @@ pub fn poc_create_synthetic_texture() -> Result<PocSharedTexture> {
         let device = device.ok_or_else(|| napi::Error::from_reason("D3D11CreateDevice: null device"))?;
         let context = context.ok_or_else(|| napi::Error::from_reason("D3D11CreateDevice: null context"))?;
 
-        // Shared textures reject initial data (E_INVALIDARG); we upload after
-        // creation. windows 0.58: these struct flag fields are plain u32, the
-        // constants are newtypes -> `.0`.
-        let bind_sr = D3D11_BIND_SHADER_RESOURCE.0 as u32;
-        let bind_sr_rt = (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32;
-        let nt = D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 as u32;
-        let km = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0 as u32;
-
-        // Probe combos in order, preferring NO keyed mutex (Chromium's bgra
-        // convention). (label, bindFlags, hasKeyedMutex)
-        let combos: [(&str, u32, bool); 4] = [
-            ("SHADER_RESOURCE | NTHANDLE", bind_sr, false),
-            ("SHADER_RESOURCE|RENDER_TARGET | NTHANDLE", bind_sr_rt, false),
-            ("SHADER_RESOURCE|RENDER_TARGET | NTHANDLE|KEYEDMUTEX", bind_sr_rt, true),
-            ("SHADER_RESOURCE | NTHANDLE|KEYEDMUTEX", bind_sr, true),
-        ];
-        let mut chosen: Option<(ID3D11Texture2D, bool, &str)> = None;
-        for (label, bind, keyed) in combos {
-            let desc = D3D11_TEXTURE2D_DESC {
-                Width: SIZE,
-                Height: SIZE,
-                MipLevels: 1,
-                ArraySize: 1,
-                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: bind,
-                CPUAccessFlags: 0,
-                MiscFlags: if keyed { nt | km } else { nt },
-            };
-            let mut tex: Option<ID3D11Texture2D> = None;
-            match device.CreateTexture2D(&desc, None, Some(&mut tex)) {
-                Ok(()) => {
-                    eprintln!("[poc-native] CreateTexture2D OK: {label}");
-                    chosen = Some((tex.unwrap(), keyed, label));
-                    break;
+        // Per-format desc. windows 0.58: these struct flag fields are plain u32,
+        // the constants are newtypes -> `.0`. NTHANDLE|KEYEDMUTEX always (raw
+        // D3D11 requires the pair). NV12 can't be a render target; BGRA adds it.
+        let nt_km =
+            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
+        let want = format.to_lowercase();
+        // (dxgi_format, bindFlags, Y/row pitch in bytes, plane buffer)
+        let (dxgi_format, bind, row_pitch, pixels): (DXGI_FORMAT, u32, u32, Vec<u8>) =
+            match want.as_str() {
+                "bgra" => (
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+                    SIZE * 4,
+                    checkerboard(),
+                ),
+                "nv12" => (
+                    DXGI_FORMAT_NV12,
+                    D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    SIZE, // Y-plane row pitch; runtime derives the chroma plane
+                    nv12_pattern(),
+                ),
+                other => {
+                    return Err(napi::Error::from_reason(format!(
+                        "unsupported format '{other}' (use bgra|nv12)"
+                    )))
                 }
-                Err(e) => eprintln!("[poc-native] CreateTexture2D FAIL [{label}]: {e}"),
-            }
-        }
-        let (texture, has_keyed_mutex, combo_label) = chosen
-            .ok_or_else(|| napi::Error::from_reason("no shared-texture flag combo was accepted"))?;
-        eprintln!("[poc-native] using combo: {combo_label} (keyed_mutex={has_keyed_mutex})");
+            };
 
-        // Upload the checkerboard, then Flush so the GPU completes the write
-        // before the texture is shared. If the combo carries a keyed mutex,
-        // bracket the write in Acquire/Release(0).
-        let pixels = checkerboard();
-        let keyed_mutex: Option<IDXGIKeyedMutex> = if has_keyed_mutex {
-            Some(texture.cast().map_err(|e| win_err("cast IDXGIKeyedMutex", e))?)
-        } else {
-            None
+        // Shared textures reject initial data (E_INVALIDARG); upload after create.
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: SIZE,
+            Height: SIZE,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: dxgi_format,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: bind,
+            CPUAccessFlags: 0,
+            MiscFlags: nt_km,
         };
-        if let Some(km) = &keyed_mutex {
-            km.AcquireSync(0, INFINITE).map_err(|e| win_err("AcquireSync", e))?;
-        }
-        context.UpdateSubresource(&texture, 0, None, pixels.as_ptr() as *const _, SIZE * 4, 0);
+        let mut tex: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&desc, None, Some(&mut tex))
+            .map_err(|e| win_err(&format!("CreateTexture2D({want})"), e))?;
+        let texture = tex.ok_or_else(|| napi::Error::from_reason("CreateTexture2D: null texture"))?;
+        eprintln!("[poc-native] created {want} texture (keyed mutex)");
+
+        // Upload (bracketed by the keyed mutex), then Flush so the GPU completes
+        // the write before the texture is shared cross-process.
+        let keyed_mutex: IDXGIKeyedMutex = texture.cast().map_err(|e| win_err("cast IDXGIKeyedMutex", e))?;
+        keyed_mutex.AcquireSync(0, INFINITE).map_err(|e| win_err("AcquireSync", e))?;
+        context.UpdateSubresource(&texture, 0, None, pixels.as_ptr() as *const _, row_pitch, 0);
         context.Flush();
-        if let Some(km) = &keyed_mutex {
-            km.ReleaseSync(0).map_err(|e| win_err("ReleaseSync", e))?;
-        }
+        keyed_mutex.ReleaseSync(0).map_err(|e| win_err("ReleaseSync", e))?;
 
         // CreateSharedHandle requires SHARED_NTHANDLE; produces an NT HANDLE that
         // Electron duplicates into its own process on import.
@@ -249,6 +269,7 @@ pub fn poc_create_synthetic_texture() -> Result<PocSharedTexture> {
             height: SIZE,
             adapter: adapter_name,
             handle_value: handle_value.to_string(),
+            pixel_format: want,
         })
     }
 }
