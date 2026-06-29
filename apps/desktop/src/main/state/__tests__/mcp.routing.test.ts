@@ -28,6 +28,14 @@ function addColorLayerMcp(actor: ReturnType<typeof freshActor>, trackId: string,
   return r.result.content[0].text
 }
 
+const SHORT_STILL_ID = '00000000-0000-7000-8000-000000000101'
+
+function addShortStillMedia(actor: ReturnType<typeof freshActor>, mediaId = SHORT_STILL_ID): string {
+  const r = actor.dispatch('add_media', { id: mediaId, kind: 'Image', duration_us: 40_000 })
+  expect(r.ok, 'setup image media must succeed').toBe(true)
+  return mediaId
+}
+
 // ── Dedicated-exec: add_color_layer ──────────────────────────────────────────
 
 describe('MCP adapter routing — add_color_layer (dedicated)', () => {
@@ -78,6 +86,53 @@ describe('MCP adapter routing — add_color_layer (dedicated)', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
+    expect(totalLayerCount(a)).toBe(0)
+  })
+})
+
+// ── Dedicated-exec: add_video_layer with Image media ─────────────────────────
+
+describe('MCP adapter routing — add_video_layer Image media (dedicated)', () => {
+  it('routes still images to ImageOverlay so timeline duration is not capped by probe duration', () => {
+    const a = freshActor()
+    const trackId = aRollId(a)
+    const mediaId = addShortStillMedia(a)
+    const r = a.mcpCall('add_video_layer', JSON.stringify({
+      track_id: trackId,
+      media_id: mediaId,
+      src_in_us: 0,
+      src_out_us: 5_000_000,
+      t_start_us: 0,
+      t_end_us: 5_000_000,
+    }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const layerId = r.result.content[0].text
+    const track = a.snapshot().tracks.find((t) => t.id === trackId)!
+    expect(track.layers).toHaveLength(1)
+    expect(track.layers[0].id).toBe(layerId)
+    expect(track.layers[0].params.kind).toBe('ImageOverlay')
+    expect(track.layers[0].t_end_us - track.layers[0].t_start_us).toBe(5_000_000)
+  })
+
+  it('dry_run uses the same ImageOverlay routing for still images', () => {
+    const a = freshActor()
+    const trackId = aRollId(a)
+    const mediaId = addShortStillMedia(a)
+    const r = a.mcpCall('dry_run', JSON.stringify({ operations: [{
+      kind: 'add_video_layer',
+      track_id: trackId,
+      media_id: mediaId,
+      src_in_us: 0,
+      src_out_us: 5_000_000,
+      t_start_us: 0,
+      t_end_us: 5_000_000,
+    }] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const body = JSON.parse(r.result.content[0].text) as { halted_at: number | null; results: Array<{ status: string }> }
+    expect(body.halted_at).toBeNull()
+    expect(body.results[0].status).toBe('ok')
     expect(totalLayerCount(a)).toBe(0)
   })
 })

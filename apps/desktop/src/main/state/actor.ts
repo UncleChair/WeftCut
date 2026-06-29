@@ -681,10 +681,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
         return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
           params: colorParams(parseRgba(spec.color, 'color'), parseNumOpt(spec.width, 'width') ?? 1920, parseNumOpt(spec.height, 'height') ?? 1080),
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
-      case 'add_video_layer':
+      case 'add_video_layer': {
+        const media = parseUuid(spec.media_id, 'media_id')
+        const srcIn = parseNum(spec.src_in_us, 'src_in_us')
+        const srcOut = parseNum(spec.src_out_us, 'src_out_us')
+        const params = current().media_pool[media]?.kind === 'Image'
+          ? imageOverlayParams(media)
+          : videoClipParams(media, srcIn, srcOut)
         return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
-          params: videoClipParams(parseUuid(spec.media_id, 'media_id'), parseNum(spec.src_in_us, 'src_in_us'), parseNum(spec.src_out_us, 'src_out_us')),
+          params,
           t_start_us: parseNum(spec.t_start_us, 't_start_us'), t_end_us: parseNum(spec.t_end_us, 't_end_us') }
+      }
       case 'update_layer':
         return { kind: 'UpdateLayer', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerPatch }
       case 'update_layer_params':
@@ -724,9 +731,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const t1 = p.t_end_us as number
           const snap = current()
           const item = snap.media_pool[media]
+          if (item?.kind === 'Image') {
+            const imageId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media), t0, t1))
+            return { ok: true, result: toolText(imageId) }
+          }
           const vParams = videoClipParams(media, srcIn, srcOut)
           const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
-          const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.metadata.audio != null)
+          const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.kind === 'Video') && (item.metadata.audio != null)
           if (shouldPair) {
             // ensure_audio_track: topmost track, or a new "Voiceover" if none.
             const tracks = current().tracks
