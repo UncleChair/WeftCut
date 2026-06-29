@@ -17,7 +17,7 @@
 //! Windows-only by design.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use napi::bindgen_prelude::*;
@@ -415,5 +415,280 @@ pub fn poc_release_texture(id: u32) {
         }
         eprintln!("[poc-native] released texture id={id}");
         // device + texture drop here, releasing their COM references.
+    }
+}
+
+// ===========================================================================
+// Result 3 — streaming sync: decode a multi-frame video continuously into a
+// POOL of reusable shared NV12 textures, so the producer can fill frame N+1
+// while the renderer still holds frame N.
+//
+// Central question: does the keyed-mutex handshake let us REUSE a shared
+// texture across frames without deadlock / tearing / stale frames?
+//
+// Lifecycle of one pool slot:
+//   free  --pocStreamNextFrame picks it--> busy (we AcquireSync, copy, ReleaseSync)
+//   busy  --JS importSharedTexture + renderer holds VideoFrame-->
+//   busy  --Electron allReferencesReleased fires --> pocFreeSlot --> free
+// The keyed mutex (index 0) serialises OUR GPU write against Chromium's GPU
+// read of the same texture; the free-flag serialises slot *ownership* in JS.
+// ===========================================================================
+
+/// One reusable shared NV12 texture in the streaming pool.
+struct PoolSlot {
+    texture: ID3D11Texture2D,
+    keyed_mutex: IDXGIKeyedMutex,
+    handle: HANDLE,
+    /// `true` once `allReferencesReleased` has fired (or the slot was never sent);
+    /// the producer may only reuse a free slot. Shared as an `AtomicBool` so the
+    /// JS free callback and the producer agree without taking the global lock in a
+    /// surprising order.
+    free: AtomicBool,
+}
+unsafe impl Send for PoolSlot {}
+
+/// The live streaming session: the open decoder + its texture pool, all on
+/// ffmpeg's D3D11 device. COM objects are `!Send`; everything runs on the Node
+/// main thread (same contract as `Holder`).
+struct StreamState {
+    stream: decoder::VideoStream,
+    /// ffmpeg's device, cloned (AddRef) to outlive the decoder so the pool
+    /// textures (created on it) stay valid; only held for its lifetime, the
+    /// per-frame copy goes through `context`.
+    _device: ID3D11Device,
+    context: ID3D11DeviceContext,
+    pool: Vec<PoolSlot>,
+    width: u32,
+    height: u32,
+    frame_index: u32,
+    eof: bool,
+}
+unsafe impl Send for StreamState {}
+
+static STREAM: Mutex<Option<StreamState>> = Mutex::new(None);
+
+#[napi(object)]
+pub struct PocStreamInfo {
+    pub width: u32,
+    pub height: u32,
+    pub pool_size: u32,
+}
+
+#[napi(object)]
+pub struct PocStreamFrame {
+    /// Pool slot index this frame was copied into. JS passes it back to
+    /// `pocFreeSlot` from `allReferencesReleased`.
+    pub slot: u32,
+    /// Little-endian bytes of the slot texture's NT handle (cached once per slot).
+    pub handle: Buffer,
+    pub width: u32,
+    pub height: u32,
+    /// 0-based decode order index of this frame.
+    pub frame_index: u32,
+}
+
+/// Open `path` for streaming and create a pool of `pool_size` reusable shared
+/// NV12 textures on ffmpeg's device. Reuse `poc_open_video_stream` once; pull
+/// frames with `poc_stream_next_frame`.
+#[napi]
+pub fn poc_open_video_stream(path: String, pool_size: u32) -> Result<PocStreamInfo> {
+    let pool_size = pool_size.max(1);
+    let stream = decoder::VideoStream::open(&path)
+        .map_err(|e| napi::Error::from_reason(format!("open stream '{path}' failed: {e}")))?;
+    let (width, height) = (stream.width, stream.height);
+
+    unsafe {
+        let device = ID3D11Device::from_raw_borrowed(&stream.device)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device is null"))?
+            .clone();
+        let context = ID3D11DeviceContext::from_raw_borrowed(&stream.device_context)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device context is null"))?
+            .clone();
+
+        let nt_km =
+            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_NV12,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: nt_km,
+        };
+
+        let mut pool = Vec::with_capacity(pool_size as usize);
+        for i in 0..pool_size {
+            let mut tex: Option<ID3D11Texture2D> = None;
+            device
+                .CreateTexture2D(&desc, None, Some(&mut tex))
+                .map_err(|e| win_err(&format!("CreateTexture2D(pool slot {i})"), e))?;
+            let texture = tex.ok_or_else(|| napi::Error::from_reason("CreateTexture2D: null"))?;
+            let keyed_mutex: IDXGIKeyedMutex =
+                texture.cast().map_err(|e| win_err("cast IDXGIKeyedMutex", e))?;
+            let resource: IDXGIResource1 =
+                texture.cast().map_err(|e| win_err("cast IDXGIResource1", e))?;
+            let handle = resource
+                .CreateSharedHandle(None, DXGI_SHARED_RESOURCE_RW, PCWSTR::null())
+                .map_err(|e| win_err("CreateSharedHandle", e))?;
+            pool.push(PoolSlot {
+                texture,
+                keyed_mutex,
+                handle,
+                free: AtomicBool::new(true),
+            });
+        }
+
+        eprintln!(
+            "[poc-native] stream opened {width}x{height}, pool of {pool_size} shared NV12 textures"
+        );
+
+        *STREAM.lock().unwrap() = Some(StreamState {
+            stream,
+            _device: device,
+            context,
+            pool,
+            width,
+            height,
+            frame_index: 0,
+            eof: false,
+        });
+    }
+
+    Ok(PocStreamInfo { width, height, pool_size })
+}
+
+/// Status of a `poc_stream_next_frame` call. Exactly one of `frame` / `eof` /
+/// `busy` is the meaningful field (a `#[napi(object)]` can't be a Rust enum, so
+/// this is a small tagged struct JS branches on).
+#[napi(object)]
+pub struct PocStreamResult {
+    /// "frame" — `frame` is populated; "eof" — stream finished; "busy" — every
+    /// pool slot is still held by the renderer, retry shortly.
+    pub status: String,
+    pub frame: Option<PocStreamFrame>,
+}
+
+/// Decode the next frame and copy it (GPU→GPU) into a FREE pool slot. Returns
+/// status "eof" at end of stream, "busy" if all slots are still held by the
+/// renderer (JS should retry after a tick), or "frame" with the slot + handle.
+#[napi]
+pub fn poc_stream_next_frame() -> Result<PocStreamResult> {
+    let mut guard = STREAM.lock().unwrap();
+    let st = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("no open stream"))?;
+
+    if st.eof {
+        return Ok(PocStreamResult { status: "eof".into(), frame: None });
+    }
+
+    // Find a free slot BEFORE decoding so a busy pool doesn't consume a frame.
+    let slot_idx = st.pool.iter().position(|s| s.free.load(Ordering::Acquire));
+    let Some(slot_idx) = slot_idx else {
+        return Ok(PocStreamResult { status: "busy".into(), frame: None });
+    };
+
+    let decoded = st
+        .stream
+        .next_frame()
+        .map_err(|e| napi::Error::from_reason(format!("decode next frame failed: {e}")))?;
+    let Some(decoded) = decoded else {
+        st.eof = true;
+        eprintln!("[poc-native] stream EOF after {} frames", st.frame_index);
+        return Ok(PocStreamResult { status: "eof".into(), frame: None });
+    };
+
+    let frame_index = st.frame_index;
+    let width = st.width;
+    let height = st.height;
+
+    // Copy the decoded GPU surface into the chosen pool slot, bracketed by the
+    // slot's keyed mutex (our write vs. Chromium's read) AND ffmpeg's device-
+    // context lock (decode thread vs. our copy).
+    unsafe {
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&decoded.src_texture)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+        let slot = &st.pool[slot_idx];
+
+        slot.keyed_mutex
+            .AcquireSync(0, INFINITE)
+            .map_err(|e| win_err("AcquireSync(pool slot)", e))?;
+        if let Some(lock) = st.stream.lock {
+            lock(st.stream.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: width,
+            bottom: height,
+            back: 1,
+        };
+        st.context.CopySubresourceRegion(
+            &slot.texture,
+            0,
+            0,
+            0,
+            0,
+            src_tex,
+            decoded.src_index,
+            Some(&region),
+        );
+        st.context.Flush();
+        if let Some(unlock) = st.stream.unlock {
+            unlock(st.stream.lock_ctx);
+        }
+        slot.keyed_mutex
+            .ReleaseSync(0)
+            .map_err(|e| win_err("ReleaseSync(pool slot)", e))?;
+
+        // Mark busy: the renderer now owns it until allReferencesReleased.
+        slot.free.store(false, Ordering::Release);
+
+        let handle_value = slot.handle.0 as isize as i64;
+        st.frame_index += 1;
+
+        Ok(PocStreamResult {
+            status: "frame".into(),
+            frame: Some(PocStreamFrame {
+                slot: slot_idx as u32,
+                handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+                width,
+                height,
+                frame_index,
+            }),
+        })
+    }
+}
+
+/// Mark a pool slot free again — called from JS `allReferencesReleased`, meaning
+/// every cross-process reference to that slot's texture has been dropped, so the
+/// producer may reuse it for a later frame.
+#[napi]
+pub fn poc_free_slot(slot: u32) {
+    let guard = STREAM.lock().unwrap();
+    if let Some(st) = guard.as_ref() {
+        if let Some(s) = st.pool.get(slot as usize) {
+            s.free.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// Drop the decoder + pool, closing each slot's NT handle.
+#[napi]
+pub fn poc_close_video_stream() {
+    let st = STREAM.lock().unwrap().take();
+    if let Some(st) = st {
+        unsafe {
+            for slot in &st.pool {
+                let _ = CloseHandle(slot.handle);
+            }
+        }
+        eprintln!("[poc-native] stream closed ({} frames decoded)", st.frame_index);
+        // stream (decoder), device, context, pool textures all drop here.
     }
 }

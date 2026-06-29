@@ -70,7 +70,73 @@ ffmpeg-path findings:
   copy into a fresh `SHARED_NTHANDLE|KEYEDMUTEX` texture.
 - Still single-frame/static. A streaming preview must solve per-frame
   producer/consumer sync (keyed mutex or a shared fence) and reuse one shared
-  texture across frames.
+  texture across frames — that is Result 3.
+
+## Result 3 — streaming sync, pooled texture REUSE ✅ (2026-06-29)
+
+The question Results 1–2 left open: **does the keyed-mutex handshake with Chromium
+let us REUSE a shared texture across many frames** (the thing a real preview needs),
+without deadlock, tearing, stale frames, or drops?
+
+**Yes — confirmed, including down to a single recycled texture.** A 60-frame
+256×256 H.264 clip whose luma ramps monotonically (20→235, ~3.6/frame) was decoded
+continuously and streamed to the renderer through a POOL of reusable shared NV12
+textures, one frame at a time. Every run PASSED all criteria:
+
+| pool | frames sent/recv | ordered+advancing | gaps | dups | errors | busySpins | producer fps |
+|------|------------------|-------------------|------|------|--------|-----------|--------------|
+| 5    | 60 / 60          | yes               | 0    | 0    | 0      | 0         | ~65          |
+| 3    | 60 / 60          | yes               | 0    | 0    | 0      | 2–7       | ~60–75       |
+| 1    | 60 / 60          | yes               | 0    | 0    | 0      | **79**    | ~53          |
+
+The renderer sampled each frame's center-patch average luma and matched it against
+the frame index: luma rose strictly 20→235 in lockstep with indices 0→59, with **no
+non-advancing or backward sample** — which is the machine-checkable proof of *no
+stale-frame reuse and no tearing* (a torn or stale frame would break monotonicity).
+
+**`busySpins` is the load-bearing number.** It counts how often the producer found
+every pool slot still held by the renderer and had to wait for Electron's
+`allReferencesReleased` to free one, *then reused that freed slot for a later frame*.
+With `POC_POOL=1` there is exactly ONE shared texture, so all 59 frames after the
+first are forced reuses of the same texture (busySpins=79) — and it still passed,
+byte-coherent and in order. **Keyed-mutex texture reuse with Chromium is real**, no
+fallback to fresh-per-frame textures was needed.
+
+How it works (architecture mirrors Electron OSR streaming):
+
+- Native (`poc_open_video_stream`) opens the d3d11va decoder ONCE
+  (`decoder::VideoStream`, which keeps `ictx`/decoder/hw-device alive and pulls the
+  next GPU frame per call — `PacketIter` holds no cursor, the read position lives in
+  the `AVFormatContext`, so a fresh iterator each call resumes correctly) and creates
+  `poolSize` reusable `SHARED_NTHANDLE|KEYEDMUTEX` NV12 textures on ffmpeg's device,
+  caching one NT handle per slot.
+- `poc_stream_next_frame` finds a FREE slot (its `allReferencesReleased` fired, or it
+  was never sent), `AcquireSync(0)` → `CopySubresourceRegion` (GPU→GPU) the decoded
+  surface into it → `ReleaseSync(0)`, marks it busy, returns `{slot, handle, frameIndex}`.
+  If no slot is free it returns `status:"busy"` so the JS pump yields and retries
+  (back-pressure) instead of consuming a frame.
+- Main's pump loop: per frame, `importSharedTexture({textureInfo, allReferencesReleased: () => pocFreeSlot(slot)})`,
+  `await sendSharedTexture(...)`, then `imported.release()` (drop main's ref; the
+  renderer holds one until it draws). `timestamp` is set to the frame index so it
+  travels with the frame.
+
+Two sync layers cooperate, and both were necessary:
+1. **Keyed mutex (index 0)** on each pool texture serialises OUR GPU write
+   (`CopySubresourceRegion`) against Chromium's GPU read of the same texture.
+2. **A per-slot `AtomicBool` free-flag** serialises slot *ownership* across the JS
+   boundary: the producer only writes a slot whose `allReferencesReleased` has fired.
+
+Streaming-path findings:
+- The producer fps (~50–75) is bounded by the per-frame `importSharedTexture` /
+  `sendSharedTexture` IPC round-trip and the 2 ms busy-yield, **not** the GPU copy.
+  A real preview that imports straight to a WebGPU `importExternalTexture` and paces
+  to the composition clock would not pay the 2D-readback verification cost.
+- More pool slots straightforwardly reduce back-pressure (busySpins 79→7→0 as
+  pool 1→3→5); 3 is a comfortable default, fully decoupling producer and consumer.
+- The decode never fell back to software (`next_frame` errors on any non-`D3D11`
+  frame; all 60 stayed `AV_PIX_FMT_D3D11`), so the whole pipeline is true zero-copy
+  GPU→GPU per frame — decode → keyed-mutex copy into a recycled shared texture →
+  Chromium VideoFrame.
 
 ## Run (Windows only)
 
@@ -98,6 +164,24 @@ node_modules/.bin/napi build --platform \
 POC_VIDEO=/path/to/clip.mp4 node_modules/.bin/electron poc/shared-texture                  # 1b-i (CPU bounce)
 POC_VIDEO=/path/to/clip.mp4 POC_ZEROCOPY=1 node_modules/.bin/electron poc/shared-texture    # 1b-ii (zero-copy)
 ```
+
+**Streaming sync (Result 3)** — pooled reusable shared textures, multi-frame:
+
+```sh
+# Make a luma-ramp verification clip (overall brightness rises with frame index,
+# so the renderer can machine-verify ordering + advance):
+ffmpeg -y -f lavfi -i "color=c=black:s=256x256:r=30:d=2" \
+  -vf "geq=lum='20+215*N/59':cb=128:cr=128,format=yuv420p" \
+  -frames:v 60 -c:v libx264 -preset ultrafast -g 30 -bf 0 -pix_fmt yuv420p stream_test.mp4
+
+POC_STREAM=1 POC_VIDEO=stream_test.mp4              node_modules/.bin/electron poc/shared-texture  # pool=3 (default)
+POC_STREAM=1 POC_VIDEO=stream_test.mp4 POC_POOL=1   node_modules/.bin/electron poc/shared-texture  # forces reuse of ONE texture
+POC_STREAM=1 POC_VIDEO=stream_test.mp4 POC_POOL=5   node_modules/.bin/electron poc/shared-texture  # no back-pressure
+```
+
+The run self-terminates and prints `STREAM SUMMARY` + `STREAM VERDICT: PASS/FAIL`.
+PASS requires: received == sent, indices in order, luma strictly advancing, zero
+gaps/duplicates/errors, ≥60 frames.
 
 ## Success criteria
 

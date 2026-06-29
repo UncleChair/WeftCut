@@ -298,6 +298,171 @@ pub fn decode_first_d3d11_frame(path: &str) -> Result<D3d11Frame, String> {
     })
 }
 
+/// An open d3d11va decode session that yields successive GPU frames, for the
+/// streaming POC (Result 3). Owns the same ffmpeg objects as `D3d11Frame` but
+/// keeps them alive across many `next_frame()` calls instead of one shot.
+///
+/// Packet pumping relies on ffmpeg-next's `PacketIter` holding no cursor of its
+/// own: each `self.ictx.packets().next()` reads the *next* packet because the
+/// read position lives inside the `AVFormatContext`. So a fresh iterator per
+/// call resumes where the previous one left off.
+pub struct VideoStream {
+    ictx: ffmpeg_next::format::context::Input,
+    decoder: ffmpeg_next::decoder::Video,
+    hw_ctx: *mut ffs::AVBufferRef,
+    stream_index: usize,
+    /// Reused frame buffer; `receive_frame` overwrites it each call.
+    frame: VideoFrame,
+    /// Set once `send_eof` has been issued, so we only drain afterwards.
+    eof_sent: bool,
+    pub width: u32,
+    pub height: u32,
+    pub device: *mut c_void,
+    pub device_context: *mut c_void,
+    pub lock: Option<unsafe extern "C" fn(*mut c_void)>,
+    pub unlock: Option<unsafe extern "C" fn(*mut c_void)>,
+    pub lock_ctx: *mut c_void,
+}
+
+// The COM pointers + ffmpeg objects are `!Send`, but every call runs on the Node
+// main thread and the pointers never cross threads (same contract as `Holder`).
+unsafe impl Send for VideoStream {}
+
+impl Drop for VideoStream {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.hw_ctx.is_null() {
+                ffs::av_buffer_unref(&mut self.hw_ctx);
+            }
+        }
+    }
+}
+
+/// A decoded GPU surface borrowed from a live `VideoStream`. Holds the raw source
+/// texture + slice index for `CopySubresourceRegion`; valid only until the next
+/// `next_frame()` overwrites the stream's frame buffer.
+pub struct StreamFrame {
+    pub src_texture: *mut c_void,
+    pub src_index: u32,
+}
+
+impl VideoStream {
+    /// Open `path` with d3d11va hardware decode and prepare for streaming. Errors
+    /// if hardware decode is unavailable (zero-copy needs the GPU texture).
+    pub fn open(path: &str) -> Result<VideoStream, String> {
+        ffmpeg_next::init().ok();
+        let map = |e: ffmpeg_next::Error| e.to_string();
+
+        let ictx = input(&path).map_err(map)?;
+        let stream = ictx
+            .streams()
+            .best(Type::Video)
+            .ok_or_else(|| "no video stream".to_string())?;
+        let stream_index = stream.index();
+        let mut codec_ctx =
+            ffmpeg_next::codec::context::Context::from_parameters(stream.parameters())
+                .map_err(map)?;
+
+        let mut hw_ctx: *mut ffs::AVBufferRef = ptr::null_mut();
+        unsafe {
+            let ret = ffs::av_hwdevice_ctx_create(
+                &mut hw_ctx,
+                ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA,
+                ptr::null(),
+                ptr::null_mut(),
+                0,
+            );
+            if ret < 0 || hw_ctx.is_null() {
+                return Err(format!("av_hwdevice_ctx_create(d3d11va) failed (ret={ret})"));
+            }
+            let raw = codec_ctx.as_mut_ptr();
+            (*raw).hw_device_ctx = ffs::av_buffer_ref(hw_ctx);
+            (*raw).get_format = Some(get_format_d3d11);
+        }
+
+        let decoder = codec_ctx.decoder().video().map_err(map)?;
+        let width = decoder.width();
+        let height = decoder.height();
+
+        // Pull the D3D11 device + context out of ffmpeg's hw device context (same
+        // ABI mirror as the single-frame path).
+        let (device, device_context, lock, unlock, lock_ctx) = unsafe {
+            let hwdev = (*hw_ctx).data as *mut ffs::AVHWDeviceContext;
+            let d = (*hwdev).hwctx as *mut AVD3D11VADeviceContextLayout;
+            (
+                (*d).device,
+                (*d).device_context,
+                (*d).lock,
+                (*d).unlock,
+                (*d).lock_ctx,
+            )
+        };
+
+        Ok(VideoStream {
+            ictx,
+            decoder,
+            hw_ctx,
+            stream_index,
+            frame: VideoFrame::empty(),
+            eof_sent: false,
+            width,
+            height,
+            device,
+            device_context,
+            lock,
+            unlock,
+            lock_ctx,
+        })
+    }
+
+    /// Decode the next GPU frame. Returns `Ok(None)` at end of stream. The
+    /// returned `StreamFrame` borrows the stream's internal frame buffer, so it
+    /// must be consumed (copied out) before the next `next_frame()` call.
+    pub fn next_frame(&mut self) -> Result<Option<StreamFrame>, String> {
+        let map = |e: ffmpeg_next::Error| e.to_string();
+        loop {
+            // Drain any already-decoded frame first.
+            if self.decoder.receive_frame(&mut self.frame).is_ok() {
+                if self.frame.format() != Pixel::D3D11 {
+                    return Err(format!(
+                        "decoder produced {:?}, not D3D11 (hardware decode unavailable)",
+                        self.frame.format()
+                    ));
+                }
+                let (src_texture, src_index) = unsafe {
+                    let p = self.frame.as_ptr();
+                    (
+                        (*p).data[0] as *mut c_void,
+                        (*p).data[1] as usize as u32,
+                    )
+                };
+                return Ok(Some(StreamFrame { src_texture, src_index }));
+            }
+
+            if self.eof_sent {
+                // Already flushing and the decoder gave nothing -> end of stream.
+                return Ok(None);
+            }
+
+            // Feed one more video packet (a fresh PacketIter resumes the read
+            // position, which lives in the AVFormatContext).
+            match self.ictx.packets().next() {
+                Some((s, p)) => {
+                    if s.index() == self.stream_index {
+                        self.decoder.send_packet(&p).map_err(map)?;
+                    }
+                    // Non-video packet: loop and try receive/next again.
+                }
+                None => {
+                    self.decoder.send_eof().map_err(map)?;
+                    self.eof_sent = true;
+                    // Loop: drain the flushed frames.
+                }
+            }
+        }
+    }
+}
+
 /// Pack an NV12 `VideoFrame` into a contiguous `Y then UV` buffer, dropping any
 /// row padding (stride > width).
 fn extract_nv12_planes(frame: &VideoFrame) -> Vec<u8> {
