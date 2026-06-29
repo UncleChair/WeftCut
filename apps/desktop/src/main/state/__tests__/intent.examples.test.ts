@@ -161,8 +161,8 @@ describe('timeline mutation intent', () => {
   })
 
   // ── (f) Mined from: split-inside.json ─────────────────────────────────────
-  // Discovery: left half REUSES the original layer id (mutations.rs:815-874
-  // / split.ts splitSingleLayer line 53: `return { left: id, right: right.id }`).
+  // Discovery: left half REUSES the original layer id
+  // (split.ts splitSingleLayer line 53: `return { left: id, right: right.id }`).
   // The original id is NOT gone — it IS the left half.
   it('split produces two contiguous, non-overlapping halves; left reuses the original id', () => {
     const a = freshActor()

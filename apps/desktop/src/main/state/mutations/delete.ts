@@ -2,7 +2,7 @@ import type { Project, Uuid } from '../model'
 import { applyDurationAutofit, checkTrackLock, dropLayerFromGroups, pruneEmptiedTrack, pruneEmptyHiddenTracks } from './helpers'
 import { CommandFailure } from '../errors'
 
-/** mutations.rs:111-135 — remove the layer, drop from groups (auto-dissolve <2),
+/** Remove the layer, drop from groups (auto-dissolve <2),
  *  prune transient + emptied removable track, autofit. Returns the pruned track id. */
 export function applyDeleteLayer(p: Project, id: Uuid): Uuid | null {
   checkTrackLock(p, id) // throws LayerNotFound / TrackLocked

@@ -23,7 +23,7 @@ export function defaultTransform() {
   return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5] as [number, number] }
 }
 
-/** mutations.rs:47-89. Snaps both edges, inserts t-start-sorted, autofits.
+/** Snaps both edges, inserts t-start-sorted, autofits.
  *  Allocates the layer id only AFTER the track-existence check (id contract). */
 export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: LayerParams, tStartUs: number, tEndUs: number): Uuid {
   const t0 = snapFrameRound(tStartUs, p.composition.fps.num, p.composition.fps.den)

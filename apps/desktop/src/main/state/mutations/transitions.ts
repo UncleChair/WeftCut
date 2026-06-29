@@ -2,14 +2,14 @@ import type { Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 
-/** mutations.rs:1412 — extend t_end_us (and src_out_us for media-bearing kinds)
+/** Extend t_end_us (and src_out_us for media-bearing kinds)
  *  by deltaUs. Used by add_transition to open the authorized overlap. */
 export function extendLayerTEnd(layer: Layer, deltaUs: number): void {
   layer.t_end_us += deltaUs
   if (layer.params.kind === 'VideoClip' || layer.params.kind === 'Audio') layer.params.src_out_us += deltaUs
 }
 
-/** mutations.rs:1424 — inverse of extendLayerTEnd; saturates at 0. Used by
+/** Inverse of extendLayerTEnd; saturates at 0. Used by
  *  remove_transition to undo the auto-extension. */
 export function shrinkLayerTEnd(layer: Layer, deltaUs: number): void {
   layer.t_end_us = Math.max(layer.t_end_us - deltaUs, 0)

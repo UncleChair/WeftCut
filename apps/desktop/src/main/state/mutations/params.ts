@@ -18,7 +18,7 @@ export type LayerParamsPatch =
 
 const stat = <T>(value: T): Animated<T> => ({ mode: 'Static', value })
 
-/** mutations.rs:1232 apply_params_patch — kind-matched field merge; a discriminant
+/** apply_params_patch — kind-matched field merge; a discriminant
  *  mismatch is the only error. Animated fields collapse to Static(v) (MVP: this
  *  overwrites any keyframe track). Motif props merge field-wise (never replace). */
 export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
@@ -101,7 +101,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
 }
 
 /** actor.rs:2734 do_update_layer_params (mutation half): lock-check, locate,
- *  field-merge, then Motif content-window clamp (mutations.rs:391-453).
+ *  field-merge, then Motif content-window clamp.
  *  After the field-merge: if the layer is a Motif with a known catalog entry and
  *  a finite contentDur, and the placed window exceeds that contentDur, clamp
  *  src_in_us + t_end_us into the new content. Growing never resizes.
@@ -117,16 +117,13 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
 
   // Content-window model: after a Motif params update, if the cap-driving prop
   // (e.g. `seconds`) shrank the content below the current window, clamp the
-  // geometry. Growing never resizes. Mirrors mutations.rs:391-453.
+  // geometry. Growing never resizes.
   if (layer.params.kind === 'Motif') {
     const params = layer.params as MotifParams
-    // TWIN DIVERGENCE (intentional): Rust mutations.rs:401 resolves the clamp cap
-    // from `catalog::builtins()` ONLY; this `catalog` is the actor's full MotifCatalog
-    // (built-ins + user layer). So a USER motif with a cap clamps here but not in Rust.
-    // Bounded + invisible to the differential gate (corpus is built-in `countdown` only,
-    // and there is no shipped user-motif clamp path under the flag yet). Do NOT "fix" this
-    // to built-ins-only to match Rust — clamping user motifs is the desired behavior once
-    // TS becomes sole owner (4b deletes the Rust twin). Closes with the deferred authoring port.
+    // INTENTIONAL: the clamp cap is resolved from this `catalog` — the actor's full
+    // MotifCatalog (built-ins + user layer) — so a USER motif with a cap clamps here too,
+    // not just built-ins. Clamping user motifs is the desired behavior; do NOT narrow this
+    // to built-ins-only.
     const manifest = catalog.get(params.motif_id)
     if (manifest === undefined) return // unknown motif → no clamp
     const contentDur = resolveMotifMaxDurUs(manifest, params.props)

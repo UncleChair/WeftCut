@@ -504,7 +504,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     try {
       switch (channel) {
         case 'add_color_layer': {
-          // add_color_layer_impl (mutations.rs:362-388): resolve overlay track when
+          // add_color_layer_impl: resolve overlay track when
           // trackId absent (reverse-scan non-reserved; create "Overlay" if none free).
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
@@ -519,7 +519,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // No free track — create "Overlay" in its OWN commit (matching Rust's
           // resolve_overlay_track which calls handle.add_track — a SEPARATE committed
           // op with its own op_id), THEN add the layer in a second commit. Two op_ids,
-          // matching mutations.rs:254-267 + add_color_layer_impl:362-388.
+          // matching the overlay-track resolution + color-layer-default logic.
           const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
             applyAddTrack(d, idGen, 'Overlay'))
           const params = prodColorParams(wireArgs, current().composition)
@@ -528,7 +528,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: id }
         }
         case 'add_text_layer': {
-          // add_text_layer_impl (mutations.rs:269-305): same overlay-track logic.
+          // add_text_layer_impl: same overlay-track logic.
           const t0 = parseNum(wireArgs.tStartUs, 'tStartUs')
           const dur = resolveDurationUs(parseNumOpt(wireArgs.durationUs, 'durationUs'))
           const t1 = t0 + dur
@@ -547,7 +547,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: id }
         }
         case 'add_media_layer': {
-          // add_media_layer (mutations.rs:73-183): track_id required, kind-matched
+          // add_media_layer: track_id required, kind-matched
           // params. When auto-pair fires (Video + audio.is_some() + setting on):
           // THREE separate commits (three op_ids), mirroring Rust's three handle
           // calls — add video layer, add audio layer (role=dialogue), groups_create.
@@ -558,7 +558,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, trackId, params, t0, t1))
           if (autoPairAudio !== null) {
-            // mutations.rs:161-179: paired Audio layer (role dialogue) on the SAME track,
+            // Paired Audio layer (role dialogue) on the SAME track,
             // same span, then groups_create([video, audio]). THREE separate commits ⇒ three
             // op_ids, matching Rust's three handle calls (the id-allocation keystone).
             const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
@@ -569,7 +569,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: videoId }
         }
         case 'add_demo_color_layer': {
-          // add_demo_color_layer (mutations.rs:185-214):
+          // add_demo_color_layer:
           //   track=tracks.front() (create "Track" if empty),
           //   t_start=track.last_layer.t_end ?? 0, duration=2s,
           //   color=demo_color(track.layers.len()), w/h=composition size.
@@ -598,7 +598,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: id }
         }
         case 'add_demo_text_layer': {
-          // add_demo_text_layer (mutations.rs:318-360):
+          // add_demo_text_layer:
           //   track=tracks.last() (create "Overlay" if empty),
           //   t_start=track.last_layer.t_end ?? 0, duration=3s,
           //   content="TEXT", Arial 96 weight:700.

@@ -5,7 +5,6 @@ import { applyDurationAutofit, locateLayer, pruneEmptyHiddenTracks } from './hel
 import { groupSiblingsExcluding, checkGroupLock } from './groups'
 import { CommandFailure } from '../errors'
 
-/** Port of mutations.rs:502-635. */
 export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeGroup: boolean): void {
   const fpsN = p.composition.fps.num, fpsD = p.composition.fps.den
   const snapped = snapFrameRound(newTStartUs, fpsN, fpsD)
@@ -21,8 +20,8 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   const delta = snapped - curStart
 
   const siblings = escapeGroup ? [] : groupSiblingsExcluding(p, id)
-  // Reject up-front if any member (incl. target) is locked / on a locked track
-  // (mutations.rs:535-545). Only fires for a coupled move with real siblings.
+  // Reject up-front if any member (incl. target) is locked / on a locked track.
+  // Only fires for a coupled move with real siblings.
   if (!escapeGroup && siblings.length > 0) checkGroupLock(p, id, [id, ...siblings])
 
   // Remove the target layer.

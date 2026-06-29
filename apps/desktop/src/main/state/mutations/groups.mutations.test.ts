@@ -57,7 +57,7 @@ describe('group mutations', () => {
     const gid = applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
     applyGroupsAddMembers(p, gid, ['c'], false)
     expect([...p.groups[0].members].sort()).toEqual(['a', 'b', 'c'])
-    // Rust checks already-grouped BEFORE group existence (mutations.rs:234-277):
+    // Rust checks already-grouped BEFORE group existence:
     // 'a' is grouped, target 'nope' missing, reassign=false → LayerAlreadyGrouped.
     expectCmd(() => applyGroupsAddMembers(p, 'nope', ['a'], false), 'LayerAlreadyGrouped')
     // 'd' is ungrouped → passes the already-grouped scan → reaches the missing-group check.

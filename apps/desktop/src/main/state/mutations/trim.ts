@@ -13,7 +13,7 @@ export function clampSigned(d: number, min: number, max: number): number {
   return Math.min(Math.max(d, min), max)
 }
 
-/** mutations.rs:1121-1222. motifMaxDurUs is null for all Phase-1 kinds → the
+/** motifMaxDurUs is null for all Phase-1 kinds → the
  *  motif-cap branches collapse to ±INF; only timeline + src bounds remain. */
 export function trimDeltaBounds(layer: Layer, edge: LayerEdge, _motifMaxDurUs: number | null): { min: number; max: number } {
   const dur = layer.t_end_us - layer.t_start_us
@@ -32,7 +32,7 @@ export function trimDeltaBounds(layer: Layer, edge: LayerEdge, _motifMaxDurUs: n
   }
 }
 
-/** Port of mutations.rs:881-1062 (motif cap deferred to Phase 2b). */
+/** Motif cap deferred to Phase 2b. */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeGroup: boolean): void {
   const fpsN = p.composition.fps.num, fpsD = p.composition.fps.den
   const snapped = snapFrameRound(newTUs, fpsN, fpsD)
@@ -45,7 +45,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   const curEdgeT = edge === 'In' ? curStart : curEnd
 
   // Aligned set: the target + every group sibling whose MATCHING edge sits at the
-  // same t as the target's pre-trim edge (mutations.rs:906-928).
+  // same t as the target's pre-trim edge.
   const aligned: Uuid[] = [id]
   if (!escapeGroup) {
     for (const sid of groupSiblingsExcluding(p, id)) {
@@ -58,7 +58,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   }
 
   const requestedDelta = snapped - curEdgeT
-  if (requestedDelta === 0) return // no-op early return (mutations.rs:931-933)
+  if (requestedDelta === 0) return // no-op early return
 
   // Clamp against every aligned member.
   let clamped = requestedDelta

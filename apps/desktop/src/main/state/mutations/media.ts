@@ -4,14 +4,14 @@ import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
 
-/** commands/mutations.rs:91 — the canonical VideoClip layer shape. blend_mode
+/** The canonical VideoClip layer shape. blend_mode
  *  default = Normal, transform default per defaultTransform. */
 export function videoClipParams(media: Uuid, srcInUs: number, srcOutUs: number): LayerParams {
   return { kind: 'VideoClip', media, src_in_us: srcInUs, src_out_us: srcOutUs,
     transform: defaultTransform(), opacity: { mode: 'Static', value: 1 }, crop: null,
     flip_h: false, flip_v: false, blend_mode: 'Normal', speed: 1, fade_in_us: 0, fade_out_us: 0 }
 }
-/** commands/mutations.rs:109 — standalone Audio layer. AudioRole is
+/** Standalone Audio layer. AudioRole is
  *  #[serde(rename_all="kebab-case")] (audio_role.rs:14), so Rust AudioRole::Music
  *  serializes to the lowercase wire form "music" — the TS model's AudioRole. */
 export function audioParams(media: Uuid, srcInUs: number, srcOutUs: number): AudioParams {
@@ -19,7 +19,7 @@ export function audioParams(media: Uuid, srcInUs: number, srcOutUs: number): Aud
     gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
     fade_in_us: 0, fade_out_us: 0, mute: false, role: 'music' }
 }
-/** commands/mutations.rs:123 — Image overlay (no src range; validator checks
+/** Image overlay (no src range; validator checks
  *  only the media ref). */
 export function imageOverlayParams(media: Uuid): LayerParams {
   return { kind: 'ImageOverlay', media, transform: defaultTransform(),

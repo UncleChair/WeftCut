@@ -26,7 +26,7 @@ describe('applyUpdateLayer', () => {
     const l = p.tracks[0].layers[0]
     expect(l.label).toBeNull(); expect(l.t_start_us).toBe(0) // unchanged
   })
-  it('does NOT autofit composition.duration_us on a t_end change (mutations.rs:332-362)', () => {
+  it('does NOT autofit composition.duration_us on a t_end change', () => {
     const p = one(); p.composition.duration_us = 1_000_000; p.composition.duration_pinned = false
     applyUpdateLayer(p, 'a', { t_end_us: 5_000_000 })
     expect(p.composition.duration_us).toBe(1_000_000) // unchanged — update_layer never autofits

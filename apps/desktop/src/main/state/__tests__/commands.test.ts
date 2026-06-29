@@ -177,7 +177,7 @@ describe('pickFreeOverlayTrack', () => {
   })
 })
 
-// ── add_media_layer auto-pair (mutations.rs:146-180) ─────────────────────
+// ── add_media_layer auto-pair ─────────────────────
 // TDD: written to fail before Step 6 implementation. Verifies:
 //   1. A Video+audio media item produces Video layer + Audio (role=dialogue)
 //      layer on the SAME track with the SAME span.
@@ -213,7 +213,7 @@ describe('add_media_layer auto-pair', () => {
     expect(vid.t_end_us).toBe(4_000_000)
     expect(aud.t_start_us).toBe(0)
     expect(aud.t_end_us).toBe(4_000_000)
-    // Paired audio has role=dialogue (kebab-case, mutations.rs:159)
+    // Paired audio has role=dialogue (kebab-case)
     if (aud.params.kind === 'Audio') expect(aud.params.role).toBe('dialogue')
   })
 

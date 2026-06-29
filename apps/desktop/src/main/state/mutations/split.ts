@@ -7,7 +7,7 @@ import { locateLayer } from './helpers'
 import { groupSiblingsExcluding, checkGroupLock, indexGroups } from './groups'
 import { forEachAnimatedF64, forEachAnimatedRgba, retainKeyframes, shiftKeyframes, firstKeyframeValue, lastKeyframeValue, collapseToStatic } from './animated'
 
-/** mutations.rs:797-811 — partition one Animated<T> track for a split at the
+/** Partition one Animated<T> track for a split at the
  *  clip-local `splitOffset`. LEFT keeps t<=offset; RIGHT keeps t>offset, rebased
  *  by -offset. An emptied Keyframed half collapses to Static at the boundary value
  *  (LEFT→first, RIGHT→last). */
@@ -18,7 +18,7 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
   if (a.mode === 'Keyframed' && (a.value as Keyframe<T>[]).length === 0 && boundary !== null) collapseToStatic(a, boundary)
 }
 
-/** mutations.rs:815-874 — single-layer split (group-unaware). Returns {left,right};
+/** Single-layer split (group-unaware). Returns {left,right};
  *  left reuses the original id, right gets a fresh one and is inserted at li+1. */
 function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number): { left: Uuid; right: Uuid } {
   const atTUs = snapFrameRound(atTUsRaw, p.composition.fps.num, p.composition.fps.den)
@@ -53,7 +53,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   return { left: id, right: right.id }
 }
 
-/** mutations.rs:714-789 — split with group spanning fan-out. */
+/** Split with group spanning fan-out. */
 export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeGroup: boolean): { left: Uuid; right: Uuid } {
   const atTUs = snapFrameRound(atTUsRaw, p.composition.fps.num, p.composition.fps.den)
   // Pre-flight on the target.
@@ -85,7 +85,7 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
       if (g) { g.members = [...g.members, rightId].sort() }
     }
   }
-  // Add the target's right-half to its group, if any. UNCONDITIONAL (mutations.rs:779-787):
+  // Add the target's right-half to its group, if any. UNCONDITIONAL:
   // even with escape_group, the target's left half keeps the original id and stays grouped,
   // so its right half joins too (verified against the group-split-escape oracle: 3 members).
   const tgid = indexGroups(p.groups).get(targetHalves.left)

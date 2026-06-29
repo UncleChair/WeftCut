@@ -18,8 +18,7 @@ function effectsOrThrow(p: Project, layerId: Uuid): Effect[] {
   throw new CommandFailure({ error: 'LayerNotFound', layer: layerId })
 }
 
-/** mutations.rs:1462 (apply_add_effect) + commands/mutations.rs:460-474. The
- *  effect id is minted UNCONDITIONALLY, BEFORE the layer lookup — so a
+/** The effect id is minted UNCONDITIONALLY, BEFORE the layer lookup — so a
  *  LayerNotFound still burns the id. This is the OPPOSITE of applyAddLayer
  *  (add.ts:33, mints after the track check). Mints here, not in the dispatch
  *  arm, so the actor's commit pipeline stays uniform. */
@@ -30,7 +29,7 @@ export function applyAddEffect(p: Project, idGen: IdGen, layerId: Uuid, kind: st
   return id
 }
 
-/** mutations.rs:1482 — replace `enabled` when present; merge `params`
+/** Replace `enabled` when present; merge `params`
  *  key-by-key when present. LayerNotFound → EffectNotFound. */
 export function applyUpdateEffect(p: Project, layerId: Uuid, effectId: Uuid, patch: EffectPatch): void {
   const e = effectsOrThrow(p, layerId).find((x) => x.id === effectId)
@@ -41,7 +40,7 @@ export function applyUpdateEffect(p: Project, layerId: Uuid, effectId: Uuid, pat
   }
 }
 
-/** mutations.rs:1513 — reorder within the chain (0 = first). Rejection order:
+/** Reorder within the chain (0 = first). Rejection order:
  *  LayerNotFound → EffectNotFound → EffectIndexOutOfRange (>= len). */
 export function applyMoveEffect(p: Project, layerId: Uuid, effectId: Uuid, newIndex: number): void {
   const effects = effectsOrThrow(p, layerId)
@@ -53,7 +52,7 @@ export function applyMoveEffect(p: Project, layerId: Uuid, effectId: Uuid, newIn
   effects.splice(newIndex, 0, e)
 }
 
-/** mutations.rs:1541 — remove by id. LayerNotFound → EffectNotFound. */
+/** Remove by id. LayerNotFound → EffectNotFound. */
 export function applyRemoveEffect(p: Project, layerId: Uuid, effectId: Uuid): void {
   const effects = effectsOrThrow(p, layerId)
   const at = effects.findIndex((e) => e.id === effectId)

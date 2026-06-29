@@ -71,7 +71,7 @@ describe('applySplitLayer', () => {
     const r = applySplitLayer(p, seededGen(), 'a', 400_000, true)
     expect(p.tracks[1].layers.length).toBe(1) // sibling b NOT split (escape → no spanning fan-out)
     const group = p.groups.find((g) => g.id === gid)!
-    expect(group.members.length).toBe(3) // target stays grouped; its right-half joins (mutations.rs:779-787)
+    expect(group.members.length).toBe(3) // target stays grouped; its right-half joins
     expect(group.members).toContain(r.right)
     expect(group.members).toContain('b')
   })

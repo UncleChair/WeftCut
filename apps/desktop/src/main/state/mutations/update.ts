@@ -11,7 +11,7 @@ export interface LayerPatch {
   locked?: boolean | null
 }
 
-/** mutations.rs:332-362 — envelope-only patch. check_track_lock FIRST (rejects
+/** Envelope-only patch. check_track_lock FIRST (rejects
  *  edits on a locked track / missing layer), then apply only the provided fields.
  *  Does NOT autofit (Rust doesn't — a t_end edit here never moves composition.duration_us). */
 export function applyUpdateLayer(p: Project, id: Uuid, patch: LayerPatch): void {
