@@ -320,6 +320,90 @@ async function colorTest(win) {
   win.webContents.send('poc-color-done')
 }
 
+// ---------------------------------------------------------------------------
+// Result 6 — native NV12→BGRA convert (color-correct zero-copy) (POC_BGRA=1).
+//
+// Result 5 proved feeding raw NV12 into WebGPU mis-colors BT.601 sources
+// ([58,217,38] vs the [20,220,40] that 2D drawImage produces). The fix under
+// test here: convert NV12→BGRA in NATIVE (a D3D11 pixel shader on ffmpeg's
+// device, BT.601 limited-range matrix, no primaries remap) and share an
+// already-RGB BGRA texture. Then WebGPU has no YUV→RGB to mishandle.
+//
+// Two textures from the SAME solid clip, in the SAME run:
+//   - refDraw      = 2D drawImage of the RAW NV12 frame (601-tagged) — WeftCut's
+//                    existing-pipeline reference (~[20,220,40]).
+//   - bgraViaWebGPU= copyExternalImageToTexture readback of the NATIVE-CONVERTED
+//                    BGRA texture (the path that was WRONG for raw NV12).
+// PASS = bgraViaWebGPU matches refDraw within +/-8/channel (color-correct AND
+// consistent with the pipeline AND stable through WebGPU), and is clearly NOT
+// the broken ~[58,217,38].
+// ---------------------------------------------------------------------------
+// BGRA is already RGB in the working/sRGB space — no YUV→RGB matrix for the
+// importer to apply. range:'full' because the shader output spans 0..255.
+const COLOR_SPACE_BGRA_SRGB = {
+  primaries: 'bt709',
+  transfer: 'srgb',
+  matrix: 'rgb',
+  range: 'full',
+}
+
+async function bgraTest(win) {
+  const video = process.env.POC_VIDEO
+  if (!video) throw new Error('POC_BGRA=1 requires POC_VIDEO=<path>')
+
+  // Source colorimetry. Default 601 (the motivating clip). For a 709 clip set
+  // POC_BGRA_MATRIX=709 so BOTH the reference NV12 tag AND the native convert
+  // shader honor 709 — the matrix MUST match the source (Result 6 finding).
+  const matrix = (process.env.POC_BGRA_MATRIX || '601').toLowerCase()
+  const refColorSpace = matrix === '709' ? COLOR_SPACE_709 : COLOR_SPACE_601
+  console.log(`[poc] bgra: source matrix = ${matrix}`)
+
+  // variant 'ref'  → raw NV12, tagged to match the source (the reference path).
+  // variant 'bgra' → native-converted BGRA (same matrix), tagged sRGB/full RGB.
+  const variants = [
+    {
+      tag: 'ref',
+      make: () => native.pocCreateTextureFromVideoZerocopy(video),
+      pixelFormat: 'nv12',
+      colorSpace: refColorSpace,
+    },
+    {
+      tag: 'bgra',
+      make: () => native.pocCreateBgraFromVideoZerocopy(video, matrix),
+      pixelFormat: 'bgra',
+      colorSpace: COLOR_SPACE_BGRA_SRGB,
+    },
+  ]
+
+  for (const v of variants) {
+    const tex = v.make()
+    console.log(
+      `[poc] bgra: ${v.tag} -> ${tex.pixelFormat} ${tex.width}x${tex.height} (matrix=${v.colorSpace.matrix}, range=${v.colorSpace.range}, adapter=${tex.adapter})`
+    )
+    const textureInfo = {
+      codedSize: { width: tex.width, height: tex.height },
+      visibleRect: { x: 0, y: 0, width: tex.width, height: tex.height },
+      pixelFormat: v.pixelFormat,
+      colorSpace: v.colorSpace,
+      timestamp: 0,
+      handle: { ntHandle: tex.handle },
+    }
+    const imported = sharedTexture.importSharedTexture({
+      textureInfo,
+      allReferencesReleased: () => native.pocReleaseTexture(tex.id),
+    })
+    win.webContents.send('poc-bgra-tag', v.tag)
+    await sharedTexture.sendSharedTexture({
+      frame: win.webContents.mainFrame,
+      importedSharedTexture: imported,
+    })
+    imported.release()
+    await new Promise((resolve) => ipcMain.once(`poc-bgra-variant-done-${v.tag}`, resolve))
+  }
+
+  win.webContents.send('poc-bgra-done')
+}
+
 async function pushTexture(win) {
   const video = process.env.POC_VIDEO
   const zeroCopy = process.env.POC_ZEROCOPY === '1'
@@ -374,10 +458,13 @@ app.whenReady().then(() => {
   const streaming = process.env.POC_STREAM === '1'
   const persistent = process.env.POC_PERSIST === '1'
   const colorMode = process.env.POC_COLOR === '1'
+  const bgraMode = process.env.POC_BGRA === '1'
 
   ipcMain.on('renderer-ready', async () => {
     try {
-      if (colorMode) {
+      if (bgraMode) {
+        await bgraTest(win)
+      } else if (colorMode) {
         await colorTest(win)
       } else if (persistent) {
         await persistVideo(win)
@@ -504,6 +591,60 @@ app.whenReady().then(() => {
     setTimeout(() => app.quit(), 1500)
   })
 
+  // Result 6 — native NV12→BGRA convert. The renderer reports, per variant
+  // ('ref' = raw NV12 / 'bgra' = native-converted BGRA), the measured
+  // center-patch RGB for each ingestion path it ran.
+  const bgraResults = {}
+  ipcMain.on('poc-bgra-result', (_e, r) => {
+    console.log(`[poc] ===== BGRA RESULT (variant=${r.tag}) =====`)
+    console.log(JSON.stringify(r, null, 2))
+    bgraResults[r.tag] = r
+    ipcMain.emit(`poc-bgra-variant-done-${r.tag}`)
+  })
+  ipcMain.on('poc-bgra-summary-request', () => {
+    console.log('[poc] ===== RESULT 6 — NATIVE NV12→BGRA CONVERT: VERDICT =====')
+    const ref = bgraResults.ref
+    const bgra = bgraResults.bgra
+    // The self-calibrating target: bgraViaWebGPU vs refDraw, +/-8/channel.
+    const tol = 8
+    const refDraw = ref && ref.drawImage // 2D drawImage of raw NV12, 601-tagged
+    const bgraViaWebGPU = bgra && bgra.copyExternal // copyExternalImageToTexture of converted BGRA
+    const bgraDraw = bgra && bgra.drawImage // 2D drawImage of converted BGRA (sanity)
+    const brokenNv12WebGPU = [58, 217, 38] // the Result-5 wrong value, for contrast
+    const diff = (a, b) => (a && b ? [a[0] - b[0], a[1] - b[1], a[2] - b[2]] : null)
+    const maxAbs = (e) => (e ? Math.max(Math.abs(e[0]), Math.abs(e[1]), Math.abs(e[2])) : null)
+
+    const srcMatrix = (process.env.POC_BGRA_MATRIX || '601').toLowerCase()
+    console.log(`Source RGB fed to encoder: (20,220,40); source matrix = ${srcMatrix}`)
+    console.log(`refDraw       (2D drawImage of RAW NV12, ${srcMatrix}-tagged) = [${refDraw}]`)
+    console.log(`bgraViaWebGPU (copyExternalImageToTexture of native-BGRA) = [${bgraViaWebGPU}]`)
+    console.log(`bgraDraw      (2D drawImage of native-BGRA, sanity)   = [${bgraDraw}]`)
+    console.log(`(Result-5 broken raw-NV12-via-WebGPU value, for contrast) = [${brokenNv12WebGPU}]`)
+
+    const errVsRef = diff(bgraViaWebGPU, refDraw)
+    const maxErrVsRef = maxAbs(errVsRef)
+    const errVsBroken = diff(bgraViaWebGPU, brokenNv12WebGPU)
+    const maxErrVsBroken = maxAbs(errVsBroken)
+    const matchesRef = maxErrVsRef != null && maxErrVsRef <= tol
+    const notBroken = maxErrVsBroken != null && maxErrVsBroken > tol
+
+    console.log(`bgraViaWebGPU err vs refDraw   = [${errVsRef}] maxAbs=${maxErrVsRef} (PASS if <= ${tol})`)
+    console.log(`bgraViaWebGPU err vs broken    = [${errVsBroken}] maxAbs=${maxErrVsBroken} (want clearly > ${tol})`)
+
+    // Sanity cross-check: the converted-BGRA drawImage should also match refDraw
+    // (the native shader and drawImage should agree on the matrix-only convert).
+    if (bgraDraw && refDraw) {
+      const eb = diff(bgraDraw, refDraw)
+      console.log(`bgraDraw err vs refDraw        = [${eb}] maxAbs=${maxAbs(eb)} (sanity: native shader vs drawImage)`)
+    }
+
+    const pass = matchesRef && notBroken
+    console.log(
+      `[poc] RESULT 6 VERDICT: ${pass ? 'PASS ✅ (native NV12→BGRA is color-correct, consistent with the pipeline, and stable through WebGPU)' : 'FAIL ❌ (see numbers above)'}`
+    )
+    setTimeout(() => app.quit(), 1500)
+  })
+
   // Watchdog: never hang headless. Streaming + persistent runs decode many frames
   // and round-trip, so give them more headroom than the single-frame probe.
   setTimeout(
@@ -511,7 +652,7 @@ app.whenReady().then(() => {
       console.log('[poc] watchdog timeout — quitting')
       app.quit()
     },
-    streaming || persistent || colorMode ? 60000 : 12000
+    streaming || persistent || colorMode || bgraMode ? 60000 : 12000
   )
 })
 

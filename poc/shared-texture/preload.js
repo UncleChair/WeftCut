@@ -548,6 +548,83 @@ ipcRenderer.on('poc-color-done', () => {
   ipcRenderer.send('poc-color-summary-request')
 })
 
+// ---------------------------------------------------------------------------
+// Result 6 — native NV12→BGRA convert (POC_BGRA=1, renderer side).
+//
+// Two variants arrive in order:
+//   'ref'  = the RAW NV12 frame tagged BT.601 — we read it back via 2D drawImage
+//            (the reference WeftCut already gets right).
+//   'bgra' = the NATIVE-CONVERTED BGRA texture (matrix:'rgb') — we read it back
+//            via copyExternalImageToTexture (the WebGPU path that mangled raw
+//            NV12 in Result 5) AND via 2D drawImage (sanity) AND
+//            importExternalTexture (extra cross-check).
+//
+// Reuses the Result-5 ingestion helpers (colorPath2dDrawImage,
+// colorPathCopyExternal, colorPathImportExternal, getGpuDevice).
+// ---------------------------------------------------------------------------
+const bgraTagQueue = []
+ipcRenderer.on('poc-bgra-tag', (_e, tag) => bgraTagQueue.push(tag))
+
+async function bgraReceiver(data) {
+  const imported = data.importedSharedTexture
+  const tag = bgraTagQueue.length ? bgraTagQueue.shift() : 'unknown'
+  const result = { tag }
+  try {
+    let probe = imported.getVideoFrame()
+    const w = probe.displayWidth || probe.codedWidth
+    const h = probe.displayHeight || probe.codedHeight
+    result.format = probe.format
+    result.size = [w, h]
+    probe.close()
+
+    // 2D drawImage — for 'ref' this is the reference; for 'bgra' it's the sanity
+    // cross-check (native shader output vs drawImage of the same BGRA).
+    try {
+      const f1 = imported.getVideoFrame()
+      result.drawImage = colorPath2dDrawImage(f1, w, h)
+      f1.close()
+    } catch (e) {
+      result.drawImageError = String((e && e.message) || e)
+    }
+
+    const device = await getGpuDevice()
+
+    // copyExternalImageToTexture — the load-bearing path. For 'bgra' this is
+    // bgraViaWebGPU (the value the PASS/FAIL hinges on); we also run it for 'ref'
+    // so the log re-confirms the Result-5 broken raw-NV12-via-WebGPU number.
+    try {
+      const f2 = imported.getVideoFrame()
+      result.copyExternal = await colorPathCopyExternal(device, f2, w, h)
+      f2.close()
+    } catch (e) {
+      result.copyExternalError = String((e && e.message) || e)
+    }
+
+    // importExternalTexture — extra cross-check (mainly interesting for 'bgra').
+    try {
+      const f3 = imported.getVideoFrame()
+      result.importExternal = await colorPathImportExternal(device, f3, w, h)
+      f3.close()
+    } catch (e) {
+      result.importExternalError = String((e && e.message) || e)
+    }
+
+    imported.release()
+  } catch (e) {
+    result.fatalError = String((e && e.stack) || e)
+    try { imported.release() } catch {}
+  }
+  const el = document.getElementById('log')
+  if (el)
+    el.textContent =
+      `bgra[${tag}] draw=${result.drawImage} copyExt=${result.copyExternal} importExt=${result.importExternal}`
+  ipcRenderer.send('poc-bgra-result', result)
+}
+
+ipcRenderer.on('poc-bgra-done', () => {
+  ipcRenderer.send('poc-bgra-summary-request')
+})
+
 // Single-frame receiver (Results 1 & 2): one import, draw + verify, report.
 function singleReceiver(data) {
   const log = (m) => {
@@ -581,8 +658,10 @@ function singleReceiver(data) {
 const STREAM_MODE = process.env.POC_STREAM === '1'
 const PERSIST_MODE = process.env.POC_PERSIST === '1'
 const COLOR_MODE = process.env.POC_COLOR === '1'
+const BGRA_MODE = process.env.POC_BGRA === '1'
 sharedTexture.setSharedTextureReceiver(async (data) => {
-  if (COLOR_MODE) await colorReceiver(data)
+  if (BGRA_MODE) await bgraReceiver(data)
+  else if (COLOR_MODE) await colorReceiver(data)
   else if (PERSIST_MODE) persistReceiver(data)
   else if (STREAM_MODE) streamReceiver(data)
   else singleReceiver(data)

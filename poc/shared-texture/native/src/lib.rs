@@ -42,6 +42,7 @@ use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1, IDXGIKeyedMutex, IDXGIResource1,
 };
 
+mod convert;
 mod decoder;
 
 const SIZE: u32 = 256;
@@ -404,6 +405,119 @@ pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedT
         })
     }
     // `f` (decoder/frame/hw_ctx) drops here, after the copy completed + flushed.
+}
+
+/// Result 6: native NV12→BGRA color convert + zero-copy share. Hardware-decode
+/// the first frame to a D3D11 NV12 surface, then on ffmpeg's own device convert
+/// it to BGRA with the BT.601 limited-range matrix (custom pixel shader, no
+/// primaries remap) into a shared BGRA texture, and share THAT. Because the
+/// shared texture is already RGB (matrix:'rgb', range:'full'), the WebGPU
+/// ingestion that mis-colored raw NV12 (Result 5) has no YUV→RGB to mishandle.
+///
+/// The decoder's NV12 frame lives in a `BIND_DECODER` texture ARRAY, which can't
+/// carry shader-resource views; so we first `CopySubresourceRegion` the decoded
+/// slice into a plain `BIND_SHADER_RESOURCE` NV12 texture (subresource 0), then
+/// SRV+convert that.
+///
+/// `matrix` selects the YUV→RGB matrix the convert shader applies ("601"
+/// default, or "709"); it MUST match the source's colorimetry tag (a real
+/// integration reads it from the stream). Result 6 showed the wrong matrix
+/// yields a wrong-but-self-consistent color.
+#[napi]
+pub fn poc_create_bgra_from_video_zerocopy(
+    path: String,
+    matrix: Option<String>,
+) -> Result<PocSharedTexture> {
+    let matrix = match matrix.as_deref() {
+        Some("709") | Some("bt709") => convert::YuvMatrix::Bt709,
+        _ => convert::YuvMatrix::Bt601,
+    };
+    let f = decoder::decode_first_d3d11_frame(&path)
+        .map_err(|e| napi::Error::from_reason(format!("d3d11 decode '{path}' failed: {e}")))?;
+    eprintln!(
+        "[poc-native] bgra-convert: D3D11 NV12 frame {}x{}, src array index {}",
+        f.width,
+        f.height,
+        f.src_index()
+    );
+
+    unsafe {
+        let device = ID3D11Device::from_raw_borrowed(&f.device)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device is null"))?;
+        let context = ID3D11DeviceContext::from_raw_borrowed(&f.device_context)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device context is null"))?;
+        let src_ptr = f.src_texture();
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&src_ptr)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+
+        // Staging NV12 with SHADER_RESOURCE so we can SRV its Y/UV planes (the
+        // decoder texture is BIND_DECODER-only + array-typed). Not shared — local
+        // to this device, freed when it drops at the end of the call.
+        let nv12_desc = D3D11_TEXTURE2D_DESC {
+            Width: f.width,
+            Height: f.height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_NV12,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let mut nv12_srv_tex: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&nv12_desc, None, Some(&mut nv12_srv_tex))
+            .map_err(|e| win_err("CreateTexture2D(nv12 SRV staging)", e))?;
+        let nv12_srv_tex = nv12_srv_tex.ok_or_else(|| napi::Error::from_reason("null nv12 staging"))?;
+
+        // GPU→GPU copy the decoded slice into the SRV-able NV12 texture, under
+        // ffmpeg's device-context lock (decode thread vs. our copy).
+        if let Some(lock) = f.lock {
+            lock(f.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: f.width,
+            bottom: f.height,
+            back: 1,
+        };
+        context.CopySubresourceRegion(&nv12_srv_tex, 0, 0, 0, 0, src_tex, f.src_index(), Some(&region));
+        if let Some(unlock) = f.unlock {
+            unlock(f.lock_ctx);
+        }
+
+        // NV12 → BGRA on the same device via the matrix-only shader.
+        let bgra =
+            convert::convert_nv12_to_bgra_shader(device, context, &nv12_srv_tex, f.width, f.height, matrix)
+                .map_err(napi::Error::from_reason)?;
+
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let handle_value = bgra.handle.0 as isize as i64;
+        eprintln!(
+            "[poc-native] bgra-convert shared id={id} {}x{} (601 limited-range shader), NT handle={handle_value}",
+            bgra.width, bgra.height
+        );
+
+        REGISTRY
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(id, Holder { _device: device.clone(), _texture: bgra.texture, handle: bgra.handle });
+
+        Ok(PocSharedTexture {
+            id,
+            handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+            width: bgra.width,
+            height: bgra.height,
+            adapter: "ffmpeg-d3d11".to_string(),
+            handle_value: handle_value.to_string(),
+            pixel_format: "bgra".to_string(),
+        })
+    }
+    // `f` (decoder/frame/hw_ctx) + nv12 staging drop here, after the convert flushed.
 }
 
 #[napi]

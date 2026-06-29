@@ -186,6 +186,28 @@ a zero-copy `GPUExternalTexture` preview mis-colors non-709 sources; correct col
 needs a native GPU NV12→working-space-RGB convert (or non-zero-copy
 `createImageBitmap`). Full writeup + numbers in [FINDINGS.md](./FINDINGS.md) §6c.
 
+## Result 6 — native NV12→BGRA convert (color-correct zero-copy) ✅ PASS (2026-06-29)
+
+Result 5's recommended fix, verified: do the YUV→RGB in NATIVE (a D3D11 pixel shader
+on ffmpeg's device, the BT.601/709 limited-range matrix, no primaries remap) and
+share an already-**BGRA** texture (`matrix:'rgb'`). Then the WebGPU path has no
+YUV→RGB to mishandle.
+
+Measured on the same `color601.mp4` (source RGB (20,220,40)), in one run:
+
+| path | measured | result |
+|---|---|---|
+| `refDraw` — 2D drawImage of raw NV12, 601-tagged (the reference) | [20,220,41] | — |
+| **`bgraViaWebGPU`** — `copyExternalImageToTexture` of the native-converted BGRA | **[20,220,41]** | **err vs refDraw = 0** |
+| *(raw NV12 via `copyExternalImageToTexture` — the Result-5 break)* | [58,217,38] | 38 away |
+
+So the native-converted BGRA reads back through the very WebGPU path that mangled raw
+NV12, matching the reference **to the byte**. A 709 clip (`POC_BGRA_MATRIX=709`) also
+PASSes ([17,218,37] ≈ source). The matrix MUST match the source's color tag — applying
+the wrong one yields a wrong-but-self-consistent color. **Recommendation: the preview
+producer shares BGRA (converted on its D3D11 device), not raw NV12.** Full writeup +
+the integration plan in [FINDINGS.md](./FINDINGS.md) §6d.
+
 ## Run (Windows only)
 
 From the repo root (where `node_modules` is hoisted).
@@ -263,6 +285,28 @@ POC_COLOR=1 POC_VIDEO=color601.mp4 node_modules/.bin/electron poc/shared-texture
 It self-terminates and prints `RESULT 5 — RENDERER COLOR PATHS: VERDICT` with each
 path's measured RGB, error vs the expected [20,220,40], and CORRECT/WRONG, plus a
 BT.709-tagged control and a known-sRGB readback control.
+
+**Native NV12→BGRA convert (Result 6)** — decode + convert NV12→BGRA on ffmpeg's
+D3D11 device (matrix-only shader, no primaries remap), share the BGRA, and read back
+the center RGB via the WebGPU `copyExternalImageToTexture` path (the one that mangled
+raw NV12) alongside the raw-NV12 2D-drawImage reference, in the SAME run:
+
+```sh
+# 601 clip (the motivating case — same color601.mp4 the color probe uses):
+POC_BGRA=1 POC_VIDEO=color601.mp4 node_modules/.bin/electron poc/shared-texture
+
+# 709 clip — the shader matrix MUST match the source; pass POC_BGRA_MATRIX=709 so
+# both the reference NV12 tag and the convert shader honor 709:
+ffmpeg -y -f lavfi -i "color=c=0x14DC28:s=256x256:r=30:d=0.3" -vf "format=yuv420p" \
+  -color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv \
+  -c:v libx264 -preset ultrafast -g 8 -bf 0 -pix_fmt yuv420p -frames:v 8 color709.mp4
+POC_BGRA=1 POC_BGRA_MATRIX=709 POC_VIDEO=color709.mp4 node_modules/.bin/electron poc/shared-texture
+```
+
+It self-terminates and prints `RESULT 6 — NATIVE NV12→BGRA CONVERT: VERDICT` with
+`refDraw` vs `bgraViaWebGPU`, the error vs the reference, and PASS/FAIL (PASS =
+bgraViaWebGPU matches refDraw within ±8/channel AND is clearly not the broken
+~[58,217,38]).
 
 ## Success criteria
 

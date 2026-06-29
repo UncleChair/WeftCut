@@ -1,9 +1,12 @@
 # Findings — zero-copy native-GPU-texture → renderer via Electron `sharedTexture`
 
-**Verdict: feasible and proven end-to-end on Windows.** A video frame decoded by
-ffmpeg on the GPU can be displayed in an Electron renderer as a `VideoFrame` with
-**no CPU frame copy and no IPC frame transfer**, and the path streams continuously
-by recycling a pool of shared textures.
+**Verdict: feasible and proven end-to-end on Windows, including color.** A video
+frame decoded by ffmpeg on the GPU can be displayed in an Electron renderer as a
+`VideoFrame` with **no CPU frame copy and no IPC frame transfer**, the path streams
+continuously by recycling a pool of shared textures, and — by converting NV12→RGB on
+the producer's GPU and sharing a **BGRA** texture — it is **color-correct through the
+WebGPU/Pixi ingestion path** for both BT.601 and BT.709 sources (Result 6 closed the
+Result-5 color gap).
 
 - Environment: Electron **42.4.1** (Chromium 148), Windows 11, NVIDIA RTX 3050, `ffmpeg-next` 8.1 / FFmpeg 8.1.1.
 - Branch: `poc/shared-texture-import`. Standalone under `poc/shared-texture/`; does **not** touch `@weftcut/core`.
@@ -329,19 +332,136 @@ color for non-709 sources* requires a native color-convert step; the spec
 `GPUExternalTexture` path does not provide it on Electron 42.** Run with
 `POC_COLOR=1 POC_VIDEO=<601 clip>` (see README).
 
+## 6d. Result 6 — native NV12→BGRA convert (color-correct zero-copy) ✅ PASS (2026-06-29)
+
+Result 5 closed the "stay raw-NV12 zero-copy through `GPUExternalTexture`" branch:
+both WebGPU video-ingestion paths mis-color a BT.601 `VideoFrame` ([58,217,38] vs
+the [20,220,40] that 2D `drawImage` recovers). Result 6 tests the recommended fix:
+**do the YUV→RGB in native** — on ffmpeg's own D3D11 device, where the decoded NV12
+surface lives — and share an **already-BGRA** texture in the working/sRGB space, so
+the WebGPU path has no YUV→RGB left to mishandle.
+
+**Verdict: PASS, exactly. Approach (B) — a custom D3D11 pixel shader — recovers the
+reference color through the very WebGPU path that mangled raw NV12, with ZERO error.**
+
+### Method (`POC_BGRA=1`, new mode; existing modes untouched)
+
+Two shared textures from the SAME solid clip, in the SAME run, then ingested in the
+renderer and read back at the center patch:
+
+1. **`refDraw`** — the existing zero-copy NV12 texture
+   (`pocCreateTextureFromVideoZerocopy`), imported tagged BT.601 limited, read back
+   via 2D `drawImage`. This is WeftCut's existing-pipeline reference (~[20,220,40]),
+   the self-calibrating target.
+2. **`bgraViaWebGPU`** — a new `pocCreateBgraFromVideoZerocopy(path, matrix)`:
+   - decode the first frame to the NV12 D3D11 surface (reuse
+     `decode_first_d3d11_frame`),
+   - `CopySubresourceRegion` the decoded slice (a `BIND_DECODER` array surface,
+     which can't carry SRVs) into a plain `BIND_SHADER_RESOURCE` NV12 staging
+     texture on ffmpeg's device,
+   - create two SRVs over that one texture — **Y as `DXGI_FORMAT_R8_UNORM`, UV as
+     `DXGI_FORMAT_R8G8_UNORM`** (D3D11 binds individual NV12 planes as typed views),
+   - render a full-screen triangle into a **shared BGRA** texture
+     (`SHADER_RESOURCE|RENDER_TARGET|SHARED_NTHANDLE|SHARED_KEYEDMUTEX`), pixel
+     shader = the **limited-range matrix the task pins** (`Yl=(Y*255-16)/219`,
+     `Cb=(U*255-128)/224`, `Cr=(V*255-128)/224`, then the 601 **or** 709 matrix,
+     `saturate`), bracketed by the BGRA texture's keyed mutex,
+   - share that BGRA texture, tagged `{primaries:'bt709', transfer:'srgb',
+     matrix:'rgb', range:'full'}`.
+
+   In the renderer it is ingested via **`copyExternalImageToTexture`** (Pixi's path,
+   the one that was wrong for NV12) — and also `drawImage` (sanity) and
+   `importExternalTexture` (cross-check).
+
+`PASS = bgraViaWebGPU matches refDraw within ±8/channel` AND is clearly NOT the
+broken raw-NV12-via-WebGPU value (~[58,217,38]).
+
+**Approach choice — went straight to (B), the shader.** The task flagged that
+`VideoProcessorBlt` (approach A) likely applies a 601→display *primaries* remap and
+would land near the broken [58,217,38]; the shader gives matrix-only control that
+matches `drawImage`'s naive behavior. The shader passed on the first run with 0
+error, so (A) was not needed. The shader compiles HLSL at runtime via `D3DCompile`
+(`Win32_Graphics_Direct3D_Fxc`), with the 601/709 matrix selected by a `#define`.
+
+### Results (deterministic across 3 runs each)
+
+| source | path | measured RGB | err vs refDraw | verdict |
+|---|---|---|---|---|
+| **601 clip** (`color601.mp4`) | `refDraw` (2D drawImage of raw NV12, 601-tagged) | **[20,220,41]** | — (reference) | reference |
+| | **`bgraViaWebGPU`** (copyExternalImageToTexture of native-BGRA) | **[20,220,41]** | **[0,0,0]** | **PASS** |
+| | bgraDraw (2D drawImage of native-BGRA, sanity) | [20,220,41] | [0,0,0] | shader == drawImage |
+| | bgra via importExternalTexture (cross-check) | [20,220,41] | [0,0,0] | also correct |
+| | *(raw NV12 via copyExternalImageToTexture — the Result-5 break)* | [58,217,38] | (err vs bgra = 38) | still WRONG |
+| **709 clip** (`color709.mp4`, `POC_BGRA_MATRIX=709`) | `refDraw` (drawImage, 709-tagged) | [17,218,37] | — | reference |
+| | **`bgraViaWebGPU`** (709-shader BGRA) | [17,218,37] | **[0,0,0]** | **PASS** |
+
+### What this proves
+
+1. **Native NV12→BGRA convert closes the Result-5 color gap.** The native-converted
+   BGRA texture read back through `copyExternalImageToTexture` matches WeftCut's 2D
+   `drawImage` reference **to the byte** ([20,220,41] vs [20,220,41], maxAbs 0), and
+   is 38 away from the broken raw-NV12-via-WebGPU value. The zero-copy-to-renderer
+   property is preserved: the convert is a GPU render on ffmpeg's device, no CPU
+   bounce, no IPC frame copy; only the share handle crosses to Chromium.
+2. **`copyExternalImageToTexture` is color-clean for an RGB/BGRA texture.** The
+   WebGPU path only mishandled YUV→RGB; given a texture already in the working space
+   (`matrix:'rgb'`), it round-trips exactly. So the fix is entirely on the producer
+   side — no renderer/Pixi change needed.
+3. **The native shader's matrix is byte-identical to `drawImage`'s.** For both the
+   601 and 709 clips, the BGRA-via-drawImage sanity read equals the raw-NV12 drawImage
+   reference (maxAbs 0). The simple limited-range matrix (no primaries/gamut remap) IS
+   what `drawImage` does — confirming the [58,217,38] WebGPU error was a primaries/gamut
+   transform the native path correctly omits.
+4. **The convert matrix MUST track the source colorimetry.** A 709 clip decoded with
+   the 601 shader (and vice-versa) gives a wrong-but-self-consistent color
+   (`POC_BGRA_MATRIX` default 601 on the 709 clip read [33,251,43], not the source
+   [20,220,40]); with the matching 709 matrix it recovers [17,218,37] ≈ source. A
+   real integration must read the matrix (and range) from the decoded stream's tags,
+   not hardcode it. The POC exposes this as the `matrix` arg / `POC_BGRA_MATRIX`.
+
+### Caveats
+
+- Verified at 256×256, single frame, two solid saturated colors (601 + 709), on one
+  machine (Electron 42.4.1 / Chromium 148, Windows 11, RTX 3050). Not a
+  multi-resolution / streaming / HDR sweep.
+- The shader handles **8-bit NV12 limited-range** only. 10-bit (P010) and full-range
+  sources need their own scaling/matrix; the shader is structured for it (the matrix
+  is a `#define`) but those variants are not exercised here.
+- The convert allocates the shader/sampler/SRVs per call (fine for a probe). A
+  streaming integration would create them once and reuse, and would fold the convert
+  into the per-frame `CopySubresourceRegion` already in the streaming pool (Result 3),
+  so each frame is decode → convert-to-BGRA → recycled shared BGRA texture.
+
+### Integration recommendation
+
+**Ship the native NV12→BGRA convert as the preview producer's output format.** The
+zero-copy-to-renderer transport (Results 1–4) is sound; the only open risk (color,
+Result 5) is closed by converting on the producer side and sharing BGRA instead of
+NV12. Concretely:
+
+- Decode (d3d11va) → on ffmpeg's device, NV12→BGRA via the matrix-only shader
+  (matrix + range from the stream's color tags) → recycled shared **BGRA** texture
+  (the Result-3 pool, BGRA instead of NV12) → import **once** per ring texture
+  (Result 4) → renderer feeds it straight into Pixi/WebGPU via
+  `copyExternalImageToTexture`/`importExternalTexture`, no per-frame conversion and
+  correct color for any source colorimetry.
+- This is a hair more GPU work than sharing raw NV12 (one extra full-screen pass per
+  frame, size-proportional, on the decode device) but removes the renderer-side color
+  ambiguity entirely and means the renderer treats the preview texture identically to
+  any other RGB layer.
+
 ## 7. Conclusion
 
-The transport idea is proven: ffmpeg-decoded frames reach the renderer zero-copy
-and stream continuously (Results 1–4). But Result 5 found a real **open technical
-risk** in the renderer ingestion — color — so integration is no longer
-"deterministic engineering only". Remaining work:
+**The full path is proven end-to-end, including color.** ffmpeg-decoded frames reach
+the renderer zero-copy and stream continuously (Results 1–4), and the renderer
+*ingestion* color gap that Result 5 exposed for raw NV12 is **closed** by a native
+GPU NV12→BGRA convert (Result 6): the native-converted BGRA texture read back through
+the same WebGPU `copyExternalImageToTexture` path that mangled raw NV12 now matches
+WeftCut's 2D-`drawImage` reference **to the byte** (maxAbs 0), for both BT.601 and
+BT.709 sources. Integration is back to deterministic engineering: share **BGRA**
+(converted on the producer's D3D11 device, matrix/range from the stream tags), not
+raw NV12. Remaining work:
 
-- **Color (open risk — see Result 5):** feeding the shared NV12 `VideoFrame` straight
-  into WebGPU/Pixi mis-colors non-709 sources; **neither** `copyExternalImageToTexture`
-  **nor** `importExternalTexture` honors BT.601 the way the 2D reference does. A clean
-  zero-copy preview needs a **native GPU NV12→working-space-RGB convert** (output a
-  709/sRGB-working-space BGRA shared texture, which the WebGPU path *does* preserve) —
-  or `createImageBitmap` (correct but not zero-copy). This is the recommended next probe.
 - Pace the pump to the playback clock / PTS instead of as-fast-as-possible; wire into the transport (`playbackStore`).
 - Correct color-range tagging (libx264 is limited-range; the streaming POC tagged full, hence 235/16 instead of 255/0), HDR (P010), odd-size/alignment.
 - Lifecycle: decode errors, seek, pause, pool teardown on window close.
@@ -353,7 +473,9 @@ See [README.md](./README.md) for build/run commands and the toolchain env vars
 (`FFMPEG_DIR`, `LIBCLANG_PATH`; ffmpeg bin on `PATH` at runtime — see
 [[reference_ffmpeg_next_windows_setup]]). Modes: synthetic (`POC_FORMAT=bgra|nv12`),
 single video (`POC_VIDEO=…`, `POC_ZEROCOPY=1`), streaming (`POC_STREAM=1`,
-`POC_POOL=N`).
+`POC_POOL=N`), persistent import (`POC_PERSIST=1`), renderer color paths
+(`POC_COLOR=1`), and native NV12→BGRA convert (`POC_BGRA=1`,
+`POC_BGRA_MATRIX=601|709`).
 
 ## 9. References
 
