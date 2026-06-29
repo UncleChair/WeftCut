@@ -118,6 +118,145 @@ function streamReceiver(data) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Result 4 — persistent import / zero per-frame IPC (renderer side).
+//
+// We receive each pool texture's import EXACTLY ONCE (in send order), store it,
+// and NEVER release it. Then on a self-paced rAF loop we call getVideoFrame() on
+// each stored persistent import and sample its center-patch luma. The producer
+// (main) overwrites the SAME underlying textures over time without re-importing.
+// If getVideoFrame() reflects the new content, luma ADVANCES over the run (PASS);
+// if it freezes at the first frame, luma stays flat (FAIL).
+// ---------------------------------------------------------------------------
+const persistImports = [] // slot index -> SharedTextureImported (kept alive)
+const persistSlotQueue = [] // slot indices announced by main, in send order
+let persistPulls = [] // [{ tMs, slot, luma }]
+let persistPullErrors = 0
+let persistPulling = false
+let persistT0 = 0
+
+ipcRenderer.on('poc-persist-slot', (_e, slot) => persistSlotQueue.push(slot))
+
+function persistReceiver(data) {
+  const imported = data.importedSharedTexture
+  // Assign this received import to the slot index main announced just before the
+  // send (FIFO); fall back to arrival order if the queue is empty.
+  const slot = persistSlotQueue.length ? persistSlotQueue.shift() : persistImports.length
+  persistImports[slot] = imported // KEEP alive — do NOT release.
+  const el = document.getElementById('log')
+  if (el) el.textContent = `persist: imported slot ${slot} (${persistImports.filter(Boolean).length} held)`
+}
+
+// One pull pass: for each persistent import, getVideoFrame(), sample luma, close
+// the frame but KEEP the imported. Records a time series for the advance check.
+function persistPullOnce() {
+  for (let slot = 0; slot < persistImports.length; slot++) {
+    const imported = persistImports[slot]
+    if (!imported) continue
+    try {
+      const frame = imported.getVideoFrame()
+      const luma = sampleLuma(frame)
+      frame.close() // close the per-pull VideoFrame; the imported stays alive.
+      persistPulls.push({ tMs: Math.round(performance.now() - persistT0), slot, luma })
+    } catch (e) {
+      persistPullErrors++
+      console.error('[poc] persist pull threw:', e)
+    }
+  }
+}
+
+function persistPullLoop() {
+  if (!persistPulling) return
+  persistPullOnce()
+  requestAnimationFrame(persistPullLoop)
+}
+
+ipcRenderer.on('poc-persist-go', () => {
+  persistT0 = performance.now()
+  persistPulling = true
+  requestAnimationFrame(persistPullLoop)
+})
+
+ipcRenderer.on('poc-persist-done', (_e, info) => {
+  persistPulling = false
+  // A few final pulls to capture the last written content, then summarise.
+  persistPullOnce()
+  persistPullOnce()
+
+  const lumas = persistPulls.map((p) => p.luma)
+  const distinct = new Set(lumas)
+  const minLuma = lumas.length ? Math.min(...lumas) : null
+  const maxLuma = lumas.length ? Math.max(...lumas) : null
+  const firstLuma = lumas.length ? lumas[0] : null
+  const lastLuma = lumas.length ? lumas[lumas.length - 1] : null
+  // ADVANCED = the persistent import clearly reflected updated content: many
+  // distinct luma values AND a clear rise from the first sample (the ramp clip
+  // goes 20→235). A frozen/stale import would show 1 distinct value, max≈min.
+  const advanced =
+    distinct.size >= 3 && maxLuma != null && minLuma != null && maxLuma - minLuma >= 40
+
+  // Monotonicity check — PER SLOT. The producer writes luma strictly upward into
+  // each slot it owns; a clean read of a slot's persistent import therefore never
+  // steps BACKWARD between consecutive pulls OF THAT SLOT. A backward step mid-run
+  // means a torn / re-ordered read of that shared texture (the soft tearing
+  // check). Must be per-slot: with poolSize>1 the producer writes slots
+  // round-robin, so they are a frame apart at any instant — comparing across
+  // slots would show spurious "backward" steps that are just the pool offset, not
+  // tearing.
+  //
+  // The pull loop (rAF) starts ~independently of the producer, so a slot's FIRST
+  // few pulls can catch it mid-ramp (the producer ran a few frames during setup)
+  // then snap back to the true ramp start ONCE. That single startup re-alignment
+  // per slot is benign; backward steps AFTER startup are the real tearing signal.
+  const startupPulls = 12
+  let backwardSteps = 0 // all backward steps across all slots (incl. startup)
+  let maxBackwardDrop = 0
+  let backwardStepsMidRun = 0 // per-slot backward steps after startup — tearing signal
+  for (let slot = 0; slot < persistImports.length; slot++) {
+    if (!persistImports[slot]) continue
+    const slotPulls = persistPulls.filter((p) => p.slot === slot)
+    for (let i = 1; i < slotPulls.length; i++) {
+      const drop = slotPulls[i - 1].luma - slotPulls[i].luma
+      if (drop > 1) {
+        backwardSteps++
+        if (drop > maxBackwardDrop) maxBackwardDrop = drop
+        if (i >= startupPulls) backwardStepsMidRun++
+      }
+    }
+  }
+
+  const summary = {
+    written: info.written,
+    poolSize: info.poolSize,
+    importCount: info.importCount,
+    sendCount: info.sendCount,
+    allRefsReleasedFires: info.allRefsReleasedFires,
+    totalPulls: persistPulls.length,
+    pullErrors: persistPullErrors,
+    distinctLuma: distinct.size,
+    minLuma,
+    maxLuma,
+    firstLuma,
+    lastLuma,
+    advanced,
+    backwardSteps,
+    backwardStepsMidRun,
+    maxBackwardDrop,
+    // Down-sampled trajectory (~14 points across the whole run) so the log shows
+    // the advance, not just head+tail.
+    lumaSeries: persistPulls.filter(
+      (_p, i) => i % Math.max(1, Math.floor(persistPulls.length / 14)) === 0
+    ),
+    // Full per-pull series, gated on POC_PERSIST_DUMP=1, for offline trajectory /
+    // tearing analysis (kept out of the default summary to keep logs readable).
+    fullSeries: process.env.POC_PERSIST_DUMP === '1' ? persistPulls : undefined,
+  }
+  const el = document.getElementById('log')
+  if (el)
+    el.textContent = `persist done: ${persistPulls.length} pulls, distinctLuma=${distinct.size}, luma ${minLuma}→${maxLuma}, advanced=${advanced}`
+  ipcRenderer.send('poc-persist-summary', summary)
+})
+
 // Single-frame receiver (Results 1 & 2): one import, draw + verify, report.
 function singleReceiver(data) {
   const log = (m) => {
@@ -149,8 +288,10 @@ function singleReceiver(data) {
 // Preload runs in a Node context (nodeIntegration off, but preload always has
 // `process`), so the mode env var is readable here.
 const STREAM_MODE = process.env.POC_STREAM === '1'
+const PERSIST_MODE = process.env.POC_PERSIST === '1'
 sharedTexture.setSharedTextureReceiver(async (data) => {
-  if (STREAM_MODE) streamReceiver(data)
+  if (PERSIST_MODE) persistReceiver(data)
+  else if (STREAM_MODE) streamReceiver(data)
   else singleReceiver(data)
 })
 

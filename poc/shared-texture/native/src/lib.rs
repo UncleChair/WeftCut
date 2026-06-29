@@ -678,6 +678,144 @@ pub fn poc_free_slot(slot: u32) {
     }
 }
 
+// ===========================================================================
+// Result 4 — persistent import / zero per-frame IPC.
+//
+// Hypothesis: import + send each pool texture exactly ONCE; thereafter the
+// producer overwrites the SAME underlying D3D11 texture (bracketed by the keyed
+// mutex) and the renderer, holding the SAME `SharedTextureImported` object, calls
+// `getVideoFrame()` repeatedly and sees the NEW content — with NO per-frame
+// import/send. If `getVideoFrame()` instead returns the frozen first frame, the
+// persistent import is impossible and per-frame re-import is mandatory.
+//
+// These functions reuse the streaming `STREAM`/pool (open with
+// `poc_open_video_stream`, tear down with `poc_close_video_stream`) but DROP the
+// free-slot/allReferencesReleased gating: the producer writes whichever slot it
+// is told, whenever it likes. That is the whole point — the producer and the
+// persistent import are deliberately NOT coordinated via slot ownership; only the
+// keyed mutex serialises the GPU write against Chromium's read.
+// ===========================================================================
+
+#[napi(object)]
+pub struct PocPersistSlot {
+    /// Little-endian bytes of the slot texture's NT handle (cached once per slot).
+    pub handle: Buffer,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Return a slot's cached NT handle + dimensions, for the ONE-TIME import in
+/// persistent mode. No GPU work — just reads the handle created at open time.
+#[napi]
+pub fn poc_persist_slot_handle(slot: u32) -> Result<PocPersistSlot> {
+    let guard = STREAM.lock().unwrap();
+    let st = guard
+        .as_ref()
+        .ok_or_else(|| napi::Error::from_reason("no open stream"))?;
+    let s = st
+        .pool
+        .get(slot as usize)
+        .ok_or_else(|| napi::Error::from_reason(format!("slot {slot} out of range")))?;
+    let handle_value = s.handle.0 as isize as i64;
+    Ok(PocPersistSlot {
+        handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+        width: st.width,
+        height: st.height,
+    })
+}
+
+#[napi(object)]
+pub struct PocPersistWrite {
+    /// "frame" — a new frame was written into `slot`; "eof" — stream finished.
+    pub status: String,
+    /// 0-based decode order index of the frame just written (meaningful on "frame").
+    pub frame_index: u32,
+}
+
+/// Decode the next frame and overwrite the GIVEN pool `slot` with it (GPU→GPU),
+/// bracketed by that slot's keyed mutex. Unlike `poc_stream_next_frame` this does
+/// NOT check the free-flag and does NOT import/send anything — it just mutates the
+/// shared texture in place. The renderer is expected to hold a persistent import
+/// of this slot and pull `getVideoFrame()` on its own timer. Returns "eof" at end
+/// of stream.
+#[napi]
+pub fn poc_persist_write_next(slot: u32) -> Result<PocPersistWrite> {
+    let mut guard = STREAM.lock().unwrap();
+    let st = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("no open stream"))?;
+
+    if st.eof {
+        return Ok(PocPersistWrite { status: "eof".into(), frame_index: 0 });
+    }
+    if slot as usize >= st.pool.len() {
+        return Err(napi::Error::from_reason(format!("slot {slot} out of range")));
+    }
+
+    let decoded = st
+        .stream
+        .next_frame()
+        .map_err(|e| napi::Error::from_reason(format!("decode next frame failed: {e}")))?;
+    let Some(decoded) = decoded else {
+        st.eof = true;
+        eprintln!("[poc-native] persist stream EOF after {} frames", st.frame_index);
+        return Ok(PocPersistWrite { status: "eof".into(), frame_index: 0 });
+    };
+
+    let frame_index = st.frame_index;
+    let width = st.width;
+    let height = st.height;
+
+    // Overwrite the chosen slot in place, bracketed by ITS keyed mutex (our write
+    // vs. Chromium's read) and ffmpeg's device-context lock. No free-flag: the
+    // renderer's persistent import of this slot is intentionally not coordinated
+    // here — the keyed mutex is the only handshake. This is the hypothesis under
+    // test.
+    unsafe {
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&decoded.src_texture)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+        let pool_slot = &st.pool[slot as usize];
+
+        pool_slot
+            .keyed_mutex
+            .AcquireSync(0, INFINITE)
+            .map_err(|e| win_err("AcquireSync(persist slot)", e))?;
+        if let Some(lock) = st.stream.lock {
+            lock(st.stream.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: width,
+            bottom: height,
+            back: 1,
+        };
+        st.context.CopySubresourceRegion(
+            &pool_slot.texture,
+            0,
+            0,
+            0,
+            0,
+            src_tex,
+            decoded.src_index,
+            Some(&region),
+        );
+        st.context.Flush();
+        if let Some(unlock) = st.stream.unlock {
+            unlock(st.stream.lock_ctx);
+        }
+        pool_slot
+            .keyed_mutex
+            .ReleaseSync(0)
+            .map_err(|e| win_err("ReleaseSync(persist slot)", e))?;
+
+        st.frame_index += 1;
+    }
+
+    Ok(PocPersistWrite { status: "frame".into(), frame_index })
+}
+
 /// Drop the decoder + pool, closing each slot's NT handle.
 #[napi]
 pub fn poc_close_video_stream() {

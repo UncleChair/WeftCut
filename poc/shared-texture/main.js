@@ -122,6 +122,120 @@ async function streamVideo(win) {
   win.webContents.send('poc-stream-done', { sent, fps, busySpins })
 }
 
+// ---------------------------------------------------------------------------
+// Result 4 — persistent import / zero per-frame IPC (POC_PERSIST=1).
+//
+// Import + send each pool texture exactly ONCE, then overwrite its content over
+// time WITHOUT re-import/re-send, and have the renderer pull getVideoFrame() on
+// its own timer. The binary question: does a persistent import reflect the
+// producer's later writes (PASS — zero per-frame texture IPC is possible), or
+// does it freeze at the first frame (FAIL — per-frame re-import is mandatory)?
+//
+// import-count and send-count are tracked here; on PASS they MUST equal poolSize
+// (one-time, not per-frame), which is the other half of the proof.
+// ---------------------------------------------------------------------------
+async function persistVideo(win) {
+  const video = process.env.POC_VIDEO
+  if (!video) throw new Error('POC_PERSIST=1 requires POC_VIDEO=<path>')
+  const poolSize = Number(process.env.POC_POOL || 1)
+  // Cap on frames the producer writes (decode order), so the run is bounded even
+  // for long clips; the verification ramp clip has 60 frames.
+  const maxFrames = Number(process.env.POC_FRAMES || 60)
+  // Producer write cadence (ms). The renderer pulls on its own rAF loop.
+  const writeIntervalMs = Number(process.env.POC_WRITE_MS || 16)
+
+  const info = native.pocOpenVideoStream(video, poolSize)
+  console.log(
+    `[poc] persist opened ${info.width}x${info.height}, pool=${info.poolSize}, src=${video}`
+  )
+
+  let importCount = 0
+  let sendCount = 0
+  let allRefsReleasedFires = 0
+
+  // ---- ONE-TIME import + send per pool slot ----
+  // Keep every imported alive in this array for the whole run so its
+  // allReferencesReleased never fires (main always holds a reference). The
+  // renderer also keeps its reference (it never calls imported.release() in
+  // persist mode). So the underlying texture stays alive and reusable.
+  const importedBySlot = []
+  for (let slot = 0; slot < info.poolSize; slot++) {
+    const h = native.pocPersistSlotHandle(slot)
+    const textureInfo = {
+      codedSize: { width: h.width, height: h.height },
+      visibleRect: { x: 0, y: 0, width: h.width, height: h.height },
+      pixelFormat: 'nv12',
+      colorSpace: STREAM_COLOR_SPACE,
+      timestamp: 0,
+      handle: { ntHandle: h.handle },
+    }
+    const imported = sharedTexture.importSharedTexture({
+      textureInfo,
+      // Should basically never fire in this mode: main holds the imported for the
+      // whole run and the renderer never releases its copy. Count it if it does —
+      // that would itself be evidence the persistent-import assumption is shaky.
+      allReferencesReleased: () => {
+        allRefsReleasedFires++
+        console.log(`[poc] UNEXPECTED allReferencesReleased for slot ${slot}`)
+      },
+    })
+    importCount++
+    importedBySlot[slot] = imported
+
+    // Tell the renderer which slot this send carries, in send order, so it can
+    // assign the received imported to a slot index for its per-slot pull loop.
+    win.webContents.send('poc-persist-slot', slot)
+
+    await sharedTexture.sendSharedTexture({
+      frame: win.webContents.mainFrame,
+      importedSharedTexture: imported,
+    })
+    sendCount++
+    // NOTE: deliberately DO NOT call imported.release() — persistent import.
+  }
+  console.log(`[poc] persist setup done: importCount=${importCount}, sendCount=${sendCount} (poolSize=${info.poolSize})`)
+
+  // Let the renderer register its persistent imports and start its pull loop.
+  win.webContents.send('poc-persist-go', { poolSize: info.poolSize })
+  await sleep(200)
+
+  // ---- Producer loop: overwrite the textures in place, round-robin, NO re-import/re-send ----
+  let written = 0
+  const t0 = Date.now()
+  for (;;) {
+    const slot = written % info.poolSize
+    const res = native.pocPersistWriteNext(slot)
+    if (res.status === 'eof') {
+      console.log(`[poc] producer reached EOF after writing ${written} frames`)
+      break
+    }
+    written++
+    // Poke the renderer with the just-written frame index + slot (for correlation
+    // only; the renderer's pull loop is independent of this poke).
+    win.webContents.send('poc-persist-wrote', { slot, frameIndex: res.frameIndex })
+    if (written >= maxFrames) {
+      console.log(`[poc] producer hit frame cap ${maxFrames}`)
+      break
+    }
+    await sleep(writeIntervalMs)
+  }
+  const dt = (Date.now() - t0) / 1000
+  console.log(
+    `[poc] persist producer done: wrote ${written} frames in ${dt.toFixed(2)}s; importCount=${importCount}, sendCount=${sendCount}, allRefsReleasedFires=${allRefsReleasedFires}`
+  )
+
+  // Give the renderer a moment to keep pulling the final content, then ask for
+  // its summary.
+  await sleep(500)
+  win.webContents.send('poc-persist-done', {
+    written,
+    poolSize: info.poolSize,
+    importCount,
+    sendCount,
+    allRefsReleasedFires,
+  })
+}
+
 async function pushTexture(win) {
   const video = process.env.POC_VIDEO
   const zeroCopy = process.env.POC_ZEROCOPY === '1'
@@ -174,10 +288,13 @@ app.whenReady().then(() => {
   win.loadFile(path.join(__dirname, 'index.html'))
 
   const streaming = process.env.POC_STREAM === '1'
+  const persistent = process.env.POC_PERSIST === '1'
 
   ipcMain.on('renderer-ready', async () => {
     try {
-      if (streaming) {
+      if (persistent) {
+        await persistVideo(win)
+      } else if (streaming) {
         await streamVideo(win)
       } else {
         await pushTexture(win)
@@ -210,14 +327,41 @@ app.whenReady().then(() => {
     setTimeout(() => app.quit(), 1500)
   })
 
-  // Watchdog: never hang headless. Streaming runs longer (decode + per-frame
-  // round-trips), so give it more headroom than the single-frame probe.
+  ipcMain.on('poc-persist-summary', (_e, summary) => {
+    console.log('[poc] ===== PERSIST SUMMARY =====')
+    console.log(JSON.stringify(summary, null, 2))
+    // PASS = (a) import/send were ONE-TIME (== poolSize, not per-frame) AND (b) the
+    // renderer's repeated getVideoFrame() on the persistent import observed luma
+    // that ADVANCED over the run (clearly not frozen at the first frame). FAIL =
+    // luma frozen → persistent import does not reflect producer writes → per-frame
+    // re-import is mandatory.
+    const oneTimeImports =
+      summary.importCount === summary.poolSize && summary.sendCount === summary.poolSize
+    const advanced = summary.advanced === true
+    const pass = oneTimeImports && advanced && summary.pullErrors === 0
+    console.log(
+      `[poc] PERSIST one-time import/send: ${oneTimeImports} (import=${summary.importCount}, send=${summary.sendCount}, pool=${summary.poolSize})`
+    )
+    console.log(
+      `[poc] PERSIST luma advanced: ${advanced} (distinct=${summary.distinctLuma}, min=${summary.minLuma}, max=${summary.maxLuma}, firstPull=${summary.firstLuma}, lastPull=${summary.lastLuma}, pulls=${summary.totalPulls})`
+    )
+    console.log(
+      `[poc] PERSIST tearing check: backwardStepsMidRun=${summary.backwardStepsMidRun} (the tearing signal; 0 ⇒ no torn/reordered reads), backwardStepsTotal=${summary.backwardSteps} incl. one benign startup re-align, maxBackwardDrop=${summary.maxBackwardDrop}`
+    )
+    console.log(
+      `[poc] PERSIST VERDICT: ${pass ? 'PASS ✅ (persistent import reflects updates → zero per-frame texture IPC)' : 'FAIL ❌ (persistent import stale/frozen → per-frame re-import required)'}`
+    )
+    setTimeout(() => app.quit(), 1500)
+  })
+
+  // Watchdog: never hang headless. Streaming + persistent runs decode many frames
+  // and round-trip, so give them more headroom than the single-frame probe.
   setTimeout(
     () => {
       console.log('[poc] watchdog timeout — quitting')
       app.quit()
     },
-    streaming ? 60000 : 12000
+    streaming || persistent ? 60000 : 12000
   )
 })
 

@@ -119,6 +119,102 @@ re-acquires/re-releases the keyed mutex cleanly across frames**; pooled reuse wo
 9. **Performance is IPC-round-trip bound, not GPU**: ~53–75 fps here is `import`/`sendSharedTexture` overhead (+2 ms busy-yield), not the GPU copy. A real preview would import straight to WebGPU and pace to the clock.
 10. **Spec tests are macOS-arm64-only**, but the feature works on Windows (the skip is a CI-GPU limitation, not a feature gap).
 
+## 6b. Result 4 — persistent import / zero per-frame IPC ✅ PASS (2026-06-29)
+
+Result 3 streamed via **per-frame** import/send/release (one `importSharedTexture` +
+`sendSharedTexture` round-trip per frame, paced by `allReferencesReleased`). The
+open question for a real preview: **can per-frame texture IPC be driven to zero?**
+
+Hypothesis: import + send each pool texture **exactly once**, keep the
+`SharedTextureImported` alive in the renderer, then have the producer overwrite the
+**same** underlying D3D11 texture (bracketed by the keyed mutex) while the renderer
+calls `getVideoFrame()` repeatedly on that persistent import — and have each call
+reflect the **new** content, with no further import/send.
+
+**Verdict: PASS.** A persistent import DOES reflect the producer's later writes.
+
+How it was tested (`POC_PERSIST=1`, new mode; existing modes untouched):
+- Native: reuse `pocOpenVideoStream(path, poolSize)` for the pool, then
+  `pocPersistSlotHandle(slot)` (returns the slot's cached NT handle for the
+  one-time import) and `pocPersistWriteNext(slot)` — decode the next frame and
+  `CopySubresourceRegion` it into the **given** slot under that slot's keyed mutex,
+  **without** the free-slot / `allReferencesReleased` gating. The producer and the
+  persistent import are deliberately NOT coordinated by slot ownership; the keyed
+  mutex (index 0) is the only handshake.
+- Main: for each slot, `importSharedTexture` **once** + `await sendSharedTexture`
+  **once** (kept in a main-side array so `allReferencesReleased` never fires), then
+  a producer loop overwrites the textures round-robin every ~16 ms — **no**
+  re-import/re-send. `importCount` / `sendCount` are tracked and must equal
+  `poolSize`.
+- Renderer: store each received import in a slot map and **never release it**; on a
+  self-paced `requestAnimationFrame` loop call `getVideoFrame()` on each persistent
+  import, sample center-patch average luma, `frame.close()` (but keep the import),
+  record `{tMs, slot, luma}`. On the done signal compute distinct-luma count,
+  min/max, advance, and a per-slot monotonicity (tearing) metric.
+
+Verification clip: the same 60-frame 256×256 H.264 luma ramp (20→235).
+
+| pool | import/send (must == pool) | pulls | distinct luma | luma min→max | advanced | mid-run backward steps (tearing) | verdict |
+|------|----------------------------|-------|---------------|--------------|----------|----------------------------------|---------|
+| **1** | **1 / 1** | 132 | 60 | 20 → 235 | yes | **0** | **PASS** |
+| 2 | 2 / 2 | 266 | 60 | 20 → 235 | yes | 0 | PASS |
+
+The `POC_POOL=1` case is decisive: **one** shared texture, imported and sent **once**,
+overwritten 60 times in place — and the renderer's repeated `getVideoFrame()` on that
+single persistent import tracked the full ramp. Collapsing repeated reads, the
+observed luma trajectory was a clean monotonic ramp:
+
+```
+49 20 23 27 30 34 38 41 45 49 52 56 60 63 67 71 74 78 85 89 92 96 100 103 107 111
+114 118 122 125 129 132 136 140 143 147 151 154 158 162 165 169 173 176 180 183
+187 191 194 198 202 205 209 213 216 220 224 227 231 235
+```
+
+(The leading `49` then `20` is a one-time startup re-alignment: the producer ran a
+few frames during the ~200 ms setup wait before the renderer's rAF pull loop began,
+so the first pulls caught the texture mid-ramp, then snapped to the true start ONCE.
+After startup, **zero** backward steps per slot — no torn or reordered reads. The
+pool=2 backward count is measured per-slot for the same reason: with round-robin
+writes the two slots are one frame apart at any instant, which is the pool offset,
+not tearing.)
+
+Result-4 findings:
+1. **`getVideoFrame()` on a persistent `SharedTextureImported` is a live view of the
+   underlying texture, not a snapshot.** Each call samples the current GPU contents;
+   producer writes between calls ARE observed. This is the load-bearing fact.
+2. **The keyed mutex alone is sufficient to make in-place overwrites coherent.** The
+   producer `AcquireSync(0)` / `CopySubresourceRegion` / `Flush` / `ReleaseSync(0)`,
+   and the renderer's `getVideoFrame()` read, interleave without tearing — no
+   per-frame import/send, no `allReferencesReleased` round-trip, needed for
+   correctness.
+3. **Per-frame texture IPC can be driven to zero.** Import + send happen exactly
+   `poolSize` times for the whole stream (1 and 2 here), regardless of frame count.
+   `allReferencesReleased` fired **0** times (main holds the import for the run).
+4. **What still costs per frame:** the producer's GPU copy + keyed-mutex bracket
+   (native, cheap, off the IPC path) and, in this probe, the renderer's 2D
+   `getImageData` readback (verification only — a real preview reads the VideoFrame
+   straight into WebGPU). The expensive `sendSharedTexture` IPC round-trip is gone.
+
+Caveats / what this does NOT yet establish:
+- **No frame-ready signal.** The renderer pulls on its own timer; it does not know
+  *when* the producer finished a write. For a real preview you still need a cheap
+  per-frame poke (a tiny `{frameIndex}` IPC message — orders of magnitude smaller
+  than a texture send) or to pace both sides to the same clock, so the renderer
+  reads exactly once per produced frame rather than over-/under-sampling.
+- **No double-buffer guarantee against read-during-write.** Coherence here rests on
+  the keyed mutex serialising the whole write against the whole read. With `pool=1`
+  a read must wait for an in-flight write (and vice-versa) on the SAME texture; a
+  `pool≥2` ping-pong (write slot B while renderer reads slot A) avoids that stall —
+  the persistent-import model supports either, since both slots are imported once.
+- Tested at 256×256 / 60 frames on one machine (Electron 42.4.1, RTX 3050); not a
+  soak or a multi-resolution sweep.
+
+**Integration implication:** the real WeftCut preview can import a small ring of
+shared textures **once** at session/seek setup and thereafter feed the renderer by
+overwriting them in place + a tiny frame-index poke — eliminating the per-frame
+`importSharedTexture`/`sendSharedTexture` IPC that bounded Result 3's throughput
+(~50–75 fps). The renderer imports each ring texture to WebGPU once and re-samples.
+
 ## 7. Conclusion
 
 The entire original idea is proven: ffmpeg-decoded frames reach the renderer

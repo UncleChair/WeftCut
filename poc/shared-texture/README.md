@@ -141,6 +141,21 @@ Streaming-path findings:
   GPU→GPU per frame — decode → keyed-mutex copy into a recycled shared texture →
   Chromium VideoFrame.
 
+## Result 4 — persistent import / zero per-frame IPC ✅ PASS (2026-06-29)
+
+Result 3 paid one `importSharedTexture` + `sendSharedTexture` IPC round-trip **per
+frame**. Result 4 asks whether that can go to zero: import + send each pool texture
+**once**, then overwrite the SAME texture in place while the renderer keeps the same
+`SharedTextureImported` and calls `getVideoFrame()` repeatedly.
+
+**Yes.** With `POC_POOL=1` (one shared texture, imported and sent exactly once,
+overwritten 60×), the renderer's repeated `getVideoFrame()` tracked the full luma
+ramp 20→235 (60 distinct values, zero per-slot mid-run backward steps = no tearing),
+with `importCount=sendCount=1` and `allReferencesReleased` firing 0 times. So
+`getVideoFrame()` on a persistent import is a **live view** of the texture, not a
+snapshot, and the keyed mutex alone keeps in-place overwrites coherent — **per-frame
+texture IPC is unnecessary**. Full writeup + table in [FINDINGS.md](./FINDINGS.md) §6b.
+
 ## Run (Windows only)
 
 From the repo root (where `node_modules` is hoisted).
@@ -185,6 +200,20 @@ POC_STREAM=1 POC_VIDEO=stream_test.mp4 POC_POOL=5   node_modules/.bin/electron p
 The run self-terminates and prints `STREAM SUMMARY` + `STREAM VERDICT: PASS/FAIL`.
 PASS requires: received == sent, indices in order, luma strictly advancing, zero
 gaps/duplicates/errors, ≥60 frames.
+
+**Persistent import (Result 4)** — one-time import/send, in-place overwrite, no
+per-frame texture IPC:
+
+```sh
+POC_PERSIST=1 POC_VIDEO=stream_test.mp4 POC_POOL=1 node_modules/.bin/electron poc/shared-texture  # single texture (decisive)
+POC_PERSIST=1 POC_VIDEO=stream_test.mp4 POC_POOL=2 node_modules/.bin/electron poc/shared-texture  # ping-pong ring
+```
+
+Env knobs: `POC_FRAMES` (producer frame cap, default 60), `POC_WRITE_MS` (producer
+write cadence ms, default 16), `POC_PERSIST_DUMP=1` (include the full per-pull luma
+series in the summary). Prints `PERSIST SUMMARY` + `PERSIST VERDICT: PASS/FAIL`.
+PASS requires: `importCount == sendCount == poolSize` (one-time), luma advanced
+(≥3 distinct, max−min ≥ 40), and zero pull errors.
 
 ## Success criteria
 
