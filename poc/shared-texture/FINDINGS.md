@@ -2,15 +2,17 @@
 
 **Verdict: feasible and proven end-to-end on Windows, including color.** A video
 frame decoded by ffmpeg on the GPU can be displayed in an Electron renderer as a
-`VideoFrame` with **no CPU frame copy and no IPC frame transfer**, the path streams
-continuously by recycling a pool of shared textures, and — by converting NV12→RGB on
+`VideoFrame` with **no CPU frame copy and no IPC frame transfer**; the path streams
+continuously by recycling a pool of shared textures; per-frame texture IPC can be
+driven to **zero** via a persistent import (Result 4); and — by converting NV12→RGB on
 the producer's GPU and sharing a **BGRA** texture — it is **color-correct through the
 WebGPU/Pixi ingestion path** for both BT.601 and BT.709 sources (Result 6 closed the
-Result-5 color gap).
+Result-5 color gap). No open technical risk remains; what's left is integration
+engineering.
 
 - Environment: Electron **42.4.1** (Chromium 148), Windows 11, NVIDIA RTX 3050, `ffmpeg-next` 8.1 / FFmpeg 8.1.1.
 - Branch: `poc/shared-texture-import`. Standalone under `poc/shared-texture/`; does **not** touch `@weftcut/core`.
-- Commits: `04827a9d` (BGRA) → `a0b47d50` (NV12) → `84231a7d` (ffmpeg CPU-bounce) → `ad31685d` (ffmpeg zero-copy) → `03eac452` (streaming).
+- Commits: `04827a9d` (BGRA) → `a0b47d50` (NV12) → `84231a7d` (ffmpeg CPU-bounce) → `ad31685d` (ffmpeg zero-copy) → `03eac452` (streaming, Result 3) → `8ddfbcf3` (this writeup) → `de08a824` (persistent import / zero per-frame IPC, Result 4) → `1fd95f72` (renderer color paths, Result 5) → `705a8d69` (native NV12→BGRA convert, Result 6).
 
 ---
 
@@ -57,7 +59,12 @@ Direction: native handle → main-process import → send to renderer → `Video
   pixelFormat:'bgra'|'rgba'|'rgbaf16'|'nv12'|'p010le', colorSpace?, visibleRect?, timestamp? }
 ```
 
-## 4. Architecture (final, zero-copy + streaming)
+## 4. Architecture
+
+Two views: the **streaming-sync model** that Result 3 proved (below), and the
+**final integration shape** that Results 4 & 6 evolved it into (after the diagram).
+
+### 4a. Streaming-sync model (Result 3 — how pooled reuse + sync was proven)
 
 ```
             main process (Rust napi addon + Electron main)            │   renderer
@@ -85,6 +92,30 @@ Two cooperating sync layers, both necessary:
 The **pool** provides concurrency: the producer fills slot N+1 while the renderer
 still holds slot N — exactly how Electron OSR recycles textures.
 
+### 4b. Final integration shape (after Result 4 + Result 6)
+
+Result 4 showed the per-frame `import`/`send`/`release` above is unnecessary — a
+persistent import is a *live view* — and Result 6 showed the shared texture must be
+**BGRA** (converted on the producer's GPU), not NV12, for correct color. So the shape
+to actually build is:
+
+```
+ffmpeg d3d11va HW-decode (GPU)
+  → native NV12→BGRA convert on the decode device (matrix-only shader,
+      matrix/range from the stream's color tags)        [Result 6]
+  → recycled shared BGRA texture ring (NTHANDLE|KEYEDMUTEX)   [Result 3 pool, BGRA]
+  → import + send each ring texture ONCE at setup; renderer keeps the
+      SharedTextureImported and getVideoFrame()s it per frame  [Result 4]
+  → tiny per-frame {frameIndex} poke (or clock pacing); NO per-frame texture IPC
+  → renderer feeds the BGRA VideoFrame straight into Pixi/WebGPU
+      (copyExternalImageToTexture) — color-correct, no renderer change
+```
+
+This keeps all three properties at once: zero CPU frame copy, zero per-frame texture
+IPC, and correct color for any source colorimetry. The §4a per-frame model remains the
+honest record of how the keyed-mutex reuse handshake was *proven*; this is what a real
+preview ships.
+
 ## 5. Milestones (all verified, byte-exact in the renderer)
 
 | # | Commit | What | Evidence |
@@ -93,7 +124,10 @@ still holds slot N — exactly how Electron OSR recycles textures.
 | 1a | `a0b47d50` | synthetic **NV12** (YUV) bands | top `[210,210,210]`, bottom `[60,60,60]` |
 | 1b-i | `84231a7d` | real H.264 → **ffmpeg d3d11va** HW-decode → `av_hwframe_transfer_data` (GPU→CPU NV12) → upload → display | `format=NV12`, lumaTop 235, lumaBottom 16 |
 | 1b-ii | `ad31685d` | **true zero-copy**: HW-decode → `CopySubresourceRegion` (GPU→GPU) into a shared NV12 texture on ffmpeg's device → display | identical to 1b-i |
-| streaming | `03eac452` | pool of reusable shared NV12 textures, per-frame import/send/release | see below |
+| 3 streaming | `03eac452` | pool of reusable shared NV12 textures, per-frame import/send/release | see streaming table below |
+| 4 persistent import | `de08a824` | import ONCE, renderer pulls a live `getVideoFrame()` → zero per-frame texture IPC | §6b: import/send==poolSize, 60 distinct frames, 0 tearing |
+| 5 color paths | `1fd95f72` | which renderer ingestion path is color-correct for non-709 | §6c: only 2D `drawImage` correct; both WebGPU paths WRONG |
+| 6 native BGRA convert | `705a8d69` | native NV12→BGRA (matrix shader) → share BGRA → WebGPU | §6d: byte-identical to `drawImage` ref (601 + 709) — **color gap closed** |
 
 Streaming verification (60-frame 256×256 H.264, center-patch luma ramps 20→235 with
 frame index; renderer keys each frame by `VideoFrame.timestamp` = frame index and
@@ -119,7 +153,7 @@ re-acquires/re-releases the keyed mutex cleanly across frames**; pooled reuse wo
 6. **`ffmpeg-sys-next` does not bind `AVD3D11VADeviceContext`** (its wrapper omits the D3D11 hw-context header). Mirror its stable `repr(C)` layout to read `device`/`device_context`. Wrap ffmpeg's COM pointers with windows-rs `from_raw_borrowed` (**no** ownership) and `device.clone()` (AddRef) so the device outlives the decoder.
 7. **windows crate 0.58 quirks**: `CreateSharedHandle` needs the `Win32_Security` feature (else the method is gated out); struct flag fields are plain `u32` while the constants are newtypes (`.0`); `GetDesc1()` returns by value.
 8. **Adapter must match Chromium's** (multi-GPU laptops): pick the highest-VRAM adapter (the discrete GPU Chromium prefers); NT-handle textures share cross-device, so the copy works as long as both devices are on that adapter.
-9. **Performance is IPC-round-trip bound, not GPU**: ~53–75 fps here is `import`/`sendSharedTexture` overhead (+2 ms busy-yield), not the GPU copy. A real preview would import straight to WebGPU and pace to the clock.
+9. **Performance is IPC-round-trip bound, not GPU**: ~53–75 fps in Result 3 is the per-frame `import`/`sendSharedTexture` overhead (+2 ms busy-yield), not the GPU copy — and Result 4 removes it entirely via a persistent import (import/send once, renderer pulls a live `getVideoFrame()`).
 10. **Spec tests are macOS-arm64-only**, but the feature works on Windows (the skip is a CI-GPU limitation, not a feature gap).
 
 ## 6b. Result 4 — persistent import / zero per-frame IPC ✅ PASS (2026-06-29)
