@@ -236,6 +236,90 @@ async function persistVideo(win) {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Result 5 — renderer color paths (POC_COLOR=1).
+//
+// The gap: every prior result verified pixels ONLY via 2D `drawImage` +
+// `getImageData`, which honors `VideoFrame.colorSpace`. WeftCut's real renderer
+// uploads to WebGPU/Pixi, and a known WeftCut finding is that Pixi v8's
+// `device.queue.copyExternalImageToTexture({source: videoFrame})` IGNORES the
+// frame's colorSpace and always converts with the BT.709 matrix — so a correctly
+// BT.601-tagged frame mis-converts. UNVERIFIED for our shared NV12 textures: does
+// the spec video path, `device.importExternalTexture({source})` +
+// `texture_external` + `textureSampleBaseClampToEdge`, honor BT.601?
+//
+// We decode ONE frame of a SATURATED, BT.601-tagged clip via the existing
+// zero-copy NV12 path, import it tagged BT.601, and ingest the SAME content three
+// ways in the renderer — (1) 2D drawImage, (2) copyExternalImageToTexture,
+// (3) importExternalTexture — reading back the center-patch RGB of each and
+// comparing to the known source color. As a control we ALSO import the same frame
+// tagged BT.709 (deliberately wrong tag) to confirm the matrix is what moves the
+// numbers.
+//
+// `colorSpaceFor`/`STREAM_COLOR_SPACE` hardcode bt709; this mode drives 601/709
+// explicitly via the textureInfo.colorSpace below — that is the whole point.
+// ---------------------------------------------------------------------------
+const COLOR_SPACE_601 = {
+  // The matrix (smpte170m) is what drives YUV->RGB; range:'limited' matches the
+  // clip's color_range=tv. primaries/transfer don't affect the YUV->RGB matrix.
+  primaries: 'smpte170m',
+  transfer: 'smpte170m',
+  matrix: 'smpte170m',
+  range: 'limited',
+}
+const COLOR_SPACE_709 = {
+  primaries: 'bt709',
+  transfer: 'bt709',
+  matrix: 'bt709',
+  range: 'limited',
+}
+
+async function colorTest(win) {
+  const video = process.env.POC_VIDEO
+  if (!video) throw new Error('POC_COLOR=1 requires POC_VIDEO=<path>')
+
+  // Decode the SAME first frame twice into two independent shared NV12 textures,
+  // so we can import one tagged 601 (the honest tag) and one tagged 709 (the
+  // deliberately-wrong control) without any double-import-of-one-handle subtlety.
+  // The clip is solid color, so both decodes are byte-identical content.
+  const variants = [
+    { tag: 'bt601', colorSpace: COLOR_SPACE_601 },
+    { tag: 'bt709', colorSpace: COLOR_SPACE_709 },
+  ]
+
+  for (const v of variants) {
+    const tex = native.pocCreateTextureFromVideoZerocopy(video)
+    console.log(
+      `[poc] color: decoded zero-copy ${tex.pixelFormat} ${tex.width}x${tex.height} (tag=${v.tag}, matrix=${v.colorSpace.matrix}, range=${v.colorSpace.range})`
+    )
+    const textureInfo = {
+      codedSize: { width: tex.width, height: tex.height },
+      visibleRect: { x: 0, y: 0, width: tex.width, height: tex.height },
+      pixelFormat: 'nv12',
+      colorSpace: v.colorSpace,
+      timestamp: 0,
+      handle: { ntHandle: tex.handle },
+    }
+    const imported = sharedTexture.importSharedTexture({
+      textureInfo,
+      allReferencesReleased: () => native.pocReleaseTexture(tex.id),
+    })
+    // Tell the renderer which tag this send carries so it labels its readback.
+    win.webContents.send('poc-color-tag', v.tag)
+    await sharedTexture.sendSharedTexture({
+      frame: win.webContents.mainFrame,
+      importedSharedTexture: imported,
+    })
+    imported.release() // renderer holds its own ref until it finishes the 3 paths
+    // Wait for the renderer to finish all three ingestion paths for THIS variant
+    // before sending the next (keeps the receiver one-variant-at-a-time, since
+    // WebGPU readback is async).
+    await new Promise((resolve) => ipcMain.once(`poc-color-variant-done-${v.tag}`, resolve))
+  }
+
+  win.webContents.send('poc-color-done')
+}
+
 async function pushTexture(win) {
   const video = process.env.POC_VIDEO
   const zeroCopy = process.env.POC_ZEROCOPY === '1'
@@ -289,10 +373,13 @@ app.whenReady().then(() => {
 
   const streaming = process.env.POC_STREAM === '1'
   const persistent = process.env.POC_PERSIST === '1'
+  const colorMode = process.env.POC_COLOR === '1'
 
   ipcMain.on('renderer-ready', async () => {
     try {
-      if (persistent) {
+      if (colorMode) {
+        await colorTest(win)
+      } else if (persistent) {
         await persistVideo(win)
       } else if (streaming) {
         await streamVideo(win)
@@ -354,6 +441,69 @@ app.whenReady().then(() => {
     setTimeout(() => app.quit(), 1500)
   })
 
+  // Result 5 — renderer color paths. The renderer reports, per import tag (601 /
+  // 709), the measured center-patch RGB for each of the three ingestion paths.
+  // EXPECTED (correct, BT.601 honored): RGB ~ (20,220,40); WRONG (709 matrix on
+  // the 601-tagged YUV): RGB ~ (5,190,35) — the green channel is the discriminator
+  // (~218 correct vs ~190 wrong). Tolerance ±12 per channel absorbs H.264 + 4:2:0
+  // rounding.
+  const COLOR_EXPECTED = { bt601: [20, 220, 40] }
+  const colorResults = {}
+  ipcMain.on('poc-color-result', (_e, r) => {
+    console.log(`[poc] ===== COLOR RESULT (tag=${r.tag}) =====`)
+    console.log(JSON.stringify(r, null, 2))
+    colorResults[r.tag] = r
+    ipcMain.emit(`poc-color-variant-done-${r.tag}`)
+  })
+  ipcMain.on('poc-color-summary-request', () => {
+    console.log('[poc] ===== RESULT 5 — RENDERER COLOR PATHS: VERDICT =====')
+    const exp = COLOR_EXPECTED.bt601
+    const tol = 12
+    const r601 = colorResults.bt601
+    const r709 = colorResults.bt709
+    const err = (m) => (m ? [m[0] - exp[0], m[1] - exp[1], m[2] - exp[2]] : null)
+    const maxAbs = (e) => (e ? Math.max(Math.abs(e[0]), Math.abs(e[1]), Math.abs(e[2])) : null)
+    const verdict = (m) => {
+      const e = err(m)
+      const ma = maxAbs(e)
+      return { measured: m, errVsExpected: e, maxAbsErr: ma, status: ma != null && ma <= tol ? 'CORRECT' : 'WRONG' }
+    }
+    if (r601) {
+      const paths = {
+        drawImage_2d: verdict(r601.drawImage),
+        copyExternalImageToTexture: verdict(r601.copyExternal),
+        importExternalTexture: verdict(r601.importExternal),
+      }
+      console.log(`Source RGB fed to encoder: (20,220,40); ffmpeg 601-honoring decode ground truth: ~(19,218,40)`)
+      console.log(`Expected CORRECT readback (BT.601): [${exp}], tolerance +/-${tol}/channel`)
+      console.log(`Reference WRONG-if-709 readback: ~[5,190,35]`)
+      console.log('--- BT.601-tagged import (the honest tag) ---')
+      for (const [name, v] of Object.entries(paths)) {
+        console.log(`  ${name}: measured=[${v.measured}] err=[${v.errVsExpected}] maxAbsErr=${v.maxAbsErr} => ${v.status}`)
+      }
+      if (r601.rgbaControl) {
+        const c = r601.rgbaControl
+        const ce = [c.measured[0] - c.known[0], c.measured[1] - c.known[1], c.measured[2] - c.known[2]]
+        const cma = Math.max(Math.abs(ce[0]), Math.abs(ce[1]), Math.abs(ce[2]))
+        console.log(
+          `  [control] known-sRGB through same WebGPU readback: known=[${c.known}] measured=[${c.measured}] maxAbsErr=${cma} => ${cma <= tol ? 'readback CLEAN' : 'readback ITSELF skews'}`
+        )
+      } else if (r601.rgbaControlError) {
+        console.log(`  [control] error: ${r601.rgbaControlError}`)
+      }
+    } else {
+      console.log('  (no bt601 result received)')
+    }
+    if (r709) {
+      console.log('--- BT.709-tagged import (deliberately WRONG control) ---')
+      console.log(`  drawImage_2d: measured=[${r709.drawImage}]`)
+      console.log(`  copyExternalImageToTexture: measured=[${r709.copyExternal}]`)
+      console.log(`  importExternalTexture: measured=[${r709.importExternal}]`)
+    }
+    console.log('[poc] COLOR PROBE COMPLETE')
+    setTimeout(() => app.quit(), 1500)
+  })
+
   // Watchdog: never hang headless. Streaming + persistent runs decode many frames
   // and round-trip, so give them more headroom than the single-frame probe.
   setTimeout(
@@ -361,7 +511,7 @@ app.whenReady().then(() => {
       console.log('[poc] watchdog timeout — quitting')
       app.quit()
     },
-    streaming || persistent ? 60000 : 12000
+    streaming || persistent || colorMode ? 60000 : 12000
   )
 })
 

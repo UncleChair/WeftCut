@@ -215,15 +215,135 @@ overwriting them in place + a tiny frame-index poke — eliminating the per-fram
 `importSharedTexture`/`sendSharedTexture` IPC that bounded Result 3's throughput
 (~50–75 fps). The renderer imports each ring texture to WebGPU once and re-samples.
 
+## 6c. Result 5 — renderer color paths ❌ WebGPU video ingestion is NOT color-correct (2026-06-29)
+
+Results 1–4 verified pixels **only** through 2D `drawImage` + `getImageData`,
+which honors `VideoFrame.colorSpace`. WeftCut's real renderer uploads to
+WebGPU/Pixi, where a known WeftCut finding is that Pixi v8's
+`device.queue.copyExternalImageToTexture({source: videoFrame})` **ignores**
+`VideoFrame.colorSpace` and converts every frame with BT.709. So the WebGPU color
+behavior for our shared NV12 textures was **unverified** — especially the spec's
+`device.importExternalTexture` video path, which was the key unknown: does Electron
+honor a non-709 tag there?
+
+**Question:** for a shared NV12 `VideoFrame` from our zero-copy path, tagged
+**BT.601**, which renderer ingestion paths produce correct color?
+
+**Verdict: only the 2D `drawImage` path is color-correct. BOTH WebGPU paths —
+`copyExternalImageToTexture` AND `importExternalTexture` — are WRONG, and wrong
+identically.** `importExternalTexture` does **not** rescue the zero-copy path.
+
+### Method (`POC_COLOR=1`, new mode; existing modes untouched)
+
+1. **Known-color clip, honestly tagged BT.601.** A 256×256 H.264 solid fill of a
+   *saturated* color, RGB **(20,220,40)** (saturated green — grays can't show a
+   matrix error, chroma must be non-zero), encoded under the 601 matrix:
+   `-vf format=yuv420p -color_primaries smpte170m -color_trc smpte170m
+   -colorspace smpte170m -color_range tv`. Verified the stored bytes: center
+   **Y=136 U=79 V=53** — exactly RGB(20,220,40) under 601-limited. ffprobe confirms
+   `color_space=smpte170m, color_range=tv`. ffmpeg's own 601-honoring decode back to
+   RGB gives **(19,218,40)** — the ground-truth "correct" readback (the ~1–2 drift is
+   H.264 + 4:2:0 rounding).
+2. Decode that first frame via the existing **zero-copy** path
+   (`pocCreateTextureFromVideoZerocopy`) into a shared NV12 texture; import it with
+   `colorSpace` **matrix `smpte170m`, range `limited`** (the honest 601 tag).
+3. In the renderer, ingest the SAME `VideoFrame` **three ways**, reading back the
+   center-patch average RGB of each: (1) 2D `drawImage`+`getImageData`,
+   (2) WebGPU `copyExternalImageToTexture` (Pixi's path), (3) WebGPU
+   `importExternalTexture` + `texture_external` + `textureSampleBaseClampToEdge`
+   (spec video path). `getVideoFrame()` is a live view (Result 4), so each path gets
+   a fresh frame; path 3 does import+draw+submit synchronously, then maps the
+   readback buffer.
+4. **Controls:** (a) re-import the SAME frame tagged **BT.709** (deliberately wrong)
+   to confirm the matrix tag is what moves the numbers; (b) round-trip a **known
+   sRGB color** through the exact same WebGPU copy+render+`copyTextureToBuffer`
+   readback, to prove the readback path is color-clean.
+
+### Results (deterministic across 3 runs)
+
+Expected CORRECT (BT.601): **[20,220,40]**, tolerance ±12/channel.
+
+| ingestion path | measured RGB (601-tagged) | err vs expected | verdict |
+|---|---|---|---|
+| **2D `drawImage`** (reference) | **[20,220,41]** | [0,0,1] | **CORRECT** |
+| WebGPU `copyExternalImageToTexture` | [58,217,38] | [+38,−3,−2] | **WRONG** |
+| WebGPU `importExternalTexture` | [58,217,38] | [+38,−3,−2] | **WRONG** |
+| *control:* known sRGB through same WebGPU readback | [20,220,40] vs known [20,220,40] | [0,0,0] | readback **CLEAN** |
+
+709-tagged control (all three paths agreed): **[5,190,36]**.
+
+### What this proves (and what it does NOT)
+
+1. **2D `drawImage` honors the BT.601 tag — exact.** This is the reference; it is
+   the only path that recovers the source color.
+2. **Both WebGPU video-ingestion paths are wrong, and *identically* wrong.** The key
+   new finding: `importExternalTexture` (`texture_external` /
+   `textureSampleBaseClampToEdge`) is **not** a clean BT.601 path on
+   Electron 42 — it lands on the exact same [58,217,38] as
+   `copyExternalImageToTexture`. The spec's "proper" video-sampling entry point does
+   **not** rescue zero-copy color on this engine.
+3. **The error is genuinely in YUV→RGB ingestion, not in measurement.** The control
+   round-tripped a known sRGB color through the identical WebGPU readback path with
+   **maxAbsErr 0** — so the readback (rgba8unorm target + `copyTextureToBuffer`) is
+   color-clean.
+4. **The WebGPU error is NOT the originally-hypothesised "treated as BT.709".** A
+   709-on-601 mis-convert reads [5,190,36] — which is exactly what the *709-tagged*
+   import produced on all three paths. The WebGPU 601 result [58,217,38] is a
+   *different*, reproducible shift, dominated by the **red (V/Cr) channel** (green &
+   blue land near-correct). It does not reduce to any single textbook
+   matrix-swap or limited/full range-handling model tested (closest candidate still
+   ≥23 off); its shape (saturated-red push with green/blue intact) is most
+   consistent with a **primaries/gamut conversion from smpte170m primaries toward
+   the display/sRGB gamut** that the WebGPU paths apply and the raw-`getImageData`
+   read does not — but the **exact internal mechanism is not pinned here**, only that
+   it is real, reproducible, and color-shifting. What IS pinned: the WebGPU paths DO
+   read the colorSpace tag (the 709 tag changed their output), they just don't render
+   the same colorimetry as `drawImage` for a 601 source.
+5. **Caveat:** verified at 256×256, single frame, one saturated color, on one
+   machine (Electron 42.4.1 / Chromium 148, Windows 11, RTX 3050). The magnitude of
+   the error is color-dependent; this is a qualitative "WebGPU paths diverge from the
+   reference for non-709", not a calibrated per-color error model.
+
+### Integration implication (the decision this informs)
+
+The clean branch hoped for — *"real integration can stay zero-copy via
+`GPUExternalTexture`, no native color-convert needed"* — is **closed for non-709
+sources**. `importExternalTexture` does not honor BT.601 colorimetry the way the
+reference does, so feeding our shared NV12 `VideoFrame` straight into a WebGPU/Pixi
+texture would mis-color any 601-tagged (SD / much legacy) content. The viable paths:
+
+- **`createImageBitmap(videoFrame)`** in the renderer (honors the tag like
+  `drawImage`) then upload — **but that is no longer zero-copy** (a CPU/GPU
+  conversion + copy), partially defeating the point.
+- **Native GPU NV12→RGB convert into the working color space** (a shader on
+  ffmpeg's / a shared D3D11 device, output an already-sRGB/709-working-space BGRA
+  shared texture, which the WebGPU control proved round-trips cleanly) — keeps the
+  GPU-resident, zero-CPU-copy property and hands Chromium a texture whose colorimetry
+  the WebGPU path *does* preserve. This is the recommended follow-up probe.
+- For **BT.709 full-range** sources specifically, the WebGPU paths may already match
+  (709-tagged agreed across all three here) — but that is the easy case, not the one
+  that motivated the probe.
+
+So: **zero-copy to the renderer is real (Results 1–4), but zero-copy *with correct
+color for non-709 sources* requires a native color-convert step; the spec
+`GPUExternalTexture` path does not provide it on Electron 42.** Run with
+`POC_COLOR=1 POC_VIDEO=<601 clip>` (see README).
+
 ## 7. Conclusion
 
-The entire original idea is proven: ffmpeg-decoded frames reach the renderer
-zero-copy and stream continuously. Remaining work to integrate into a real WeftCut
-preview (all deterministic engineering, no open technical risk):
+The transport idea is proven: ffmpeg-decoded frames reach the renderer zero-copy
+and stream continuously (Results 1–4). But Result 5 found a real **open technical
+risk** in the renderer ingestion — color — so integration is no longer
+"deterministic engineering only". Remaining work:
 
-- Renderer: import to WebGPU via `device.importExternalTexture({ source: videoFrame })` and feed Pixi (POC draws to a 2D canvas for verification only).
+- **Color (open risk — see Result 5):** feeding the shared NV12 `VideoFrame` straight
+  into WebGPU/Pixi mis-colors non-709 sources; **neither** `copyExternalImageToTexture`
+  **nor** `importExternalTexture` honors BT.601 the way the 2D reference does. A clean
+  zero-copy preview needs a **native GPU NV12→working-space-RGB convert** (output a
+  709/sRGB-working-space BGRA shared texture, which the WebGPU path *does* preserve) —
+  or `createImageBitmap` (correct but not zero-copy). This is the recommended next probe.
 - Pace the pump to the playback clock / PTS instead of as-fast-as-possible; wire into the transport (`playbackStore`).
-- Correct color-range tagging (libx264 is limited-range; the POC tags full, hence 235/16 instead of 255/0), HDR (P010), odd-size/alignment.
+- Correct color-range tagging (libx264 is limited-range; the streaming POC tagged full, hence 235/16 instead of 255/0), HDR (P010), odd-size/alignment.
 - Lifecycle: decode errors, seek, pause, pool teardown on window close.
 - This currently lives outside `@weftcut/core`; integrating means weighing it against the existing WebCodecs preview path — worth a separate design pass.
 

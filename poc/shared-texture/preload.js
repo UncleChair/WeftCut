@@ -257,6 +257,297 @@ ipcRenderer.on('poc-persist-done', (_e, info) => {
   ipcRenderer.send('poc-persist-summary', summary)
 })
 
+// ---------------------------------------------------------------------------
+// Result 5 — renderer color paths (POC_COLOR=1, renderer side).
+//
+// For each imported VideoFrame (tagged bt601, then bt709), ingest the SAME
+// content three ways and read back a center-patch average RGB:
+//   1. 2D canvas drawImage + getImageData       (honors colorSpace -> reference)
+//   2. WebGPU device.queue.copyExternalImageToTexture (Pixi's documented path)
+//   3. WebGPU device.importExternalTexture + textureSampleBaseClampToEdge (spec
+//      video path) — the key unknown: does Electron honor BT.601 here?
+//
+// getVideoFrame() on the persistent import is a live view (Result 4), so we call
+// it fresh per path; importExternalTexture requires the frame valid within the
+// current task, so path 3 does import+draw+submit synchronously and reads back
+// async afterward.
+// ---------------------------------------------------------------------------
+
+// Average RGB of a center patch from an RGBA byte buffer (row-major, 4 bytes/px).
+function avgRgbPatch(rgba, w, h) {
+  const x0 = w >> 2
+  const y0 = h >> 2
+  const pw = Math.max(1, w >> 1)
+  const ph = Math.max(1, h >> 1)
+  let r = 0, g = 0, b = 0, n = 0
+  for (let y = y0; y < y0 + ph; y++) {
+    for (let x = x0; x < x0 + pw; x++) {
+      const i = (y * w + x) * 4
+      r += rgba[i]; g += rgba[i + 1]; b += rgba[i + 2]; n++
+    }
+  }
+  return [Math.round(r / n), Math.round(g / n), Math.round(b / n)]
+}
+
+// Path 1: 2D canvas drawImage + getImageData (the reference; honors colorSpace).
+function colorPath2dDrawImage(frame, w, h) {
+  const cv = document.getElementById('cv')
+  cv.width = w
+  cv.height = h
+  // Force a plain, non-color-managed 2D context so the readback is the raw
+  // composited RGB, not display-profile-adapted values.
+  const ctx = cv.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true })
+  ctx.clearRect(0, 0, w, h)
+  ctx.drawImage(frame, 0, 0)
+  const rgba = ctx.getImageData(0, 0, w, h, { colorSpace: 'srgb' }).data
+  return avgRgbPatch(rgba, w, h)
+}
+
+let gpuDevice = null
+async function getGpuDevice() {
+  if (gpuDevice) return gpuDevice
+  if (!navigator.gpu) throw new Error('navigator.gpu unavailable (no WebGPU)')
+  const adapter = await navigator.gpu.requestAdapter()
+  if (!adapter) throw new Error('requestAdapter returned null')
+  gpuDevice = await adapter.requestDevice()
+  return gpuDevice
+}
+
+// Render a sampled texture (either a copied rgba8 texture, or an external
+// texture) to an offscreen rgba8unorm target, then copyTextureToBuffer +
+// mapAsync and average the center patch. `bindEntries`/`fragmentWgsl` differ for
+// the two WebGPU paths; the rest is shared.
+async function renderSampledAndReadback(device, w, h, fragmentWgsl, makeBindGroup, sampler) {
+  const target = device.createTexture({
+    size: { width: w, height: h },
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  })
+
+  const shader = device.createShaderModule({
+    code:
+      `@vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+         // Full-screen triangle.
+         var p = array<vec2f,3>(vec2f(-1.0,-3.0), vec2f(-1.0,1.0), vec2f(3.0,1.0));
+         return vec4f(p[vi], 0.0, 1.0);
+       }\n` + fragmentWgsl,
+  })
+
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module: shader, entryPoint: 'vs' },
+    fragment: { module: shader, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+    primitive: { topology: 'triangle-list' },
+  })
+
+  const bindGroup = makeBindGroup(device, pipeline)
+
+  const encoder = device.createCommandEncoder()
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [
+      { view: target.createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' },
+    ],
+  })
+  pass.setPipeline(pipeline)
+  pass.setBindGroup(0, bindGroup)
+  pass.draw(3)
+  pass.end()
+
+  // Copy the rendered target to a readback buffer (256-byte row alignment).
+  const bytesPerRow = Math.ceil((w * 4) / 256) * 256
+  const readBuf = device.createBuffer({
+    size: bytesPerRow * h,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  })
+  encoder.copyTextureToBuffer(
+    { texture: target },
+    { buffer: readBuf, bytesPerRow, rowsPerImage: h },
+    { width: w, height: h }
+  )
+  device.queue.submit([encoder.finish()])
+
+  await readBuf.mapAsync(GPUMapMode.READ)
+  const mapped = new Uint8Array(readBuf.getMappedRange())
+  // Repack into a tight w*h*4 buffer (drop row padding) so avgRgbPatch works.
+  const tight = new Uint8Array(w * h * 4)
+  for (let y = 0; y < h; y++) {
+    tight.set(mapped.subarray(y * bytesPerRow, y * bytesPerRow + w * 4), y * w * 4)
+  }
+  const rgb = avgRgbPatch(tight, w, h)
+  readBuf.unmap()
+  readBuf.destroy()
+  target.destroy()
+  return rgb
+}
+
+// Path 2: device.queue.copyExternalImageToTexture({source: videoFrame}) — the
+// path Pixi v8's WebGPU uploader uses. Sample the rgba8 texture straight through.
+async function colorPathCopyExternal(device, frame, w, h) {
+  const tex = device.createTexture({
+    size: { width: w, height: h },
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+  })
+  device.queue.copyExternalImageToTexture(
+    { source: frame },
+    { texture: tex },
+    { width: w, height: h }
+  )
+  const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
+  const fragmentWgsl = `
+    @group(0) @binding(0) var s: sampler;
+    @group(0) @binding(1) var t: texture_2d<f32>;
+    @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+      let dims = vec2f(textureDimensions(t));
+      return textureSample(t, s, pos.xy / dims);
+    }`
+  const makeBindGroup = (dev, pipeline) =>
+    dev.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: sampler },
+        { binding: 1, resource: tex.createView() },
+      ],
+    })
+  const rgb = await renderSampledAndReadback(device, w, h, fragmentWgsl, makeBindGroup)
+  tex.destroy()
+  return rgb
+}
+
+// Path 3: device.importExternalTexture({source: videoFrame}) + texture_external
+// + textureSampleBaseClampToEdge — the WebGPU spec's video sampling path. The
+// external texture is valid only within the current task, so import + the whole
+// command-encoder build + submit happen synchronously here; only the buffer
+// mapAsync is awaited afterward (inside renderSampledAndReadback).
+async function colorPathImportExternal(device, frame, w, h) {
+  const ext = device.importExternalTexture({ source: frame })
+  const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
+  const fragmentWgsl = `
+    @group(0) @binding(0) var s: sampler;
+    @group(0) @binding(1) var t: texture_external;
+    @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+      let dims = vec2f(textureDimensions(t));
+      return textureSampleBaseClampToEdge(t, s, pos.xy / dims);
+    }`
+  const makeBindGroup = (dev, pipeline) =>
+    dev.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: sampler },
+        { binding: 1, resource: ext },
+      ],
+    })
+  return renderSampledAndReadback(device, w, h, fragmentWgsl, makeBindGroup)
+}
+
+// Control: push a KNOWN sRGB color (no YUV at all) through the exact same
+// copyExternalImageToTexture + render + readback machinery, to prove the WebGPU
+// readback path itself is color-clean. If this round-trips ~(20,220,40), any
+// error seen on the VideoFrame paths is in the YUV->RGB ingestion, not readback.
+async function colorPathRgbaControl(device, w, h) {
+  const known = [20, 220, 40]
+  const oc = new OffscreenCanvas(w, h)
+  const cx = oc.getContext('2d', { colorSpace: 'srgb' })
+  cx.fillStyle = `rgb(${known[0]},${known[1]},${known[2]})`
+  cx.fillRect(0, 0, w, h)
+  const tex = device.createTexture({
+    size: { width: w, height: h },
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+  })
+  device.queue.copyExternalImageToTexture({ source: oc }, { texture: tex }, { width: w, height: h })
+  const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
+  const fragmentWgsl = `
+    @group(0) @binding(0) var s: sampler;
+    @group(0) @binding(1) var t: texture_2d<f32>;
+    @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+      let dims = vec2f(textureDimensions(t));
+      return textureSample(t, s, pos.xy / dims);
+    }`
+  const makeBindGroup = (dev, pipeline) =>
+    dev.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: sampler },
+        { binding: 1, resource: tex.createView() },
+      ],
+    })
+  const rgb = await renderSampledAndReadback(device, w, h, fragmentWgsl, makeBindGroup)
+  tex.destroy()
+  return { known, measured: rgb }
+}
+
+const colorTagQueue = []
+ipcRenderer.on('poc-color-tag', (_e, tag) => colorTagQueue.push(tag))
+
+async function colorReceiver(data) {
+  const imported = data.importedSharedTexture
+  const tag = colorTagQueue.length ? colorTagQueue.shift() : 'unknown'
+  const result = { tag }
+  try {
+    // Frame dimensions from a one-shot frame.
+    let probe = imported.getVideoFrame()
+    const w = probe.displayWidth || probe.codedWidth
+    const h = probe.displayHeight || probe.codedHeight
+    result.format = probe.format
+    result.size = [w, h]
+    probe.close()
+
+    // Path 1 — 2D drawImage (reference).
+    try {
+      const f1 = imported.getVideoFrame()
+      result.drawImage = colorPath2dDrawImage(f1, w, h)
+      f1.close()
+    } catch (e) {
+      result.drawImageError = String((e && e.message) || e)
+    }
+
+    const device = await getGpuDevice()
+
+    // Path 2 — copyExternalImageToTexture (Pixi path).
+    try {
+      const f2 = imported.getVideoFrame()
+      result.copyExternal = await colorPathCopyExternal(device, f2, w, h)
+      f2.close()
+    } catch (e) {
+      result.copyExternalError = String((e && e.message) || e)
+    }
+
+    // Path 3 — importExternalTexture (spec video path; the key unknown).
+    try {
+      const f3 = imported.getVideoFrame()
+      result.importExternal = await colorPathImportExternal(device, f3, w, h)
+      f3.close()
+    } catch (e) {
+      result.importExternalError = String((e && e.message) || e)
+    }
+
+    // Control (once, on the bt601 pass): prove the WebGPU readback path is clean
+    // by round-tripping a KNOWN sRGB color through the same copy+render+readback.
+    if (tag === 'bt601') {
+      try {
+        result.rgbaControl = await colorPathRgbaControl(device, w, h)
+      } catch (e) {
+        result.rgbaControlError = String((e && e.message) || e)
+      }
+    }
+
+    imported.release()
+  } catch (e) {
+    result.fatalError = String((e && e.stack) || e)
+    try { imported.release() } catch {}
+  }
+  const el = document.getElementById('log')
+  if (el)
+    el.textContent =
+      `color[${tag}] draw=${result.drawImage} copyExt=${result.copyExternal} importExt=${result.importExternal}`
+  ipcRenderer.send('poc-color-result', result)
+}
+
+ipcRenderer.on('poc-color-done', () => {
+  ipcRenderer.send('poc-color-summary-request')
+})
+
 // Single-frame receiver (Results 1 & 2): one import, draw + verify, report.
 function singleReceiver(data) {
   const log = (m) => {
@@ -289,8 +580,10 @@ function singleReceiver(data) {
 // `process`), so the mode env var is readable here.
 const STREAM_MODE = process.env.POC_STREAM === '1'
 const PERSIST_MODE = process.env.POC_PERSIST === '1'
+const COLOR_MODE = process.env.POC_COLOR === '1'
 sharedTexture.setSharedTextureReceiver(async (data) => {
-  if (PERSIST_MODE) persistReceiver(data)
+  if (COLOR_MODE) await colorReceiver(data)
+  else if (PERSIST_MODE) persistReceiver(data)
   else if (STREAM_MODE) streamReceiver(data)
   else singleReceiver(data)
 })

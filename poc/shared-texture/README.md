@@ -156,6 +156,36 @@ with `importCount=sendCount=1` and `allReferencesReleased` firing 0 times. So
 snapshot, and the keyed mutex alone keeps in-place overwrites coherent — **per-frame
 texture IPC is unnecessary**. Full writeup + table in [FINDINGS.md](./FINDINGS.md) §6b.
 
+## Result 5 — renderer color paths ❌ WebGPU video ingestion is NOT color-correct (2026-06-29)
+
+Results 1–4 verified pixels **only** via 2D `drawImage` (which honors
+`VideoFrame.colorSpace`). The real renderer uploads to WebGPU/Pixi. Result 5 asks:
+for a shared NV12 `VideoFrame` tagged **BT.601**, which ingestion paths give correct
+color — and specifically, does the spec's `device.importExternalTexture` video path
+honor the non-709 tag?
+
+**Verdict: only 2D `drawImage` is correct. BOTH WebGPU paths —
+`copyExternalImageToTexture` AND `importExternalTexture` — are wrong, identically.**
+A solid clip of saturated RGB **(20,220,40)**, honestly tagged BT.601, read back at
+its center (expected ~[20,220,40]):
+
+| path | measured | verdict |
+|---|---|---|
+| 2D `drawImage` (reference) | [20,220,41] | **CORRECT** |
+| WebGPU `copyExternalImageToTexture` (Pixi's path) | [58,217,38] | **WRONG** |
+| WebGPU `importExternalTexture` (spec video path) | [58,217,38] | **WRONG** |
+| *control:* known sRGB through the same WebGPU readback | [20,220,40] | readback **CLEAN** |
+
+`importExternalTexture` does **not** rescue zero-copy color on Electron 42 — it lands
+on the exact same wrong value. A known-sRGB control round-tripped through the
+identical readback path with **0** error, proving the error is in YUV→RGB ingestion,
+not measurement. (The WebGPU error is also *not* the textbook "treated as 709"
+mis-convert — that reads [5,190,36], what the 709-tagged import produced; the 601
+WebGPU error is a distinct, red-channel-dominant shift.) **Integration consequence:**
+a zero-copy `GPUExternalTexture` preview mis-colors non-709 sources; correct color
+needs a native GPU NV12→working-space-RGB convert (or non-zero-copy
+`createImageBitmap`). Full writeup + numbers in [FINDINGS.md](./FINDINGS.md) §6c.
+
 ## Run (Windows only)
 
 From the repo root (where `node_modules` is hoisted).
@@ -214,6 +244,25 @@ write cadence ms, default 16), `POC_PERSIST_DUMP=1` (include the full per-pull l
 series in the summary). Prints `PERSIST SUMMARY` + `PERSIST VERDICT: PASS/FAIL`.
 PASS requires: `importCount == sendCount == poolSize` (one-time), luma advanced
 (≥3 distinct, max−min ≥ 40), and zero pull errors.
+
+**Renderer color paths (Result 5)** — ingest one BT.601-tagged frame three ways
+(2D drawImage, WebGPU copyExternalImageToTexture, WebGPU importExternalTexture) and
+read back the center RGB. Needs a *saturated*, 601-tagged clip:
+
+```sh
+# Solid saturated green RGB(20,220,40), tagged BT.601 limited-range. Grays won't
+# show a matrix error — chroma must be non-zero.
+ffmpeg -y -f lavfi -i "color=c=0x14DC28:s=256x256:r=30:d=0.3" \
+  -vf "format=yuv420p" \
+  -color_primaries smpte170m -color_trc smpte170m -colorspace smpte170m -color_range tv \
+  -c:v libx264 -preset ultrafast -g 8 -bf 0 -pix_fmt yuv420p -frames:v 8 color601.mp4
+
+POC_COLOR=1 POC_VIDEO=color601.mp4 node_modules/.bin/electron poc/shared-texture
+```
+
+It self-terminates and prints `RESULT 5 — RENDERER COLOR PATHS: VERDICT` with each
+path's measured RGB, error vs the expected [20,220,40], and CORRECT/WRONG, plus a
+BT.709-tagged control and a known-sRGB readback control.
 
 ## Success criteria
 
