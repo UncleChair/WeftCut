@@ -37,8 +37,14 @@ function buildTextureInfo(tex) {
 }
 
 async function pushTexture(win) {
-  const tex = native.pocCreateSyntheticTexture(FORMAT)
-  console.log(`[poc] native ${tex.pixelFormat} texture id=${tex.id} adapter="${tex.adapter}" handle=${tex.handleValue} (${tex.handle.length} bytes)`)
+  const video = process.env.POC_VIDEO
+  const tex = video
+    ? native.pocCreateTextureFromVideo(video)
+    : native.pocCreateSyntheticTexture(FORMAT)
+  console.log(
+    `[poc] native ${tex.pixelFormat} ${tex.width}x${tex.height} texture id=${tex.id} adapter="${tex.adapter}"` +
+      (video ? ` (decoded from ${video})` : '')
+  )
 
   const imported = sharedTexture.importSharedTexture({
     textureInfo: buildTextureInfo(tex),

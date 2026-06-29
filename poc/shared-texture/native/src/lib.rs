@@ -42,6 +42,8 @@ use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1, IDXGIKeyedMutex, IDXGIResource1,
 };
 
+mod decoder;
+
 const SIZE: u32 = 256;
 const CELL: u32 = 32;
 const INFINITE: u32 = 0xFFFF_FFFF;
@@ -151,12 +153,21 @@ fn pick_adapter() -> windows::core::Result<(Option<IDXGIAdapter>, String)> {
     }
 }
 
-#[napi]
-pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> {
+/// Create a shareable D3D11 texture, upload `pixels` (bracketed by the mandatory
+/// keyed mutex), open an NT handle, register it for later release, and return the
+/// JS-facing descriptor. Shared by the synthetic and video paths.
+fn make_shared_texture(
+    width: u32,
+    height: u32,
+    dxgi_format: DXGI_FORMAT,
+    bind: u32,
+    row_pitch: u32,
+    pixels: &[u8],
+    pixel_format: &str,
+) -> Result<PocSharedTexture> {
     unsafe {
         let (adapter, adapter_name) = pick_adapter().map_err(|e| win_err("pick_adapter", e))?;
-        // D3D11CreateDevice requires DRIVER_TYPE_UNKNOWN when an explicit adapter is
-        // given, HARDWARE when it isn't.
+        // DRIVER_TYPE_UNKNOWN when an explicit adapter is given, HARDWARE when not.
         let driver_type = if adapter.is_some() {
             D3D_DRIVER_TYPE_UNKNOWN
         } else {
@@ -169,7 +180,7 @@ pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> 
         D3D11CreateDevice(
             adapter.as_ref(),
             driver_type,
-            HMODULE::default(), // no software rasterizer
+            HMODULE::default(),
             D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             Some(&[
                 D3D_FEATURE_LEVEL_12_1,
@@ -186,38 +197,15 @@ pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> 
         let device = device.ok_or_else(|| napi::Error::from_reason("D3D11CreateDevice: null device"))?;
         let context = context.ok_or_else(|| napi::Error::from_reason("D3D11CreateDevice: null context"))?;
 
-        // Per-format desc. windows 0.58: these struct flag fields are plain u32,
-        // the constants are newtypes -> `.0`. NTHANDLE|KEYEDMUTEX always (raw
-        // D3D11 requires the pair). NV12 can't be a render target; BGRA adds it.
+        // NTHANDLE|KEYEDMUTEX always — raw D3D11 requires the pair for a shareable
+        // NT-handle texture (proven by the earlier flag-combo probe). windows 0.58:
+        // struct flag fields are plain u32, constants are newtypes -> `.0`.
         let nt_km =
             (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
-        let want = format.to_lowercase();
-        // (dxgi_format, bindFlags, Y/row pitch in bytes, plane buffer)
-        let (dxgi_format, bind, row_pitch, pixels): (DXGI_FORMAT, u32, u32, Vec<u8>) =
-            match want.as_str() {
-                "bgra" => (
-                    DXGI_FORMAT_B8G8R8A8_UNORM,
-                    (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
-                    SIZE * 4,
-                    checkerboard(),
-                ),
-                "nv12" => (
-                    DXGI_FORMAT_NV12,
-                    D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    SIZE, // Y-plane row pitch; runtime derives the chroma plane
-                    nv12_pattern(),
-                ),
-                other => {
-                    return Err(napi::Error::from_reason(format!(
-                        "unsupported format '{other}' (use bgra|nv12)"
-                    )))
-                }
-            };
-
         // Shared textures reject initial data (E_INVALIDARG); upload after create.
         let desc = D3D11_TEXTURE2D_DESC {
-            Width: SIZE,
-            Height: SIZE,
+            Width: width,
+            Height: height,
             MipLevels: 1,
             ArraySize: 1,
             Format: dxgi_format,
@@ -230,20 +218,17 @@ pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> 
         let mut tex: Option<ID3D11Texture2D> = None;
         device
             .CreateTexture2D(&desc, None, Some(&mut tex))
-            .map_err(|e| win_err(&format!("CreateTexture2D({want})"), e))?;
+            .map_err(|e| win_err(&format!("CreateTexture2D({pixel_format} {width}x{height})"), e))?;
         let texture = tex.ok_or_else(|| napi::Error::from_reason("CreateTexture2D: null texture"))?;
-        eprintln!("[poc-native] created {want} texture (keyed mutex)");
 
-        // Upload (bracketed by the keyed mutex), then Flush so the GPU completes
-        // the write before the texture is shared cross-process.
-        let keyed_mutex: IDXGIKeyedMutex = texture.cast().map_err(|e| win_err("cast IDXGIKeyedMutex", e))?;
+        // Upload bracketed by the keyed mutex, then Flush before sharing.
+        let keyed_mutex: IDXGIKeyedMutex =
+            texture.cast().map_err(|e| win_err("cast IDXGIKeyedMutex", e))?;
         keyed_mutex.AcquireSync(0, INFINITE).map_err(|e| win_err("AcquireSync", e))?;
         context.UpdateSubresource(&texture, 0, None, pixels.as_ptr() as *const _, row_pitch, 0);
         context.Flush();
         keyed_mutex.ReleaseSync(0).map_err(|e| win_err("ReleaseSync", e))?;
 
-        // CreateSharedHandle requires SHARED_NTHANDLE; produces an NT HANDLE that
-        // Electron duplicates into its own process on import.
         let resource: IDXGIResource1 = texture.cast().map_err(|e| win_err("cast IDXGIResource1", e))?;
         let handle = resource
             .CreateSharedHandle(None, DXGI_SHARED_RESOURCE_RW, PCWSTR::null())
@@ -252,8 +237,7 @@ pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let handle_value = handle.0 as isize as i64;
         eprintln!(
-            "[poc-native] created texture id={id} on '{adapter_name}', NT handle={handle_value} (0x{:x})",
-            handle_value
+            "[poc-native] shared {pixel_format} texture id={id} {width}x{height} on '{adapter_name}', NT handle={handle_value}"
         );
 
         REGISTRY
@@ -265,13 +249,61 @@ pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> 
         Ok(PocSharedTexture {
             id,
             handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
-            width: SIZE,
-            height: SIZE,
+            width,
+            height,
             adapter: adapter_name,
             handle_value: handle_value.to_string(),
-            pixel_format: want,
+            pixel_format: pixel_format.to_string(),
         })
     }
+}
+
+#[napi]
+pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> {
+    let want = format.to_lowercase();
+    // (dxgi_format, bindFlags, Y/row pitch, plane buffer). NV12 can't be a render
+    // target; BGRA needs RENDER_TARGET to be shareable.
+    let (dxgi_format, bind, row_pitch, pixels): (DXGI_FORMAT, u32, u32, Vec<u8>) =
+        match want.as_str() {
+            "bgra" => (
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+                SIZE * 4,
+                checkerboard(),
+            ),
+            "nv12" => (
+                DXGI_FORMAT_NV12,
+                D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                SIZE,
+                nv12_pattern(),
+            ),
+            other => {
+                return Err(napi::Error::from_reason(format!(
+                    "unsupported format '{other}' (use bgra|nv12)"
+                )))
+            }
+        };
+    make_shared_texture(SIZE, SIZE, dxgi_format, bind, row_pitch, &pixels, &want)
+}
+
+/// Step 1b-i: ffmpeg-decode the first frame of `path` to NV12 (hardware decode
+/// when available, then GPU→CPU transfer), then upload it into a shared NV12
+/// texture. Proves the ffmpeg→shared-texture→renderer pipeline; 1b-ii will
+/// replace the CPU bounce with a GPU `CopySubresourceRegion`.
+#[napi]
+pub fn poc_create_texture_from_video(path: String) -> Result<PocSharedTexture> {
+    let (w, h, nv12) = decoder::decode_first_frame_nv12(&path)
+        .map_err(|e| napi::Error::from_reason(format!("decode '{path}' failed: {e}")))?;
+    eprintln!("[poc-native] decoded {w}x{h}, {} NV12 bytes", nv12.len());
+    make_shared_texture(
+        w,
+        h,
+        DXGI_FORMAT_NV12,
+        D3D11_BIND_SHADER_RESOURCE.0 as u32,
+        w,
+        &nv12,
+        "nv12",
+    )
 }
 
 #[napi]
