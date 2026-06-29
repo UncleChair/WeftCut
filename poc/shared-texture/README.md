@@ -1,5 +1,8 @@
 # POC: import a native (ffmpeg-style) GPU texture into the renderer via Electron `sharedTexture`
 
+> Full investigation writeup — motivation, architecture, every finding, and the
+> verdict — is in **[FINDINGS.md](./FINDINGS.md)**. This README is the build/run guide.
+
 ## The question
 
 Can `sharedTexture.importSharedTexture()` accept an NT handle for a D3D11 texture
