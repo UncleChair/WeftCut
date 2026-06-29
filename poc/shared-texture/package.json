@@ -1,0 +1,6 @@
+{
+  "name": "poc-shared-texture-app",
+  "version": "0.0.0",
+  "private": true,
+  "main": "main.js"
+}
