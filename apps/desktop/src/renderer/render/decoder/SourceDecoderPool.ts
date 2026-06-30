@@ -158,6 +158,7 @@ export class SourceMedia {
   private readonly sourceColor: VideoColorSpaceInit | undefined;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
+  private startPtsUs = 0;
   /// Cached in-flight `ensureReady` promise so concurrent handles share
   /// one open + getDecoderConfig. Cleared on dispose so a re-acquire
   /// after dispose re-opens rather than re-awaiting a stale resolved
@@ -176,6 +177,14 @@ export class SourceMedia {
       throw new Error(`SourceMedia ${this.mediaId}: packetSink before ready`);
     }
     return this.opened.packetSink;
+  }
+
+  /// Container PTS that represents source-time 0 for this media. Preview stores
+  /// decoded frames in normalized source time so clip `src_in_us=0` means "the
+  /// visible start of the source", even for edit-list / trimmed files whose
+  /// first packet starts at a positive PTS.
+  get sourceStartPtsUs(): number {
+    return this.startPtsUs;
   }
 
   constructor(
@@ -202,7 +211,9 @@ export class SourceMedia {
         opened.dispose();
         throw new Error(`SourceMedia ${this.mediaId}: no decoder config`);
       }
+      const firstPacket = await opened.packetSink.getFirstPacket();
       this.opened = opened;
+      this.startPtsUs = firstPacket ? Math.round(firstPacket.timestamp * 1e6) : 0;
       // Untagged sources get a resolution-keyed default matrix so preview decode
       // matches the rest of the toolchain (see colorSpaceDefault) — and stays
       // consistent with the export pool, which applies the same default.
@@ -214,6 +225,7 @@ export class SourceMedia {
       console.log(
         `[weftcut/pixi] source ${this.mediaId} ready: codec=${config.codec} ` +
           `${config.codedWidth ?? "?"}x${config.codedHeight ?? "?"} ` +
+          `startPts=${this.startPtsUs}us ` +
           `desc=${config.description ? `${(config.description as { byteLength: number }).byteLength}B` : "none"}`,
       );
       return this.config;
@@ -227,6 +239,7 @@ export class SourceMedia {
     this.opened?.dispose(); // disposes the Input + aborts in-flight Range reads
     this.opened = null;
     this.config = null;
+    this.startPtsUs = 0;
     this.readyP = null;
   }
 }
@@ -345,7 +358,7 @@ export class SourceHandle {
         // optimizes `createImageBitmap(VideoFrame)` to keep pixels on
         // the GPU side; we pay a per-frame conversion but stop
         // holding the decoder's buffers across many ticks.
-        const ptsUs = frame.timestamp;
+        const ptsUs = frame.timestamp - this.media.sourceStartPtsUs;
         const durationUs = frame.duration ?? 0;
         this.conversionsInFlight += 1;
         if (this.conversionsInFlight > this.peakConversionsInWindow) {
@@ -475,6 +488,7 @@ export class SourceHandle {
       },
       packetSink: handle.media.packetSink,
       ring: handle.ring,
+      sourceStartPtsUs: handle.media.sourceStartPtsUs,
       log: (msg: string) => {
         // eslint-disable-next-line no-console
         console.warn(`[weftcut/pixi] pump ${handle.mediaId}: ${msg}`);

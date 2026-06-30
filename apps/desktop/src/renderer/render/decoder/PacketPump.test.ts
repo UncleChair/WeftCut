@@ -106,11 +106,18 @@ function makeFakeDecoder(): PumpDecoder & { decoded: PumpPacket[]; resets: numbe
 /// resolves immediately to the single key at t=0.
 class GatedSink implements PumpPacketSink {
   getKeyCalls: number[] = [];
+  getFirstCalls = 0;
   private pending: Array<(p: PumpPacket | null) => void> = [];
-  private key = makePacket(0);
+
+  constructor(private key = makePacket(0)) {}
 
   async getKeyPacket(tsSeconds: number): Promise<PumpPacket | null> {
     this.getKeyCalls.push(tsSeconds);
+    return this.key;
+  }
+
+  async getFirstPacket(): Promise<PumpPacket | null> {
+    this.getFirstCalls += 1;
     return this.key;
   }
 
@@ -183,6 +190,60 @@ describe("PacketPump", () => {
     expect(dec.resets).toBe(0); // cold start ≠ reset
     expect(ring.flushes).toBe(0);
     expect(sink.getKeyCalls).toEqual([0]);
+  });
+
+  it("maps normalized source time to container PTS for non-zero media starts", async () => {
+    const sourceStartPtsUs = 299_674;
+    const sink = new GatedSink(makePacket(sourceStartPtsUs / 1e6));
+    const ring = new FakeRing();
+    const dec = makeFakeDecoder();
+    const pump = new PacketPump({
+      decoder: dec,
+      packetSink: sink,
+      ring,
+      sourceStartPtsUs,
+    });
+
+    pump.requestFrameAt(0);
+    await tick();
+
+    expect(sink.getKeyCalls).toEqual([sourceStartPtsUs / 1e6]);
+    expect(dec.decoded.map((p) => p.timestamp)).toEqual([sourceStartPtsUs / 1e6]);
+  });
+
+  it("falls back to the first packet when the normalized start precedes the first key", async () => {
+    const sourceStartPtsUs = 299_674;
+    const key = makePacket(sourceStartPtsUs / 1e6);
+    const sink: PumpPacketSink & { getKeyCalls: number[]; getFirstCalls: number } = {
+      getKeyCalls: [],
+      getFirstCalls: 0,
+      async getKeyPacket(tsSeconds: number): Promise<PumpPacket | null> {
+        this.getKeyCalls.push(tsSeconds);
+        return null;
+      },
+      async getFirstPacket(): Promise<PumpPacket | null> {
+        this.getFirstCalls += 1;
+        return key;
+      },
+      getNextPacket(): Promise<PumpPacket | null> {
+        return new Promise(() => undefined);
+      },
+    };
+    const ring = new FakeRing();
+    const dec = makeFakeDecoder();
+    const pump = new PacketPump({
+      decoder: dec,
+      packetSink: sink,
+      ring,
+      sourceStartPtsUs,
+    });
+
+    pump.requestFrameAt(0);
+    await tick();
+
+    expect(sink.getKeyCalls).toEqual([sourceStartPtsUs / 1e6]);
+    expect(sink.getFirstCalls).toBe(1);
+    expect(dec.decoded.map((p) => p.timestamp)).toEqual([sourceStartPtsUs / 1e6]);
   });
 
   it("far-forward seek resets exactly once and re-seeks the key", async () => {

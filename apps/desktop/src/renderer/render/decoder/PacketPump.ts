@@ -100,6 +100,7 @@ export interface PumpPacket {
 /// error surfaces at the wiring site, wrap the sink in a thin adapter there.
 export interface PumpPacketSink {
   getKeyPacket(tsSeconds: number): Promise<PumpPacket | null>;
+  getFirstPacket(): Promise<PumpPacket | null>;
   getNextPacket(packet: PumpPacket): Promise<PumpPacket | null>;
 }
 
@@ -115,6 +116,11 @@ export interface PumpDeps {
   decoder: PumpDecoder;
   packetSink: PumpPacketSink;
   ring: PumpRing;
+  /// Container PTS (µs) that corresponds to source-time 0. Preview callers
+  /// speak normalized source time (`src_in_us` / layer-local), while mediabunny
+  /// packets and WebCodecs frames carry container PTS. Keeping the offset here
+  /// hides edit-list / trimmed-source starts from the Compositor and FrameRing.
+  sourceStartPtsUs?: number;
   /// Optional diagnostic sink (EOS-flush failures, etc.).
   log?: (msg: string) => void;
 }
@@ -202,10 +208,19 @@ export class PacketPump {
         if (needsSeek) {
           const isReset = this.cursor !== null; // cold start is not a reset
           const myGen = this.generation;
-          const key = await this.deps.packetSink.getKeyPacket(target / 1e6);
+          let key = await this.deps.packetSink.getKeyPacket(
+            this.toContainerPtsUs(target) / 1e6,
+          );
           // A rebuild (invalidateCursor) or dispose during the await bumps
           // generation — bail rather than seed a stale decoder.
           if (this.generation !== myGen || this._disposed) return;
+          if (!key) {
+            // If source-time 0 maps before the container's first key packet
+            // (trimmed / edit-list sources), start from the opening packet
+            // instead of wedging. Export has the same fallback.
+            key = await this.deps.packetSink.getFirstPacket();
+            if (this.generation !== myGen || this._disposed) return;
+          }
           if (!key) break; // no key packet (empty/bad source) — give up this pass
           if (isReset && this.deps.decoder.state === "configured") {
             this.deps.decoder.reset();
@@ -215,7 +230,7 @@ export class PacketPump {
           if (this.deps.decoder.state === "configured") {
             this.deps.decoder.decode(key.toEncodedVideoChunk());
             this.cursor = key;
-            this.lastDecodedPtsUs = Math.round(key.timestamp * 1e6);
+            this.lastDecodedPtsUs = this.toSourcePtsUs(key);
             this.flushedThisRun = false;
           }
         }
@@ -250,7 +265,7 @@ export class PacketPump {
           }
           this.deps.decoder.decode(next.toEncodedVideoChunk());
           this.cursor = next;
-          this.lastDecodedPtsUs = Math.round(next.timestamp * 1e6);
+          this.lastDecodedPtsUs = this.toSourcePtsUs(next);
         }
       } while (this.wakeRequested && !this._disposed);
     } finally {
@@ -272,5 +287,13 @@ export class PacketPump {
     void this.deps.decoder.flush().then(undefined, (err: unknown) => {
       this.deps.log?.(`end-of-stream flush failed: ${String(err)}`);
     });
+  }
+
+  private toContainerPtsUs(sourceUs: number): number {
+    return sourceUs + (this.deps.sourceStartPtsUs ?? 0);
+  }
+
+  private toSourcePtsUs(packet: PumpPacket): number {
+    return Math.round(packet.timestamp * 1e6) - (this.deps.sourceStartPtsUs ?? 0);
   }
 }
