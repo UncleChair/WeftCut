@@ -308,6 +308,34 @@ It self-terminates and prints `RESULT 6 — NATIVE NV12→BGRA CONVERT: VERDICT`
 bgraViaWebGPU matches refDraw within ±8/channel AND is clearly not the broken
 ~[58,217,38]).
 
+**Result 7 — integration re-baseline probe** (createImageBitmap path). Validates the
+two unknowns the [INTEGRATION-DESIGN.md](./INTEGRATION-DESIGN.md) re-baseline rests on.
+
+```sh
+# Claim A — createImageBitmap is color-correct (extends POC_COLOR with a 4th path).
+# Look at the `createImageBitmap:` line + `RESULT 7 (Claim A ...)` verdict.
+POC_COLOR=1 POC_VIDEO=color601.mp4 node_modules/.bin/electron poc/shared-texture
+POC_COLOR=1 POC_VIDEO=color709.mp4 node_modules/.bin/electron poc/shared-texture  # 709: read the bt709 row
+
+# Claim B — persistent import + in-place overwrite + ASYNC createImageBitmap is
+# coherent under consume-ack (no stale/torn reads). Uses the ramp clip.
+POC_CIB_PERSIST=1 POC_POOL=2 POC_VIDEO=stream_test.mp4 node_modules/.bin/electron poc/shared-texture
+POC_CIB_PERSIST=1 POC_POOL=1 POC_VIDEO=stream_test.mp4 node_modules/.bin/electron poc/shared-texture  # single-texture, decisive
+
+# Claim A on P010 10-bit — make a Main10 clip; the zero-copy path auto-detects the
+# P010 surface and shares 'p010le'. (Result: import yields a null/black frame on
+# Electron 42 — see INTEGRATION-DESIGN.md §5a.)
+ffmpeg -y -f lavfi -i "color=c=0x14DC28:s=256x256:r=30:d=0.3" -vf "format=yuv420p10le" \
+  -color_primaries smpte170m -color_trc smpte170m -colorspace smpte170m -color_range tv \
+  -c:v libx265 -preset ultrafast -x265-params "keyint=8:bframes=0" -pix_fmt yuv420p10le \
+  -frames:v 8 color601_10bit.mp4
+POC_COLOR=1 POC_VIDEO=color601_10bit.mp4 node_modules/.bin/electron poc/shared-texture
+```
+
+Outcomes (2026-06-29): Claim A NV12 **PASS**, Claim B **PASS** (pool 1 & 2), Claim A
+P010 **BLOCKED** (null/black import). Details + the 10-bit decision in
+[INTEGRATION-DESIGN.md](./INTEGRATION-DESIGN.md) §5a.
+
 ## Success criteria
 
 - The window shows a 256×256 orange/dark **checkerboard**.

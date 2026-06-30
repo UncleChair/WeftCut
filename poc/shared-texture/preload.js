@@ -303,6 +303,26 @@ function colorPath2dDrawImage(frame, w, h) {
   return avgRgbPatch(rgba, w, h)
 }
 
+// Path 4 (Result 7): createImageBitmap(videoFrame) — the integration's CHOSEN
+// non-zero-copy path. Snapshot the VideoFrame into an ImageBitmap, then draw +
+// read back through the same color-managed 2D path as the reference. Result 5
+// only ASSERTED (by analogy to drawImage) that this honors the colorSpace tag;
+// this measures it. If it matches the drawImage reference (~[20,220,40]) and not
+// the broken WebGPU value (~[58,217,38]), the re-baselined design's color claim
+// holds for raw NV12.
+async function colorPathCreateImageBitmap(frame, w, h) {
+  const bmp = await createImageBitmap(frame)
+  const cv = document.getElementById('cv')
+  cv.width = w
+  cv.height = h
+  const ctx = cv.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true })
+  ctx.clearRect(0, 0, w, h)
+  ctx.drawImage(bmp, 0, 0)
+  const rgba = ctx.getImageData(0, 0, w, h, { colorSpace: 'srgb' }).data
+  bmp.close()
+  return avgRgbPatch(rgba, w, h)
+}
+
 let gpuDevice = null
 async function getGpuDevice() {
   if (gpuDevice) return gpuDevice
@@ -522,6 +542,15 @@ async function colorReceiver(data) {
       result.importExternalError = String((e && e.message) || e)
     }
 
+    // Path 4 (Result 7) — createImageBitmap, the re-baselined design's chosen path.
+    try {
+      const f4 = imported.getVideoFrame()
+      result.createImageBitmap = await colorPathCreateImageBitmap(f4, w, h)
+      f4.close()
+    } catch (e) {
+      result.createImageBitmapError = String((e && e.message) || e)
+    }
+
     // Control (once, on the bt601 pass): prove the WebGPU readback path is clean
     // by round-tripping a KNOWN sRGB color through the same copy+render+readback.
     if (tag === 'bt601') {
@@ -625,6 +654,123 @@ ipcRenderer.on('poc-bgra-done', () => {
   ipcRenderer.send('poc-bgra-summary-request')
 })
 
+// ---------------------------------------------------------------------------
+// Result 7 — Claim B: createImageBitmap coherence under consume-ack
+// (POC_CIB_PERSIST=1, renderer side).
+//
+// Hold each slot's persistent import (imported ONCE, never released). On each
+// 'poc-cib-frame-ready', getVideoFrame() on that slot's import, snapshot it with
+// the ASYNC createImageBitmap (the path the integration ships), sample the
+// center-patch luma, then ACK so the producer may overwrite the slot. The ramp
+// clip's luma is a known function of frameIndex, so we check each snapshot caught
+// the CORRECT frame (measured ~ expected) and that no per-slot read stepped back
+// (tearing). A fresh OffscreenCanvas per call keeps concurrent (pool>=2) snapshots
+// from racing on one shared canvas.
+// ---------------------------------------------------------------------------
+const cibImports = [] // slot -> SharedTextureImported (persistent, kept alive)
+const cibSlotQueue = []
+const cibPulls = [] // [{ frameIndex, slot, luma, expected, err }]
+let cibErrors = 0
+
+ipcRenderer.on('poc-cib-slot', (_e, slot) => cibSlotQueue.push(slot))
+
+function cibReceiver(data) {
+  const imported = data.importedSharedTexture
+  const slot = cibSlotQueue.length ? cibSlotQueue.shift() : cibImports.length
+  cibImports[slot] = imported // KEEP alive — persistent import, never released
+  const el = document.getElementById('log')
+  if (el) el.textContent = `cib: imported slot ${slot} (${cibImports.filter(Boolean).length} held)`
+}
+
+// The verification clip ramps luma as lum = 20 + 215*N/59 (N = frame index,
+// neutral chroma), and the bt709-full import tag reads Y straight through (as the
+// Result-4 persist run observed, 20→235). So the expected sampled luma per frame:
+function cibExpectedLuma(frameIndex) {
+  return 20 + (215 * frameIndex) / 59
+}
+
+async function cibSampleLumaAsync(frame) {
+  const w = frame.displayWidth || frame.codedWidth
+  const h = frame.displayHeight || frame.codedHeight
+  // ASYNC snapshot — the path under test. A torn/stale read would show here.
+  const bmp = await createImageBitmap(frame)
+  const oc = new OffscreenCanvas(w, h)
+  const ctx = oc.getContext('2d', { willReadFrequently: true })
+  ctx.drawImage(bmp, 0, 0)
+  bmp.close()
+  const x0 = w >> 2
+  const y0 = h >> 2
+  const pw = Math.max(1, w >> 1)
+  const ph = Math.max(1, h >> 1)
+  const px = ctx.getImageData(x0, y0, pw, ph).data
+  let sum = 0
+  const n = px.length / 4
+  for (let i = 0; i < px.length; i += 4) {
+    sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]
+  }
+  return Math.round(sum / n)
+}
+
+ipcRenderer.on('poc-cib-frame-ready', async (_e, { slot, frameIndex }) => {
+  try {
+    const imported = cibImports[slot]
+    if (!imported) throw new Error(`no import for slot ${slot}`)
+    const frame = imported.getVideoFrame() // live view of the slot's current content
+    const luma = await cibSampleLumaAsync(frame)
+    frame.close() // close the per-pull VideoFrame; the import stays alive
+    const expected = Math.round(cibExpectedLuma(frameIndex))
+    cibPulls.push({ frameIndex, slot, luma, expected, err: Math.abs(luma - expected) })
+    const el = document.getElementById('log')
+    if (el) el.textContent = `cib: frame ${frameIndex} slot ${slot} luma=${luma} (exp ${expected})`
+  } catch (e) {
+    cibErrors++
+    console.error('[poc] cib frame-ready threw:', e)
+  } finally {
+    // Consume-ack: only NOW may the producer overwrite this slot.
+    ipcRenderer.send('poc-cib-ack', { slot })
+  }
+})
+
+ipcRenderer.on('poc-cib-done', (_e, info) => {
+  const errs = cibPulls.map((p) => p.err)
+  const maxErr = errs.length ? Math.max(...errs) : null
+  const meanErr = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null
+  // Per-slot monotonicity: frames assigned to a slot have strictly increasing
+  // frameIndex, so a clean read of that slot's persistent import ramps upward; a
+  // backward luma step (beyond rounding) = a torn or stale read of that texture.
+  let backwardSteps = 0
+  const bySlot = {}
+  for (const p of cibPulls) (bySlot[p.slot] ||= []).push(p)
+  for (const slot of Object.keys(bySlot)) {
+    const arr = bySlot[slot].slice().sort((a, b) => a.frameIndex - b.frameIndex)
+    for (let i = 1; i < arr.length; i++) {
+      if (arr[i].luma < arr[i - 1].luma - 1) backwardSteps++
+    }
+  }
+  const lumas = cibPulls.map((p) => p.luma)
+  const summary = {
+    framesRequested: info.written,
+    snapshotsTaken: cibPulls.length,
+    cibErrors,
+    importCount: info.importCount,
+    sendCount: info.sendCount,
+    poolSize: info.poolSize,
+    maxErrVsExpected: maxErr,
+    meanErrVsExpected: meanErr != null ? Math.round(meanErr * 10) / 10 : null,
+    backwardSteps,
+    minLuma: lumas.length ? Math.min(...lumas) : null,
+    maxLuma: lumas.length ? Math.max(...lumas) : null,
+    // ~14-point trajectory so the log shows the ramp + per-frame accuracy.
+    series: cibPulls
+      .filter((_p, i) => i % Math.max(1, Math.floor(cibPulls.length / 14)) === 0)
+      .map((p) => ({ f: p.frameIndex, s: p.slot, luma: p.luma, exp: p.expected })),
+  }
+  const el = document.getElementById('log')
+  if (el)
+    el.textContent = `cib done: ${cibPulls.length} snapshots, maxErr=${maxErr}, backwardSteps=${backwardSteps}`
+  ipcRenderer.send('poc-cib-summary', summary)
+})
+
 // Single-frame receiver (Results 1 & 2): one import, draw + verify, report.
 function singleReceiver(data) {
   const log = (m) => {
@@ -659,8 +805,10 @@ const STREAM_MODE = process.env.POC_STREAM === '1'
 const PERSIST_MODE = process.env.POC_PERSIST === '1'
 const COLOR_MODE = process.env.POC_COLOR === '1'
 const BGRA_MODE = process.env.POC_BGRA === '1'
+const CIB_PERSIST_MODE = process.env.POC_CIB_PERSIST === '1'
 sharedTexture.setSharedTextureReceiver(async (data) => {
-  if (BGRA_MODE) await bgraReceiver(data)
+  if (CIB_PERSIST_MODE) cibReceiver(data)
+  else if (BGRA_MODE) await bgraReceiver(data)
   else if (COLOR_MODE) await colorReceiver(data)
   else if (PERSIST_MODE) persistReceiver(data)
   else if (STREAM_MODE) streamReceiver(data)

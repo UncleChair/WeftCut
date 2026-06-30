@@ -36,7 +36,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC,
+    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1, IDXGIKeyedMutex, IDXGIResource1,
@@ -331,7 +331,21 @@ pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedT
         let src_tex = ID3D11Texture2D::from_raw_borrowed(&src_ptr)
             .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
 
-        // Shared NV12 destination on ffmpeg's device (so the copy is intra-device).
+        // Detect the decoded surface's DXGI format so the shared copy matches it:
+        // 8-bit decode -> NV12, 10-bit (HEVC/VP9/AV1 Main10) -> P010. The dest must
+        // be the SAME format (CopySubresourceRegion needs matching formats) and JS
+        // imports it with the matching pixelFormat ('nv12' | 'p010le').
+        let mut sdesc = D3D11_TEXTURE2D_DESC::default();
+        src_tex.GetDesc(&mut sdesc);
+        let src_format = sdesc.Format;
+        let pf = if src_format == DXGI_FORMAT_P010 { "p010le" } else { "nv12" };
+        eprintln!(
+            "[poc-native] zero-copy src surface format={:?} -> pixelFormat={pf}",
+            src_format
+        );
+
+        // Shared destination (same format as the source) on ffmpeg's device, so the
+        // copy is intra-device.
         let nt_km =
             (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
         let desc = D3D11_TEXTURE2D_DESC {
@@ -339,7 +353,7 @@ pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedT
             Height: f.height,
             MipLevels: 1,
             ArraySize: 1,
-            Format: DXGI_FORMAT_NV12,
+            Format: src_format,
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
@@ -382,7 +396,7 @@ pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedT
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let handle_value = handle.0 as isize as i64;
         eprintln!(
-            "[poc-native] zero-copy shared nv12 id={id} {}x{}, NT handle={handle_value}",
+            "[poc-native] zero-copy shared {pf} id={id} {}x{}, NT handle={handle_value}",
             f.width, f.height
         );
 
@@ -401,7 +415,7 @@ pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedT
             height: f.height,
             adapter: "ffmpeg-d3d11".to_string(),
             handle_value: handle_value.to_string(),
-            pixel_format: "nv12".to_string(),
+            pixel_format: pf.to_string(),
         })
     }
     // `f` (decoder/frame/hw_ctx) drops here, after the copy completed + flushed.

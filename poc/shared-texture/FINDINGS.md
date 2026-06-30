@@ -484,7 +484,121 @@ NV12. Concretely:
   ambiguity entirely and means the renderer treats the preview texture identically to
   any other RGB layer.
 
-## 7. Conclusion
+## 7. Related work — node-av (the export-side counterpart) + the color-tag table
+
+[node-av](https://github.com/seydx/node-av) (MIT) is an N-API **C++** FFmpeg binding with a
+`SharedTexture` class. It solves the **opposite direction** to this POC: Electron offscreen
+`useSharedTexture` → `paint` event → `SharedTexture.importTexture(textureInfo)` → `AVFrame`
+(`AV_PIX_FMT_D3D11` on Windows, VideoToolbox/IOSurface on macOS, `DRM_PRIME`/DMA-BUF on Linux) →
+**hardware encode**. So it is the **export/capture counterpart** of this POC (renderer → ffmpeg),
+**not** a substitute for our decode path (ffmpeg → renderer). What it gives us:
+
+1. **Confirms finding #6 — and that nothing cleaner exists.** node-av's `gpu_texture_win.cc` reads
+   the D3D11 device the canonical way:
+   ```c
+   #include <libavutil/hwcontext_d3d11va.h>
+   AVD3D11VADeviceContext* d3d11Ctx = (AVD3D11VADeviceContext*)deviceCtx->hwctx;
+   ID3D11Device* device = d3d11Ctx->device;
+   ```
+   This is exactly the field we mirror as a `repr(C)` struct because `ffmpeg-sys-next` omits the
+   `hwcontext_d3d11va.h` binding (#6). C++ can `#include` the real header; Rust can't, so the mirror
+   IS the correct Rust equivalent — there is no more-elegant API we missed. (node-av *imports* an
+   external handle via `ID3D11Device1::OpenSharedResource1`; we *export* via `CreateSharedHandle` —
+   mirror images of the same NT-handle sharing model.)
+2. **A COM-lifecycle landmine worth copying** *if* a v2 export path ever wraps an Electron handle as
+   an `AVFrame`: before re-importing into a reused frame, `av_buffer_unref(&frame->buf[0])` (else the
+   prior texture's COM ref leaks), and tie `ID3D11Texture2D::Release()` to an `av_buffer_create`
+   destructor for lifecycle.
+3. **The Electron↔FFmpeg color-tag table (below)** — directly closes the "correct color-range
+   tagging" remaining-work item in §8.
+
+### The `textureInfo.colorSpace` ↔ `AVCOL_*` correspondence
+
+node-av's `mapColorSpace()` is the complete, MIT-licensed lookup between Electron's color-space
+**strings** (what we read off `textureInfo.colorSpace`, and what we set on `importSharedTexture`)
+and FFmpeg's `AVCOL_*` enums (what the decoded stream is tagged with). Reproduced for our use:
+
+**Range** (`colorSpace.range`):
+
+| Electron | FFmpeg |
+|---|---|
+| `full` | `AVCOL_RANGE_JPEG` |
+| `limited` | `AVCOL_RANGE_MPEG` |
+
+**Primaries** (`colorSpace.primaries`):
+
+| Electron | FFmpeg |
+|---|---|
+| `bt709` | `AVCOL_PRI_BT709` |
+| `bt470m` | `AVCOL_PRI_BT470M` |
+| `bt470bg` | `AVCOL_PRI_BT470BG` |
+| `smpte170m` | `AVCOL_PRI_SMPTE170M` |
+| `smpte240m` | `AVCOL_PRI_SMPTE240M` |
+| `film` | `AVCOL_PRI_FILM` |
+| `bt2020` | `AVCOL_PRI_BT2020` |
+| `smptest428-1` | `AVCOL_PRI_SMPTE428` |
+| `smptest431-2` | `AVCOL_PRI_SMPTE431` |
+| `p3` | `AVCOL_PRI_SMPTE432` |
+| `ebu-3213-e` | `AVCOL_PRI_EBU3213` |
+
+**Transfer** (`colorSpace.transfer`):
+
+| Electron | FFmpeg |
+|---|---|
+| `bt709`, `bt709-apple` | `AVCOL_TRC_BT709` |
+| `gamma22` | `AVCOL_TRC_GAMMA22` |
+| `gamma28` | `AVCOL_TRC_GAMMA28` |
+| `smpte170m` | `AVCOL_TRC_SMPTE170M` |
+| `smpte240m` | `AVCOL_TRC_SMPTE240M` |
+| `linear` | `AVCOL_TRC_LINEAR` |
+| `log` | `AVCOL_TRC_LOG` |
+| `log-sqrt` | `AVCOL_TRC_LOG_SQRT` |
+| `iec61966-2-4` | `AVCOL_TRC_IEC61966_2_4` |
+| `bt1361-ecg` | `AVCOL_TRC_BT1361_ECG` |
+| `srgb` | `AVCOL_TRC_IEC61966_2_1` |
+| `bt2020-10` | `AVCOL_TRC_BT2020_10` |
+| `bt2020-12` | `AVCOL_TRC_BT2020_12` |
+| `pq` | `AVCOL_TRC_SMPTE2084` |
+| `smptest428-1` | `AVCOL_TRC_SMPTE428` |
+| `hlg` | `AVCOL_TRC_ARIB_STD_B67` |
+
+**Matrix** (`colorSpace.matrix`):
+
+| Electron | FFmpeg |
+|---|---|
+| `rgb`, `gbr` | `AVCOL_SPC_RGB` |
+| `bt709` | `AVCOL_SPC_BT709` |
+| `fcc` | `AVCOL_SPC_FCC` |
+| `bt470bg` | `AVCOL_SPC_BT470BG` |
+| `smpte170m` | `AVCOL_SPC_SMPTE170M` |
+| `smpte240m` | `AVCOL_SPC_SMPTE240M` |
+| `ycocg` | `AVCOL_SPC_YCGCO` |
+| `bt2020-ncl` | `AVCOL_SPC_BT2020_NCL` |
+
+**Default** (source carries no tags, or for our BGRA-convert output): `full` range, `bt709`
+primaries, `srgb` transfer, `rgb` matrix — i.e. "treat as sRGB BGRA". This is exactly what Result 6
+already tags its converted BGRA texture (`{primaries:'bt709', transfer:'srgb', matrix:'rgb',
+range:'full'}`).
+
+**Direction matters:**
+- node-av uses the table **Electron-string → `AVCOL_*`** (it receives Electron's tag and stamps it on
+  the AVFrame for the encoder).
+- **This POC needs the inverse:** read the decoded stream's `AVCOL_*` tags (ffmpeg already has them)
+  → emit the Electron `colorSpace` strings to pass to
+  `importSharedTexture({ textureInfo: { colorSpace: { range, primaries, transfer, matrix } } })`.
+  A few enums map many-to-one (matrix `rgb`/`gbr`→`SPC_RGB`, transfer `bt709`/`bt709-apple`→`TRC_BT709`),
+  so the reverse lookup picks the canonical string.
+- **Cross-validation:** every string this POC used empirically in Results 5–6 (`smpte170m`, `bt709`,
+  `srgb`, `rgb`, `limited`, `full`) appears verbatim in node-av's table — independent confirmation our
+  tag vocabulary is correct.
+
+node-av is also a credible **adoption candidate for the deferred v2 export-side zero-copy** (encode
+the offscreen-rendered timeline/motif on GPU — see INTEGRATION-DESIGN §6) and a ready cross-platform
+reference (its `gpu_texture_{win,darwin,linux}` give the VideoToolbox/VAAPI analogues of our D3D11
+work). It is **not** a fit for the decode/preview path here: it implements the wrong direction and
+would add a second native FFI toolchain (C++ node-gyp) alongside our Rust napi addon.
+
+## 8. Conclusion
 
 **The full path is proven end-to-end, including color.** ffmpeg-decoded frames reach
 the renderer zero-copy and stream continuously (Results 1–4), and the renderer
@@ -497,11 +611,11 @@ BT.709 sources. Integration is back to deterministic engineering: share **BGRA**
 raw NV12. Remaining work:
 
 - Pace the pump to the playback clock / PTS instead of as-fast-as-possible; wire into the transport (`playbackStore`).
-- Correct color-range tagging (libx264 is limited-range; the streaming POC tagged full, hence 235/16 instead of 255/0), HDR (P010), odd-size/alignment.
+- Correct color-range tagging (libx264 is limited-range; the streaming POC tagged full, hence 235/16 instead of 255/0), HDR (P010), odd-size/alignment. The full Electron-string↔`AVCOL_*` correspondence for setting the import tag from the stream's color tags is in §7 (from node-av).
 - Lifecycle: decode errors, seek, pause, pool teardown on window close.
 - This currently lives outside `@weftcut/core`; integrating means weighing it against the existing WebCodecs preview path — worth a separate design pass.
 
-## 8. Reproduce
+## 9. Reproduce
 
 See [README.md](./README.md) for build/run commands and the toolchain env vars
 (`FFMPEG_DIR`, `LIBCLANG_PATH`; ffmpeg bin on `PATH` at runtime — see
@@ -511,7 +625,8 @@ single video (`POC_VIDEO=…`, `POC_ZEROCOPY=1`), streaming (`POC_STREAM=1`,
 (`POC_COLOR=1`), and native NV12→BGRA convert (`POC_BGRA=1`,
 `POC_BGRA_MATRIX=601|709`).
 
-## 9. References
+## 10. References
 
 - Electron offscreen rendering / shared texture: `electronjs.org/docs/latest/api/shared-texture`, `shell/common/api/shared_texture/README.md`.
 - External-texture import request (predates the shipped API): electron/electron#46779.
+- node-av (export-side counterpart; source of the §7 color table): `github.com/seydx/node-av`, MIT — `src/api/utilities/electron-shared-texture.ts` (`mapColorSpace`), `src/bindings/gpu_texture_win.cc` (D3D11 device-context access).

@@ -295,7 +295,8 @@ async function colorTest(win) {
     const textureInfo = {
       codedSize: { width: tex.width, height: tex.height },
       visibleRect: { x: 0, y: 0, width: tex.width, height: tex.height },
-      pixelFormat: 'nv12',
+      // Adapt to what native shared: 'nv12' for 8-bit, 'p010le' for 10-bit sources.
+      pixelFormat: tex.pixelFormat,
       colorSpace: v.colorSpace,
       timestamp: 0,
       handle: { ntHandle: tex.handle },
@@ -404,6 +405,114 @@ async function bgraTest(win) {
   win.webContents.send('poc-bgra-done')
 }
 
+// ---------------------------------------------------------------------------
+// Result 7 — Claim B: createImageBitmap coherence under consume-ack
+// (POC_CIB_PERSIST=1).
+//
+// The re-baselined design (INTEGRATION-DESIGN.md §3.3, choice 乙) keeps the
+// Result-4 persistent import (import+send each slot ONCE) but, instead of feeding
+// the VideoFrame straight to WebGPU, SNAPSHOTS it with the ASYNC createImageBitmap
+// before the slot may be reused. Result 4 only proved persistent-import coherence
+// with a SYNCHRONOUS readback; the async snapshot is the new gap. The chosen
+// guard is an explicit consume-ack: the producer overwrites a slot only after the
+// renderer has acked that its createImageBitmap finished reading the prior write.
+//
+// This mode validates that discipline: per slot, write -> frameReady -> renderer
+// getVideoFrame()+await createImageBitmap()+sample -> ack -> (slot reusable). With
+// pool>=2 it pipelines (write slot B while the renderer snapshots slot A), which is
+// the real v1 model. The ramp clip lets the renderer check each snapshot caught the
+// CORRECT frame (measured luma == expected ramp luma for that frameIndex) and that
+// no per-slot read stepped backward (tearing).
+// ---------------------------------------------------------------------------
+const cibImportsMain = [] // keep main-side persistent imports alive for the run
+
+async function cibPersistTest(win) {
+  const video = process.env.POC_VIDEO
+  if (!video) throw new Error('POC_CIB_PERSIST=1 requires POC_VIDEO=<path>')
+  const poolSize = Number(process.env.POC_POOL || 2)
+  const maxFrames = Number(process.env.POC_FRAMES || 60)
+
+  const info = native.pocOpenVideoStream(video, poolSize)
+  console.log(
+    `[poc] cib-persist opened ${info.width}x${info.height}, pool=${info.poolSize}, src=${video}, maxFrames=${maxFrames}`
+  )
+
+  // ---- ONE-TIME persistent import + send per slot (Result 4) ----
+  let importCount = 0
+  let sendCount = 0
+  for (let slot = 0; slot < info.poolSize; slot++) {
+    const h = native.pocPersistSlotHandle(slot)
+    const textureInfo = {
+      codedSize: { width: h.width, height: h.height },
+      visibleRect: { x: 0, y: 0, width: h.width, height: h.height },
+      pixelFormat: 'nv12',
+      colorSpace: STREAM_COLOR_SPACE,
+      timestamp: 0,
+      handle: { ntHandle: h.handle },
+    }
+    const imported = sharedTexture.importSharedTexture({
+      textureInfo,
+      allReferencesReleased: () => {},
+    })
+    importCount++
+    cibImportsMain[slot] = imported // keep alive — persistent import
+    win.webContents.send('poc-cib-slot', slot)
+    await sharedTexture.sendSharedTexture({
+      frame: win.webContents.mainFrame,
+      importedSharedTexture: imported,
+    })
+    sendCount++
+  }
+  console.log(`[poc] cib-persist setup: import=${importCount}, send=${sendCount} (pool=${info.poolSize})`)
+
+  win.webContents.send('poc-cib-go', { poolSize: info.poolSize })
+  await sleep(150)
+
+  // ---- consume-ack producer: only overwrite a slot whose prior frame the
+  // renderer has acked (createImageBitmap done). With pool>=2 this pipelines. ----
+  const inFlight = new Set()
+  let written = 0
+  let eof = false
+  const t0 = Date.now()
+
+  return new Promise((resolve) => {
+    const finalize = () => {
+      const dt = (Date.now() - t0) / 1000
+      console.log(`[poc] cib-persist producer done: wrote ${written} frames in ${dt.toFixed(2)}s`)
+      ipcMain.removeListener('poc-cib-ack', onAck)
+      native.pocCloseVideoStream()
+      win.webContents.send('poc-cib-done', {
+        written,
+        poolSize: info.poolSize,
+        importCount,
+        sendCount,
+      })
+      resolve()
+    }
+    const tryProduce = () => {
+      while (!eof && written < maxFrames && inFlight.size < info.poolSize) {
+        let slot = -1
+        for (let s = 0; s < info.poolSize; s++) {
+          if (!inFlight.has(s)) { slot = s; break }
+        }
+        if (slot < 0) break
+        const res = native.pocPersistWriteNext(slot)
+        if (res.status === 'eof') { eof = true; break }
+        inFlight.add(slot)
+        written++
+        win.webContents.send('poc-cib-frame-ready', { slot, frameIndex: res.frameIndex })
+      }
+      if ((eof || written >= maxFrames) && inFlight.size === 0) finalize()
+    }
+    const onAck = (_e, { slot }) => {
+      inFlight.delete(slot)
+      tryProduce()
+    }
+    ipcMain.on('poc-cib-ack', onAck)
+    tryProduce()
+  })
+}
+
 async function pushTexture(win) {
   const video = process.env.POC_VIDEO
   const zeroCopy = process.env.POC_ZEROCOPY === '1'
@@ -459,10 +568,13 @@ app.whenReady().then(() => {
   const persistent = process.env.POC_PERSIST === '1'
   const colorMode = process.env.POC_COLOR === '1'
   const bgraMode = process.env.POC_BGRA === '1'
+  const cibPersistMode = process.env.POC_CIB_PERSIST === '1'
 
   ipcMain.on('renderer-ready', async () => {
     try {
-      if (bgraMode) {
+      if (cibPersistMode) {
+        await cibPersistTest(win)
+      } else if (bgraMode) {
         await bgraTest(win)
       } else if (colorMode) {
         await colorTest(win)
@@ -528,6 +640,30 @@ app.whenReady().then(() => {
     setTimeout(() => app.quit(), 1500)
   })
 
+  // Result 7 — Claim B: createImageBitmap coherence under consume-ack. The
+  // renderer reports, after the producer's consume-ack-gated run, whether every
+  // async createImageBitmap snapshot caught the CORRECT frame (measured luma ==
+  // expected ramp luma) with no per-slot backward step (tearing).
+  ipcMain.on('poc-cib-summary', (_e, s) => {
+    console.log('[poc] ===== RESULT 7 (Claim B) — createImageBitmap COHERENCE: SUMMARY =====')
+    console.log(JSON.stringify(s, null, 2))
+    const oneTime = s.importCount === s.poolSize && s.sendCount === s.poolSize
+    const allSnapped = s.snapshotsTaken >= s.framesRequested && s.framesRequested >= 30
+    const correctFrames = s.maxErrVsExpected != null && s.maxErrVsExpected <= 8
+    const noTearing = s.backwardSteps === 0
+    const noErrors = s.cibErrors === 0
+    const pass = oneTime && allSnapped && correctFrames && noTearing && noErrors
+    console.log(`  one-time import/send: ${oneTime} (import=${s.importCount}, send=${s.sendCount}, pool=${s.poolSize})`)
+    console.log(`  every frame snapshotted: ${allSnapped} (snapshots=${s.snapshotsTaken}/${s.framesRequested})`)
+    console.log(`  snapshots caught CORRECT frame: ${correctFrames} (maxErrVsExpected=${s.maxErrVsExpected}, meanErr=${s.meanErrVsExpected}, tol<=8)`)
+    console.log(`  no tearing (per-slot backward steps): ${noTearing} (backwardSteps=${s.backwardSteps})`)
+    console.log(`  no snapshot errors: ${noErrors} (cibErrors=${s.cibErrors})`)
+    console.log(
+      `[poc] RESULT 7 (Claim B) VERDICT: ${pass ? 'PASS ✅ (persistent import + in-place overwrite + async createImageBitmap under consume-ack is coherent — no stale/torn reads)' : 'FAIL ❌ (see numbers above)'}`
+    )
+    setTimeout(() => app.quit(), 1500)
+  })
+
   // Result 5 — renderer color paths. The renderer reports, per import tag (601 /
   // 709), the measured center-patch RGB for each of the three ingestion paths.
   // EXPECTED (correct, BT.601 honored): RGB ~ (20,220,40); WRONG (709 matrix on
@@ -560,6 +696,7 @@ app.whenReady().then(() => {
         drawImage_2d: verdict(r601.drawImage),
         copyExternalImageToTexture: verdict(r601.copyExternal),
         importExternalTexture: verdict(r601.importExternal),
+        createImageBitmap: verdict(r601.createImageBitmap),
       }
       console.log(`Source RGB fed to encoder: (20,220,40); ffmpeg 601-honoring decode ground truth: ~(19,218,40)`)
       console.log(`Expected CORRECT readback (BT.601): [${exp}], tolerance +/-${tol}/channel`)
@@ -568,6 +705,14 @@ app.whenReady().then(() => {
       for (const [name, v] of Object.entries(paths)) {
         console.log(`  ${name}: measured=[${v.measured}] err=[${v.errVsExpected}] maxAbsErr=${v.maxAbsErr} => ${v.status}`)
       }
+      // Result 7, Claim A: the re-baselined design ships createImageBitmap. It
+      // PASSES iff createImageBitmap is CORRECT (matches the drawImage reference /
+      // source color within tolerance) — i.e. it honors the BT.601 tag, unlike the
+      // WebGPU paths. This is the claim Result 5 left as an assertion-by-analogy.
+      const cibV = paths.createImageBitmap
+      console.log(
+        `[poc] RESULT 7 (Claim A — createImageBitmap color, BT.601): ${cibV.status === 'CORRECT' ? 'PASS ✅' : 'FAIL ❌'} (measured=[${cibV.measured}], maxAbsErr=${cibV.maxAbsErr})`
+      )
       if (r601.rgbaControl) {
         const c = r601.rgbaControl
         const ce = [c.measured[0] - c.known[0], c.measured[1] - c.known[1], c.measured[2] - c.known[2]]
@@ -586,6 +731,7 @@ app.whenReady().then(() => {
       console.log(`  drawImage_2d: measured=[${r709.drawImage}]`)
       console.log(`  copyExternalImageToTexture: measured=[${r709.copyExternal}]`)
       console.log(`  importExternalTexture: measured=[${r709.importExternal}]`)
+      console.log(`  createImageBitmap: measured=[${r709.createImageBitmap}]`)
     }
     console.log('[poc] COLOR PROBE COMPLETE')
     setTimeout(() => app.quit(), 1500)
@@ -652,7 +798,7 @@ app.whenReady().then(() => {
       console.log('[poc] watchdog timeout — quitting')
       app.quit()
     },
-    streaming || persistent || colorMode || bgraMode ? 60000 : 12000
+    streaming || persistent || colorMode || bgraMode || cibPersistMode ? 60000 : 12000
   )
 })
 
