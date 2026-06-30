@@ -311,7 +311,7 @@ export function Timeline({
     setTrackHeights,
   });
 
-  const { drag, setDrag, pendingPlacement, pendingLayer, dragLayer } =
+  const { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById } =
     useLayerDrag({
       tracks,
       groups,
@@ -662,9 +662,9 @@ export function Timeline({
                 selectedLayerIds={selectedLayerIds}
                 groupByLayerId={groupByLayerId}
                 dragState={drag}
-                pendingPlacement={pendingPlacement}
-                pendingLayer={pendingLayer}
-                dragLayer={dragLayer}
+                pendingPlacements={pendingPlacements}
+                pendingLayerById={pendingLayerById}
+                dragLayerById={dragLayerById}
                 bladeMode={bladeMode}
                 onBladeSplit={splitFromClientX}
                 onBladePreview={updateBladePreview}

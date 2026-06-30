@@ -286,8 +286,8 @@ describe('applyMoveLayer: layers stay t_start_us sorted after a move', () => {
 
 // ── applyMoveLayer: delta !== 0 guard for group siblings ────────────────────
 // Mutant: 'if (delta !== 0)' → 'if (true)' — would shift siblings even on zero delta.
-// Note: the group-sibling follow in move.ts places siblings on newTrackId (same as
-// the primary), so after a coupled move all layers end up on the destination track.
+// Group-sibling follow shifts time only; cross-track moves apply the track change
+// to the primary layer and leave siblings on their original tracks.
 describe('applyMoveLayer: zero-delta group sibling move is a no-op shift', () => {
   it('sibling t_start is unchanged when delta is zero (same position)', () => {
     const p = mkProject()
@@ -454,9 +454,9 @@ describe('applyMoveLayer: locked destination track', () => {
 })
 
 // ── applyMoveLayer: sibling insertion sort (group fanout) ───────────────────
-// Mutants on move.ts:56-57: sibling position in the destination track sorted wrong.
+// Mutants on move.ts:57-58: sibling re-insertion position sorted wrong.
 describe('applyMoveLayer: group sibling insertion position', () => {
-  it('group sibling is inserted in sorted order when moved to destination track', () => {
+  it('group sibling is reinserted in sorted order after following the delta', () => {
     const p = mkProject()
     // Three layers on track 0: a[0,200), b[400,600) grouped, c[800,1000).
     // Move 'a' to 600_000 → delta=600_000; sibling 'b' follows to 1_000_000.

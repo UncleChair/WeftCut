@@ -45,13 +45,14 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
     for (const sid of siblings) {
       const loc = locateLayer(p, sid)
       if (!loc) continue
+      const siblingTrackId = p.tracks[loc[0]].id
       const s = p.tracks[loc[0]].layers.splice(loc[1], 1)[0]
       if (delta !== 0) {
         s.t_start_us = snapFrameRound(s.t_start_us + delta, fpsN, fpsD)
         s.t_end_us = snapFrameRound(s.t_end_us + delta, fpsN, fpsD)
       }
       s.t_start_us = Math.max(s.t_start_us, 0)
-      const di = p.tracks.findIndex((t) => t.id === newTrackId)
+      const di = p.tracks.findIndex((t) => t.id === siblingTrackId)
       const sAt = p.tracks[di].layers.findIndex((l) => l.t_start_us > s.t_start_us)
       p.tracks[di].layers.splice(sAt < 0 ? p.tracks[di].layers.length : sAt, 0, s)
     }

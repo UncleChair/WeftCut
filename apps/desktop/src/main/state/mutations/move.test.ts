@@ -56,4 +56,21 @@ describe('move group lock checks (not corpus-gated)', () => {
     expect(() => applyMoveLayer(p, 'a', p.tracks[0].id, 500_000, true)).not.toThrow()
     expect(p.tracks[1].layers[0].t_start_us).toBe(0) // sibling unmoved
   })
+
+  it('cross-track group move changes only the target track and shifts siblings in place', () => {
+    const p = blankProject(seededGen(), 't')
+    p.tracks[0].layers = [
+      color('a', 0, 100_000),
+      color('b', 200_000, 300_000),
+    ]
+    p.tracks[1].layers = []
+    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+
+    applyMoveLayer(p, 'a', p.tracks[1].id, 500_000, false)
+
+    expect(p.tracks[1].layers.map((l) => l.id)).toEqual(['a'])
+    expect(p.tracks[1].layers[0].t_start_us).toBe(500_000)
+    expect(p.tracks[0].layers.map((l) => l.id)).toEqual(['b'])
+    expect(p.tracks[0].layers[0].t_start_us).toBe(700_000)
+  })
 })

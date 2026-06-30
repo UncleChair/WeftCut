@@ -26,7 +26,14 @@ import {
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
-export interface DragState {
+export interface DragSubject {
+  layerId: string;
+  trackId: string;
+  originalTStart: number;
+  originalTEnd: number;
+}
+
+export interface DragSeed {
   kind: DragKind;
   layerId: string;
   trackId: string;
@@ -43,6 +50,10 @@ export interface DragState {
   /// stays local even if the dragged layer is in a group. Passed straight
   /// to `moveLayer` / `trimLayer` as `escape_group`.
   escapeGroup: boolean;
+}
+
+export interface DragState extends DragSeed {
+  subjects: DragSubject[];
 }
 
 export interface PendingLayerPlacement {
@@ -127,7 +138,7 @@ export function LayerBlock({
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
   ) => void;
-  onDragStart: (state: DragState) => void;
+  onDragStart: (state: DragSeed) => void;
   onContextMenu: (
     e: React.MouseEvent,
     layerId: string,
@@ -145,7 +156,11 @@ export function LayerBlock({
   fpsDen: number;
 }) {
   const { t } = useTranslation();
-  const isDragging = dragState?.layerId === layer.id;
+  const dragSubject =
+    dragState?.subjects.find((subject) => subject.layerId === layer.id) ??
+    null;
+  const isDragging = dragSubject !== null;
+  const isDragAnchor = dragState?.layerId === layer.id;
   const isPendingPlacement = pendingPlacement?.layerId === layer.id;
 
   const editingLayerId = useEditingLayerId();
@@ -206,28 +221,33 @@ export function LayerBlock({
   };
   let liveStart = isPendingPlacement
     ? pendingPlacement.tStartUs
-    : layer.t_start_us;
+    : (dragSubject?.originalTStart ?? layer.t_start_us);
   let liveEnd = isPendingPlacement
     ? pendingPlacement.tEndUs
-    : layer.t_end_us;
-  if (isDragging && dragState) {
+    : (dragSubject?.originalTEnd ?? layer.t_end_us);
+  if (dragSubject && dragState) {
     const dx = dragState.deltaUs;
     switch (dragState.kind) {
-      case "move":
-        liveStart += dx;
-        liveEnd += dx;
+      case "move": {
+        const moveDeltaUs = Math.max(dx, -dragState.originalTStart);
+        const durationUs = dragSubject.originalTEnd - dragSubject.originalTStart;
+        liveStart = Math.max(0, dragSubject.originalTStart + moveDeltaUs);
+        liveEnd = liveStart + durationUs;
         break;
+      }
       case "trim-start":
         liveStart = Math.min(
-          liveStart + dx,
-          liveEnd - MIN_LAYER_DURATION_US,
+          dragSubject.originalTStart + dx,
+          dragSubject.originalTEnd - MIN_LAYER_DURATION_US,
         );
+        liveEnd = dragSubject.originalTEnd;
         break;
       case "trim-end":
         liveEnd = Math.max(
-          liveStart + MIN_LAYER_DURATION_US,
-          liveEnd + dx,
+          dragSubject.originalTStart + MIN_LAYER_DURATION_US,
+          dragSubject.originalTEnd + dx,
         );
+        liveStart = dragSubject.originalTStart;
         break;
     }
   }
@@ -243,11 +263,14 @@ export function LayerBlock({
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
   // non-interactive and visually secondary.
+  const dragPreviewTrackId =
+    dragSubject && dragState?.kind === "move"
+      ? isDragAnchor
+        ? (dragState.overTrackId ?? dragSubject.trackId)
+        : dragSubject.trackId
+      : null;
   const movedAcrossTracks =
-    (isDragging &&
-      dragState?.kind === "move" &&
-      dragState.overTrackId !== null &&
-      dragState.overTrackId !== trackId) ||
+    (dragPreviewTrackId !== null && dragPreviewTrackId !== trackId) ||
     (isPendingPlacement && pendingPlacement.trackId !== trackId);
 
   // Edge-hover trim: pointerdown within EDGE_ZONE_PX of the layer's

@@ -8,7 +8,12 @@ import {
 } from "../../ipc";
 import { snapFrameRound } from "../../frames";
 import { MIN_LAYER_DURATION_US, type VisualTrack } from "../geometry";
-import { type DragState, type PendingLayerPlacement } from "../LayerBlock";
+import {
+  type DragSeed,
+  type DragState,
+  type DragSubject,
+  type PendingLayerPlacement,
+} from "../LayerBlock";
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
 
 /// Tracks are kind-agnostic: any layer can land on any track. This
@@ -38,10 +43,10 @@ export function useLayerDrag(opts: {
   onMutated: () => Promise<void>;
 }): {
   drag: DragState | null;
-  setDrag: (s: DragState | null) => void;
-  pendingPlacement: PendingLayerPlacement | null;
-  pendingLayer: LayerSummary | null;
-  dragLayer: LayerSummary | null;
+  setDrag: (s: DragSeed | null) => void;
+  pendingPlacements: PendingLayerPlacement[] | null;
+  pendingLayerById: ReadonlyMap<string, LayerSummary>;
+  dragLayerById: ReadonlyMap<string, LayerSummary>;
 } {
   const {
     tracks,
@@ -58,48 +63,107 @@ export function useLayerDrag(opts: {
     tailSnapStrengthPx,
     onMutated,
   } = opts;
-  const [drag, setDrag] = useState<DragState | null>(null);
-  const [pendingPlacement, setPendingPlacement] =
-    useState<PendingLayerPlacement | null>(null);
+  const [drag, setDragState] = useState<DragState | null>(null);
+  const [pendingPlacements, setPendingPlacements] =
+    useState<PendingLayerPlacement[] | null>(null);
 
-  const pendingLayer = useMemo(() => {
-    if (!pendingPlacement) return null;
+  const layerEntryById = useMemo(() => {
+    const layerById = new Map<string, { layer: LayerSummary; trackId: string }>();
     for (const track of tracks) {
-      const layer = track.layers.find(
-        (candidate) => candidate.id === pendingPlacement.layerId,
-      );
-      if (layer) return layer;
+      for (const layer of track.layers) {
+        layerById.set(layer.id, { layer, trackId: track.id });
+      }
     }
-    return null;
-  }, [pendingPlacement, tracks]);
+    return layerById;
+  }, [tracks]);
 
-  const dragLayer = useMemo(() => {
-    if (!drag || drag.kind !== "move") return null;
-    for (const track of tracks) {
-      const layer = track.layers.find(
-        (candidate) => candidate.id === drag.layerId,
-      );
-      if (layer) return layer;
+  const pendingLayerById = useMemo(() => {
+    const layersById = new Map<string, LayerSummary>();
+    for (const placement of pendingPlacements ?? []) {
+      const entry = layerEntryById.get(placement.layerId);
+      if (entry) layersById.set(placement.layerId, entry.layer);
     }
-    return null;
-  }, [drag?.kind, drag?.layerId, tracks]);
+    return layersById;
+  }, [layerEntryById, pendingPlacements]);
+
+  const dragLayerById = useMemo(() => {
+    const layersById = new Map<string, LayerSummary>();
+    if (!drag || drag.kind !== "move") return layersById;
+    for (const subject of drag.subjects) {
+      const entry = layerEntryById.get(subject.layerId);
+      if (entry) layersById.set(subject.layerId, entry.layer);
+    }
+    return layersById;
+  }, [drag, layerEntryById]);
 
   useEffect(() => {
-    if (!pendingPlacement) return;
-    const track = tracks.find((t) => t.id === pendingPlacement.trackId);
-    const layer = track?.layers.find((l) => l.id === pendingPlacement.layerId);
-    if (
-      layer &&
-      layer.t_start_us === pendingPlacement.tStartUs &&
-      layer.t_end_us === pendingPlacement.tEndUs
-    ) {
-      setPendingPlacement(null);
+    if (!pendingPlacements) return;
+    const allLanded = pendingPlacements.every((placement) => {
+      const track = tracks.find((t) => t.id === placement.trackId);
+      const layer = track?.layers.find((l) => l.id === placement.layerId);
+      return (
+        layer &&
+        layer.t_start_us === placement.tStartUs &&
+        layer.t_end_us === placement.tEndUs
+      );
+    });
+    if (allLanded) {
+      setPendingPlacements(null);
     }
-  }, [pendingPlacement, tracks]);
+  }, [pendingPlacements, tracks]);
 
   const visibleSnapTracks = useMemo(
     () => orderedTracks.map(({ track }) => track),
     [orderedTracks],
+  );
+
+  const buildDragSubjects = useCallback(
+    (seed: DragSeed): DragSubject[] => {
+      const groupId = seed.escapeGroup ? undefined : groupByLayerId.get(seed.layerId);
+      const group = groupId ? groups.find((candidate) => candidate.id === groupId) : null;
+      const candidateIds = group?.layer_ids ?? [seed.layerId];
+      const targetEdgeUs =
+        seed.kind === "trim-start"
+          ? seed.originalTStart
+          : seed.kind === "trim-end"
+            ? seed.originalTEnd
+            : null;
+
+      const subjects: DragSubject[] = [];
+      for (const layerId of candidateIds) {
+        const entry = layerEntryById.get(layerId);
+        if (!entry) continue;
+        const layer = entry.layer;
+        if (targetEdgeUs !== null) {
+          const edgeUs =
+            seed.kind === "trim-start" ? layer.t_start_us : layer.t_end_us;
+          if (layerId !== seed.layerId && edgeUs !== targetEdgeUs) continue;
+        }
+        subjects.push({
+          layerId,
+          trackId: entry.trackId,
+          originalTStart: layer.t_start_us,
+          originalTEnd: layer.t_end_us,
+        });
+      }
+      if (!subjects.some((subject) => subject.layerId === seed.layerId)) {
+        subjects.unshift({
+          layerId: seed.layerId,
+          trackId: seed.trackId,
+          originalTStart: seed.originalTStart,
+          originalTEnd: seed.originalTEnd,
+        });
+      }
+      return subjects;
+    },
+    [groupByLayerId, groups, layerEntryById],
+  );
+
+  const setDrag = useCallback(
+    (seed: DragSeed | null) => {
+      setDragState(seed ? { ...seed, subjects: buildDragSubjects(seed) } : null);
+    },
+    [buildDragSubjects],
   );
 
   // -------- Layer drag (move / trim) --------
@@ -177,7 +241,7 @@ export function useLayerDrag(opts: {
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
-      setDrag({
+      setDragState({
         ...drag,
         deltaUs,
         overTrackId: overTrack?.id ?? null,
@@ -201,7 +265,7 @@ export function useLayerDrag(opts: {
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
       const committed = drag;
-      setDrag(null);
+      setDragState(null);
 
       // Treat tiny deltas + same track as a no-op so a click doesn't accidentally
       // shove a layer one frame.
@@ -218,16 +282,35 @@ export function useLayerDrag(opts: {
             const newStart = Math.max(0, committed.originalTStart + deltaUs);
             const newEnd =
               newStart + (committed.originalTEnd - committed.originalTStart);
+            const actualDeltaUs = newStart - committed.originalTStart;
             const destTrackId =
               overTrack && trackAcceptsForLayer(overTrack, committed)
                 ? overTrack.id
                 : committed.trackId;
-            setPendingPlacement({
-              layerId: committed.layerId,
-              trackId: destTrackId,
-              tStartUs: newStart,
-              tEndUs: newEnd,
-            });
+            setPendingPlacements(
+              committed.subjects.map((subject) => {
+                if (subject.layerId === committed.layerId) {
+                  return {
+                    layerId: subject.layerId,
+                    trackId: destTrackId,
+                    tStartUs: newStart,
+                    tEndUs: newEnd,
+                  };
+                }
+                const durationUs =
+                  subject.originalTEnd - subject.originalTStart;
+                const tStartUs = Math.max(
+                  0,
+                  subject.originalTStart + actualDeltaUs,
+                );
+                return {
+                  layerId: subject.layerId,
+                  trackId: subject.trackId,
+                  tStartUs,
+                  tEndUs: tStartUs + durationUs,
+                };
+              }),
+            );
             await moveLayer(committed.layerId, destTrackId, newStart, escape);
             break;
           }
@@ -253,7 +336,7 @@ export function useLayerDrag(opts: {
         }
         await onMutated();
       } catch (err) {
-        setPendingPlacement(null);
+        setPendingPlacements(null);
         console.error("timeline commit failed:", err);
       }
     },
@@ -270,5 +353,5 @@ export function useLayerDrag(opts: {
     };
   }, [drag, handlePointerMove, handlePointerUp]);
 
-  return { drag, setDrag, pendingPlacement, pendingLayer, dragLayer };
+  return { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById };
 }

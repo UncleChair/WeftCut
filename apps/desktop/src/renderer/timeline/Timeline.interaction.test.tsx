@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
-import type { LayerSummary, TrackSummary } from "../ipc";
+import type { GroupSummary, LayerSummary, TrackSummary } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Timeline } from "./Timeline";
+
+const ipcMocks = vi.hoisted(() => ({
+  moveLayer: vi.fn().mockResolvedValue(undefined),
+  trimLayer: vi.fn().mockResolvedValue(undefined),
+  viewStateGet: vi
+    .fn()
+    .mockResolvedValue({ timeline_px_per_sec: 80, track_heights: {}, expanded_tracks: [] }),
+  viewStateSet: vi.fn().mockResolvedValue(undefined),
+}));
 
 // jsdom 25 does not implement PointerEvent; alias it to MouseEvent so
 // fireEvent.pointerDown carries a usable .button / .clientX (same shim the
@@ -20,10 +29,10 @@ vi.mock("../ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc")>();
   return {
     ...actual,
-    viewStateGet: vi
-      .fn()
-      .mockResolvedValue({ timeline_px_per_sec: 50, track_heights: {}, expanded_tracks: [] }),
-    viewStateSet: vi.fn().mockResolvedValue(undefined),
+    moveLayer: ipcMocks.moveLayer,
+    trimLayer: ipcMocks.trimLayer,
+    viewStateGet: ipcMocks.viewStateGet,
+    viewStateSet: ipcMocks.viewStateSet,
   };
 });
 
@@ -53,18 +62,41 @@ const track: TrackSummary = {
   layers: [layer],
 };
 
+const groupedLayer: LayerSummary = {
+  ...layer,
+  id: "layer-2",
+  label: "Clip B",
+  t_start_us: 2_000_000,
+  t_end_us: 4_000_000,
+  color_hint: "#cc8844",
+};
+
+const groupedTrack: TrackSummary = {
+  ...track,
+  layers: [layer, groupedLayer],
+};
+
+const group: GroupSummary = {
+  id: "group-1",
+  label: null,
+  layer_ids: [layer.id, groupedLayer.id],
+};
+
 function renderTimeline(overrides: {
   selectedLayerId?: string | null;
   onSeek?: () => void;
   onSelect?: (id: string | null) => void;
   bladeMode?: boolean;
+  tracks?: TrackSummary[];
+  groups?: GroupSummary[];
+  onMutated?: () => Promise<void>;
 }) {
   const onSeek = overrides.onSeek ?? vi.fn();
   const onSelect = overrides.onSelect ?? vi.fn();
   return render(
     <Timeline
-      tracks={[track]}
-      groups={[]}
+      tracks={overrides.tracks ?? [track]}
+      groups={overrides.groups ?? []}
       durationUs={5_000_000}
       currentTimeUs={0}
       selectedLayerId={overrides.selectedLayerId ?? null}
@@ -79,13 +111,15 @@ function renderTimeline(overrides: {
       onExitBlade={vi.fn()}
       onSelect={onSelect}
       onSeek={onSeek}
-      onMutated={vi.fn().mockResolvedValue(undefined)}
+      onMutated={overrides.onMutated ?? vi.fn().mockResolvedValue(undefined)}
     />,
   );
 }
 
 describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
+    ipcMocks.moveLayer.mockClear();
+    ipcMocks.trimLayer.mockClear();
     // Show-All so the role-stamped track always renders regardless of the
     // default AB-roll filter.
     useAppSettingsStore.setState((s) => ({
@@ -157,5 +191,35 @@ describe("Timeline seek/selection coupling", () => {
     // pointerdown seeks once; the drag-scrub pointermove seeks again.
     expect(onSeek.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("previews every grouped layer during and immediately after a move drag", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    const { getByText } = renderTimeline({
+      tracks: [groupedTrack],
+      groups: [group],
+      selectedLayerId: layer.id,
+      onMutated,
+    });
+
+    const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+    expect(first.style.left).toBe("0px");
+    expect(second.style.left).toBe("160px");
+
+    fireEvent.pointerDown(first, { button: 0, clientX: 0, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 30 });
+
+    expect(first.style.left).toBe("80px");
+    expect(second.style.left).toBe("240px");
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 30 });
+
+    await waitFor(() => {
+      expect(ipcMocks.moveLayer).toHaveBeenCalledWith(layer.id, track.id, 1_000_000, false);
+      expect(first.style.left).toBe("80px");
+      expect(second.style.left).toBe("240px");
+    });
   });
 });

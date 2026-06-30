@@ -1,6 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LayerBlock, type DragState, type PendingLayerPlacement } from "./LayerBlock";
+import {
+  LayerBlock,
+  type DragState,
+  type DragSeed,
+  type DragSubject,
+  type PendingLayerPlacement,
+} from "./LayerBlock";
 import { computeLayerSlices } from "./geometry";
 import type { AnimTrack, LayerSummary, TrackSummary } from "../ipc";
 
@@ -30,9 +36,9 @@ export function TrackLane({
   selectedLayerIds,
   groupByLayerId,
   dragState,
-  pendingPlacement,
-  pendingLayer,
-  dragLayer,
+  pendingPlacements,
+  pendingLayerById,
+  dragLayerById,
   bladeMode,
   onBladeSplit,
   onBladePreview,
@@ -59,9 +65,9 @@ export function TrackLane({
   selectedLayerIds: Set<string>;
   groupByLayerId: Map<string, string>;
   dragState: DragState | null;
-  pendingPlacement: PendingLayerPlacement | null;
-  pendingLayer: LayerSummary | null;
-  dragLayer: LayerSummary | null;
+  pendingPlacements: PendingLayerPlacement[] | null;
+  pendingLayerById: ReadonlyMap<string, LayerSummary>;
+  dragLayerById: ReadonlyMap<string, LayerSummary>;
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
   onBladePreview: (layer: LayerSummary | null, clientX?: number) => void;
@@ -69,7 +75,7 @@ export function TrackLane({
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
   ) => void;
-  onDragStart: (state: DragState) => void;
+  onDragStart: (state: DragSeed) => void;
   onMediaDrop: (
     track: TrackSummary,
     payload: MediaDragPayload,
@@ -101,11 +107,22 @@ export function TrackLane({
   const { t } = useTranslation();
   const [dragOverX, setDragOverX] = useState<number | null>(null);
 
+  const dragPreviewTrackId = useCallback(
+    (subject: DragSubject): string => {
+      if (dragState?.kind !== "move") return subject.trackId;
+      if (subject.layerId !== dragState.layerId) return subject.trackId;
+      return dragState.overTrackId ?? subject.trackId;
+    },
+    [dragState],
+  );
+
   const renderedLayers = useMemo(() => {
     let layers = track.layers;
 
-    if (pendingPlacement && pendingLayer) {
-      const pendingRenderLayer = {
+    for (const pendingPlacement of pendingPlacements ?? []) {
+      const pendingLayer = pendingLayerById.get(pendingPlacement.layerId);
+      if (!pendingLayer) continue;
+      const pendingRenderLayer: LayerSummary = {
         ...pendingLayer,
         t_start_us: pendingPlacement.tStartUs,
         t_end_us: pendingPlacement.tEndUs,
@@ -126,31 +143,28 @@ export function TrackLane({
       }
     }
 
-    if (
-      dragState?.kind === "move" &&
-      dragLayer &&
-      dragState.overTrackId === track.id &&
-      dragState.trackId !== track.id &&
-      !layers.some((layer) => layer.id === dragLayer.id)
-    ) {
-      layers = [...layers, dragLayer];
-    }
-
-    if (
-      dragState?.kind === "move" &&
-      dragState.overTrackId !== null &&
-      dragState.overTrackId !== track.id &&
-      dragState.trackId === track.id
-    ) {
-      layers = layers.filter((layer) => layer.id !== dragState.layerId);
+    if (dragState?.kind === "move") {
+      for (const subject of dragState.subjects) {
+        const layer = dragLayerById.get(subject.layerId);
+        if (!layer) continue;
+        const previewTrackId = dragPreviewTrackId(subject);
+        if (previewTrackId === track.id) {
+          if (!layers.some((candidate) => candidate.id === layer.id)) {
+            layers = [...layers, layer];
+          }
+        } else if (subject.trackId === track.id) {
+          layers = layers.filter((candidate) => candidate.id !== subject.layerId);
+        }
+      }
     }
 
     return layers;
   }, [
-    dragLayer,
+    dragLayerById,
+    dragPreviewTrackId,
     dragState,
-    pendingLayer,
-    pendingPlacement,
+    pendingLayerById,
+    pendingPlacements,
     track.id,
     track.layers,
   ]);
@@ -241,7 +255,9 @@ export function TrackLane({
             isSelected={selectedLayerIds.has(layer.id)}
             groupId={groupByLayerId.get(layer.id) ?? null}
             dragState={dragState}
-            pendingPlacement={pendingPlacement}
+            pendingPlacement={
+              pendingPlacements?.find((placement) => placement.layerId === layer.id) ?? null
+            }
             bladeMode={bladeMode}
             onBladeSplit={onBladeSplit}
             onBladePreview={onBladePreview}
