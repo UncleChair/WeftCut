@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { listen } from "@/bridge/events";
+import { convertFileSrc } from "@/bridge/ipc";
 import { getMediaThumbnail } from "../ipc";
+import { useMediaById } from "../state/projectStore";
 
 type CacheEntry =
   | { state: "pending" }
@@ -65,11 +67,13 @@ export function MediaThumbnail({
   mediaKind: string;
 }) {
   const [, setTick] = useState(0);
+  const media = useMediaById(mediaId);
+  const resolvedKind = (media?.kind ?? mediaKind).toLowerCase();
 
   useEffect(() => {
-    // Only videos produce thumbnails; nothing to fetch for audio / image /
-    // subtitle media.
-    if (mediaKind.toLowerCase() !== "video") return;
+    // Only videos produce generated thumbnails; image media display the
+    // original file directly.
+    if (resolvedKind !== "video") return;
     const listener = () => setTick((t) => t + 1);
     let listeners = thumbListeners.get(mediaId);
     if (!listeners) {
@@ -82,9 +86,20 @@ export function MediaThumbnail({
     return () => {
       listeners?.delete(listener);
     };
-  }, [mediaId, mediaKind]);
+  }, [mediaId, resolvedKind]);
 
-  if (mediaKind.toLowerCase() !== "video") {
+  if (resolvedKind === "image" && media?.available) {
+    return (
+      <img
+        className="media-thumbnail"
+        src={convertFileSrc(media.path)}
+        alt=""
+        draggable={false}
+      />
+    );
+  }
+
+  if (resolvedKind !== "video") {
     return <div className="media-thumbnail is-placeholder" />;
   }
   const entry = thumbCache.get(mediaId);
