@@ -105,6 +105,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const proxyAssetUrls: Record<string, string> = {};
   const originalAssetUrls: Record<string, string> = {};
   const mediaDims: Record<string, { width: number | null; height: number | null }> = {};
+  const mediaStartPtsUs: Record<string, number | null> = {};
   // Per-media source color, applied to WHATEVER the export decodes — the
   // original trivially carries its own ffprobe tags, and a proxy PRESERVES the
   // source's colorimetry (the recipe never converts matrix/range, and since
@@ -124,6 +125,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     if (exportPath) proxyAssetUrls[m.id] = convertFileSrc(exportPath);
     originalAssetUrls[m.id] = convertFileSrc(m.path);
     mediaDims[m.id] = { width: m.width, height: m.height };
+    mediaStartPtsUs[m.id] = m.video_start_pts_us ?? m.start_pts_us ?? null;
     mediaColor[m.id] = ffprobeColorToWebCodecs(m);
   }
 
@@ -137,6 +139,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     proxyAssetUrls,
     originalAssetUrls,
     mediaDims,
+    mediaStartPtsUs,
     mediaColor,
   };
 

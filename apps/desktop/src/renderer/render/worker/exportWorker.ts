@@ -196,6 +196,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         duration_us: null,
         width: d.width,
         height: d.height,
+        start_pts_us: req.project.mediaStartPtsUs[mediaId] ?? null,
+        video_start_pts_us: req.project.mediaStartPtsUs[mediaId] ?? null,
         size_bytes: 0,
         available: true,
         decode_route: { route: "bypass" },
@@ -357,6 +359,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           // proxy preserves the source colorimetry; its own colr tag outranks
           // this per-field in withDefaultColorSpace).
           sourceColor: req.project.mediaColor[g.mediaId],
+          sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
           ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
         });
         await handle.decodeRange(g.srcAUs, g.srcBUs);

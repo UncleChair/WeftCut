@@ -34,6 +34,10 @@ export interface MediaSummary {
   path: string;
   kind: string;
   duration_us: number | null;
+  /// Earliest container PTS that maps to source content time 0, when known.
+  start_pts_us?: number | null;
+  /// Raw ffprobe duration before subtracting any start offset, for diagnostics.
+  container_duration_us?: number | null;
   width: number | null;
   height: number | null;
   size_bytes: number;
@@ -55,6 +59,8 @@ export interface MediaSummary {
   color_range?: string | null;
   color_primaries?: string | null;
   color_transfer?: string | null;
+  video_start_pts_us?: number | null;
+  audio_start_pts_us?: number | null;
   /// Absolute path of the canonical conformed PCM (VCONF, `jobs/conform.rs`)
   /// once the conform job has produced it. The preview mixer Range-reads
   /// this file; `null` means the audio layer is not yet playable. Optional:

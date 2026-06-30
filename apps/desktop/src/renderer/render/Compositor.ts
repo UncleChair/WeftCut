@@ -1371,6 +1371,7 @@ export class Compositor {
     // `withDefaultColorSpace`, so a self-describing (colr-tagged) proxy is
     // unaffected; colr-less ones stop being misread as bt709/limited.
     const sourceColor = this.sourceColor(mediaId);
+    const sourceStartPtsUs = this.mediaById(mediaId)?.video_start_pts_us ?? this.mediaById(mediaId)?.start_pts_us ?? null;
     const source = this.pool.acquire({
       layerId: layer.id,
       mediaId,
@@ -1382,6 +1383,7 @@ export class Compositor {
         : {}),
       proxyAssetUrl: proxyUrl,
       sourceColor,
+      sourceStartPtsUs,
     });
     // Subscribe to the first-frame notification BEFORE kicking off
     // ensureReady so we don't miss the synchronous-fire case if the
@@ -1443,11 +1445,16 @@ export class Compositor {
     // media (`clip.mediaId`) even though we acquire under the synthetic
     // `swapMediaId`.
     const sourceColor = this.sourceColor(clip.mediaId);
+    const sourceStartPtsUs =
+      this.mediaById(clip.mediaId)?.video_start_pts_us ??
+      this.mediaById(clip.mediaId)?.start_pts_us ??
+      null;
     const handle = this.pool.acquire({
       layerId: swapLayerId,
       mediaId: swapMediaId,
       proxyAssetUrl: newUrl,
       sourceColor,
+      sourceStartPtsUs,
     });
     const state: SwapState = { handle, swapLayerId, newUrl, timer: null, deadline: null };
     this.swaps.set(clip.layerId, state);

@@ -86,7 +86,27 @@ export interface Transition { id: Uuid; from_layer: Uuid; to_layer: Uuid; durati
 /** `members` kept sorted; `label` omitted (not null) when absent — see serialize.ts. */
 export interface Group { id: Uuid; label?: string; members: Uuid[] }
 export interface RoleMixSettings { gain_db: number; muted: boolean; solo: boolean }
-export interface MediaMetadata { duration_us: TimeUs | null; [k: string]: unknown }
+export interface MediaVideoMetadata {
+  width?: number; height?: number; fps_num?: number; fps_den?: number
+  codec?: string; pix_fmt?: string; start_pts_us?: TimeUs | null
+  nb_frames?: number | null; [k: string]: unknown
+}
+export interface MediaAudioMetadata {
+  sample_rate?: number; channels?: number; codec?: string
+  start_pts_us?: TimeUs | null; [k: string]: unknown
+}
+export interface MediaMetadata {
+  /** Normalized content duration; timeline source windows use this domain. */
+  duration_us: TimeUs | null
+  /** Earliest container PTS that maps to content time 0, when known. */
+  start_pts_us?: TimeUs | null
+  /** Raw ffprobe duration before subtracting start offset, for diagnostics. */
+  container_duration_us?: TimeUs | null
+  video?: MediaVideoMetadata | null
+  audio?: MediaAudioMetadata | null
+  container_format?: string | null
+  [k: string]: unknown
+}
 export interface MediaItem {
   id: Uuid; label: string | null; path_abs: string; path_rel: string | null; kind: 'Video' | 'Audio' | 'Image' | 'Subtitle'
   metadata: MediaMetadata; file_hash_blake3: string; file_size: number; file_mtime: number

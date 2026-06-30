@@ -57,6 +57,11 @@ export interface SourceHandleInit {
   /// CORRECTNESS requirement — the HW decoder succeeds but emits opaque
   /// format=null frames with no copyTo, so the error-fallback never fires.
   preferSoftware?: boolean;
+  /// Import-time container start PTS for the ORIGINAL file. Timeline/duration
+  /// normalization uses this from metadata; the decoder derives its offset from
+  /// the opened decode target's first packet instead (re-encoded proxies start
+  /// at PTS 0). Kept as a fallback when the target has no packets.
+  sourceStartPtsUs?: number | null;
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
@@ -156,6 +161,7 @@ export class SourceMedia {
   /// `withDefaultColorSpace` so 601/full-range sources preview with their
   /// real matrix/range from either URL. Undefined ⇒ untagged source.
   private readonly sourceColor: VideoColorSpaceInit | undefined;
+  private readonly knownStartPtsUs: number | null;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
   private startPtsUs = 0;
@@ -191,10 +197,12 @@ export class SourceMedia {
     mediaId: string,
     proxyAssetUrl: string,
     sourceColor?: VideoColorSpaceInit | undefined,
+    sourceStartPtsUs?: number | null,
   ) {
     this.mediaId = mediaId;
     this.proxyAssetUrl = proxyAssetUrl;
     this.sourceColor = sourceColor;
+    this.knownStartPtsUs = sourceStartPtsUs ?? null;
   }
 
   /// Open the proxy through mediabunny and resolve the WebCodecs decoder
@@ -211,9 +219,17 @@ export class SourceMedia {
         opened.dispose();
         throw new Error(`SourceMedia ${this.mediaId}: no decoder config`);
       }
-      const firstPacket = await opened.packetSink.getFirstPacket();
       this.opened = opened;
-      this.startPtsUs = firstPacket ? Math.round(firstPacket.timestamp * 1e6) : 0;
+      // Always derive the PTS offset from the file we are actually decoding.
+      // Persisted metadata reflects the ORIGINAL container (ffprobe at import);
+      // re-encoded proxies/quick transcodes start near PTS 0 even when the
+      // source had a non-zero edit-list offset. Applying metadata here makes
+      // getKeyPacket seek past EOF, the first-packet fallback decodes at PTS≈0,
+      // normalized timestamps go negative, and lookbehind evicts every frame.
+      const firstPacket = await opened.packetSink.getFirstPacket();
+      this.startPtsUs = firstPacket
+        ? Math.round(firstPacket.timestamp * 1e6)
+        : (this.knownStartPtsUs ?? 0);
       // Untagged sources get a resolution-keyed default matrix so preview decode
       // matches the rest of the toolchain (see colorSpaceDefault) — and stays
       // consistent with the export pool, which applies the same default.
@@ -652,7 +668,12 @@ export class SourceDecoderPool {
   acquire(init: SourceHandleInit): SourceHandle {
     const existing = this.handles.get(init.layerId);
     if (existing) return existing;
-    const media = this.acquireMedia(init.mediaId, init.proxyAssetUrl, init.sourceColor);
+    const media = this.acquireMedia(
+      init.mediaId,
+      init.proxyAssetUrl,
+      init.sourceColor,
+      init.sourceStartPtsUs,
+    );
     const h = new SourceHandle(init.layerId, media);
     this.handles.set(init.layerId, h);
     this.startSweeperIfNeeded();
@@ -682,6 +703,7 @@ export class SourceDecoderPool {
     mediaId: string,
     proxyAssetUrl: string,
     sourceColor?: VideoColorSpaceInit | undefined,
+    sourceStartPtsUs?: number | null,
   ): SourceMedia {
     let entry = this.medias.get(mediaId);
     if (!entry) {
@@ -691,7 +713,7 @@ export class SourceDecoderPool {
       // resolve the same color — no stale-color hazard. The swap path
       // acquires under a synthetic mediaId, so a decodability flip over
       // time gets a fresh SourceMedia rather than reusing a stale one.
-      entry = { media: new SourceMedia(mediaId, proxyAssetUrl, sourceColor), refCount: 0 };
+      entry = { media: new SourceMedia(mediaId, proxyAssetUrl, sourceColor, sourceStartPtsUs), refCount: 0 };
       this.medias.set(mediaId, entry);
     }
     entry.refCount += 1;

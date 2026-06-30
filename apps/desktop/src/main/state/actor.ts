@@ -162,7 +162,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           l.t_start_us = snapFrameRound(l.t_start_us, nf.num, nf.den)
           l.t_end_us = snapFrameRound(l.t_end_us, nf.num, nf.den)
           // Motif src_in_us lives on the COMPOSITION grid (re-snap); VideoClip/
-          // Audio src_in_us is on the source-PTS grid (left untouched).
+          // Audio src_in_us is normalized source content time (left untouched).
           if (l.params.kind === 'Motif') l.params.src_in_us = snapFrameRound(l.params.src_in_us, nf.num, nf.den)
         }
         d.composition.duration_us = snapFrameRound(d.composition.duration_us, nf.num, nf.den)

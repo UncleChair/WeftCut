@@ -105,12 +105,12 @@ export class ExportFrameStore implements FrameStore {
     return this.derivedTenBitHighWater ?? TENBIT_RING_MAX_ENTRIES;
   }
 
-  push(frame: VideoFrame | TenBitFrame): void {
+  push(frame: VideoFrame | TenBitFrame, ptsUs = frame.timestamp): void {
     if (this.derivedTenBitHighWater === null && isTenBitFrame(frame)) {
       this.derivedTenBitHighWater = tenBitHighWaterFor(frame.data.byteLength);
     }
     this.entries.push({
-      ptsUs: frame.timestamp,
+      ptsUs,
       durationUs: frame.duration ?? 0,
       frame,
     });
@@ -369,6 +369,8 @@ export class ExportSourceHandle implements DecoderHandle {
   /// targets (a proxy preserves the source's colorimetry). Threaded into
   /// `withDefaultColorSpace`; the target's own colr tag outranks per-field.
   private readonly sourceColor: VideoColorSpaceInit | undefined;
+  private readonly knownStartPtsUs: number | null;
+  private sourceStartPtsUs = 0;
   /// Copy >8-bit decoder output to CPU planes (TenBitFrame) instead of
   /// holding VideoFrames. Also activates the reorder-margin extension in
   /// `decodeRange` so SW decoders drain their reorder tail.
@@ -433,6 +435,7 @@ export class ExportSourceHandle implements DecoderHandle {
     this.mediaId = init.mediaId;
     this.proxyAssetUrl = init.proxyAssetUrl;
     this.sourceColor = init.sourceColor;
+    this.knownStartPtsUs = init.sourceStartPtsUs ?? null;
     this.tenBitLane = init.tenBitLane ?? false;
     this.preferSoftware = init.preferSoftware ?? false;
     this.ring = new ExportFrameStore();
@@ -451,6 +454,12 @@ export class ExportSourceHandle implements DecoderHandle {
     if (!config) {
       throw new Error(`[weftcut/export] ${this.mediaId}: no decoder config`);
     }
+    // Match preview: offset comes from the decode target's first packet, not
+    // import-time metadata (re-encoded proxies start at PTS 0).
+    const first = await this.opened.packetSink.getFirstPacket();
+    this.sourceStartPtsUs = first
+      ? Math.round(first.timestamp * 1e6)
+      : (this.knownStartPtsUs ?? 0);
     // Untagged sources get a resolution-keyed default matrix so Chromium/Electron's
     // decode matches the rest of the toolchain (see colorSpaceDefault).
     // `sourceColor` carries the source's ffprobe tags as the middle-priority
@@ -461,7 +470,8 @@ export class ExportSourceHandle implements DecoderHandle {
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] source ${this.mediaId} ready: codec=${config.codec} ` +
-        `${config.codedWidth ?? "?"}x${config.codedHeight ?? "?"}`,
+        `${config.codedWidth ?? "?"}x${config.codedHeight ?? "?"} ` +
+        `startPts=${this.sourceStartPtsUs}us`,
     );
     // Diagnostic: log whether HW decode is actually available in Worker scope
     // (Chrome sometimes silently lands on software; software 1080p ≈ 2 fps).
@@ -532,9 +542,10 @@ export class ExportSourceHandle implements DecoderHandle {
             // note on TENBIT_RING_TARGET_BYTES.
             await this.ring.waitBelowTenBitHighWater();
             const tb = await copyToTenBit(frame);
+            const ptsUs = tb.timestamp - this.sourceStartPtsUs;
             frame.close();
             if (this.decoder !== dec) return;
-            this.ring.push(tb);
+            this.ring.push(tb, ptsUs);
           }).catch((e: unknown) => {
             try { frame.close(); } catch { /* already closed */ }
             if (this.decoder !== dec) return;
@@ -547,7 +558,7 @@ export class ExportSourceHandle implements DecoderHandle {
           });
           return;
         }
-        this.ring.push(frame);
+        this.ring.push(frame, frame.timestamp - this.sourceStartPtsUs);
       },
       error: (e: unknown) => {
         if (this.decoder !== dec) return;
@@ -680,7 +691,7 @@ export class ExportSourceHandle implements DecoderHandle {
     if (forward) {
       pkt = await packetSink.getNextPacket(this.cursor!);
     } else {
-      pkt = await packetSink.getKeyPacket(aUs / 1e6);
+      pkt = await packetSink.getKeyPacket(this.toContainerPtsUs(aUs) / 1e6);
       // `getKeyPacket` is null when `aUs` precedes the first key packet — a
       // trimmed / edit-list source whose first frame PTS is past the requested
       // time (e.g. ffmpeg `-ss` clips). Fall back to the track's first packet
@@ -696,7 +707,7 @@ export class ExportSourceHandle implements DecoderHandle {
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] ${this.mediaId} decodeRange pts=[${aUs}..${bUs}]us ` +
-        `(start=${pkt ? Math.round(pkt.timestamp * 1e6) : "none"}us, ` +
+        `(start=${pkt ? this.toSourcePtsUs(pkt) : "none"}us, ` +
         `frontier=${this.lastDispatchedPtsUs}us)`,
     );
 
@@ -707,7 +718,7 @@ export class ExportSourceHandle implements DecoderHandle {
     // becomes an exact invariant — what `coveredThroughUs` claims.
     let stopKeyPtsUs: number | null = null;
     while (pkt) {
-      const ptsUs = Math.round(pkt.timestamp * 1e6);
+      const ptsUs = this.toSourcePtsUs(pkt);
       if (stopKeyPtsUs !== null && ptsUs >= stopKeyPtsUs) break;
       this.decoder.decode(pkt.toEncodedVideoChunk());
       this.cursor = pkt;
@@ -728,7 +739,7 @@ export class ExportSourceHandle implements DecoderHandle {
       while (pkt && extra < TENBIT_REORDER_MARGIN) {
         this.decoder.decode(pkt.toEncodedVideoChunk());
         this.cursor = pkt;
-        this.lastDispatchedPtsUs = Math.round(pkt.timestamp * 1e6);
+        this.lastDispatchedPtsUs = this.toSourcePtsUs(pkt);
         dispatched++;
         this.dispatchedTotal++;
         extra++;
@@ -758,6 +769,14 @@ export class ExportSourceHandle implements DecoderHandle {
       this.coveredThroughUs = Number.POSITIVE_INFINITY;
       this.issueEosFlush();
     }
+  }
+
+  private toContainerPtsUs(sourceUs: number): number {
+    return sourceUs + this.sourceStartPtsUs;
+  }
+
+  private toSourcePtsUs(packet: EncodedPacket): number {
+    return Math.round(packet.timestamp * 1e6) - this.sourceStartPtsUs;
   }
 
   /// Drain the decoder's reorder buffer at true end-of-stream. The chunked

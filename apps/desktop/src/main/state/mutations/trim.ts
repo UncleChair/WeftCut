@@ -14,8 +14,15 @@ export function clampSigned(d: number, min: number, max: number): number {
 }
 
 /** motifMaxDurUs is null for all Phase-1 kinds → the
- *  motif-cap branches collapse to ±INF; only timeline + src bounds remain. */
-export function trimDeltaBounds(layer: Layer, edge: LayerEdge, _motifMaxDurUs: number | null): { min: number; max: number } {
+ *  motif-cap branches collapse to ±INF; only timeline + src bounds remain.
+ *  `sourceDurationUs` is the normalized media content duration for AV layers;
+ *  it caps OUT trims so `src_out_us` never extends past source content. */
+export function trimDeltaBounds(
+  layer: Layer,
+  edge: LayerEdge,
+  _motifMaxDurUs: number | null,
+  sourceDurationUs: number | null = null,
+): { min: number; max: number } {
   const dur = layer.t_end_us - layer.t_start_us
   const pa = layer.params
   if (edge === 'In') {
@@ -26,10 +33,19 @@ export function trimDeltaBounds(layer: Layer, edge: LayerEdge, _motifMaxDurUs: n
     return { min: Math.max(timelineMin, srcMin), max: Math.min(timelineMax, srcMax) }
   } else {
     const timelineMin = -(dur - 1)
-    let srcMin = -INF; const srcMax = INF
-    if (pa.kind === 'VideoClip' || pa.kind === 'Audio') srcMin = -(pa.src_out_us - pa.src_in_us - 1)
+    let srcMin = -INF; let srcMax = INF
+    if (pa.kind === 'VideoClip' || pa.kind === 'Audio') {
+      srcMin = -(pa.src_out_us - pa.src_in_us - 1)
+      if (sourceDurationUs != null) srcMax = sourceDurationUs - pa.src_out_us
+    }
     return { min: Math.max(timelineMin, srcMin), max: srcMax }
   }
+}
+
+function sourceDurationForLayer(p: Project, layer: Layer): number | null {
+  const pa = layer.params
+  if (pa.kind !== 'VideoClip' && pa.kind !== 'Audio') return null
+  return p.media_pool[pa.media]?.metadata.duration_us ?? null
 }
 
 /** Motif cap deferred to Phase 2b. */
@@ -65,7 +81,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   for (const mid of aligned) {
     const ml = locateLayer(p, mid)!
     const m = p.tracks[ml[0]].layers[ml[1]]
-    const b = trimDeltaBounds(m, edge, null)
+    const b = trimDeltaBounds(m, edge, null, sourceDurationForLayer(p, m))
     clamped = clampSigned(clamped, b.min, b.max)
   }
   if (clamped === 0) throw new CommandFailure({ error: 'TrimEdgeOutOfRange', layer: id, new_t: snapped, cur_start: curStart, cur_end: curEnd })

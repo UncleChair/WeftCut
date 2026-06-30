@@ -43,7 +43,19 @@ pub enum MediaKind {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MediaMetadata {
+    /// Normalized content duration in microseconds. Timeline source windows
+    /// (`src_in_us/src_out_us`) are expressed in this content-time domain where
+    /// 0 means the visible/playable start of the source, not necessarily
+    /// container PTS 0.
     pub duration_us: Option<TimeUs>,
+    /// Container PTS that maps to normalized content-time 0. Diagnostic and
+    /// decode-mapping metadata; older projects default to 0/None.
+    #[serde(default)]
+    pub start_pts_us: Option<TimeUs>,
+    /// Raw ffprobe duration before subtracting any non-zero start offset. Kept
+    /// for diagnostics/backwards reasoning; UI should use `duration_us`.
+    #[serde(default)]
+    pub container_duration_us: Option<TimeUs>,
     pub video: Option<VideoStreamMeta>,
     pub audio: Option<AudioStreamMeta>,
     /// ffprobe `format.format_name` — the demuxer/container (e.g. "gif",
@@ -63,6 +75,10 @@ pub struct VideoStreamMeta {
     pub fps_den: u32,
     pub codec: String,
     pub pix_fmt: String,
+    /// Container PTS for this stream's first content sample, if ffprobe reports
+    /// it. Video decoders use this to map normalized source time to packets.
+    #[serde(default)]
+    pub start_pts_us: Option<TimeUs>,
     /// Demuxer-reported frame count (ffprobe `nb_frames`), when the container
     /// carries one. `Some(1)` marks a single-frame stream — how `detect_kind`
     /// tells a still image from an animated GIF. `None` when the demuxer
@@ -90,6 +106,11 @@ pub struct AudioStreamMeta {
     pub sample_rate: u32,
     pub channels: u8,
     pub codec: String,
+    /// Container PTS for this stream's first content sample, if ffprobe reports
+    /// it. Conformed audio is already written in normalized time today; this is
+    /// persisted for diagnostics and future direct-audio decode paths.
+    #[serde(default)]
+    pub start_pts_us: Option<TimeUs>,
 }
 
 #[cfg(test)]
@@ -108,6 +129,9 @@ mod tests {
             "imported_at": "2026-05-29T00:00:00Z"
         });
         let item: MediaItem = serde_json::from_value(json).unwrap();
-        assert_eq!(item.decode_route, DecodeRoute::DirectExport { quick_proxy: None });
+        assert_eq!(
+            item.decode_route,
+            DecodeRoute::DirectExport { quick_proxy: None }
+        );
     }
 }

@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/mutations/trim.test.ts
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Layer, type LayerParams } from '../model'
+import { blankProject, type Layer, type LayerParams, type MediaItem } from '../model'
 import { applyAddLayer, colorParams } from './add'
 import { applyTrimLayer, clampSigned } from './trim'
 import { isCommandFailure } from '../errors'
@@ -10,6 +10,29 @@ import { applyGroupsCreate } from './groups'
 function color(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
   return { id, label: null, t_start_us: t0, t_end_us: t1, enabled: true, locked: false, metadata: {}, params, effects: [] }
+}
+
+function video(id: string, media: string, t0: number, t1: number, srcIn: number, srcOut: number): Layer {
+  const params: LayerParams = {
+    kind: 'VideoClip', media, src_in_us: srcIn, src_out_us: srcOut,
+    transform: {
+      x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 },
+      scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 },
+      rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5],
+    },
+    opacity: { mode: 'Static', value: 1 }, crop: null, flip_h: false, flip_v: false,
+    blend_mode: 'Normal', speed: 1, fade_in_us: 0, fade_out_us: 0,
+  }
+  return { id, label: null, t_start_us: t0, t_end_us: t1, enabled: true, locked: false, metadata: {}, params, effects: [] }
+}
+
+function media(id: string, durationUs: number): MediaItem {
+  return {
+    id, label: null, path_abs: '/m.mp4', path_rel: null, kind: 'Video',
+    metadata: { duration_us: durationUs, video: null, audio: null, container_format: null },
+    file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '<TS>',
+    decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null,
+  }
 }
 
 function setup() {
@@ -43,6 +66,16 @@ describe('trim', () => {
     // trimming OUT below t_start+1 → clamps; trimming with bounds collapsed → TrimEdgeOutOfRange
     const { p: p2, a: a2 } = setup()
     try { applyTrimLayer(p2, a2, 'Out', 1_000_000, false); /* would invert → clamp to -(dur-1); nonzero so applies */ } catch { /* ok */ }
+  })
+  it('clamps an AV OUT trim at normalized media duration', () => {
+    const p = blankProject(seededGen(), 't')
+    p.media_pool.m = media('m', 2_000_000)
+    p.tracks[0].layers = [video('v', 'm', 0, 1_000_000, 0, 1_000_000)]
+    applyTrimLayer(p, 'v', 'Out', 3_000_000, false)
+    const l = p.tracks[0].layers[0]
+    expect(l.t_end_us).toBe(2_000_000)
+    expect(l.params.kind).toBe('VideoClip')
+    if (l.params.kind === 'VideoClip') expect(l.params.src_out_us).toBe(2_000_000)
   })
   it('rejects a locked track', () => {
     const { p, a } = setup(); p.tracks[0].locked = true

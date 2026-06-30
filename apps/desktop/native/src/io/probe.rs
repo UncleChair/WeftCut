@@ -28,8 +28,7 @@ pub struct FileFacts {
 /// File size + mtime only — used at import time when full blake3 hashing is
 /// deferred until the workspace copy lands.
 pub fn stat_file(path: &Path) -> Result<(u64, u64)> {
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("stat {}", path.display()))?;
+    let metadata = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
     let size = metadata.len();
     let mtime_secs = metadata
         .modified()
@@ -71,7 +70,14 @@ pub fn probe_metadata(path: &Path) -> MediaMetadata {
 
     let output = Command::new(ffprobe_path())
         .no_console_window()
-        .args(["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams"])
+        .args([
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+        ])
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -123,12 +129,18 @@ pub fn probe_max_keyframe_gap_secs(path: &Path) -> Option<f64> {
     let output = Command::new(ffprobe_path())
         .no_console_window()
         .args([
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-skip_frame", "nokey",
-            "-read_intervals", "%+12",
-            "-show_entries", "frame=pts_time",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-skip_frame",
+            "nokey",
+            "-read_intervals",
+            "%+12",
+            "-show_entries",
+            "frame=pts_time",
+            "-of",
+            "csv=p=0",
         ])
         .arg(path)
         .stdout(Stdio::piped())
@@ -181,8 +193,16 @@ const STILL_IMAGE_CODECS: &[&str] = &["png", "apng", "mjpeg", "webp", "gif", "bm
 /// image codec (motion-JPEG in .avi → Video). ffprobe joins alternatives with
 /// commas ("mov,mp4,m4a,3gp,3g2,mj2"), so match any comma-separated part.
 const IMAGE_CONTAINERS: &[&str] = &[
-    "gif", "webp_pipe", "webp", "png_pipe", "apng", "image2", "image2pipe",
-    "bmp_pipe", "tiff_pipe", "avif",
+    "gif",
+    "webp_pipe",
+    "webp",
+    "png_pipe",
+    "apng",
+    "image2",
+    "image2pipe",
+    "bmp_pipe",
+    "tiff_pipe",
+    "avif",
 ];
 
 fn container_is_image(format_name: Option<&str>) -> bool {
@@ -254,6 +274,7 @@ struct RawProbe {
 
 #[derive(Deserialize, Default)]
 struct RawFormat {
+    start_time: Option<String>,
     duration: Option<String>,
     format_name: Option<String>,
 }
@@ -275,6 +296,7 @@ enum RawStream {
         r_frame_rate: Option<String>,
         codec_name: Option<String>,
         pix_fmt: Option<String>,
+        start_time: Option<String>,
         duration: Option<String>,
         nb_frames: Option<String>,
         color_space: Option<String>,
@@ -288,6 +310,7 @@ enum RawStream {
         sample_rate: Option<String>,
         channels: Option<u8>,
         codec_name: Option<String>,
+        start_time: Option<String>,
         duration: Option<String>,
     },
     #[serde(other)]
@@ -298,9 +321,22 @@ fn duration_seconds_to_us(s: &str) -> Option<i64> {
     s.parse::<f64>().ok().map(|v| (v * 1_000_000.0) as i64)
 }
 
+fn max_opt(a: Option<i64>, b: i64) -> Option<i64> {
+    Some(a.map_or(b, |cur| cur.max(b)))
+}
+
+fn min_opt(a: Option<i64>, b: i64) -> Option<i64> {
+    Some(a.map_or(b, |cur| cur.min(b)))
+}
+
 impl RawProbe {
     fn into_metadata(self) -> MediaMetadata {
         let container_format = self.format.format_name;
+        let format_start_us = self
+            .format
+            .start_time
+            .as_deref()
+            .and_then(duration_seconds_to_us);
         let format_duration_us = self
             .format
             .duration
@@ -318,9 +354,17 @@ impl RawProbe {
         // stsd/stts/ctts and includes the offset, so it's the source of
         // truth for the visible timeline extent we want here.
         let mut max_duration_us = format_duration_us;
-        let mut consider = |s: Option<&str>| {
-            if let Some(us) = s.and_then(duration_seconds_to_us) {
-                max_duration_us = Some(max_duration_us.map_or(us, |cur| cur.max(us)));
+        let mut min_start_us = None;
+        let mut max_end_us = None;
+        let mut consider_extent = |start: Option<&str>, duration: Option<&str>| {
+            let s = start.and_then(duration_seconds_to_us);
+            let d = duration.and_then(duration_seconds_to_us);
+            if let Some(d) = d {
+                max_duration_us = max_opt(max_duration_us, d);
+                if let Some(s) = s {
+                    min_start_us = min_opt(min_start_us, s);
+                    max_end_us = max_opt(max_end_us, s + d);
+                }
             }
         };
 
@@ -342,6 +386,7 @@ impl RawProbe {
                     r_frame_rate,
                     codec_name,
                     pix_fmt,
+                    start_time,
                     duration,
                     nb_frames,
                     color_space,
@@ -350,7 +395,8 @@ impl RawProbe {
                     color_transfer,
                     disposition: _,
                 } if video.is_none() => {
-                    consider(duration.as_deref());
+                    consider_extent(start_time.as_deref(), duration.as_deref());
+                    let start_pts_us = start_time.as_deref().and_then(duration_seconds_to_us);
                     let (num, den) = parse_rational(r_frame_rate.as_deref().unwrap_or("0/1"));
                     video = Some(VideoStreamMeta {
                         width: width.unwrap_or(0),
@@ -359,6 +405,7 @@ impl RawProbe {
                         fps_den: den,
                         codec: codec_name.unwrap_or_default(),
                         pix_fmt: pix_fmt.unwrap_or_default(),
+                        start_pts_us,
                         nb_frames: nb_frames.as_deref().and_then(|s| s.parse().ok()),
                         color_matrix: clean_color(color_space),
                         color_range: clean_color(color_range),
@@ -370,9 +417,11 @@ impl RawProbe {
                     sample_rate,
                     channels,
                     codec_name,
+                    start_time,
                     duration,
                 } if audio.is_none() => {
-                    consider(duration.as_deref());
+                    consider_extent(start_time.as_deref(), duration.as_deref());
+                    let start_pts_us = start_time.as_deref().and_then(duration_seconds_to_us);
                     audio = Some(AudioStreamMeta {
                         sample_rate: sample_rate
                             .as_deref()
@@ -380,16 +429,33 @@ impl RawProbe {
                             .unwrap_or(0),
                         channels: channels.unwrap_or(0),
                         codec: codec_name.unwrap_or_default(),
+                        start_pts_us,
                     });
                 }
-                RawStream::Video { duration, .. } | RawStream::Audio { duration, .. } => {
-                    consider(duration.as_deref());
+                RawStream::Video {
+                    start_time,
+                    duration,
+                    ..
+                }
+                | RawStream::Audio {
+                    start_time,
+                    duration,
+                    ..
+                } => {
+                    consider_extent(start_time.as_deref(), duration.as_deref());
                 }
                 RawStream::Other => {}
             }
         }
+        let duration_us = match (min_start_us, max_end_us) {
+            (Some(start), Some(end)) => Some((end - start).max(0)),
+            _ => max_duration_us,
+        };
+        let start_pts_us = min_start_us.or(format_start_us);
         MediaMetadata {
-            duration_us: max_duration_us,
+            duration_us,
+            start_pts_us,
+            container_duration_us: max_duration_us,
             video,
             audio,
             container_format,
@@ -543,6 +609,7 @@ mod tests {
                 fps_den: 1,
                 codec: "h264".into(),
                 pix_fmt: "yuv420p".into(),
+                start_pts_us: None,
                 nb_frames: None,
                 color_matrix: None,
                 color_range: None,
@@ -564,7 +631,9 @@ mod tests {
         let json = r#"{"streams":[{"codec_type":"video","width":1920,"height":1080,
           "r_frame_rate":"30/1","codec_name":"h264","pix_fmt":"yuv420p",
           "color_space":"smpte170m","color_range":"tv"}]}"#;
-        let meta = serde_json::from_slice::<RawProbe>(json.as_bytes()).unwrap().into_metadata();
+        let meta = serde_json::from_slice::<RawProbe>(json.as_bytes())
+            .unwrap()
+            .into_metadata();
         let v = meta.video.unwrap();
         assert_eq!(v.color_matrix.as_deref(), Some("smpte170m"));
         assert_eq!(v.color_range.as_deref(), Some("tv"));
@@ -576,7 +645,11 @@ mod tests {
         let json = r#"{"streams":[{"codec_type":"video","width":1920,"height":1080,
           "r_frame_rate":"30/1","codec_name":"h264","pix_fmt":"yuv420p",
           "color_space":"unknown","color_range":"unknown"}]}"#;
-        let v = serde_json::from_slice::<RawProbe>(json.as_bytes()).unwrap().into_metadata().video.unwrap();
+        let v = serde_json::from_slice::<RawProbe>(json.as_bytes())
+            .unwrap()
+            .into_metadata()
+            .video
+            .unwrap();
         assert_eq!(v.color_matrix, None);
         assert_eq!(v.color_range, None);
     }
@@ -588,6 +661,32 @@ mod tests {
         serde_json::from_str::<RawProbe>(json)
             .expect("probe JSON")
             .into_metadata()
+    }
+
+    #[test]
+    fn non_zero_stream_start_normalizes_duration() {
+        let json = r#"{
+            "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "start_time": "0.299674",
+                "duration": "10.299674"
+            },
+            "streams": [{
+                "codec_type": "video", "codec_name": "h264",
+                "width": 1920, "height": 1080, "pix_fmt": "yuv420p",
+                "r_frame_rate": "30/1", "nb_frames": "300",
+                "start_time": "0.299674", "duration": "10.000000",
+                "disposition": { "attached_pic": 0 }
+            }]
+        }"#;
+        let meta = meta_from_probe_json(json);
+        assert_eq!(meta.start_pts_us, Some(299_674));
+        assert_eq!(meta.container_duration_us, Some(10_299_674));
+        assert_eq!(meta.duration_us, Some(10_000_000));
+        assert_eq!(
+            meta.video.as_ref().and_then(|v| v.start_pts_us),
+            Some(299_674)
+        );
     }
 
     /// mp3 with embedded cover art (very common in the wild): ffprobe reports
@@ -769,7 +868,10 @@ mod tests {
               "disposition": { "attached_pic": 0 } }]
         }"#;
         let meta = meta_from_probe_json(json);
-        assert_eq!(detect_kind(Path::new("/x/clip.mp4"), &meta), MediaKind::Video);
+        assert_eq!(
+            detect_kind(Path::new("/x/clip.mp4"), &meta),
+            MediaKind::Video
+        );
     }
 
     /// Motion-JPEG video (e.g. .avi capture): codec mjpeg like a still JPEG,
@@ -852,33 +954,70 @@ mod tests {
         let png = dir.path().join("chart.png");
         assert!(
             gen(
-                &["-f", "lavfi", "-i", "testsrc2=size=64x48:rate=1:duration=1", "-frames:v", "1"],
+                &[
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=64x48:rate=1:duration=1",
+                    "-frames:v",
+                    "1"
+                ],
                 &png
             ),
             "png fixture"
         );
 
         // (file, ffmpeg args, expected kind, expect_video_meta)
-        let mut cases: Vec<(std::path::PathBuf, MediaKind, bool)> = vec![(png.clone(), MediaKind::Image, true)];
+        let mut cases: Vec<(std::path::PathBuf, MediaKind, bool)> =
+            vec![(png.clone(), MediaKind::Image, true)];
         let png_arg = png.to_str().unwrap().to_string();
         let derived: &[(&str, Vec<String>, MediaKind, bool)] = &[
-            ("chart.jpg", vec!["-i".into(), png_arg.clone()], MediaKind::Image, true),
-            ("chart.gif", vec!["-i".into(), png_arg.clone()], MediaKind::Image, true),
+            (
+                "chart.jpg",
+                vec!["-i".into(), png_arg.clone()],
+                MediaKind::Image,
+                true,
+            ),
+            (
+                "chart.gif",
+                vec!["-i".into(), png_arg.clone()],
+                MediaKind::Image,
+                true,
+            ),
             (
                 "anim.gif",
-                vec!["-f".into(), "lavfi".into(), "-i".into(), "testsrc2=size=64x48:rate=5:duration=2".into()],
+                vec![
+                    "-f".into(),
+                    "lavfi".into(),
+                    "-i".into(),
+                    "testsrc2=size=64x48:rate=5:duration=2".into(),
+                ],
                 MediaKind::Image,
                 true,
             ),
             (
                 "plain.wav",
-                vec!["-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(), "-ac".into(), "1".into()],
+                vec![
+                    "-f".into(),
+                    "lavfi".into(),
+                    "-i".into(),
+                    "sine=frequency=1000:duration=1".into(),
+                    "-ac".into(),
+                    "1".into(),
+                ],
                 MediaKind::Audio,
                 false,
             ),
             (
                 "plain.mp3",
-                vec!["-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(), "-ac".into(), "1".into()],
+                vec![
+                    "-f".into(),
+                    "lavfi".into(),
+                    "-i".into(),
+                    "sine=frequency=1000:duration=1".into(),
+                    "-ac".into(),
+                    "1".into(),
+                ],
                 MediaKind::Audio,
                 false,
             ),
@@ -887,18 +1026,34 @@ mod tests {
             (
                 "cover.mp3",
                 vec![
-                    "-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(),
-                    "-i".into(), png_arg.clone(),
-                    "-map".into(), "0:a".into(), "-map".into(), "1:v".into(),
-                    "-c:v".into(), "mjpeg".into(),
-                    "-disposition:v".into(), "attached_pic".into(),
+                    "-f".into(),
+                    "lavfi".into(),
+                    "-i".into(),
+                    "sine=frequency=1000:duration=1".into(),
+                    "-i".into(),
+                    png_arg.clone(),
+                    "-map".into(),
+                    "0:a".into(),
+                    "-map".into(),
+                    "1:v".into(),
+                    "-c:v".into(),
+                    "mjpeg".into(),
+                    "-disposition:v".into(),
+                    "attached_pic".into(),
                 ],
                 MediaKind::Audio,
                 false,
             ),
             (
                 "plain.m4a",
-                vec!["-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(), "-c:a".into(), "aac".into()],
+                vec![
+                    "-f".into(),
+                    "lavfi".into(),
+                    "-i".into(),
+                    "sine=frequency=1000:duration=1".into(),
+                    "-c:a".into(),
+                    "aac".into(),
+                ],
                 MediaKind::Audio,
                 false,
             ),

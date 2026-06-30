@@ -125,6 +125,35 @@ afterEach(() => {
 });
 
 describe("ExportSourceHandle EOS tail", () => {
+  it("stores decoded frames in normalized source time for non-zero media starts", async () => {
+    const startUs = 299_674;
+    sink = makeSink([pkt(startUs / 1e6, "key"), pkt((startUs + 20_000) / 1e6, "delta")]);
+    const h = makeHandle({ sourceStartPtsUs: startUs });
+
+    await h.decodeRange(0, 20_000);
+    const dec = FakeVideoDecoder.instances[0]!;
+    dec.output(decodedFrame(startUs, 20_000));
+
+    expect(h.ring.firstPtsUs()).toBe(0);
+    expect(h.ring.frameAt(0)).not.toBeNull();
+  });
+
+  it("ignores import metadata start PTS when the decode target begins at zero", async () => {
+    const metadataStartUs = 299_674;
+    const seekUs = 212_133_333;
+    const packets = [pkt(0, "key"), pkt(seekUs / 1e6, "key")];
+    sink = makeSink(packets);
+    const h = makeHandle({ sourceStartPtsUs: metadataStartUs });
+
+    await h.ensureReady();
+    await h.decodeRange(seekUs, seekUs + 33_333);
+    const dec = FakeVideoDecoder.instances[0]!;
+    dec.output(decodedFrame(seekUs, 33_333));
+
+    expect(h.ring.firstPtsUs()).toBe(seekUs);
+    expect(h.ring.frameAt(seekUs)).not.toBeNull();
+  });
+
   it("does not block a forward tail range on a stalled EOS flush (export-freeze regression)", async () => {
     // Single trailing GOP: key@0 + deltas to 0.98s, nothing after — chunk A's
     // dispatch runs straight into EOS and floats the flush.

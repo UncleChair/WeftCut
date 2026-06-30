@@ -25,6 +25,7 @@
 // add_media_layer:
 //   track_id  → required (no fallback)
 //   total_src → media.metadata.duration_us ?? 2_000_000
+//               (normalized content duration; container start PTS is hidden)
 //   Video   → videoClipParams(media,0,total_src), span=total_src
 //   Audio   → audioParams(media,0,total_src) role=Music, span=total_src
 //   Image   → imageOverlayParams(media), span=image_layer_span_us()

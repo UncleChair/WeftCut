@@ -151,10 +151,12 @@ export interface GroupSummary { id: string; label: string | null; layer_ids: str
 export interface MarkerSummary { id: string; t_us: number; end_t_us: number | null; label: string; color_hint: string }
 export interface MediaSummary {
   id: string; label: string; path: string; kind: string; duration_us: number | null
+  start_pts_us: number | null; container_duration_us: number | null
   width: number | null; height: number | null; size_bytes: number; available: boolean
   decode_route: DecodeRoute
   codec: string | null; pix_fmt: string | null; color_matrix: string | null; color_range: string | null
-  color_primaries: string | null; color_transfer: string | null; conform_path: string | null
+  color_primaries: string | null; color_transfer: string | null; video_start_pts_us: number | null
+  audio_start_pts_us: number | null; conform_path: string | null
 }
 export interface LayerSummary {
   id: string; label: string | null; t_start_us: number; t_end_us: number; kind: string; color_hint: string
@@ -198,14 +200,19 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   }
   const media: MediaSummary[] = Object.values(p.media_pool).map((m: MediaItem) => {
     const video = m.metadata.video as Record<string, unknown> | null | undefined
+    const audio = m.metadata.audio as Record<string, unknown> | null | undefined
     return {
       id: m.id, label: mediaLabel(m), path: m.path_abs, kind: m.kind, duration_us: m.metadata.duration_us,
+      start_pts_us: m.metadata.start_pts_us ?? null,
+      container_duration_us: m.metadata.container_duration_us ?? null,
       width: (video?.width as number | undefined) ?? null, height: (video?.height as number | undefined) ?? null,
       size_bytes: m.file_size, available: fileExists(m.path_abs),
       decode_route: routeForSummary(m.decode_route),
       codec: (video?.codec as string | undefined) ?? null, pix_fmt: (video?.pix_fmt as string | undefined) ?? null,
       color_matrix: (video?.color_matrix as string | undefined) ?? null, color_range: (video?.color_range as string | undefined) ?? null,
       color_primaries: (video?.color_primaries as string | undefined) ?? null, color_transfer: (video?.color_transfer as string | undefined) ?? null,
+      video_start_pts_us: (video?.start_pts_us as number | undefined) ?? null,
+      audio_start_pts_us: (audio?.start_pts_us as number | undefined) ?? null,
       conform_path: fileOrNull(m.conform_path),
     }
   })

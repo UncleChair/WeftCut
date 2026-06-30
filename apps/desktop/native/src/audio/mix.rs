@@ -397,6 +397,7 @@ mod tests {
                             sample_rate: 48_000,
                             channels: 1,
                             codec: "pcm_f32le".into(),
+                            start_pts_us: None,
                         }),
                         ..Default::default()
                     },

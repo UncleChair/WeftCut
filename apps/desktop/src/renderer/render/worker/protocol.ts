@@ -38,6 +38,10 @@ export interface ExportProjectSnapshot {
   /// for fallback positioning math; the full MediaSummary is too
   /// large to copy. Only `width` / `height` are needed.
   mediaDims: Record<string, { width: number | null; height: number | null }>;
+  /// `media_id → video stream start PTS` in microseconds. Source windows are
+  /// normalized to content time; export decoders add this offset when seeking
+  /// packets and subtract it when storing decoded frames.
+  mediaStartPtsUs: Record<string, number | null>;
   /// `media_id → source color tags`, present (defined) ONLY for media the
   /// export decodes from the ORIGINAL file (DirectExport); undefined for proxy
   /// decodes and untagged sources. A plain serializable object (postMessage-

@@ -240,6 +240,7 @@ mod tests {
                     sample_rate: 44100,
                     channels,
                     codec: "pcm_s16le".into(),
+                    start_pts_us: None,
                 }),
                 ..Default::default()
             },
