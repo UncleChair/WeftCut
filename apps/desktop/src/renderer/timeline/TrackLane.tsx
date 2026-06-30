@@ -35,6 +35,7 @@ export function TrackLane({
   dragLayer,
   bladeMode,
   onBladeSplit,
+  onBladePreview,
   onSelectFromClick,
   onDragStart,
   onMediaDrop,
@@ -63,6 +64,7 @@ export function TrackLane({
   dragLayer: LayerSummary | null;
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
+  onBladePreview: (layer: LayerSummary | null, clientX?: number) => void;
   onSelectFromClick: (
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
@@ -242,6 +244,7 @@ export function TrackLane({
             pendingPlacement={pendingPlacement}
             bladeMode={bladeMode}
             onBladeSplit={onBladeSplit}
+            onBladePreview={onBladePreview}
             onSelectFromClick={onSelectFromClick}
             onDragStart={onDragStart}
             onContextMenu={onContextMenu}

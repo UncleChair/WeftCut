@@ -454,10 +454,10 @@ const enUS = {
     composition_duration_below_floor: "Must be ≥ {{floor}} (content end).",
     timeline_heading: "Timeline",
     timeline_blurb:
-      "Timeline editing preferences for layer movement and placement.",
-    tail_snap_enabled: "Snap moved layers to clip edges and playhead",
+      "Timeline editing preferences for movement, trimming, blade cuts, and placement.",
+    tail_snap_enabled: "Snap timeline edits to clip edges and playhead",
     tail_snap_enabled_hint:
-      "When dragging a layer, snap its start to the nearest layer start/end boundary on visible tracks or to the playhead.",
+      "When moving or trimming layers, or cutting with the blade tool, snap the active edge or cut point to visible layer boundaries or to the playhead.",
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels, so the effective time range follows the current timeline zoom.",

@@ -57,6 +57,7 @@ function renderTimeline(overrides: {
   selectedLayerId?: string | null;
   onSeek?: () => void;
   onSelect?: (id: string | null) => void;
+  bladeMode?: boolean;
 }) {
   const onSeek = overrides.onSeek ?? vi.fn();
   const onSelect = overrides.onSelect ?? vi.fn();
@@ -70,7 +71,7 @@ function renderTimeline(overrides: {
       keybindings={{}}
       fpsNum={30}
       fpsDen={1}
-      bladeMode={false}
+      bladeMode={overrides.bladeMode ?? false}
       media={[]}
       importing={new Set()}
       proxyState={new Map()}
@@ -128,6 +129,21 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSelect).toHaveBeenCalledWith(layer.id);
     expect(onSeek).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalledWith(null);
+  });
+
+  it("shows a blade cut preview at the hovered cut point", () => {
+    const { container } = renderTimeline({ bladeMode: true });
+    const block = container.querySelector(".timeline-layer")!;
+    fireEvent.pointerMove(block, { clientX: 80, buttons: 0 });
+
+    const marker = container.querySelector(
+      '[data-testid="timeline-blade-preview"]',
+    ) as HTMLElement | null;
+    expect(marker).not.toBeNull();
+    expect(marker?.style.left).toBe("80px");
+
+    fireEvent.pointerLeave(block);
+    expect(container.querySelector('[data-testid="timeline-blade-preview"]')).toBeNull();
   });
 
   it("dragging on the ruler scrubs the playhead repeatedly", () => {

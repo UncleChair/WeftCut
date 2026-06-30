@@ -85,6 +85,7 @@ export function LayerBlock({
   pendingPlacement,
   bladeMode,
   onBladeSplit,
+  onBladePreview,
   onSelectFromClick,
   onDragStart,
   onContextMenu,
@@ -121,6 +122,7 @@ export function LayerBlock({
   /// class (styles.css) via the `timeline-layer` hook class below.
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
+  onBladePreview: (layer: LayerSummary | null, clientX?: number) => void;
   onSelectFromClick: (
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
@@ -269,6 +271,15 @@ export function LayerBlock({
 
   const onPointerMoveHover = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.buttons !== 0) return; // ignore moves with a button held (drag)
+    if (bladeMode) {
+      if (layer.locked || trackLocked || isDragging) {
+        onBladePreview(null);
+      } else {
+        onBladePreview(layer, e.clientX);
+      }
+      if (edgeHover !== null) setEdgeHover(null);
+      return;
+    }
     if (layer.locked || trackLocked || bladeMode || isDragging) {
       if (edgeHover !== null) setEdgeHover(null);
       return;
@@ -281,6 +292,7 @@ export function LayerBlock({
   };
 
   const onPointerLeaveHover = () => {
+    if (bladeMode) onBladePreview(null);
     if (edgeHover !== null) setEdgeHover(null);
   };
 

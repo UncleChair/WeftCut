@@ -23,7 +23,7 @@ import {
   type TrackSummary,
 } from "../ipc";
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
-import { snapFrameRound } from "../frames";
+import { formatTimecode, snapFrameRound } from "../frames";
 import {
   toggleDisplayMode,
   useDisplayMode,
@@ -48,6 +48,7 @@ import { beginRename } from "./renameStore";
 import { useTimelineView } from "./hooks/useTimelineView";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
+import { snapTimeToTimelineBoundary } from "./snapping";
 
 // Any media kind drops on any track (tracks are kind-agnostic; the
 // backend enforces overlap rules). Kept as a stub returning true to
@@ -147,6 +148,10 @@ export function Timeline({
   /// this set tracks every layer that should render with the selected
   /// chrome. Stays in sync via the click handlers below.
   const [selectedLayerIds, setSelectedLayerIds] = useState<Set<string>>(new Set());
+  const [bladePreview, setBladePreview] = useState<{
+    layerId: string;
+    atUs: number;
+  } | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
@@ -186,6 +191,11 @@ export function Timeline({
         track.role !== null || track.id === (revealedTrackId ?? null),
     );
   }, [tracks, displayMode, revealedTrackId]);
+
+  const visibleSnapTracks = useMemo(
+    () => orderedTracks.map(({ track }) => track),
+    [orderedTracks],
+  );
 
   /// Map a click event on a layer chip to the resulting selection set.
   /// `docs/groups.md`: plain click on a grouped layer selects the
@@ -468,6 +478,60 @@ export function Timeline({
     [onSeek, pxPerSec, fpsNum, fpsDen],
   );
 
+  const bladeCutTimeFromClientX = useCallback(
+    (layer: LayerSummary, clientX: number): number | null => {
+      if (!canvasRef.current) return null;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const rawUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
+      const frameUs = snapFrameRound(rawUs, fpsNum, fpsDen);
+      const atUs = snapTimeToTimelineBoundary({
+        timeUs: frameUs,
+        layerId: layer.id,
+        escapeGroup: false,
+        visibleTracks: visibleSnapTracks,
+        groups,
+        groupByLayerId,
+        currentTimeUs,
+        fpsNum,
+        fpsDen,
+        pxPerSec,
+        enabled: tailSnapEnabled,
+        strengthPx: tailSnapStrengthPx,
+        isValidSnap: (boundaryUs) =>
+          boundaryUs > layer.t_start_us && boundaryUs < layer.t_end_us,
+      });
+      return atUs > layer.t_start_us && atUs < layer.t_end_us ? atUs : null;
+    },
+    [
+      currentTimeUs,
+      fpsNum,
+      fpsDen,
+      groupByLayerId,
+      groups,
+      pxPerSec,
+      tailSnapEnabled,
+      tailSnapStrengthPx,
+      visibleSnapTracks,
+    ],
+  );
+
+  const updateBladePreview = useCallback(
+    (layer: LayerSummary | null, clientX?: number) => {
+      if (!bladeMode || !layer || clientX === undefined) {
+        setBladePreview(null);
+        return;
+      }
+      const atUs = bladeCutTimeFromClientX(layer, clientX);
+      setBladePreview(atUs === null ? null : { layerId: layer.id, atUs });
+    },
+    [bladeCutTimeFromClientX, bladeMode],
+  );
+
+  useEffect(() => {
+    if (!bladeMode) setBladePreview(null);
+  }, [bladeMode]);
+
   // Blade-tool click handler: convert clientX → frame-snapped composition
   // timestamp and ask the actor to split the layer at that point. Reject
   // only when the snapped point lands exactly on a layer edge — the
@@ -476,12 +540,9 @@ export function Timeline({
   // (NLE convention); press `C` or `Esc` to exit.
   const splitFromClientX = useCallback(
     async (layer: LayerSummary, clientX: number) => {
-      if (!canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = clientX - rect.left;
-      const rawUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
-      const atUs = snapFrameRound(rawUs, fpsNum, fpsDen);
-      if (atUs <= layer.t_start_us || atUs >= layer.t_end_us) return;
+      const atUs = bladeCutTimeFromClientX(layer, clientX);
+      if (atUs === null) return;
+      setBladePreview(null);
       try {
         await splitLayerGrouped(layer.id, atUs, false);
         await onMutated();
@@ -489,7 +550,7 @@ export function Timeline({
         console.error("blade split failed:", err);
       }
     },
-    [pxPerSec, fpsNum, fpsDen, onMutated],
+    [bladeCutTimeFromClientX, onMutated],
   );
 
   // Esc exits blade mode. Bound at the window level so it fires regardless
@@ -606,6 +667,7 @@ export function Timeline({
                 dragLayer={dragLayer}
                 bladeMode={bladeMode}
                 onBladeSplit={splitFromClientX}
+                onBladePreview={updateBladePreview}
                 onSelectFromClick={selectFromClick}
                 onDragStart={(state) => setDrag(state)}
                 onContextMenu={onContextMenu}
@@ -628,6 +690,13 @@ export function Timeline({
               )}
               </Fragment>
             ))}
+            {bladePreview && (
+              <BladeCutPreview
+                x={(bladePreview.atUs / 1_000_000) * pxPerSec}
+                label={formatTimecode(bladePreview.atUs, fpsNum, fpsDen)}
+                width={Math.max(widthPx, 200)}
+              />
+            )}
           </div>
           {currentTimeUs >= 0 && (
             <div
@@ -655,6 +724,38 @@ export function Timeline({
         onPrebakeNow={onPrebakeNow}
       />
     )}
+    </>
+  );
+}
+
+function BladeCutPreview({
+  x,
+  label,
+  width,
+}: {
+  x: number;
+  label: string;
+  width: number;
+}) {
+  const labelX = Math.min(Math.max(x, 44), Math.max(44, width - 44));
+  return (
+    <>
+      <div
+        data-testid="timeline-blade-preview"
+        className="pointer-events-none absolute bottom-0 top-0 z-[5]"
+        style={{ left: x }}
+        aria-hidden="true"
+      >
+        <div className="absolute bottom-0 top-0 w-px -translate-x-1/2 bg-amber-300 shadow-[0_0_0_0.5px_rgba(0,0,0,0.65),0_0_8px_rgba(251,191,36,0.55)]" />
+        <div className="absolute -left-1.5 top-0 h-3 w-3 bg-amber-300 shadow-[0_1px_2px_rgba(0,0,0,0.55)] [clip-path:polygon(50%_100%,0_0,100%_0)]" />
+      </div>
+      <div
+        className="pointer-events-none absolute top-1 z-[6] -translate-x-1/2 whitespace-nowrap rounded-sm border border-amber-200/50 bg-black/80 px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none text-amber-100 shadow-[0_1px_5px_rgba(0,0,0,0.45)]"
+        style={{ left: labelX }}
+        aria-hidden="true"
+      >
+        {label}
+      </div>
     </>
   );
 }

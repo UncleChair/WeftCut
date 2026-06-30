@@ -9,6 +9,7 @@ import {
 import { snapFrameRound } from "../../frames";
 import { MIN_LAYER_DURATION_US, type VisualTrack } from "../geometry";
 import { type DragState, type PendingLayerPlacement } from "../LayerBlock";
+import { snapDragDeltaToTimelineBoundary } from "../snapping";
 
 /// Tracks are kind-agnostic: any layer can land on any track. This
 /// reject hook always accepts; routing is by LayerParams, not track
@@ -18,7 +19,7 @@ function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean 
 }
 
 /// Layer drag state machine (move / trim-start / trim-end): ghost
-/// tracking via window pointermove, frame + clip-boundary snapping,
+/// tracking via window pointermove, frame + timeline-boundary snapping,
 /// and the commit-on-pointerup switch that lowers to
 /// `moveLayer`/`trimLayer`.
 export function useLayerDrag(opts: {
@@ -96,6 +97,11 @@ export function useLayerDrag(opts: {
     }
   }, [pendingPlacement, tracks]);
 
+  const visibleSnapTracks = useMemo(
+    () => orderedTracks.map(({ track }) => track),
+    [orderedTracks],
+  );
+
   // -------- Layer drag (move / trim) --------
 
   const trackUnderPointer = useCallback(
@@ -125,59 +131,24 @@ export function useLayerDrag(opts: {
     [fpsNum, fpsDen],
   );
 
-  const snapMoveDeltaToClipBoundary = useCallback(
+  const snapDeltaToTimelineBoundary = useCallback(
     (
       state: DragState,
       frameDeltaUs: number,
     ): number => {
-      if (!tailSnapEnabled || state.kind !== "move") return frameDeltaUs;
-      const desiredStart = Math.max(0, state.originalTStart + frameDeltaUs);
-      const desiredEnd = Math.max(0, state.originalTEnd + frameDeltaUs);
-      const thresholdUs = (Math.max(0, tailSnapStrengthPx) / pxPerSec) * 1_000_000;
-      if (thresholdUs <= 0) return frameDeltaUs;
-
-      const ignoredLayerIds = new Set<string>([state.layerId]);
-      if (!state.escapeGroup) {
-        const groupId = groupByLayerId.get(state.layerId);
-        const group = groupId ? groups.find((g) => g.id === groupId) : null;
-        for (const layerId of group?.layer_ids ?? []) {
-          ignoredLayerIds.add(layerId);
-        }
-      }
-
-      let bestDeltaUs: number | null = null;
-      let bestDistanceUs = Number.POSITIVE_INFINITY;
-      const considerDelta = (distanceUs: number, deltaUs: number) => {
-        if (state.originalTStart + deltaUs < 0) return;
-        if (distanceUs <= thresholdUs && distanceUs < bestDistanceUs) {
-          bestDistanceUs = distanceUs;
-          bestDeltaUs = deltaUs;
-        }
-      };
-      const considerBoundary = (boundaryUs: number) => {
-        const startDistanceUs = Math.abs(boundaryUs - desiredStart);
-        considerDelta(startDistanceUs, boundaryUs - state.originalTStart);
-
-        const endDistanceUs = Math.abs(boundaryUs - desiredEnd);
-        considerDelta(endDistanceUs, boundaryUs - state.originalTEnd);
-      };
-
-      for (const { track } of orderedTracks) {
-        for (const layer of track.layers) {
-          if (ignoredLayerIds.has(layer.id)) continue;
-          const boundaries = [
-            snapFrameRound(layer.t_start_us, fpsNum, fpsDen),
-            snapFrameRound(layer.t_end_us, fpsNum, fpsDen),
-          ];
-          for (const boundaryUs of boundaries) {
-            considerBoundary(boundaryUs);
-          }
-        }
-      }
-      const playheadUs = snapFrameRound(currentTimeUs, fpsNum, fpsDen);
-      considerBoundary(playheadUs);
-
-      return bestDeltaUs === null ? frameDeltaUs : bestDeltaUs;
+      return snapDragDeltaToTimelineBoundary({
+        state,
+        frameDeltaUs,
+        visibleTracks: visibleSnapTracks,
+        groups,
+        groupByLayerId,
+        currentTimeUs,
+        fpsNum,
+        fpsDen,
+        pxPerSec,
+        enabled: tailSnapEnabled,
+        strengthPx: tailSnapStrengthPx,
+      });
     },
     [
       currentTimeUs,
@@ -185,10 +156,10 @@ export function useLayerDrag(opts: {
       fpsDen,
       groupByLayerId,
       groups,
-      orderedTracks,
       pxPerSec,
       tailSnapEnabled,
       tailSnapStrengthPx,
+      visibleSnapTracks,
     ],
   );
 
@@ -205,14 +176,14 @@ export function useLayerDrag(opts: {
       );
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
-      const deltaUs = snapMoveDeltaToClipBoundary(drag, frameDeltaUs);
+      const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
       setDrag({
         ...drag,
         deltaUs,
         overTrackId: overTrack?.id ?? null,
       });
     },
-    [drag, pxPerSec, snapDragDelta, snapMoveDeltaToClipBoundary, trackUnderPointer],
+    [drag, pxPerSec, snapDragDelta, snapDeltaToTimelineBoundary, trackUnderPointer],
   );
 
   const handlePointerUp = useCallback(
@@ -228,7 +199,7 @@ export function useLayerDrag(opts: {
       );
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
-      const deltaUs = snapMoveDeltaToClipBoundary(drag, frameDeltaUs);
+      const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
       const committed = drag;
       setDrag(null);
 
@@ -286,7 +257,7 @@ export function useLayerDrag(opts: {
         console.error("timeline commit failed:", err);
       }
     },
-    [drag, onMutated, pxPerSec, snapDragDelta, snapMoveDeltaToClipBoundary, trackUnderPointer],
+    [drag, onMutated, pxPerSec, snapDragDelta, snapDeltaToTimelineBoundary, trackUnderPointer],
   );
 
   useEffect(() => {
