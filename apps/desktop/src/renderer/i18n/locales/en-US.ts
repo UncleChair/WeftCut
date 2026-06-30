@@ -453,11 +453,10 @@ const enUS = {
     composition_duration_invalid: "Invalid timecode.",
     composition_duration_below_floor: "Must be ≥ {{floor}} (content end).",
     timeline_heading: "Timeline",
-    timeline_blurb:
-      "Timeline editing preferences for movement, trimming, blade cuts, and placement.",
-    tail_snap_enabled: "Snap timeline edits to clip edges and playhead",
+    timeline_blurb: "Timeline editing preferences.",
+    tail_snap_enabled: "Enable timeline snapping",
     tail_snap_enabled_hint:
-      "When moving or trimming layers, or cutting with the blade tool, snap the active edge or cut point to visible layer boundaries or to the playhead.",
+      "Align edits to nearby clip edges or the playhead.",
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels, so the effective time range follows the current timeline zoom.",

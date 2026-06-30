@@ -441,10 +441,10 @@ const zhCN: Resources = {
     composition_duration_invalid: "时间码格式无效。",
     composition_duration_below_floor: "不得小于 {{floor}}（内容末尾）。",
     timeline_heading: "时间线",
-    timeline_blurb: "控制图层移动、裁剪、剪刀切割和放置时的时间线编辑偏好。",
-    tail_snap_enabled: "移动、裁剪和剪刀切割时启用吸附",
+    timeline_blurb: "控制时间线编辑偏好。",
+    tail_snap_enabled: "启用时间线吸附",
     tail_snap_enabled_hint:
-      "移动或裁剪图层、使用剪刀工具切割时，将正在操作的边界或切点吸附到可见轨道上的图层边界或播放头。",
+      "编辑时自动对齐到附近的图层边界或播放头。",
     tail_snap_strength: "吸附强度",
     tail_snap_strength_hint:
       "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",
