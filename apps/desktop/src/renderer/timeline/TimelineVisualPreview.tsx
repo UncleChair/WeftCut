@@ -108,10 +108,12 @@ export function TimelineVisualPreview({
   layer,
   layerWidthPx,
   layerHeightPx,
+  pxPerSec,
 }: {
   layer: LayerSummary;
   layerWidthPx: number;
   layerHeightPx: number;
+  pxPerSec: number;
 }) {
   const canRenderPreview = layerWidthPx >= LAYER_PREVIEW_MIN_PX;
   const { enabled: resourceEnabled, rootRef } =
@@ -144,6 +146,7 @@ export function TimelineVisualPreview({
             layerHeightPx={layerHeightPx}
             colorHint={layer.color_hint}
             enabled={resourceEnabled}
+            pxPerSec={pxPerSec}
           />
         );
       case "ImageOverlay":

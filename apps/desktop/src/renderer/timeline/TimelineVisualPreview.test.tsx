@@ -139,6 +139,7 @@ describe("TimelineVisualPreview", () => {
         layer={videoLayer}
         layerWidthPx={160}
         layerHeightPx={32}
+        pxPerSec={80}
       />,
     );
 
@@ -177,6 +178,7 @@ describe("TimelineVisualPreview", () => {
         layer={videoLayer}
         layerWidthPx={160}
         layerHeightPx={32}
+        pxPerSec={80}
       />,
     );
 
@@ -191,6 +193,7 @@ describe("TimelineVisualPreview", () => {
         layer={videoLayer}
         layerWidthPx={LAYER_PREVIEW_MIN_PX - 1}
         layerHeightPx={32}
+        pxPerSec={80}
       />,
     );
 
@@ -204,6 +207,7 @@ describe("TimelineVisualPreview", () => {
         layer={colorLayer}
         layerWidthPx={160}
         layerHeightPx={32}
+        pxPerSec={80}
       />,
     );
 

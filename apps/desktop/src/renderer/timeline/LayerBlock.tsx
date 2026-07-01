@@ -497,6 +497,7 @@ export function LayerBlock({
         layer={layer}
         layerWidthPx={layerWidthPx}
         layerHeightPx={sliceHeight}
+        pxPerSec={pxPerSec}
       />
       {isEditing && showLabel ? (
         <AppInput
