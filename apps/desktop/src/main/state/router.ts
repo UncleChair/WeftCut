@@ -41,7 +41,7 @@ export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
  *  before the rust dispatch. Safe on rust: they hold no resident state. */
 export const SLICE_INJECTED_READS: ReadonlySet<string> = new Set([
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
-  'get_media_thumbnail', 'get_waveform_peaks',
+  'get_media_thumbnail', 'get_media_thumbnails', 'get_waveform_peaks',
 ])
 
 /** Native compute with NO project actor access. */

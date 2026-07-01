@@ -290,11 +290,14 @@ impl Backend {
     pub fn end_agent_session_slot(&self) {
         crate::agent_session::end_and_emit(self.events.as_ref(), &self.agent_session);
     }
+}
 
+#[cfg(feature = "export")]
+#[napi]
+impl Backend {
     /// Stream one raw encoded frame to the active 10-bit video sink over native
     /// IPC (PoC: the Electron-native alternative to the loopback WebSocket).
     /// Binary in, no JSON — bypasses the `invoke` dispatcher.
-    #[cfg(feature = "export")]
     #[napi]
     pub async fn export_video_sink_write(
         &self,
@@ -433,6 +436,11 @@ impl Backend {
             "get_media_thumbnail" => {
                 let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::get_media_thumbnail(a.item).await)
+            }
+            #[cfg(feature = "jobs")]
+            "get_media_thumbnails" => {
+                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_media_thumbnails(a.item).await)
             }
             #[cfg(feature = "jobs")]
             "get_waveform_peaks" => {
@@ -905,9 +913,9 @@ mod tests {
             "jobs/import.rs: the pending-hash / migrate machinery is deleted (Phase 4)"
         );
 
-        // Phase 1 (stateless-compute-service): the four single-media channels no
+        // Phase 1 (stateless-compute-service): the single-media channels no
         // longer read the mirror — the TS host passes the resolved MediaItem.
-        for name in ["get_media_thumbnail", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform"] {
+        for name in ["get_media_thumbnail", "get_media_thumbnails", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform"] {
             let start = media.find(&format!("fn {name}"))
                 .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));
             let body = &media[start..(start + 600).min(media.len())];

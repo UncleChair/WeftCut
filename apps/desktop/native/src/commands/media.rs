@@ -63,12 +63,29 @@ pub async fn import_queue_list(backend: &Backend) -> Result<Vec<ImportEntry>, St
 
 use base64::Engine;
 
+const TIMELINE_THUMB_COUNT: usize = 10;
+
 /// Peaks payload for the timeline waveform. `peaks_per_second` maps a layer's
 /// src window onto a slice of `peaks`.
 #[derive(serde::Serialize)]
 pub struct WaveformPeaks {
     pub peaks: Vec<f32>,
     pub peaks_per_second: u32,
+}
+
+/// Timeline-oriented thumbnail manifest. Paths point at the existing cached
+/// JPGs; the renderer converts them with `convertFileSrc`.
+#[derive(Debug, serde::Serialize)]
+pub struct ThumbnailManifest {
+    pub frames: Vec<ThumbnailFrame>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbnailFrame {
+    pub index: usize,
+    pub t_us: i64,
+    pub path: PathBuf,
 }
 
 /// Master-bus meter reading pushed by the renderer (~2 Hz while playing).
@@ -91,6 +108,24 @@ pub async fn get_media_thumbnail(item: MediaItem) -> Result<String, String> {
     let bytes = tokio::fs::read(&path).await.map_err(|e| format!("read thumbnail: {e}"))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:image/jpeg;base64,{b64}"))
+}
+
+pub async fn get_media_thumbnails(item: MediaItem) -> Result<ThumbnailManifest, String> {
+    let dir = item.thumbnails_dir.clone().ok_or_else(|| "not_ready".to_string())?;
+    let duration_us = item.metadata.duration_us.unwrap_or(0).max(0);
+    let mut frames = Vec::with_capacity(TIMELINE_THUMB_COUNT);
+    for index in 0..TIMELINE_THUMB_COUNT {
+        let path = dir.join(format!("{index:03}.jpg"));
+        if !crate::cache::cached_ok(&path) {
+            return Err("not_ready".to_string());
+        }
+        frames.push(ThumbnailFrame {
+            index,
+            t_us: (duration_us.saturating_mul(index as i64)) / TIMELINE_THUMB_COUNT as i64,
+            path,
+        });
+    }
+    Ok(ThumbnailManifest { frames })
 }
 
 pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String> {
@@ -138,6 +173,7 @@ mod mirror_tests {
     use std::sync::Arc;
     use chrono::Utc;
     use crate::state::{DecodeRoute, MediaItem, MediaKind, MediaMetadata};
+    use super::{get_media_thumbnails, TIMELINE_THUMB_COUNT};
 
     fn mirror_only_item(id: uuid::Uuid) -> MediaItem {
         MediaItem {
@@ -171,6 +207,44 @@ mod mirror_tests {
         let args = serde_json::json!({ "item": item }).to_string();
         let err = b.dispatch("get_media_thumbnail", &args).await.unwrap_err();
         assert_eq!(err, "not_ready", "expected not_ready from passed item, got: {err}");
+    }
+
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn get_media_thumbnails_returns_existing_timeline_manifest() {
+        let id = uuid::Uuid::now_v7();
+        let mut item = mirror_only_item(id);
+        item.metadata.duration_us = Some(10_000_000);
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..TIMELINE_THUMB_COUNT {
+            tokio::fs::write(dir.path().join(format!("{index:03}.jpg")), b"jpg")
+                .await
+                .unwrap();
+        }
+        item.thumbnails_dir = Some(dir.path().to_path_buf());
+
+        let manifest = get_media_thumbnails(item).await.expect("manifest");
+
+        assert_eq!(manifest.frames.len(), TIMELINE_THUMB_COUNT);
+        for (index, frame) in manifest.frames.iter().enumerate() {
+            assert_eq!(frame.index, index);
+            assert_eq!(frame.t_us, index as i64 * 1_000_000);
+            assert_eq!(frame.path, dir.path().join(format!("{index:03}.jpg")));
+        }
+    }
+
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn get_media_thumbnails_reports_not_ready_when_cache_absent() {
+        let id = uuid::Uuid::now_v7();
+        let mut item = mirror_only_item(id);
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("000.jpg"), b"jpg").await.unwrap();
+        item.thumbnails_dir = Some(dir.path().to_path_buf());
+
+        let err = get_media_thumbnails(item).await.unwrap_err();
+
+        assert_eq!(err, "not_ready");
     }
 
     /// `ensure_full_proxy` routes the derivative write through the seam

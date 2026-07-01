@@ -36,7 +36,7 @@ const ALL_CHANNELS: readonly string[] = [
   'import_media',
   // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
-  'get_media_thumbnail', 'get_waveform_peaks',
+  'get_media_thumbnail', 'get_media_thumbnails', 'get_waveform_peaks',
   // backend stores (config-dir, not the project actor)
   'app_settings_get', 'app_settings_set', 'view_state_get', 'view_state_set', 'export_settings_get',
   'export_settings_set', 'workspace_dir', 'recents_list', 'recents_remove',
