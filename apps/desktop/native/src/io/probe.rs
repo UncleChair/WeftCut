@@ -449,7 +449,14 @@ impl RawProbe {
         }
         let duration_us = match (min_start_us, max_end_us) {
             (Some(start), Some(end)) => Some((end - start).max(0)),
-            _ => max_duration_us,
+            // No per-stream extent (e.g. MKV/WebM report only at the format
+            // level). `format.duration` includes the leading offset (see note
+            // above), so subtract the format start to keep `duration_us`
+            // consistent with the `start_pts_us` we still expose below.
+            _ => match (format_start_us, max_duration_us) {
+                (Some(fstart), Some(fdur)) => Some((fdur - fstart).max(0)),
+                _ => max_duration_us,
+            },
         };
         let start_pts_us = min_start_us.or(format_start_us);
         MediaMetadata {
@@ -687,6 +694,33 @@ mod tests {
             meta.video.as_ref().and_then(|v| v.start_pts_us),
             Some(299_674)
         );
+    }
+
+    /// Some containers (notably MKV/WebM) report `start_time` + `duration`
+    /// only at the FORMAT level; the streams carry neither. The stream-extent
+    /// normalization can't fire, but the offset still lands in `start_pts_us`,
+    /// so `duration_us` must be normalized against the format start too — else
+    /// the seeded clip span keeps the phantom leading offset and disagrees with
+    /// its own `start_pts_us`.
+    #[test]
+    fn format_start_normalizes_duration_without_stream_extent() {
+        let json = r#"{
+            "format": {
+                "format_name": "matroska,webm",
+                "start_time": "0.299674",
+                "duration": "10.299674"
+            },
+            "streams": [{
+                "codec_type": "video", "codec_name": "vp9",
+                "width": 1920, "height": 1080, "pix_fmt": "yuv420p",
+                "r_frame_rate": "30/1",
+                "disposition": { "attached_pic": 0 }
+            }]
+        }"#;
+        let meta = meta_from_probe_json(json);
+        assert_eq!(meta.start_pts_us, Some(299_674));
+        assert_eq!(meta.container_duration_us, Some(10_299_674));
+        assert_eq!(meta.duration_us, Some(10_000_000));
     }
 
     /// mp3 with embedded cover art (very common in the wild): ffprobe reports
