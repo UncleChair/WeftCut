@@ -164,7 +164,10 @@ pub fn read_v2_range(
         .levels
         .get(level_idx)
         .ok_or_else(|| anyhow!("level {level_idx} out of range"))?;
-    let ch = channel.min(header.channels.saturating_sub(1) as usize);
+    if channel >= header.channels as usize {
+        anyhow::bail!("channel {channel} out of range (file has {} channels)", header.channels);
+    }
+    let ch = channel;
     let start = start_peak.min(level.peak_count);
     let end = (start + count).min(level.peak_count);
     let n = (end - start) as usize;
@@ -578,5 +581,12 @@ mod tests {
         // Clamp past the end.
         let (mins, _) = read_v2_range(&path, 0, 0, 3, 10).expect("clamped range");
         assert_eq!(mins, vec![-4000]);
+
+        // Fully past-end start_peak -> empty result (start clamps to peak_count, n = 0).
+        let (mins, maxs) = read_v2_range(&path, 0, 0, 10, 5).expect("past-end start");
+        assert!(mins.is_empty() && maxs.is_empty());
+
+        // Out-of-range channel is an error, not a silent clamp.
+        assert!(read_v2_range(&path, 0, 5, 0, 2).is_err());
     }
 }
