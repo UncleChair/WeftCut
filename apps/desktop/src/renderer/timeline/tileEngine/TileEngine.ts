@@ -64,7 +64,9 @@ export class TileEngine {
     const ks = keyStr(key);
     const existing = this.slots.get(ks);
     if (existing && (existing.entry.state === "pending" || existing.entry.state === "ready" || existing.entry.state === "error")) {
-      return; // coalesce; not_ready is retried on job_complete, so allow re-request only then
+      return; // coalesce: pending/ready/error slots are left as-is. not_ready is deliberately
+      // NOT short-circuited — a later request() re-fetches it (e.g. after invalidateMedia
+      // clears the slot, or a consumer explicit retry).
     }
     const producer = this.producers.get(key.kind);
     if (!producer) return;
