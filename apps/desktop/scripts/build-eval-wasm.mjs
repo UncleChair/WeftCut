@@ -8,6 +8,10 @@ import { dirname, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..') // apps/desktop
 const manifest = resolve(root, 'native/Cargo.toml')
+const cargoEnv = { ...process.env }
+// Dev startup should not fail because a machine-local rustc wrapper daemon
+// cannot start. This wasm leaf builds quickly without sccache.
+delete cargoEnv.RUSTC_WRAPPER
 
 execFileSync(
   'cargo',
@@ -21,7 +25,7 @@ execFileSync(
     'wasm32-unknown-unknown',
     '--release',
   ],
-  { stdio: 'inherit' },
+  { stdio: 'inherit', env: cargoEnv },
 )
 
 const wasm = resolve(root, 'native/target/wasm32-unknown-unknown/release/weftcut_eval.wasm')
