@@ -120,10 +120,11 @@ impl CacheLayout {
         self.thumbnails(hash).join(format!("{idx:03}.jpg"))
     }
 
-    /// Audio peaks file. Format: little-endian f32 samples, one per peak window.
-    /// See `jobs::waveform` for the window size + header convention.
+    /// Multi-resolution audio peaks file (VPEAKS v2). The `v2` segment is the
+    /// format version — bumped when the on-disk layout changes so stale v1
+    /// caches are regenerated, not misread (mirrors `quick_proxy`'s recipe tag).
     pub fn waveform(&self, hash: &str) -> PathBuf {
-        self.waveforms_dir().join(format!("{hash}.peaks"))
+        self.waveforms_dir().join(format!("{hash}.v2.peaks"))
     }
 
     /// Canonical conformed PCM for a hashed media file — 48 kHz, f32le,
@@ -256,7 +257,7 @@ mod tests {
         );
         assert_eq!(
             layout.waveform("abc"),
-            tmp.path().join("waveforms").join("abc.peaks"),
+            tmp.path().join("waveforms").join("abc.v2.peaks"),
         );
         assert_eq!(
             layout.audio_conform("abc"),
