@@ -219,6 +219,17 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
+  it("keeps the layer root overflow visible while the visual preview clips its own content", () => {
+    const { container } = renderTimeline({});
+    const block = container.querySelector(".timeline-layer") as HTMLElement;
+    const preview = container.querySelector(
+      '[data-testid="timeline-visual-preview"]',
+    ) as HTMLElement;
+
+    expect(block.className).not.toContain("overflow-hidden");
+    expect(preview.className).toContain("overflow-hidden");
+  });
+
   it("hides labels and avoids preview requests for clips narrower than 16px", () => {
     const { container, queryByText } = renderTimeline({ tracks: [tinyVideoTrack] });
     expect(queryByText("Tiny Video")).toBeNull();

@@ -14,10 +14,18 @@ type PeaksEntry =
 
 const peaksCache = new Map<string, PeaksEntry>();
 const peaksListeners = new Map<string, Set<() => void>>();
+const peaksRequestVersions = new Map<string, number>();
+const MAX_WAVEFORM_CANVAS_WIDTH = 4096;
 let jobListenerInstalled = false;
 
 function firePeaksListeners(mediaId: string) {
   peaksListeners.get(mediaId)?.forEach((cb) => cb());
+}
+
+function bumpPeaksRequestVersion(mediaId: string): number {
+  const next = (peaksRequestVersions.get(mediaId) ?? 0) + 1;
+  peaksRequestVersions.set(mediaId, next);
+  return next;
 }
 
 async function ensurePeaks(mediaId: string) {
@@ -29,11 +37,14 @@ async function ensurePeaks(mediaId: string) {
   ) {
     return;
   }
+  const requestVersion = bumpPeaksRequestVersion(mediaId);
   peaksCache.set(mediaId, { state: "pending" });
   try {
     const peaks = await getWaveformPeaks(mediaId);
+    if (peaksRequestVersions.get(mediaId) !== requestVersion) return;
     peaksCache.set(mediaId, { state: "ready", peaks });
   } catch (e) {
+    if (peaksRequestVersions.get(mediaId) !== requestVersion) return;
     const message = typeof e === "string" ? e : String(e);
     peaksCache.set(
       mediaId,
@@ -54,6 +65,7 @@ async function installJobListenerOnce() {
       if (event.payload?.kind !== "waveform") return;
       const mediaId = event.payload.media_id;
       peaksCache.delete(mediaId);
+      bumpPeaksRequestVersion(mediaId);
       firePeaksListeners(mediaId);
       if ((peaksListeners.get(mediaId)?.size ?? 0) > 0) {
         void ensurePeaks(mediaId);
@@ -170,7 +182,10 @@ export function TimelineWaveform({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const entry = useWaveformPeaks(mediaId, enabled);
   const state = entry?.state ?? (enabled ? "pending" : "disabled");
-  const width = Math.max(1, Math.ceil(layerWidthPx));
+  const width = Math.max(
+    1,
+    Math.min(MAX_WAVEFORM_CANVAS_WIDTH, Math.ceil(layerWidthPx)),
+  );
   const height = Math.max(1, Math.ceil(layerHeightPx));
 
   useEffect(() => {

@@ -434,7 +434,7 @@ export function LayerBlock({
     <div
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
-        "absolute flex items-center overflow-hidden rounded border border-white/15 px-2",
+        "absolute flex items-center rounded border border-white/15 px-2",
         "text-[11px] font-semibold text-background select-none cursor-grab",
         "shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-[outline,filter] duration-75",
         "hover:brightness-110",

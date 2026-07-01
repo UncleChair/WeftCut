@@ -17,10 +17,17 @@ type ManifestEntry =
 
 const manifestCache = new Map<string, ManifestEntry>();
 const manifestListeners = new Map<string, Set<() => void>>();
+const manifestRequestVersions = new Map<string, number>();
 let jobListenerInstalled = false;
 
 function fireManifestListeners(mediaId: string) {
   manifestListeners.get(mediaId)?.forEach((cb) => cb());
+}
+
+function bumpManifestRequestVersion(mediaId: string): number {
+  const next = (manifestRequestVersions.get(mediaId) ?? 0) + 1;
+  manifestRequestVersions.set(mediaId, next);
+  return next;
 }
 
 async function ensureManifest(mediaId: string) {
@@ -32,11 +39,14 @@ async function ensureManifest(mediaId: string) {
   ) {
     return;
   }
+  const requestVersion = bumpManifestRequestVersion(mediaId);
   manifestCache.set(mediaId, { state: "pending" });
   try {
     const manifest = await getMediaThumbnails(mediaId);
+    if (manifestRequestVersions.get(mediaId) !== requestVersion) return;
     manifestCache.set(mediaId, { state: "ready", manifest });
   } catch (e) {
+    if (manifestRequestVersions.get(mediaId) !== requestVersion) return;
     const message = typeof e === "string" ? e : String(e);
     manifestCache.set(
       mediaId,
@@ -57,6 +67,7 @@ async function installJobListenerOnce() {
       if (event.payload?.kind !== "thumbnails") return;
       const mediaId = event.payload.media_id;
       manifestCache.delete(mediaId);
+      bumpManifestRequestVersion(mediaId);
       fireManifestListeners(mediaId);
       if ((manifestListeners.get(mediaId)?.size ?? 0) > 0) {
         void ensureManifest(mediaId);
