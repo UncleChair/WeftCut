@@ -28,6 +28,13 @@ vi.mock("../ipc", async (importOriginal) => {
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
 
+type MutableIntersectionObserverGlobal = typeof globalThis & {
+  IntersectionObserver?: typeof globalThis.IntersectionObserver;
+};
+
+const intersectionObserverGlobal =
+  globalThis as MutableIntersectionObserverGlobal;
+
 const videoLayer: LayerSummary = {
   id: "video-1",
   label: "Video",
@@ -72,11 +79,13 @@ describe("TimelineVisualPreview", () => {
     observerCallback = null;
     observedElement = null;
     observerOptions = undefined;
-    originalIntersectionObserver = globalThis.IntersectionObserver;
-    class FakeIntersectionObserver {
-      readonly root = null;
+    originalIntersectionObserver =
+      intersectionObserverGlobal.IntersectionObserver;
+    class FakeIntersectionObserver implements IntersectionObserver {
+      readonly root: Element | Document | null = null;
       readonly rootMargin = "";
-      readonly thresholds = [];
+      readonly scrollMargin = "";
+      readonly thresholds: ReadonlyArray<number> = [];
       constructor(
         callback: IntersectionObserverCallback,
         options?: IntersectionObserverInit,
@@ -87,19 +96,23 @@ describe("TimelineVisualPreview", () => {
       observe(element: Element) {
         observedElement = element;
       }
-      unobserve() {}
+      unobserve(_element: Element) {}
       disconnect() {}
-      takeRecords() {
+      takeRecords(): IntersectionObserverEntry[] {
         return [];
       }
     }
-    globalThis.IntersectionObserver =
-      FakeIntersectionObserver as typeof globalThis.IntersectionObserver;
+    intersectionObserverGlobal.IntersectionObserver = FakeIntersectionObserver;
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.IntersectionObserver = originalIntersectionObserver;
+    if (originalIntersectionObserver) {
+      intersectionObserverGlobal.IntersectionObserver =
+        originalIntersectionObserver;
+    } else {
+      delete intersectionObserverGlobal.IntersectionObserver;
+    }
   });
 
   it("does not request video thumbnails until the preview is near the viewport", async () => {
@@ -139,8 +152,7 @@ describe("TimelineVisualPreview", () => {
   });
 
   it("requests video thumbnails immediately when IntersectionObserver is unavailable and width allows", async () => {
-    globalThis.IntersectionObserver =
-      undefined as unknown as typeof globalThis.IntersectionObserver;
+    delete intersectionObserverGlobal.IntersectionObserver;
 
     render(
       <TimelineVisualPreview
