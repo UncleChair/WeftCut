@@ -116,13 +116,10 @@ Add to the `#[cfg(test)] mod tests` in `waveform.rs`:
             (BASE_PEAKS_PER_SECOND, fine),
             (BASE_PEAKS_PER_SECOND / 2, coarse),
         ];
-        let level_data: Vec<LevelData> = levels.iter().map(|(_, d)| d.clone()).collect();
-
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async {
             write_v2_with_pps(&path, 2, &levels).await
         }).unwrap();
-        let _ = level_data; // silence unused if not needed
 
         let header = read_v2_header(&path).expect("header");
         assert_eq!(header.channels, 2);
@@ -149,17 +146,15 @@ Expected: FAIL — `write_v2_with_pps`, `read_v2_header`, `read_v2_range`, `Leve
 
 - [ ] **Step 3: Implement the format constants, structs, and read/write helpers**
 
-Replace the old header constants at the top of `waveform.rs` (the `MAGIC`/`VERSION`/`SAMPLE_RATE`/`PEAKS_PER_SECOND`/`SAMPLES_PER_PEAK` block) with:
+**Additive only — do NOT modify or remove the existing `MAGIC`/`VERSION`/`SAMPLE_RATE`/`PEAKS_PER_SECOND`/`SAMPLES_PER_PEAK` constants.** The v1 `run`/`compute_peaks`/`write_peaks_file`/`read_peaks_file` still use them and are only replaced in Tasks 2-3; touching them here breaks compilation. `MAGIC`, `SAMPLE_RATE`, and `PEAKS_PER_SECOND` are reused by v2 as-is. Add the following new items (a `FORMAT_VERSION_V2` const sidesteps the `VERSION` name clash; Task 3 removes the orphaned v1 `VERSION` once nothing reads v1):
 
 ```rust
-pub const MAGIC: &[u8; 8] = b"VPEAKS\0\0";
-pub const VERSION: u32 = 2;
-pub const SAMPLE_RATE: u32 = 22_050;
+/// v2 on-disk format version, written into the header. Distinct from the v1
+/// `VERSION` (= 1) so both readers compile during the migration; the v1
+/// constant is removed in Task 3 once no code reads the v1 layout.
+pub const FORMAT_VERSION_V2: u32 = 2;
 /// Finest stored LOD. Coarser levels halve this until ~1/sec.
 pub const BASE_PEAKS_PER_SECOND: u32 = 1000;
-/// Compat resolution the MCP consumers (detect_silences, media://…/waveform)
-/// still ask for via `read_peaks_file`. Unchanged so those call sites don't move.
-pub const PEAKS_PER_SECOND: u32 = 100;
 pub const MAX_CHANNELS: usize = 2;
 
 const HEADER_FIXED_BYTES: u64 = 8 + 4 + 4 + 4 + 4; // magic+version+rate+channels+level_count
@@ -216,7 +211,7 @@ pub async fn write_v2_with_pps(
 
     let mut buf: Vec<u8> = Vec::with_capacity(offset as usize);
     buf.extend_from_slice(MAGIC);
-    buf.extend_from_slice(&VERSION.to_le_bytes());
+    buf.extend_from_slice(&FORMAT_VERSION_V2.to_le_bytes());
     buf.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
     buf.extend_from_slice(&channels.to_le_bytes());
     buf.extend_from_slice(&(levels.len() as u32).to_le_bytes());
@@ -251,7 +246,7 @@ pub fn read_v2_header(path: &std::path::Path) -> Result<V2Header> {
         anyhow::bail!("bad magic in peaks file");
     }
     let version = u32::from_le_bytes(fixed[8..12].try_into().unwrap());
-    if version != VERSION {
+    if version != FORMAT_VERSION_V2 {
         anyhow::bail!("unsupported peaks version {version}");
     }
     let channels = u32::from_le_bytes(fixed[16..20].try_into().unwrap());
@@ -551,7 +546,7 @@ Then in `run`, change the ffmpeg `-ac` value from `"1"` to `"2"`, and replace th
     Ok(dest)
 ```
 
-Delete the now-unused `compute_peaks` and `write_peaks_file` functions.
+Delete the now-unused v1 `compute_peaks` and `write_peaks_file` functions and the now-orphaned `SAMPLES_PER_PEAK` const (they were the v1 write path). Leave the v1 `VERSION` const and the v1 `read_peaks_file` in place — Task 3 replaces the reader and removes `VERSION`.
 
 - [ ] **Step 4: Run unit tests to verify they pass**
 
@@ -678,6 +673,8 @@ pub fn read_peaks_file(path: &std::path::Path) -> Result<Vec<f32>> {
     Ok(out)
 }
 ```
+
+Now that no code reads the v1 layout, remove the orphaned v1 `VERSION` const (the `= 1` line kept through Tasks 1–2). `FORMAT_VERSION_V2` is the single remaining on-disk version constant.
 
 - [ ] **Step 4: Run to verify it passes, plus the existing offline roundtrip test name**
 
