@@ -64,6 +64,24 @@ const videoLayer: LayerSummary = {
   effects: [],
 };
 
+const colorLayer: LayerSummary = {
+  id: "color-1",
+  label: "Color",
+  t_start_us: 0,
+  t_end_us: 2_000_000,
+  kind: "Color",
+  color_hint: "#0a141e",
+  enabled: true,
+  locked: false,
+  params: {
+    kind: "Color",
+    color: { mode: "Static", value: { r: 10, g: 20, b: 30, a: 1 } },
+    width: 1920,
+    height: 1080,
+  },
+  effects: [],
+};
+
 describe("TimelineVisualPreview", () => {
   let observerCallback: IntersectionObserverCallback | null = null;
   let observedElement: Element | null = null;
@@ -178,5 +196,21 @@ describe("TimelineVisualPreview", () => {
 
     expect(queryByTestId("timeline-visual-preview")).toBeNull();
     expect(mocks.getMediaThumbnails).not.toHaveBeenCalled();
+  });
+
+  it("treats color alpha as the same 0-255 channel used by the compositor", () => {
+    const { getByTestId } = render(
+      <TimelineVisualPreview
+        layer={colorLayer}
+        layerWidthPx={160}
+        layerHeightPx={32}
+      />,
+    );
+
+    const fill = getByTestId("timeline-visual-preview").firstElementChild as HTMLElement;
+
+    expect(fill.getAttribute("style")).toContain(
+      "rgba(10, 20, 30, 0.00392156862745098)",
+    );
   });
 });

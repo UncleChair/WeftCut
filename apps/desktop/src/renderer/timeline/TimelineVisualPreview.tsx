@@ -14,7 +14,7 @@ function clamp01(value: number): number {
 }
 
 function rgbaToCss(color: Rgba): string {
-  const alpha = color.a <= 1 ? color.a : color.a / 255;
+  const alpha = color.a / 255;
   return `rgba(${color.r}, ${color.g}, ${color.b}, ${clamp01(alpha)})`;
 }
 
@@ -78,7 +78,7 @@ function usePreviewResourceGate(enabledByWidth: boolean) {
 }
 
 function colorFill(color: Rgba, colorHint: string) {
-  const alpha = color.a <= 1 ? color.a : color.a / 255;
+  const alpha = color.a / 255;
   if (alpha < 0.98) {
     const fill = rgbaToCss(color);
     return (
