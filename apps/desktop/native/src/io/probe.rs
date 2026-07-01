@@ -318,7 +318,12 @@ enum RawStream {
 }
 
 fn duration_seconds_to_us(s: &str) -> Option<i64> {
-    s.parse::<f64>().ok().map(|v| (v * 1_000_000.0) as i64)
+    // Round to nearest (not truncate): matches the renderer's
+    // `Math.round(ts * 1e6)` (render/decoder/ptsOffset.ts) so a metadata start
+    // PTS and a packet-derived one agree, and a float product landing at
+    // `x.9999…` doesn't silently lose a whole µs. `round` is half-away-from-zero,
+    // which is also the faithful choice for negative starts (priming/edit lists).
+    s.parse::<f64>().ok().map(|v| (v * 1_000_000.0).round() as i64)
 }
 
 fn max_opt(a: Option<i64>, b: i64) -> Option<i64> {
@@ -668,6 +673,16 @@ mod tests {
         serde_json::from_str::<RawProbe>(json)
             .expect("probe JSON")
             .into_metadata()
+    }
+
+    /// ffprobe can report sub-µs precision. This must round to nearest to match
+    /// the renderer's `Math.round(ts * 1e6)` (renderer/render/decoder/ptsOffset.ts),
+    /// so a future metadata-driven decode offset agrees with the packet-derived
+    /// one. Truncation would drop this half-µs (→299674) and, worse, silently
+    /// lose a whole µs whenever the float product lands at `x.9999…`.
+    #[test]
+    fn seconds_to_us_rounds_to_nearest() {
+        assert_eq!(duration_seconds_to_us("0.2996745"), Some(299_675));
     }
 
     #[test]
