@@ -1097,6 +1097,38 @@ export async function getWaveformPeaks(mediaId: string): Promise<WaveformPeaks> 
   return invoke<WaveformPeaks>("get_waveform_peaks", { mediaId });
 }
 
+export interface WaveformLevels {
+  channels: number;
+  levels: Array<{ level: number; peaksPerSecond: number; peakCount: number }>;
+}
+
+/// Header-only read of the media's peaks LOD table. Rejects "not_ready" until
+/// the waveform job has produced the v2 file.
+export async function getWaveformLevels(mediaId: string): Promise<WaveformLevels> {
+  return invoke<WaveformLevels>("get_waveform_levels", { mediaId });
+}
+
+export interface WaveformTile {
+  peaksPerSecond: number;
+  /// Parallel arrays; each value is a normalized sample in [-1, 1].
+  min: number[];
+  max: number[];
+}
+
+/// Read `count` (min,max) windows for one channel of one LOD level, starting at
+/// `startPeak`. The range is clamped to the level's peak count backend-side.
+export async function getWaveformTile(
+  mediaId: string,
+  level: number,
+  channel: number,
+  startPeak: number,
+  count: number,
+): Promise<WaveformTile> {
+  return invoke<WaveformTile>("get_waveform_tile", {
+    mediaId, level, channel, startPeak, count,
+  });
+}
+
 /// Returns a `data:image/jpeg;base64,...` URL for the middle thumbnail of a
 /// video media item. Rejects with "not_ready" if the thumbnails job is still
 /// running.

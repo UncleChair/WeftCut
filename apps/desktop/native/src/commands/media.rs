@@ -137,6 +137,90 @@ pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String
     Ok(WaveformPeaks { peaks, peaks_per_second: crate::jobs::waveform::PEAKS_PER_SECOND })
 }
 
+/// One LOD level's coarseness (`peaks_per_second`) + how many peak windows it holds.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveformLevelInfo {
+    pub level: u32,
+    pub peaks_per_second: u32,
+    pub peak_count: u32,
+}
+
+/// The v2 peaks file's level table, header-only (no sample data). The renderer
+/// uses this to pick a LOD level for the current zoom before requesting tiles.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveformLevels {
+    pub channels: u32,
+    pub levels: Vec<WaveformLevelInfo>,
+}
+
+/// A min/max window range for one channel of one LOD level.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveformTile {
+    pub peaks_per_second: u32,
+    pub min: Vec<f32>,
+    pub max: Vec<f32>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveformTileArgs {
+    pub item: MediaItem,
+    pub level: u32,
+    pub channel: u32,
+    pub start_peak: u32,
+    pub count: u32,
+}
+
+pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, String> {
+    let path = item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    let header = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_v2_header(&path))
+        .await
+        .map_err(|e| format!("join error: {e}"))?
+        .map_err(|e| format!("read header: {e:#}"))?;
+    Ok(WaveformLevels {
+        channels: header.channels,
+        levels: header
+            .levels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| WaveformLevelInfo {
+                level: i as u32,
+                peaks_per_second: l.peaks_per_second,
+                peak_count: l.peak_count,
+            })
+            .collect(),
+    })
+}
+
+pub async fn get_waveform_tile(args: WaveformTileArgs) -> Result<WaveformTile, String> {
+    let path = args.item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    let WaveformTileArgs { level, channel, start_peak, count, .. } = args;
+    let (mins, maxs) = tokio::task::spawn_blocking(move || {
+        crate::jobs::waveform::read_v2_range(&path, level as usize, channel as usize, start_peak, count)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
+    .map_err(|e| format!("read tile: {e:#}"))?;
+    // Resolve the level's pps from the header so the renderer can map peaks→time.
+    let hdr_path = args.item.waveform_path.clone().unwrap();
+    let peaks_per_second = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_v2_header(&hdr_path))
+        .await
+        .map_err(|e| format!("join error: {e}"))?
+        .map_err(|e| format!("read header: {e:#}"))?
+        .levels
+        .get(level as usize)
+        .map(|l| l.peaks_per_second)
+        .ok_or_else(|| "level out of range".to_string())?;
+    Ok(WaveformTile {
+        peaks_per_second,
+        min: mins.iter().map(|v| crate::jobs::waveform::dequantize(*v)).collect(),
+        max: maxs.iter().map(|v| crate::jobs::waveform::dequantize(*v)).collect(),
+    })
+}
+
 pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(), String> {
     let id = item.id;
     if matches!(item.decode_route, state::DecodeRoute::Proxied { full_proxy: Some(ref p), .. } if p.is_file()) {

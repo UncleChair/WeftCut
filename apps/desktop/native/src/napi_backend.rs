@@ -448,6 +448,16 @@ impl Backend {
                 ser(crate::commands::media::get_waveform_peaks(a.item).await)
             }
             #[cfg(feature = "jobs")]
+            "get_waveform_levels" => {
+                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_waveform_levels(a.item).await)
+            }
+            #[cfg(feature = "jobs")]
+            "get_waveform_tile" => {
+                let a: crate::commands::media::WaveformTileArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_waveform_tile(a).await)
+            }
+            #[cfg(feature = "jobs")]
             "ensure_full_proxy" => {
                 let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::ensure_full_proxy(self, a.item).await)
@@ -543,6 +553,34 @@ mod tests {
         // No `item` field → serde deserialize fails.
         let err = b.dispatch("get_waveform_peaks", "{}").await.unwrap_err();
         assert!(err.contains("item") || err.contains("missing"), "expected a parse error, got: {err}");
+    }
+
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_waveform_levels_not_ready_without_path() {
+        let sink = std::sync::Arc::new(crate::events::VecEventSink::new());
+        let b = Backend::new_for_test(sink as std::sync::Arc<dyn crate::events::EventSink>);
+        b.init().await.unwrap();
+        let id = uuid::Uuid::now_v7();
+        let item = crate::state::MediaItem {
+            id,
+            label: None,
+            path_abs: std::path::PathBuf::from("/nonexistent"),
+            path_rel: None,
+            kind: crate::state::MediaKind::Video,
+            metadata: crate::state::MediaMetadata::default(),
+            decode_route: crate::state::DecodeRoute::Bypass,
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: format!("test-{id}"),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        let args = serde_json::json!({ "item": item }).to_string();
+        let err = b.dispatch("get_waveform_levels", &args).await.unwrap_err();
+        assert_eq!(err, "not_ready");
     }
 
     #[cfg(feature = "jobs")]
