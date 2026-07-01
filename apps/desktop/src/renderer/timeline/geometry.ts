@@ -27,6 +27,10 @@ export const MIN_LAYER_DURATION_US = 100_000;
 // releasing the handle.
 export const VIEW_SAVE_DEBOUNCE_MS = 200;
 
+export const LAYER_PREVIEW_MIN_PX = 16;
+export const LAYER_LABEL_MIN_PX = 48;
+export const LAYER_FULL_LABEL_MIN_PX = 120;
+
 /// Width of the sticky track-header column. See the timeline-redesign spec (§1).
 export const HEADER_COL_PX = 160;
 

@@ -2,6 +2,7 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayerSummary } from "../ipc";
+import { LAYER_PREVIEW_MIN_PX } from "./geometry";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 
 const mocks = vi.hoisted(() => ({
@@ -59,6 +60,7 @@ const videoLayer: LayerSummary = {
 describe("TimelineVisualPreview", () => {
   let observerCallback: IntersectionObserverCallback | null = null;
   let observedElement: Element | null = null;
+  let observerOptions: IntersectionObserverInit | undefined;
   let originalIntersectionObserver:
     | typeof globalThis.IntersectionObserver
     | undefined;
@@ -69,13 +71,18 @@ describe("TimelineVisualPreview", () => {
     mocks.listen.mockClear();
     observerCallback = null;
     observedElement = null;
+    observerOptions = undefined;
     originalIntersectionObserver = globalThis.IntersectionObserver;
     class FakeIntersectionObserver {
       readonly root = null;
       readonly rootMargin = "";
       readonly thresholds = [];
-      constructor(callback: IntersectionObserverCallback) {
+      constructor(
+        callback: IntersectionObserverCallback,
+        options?: IntersectionObserverInit,
+      ) {
         observerCallback = callback;
+        observerOptions = options;
       }
       observe(element: Element) {
         observedElement = element;
@@ -107,6 +114,10 @@ describe("TimelineVisualPreview", () => {
     await waitFor(() => {
       expect(observedElement).not.toBeNull();
     });
+    expect(observerOptions).toMatchObject({
+      root: null,
+      rootMargin: "256px 512px",
+    });
     expect(mocks.getMediaThumbnails).not.toHaveBeenCalled();
 
     act(() => {
@@ -125,5 +136,35 @@ describe("TimelineVisualPreview", () => {
     await waitFor(() => {
       expect(mocks.getMediaThumbnails).toHaveBeenCalledWith("media-1");
     });
+  });
+
+  it("requests video thumbnails immediately when IntersectionObserver is unavailable and width allows", async () => {
+    globalThis.IntersectionObserver =
+      undefined as unknown as typeof globalThis.IntersectionObserver;
+
+    render(
+      <TimelineVisualPreview
+        layer={videoLayer}
+        layerWidthPx={160}
+        layerHeightPx={32}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mocks.getMediaThumbnails).toHaveBeenCalledWith("media-1");
+    });
+  });
+
+  it("renders no preview and makes no thumbnail request below the preview width threshold", () => {
+    const { queryByTestId } = render(
+      <TimelineVisualPreview
+        layer={videoLayer}
+        layerWidthPx={LAYER_PREVIEW_MIN_PX - 1}
+        layerHeightPx={32}
+      />,
+    );
+
+    expect(queryByTestId("timeline-visual-preview")).toBeNull();
+    expect(mocks.getMediaThumbnails).not.toHaveBeenCalled();
   });
 });

@@ -4,12 +4,15 @@ import { formatTimecode } from "../frames";
 import { AppInput } from "../components/AppInput";
 import {
   HEADER_COL_PX,
+  LAYER_FULL_LABEL_MIN_PX,
+  LAYER_LABEL_MIN_PX,
   MIN_LAYER_DURATION_US,
   groupHue,
   keyframeHitTest,
   keyframeXWithinClip,
   type LayerSlice,
 } from "./geometry";
+import { TimelineVisualPreview } from "./TimelineVisualPreview";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
 import { useEditingLayerId, beginRename, endRename } from "./renameStore";
@@ -78,6 +81,12 @@ export function MotifBakeDot({ layerId }: { layerId: string }) {
           ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
           : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
   return <span className={`motif-bake-dot is-${phase}`} title={label} aria-label={label} />;
+}
+
+function shortLayerLabel(label: string): string {
+  const clean = label.trim();
+  if (clean.length <= 12) return clean;
+  return `${clean.slice(0, 12)}...`;
 }
 
 export function LayerBlock({
@@ -361,6 +370,9 @@ export function LayerBlock({
   };
 
   const layerWidthPx = Math.max(width, 4);
+  const showLabel = layerWidthPx >= LAYER_LABEL_MIN_PX;
+  const showFullAffordances = layerWidthPx > LAYER_FULL_LABEL_MIN_PX;
+  const visibleLabel = showFullAffordances ? label : shortLayerLabel(label);
 
   // Vertical slot. Each row has a 4px outer breathing room so the
   // chip doesn't touch the row edges. Within that interior:
@@ -422,7 +434,7 @@ export function LayerBlock({
     <div
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
-        "absolute flex items-center rounded border border-white/15 px-2",
+        "absolute flex items-center overflow-hidden rounded border border-white/15 px-2",
         "text-[11px] font-semibold text-background select-none cursor-grab",
         "shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-[outline,filter] duration-75",
         "hover:brightness-110",
@@ -481,7 +493,12 @@ export function LayerBlock({
       }}
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >
-      {isEditing ? (
+      <TimelineVisualPreview
+        layer={layer}
+        layerWidthPx={layerWidthPx}
+        layerHeightPx={sliceHeight}
+      />
+      {isEditing && showLabel ? (
         <AppInput
           ref={inputRef}
           // Sticky like the label so the editor appears at the clip's current
@@ -507,19 +524,26 @@ export function LayerBlock({
             }
           }}
         />
-      ) : (
+      ) : showLabel ? (
         <span
           // Sticky so the label stays readable while scrolling a long clip:
           // it pins just past the sticky track-header column and slides along
           // within the clip until the clip's tail scrolls past it. Content-
           // width (capped) so it can actually slide; clips itself with ellipsis.
-          className="sticky z-[1] overflow-hidden text-ellipsis whitespace-nowrap [text-shadow:0_1px_0_rgba(255,255,255,0.4)]"
-          style={{ left: HEADER_COL_PX + 4, maxWidth: "min(100%, 240px)" }}
+          className="sticky z-[1] overflow-hidden text-ellipsis whitespace-nowrap rounded-sm bg-black/45 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
+          style={{
+            left: HEADER_COL_PX + 4,
+            maxWidth: showFullAffordances
+              ? "min(calc(100% - 8px), 240px)"
+              : "min(calc(100% - 8px), 120px)",
+          }}
         >
-          {label}
+          {visibleLabel}
         </span>
+      ) : null}
+      {layer.kind === "Motif" && showFullAffordances && (
+        <MotifBakeDot layerId={layer.id} />
       )}
-      {layer.kind === "Motif" && <MotifBakeDot layerId={layer.id} />}
       {diamonds.length > 0 && focusedParam && (
         <div
           className="kf-diamond-row"

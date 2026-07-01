@@ -9,6 +9,8 @@ import { Timeline } from "./Timeline";
 const ipcMocks = vi.hoisted(() => ({
   moveLayer: vi.fn().mockResolvedValue(undefined),
   trimLayer: vi.fn().mockResolvedValue(undefined),
+  getMediaThumbnails: vi.fn().mockRejectedValue("not_ready"),
+  getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   viewStateGet: vi
     .fn()
     .mockResolvedValue({ timeline_px_per_sec: 80, track_heights: {}, expanded_tracks: [] }),
@@ -31,10 +33,14 @@ vi.mock("../ipc", async (importOriginal) => {
     ...actual,
     moveLayer: ipcMocks.moveLayer,
     trimLayer: ipcMocks.trimLayer,
+    getMediaThumbnails: ipcMocks.getMediaThumbnails,
+    getWaveformPeaks: ipcMocks.getWaveformPeaks,
     viewStateGet: ipcMocks.viewStateGet,
     viewStateSet: ipcMocks.viewStateSet,
   };
 });
+
+const staticNum = (value: number) => ({ mode: "Static" as const, value });
 
 const layer: LayerSummary = {
   id: "layer-1",
@@ -60,6 +66,40 @@ const track: TrackSummary = {
   role: "a-roll",
   transient: false,
   layers: [layer],
+};
+
+const tinyVideoLayer: LayerSummary = {
+  id: "video-1",
+  label: "Tiny Video",
+  t_start_us: 0,
+  t_end_us: 100_000,
+  kind: "VideoClip",
+  color_hint: "#5588aa",
+  enabled: true,
+  locked: false,
+  params: {
+    kind: "VideoClip",
+    media_id: "media-1",
+    media_label: "media.mov",
+    src_in_us: 0,
+    src_out_us: 100_000,
+    x: staticNum(0),
+    y: staticNum(0),
+    scale_x: staticNum(1),
+    scale_y: staticNum(1),
+    opacity: staticNum(1),
+    speed: 1,
+    flip_h: false,
+    flip_v: false,
+    fade_in_us: 0,
+    fade_out_us: 0,
+  },
+  effects: [],
+};
+
+const tinyVideoTrack: TrackSummary = {
+  ...track,
+  layers: [tinyVideoLayer],
 };
 
 const groupedLayer: LayerSummary = {
@@ -120,6 +160,8 @@ describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
     ipcMocks.moveLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
+    ipcMocks.getMediaThumbnails.mockClear();
+    ipcMocks.getWaveformPeaks.mockClear();
     // Show-All so the role-stamped track always renders regardless of the
     // default AB-roll filter.
     useAppSettingsStore.setState((s) => ({
@@ -163,6 +205,25 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSelect).toHaveBeenCalledWith(layer.id);
     expect(onSeek).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalledWith(null);
+  });
+
+  it("clicking the content preview overlay still selects without seeking", () => {
+    const onSeek = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = renderTimeline({ selectedLayerId: null, onSeek, onSelect });
+    const preview = container.querySelector('[data-testid="timeline-visual-preview"]')!;
+    fireEvent.pointerDown(preview, { button: 0, clientX: 50 });
+    fireEvent.pointerUp(window, { clientX: 50 });
+    fireEvent.click(preview);
+    expect(onSelect).toHaveBeenCalledWith(layer.id);
+    expect(onSeek).not.toHaveBeenCalled();
+  });
+
+  it("hides labels and avoids preview requests for clips narrower than 16px", () => {
+    const { container, queryByText } = renderTimeline({ tracks: [tinyVideoTrack] });
+    expect(queryByText("Tiny Video")).toBeNull();
+    expect(container.querySelector('[data-testid="timeline-visual-preview"]')).toBeNull();
+    expect(ipcMocks.getMediaThumbnails).not.toHaveBeenCalled();
   });
 
   it("shows a blade cut preview at the hovered cut point", () => {
