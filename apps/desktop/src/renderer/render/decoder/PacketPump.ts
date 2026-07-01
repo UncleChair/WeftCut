@@ -20,6 +20,8 @@
 //     (see the design note in the plan). Only the reset ACTION fetches a
 //     key packet.
 
+import { packetToSourceUs, sourceToContainerUs } from "./ptsOffset";
+
 /// Forward-seek threshold (µs). A target more than one lookahead window
 /// (≈1 s, matching FrameRing's DEFAULT_LOOKAHEAD_US) past the pump's
 /// decoded frontier triggers a reset+seek instead of a forward slog
@@ -290,10 +292,10 @@ export class PacketPump {
   }
 
   private toContainerPtsUs(sourceUs: number): number {
-    return sourceUs + (this.deps.sourceStartPtsUs ?? 0);
+    return sourceToContainerUs(sourceUs, this.deps.sourceStartPtsUs ?? 0);
   }
 
   private toSourcePtsUs(packet: PumpPacket): number {
-    return Math.round(packet.timestamp * 1e6) - (this.deps.sourceStartPtsUs ?? 0);
+    return packetToSourceUs(packet.timestamp, this.deps.sourceStartPtsUs ?? 0);
   }
 }

@@ -17,6 +17,7 @@ import { logEmit } from "../../ipc";
 import type { TenBitFrame } from "./tenBitFrame";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { FrameRing } from "./FrameRing";
+import { frameToSourceUs } from "./ptsOffset";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
@@ -374,7 +375,7 @@ export class SourceHandle {
         // optimizes `createImageBitmap(VideoFrame)` to keep pixels on
         // the GPU side; we pay a per-frame conversion but stop
         // holding the decoder's buffers across many ticks.
-        const ptsUs = frame.timestamp - this.media.sourceStartPtsUs;
+        const ptsUs = frameToSourceUs(frame.timestamp, this.media.sourceStartPtsUs);
         const durationUs = frame.duration ?? 0;
         this.conversionsInFlight += 1;
         if (this.conversionsInFlight > this.peakConversionsInWindow) {

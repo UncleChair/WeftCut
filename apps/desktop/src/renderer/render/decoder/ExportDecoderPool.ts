@@ -27,6 +27,7 @@ import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
+import { frameToSourceUs, packetToSourceUs, sourceToContainerUs } from "./ptsOffset";
 
 /// SW 10-bit decoders hold a reorder tail internally and the chunked model
 /// never mid-flushes, so feed a bounded lead-in past the stop key to push the
@@ -542,7 +543,7 @@ export class ExportSourceHandle implements DecoderHandle {
             // note on TENBIT_RING_TARGET_BYTES.
             await this.ring.waitBelowTenBitHighWater();
             const tb = await copyToTenBit(frame);
-            const ptsUs = tb.timestamp - this.sourceStartPtsUs;
+            const ptsUs = frameToSourceUs(tb.timestamp, this.sourceStartPtsUs);
             frame.close();
             if (this.decoder !== dec) return;
             this.ring.push(tb, ptsUs);
@@ -558,7 +559,7 @@ export class ExportSourceHandle implements DecoderHandle {
           });
           return;
         }
-        this.ring.push(frame, frame.timestamp - this.sourceStartPtsUs);
+        this.ring.push(frame, frameToSourceUs(frame.timestamp, this.sourceStartPtsUs));
       },
       error: (e: unknown) => {
         if (this.decoder !== dec) return;
@@ -772,11 +773,11 @@ export class ExportSourceHandle implements DecoderHandle {
   }
 
   private toContainerPtsUs(sourceUs: number): number {
-    return sourceUs + this.sourceStartPtsUs;
+    return sourceToContainerUs(sourceUs, this.sourceStartPtsUs);
   }
 
   private toSourcePtsUs(packet: EncodedPacket): number {
-    return Math.round(packet.timestamp * 1e6) - this.sourceStartPtsUs;
+    return packetToSourceUs(packet.timestamp, this.sourceStartPtsUs);
   }
 
   /// Drain the decoder's reorder buffer at true end-of-stream. The chunked
