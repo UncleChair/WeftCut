@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -33,6 +33,167 @@ pub const VERSION: u32 = 1;
 pub const SAMPLE_RATE: u32 = 22_050;
 pub const PEAKS_PER_SECOND: u32 = 100;
 pub const SAMPLES_PER_PEAK: usize = (SAMPLE_RATE / PEAKS_PER_SECOND) as usize;
+
+/// v2 on-disk format version, written into the header. Distinct from the v1
+/// `VERSION` (= 1) so both readers compile during the migration; the v1
+/// constant is removed in Task 3 once no code reads the v1 layout.
+pub const FORMAT_VERSION_V2: u32 = 2;
+/// Finest stored LOD. Coarser levels halve this until ~1/sec.
+pub const BASE_PEAKS_PER_SECOND: u32 = 1000;
+pub const MAX_CHANNELS: usize = 2;
+
+const HEADER_FIXED_BYTES: u64 = 8 + 4 + 4 + 4 + 4; // magic+version+rate+channels+level_count
+const LEVEL_ENTRY_BYTES: u64 = 4 + 4 + 8; // pps + peak_count + data_offset
+
+/// One resolution level's peaks for all channels, planar: `mins[ch]`, `maxs[ch]`.
+#[derive(Clone, Debug)]
+pub struct LevelData {
+    pub channels: u32,
+    pub peak_count: u32,
+    pub mins: Vec<Vec<i16>>,
+    pub maxs: Vec<Vec<i16>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PeakLevel {
+    pub peaks_per_second: u32,
+    pub peak_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct V2Header {
+    pub channels: u32,
+    pub levels: Vec<PeakLevel>,
+}
+
+#[inline]
+pub fn quantize(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
+}
+
+#[inline]
+pub fn dequantize(v: i16) -> f32 {
+    v as f32 / i16::MAX as f32
+}
+
+/// Write a v2 peaks file. `levels` is finest-first; each entry pairs a
+/// peaks-per-second with its channel-planar min/max data.
+pub async fn write_v2_with_pps(
+    path: &std::path::Path,
+    channels: u32,
+    levels: &[(u32, LevelData)],
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    // Compute data offsets: header + level table, then each level's bytes.
+    let table_bytes = LEVEL_ENTRY_BYTES * levels.len() as u64;
+    let mut offset = HEADER_FIXED_BYTES + table_bytes;
+    let mut offsets = Vec::with_capacity(levels.len());
+    for (_, d) in levels {
+        offsets.push(offset);
+        offset += (channels as u64) * (d.peak_count as u64) * 4; // 2×i16 per window
+    }
+
+    let mut buf: Vec<u8> = Vec::with_capacity(offset as usize);
+    buf.extend_from_slice(MAGIC);
+    buf.extend_from_slice(&FORMAT_VERSION_V2.to_le_bytes());
+    buf.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+    buf.extend_from_slice(&channels.to_le_bytes());
+    buf.extend_from_slice(&(levels.len() as u32).to_le_bytes());
+    for (i, (pps, d)) in levels.iter().enumerate() {
+        buf.extend_from_slice(&pps.to_le_bytes());
+        buf.extend_from_slice(&d.peak_count.to_le_bytes());
+        buf.extend_from_slice(&offsets[i].to_le_bytes());
+    }
+    for (_, d) in levels {
+        for ch in 0..channels as usize {
+            for w in 0..d.peak_count as usize {
+                buf.extend_from_slice(&d.mins[ch][w].to_le_bytes());
+                buf.extend_from_slice(&d.maxs[ch][w].to_le_bytes());
+            }
+        }
+    }
+
+    let mut f = tokio::fs::File::create(path)
+        .await
+        .with_context(|| format!("create {}", path.display()))?;
+    f.write_all(&buf).await.with_context(|| format!("write {}", path.display()))?;
+    f.flush().await.with_context(|| format!("flush {}", path.display()))?;
+    Ok(())
+}
+
+pub fn read_v2_header(path: &std::path::Path) -> Result<V2Header> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut fixed = [0u8; HEADER_FIXED_BYTES as usize];
+    f.read_exact(&mut fixed).context("read v2 fixed header")?;
+    if &fixed[..8] != MAGIC {
+        anyhow::bail!("bad magic in peaks file");
+    }
+    let version = u32::from_le_bytes(fixed[8..12].try_into().unwrap());
+    if version != FORMAT_VERSION_V2 {
+        anyhow::bail!("unsupported peaks version {version}");
+    }
+    let channels = u32::from_le_bytes(fixed[16..20].try_into().unwrap());
+    let level_count = u32::from_le_bytes(fixed[20..24].try_into().unwrap()) as usize;
+    let mut table = vec![0u8; level_count * LEVEL_ENTRY_BYTES as usize];
+    f.read_exact(&mut table).context("read v2 level table")?;
+    let mut levels = Vec::with_capacity(level_count);
+    for i in 0..level_count {
+        let base = i * LEVEL_ENTRY_BYTES as usize;
+        levels.push(PeakLevel {
+            peaks_per_second: u32::from_le_bytes(table[base..base + 4].try_into().unwrap()),
+            peak_count: u32::from_le_bytes(table[base + 4..base + 8].try_into().unwrap()),
+        });
+    }
+    Ok(V2Header { channels, levels })
+}
+
+/// Read `count` (min,max) windows for one channel of one level, starting at
+/// `start_peak`. Clamps the range to the level's peak_count.
+pub fn read_v2_range(
+    path: &std::path::Path,
+    level_idx: usize,
+    channel: usize,
+    start_peak: u32,
+    count: u32,
+) -> Result<(Vec<i16>, Vec<i16>)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let header = read_v2_header(path)?;
+    let level = *header
+        .levels
+        .get(level_idx)
+        .ok_or_else(|| anyhow!("level {level_idx} out of range"))?;
+    let ch = channel.min(header.channels.saturating_sub(1) as usize);
+    let start = start_peak.min(level.peak_count);
+    let end = (start + count).min(level.peak_count);
+    let n = (end - start) as usize;
+    if n == 0 {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    // data_offset lives in the on-disk table; recompute it the same way write did.
+    let table_bytes = LEVEL_ENTRY_BYTES * header.levels.len() as u64;
+    let mut level_start = HEADER_FIXED_BYTES + table_bytes;
+    for l in &header.levels[..level_idx] {
+        level_start += (header.channels as u64) * (l.peak_count as u64) * 4;
+    }
+    let channel_start = level_start + (ch as u64) * (level.peak_count as u64) * 4;
+    let seek_to = channel_start + (start as u64) * 4;
+
+    let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    f.seek(SeekFrom::Start(seek_to)).context("seek v2 range")?;
+    let mut bytes = vec![0u8; n * 4];
+    f.read_exact(&mut bytes).context("read v2 range")?;
+    let mut mins = Vec::with_capacity(n);
+    let mut maxs = Vec::with_capacity(n);
+    for w in 0..n {
+        let b = w * 4;
+        mins.push(i16::from_le_bytes([bytes[b], bytes[b + 1]]));
+        maxs.push(i16::from_le_bytes([bytes[b + 2], bytes[b + 3]]));
+    }
+    Ok((mins, maxs))
+}
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
@@ -373,5 +534,49 @@ mod tests {
             .unwrap();
         let read_back = read_peaks_file(&path).expect("read back");
         assert_eq!(original, read_back);
+    }
+
+    #[test]
+    fn v2_write_read_header_and_range() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.v2.peaks");
+
+        // Two levels, stereo. Finest: 4 windows; coarse: 2 windows.
+        let fine = LevelData {
+            channels: 2,
+            peak_count: 4,
+            mins: vec![vec![-1000, -2000, -3000, -4000], vec![-10, -20, -30, -40]],
+            maxs: vec![vec![1000, 2000, 3000, 4000], vec![10, 20, 30, 40]],
+        };
+        let coarse = LevelData {
+            channels: 2,
+            peak_count: 2,
+            mins: vec![vec![-2000, -4000], vec![-20, -40]],
+            maxs: vec![vec![2000, 4000], vec![20, 40]],
+        };
+        let levels = vec![
+            (BASE_PEAKS_PER_SECOND, fine),
+            (BASE_PEAKS_PER_SECOND / 2, coarse),
+        ];
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            write_v2_with_pps(&path, 2, &levels).await
+        }).unwrap();
+
+        let header = read_v2_header(&path).expect("header");
+        assert_eq!(header.channels, 2);
+        assert_eq!(header.levels.len(), 2);
+        assert_eq!(header.levels[0].peaks_per_second, BASE_PEAKS_PER_SECOND);
+        assert_eq!(header.levels[0].peak_count, 4);
+        assert_eq!(header.levels[1].peaks_per_second, BASE_PEAKS_PER_SECOND / 2);
+
+        // Range read: level 0, channel 1, windows [1,3)
+        let (mins, maxs) = read_v2_range(&path, 0, 1, 1, 2).expect("range");
+        assert_eq!(mins, vec![-20, -30]);
+        assert_eq!(maxs, vec![20, 30]);
+
+        // Clamp past the end.
+        let (mins, _) = read_v2_range(&path, 0, 0, 3, 10).expect("clamped range");
+        assert_eq!(mins, vec![-4000]);
     }
 }
