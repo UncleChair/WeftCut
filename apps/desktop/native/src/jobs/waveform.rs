@@ -17,13 +17,11 @@ use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path
 use crate::state::{MediaItem, MediaKind};
 
 pub const MAGIC: &[u8; 8] = b"VPEAKS\0\0";
-pub const VERSION: u32 = 1;
 pub const SAMPLE_RATE: u32 = 22_050;
 pub const PEAKS_PER_SECOND: u32 = 100;
 
-/// v2 on-disk format version, written into the header. Distinct from the v1
-/// `VERSION` (= 1) so both readers compile during the migration; the v1
-/// constant is removed in Task 3 once no code reads the v1 layout.
+/// v2 on-disk format version, written into the header — the only on-disk
+/// version constant; there is no v1 reader left to keep in sync.
 pub const FORMAT_VERSION_V2: u32 = 2;
 /// Finest stored LOD. Coarser levels halve this until ~1/sec.
 pub const BASE_PEAKS_PER_SECOND: u32 = 1000;
@@ -417,39 +415,39 @@ fn build_pyramid(finest: LevelData) -> Vec<(u32, LevelData)> {
     out
 }
 
-/// Read a peaks file and return the peaks array. Consumed by the waveform media
-/// command, the `detect_silences` MCP tool, and the `media://{id}/waveform`
-/// MCP resource.
+/// Back-compat reader for MCP (detect_silences, media://{id}/waveform).
+/// Returns max-abs f32 peaks at `PEAKS_PER_SECOND` (100/sec), aggregated down
+/// from the nearest v2 level whose resolution is >= 100/sec (channel 0).
 pub fn read_peaks_file(path: &std::path::Path) -> Result<Vec<f32>> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .with_context(|| format!("open {}", path.display()))?
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", path.display()))?;
-    if bytes.len() < 8 + 16 {
-        anyhow::bail!("peaks file too small ({} bytes)", bytes.len());
+    let header = read_v2_header(path)?;
+    // Levels are finest-first; pick the coarsest level still >= target so we
+    // aggregate down, never up.
+    let target = PEAKS_PER_SECOND;
+    let (level_idx, level) = header
+        .levels
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.peaks_per_second >= target)
+        .last()
+        .map(|(i, l)| (i, *l))
+        .unwrap_or((0, header.levels[0]));
+
+    let (mins, maxs) = read_v2_range(path, level_idx, 0, 0, level.peak_count)?;
+    let src_pps = level.peaks_per_second as f64;
+    let n_out = ((mins.len() as f64) * (target as f64) / src_pps).round() as usize;
+    let n_out = n_out.max(1);
+    let mut out = Vec::with_capacity(n_out);
+    for i in 0..n_out {
+        let start = ((i as f64) * (mins.len() as f64) / (n_out as f64)).floor() as usize;
+        let end = (((i + 1) as f64) * (mins.len() as f64) / (n_out as f64)).ceil() as usize;
+        let end = end.min(mins.len()).max(start + 1);
+        let mut amp = 0.0_f32;
+        for w in start..end {
+            amp = amp.max(dequantize(mins[w]).abs()).max(dequantize(maxs[w]).abs());
+        }
+        out.push(amp);
     }
-    if &bytes[..8] != MAGIC {
-        anyhow::bail!("bad magic in peaks file");
-    }
-    let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-    if version != VERSION {
-        anyhow::bail!("unsupported peaks version {version}");
-    }
-    let count = u32::from_le_bytes(bytes[20..24].try_into().unwrap()) as usize;
-    let body = &bytes[24..];
-    if body.len() < count * 4 {
-        anyhow::bail!(
-            "peaks file truncated: header claims {count} peaks, body has {} bytes",
-            body.len()
-        );
-    }
-    let mut peaks = Vec::with_capacity(count);
-    for chunk in body[..count * 4].chunks_exact(4) {
-        peaks.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-    }
-    Ok(peaks)
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -641,6 +639,29 @@ mod tests {
         let (dmin, dmax) = decimate(&mins, &maxs);
         assert_eq!(dmin, vec![-3, -7]); // min(-3,-1)=-3 ; min(-7,-2)=-7
         assert_eq!(dmax, vec![5, 9]); // max(2,5)=5 ; max(1,9)=9
+    }
+
+    #[test]
+    fn read_peaks_file_returns_100hz_maxabs_from_v2() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("c.v2.peaks");
+        // Finest level at 1000/sec, 1000 windows, channel 0 has a big negative
+        // excursion so max-abs must pick up |min|, not just max.
+        let mut mins = vec![0i16; 1000];
+        let mut maxs = vec![0i16; 1000];
+        mins[500] = quantize(-0.9);
+        maxs[10] = quantize(0.4);
+        let finest = LevelData { channels: 1, peak_count: 1000, mins: vec![mins], maxs: vec![maxs] };
+        let pyramid = build_pyramid(finest);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async { write_v2_with_pps(&path, 1, &pyramid).await }).unwrap();
+
+        let peaks = read_peaks_file(&path).expect("compat read");
+        // 1000 finest windows @1000/sec -> ~100 windows @100/sec.
+        assert!((98..=102).contains(&peaks.len()), "got {}", peaks.len());
+        // The -0.9 excursion (window 500 -> ~window 50 @100/sec) must surface as ~0.9.
+        let big = peaks.iter().cloned().fold(0.0_f32, f32::max);
+        assert!((big - 0.9).abs() < 0.05, "max-abs lost the negative excursion: {big}");
     }
 
     #[test]
