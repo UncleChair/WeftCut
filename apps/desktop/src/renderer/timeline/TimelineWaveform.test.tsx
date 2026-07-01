@@ -141,6 +141,73 @@ describe("TimelineWaveform", () => {
     }
   });
 
+  it("exposes data-state=not_ready when the engine reports the source isn't ready", async () => {
+    vi.mocked(ensureWaveformWindow).mockResolvedValueOnce("not_ready");
+
+    const { getByTestId } = render(
+      <TimelineWaveform
+        mediaId="m"
+        srcInUs={0}
+        srcOutUs={1_000_000}
+        layerWidthPx={100}
+        layerHeightPx={24}
+        colorHint="#123"
+        enabled
+        pxPerSec={80}
+      />,
+    );
+
+    const wrapper = getByTestId("timeline-waveform");
+    await waitFor(() => {
+      expect(wrapper.getAttribute("data-state")).toBe("not_ready");
+    });
+  });
+
+  it("scales tile canvases by devicePixelRatio", async () => {
+    const originalDpr = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+    Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true });
+    try {
+      vi.mocked(ensureWaveformWindow).mockResolvedValue({
+        peaksPerSecond: 1000,
+        startPeak: 0,
+        min: new Float32Array([-0.5, -0.7]),
+        max: new Float32Array([0.5, 0.7]),
+      });
+
+      const { getByTestId, getAllByTestId } = render(
+        <TimelineWaveform
+          mediaId="m"
+          srcInUs={0}
+          srcOutUs={2_000_000}
+          layerWidthPx={200}
+          layerHeightPx={40}
+          colorHint="#123"
+          enabled
+          pxPerSec={80}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(getByTestId("timeline-waveform").getAttribute("data-state")).toBe(
+          "ready",
+        );
+      });
+
+      const tiles = getAllByTestId("timeline-waveform-tile") as HTMLCanvasElement[];
+      expect(tiles.length).toBe(1);
+      for (const tile of tiles) {
+        expect(tile.width).toBe(Math.round(200 * 2));
+      }
+      expect(fakeContext.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+    } finally {
+      if (originalDpr) {
+        Object.defineProperty(window, "devicePixelRatio", originalDpr);
+      } else {
+        Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
+      }
+    }
+  });
+
   it("does not query the engine while disabled", () => {
     const { getByTestId } = render(
       <TimelineWaveform
