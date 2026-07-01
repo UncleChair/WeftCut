@@ -342,7 +342,6 @@ async fn compute_finest_level(
                     &mut mins,
                     &mut maxs,
                 );
-                leftover_len = 0;
             }
         }
         let aligned = slice.len() - (slice.len() % 4);
