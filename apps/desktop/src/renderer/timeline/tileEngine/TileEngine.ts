@@ -145,17 +145,23 @@ export class TileEngine {
   private async installJobListenerOnce(): Promise<void> {
     if (this.jobListenerInstalled) return;
     this.jobListenerInstalled = true;
-    await listen<{ media_id: string; kind: string }>(
-      MEDIA_JOB_EVENTS.complete,
-      (event) => {
-        const kind = event.payload?.kind;
-        const mediaId = event.payload?.media_id;
-        if (!kind || !mediaId) return;
-        // Only kinds that map to a registered producer are ours.
-        if (!this.producers.has(kind)) return;
-        this.invalidateMedia(mediaId, kind);
-      },
-    );
+    try {
+      await listen<{ media_id: string; kind: string }>(
+        MEDIA_JOB_EVENTS.complete,
+        (event) => {
+          const kind = event.payload?.kind;
+          const mediaId = event.payload?.media_id;
+          if (!kind || !mediaId) return;
+          // Only kinds that map to a registered producer are ours.
+          if (!this.producers.has(kind)) return;
+          this.invalidateMedia(mediaId, kind);
+        },
+      );
+    } catch {
+      // Bridge unavailable (non-Electron: Vitest / headless / SSR). The renderer
+      // always has window.api, so this only trips in tests — job-complete
+      // auto-invalidation is simply inert there.
+    }
   }
 }
 
