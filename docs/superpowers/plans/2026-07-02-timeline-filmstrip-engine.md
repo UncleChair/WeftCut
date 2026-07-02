@@ -40,10 +40,18 @@ resolutions §1–§2); the display/data design is otherwise exactly as locked.
 5. **`widthPx`/`heightPx` in the response are informative** (derived from probe
    metadata scaled to 256 height). The producer sizes layout from
    `ImageBitmap.width/height` — the decoded truth.
-6. **Coarse-fallback draw is a painter's pass:** lods `min(target+3, 12)` down
-   to `target`, drawing every READY tile in each lod's visible range
-   (`get()` only — never `request()` a non-target lod). Coarse first, fine
-   over it; work is bounded (visible index count halves per coarser lod).
+6. **Fallback draw is a painter's pass, bidirectional:** consulted lods are
+   `target ± 3` (clamped to `[0, 12]`), drawing every READY tile in each lod's
+   visible range (`get()` only — never `request()` a non-target lod). Paint
+   order: finer backfill first (`target−3`, `target−2`, `target−1`), then the
+   coarse pass ending at target (`target+3` … `target+1`, `target`) so the
+   target lod is always most authoritative and Plan-A's proven
+   coarser-keeps-drawing zoom-in behavior is preserved. The finer direction
+   exists because zoom-OUT raises the target lod: without it, previously-ready
+   finer tiles fell outside the consulted range and the clip blanked until the
+   debounced coarser fetch landed — violating the locked never-blank rule
+   (amended during Task B5 review; the original coarser-only pass was a
+   breakdown-time gap, not part of the locked design).
 7. **Error-tile retry (T6-M1):** `TileEngine.request()` re-fetches an `error`
    slot once `ERROR_RETRY_COOLDOWN_MS = 5000` has elapsed since the failure;
    `ensureWaveformWindow` and the filmstrip request pass both call `request()`
