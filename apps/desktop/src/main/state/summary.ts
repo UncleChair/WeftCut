@@ -157,6 +157,10 @@ export interface MediaSummary {
   codec: string | null; pix_fmt: string | null; color_matrix: string | null; color_range: string | null
   color_primaries: string | null; color_transfer: string | null; video_start_pts_us: number | null
   audio_start_pts_us: number | null; conform_path: string | null
+  /// Probed source channel count, null when the media has no audio stream or
+  /// hasn't been probed yet. The waveform generator always downmixes to
+  /// stereo for storage, so this is the only reliable mono/stereo signal.
+  audio_channels: number | null
 }
 export interface LayerSummary {
   id: string; label: string | null; t_start_us: number; t_end_us: number; kind: string; color_hint: string
@@ -214,6 +218,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
       video_start_pts_us: (video?.start_pts_us as number | undefined) ?? null,
       audio_start_pts_us: (audio?.start_pts_us as number | undefined) ?? null,
       conform_path: fileOrNull(m.conform_path),
+      audio_channels: (audio?.channels as number | undefined) ?? null,
     }
   })
   media.sort((x, y) => (x.id < y.id ? 1 : x.id > y.id ? -1 : 0)) // b.id.cmp(&a.id) — descending

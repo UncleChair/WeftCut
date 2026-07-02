@@ -121,6 +121,9 @@ export function TimelineVisualPreview({
   const imageMedia = useMediaById(
     layer.params.kind === "ImageOverlay" ? layer.params.media_id : null,
   );
+  const audioMedia = useMediaById(
+    layer.params.kind === "Audio" ? layer.params.media_id : null,
+  );
   if (!canRenderPreview) return null;
 
   const preview = (() => {
@@ -147,6 +150,7 @@ export function TimelineVisualPreview({
             colorHint={layer.color_hint}
             enabled={resourceEnabled}
             pxPerSec={pxPerSec}
+            mediaChannels={audioMedia?.audio_channels ?? undefined}
           />
         );
       case "ImageOverlay":

@@ -66,6 +66,11 @@ export interface MediaSummary {
   /// this file; `null` means the audio layer is not yet playable. Optional:
   /// older summaries / test fixtures omit it.
   conform_path?: string | null;
+  /// Probed source channel count, null/absent when the media has no audio
+  /// stream or hasn't been probed yet. The waveform generator always
+  /// downmixes to stereo for storage, so this is the only reliable
+  /// mono/stereo signal — see TimelineWaveform's `mediaChannels` prop.
+  audio_channels?: number | null;
 }
 
 /// One effect in a layer's effect chain. `kind` is the join key into the
@@ -1103,7 +1108,7 @@ export interface WaveformLevels {
 }
 
 /// Header-only read of the media's peaks LOD table. Rejects "not_ready" until
-/// the waveform job has produced the v2 file.
+/// the waveform job has produced the peaks file.
 export async function getWaveformLevels(mediaId: string): Promise<WaveformLevels> {
   return invoke<WaveformLevels>("get_waveform_levels", { mediaId });
 }
@@ -1116,7 +1121,7 @@ export interface WaveformTile {
   rms: number[];
 }
 
-/// Read `count` (min,max) windows for one channel of one LOD level, starting at
+/// Read `count` (min,max,rms) windows for one channel of one LOD level, starting at
 /// `startPeak`. The range is clamped to the level's peak count backend-side.
 export async function getWaveformTile(
   mediaId: string,

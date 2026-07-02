@@ -63,9 +63,10 @@ Audio clips render a waveform:
   brighter RMS core symmetric around the lane midline. A 1px visibility floor
   ensures quiet-but-present audio never vanishes; silence renders only the
   thin envelope line without a core.
-- Stereo slices at least 28 px tall render two lanes (left on top, right
+- Stereo slices at least 28px tall render two lanes (left on top, right
   below); shorter slices render one merged lane (per-peak min/max across
-  channels, maximum of the channel RMS values).
+  channels, maximum of the channel RMS values). Mono sources always render
+  the single merged lane — the dual-lane rule applies only to stereo sources.
 - The producer selects the coarsest LOD level that meets the on-screen density
   for the current zoom, assembles covering tiles into one window, and draws
   across DPR-scaled canvas segments. Canvases redraw when the display's

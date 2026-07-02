@@ -335,6 +335,42 @@ describe("TimelineWaveform", () => {
     expect(ensureWaveformWindow).toHaveBeenCalledWith("stereo-1", 1, 0, 2_000_000, 80);
   });
 
+  it("caps the effective channel count at mediaChannels when the source is really mono", async () => {
+    // The peaks file header always reports 2 channels (the generator
+    // downmixes with -ac 2), so a real mono source needs the probed source
+    // channel count to correct it back down to a single fetched channel.
+    vi.mocked(getWaveformChannelCount).mockResolvedValue(2);
+    vi.mocked(ensureWaveformWindow).mockResolvedValue({
+      peaksPerSecond: 1000,
+      startPeak: 0,
+      min: new Float32Array([-0.5, -0.6]),
+      max: new Float32Array([0.5, 0.6]),
+      rms: new Float32Array([0.2, 0.25]),
+    });
+
+    const { getByTestId } = render(
+      <TimelineWaveform
+        mediaId="mono-1"
+        srcInUs={0}
+        srcOutUs={2_000_000}
+        layerWidthPx={200}
+        layerHeightPx={40}
+        colorHint="#123"
+        enabled
+        pxPerSec={80}
+        mediaChannels={1}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("timeline-waveform").getAttribute("data-state")).toBe(
+        "ready",
+      );
+    });
+    expect(ensureWaveformWindow).toHaveBeenCalledWith("mono-1", 0, 0, 2_000_000, 80);
+    expect(ensureWaveformWindow).not.toHaveBeenCalledWith("mono-1", 1, 0, 2_000_000, 80);
+  });
+
   it("does not query the engine while disabled", () => {
     const { getByTestId } = render(
       <TimelineWaveform

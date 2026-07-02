@@ -6,7 +6,7 @@ import {
 import { tileEngine, type TileEngine, type TileKey } from "./TileEngine";
 
 export const WAVEFORM_KIND = "waveform";
-/// One fetched tile = this many (min,max) windows. Bounds IPC payload size.
+/// One fetched tile = this many (min,max,rms) windows. Bounds IPC payload size.
 export const TILE_PEAKS = 2048;
 /// Aim for ~1.5 timeline px per peak window at the chosen LOD.
 export const PX_PER_PEAK_TARGET = 1.5;

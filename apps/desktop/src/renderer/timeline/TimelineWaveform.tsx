@@ -83,13 +83,23 @@ function assembleWindowData(
   srcInUs: number,
   srcOutUs: number,
   pxPerSec: number,
+  mediaChannels: number | undefined,
 ): Promise<WindowData> {
   return getWaveformChannelCount(mediaId)
     // A rejection here (e.g. the waveform file isn't generated yet) must
     // never throw into render; fall back to the mono path, which will
     // independently surface "not_ready"/"pending" from ensureWaveformWindow.
     .catch(() => 1)
-    .then((channels) => {
+    .then((headerChannels) => {
+      // The generator always decodes with -ac 2, so the peaks file header
+      // reports 2 channels even for a mono source — it alone can't tell a
+      // real stereo source from a downmixed mono one. The source's own
+      // probed channel count can, so cap the header count with it whenever
+      // it's known; a missing/unusable value leaves the header authoritative.
+      const channels =
+        typeof mediaChannels === "number" && Number.isFinite(mediaChannels) && mediaChannels > 0
+          ? Math.min(headerChannels, mediaChannels)
+          : headerChannels;
       if (channels === 2) {
         return Promise.all([
           ensureWaveformWindow(mediaId, 0, srcInUs, srcOutUs, pxPerSec),
@@ -120,6 +130,7 @@ function useWindowData(
   srcOutUs: number,
   pxPerSec: number,
   enabled: boolean,
+  mediaChannels: number | undefined,
 ): WindowData {
   const [result, setResult] = useState<WindowData>(INITIAL_WINDOW_DATA);
   // Tracks mediaId across renders so the effect can tell a genuine media
@@ -148,7 +159,7 @@ function useWindowData(
       ));
     };
 
-    const run = () => { void assembleWindowData(mediaId, srcInUs, srcOutUs, pxPerSec).then(apply); };
+    const run = () => { void assembleWindowData(mediaId, srcInUs, srcOutUs, pxPerSec, mediaChannels).then(apply); };
     const unsub = tileEngine.subscribe(mediaId, run);
 
     if (isNewMedia) {
@@ -159,7 +170,7 @@ function useWindowData(
 
     const timer = setTimeout(run, WAVEFORM_REFETCH_DEBOUNCE_MS);
     return () => { cancelled = true; unsub(); clearTimeout(timer); };
-  }, [mediaId, srcInUs, srcOutUs, pxPerSec, enabled]);
+  }, [mediaId, srcInUs, srcOutUs, pxPerSec, enabled, mediaChannels]);
   return result;
 }
 
@@ -302,7 +313,7 @@ function drawTile(
 }
 
 export function TimelineWaveform({
-  mediaId, srcInUs, srcOutUs, layerWidthPx, layerHeightPx, colorHint, enabled, pxPerSec,
+  mediaId, srcInUs, srcOutUs, layerWidthPx, layerHeightPx, colorHint, enabled, pxPerSec, mediaChannels,
 }: {
   mediaId: string;
   srcInUs: number;
@@ -312,8 +323,11 @@ export function TimelineWaveform({
   colorHint: string;
   enabled: boolean;
   pxPerSec: number;
+  /// Source audio channel count from probe metadata, when known. Caps the
+  /// (always-stereo) peaks-file header count — see assembleWindowData.
+  mediaChannels?: number | undefined;
 }) {
-  const { state, channels, win0, win1 } = useWindowData(mediaId, srcInUs, srcOutUs, pxPerSec, enabled);
+  const { state, channels, win0, win1 } = useWindowData(mediaId, srcInUs, srcOutUs, pxPerSec, enabled, mediaChannels);
   const dprVersion = useDprVersion();
   const totalWidthPx = Math.max(1, Math.ceil(layerWidthPx));
   const height = Math.max(1, Math.ceil(layerHeightPx));
