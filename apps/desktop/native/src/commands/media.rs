@@ -198,22 +198,14 @@ pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, Stri
 pub async fn get_waveform_tile(args: WaveformTileArgs) -> Result<WaveformTile, String> {
     let path = args.item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
     let WaveformTileArgs { level, channel, start_peak, count, .. } = args;
-    let (mins, maxs) = tokio::task::spawn_blocking(move || {
+    // The range read parses the header anyway, so it hands back the level's pps
+    // (the renderer needs it to map peaks→time) — one file open per tile.
+    let (peaks_per_second, mins, maxs) = tokio::task::spawn_blocking(move || {
         crate::jobs::waveform::read_v2_range(&path, level as usize, channel as usize, start_peak, count)
     })
     .await
     .map_err(|e| format!("join error: {e}"))?
     .map_err(|e| format!("read tile: {e:#}"))?;
-    // Resolve the level's pps from the header so the renderer can map peaks→time.
-    let hdr_path = args.item.waveform_path.clone().unwrap();
-    let peaks_per_second = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_v2_header(&hdr_path))
-        .await
-        .map_err(|e| format!("join error: {e}"))?
-        .map_err(|e| format!("read header: {e:#}"))?
-        .levels
-        .get(level as usize)
-        .map(|l| l.peaks_per_second)
-        .ok_or_else(|| "level out of range".to_string())?;
     Ok(WaveformTile {
         peaks_per_second,
         min: mins.iter().map(|v| crate::jobs::waveform::dequantize(*v)).collect(),

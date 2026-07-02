@@ -135,14 +135,16 @@ pub fn read_v2_header(path: &std::path::Path) -> Result<V2Header> {
 }
 
 /// Read `count` (min,max) windows for one channel of one level, starting at
-/// `start_peak`. Clamps the range to the level's peak_count.
+/// `start_peak`. Clamps the range to the level's peak_count. Returns the
+/// level's peaks_per_second alongside the windows — the header is already
+/// parsed here, so callers must not re-open the file just to resolve it.
 pub fn read_v2_range(
     path: &std::path::Path,
     level_idx: usize,
     channel: usize,
     start_peak: u32,
     count: u32,
-) -> Result<(Vec<i16>, Vec<i16>)> {
+) -> Result<(u32, Vec<i16>, Vec<i16>)> {
     use std::io::{Read, Seek, SeekFrom};
     let header = read_v2_header(path)?;
     let level = *header
@@ -157,7 +159,7 @@ pub fn read_v2_range(
     let end = (start + count).min(level.peak_count);
     let n = (end - start) as usize;
     if n == 0 {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((level.peaks_per_second, Vec::new(), Vec::new()));
     }
 
     // data_offset lives in the on-disk table; recompute it the same way write did.
@@ -180,7 +182,7 @@ pub fn read_v2_range(
         mins.push(i16::from_le_bytes([bytes[b], bytes[b + 1]]));
         maxs.push(i16::from_le_bytes([bytes[b + 2], bytes[b + 3]]));
     }
-    Ok((mins, maxs))
+    Ok((level.peaks_per_second, mins, maxs))
 }
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
@@ -432,7 +434,7 @@ pub fn read_peaks_file(path: &std::path::Path) -> Result<Vec<f32>> {
         .map(|(i, l)| (i, *l))
         .unwrap_or((0, header.levels[0]));
 
-    let (mins, maxs) = read_v2_range(path, level_idx, 0, 0, level.peak_count)?;
+    let (_, mins, maxs) = read_v2_range(path, level_idx, 0, 0, level.peak_count)?;
     let src_pps = level.peaks_per_second as f64;
     let n_out = ((mins.len() as f64) * (target as f64) / src_pps).round() as usize;
     let n_out = n_out.max(1);
@@ -542,7 +544,7 @@ mod tests {
 
         // Constant 1 kHz sine: every finest window has a full cycle, so max ≈ const,
         // well above the noise floor and below clipping.
-        let (_mins, maxs) = read_v2_range(&path, 0, 0, 0, header.levels[0].peak_count).expect("range");
+        let (_, _mins, maxs) = read_v2_range(&path, 0, 0, 0, header.levels[0].peak_count).expect("range");
         let peak = maxs.iter().map(|v| dequantize(*v)).fold(0.0_f32, f32::max);
         assert!(peak > 0.05, "peak {peak} too low — pipeline likely broken");
         assert!(peak <= 1.01, "peak {peak} clipped");
@@ -614,17 +616,25 @@ mod tests {
         assert_eq!(header.levels[0].peak_count, 4);
         assert_eq!(header.levels[1].peaks_per_second, BASE_PEAKS_PER_SECOND / 2);
 
-        // Range read: level 0, channel 1, windows [1,3)
-        let (mins, maxs) = read_v2_range(&path, 0, 1, 1, 2).expect("range");
+        // Range read: level 0, channel 1, windows [1,3). The level's pps rides
+        // along so callers don't need a second header read.
+        let (pps, mins, maxs) = read_v2_range(&path, 0, 1, 1, 2).expect("range");
+        assert_eq!(pps, BASE_PEAKS_PER_SECOND);
         assert_eq!(mins, vec![-20, -30]);
         assert_eq!(maxs, vec![20, 30]);
 
+        // Coarse level reports its own pps.
+        let (pps, _, _) = read_v2_range(&path, 1, 0, 0, 2).expect("coarse range");
+        assert_eq!(pps, BASE_PEAKS_PER_SECOND / 2);
+
         // Clamp past the end.
-        let (mins, _) = read_v2_range(&path, 0, 0, 3, 10).expect("clamped range");
+        let (_, mins, _) = read_v2_range(&path, 0, 0, 3, 10).expect("clamped range");
         assert_eq!(mins, vec![-4000]);
 
-        // Fully past-end start_peak -> empty result (start clamps to peak_count, n = 0).
-        let (mins, maxs) = read_v2_range(&path, 0, 0, 10, 5).expect("past-end start");
+        // Fully past-end start_peak -> empty result (start clamps to peak_count,
+        // n = 0) but pps is still reported.
+        let (pps, mins, maxs) = read_v2_range(&path, 0, 0, 10, 5).expect("past-end start");
+        assert_eq!(pps, BASE_PEAKS_PER_SECOND);
         assert!(mins.is_empty() && maxs.is_empty());
 
         // Out-of-range channel is an error, not a silent clamp.
