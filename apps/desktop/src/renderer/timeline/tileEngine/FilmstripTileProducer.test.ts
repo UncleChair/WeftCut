@@ -7,10 +7,11 @@ import {
   filmstripTileKey,
   registerFilmstripProducer,
   FILMSTRIP_KIND,
+  FILMSTRIP_INVALIDATE_ON,
   FILMSTRIP_MAX_CONCURRENT_FETCHES,
   type FilmstripTileValue,
 } from "./FilmstripTileProducer";
-import { TileEngine } from "./TileEngine";
+import { TileEngine, type TileProducer } from "./TileEngine";
 import { getFilmstripTile, type FilmstripTile } from "../../ipc";
 import { convertFileSrc } from "@/bridge/ipc";
 
@@ -91,7 +92,23 @@ describe("visibleTileRange", () => {
 // registration call, keyed apart by distinct mediaIds.
 describe("filmstrip tile producer (shared engine)", () => {
   const engine = new TileEngine(1024 * 1024 * 1024);
+  // Capture the REAL producer object handed to engine.register so the tests
+  // below exercise its callbacks directly instead of re-deriving the expected
+  // behavior locally (which could never catch a broken bytes/dispose wiring).
+  const registerSpy = vi.spyOn(engine, "register");
   registerFilmstripProducer(engine);
+  const producer = registerSpy.mock.calls[0]![0] as TileProducer<FilmstripTileValue>;
+
+  it("registers the producer contract: kind, invalidateOn, and the bytes formula", () => {
+    expect(registerSpy).toHaveBeenCalledTimes(1);
+    expect(producer.kind).toBe(FILMSTRIP_KIND);
+    expect(producer.invalidateOn).toEqual(FILMSTRIP_INVALIDATE_ON);
+    const value: FilmstripTileValue = {
+      bitmap: { width: 12, height: 34 } as unknown as ImageBitmap,
+      tUs: 0,
+    };
+    expect(producer.bytes(value)).toBe(12 * 34 * 4);
+  });
 
   it("caps in-flight fetches at FILMSTRIP_MAX_CONCURRENT_FETCHES", async () => {
     const mediaId = "m-concurrency";
@@ -152,12 +169,31 @@ describe("filmstrip tile producer (shared engine)", () => {
     const value = entry.value;
 
     expect(vi.mocked(convertFileSrc)).toHaveBeenCalledWith("/cache/tile-3-5.jpg");
+    // The composition matters: fetch must receive convertFileSrc's RETURN
+    // value (the weftcut-media:// URL), not the raw ipc path.
+    expect(fetchMock).toHaveBeenCalledWith("weftcut-media://test//cache/tile-3-5.jpg");
     expect(value.tUs).toBe(index * spacingUs(lod));
     expect(value.bitmap).toBe(fakeBitmap);
-    const bytes = value.bitmap.width * value.bitmap.height * 4;
-    expect(bytes).toBe(12 * 34 * 4);
+    // Assert the REGISTERED bytes callback, not a locally recomputed formula.
+    expect(producer.bytes(value)).toBe(12 * 34 * 4);
 
     engine.invalidateMedia(mediaId, FILMSTRIP_KIND);
     expect((fakeBitmap as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the fetch slot when the ipc call rejects", async () => {
+    vi.mocked(getFilmstripTile).mockReset();
+    vi.mocked(getFilmstripTile).mockRejectedValue("not_ready");
+
+    // Reject once per concurrency slot, sequentially. If any rejection leaked
+    // its slot (finally not run), inFlight would hit the cap and the follow-up
+    // fetch below would park forever on the waiter queue (test timeout).
+    for (let i = 0; i < FILMSTRIP_MAX_CONCURRENT_FETCHES; i++) {
+      await expect(producer.fetch(filmstripTileKey("m-reject", 0, i))).rejects.toBe("not_ready");
+    }
+
+    vi.mocked(getFilmstripTile).mockResolvedValue({ path: "after.jpg", widthPx: 8, heightPx: 8 });
+    const value = await producer.fetch(filmstripTileKey("m-reject", 0, 9));
+    expect(value.tUs).toBe(9 * spacingUs(0));
   });
 });
