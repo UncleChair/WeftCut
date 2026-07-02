@@ -56,7 +56,20 @@ resolutions §1–§2); the display/data design is otherwise exactly as locked.
    slot once `ERROR_RETRY_COOLDOWN_MS = 5000` has elapsed since the failure;
    `ensureWaveformWindow` and the filmstrip request pass both call `request()`
    on error entries. Bounded: at most one retry per tile per cooldown window.
-8. **The spacing formula is a 1-line Rust↔TS twin**
+8. **Request/draw passes are clipped to the on-screen viewport** (amended
+   during Task B7 field verification): covering a layer's ENTIRE src window
+   melted the renderer — a 3.5-minute clip at deep zoom queued ~850 tile
+   extractions (≈400 MB of ImageBitmaps) and every arrival redrew every
+   canvas segment, ending in a renderer OOM crash. Each 2048-px segment gets
+   an IntersectionObserver visibility flag (same feature-detect fallback as
+   `usePreviewResourceGate`: no IntersectionObserver → treat all segments
+   visible, which is what tests see); the request pass fetches only tiles
+   whose x-range intersects a visible segment (± one segment margin), the
+   draw effect skips invisible segments (no backing-store churn), and
+   data-state is computed over the clipped range. The waveform tolerates
+   full-window fetches because its tiles are ~48 KB arrays; 466 KB bitmaps
+   do not.
+9. **The spacing formula is a 1-line Rust↔TS twin**
    (`FILMSTRIP_BASE_SPACING_US << lod`). Guarded by mirrored pinned-value tests
    (both sides assert lod 0 → 250_000, lod 12 → 1_024_000_000) + cross-pointer
    comments naming the twin file. No golden fixture — one shift does not merit
