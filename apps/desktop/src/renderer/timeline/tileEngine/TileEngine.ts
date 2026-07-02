@@ -17,6 +17,11 @@ export type TileEntry<T> =
 export interface TileProducer<T> {
   /// Matches `media:job_complete.kind` and `TileKey.kind`.
   kind: string;
+  /// Extra `media:job_complete` kinds that also invalidate this producer's
+  /// tiles — for producers whose pixels derive from another job's output
+  /// (filmstrip tiles decode from the proxy the "proxy"/"quick_proxy" jobs
+  /// produce). The waveform producer needs no entry: its own kind matches.
+  invalidateOn?: string[];
   fetch(key: TileKey): Promise<T>;
   bytes(value: T): number;
   /// Called when an entry is evicted or invalidated. Use for ImageBitmap.close().
@@ -28,6 +33,11 @@ export interface TileProducer<T> {
 
 export const DEFAULT_TILE_BUDGET_BYTES = 192 * 1024 * 1024;
 
+/// A failed fetch parks the slot as `error`; `request()` retries it once this
+/// cooldown has elapsed, so a transient failure (file mid-promote, ffmpeg
+/// hiccup) heals without an invalidation, but a persistent one can't hot-loop.
+export const ERROR_RETRY_COOLDOWN_MS = 5000;
+
 function keyStr(k: TileKey): string {
   return `${k.mediaId} ${k.kind} ${k.lod} ${k.index}`;
 }
@@ -38,6 +48,8 @@ interface Slot<T> {
   bytes: number;
   /// Monotonic touch counter for LRU; also the request version for stale-drop.
   version: number;
+  /// Set alongside an `error` entry; drives the ERROR_RETRY_COOLDOWN_MS gate.
+  erroredAtMs?: number;
 }
 
 export class TileEngine {
@@ -72,10 +84,17 @@ export class TileEngine {
   request(key: TileKey): void {
     const ks = keyStr(key);
     const existing = this.slots.get(ks);
-    if (existing && (existing.entry.state === "pending" || existing.entry.state === "ready" || existing.entry.state === "error")) {
-      return; // coalesce: pending/ready/error slots are left as-is. not_ready is deliberately
-      // NOT short-circuited — a later request() re-fetches it (e.g. after invalidateMedia
-      // clears the slot, or a consumer explicit retry).
+    if (existing) {
+      const { state } = existing.entry;
+      // pending/ready always coalesce. not_ready is deliberately NOT
+      // short-circuited — a later request() re-fetches it (e.g. after
+      // invalidateMedia clears the slot, or a consumer explicit retry).
+      // error also falls through once ERROR_RETRY_COOLDOWN_MS has elapsed, so
+      // a transient failure heals on the next request() instead of wedging.
+      if (state === "pending" || state === "ready") return;
+      if (state === "error" && Date.now() - (existing.erroredAtMs ?? 0) < ERROR_RETRY_COOLDOWN_MS) {
+        return;
+      }
     }
     const producer = this.producers.get(key.kind);
     if (!producer) return;
@@ -102,9 +121,12 @@ export class TileEngine {
         const slot = this.slots.get(ks);
         if (!slot || slot.version !== version) return;
         const message = typeof e === "string" ? e : String(e);
-        slot.entry = message.includes("not_ready")
-          ? { state: "not_ready" }
-          : { state: "error", message };
+        if (message.includes("not_ready")) {
+          slot.entry = { state: "not_ready" };
+        } else {
+          slot.entry = { state: "error", message };
+          slot.erroredAtMs = Date.now();
+        }
         this.notify(key.mediaId);
       });
   }
@@ -152,6 +174,16 @@ export class TileEngine {
     this.listeners.get(mediaId)?.forEach((cb) => cb());
   }
 
+  /** Route one media:job_complete to every producer it invalidates. Exposed for
+   *  tests — the bridge listener is inert under vitest. */
+  handleJobComplete(mediaId: string, kind: string): void {
+    for (const producer of this.producers.values()) {
+      if (producer.kind === kind || producer.invalidateOn?.includes(kind)) {
+        this.invalidateMedia(mediaId, producer.kind);
+      }
+    }
+  }
+
   private async installJobListenerOnce(): Promise<void> {
     if (this.jobListenerInstalled) return;
     this.jobListenerInstalled = true;
@@ -162,9 +194,7 @@ export class TileEngine {
           const kind = event.payload?.kind;
           const mediaId = event.payload?.media_id;
           if (!kind || !mediaId) return;
-          // Only kinds that map to a registered producer are ours.
-          if (!this.producers.has(kind)) return;
-          this.invalidateMedia(mediaId, kind);
+          this.handleJobComplete(mediaId, kind);
         },
       );
     } catch {

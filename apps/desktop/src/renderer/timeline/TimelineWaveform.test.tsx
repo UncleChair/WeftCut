@@ -7,6 +7,7 @@ import {
   TimelineWaveform,
   WAVEFORM_REFETCH_DEBOUNCE_MS,
 } from "./TimelineWaveform";
+import { tileEngine } from "./tileEngine/TileEngine";
 import {
   ensureWaveformWindow,
   getWaveformChannelCount,
@@ -19,9 +20,26 @@ vi.mock("./tileEngine/WaveformTileProducer", () => ({
   getWaveformChannelCount: vi.fn(async () => 1),
 }));
 
-vi.mock("./tileEngine/TileEngine", () => ({
-  tileEngine: { subscribe: vi.fn(() => () => {}) },
-}));
+// A minimal real subscribe/notify pub-sub (mirrors TileEngine.subscribe +
+// invalidateMedia) so the engine-subscribe-path test can drive the hook's
+// subscription the same way a live TileEngine would, without pulling in the
+// whole module (which installs a bridge job listener).
+vi.mock("./tileEngine/TileEngine", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  return {
+    tileEngine: {
+      subscribe: vi.fn((mediaId: string, cb: () => void) => {
+        let set = listeners.get(mediaId);
+        if (!set) { set = new Set(); listeners.set(mediaId, set); }
+        set.add(cb);
+        return () => { set?.delete(cb); };
+      }),
+      invalidateMedia: vi.fn((mediaId: string) => {
+        listeners.get(mediaId)?.forEach((cb) => cb());
+      }),
+    },
+  };
+});
 
 /// Drains a bounded number of microtask turns under `act`, so chained
 /// promises (channel-count fetch -> ensure-window fetch -> setState) that
@@ -648,6 +666,52 @@ describe("TimelineWaveform", () => {
         } else {
           Reflect.deleteProperty(window, "matchMedia");
         }
+      }
+    });
+  });
+
+  describe("engine subscribe path", () => {
+    it("invalidateMedia notifies the subscribed hook and triggers an immediate refetch", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(ensureWaveformWindow).mockResolvedValue({
+          peaksPerSecond: 1000,
+          startPeak: 0,
+          min: new Float32Array([-0.5, -0.7]),
+          max: new Float32Array([0.5, 0.7]),
+          rms: new Float32Array([0.2, 0.3]),
+        });
+
+        const { getByTestId } = render(
+          <TimelineWaveform
+            mediaId="m"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={80}
+          />,
+        );
+        await flushMicrotasks();
+        const wrapper = getByTestId("timeline-waveform");
+        expect(wrapper.getAttribute("data-state")).toBe("ready");
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        act(() => { tileEngine.invalidateMedia("m", "waveform"); });
+        // Synchronously after the notification (before the refetch settles):
+        // the stale window is still on screen, not blanked to a placeholder.
+        expect(wrapper.getAttribute("data-state")).toBe("ready");
+        // No timer advance at all: subscribe notifications bypass the 120ms
+        // debounce entirely (unlike the pxPerSec-churn path above).
+        await flushMicrotasks();
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(2);
+        // The stale window stays on screen the whole time — never drops to
+        // "pending" while the refetch is in flight.
+        expect(wrapper.getAttribute("data-state")).toBe("ready");
+      } finally {
+        vi.useRealTimers();
       }
     });
   });

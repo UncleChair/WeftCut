@@ -128,7 +128,8 @@ export async function ensureWaveformWindow(
     if (!entry) { engine.request(key); anyMissing = true; tiles.push(null); continue; }
     if (entry.state === "ready") { tiles.push(entry.value); continue; }
     if (entry.state === "not_ready") { notReady = true; tiles.push(null); continue; }
-    // pending or error -> treat as missing
+    if (entry.state === "error") { engine.request(key); anyMissing = true; tiles.push(null); continue; }
+    // pending -> treat as missing
     anyMissing = true;
     tiles.push(null);
   }

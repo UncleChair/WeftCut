@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TileEngine, type TileProducer, type TileKey } from "./TileEngine";
+import { TileEngine, ERROR_RETRY_COOLDOWN_MS, type TileProducer, type TileKey } from "./TileEngine";
 
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 
@@ -94,5 +94,83 @@ describe("TileEngine", () => {
     engine.register(producer);
     engine.invalidateMedia("m", "test");
     expect(invalidated).toEqual(["m"]);
+  });
+
+  it("invalidateOn kinds route job-complete events to the producer", async () => {
+    const invalidatedA: string[] = [];
+    const { producer: producerA, resolve: resolveA } = makeProducer({
+      kind: "filmstrip",
+      invalidateOn: ["proxy", "quick_proxy"],
+      invalidate: (mediaId) => invalidatedA.push(mediaId),
+    });
+    const invalidatedB: string[] = [];
+    const { producer: producerB, resolve: resolveB } = makeProducer({
+      kind: "waveform",
+      invalidate: (mediaId) => invalidatedB.push(mediaId),
+    });
+    engine.register(producerA);
+    engine.register(producerB);
+
+    const keyA: TileKey = { mediaId: "m1", kind: "filmstrip", lod: 0, index: 0 };
+    const keyB: TileKey = { mediaId: "m1", kind: "waveform", lod: 0, index: 0 };
+    engine.request(keyA);
+    resolveA("0:0", [1]);
+    await Promise.resolve();
+    engine.request(keyB);
+    resolveB("0:0", [2]);
+    await Promise.resolve();
+    expect(engine.get(keyA)?.state).toBe("ready");
+    expect(engine.get(keyB)?.state).toBe("ready");
+
+    engine.handleJobComplete("m1", "proxy");
+    expect(engine.get(keyA)).toBeUndefined();
+    expect(invalidatedA).toEqual(["m1"]);
+    // The waveform producer's own kind doesn't match "proxy" and it declares
+    // no invalidateOn, so it's untouched.
+    expect(engine.get(keyB)?.state).toBe("ready");
+    expect(invalidatedB).toEqual([]);
+
+    engine.handleJobComplete("m1", "waveform");
+    expect(engine.get(keyB)).toBeUndefined();
+    expect(invalidatedB).toEqual(["m1"]);
+  });
+
+  it("re-requests an error slot only after the cooldown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const calls: TileKey[] = [];
+      let reject: (e: unknown) => void = () => {};
+      let resolveSecond: (v: number[]) => void = () => {};
+      const producer: TileProducer<number[]> = {
+        kind: "test",
+        fetch: (key) => {
+          calls.push(key);
+          if (calls.length === 1) return new Promise<number[]>((_res, rej) => { reject = rej; });
+          return new Promise<number[]>((res) => { resolveSecond = res; });
+        },
+        bytes: (v) => v.length * 8,
+      };
+      engine.register(producer);
+      const key: TileKey = { mediaId: "m", kind: "test", lod: 0, index: 0 };
+
+      engine.request(key);
+      reject("boom");
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(engine.get(key)?.state).toBe("error");
+
+      engine.request(key);
+      expect(calls.length).toBe(1); // still within cooldown: coalesced
+
+      vi.setSystemTime(ERROR_RETRY_COOLDOWN_MS);
+      engine.request(key);
+      expect(calls.length).toBe(2);
+      resolveSecond([1, 2]);
+      await Promise.resolve();
+      expect(engine.get(key)).toEqual({ state: "ready", value: [1, 2] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
