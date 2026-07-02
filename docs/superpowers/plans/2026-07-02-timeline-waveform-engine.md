@@ -1767,5 +1767,10 @@ git commit -m "test(waveform): e2e verification of the tiled waveform engine"
 
 ## Follow-up plans (not in this plan)
 
-- **Plan 2 — Filmstrip tiles:** `FilmstripTileProducer` (Rust ffmpeg seek-extract, eager coarse base + lazy fine tiles, prefer-proxy, source-time keyed) registered on this same `TileEngine`; canvas filmstrip render with temporal frame positioning; `dispose` = `ImageBitmap.close()`. Requires the proxy-wait generation rule (design Q9 option (i)).
-- **Plan 3 — Disk LRU + zoom ceiling:** Rust disk-cache budget + LRU eviction (thumbnail tiles are the growth source); raise `MAX_PX_PER_SEC` 800 → 2000 in `geometry.ts`.
+Superseded — the follow-up roadmap was reorganized after the clipcombo
+display-strategy comparison. See
+`docs/superpowers/plans/2026-07-02-timeline-display-upgrades.md`:
+Plan A (waveform display upgrades: VPEAKS v3 RMS two-tone, stereo lanes,
+stale-while-revalidate zoom), Plan B (filmstrip tile engine — the former
+"Plan 2", design locked incl. the proxy-wait rule), Plan C (disk LRU + zoom
+ceiling — the former "Plan 3", scope amended with the v2-orphan sweep).

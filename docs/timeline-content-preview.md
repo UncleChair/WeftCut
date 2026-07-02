@@ -53,10 +53,13 @@ Video clips render a real filmstrip based on the layer's current source window:
 Audio clips render a waveform:
 
 - Use the layer's `src_in_us` and `src_out_us` as the displayed source interval.
-- Fetch peaks with `getWaveformPeaks(mediaId)`.
-- Draw the waveform on a canvas.
-- Aggregate peaks to the rendered pixel width, targeting roughly one vertical
-  bar per 1-2 px.
+- Peaks come from the tile engine: `getWaveformLevels(mediaId)` returns the
+  peaks file's LOD level table, and `getWaveformTile(mediaId, level, channel,
+  startPeak, count)` serves fixed-size min/max tiles that `TileEngine` caches
+  under a byte budget.
+- The producer picks the coarsest LOD level that still meets the on-screen
+  density for the current zoom, assembles the covering tiles into one window,
+  and the component draws it across DPR-scaled canvas segments.
 - Missing peaks render a stable center-line placeholder until the waveform job
   completes.
 
@@ -180,9 +183,11 @@ Recommended components:
   - maps `src_in_us/src_out_us` to displayed frames,
   - listens for `media:job_complete` with `kind === "thumbnails"`.
 - `TimelineWaveform`
-  - fetches and caches waveform peaks,
-  - draws to canvas,
-  - listens for `media:job_complete` with `kind === "waveform"`.
+  - assembles peak windows via the tile engine
+    (`timeline/tileEngine/TileEngine.ts` + `WaveformTileProducer.ts`),
+  - draws to bounded canvas segments,
+  - relies on the tile engine's `media:job_complete` invalidation (tile slots
+    and the producer's cached level table both drop on `kind === "waveform"`).
 
 Keep `LayerBlock` responsible for geometry, interaction, and chrome. It should
 delegate the clip body content to these components instead of growing more
@@ -218,7 +223,10 @@ implementation.
 
 - Existing thumbnail job output is fixed at ten JPGs named `000.jpg` through
   `009.jpg`.
-- Existing waveform command is `getWaveformPeaks(mediaId)`.
+- Timeline waveform commands are `getWaveformLevels(mediaId)` and
+  `getWaveformTile(mediaId, level, channel, startPeak, count)`;
+  `getWaveformPeaks(mediaId)` remains only as the coarse max-abs reader for
+  MCP consumers.
 - Existing image loading should use `convertFileSrc`.
 - Existing layer slice logic lives in `apps/desktop/src/renderer/timeline/geometry.ts`.
 - Existing block/chrome logic lives in `apps/desktop/src/renderer/timeline/LayerBlock.tsx`.
