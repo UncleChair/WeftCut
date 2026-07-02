@@ -59,6 +59,14 @@ architecture that backs the audio waveform:
   or trim frames coalesces into one request pass; mounting, switching media,
   and the tile engine's own completion notifications bypass the debounce and
   request immediately.
+- Both the request pass and the draw pass are clipped to the on-screen
+  viewport: the strip renders across fixed-width canvas segments, each
+  tracking its own visibility, and only tiles overlapping a visible segment
+  (plus one segment of margin to either side) are fetched or painted. A long
+  clip at deep zoom therefore costs what the viewport shows, not what the
+  whole source window contains, and hidden segments allocate no canvas
+  backing store. A segment scrolling into view requests its tiles
+  immediately, bypassing the debounce.
 - Drawing never blanks the strip in either zoom direction: alongside the
   target level, the canvas also paints levels up to three steps to either
   side as fallback — finer levels paint first as backfill, then coarser
