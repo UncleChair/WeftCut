@@ -206,8 +206,10 @@ to verify on real macOS + Linux hardware:
 - Motif-picker thumbnails for the remaining starter Motifs
   (rendered lazily via a CDP still; verify each Motif renders end-to-end
   through the picker → export path).
-- Media-pool thumbnail strip and timeline waveform strip on audio
-  layers (backend data already cached; both are React + canvas work).
+- Media-pool thumbnail strip (backend data already cached; React + canvas
+  work). The timeline waveform strip ships already; the filmstrip's
+  tile-engine rebuild is planned in
+  `docs/superpowers/plans/2026-07-02-timeline-display-upgrades.md` (Plan B).
 
 ### MCP tool gating
 

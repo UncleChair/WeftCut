@@ -12,9 +12,17 @@ This supersedes the "Follow-up plans" section of
 `docs/superpowers/plans/2026-07-02-timeline-waveform-engine.md` and reorganizes
 the remaining timeline-content work as:
 
-- **Plan A — Waveform display upgrades** (fully specified below, executable now)
+- **Plan A — Waveform display upgrades — SHIPPED** (merged to main through
+  `006d7571`, user-verified in the real app; kept below as the record of the
+  bound decisions). Post-ship fixes folded in: stereo-lane gating on source
+  channel metadata (`MediaSummary.audio_channels` — the generator's `-ac 2`
+  makes the peaks header always report 2 channels), and a TileEngine fix (LRU
+  touches only ready slots; a pending-slot touch stale-dropped in-flight
+  fetches and wedged tiles forever — deterministic under dual-channel fetch).
 - **Plan B — Filmstrip tile engine** (design locked below; expand into its own
-  task-by-task plan at pickup)
+  task-by-task plan at pickup). Additional intake from the Plan-A field
+  incident: an engine-subscribe-path test (the invalidation→refetch linchpin
+  has no coverage), and error-tile re-request (T6-M1).
 - **Plan C — Disk-cache LRU + zoom ceiling** (carried forward, scope amended)
 
 ## Global Constraints
