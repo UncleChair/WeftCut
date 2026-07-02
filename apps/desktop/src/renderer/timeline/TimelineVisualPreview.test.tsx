@@ -179,6 +179,24 @@ describe("TimelineVisualPreview", () => {
       );
     });
 
+    // Enabling the preview mounted the filmstrip's segment canvas, which is
+    // itself gated behind a per-segment IntersectionObserver — the shared
+    // fake's captured callback/element now point at that observer and canvas.
+    // Still nothing fetched until the segment too reports visible.
+    expect(mocks.getFilmstripTile).not.toHaveBeenCalled();
+    act(() => {
+      observerCallback?.(
+        [
+          {
+            isIntersecting: true,
+            intersectionRatio: 1,
+            target: observedElement,
+          } as IntersectionObserverEntry,
+        ],
+        {} as IntersectionObserver,
+      );
+    });
+
     await waitFor(() => {
       expect(mocks.getFilmstripTile).toHaveBeenCalledWith("media-1", expect.any(Number), expect.any(Number));
     });

@@ -213,3 +213,125 @@ describe("TimelineFilmstrip", () => {
     });
   });
 });
+
+describe("TimelineFilmstrip segment visibility", () => {
+  type FakeEntry = { target: Element; isIntersecting: boolean; intersectionRatio: number };
+
+  class FakeIntersectionObserver {
+    static instances: FakeIntersectionObserver[] = [];
+    observed: Element[] = [];
+    constructor(
+      readonly callback: (entries: FakeEntry[], observer: FakeIntersectionObserver) => void,
+      readonly options?: IntersectionObserverInit,
+    ) {
+      FakeIntersectionObserver.instances.push(this);
+    }
+    observe(el: Element) {
+      this.observed.push(el);
+    }
+    unobserve(el: Element) {
+      this.observed = this.observed.filter((o) => o !== el);
+    }
+    disconnect() {
+      this.observed = [];
+    }
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  }
+
+  // A 60s clip at 96 px/s over a 5760px-wide layer -> 3 canvas segments
+  // (2048/2048/1664px). Thumb 96px (54px lane, 16:9 fallback) at 96 px/s ->
+  // desired spacing exactly 1_000_000us -> target lod 2. The FULL-strip tile
+  // range at lod 2 is 0..59; the point of these tests is that only a clipped
+  // sub-range of it may be requested.
+  const WIDE = {
+    srcInUs: 0,
+    srcOutUs: 60_000_000,
+    layerWidthPx: 5760,
+    pxPerSec: 96,
+  };
+
+  const ioGlobal = globalThis as typeof globalThis & {
+    IntersectionObserver?: typeof globalThis.IntersectionObserver;
+  };
+
+  beforeEach(() => {
+    FakeIntersectionObserver.instances.length = 0;
+    ioGlobal.IntersectionObserver =
+      FakeIntersectionObserver as unknown as typeof globalThis.IntersectionObserver;
+  });
+
+  afterEach(() => {
+    delete ioGlobal.IntersectionObserver;
+  });
+
+  function fireVisible(io: FakeIntersectionObserver, el: Element) {
+    act(() => {
+      io.callback([{ target: el, isIntersecting: true, intersectionRatio: 1 }], io);
+    });
+  }
+
+  it("requests only the tiles overlapping visible segments, one segment width of margin included", () => {
+    const mediaId = "m-vis-clip";
+    const requestSpy = vi.spyOn(tileEngine, "request");
+    const { getAllByTestId } = renderFilmstrip(mediaId, WIDE);
+
+    const canvases = getAllByTestId("timeline-filmstrip-tile");
+    expect(canvases).toHaveLength(3);
+    const io = FakeIntersectionObserver.instances[0]!;
+    expect(io.options).toMatchObject({ root: null, rootMargin: "256px 512px" });
+    expect(io.observed).toHaveLength(3);
+    // No segment has reported visible yet -> nothing to fetch.
+    expect(requestSpy).not.toHaveBeenCalled();
+
+    fireVisible(io, canvases[0]!);
+
+    // Segment 0 spans px [0, 2048); one segment width of margin each side
+    // clamps to [0, 4096) -> tUs [0, ~42_666_667) over 60s/5760px -> lod-2
+    // indices 0..42 EXACTLY — not the full-strip 0..59.
+    expect(requestSpy.mock.calls.map((c) => c[0])).toEqual(
+      Array.from({ length: 43 }, (_, i) => filmstripTileKey(mediaId, 2, i)),
+    );
+  });
+
+  it("fires an immediate request pass when another segment becomes visible", () => {
+    vi.useFakeTimers();
+    try {
+      const mediaId = "m-vis-grow";
+      const requestSpy = vi.spyOn(tileEngine, "request");
+      const { getAllByTestId } = renderFilmstrip(mediaId, WIDE);
+      const canvases = getAllByTestId("timeline-filmstrip-tile");
+      const io = FakeIntersectionObserver.instances[0]!;
+
+      fireVisible(io, canvases[0]!);
+      expect(requestSpy).toHaveBeenCalledTimes(43); // segment 0's clipped range
+
+      fireVisible(io, canvases[1]!);
+
+      // Segment 1's margin window clamps to the whole strip (indices 0..59);
+      // 0..42 are already pending and coalesce via get(), so exactly 43..59
+      // are new — and they were issued with NO timer advance (visibility
+      // changes are in the immediate class, like subscribe notifications,
+      // not the 140ms param-churn debounce).
+      expect(requestSpy.mock.calls.slice(43).map((c) => c[0])).toEqual(
+        Array.from({ length: 17 }, (_, i) => filmstripTileKey(mediaId, 2, 43 + i)),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats every segment as visible when IntersectionObserver is unavailable", () => {
+    delete ioGlobal.IntersectionObserver;
+    const mediaId = "m-vis-fallback";
+    const requestSpy = vi.spyOn(tileEngine, "request");
+    renderFilmstrip(mediaId, WIDE);
+    // Fallback pin: with no observer the mount pass covers the full strip
+    // immediately — this is the environment every other test in this file
+    // (and jsdom generally) runs in.
+    expect(requestSpy.mock.calls.map((c) => c[0])).toEqual(
+      Array.from({ length: 60 }, (_, i) => filmstripTileKey(mediaId, 2, i)),
+    );
+  });
+});
