@@ -83,6 +83,14 @@ impl CacheLayout {
         self.current_root().join("frames")
     }
 
+    /// On-demand filmstrip tiles for the timeline, lazy-cached per source hash.
+    /// Keys mirror the renderer's time grid: `{lod}/{index:06}.jpg` where the
+    /// tile samples source time `index * (250ms << lod)`. Growth is bounded by
+    /// the disk-cache LRU (follow-up plan); tiles are ~15-25 KB JPGs.
+    pub fn filmstrip_root(&self) -> PathBuf {
+        self.current_root().join("filmstrip")
+    }
+
     /// Reserved scaffolding for materializing caption text bodies to a
     /// blake3-addressed file when a code path needs a real on-disk path.
     /// Currently UNUSED: kept for a future ffmpeg subtitle burn-in export path,
@@ -148,6 +156,10 @@ impl CacheLayout {
         self.frames(hash).join(format!("{t_us}.jpg"))
     }
 
+    pub fn filmstrip_tile(&self, hash: &str, lod: u32, index: u32) -> PathBuf {
+        self.filmstrip_root().join(hash).join(lod.to_string()).join(format!("{index:06}.jpg"))
+    }
+
     /// Audio slices extracted for cloud transcription (mono 16 kHz WAV).
     /// Hash composition is `blake3([source_hash_bytes, in_us.to_le_bytes(),
     /// out_us.to_le_bytes()].concat())` — see `cloud::audio_extract`.
@@ -189,6 +201,7 @@ impl CacheLayout {
             self.waveforms_dir(),
             self.audio_conform_dir(),
             self.frames_root(),
+            self.filmstrip_root(),
             self.inline_subs_dir(),
             self.transcribe_audio_dir(),
             self.voiceover_dir(),
@@ -276,6 +289,10 @@ mod tests {
             layout.voiceover("abc", "mp3"),
             tmp.path().join("voiceover").join("abc.mp3"),
         );
+        assert_eq!(
+            layout.filmstrip_tile("abc", 3, 7),
+            tmp.path().join("filmstrip").join("abc").join("3").join("000007.jpg"),
+        );
     }
 
     #[test]
@@ -292,6 +309,7 @@ mod tests {
         assert!(layout.inline_subs_dir().is_dir());
         assert!(layout.transcribe_audio_dir().is_dir());
         assert!(layout.voiceover_dir().is_dir());
+        assert!(layout.filmstrip_root().is_dir());
     }
 
     #[test]

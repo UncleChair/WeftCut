@@ -18,6 +18,7 @@
 //! - `media:job_error`    — `{ media_id, kind, error }`
 
 pub mod conform;
+pub mod filmstrip;
 mod frame;
 pub mod hwaccel;
 pub mod import;
