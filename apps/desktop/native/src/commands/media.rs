@@ -354,7 +354,7 @@ mod mirror_tests {
     #[cfg(feature = "jobs")]
     #[tokio::test]
     async fn get_waveform_tile_dequantizes_rms() {
-        use crate::jobs::waveform::{LevelData, write_peaks, dequantize, dequantize_rms};
+        use crate::jobs::waveform::{LevelData, write_peaks};
         use super::{get_waveform_tile, WaveformTileArgs};
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -368,16 +368,9 @@ mod mirror_tests {
             maxs: vec![vec![100, 200, 300]],
             rmss: vec![vec![1000, 2000, 3000]],
         };
-        tokio::task::spawn_blocking({
-            let path = peaks_path.clone();
-            move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(write_peaks(&path, 1, &[(100, level_data)]))
-                    .expect("write_peaks")
-            }
-        })
-        .await
-        .expect("spawn_blocking");
+        write_peaks(&peaks_path, 1, &[(100, level_data)])
+            .await
+            .expect("write_peaks");
 
         let mut item = mirror_only_item(uuid::Uuid::now_v7());
         item.waveform_path = Some(peaks_path);
@@ -393,13 +386,13 @@ mod mirror_tests {
         .expect("get_waveform_tile");
 
         // Verify min/max are dequantized correctly (existing behavior).
-        assert_eq!(tile.min[0], dequantize(-100i16));
-        assert_eq!(tile.max[0], dequantize(100i16));
+        assert_eq!(tile.min[0], -100.0_f32 / 32767.0);
+        assert_eq!(tile.max[0], 100.0_f32 / 32767.0);
 
         // Verify rms is dequantized and present (new behavior).
         assert_eq!(tile.rms.len(), 3);
-        assert_eq!(tile.rms[0], dequantize_rms(1000u16));
-        assert_eq!(tile.rms[1], dequantize_rms(2000u16));
-        assert_eq!(tile.rms[2], dequantize_rms(3000u16));
+        assert_eq!(tile.rms[0], 1000.0_f32 / 65535.0);
+        assert_eq!(tile.rms[1], 2000.0_f32 / 65535.0);
+        assert_eq!(tile.rms[2], 3000.0_f32 / 65535.0);
     }
 }
