@@ -47,12 +47,14 @@ export interface WaveformWindow {
   startPeak: number;
   min: Float32Array;
   max: Float32Array;
+  rms: Float32Array;
 }
 
 interface TileValue {
   peaksPerSecond: number;
   min: number[];
   max: number[];
+  rms: number[];
 }
 
 // Level tables are cheap and stable per generated waveform file; cache them so
@@ -82,9 +84,9 @@ export function registerWaveformProducer(engine: TileEngine = tileEngine): void 
       const tile = await getWaveformTile(
         key.mediaId, key.lod, channel, tileIndex * TILE_PEAKS, TILE_PEAKS,
       );
-      return { peaksPerSecond: tile.peaksPerSecond, min: tile.min, max: tile.max };
+      return { peaksPerSecond: tile.peaksPerSecond, min: tile.min, max: tile.max, rms: tile.rms };
     },
-    bytes: (v) => (v.min.length + v.max.length) * 8,
+    bytes: (v) => (v.min.length + v.max.length + v.rms.length) * 8,
     invalidate: (mediaId) => { levelsCache.delete(mediaId); },
   });
 }
@@ -137,6 +139,7 @@ export async function ensureWaveformWindow(
   const total = endPeak - startPeak;
   const min = new Float32Array(total);
   const max = new Float32Array(total);
+  const rms = new Float32Array(total);
   for (let i = 0; i < total; i++) {
     const globalPeak = startPeak + i;
     const t = Math.floor(globalPeak / TILE_PEAKS);
@@ -144,6 +147,13 @@ export async function ensureWaveformWindow(
     const tile = tiles[t - firstTile]!;
     min[i] = tile.min[within] ?? 0;
     max[i] = tile.max[within] ?? 0;
+    rms[i] = tile.rms[within] ?? 0;
   }
-  return { peaksPerSecond: pps, startPeak, min, max };
+  return { peaksPerSecond: pps, startPeak, min, max, rms };
+}
+
+/// Channel count for a media's waveform, shared with `ensureWaveformWindow`'s
+/// level-table cache (and therefore its invalidation on regeneration).
+export async function getWaveformChannelCount(mediaId: string): Promise<number> {
+  return (await fetchLevels(mediaId)).channels;
 }

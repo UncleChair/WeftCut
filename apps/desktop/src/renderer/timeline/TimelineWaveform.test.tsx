@@ -91,6 +91,7 @@ describe("TimelineWaveform", () => {
       startPeak: 0,
       min: new Float32Array([-0.5, -0.7]),
       max: new Float32Array([0.5, 0.7]),
+      rms: new Float32Array([0.2, 0.3]),
     });
 
     const { findByTestId } = render(
@@ -115,6 +116,7 @@ describe("TimelineWaveform", () => {
       startPeak: 0,
       min: new Float32Array(1000),
       max: new Float32Array(1000),
+      rms: new Float32Array(1000),
     });
 
     const { getAllByTestId, getByTestId } = render(
@@ -172,6 +174,7 @@ describe("TimelineWaveform", () => {
         startPeak: 0,
         min: new Float32Array([-0.5, -0.7]),
         max: new Float32Array([0.5, 0.7]),
+        rms: new Float32Array([0.2, 0.3]),
       });
 
       const { getByTestId, getAllByTestId } = render(

@@ -6,6 +6,7 @@ import {
   WAVEFORM_KIND,
   registerWaveformProducer,
   ensureWaveformWindow,
+  getWaveformChannelCount,
 } from "./WaveformTileProducer";
 import { TileEngine } from "./TileEngine";
 import { getWaveformLevels, getWaveformTile } from "../../ipc";
@@ -54,10 +55,16 @@ describe("tileRangeForWindow", () => {
   });
 });
 
-describe("levels cache invalidation", () => {
+// `registerWaveformProducer` has a module-level "only the first call ever
+// registers" guard (real production behavior: one producer per engine, and
+// production code only ever builds one `tileEngine`). All tests below that
+// need a registered producer therefore share this single engine + single
+// registration call, keyed apart by distinct mediaIds.
+describe("waveform tile producer (shared engine)", () => {
+  const engine = new TileEngine(1024 * 1024);
+  registerWaveformProducer(engine);
+
   it("re-fetches the level table after invalidateMedia (regenerated waveform)", async () => {
-    const engine = new TileEngine(1024 * 1024);
-    registerWaveformProducer(engine);
     vi.mocked(getWaveformLevels).mockResolvedValue({
       channels: 2,
       levels: [{ level: 0, peaksPerSecond: 1000, peakCount: 10_000 }],
@@ -72,5 +79,63 @@ describe("levels cache invalidation", () => {
     engine.invalidateMedia("m1", WAVEFORM_KIND);
     await ensureWaveformWindow("m1", 0, 0, 1_000_000, 100, engine);
     expect(vi.mocked(getWaveformLevels)).toHaveBeenCalledTimes(2);
+  });
+
+  it("assembles the rms slice for [startPeak, endPeak) from the covering tile", async () => {
+    vi.mocked(getWaveformLevels).mockResolvedValue({
+      channels: 1,
+      levels: [{ level: 0, peaksPerSecond: 1000, peakCount: 100_000 }],
+    });
+    // 0.5 and 0.25 are exactly representable in float32, so the assembled
+    // Float32Array round-trips without precision drift against the literals
+    // in the assertion below.
+    const rms = new Array(TILE_PEAKS).fill(0);
+    rms[1500] = 0.5;
+    rms[1501] = 0.25;
+    vi.mocked(getWaveformTile).mockResolvedValue({
+      peaksPerSecond: 1000,
+      min: new Array(TILE_PEAKS).fill(-1),
+      max: new Array(TILE_PEAKS).fill(1),
+      rms,
+    });
+
+    const mediaId = "m-rms";
+    // 1000 pps, window [1.5s, 1.502s) -> peaks [1500, 1502): a nonzero
+    // startPeak so the slice math (globalPeak - firstTile*TILE_PEAKS) is
+    // actually exercised, not just the degenerate startPeak === 0 case.
+    const first = await ensureWaveformWindow(mediaId, 0, 1_500_000, 1_502_000, 800, engine);
+    expect(first).toBe("pending");
+
+    // Flush the mocked async fetch chain (fetch's internal await plus the
+    // engine's own `.then`) past a macrotask boundary so the tile lands.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const second = await ensureWaveformWindow(mediaId, 0, 1_500_000, 1_502_000, 800, engine);
+    if (second === "pending" || second === "not_ready") {
+      throw new Error(`expected a ready window, got ${second}`);
+    }
+    expect(second.startPeak).toBe(1500);
+    expect(Array.from(second.rms)).toEqual([0.5, 0.25]);
+  });
+});
+
+describe("getWaveformChannelCount", () => {
+  it("resolves the channel count from the levels response, served from the shared cache", async () => {
+    vi.mocked(getWaveformLevels).mockResolvedValue({
+      channels: 3,
+      levels: [{ level: 0, peaksPerSecond: 1000, peakCount: 1000 }],
+    });
+    // The mock's call history is cumulative across this whole test file (no
+    // global mock-reset config), so clear it to isolate this test's own count.
+    vi.mocked(getWaveformLevels).mockClear();
+
+    const mediaId = "m-channels";
+    const [a, b] = await Promise.all([
+      getWaveformChannelCount(mediaId),
+      getWaveformChannelCount(mediaId),
+    ]);
+    expect(a).toBe(3);
+    expect(b).toBe(3);
+    expect(vi.mocked(getWaveformLevels)).toHaveBeenCalledTimes(1);
   });
 });
