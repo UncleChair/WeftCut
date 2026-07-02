@@ -146,7 +146,7 @@ pub struct WaveformLevelInfo {
     pub peak_count: u32,
 }
 
-/// The v2 peaks file's level table, header-only (no sample data). The renderer
+/// The peaks file's level table, header-only (no sample data). The renderer
 /// uses this to pick a LOD level for the current zoom before requesting tiles.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,13 +155,15 @@ pub struct WaveformLevels {
     pub levels: Vec<WaveformLevelInfo>,
 }
 
-/// A min/max window range for one channel of one LOD level.
+/// A min/max/rms window range for one channel of one LOD level. All values are
+/// normalized to [-1, 1] for min/max and [0, 1] for rms.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WaveformTile {
     pub peaks_per_second: u32,
     pub min: Vec<f32>,
     pub max: Vec<f32>,
+    pub rms: Vec<f32>,
 }
 
 #[derive(serde::Deserialize)]
@@ -210,6 +212,7 @@ pub async fn get_waveform_tile(args: WaveformTileArgs) -> Result<WaveformTile, S
         peaks_per_second: range.peaks_per_second,
         min: range.min.iter().map(|v| crate::jobs::waveform::dequantize(*v)).collect(),
         max: range.max.iter().map(|v| crate::jobs::waveform::dequantize(*v)).collect(),
+        rms: range.rms.iter().map(|v| crate::jobs::waveform::dequantize_rms(*v)).collect(),
     })
 }
 
@@ -343,5 +346,60 @@ mod mirror_tests {
             "media:derivatives must be emitted via seam; got: {:?}",
             sink.names()
         );
+    }
+
+    /// `get_waveform_tile` returns dequantized min/max/rms values for the
+    /// requested range. Fixtures a v3 peaks file with known RMS values and
+    /// asserts they round-trip correctly through dequantization.
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn get_waveform_tile_dequantizes_rms() {
+        use crate::jobs::waveform::{LevelData, write_peaks, dequantize, dequantize_rms};
+        use super::{get_waveform_tile, WaveformTileArgs};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let peaks_path = tmp.path().join("test.v3.peaks");
+
+        // Create a simple v3 peaks file with known values for 1 channel, 1 level.
+        let level_data = LevelData {
+            channels: 1,
+            peak_count: 3,
+            mins: vec![vec![-100, -200, -300]],
+            maxs: vec![vec![100, 200, 300]],
+            rmss: vec![vec![1000, 2000, 3000]],
+        };
+        tokio::task::spawn_blocking({
+            let path = peaks_path.clone();
+            move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(write_peaks(&path, 1, &[(100, level_data)]))
+                    .expect("write_peaks")
+            }
+        })
+        .await
+        .expect("spawn_blocking");
+
+        let mut item = mirror_only_item(uuid::Uuid::now_v7());
+        item.waveform_path = Some(peaks_path);
+
+        let tile = get_waveform_tile(WaveformTileArgs {
+            item,
+            level: 0,
+            channel: 0,
+            start_peak: 0,
+            count: 3,
+        })
+        .await
+        .expect("get_waveform_tile");
+
+        // Verify min/max are dequantized correctly (existing behavior).
+        assert_eq!(tile.min[0], dequantize(-100i16));
+        assert_eq!(tile.max[0], dequantize(100i16));
+
+        // Verify rms is dequantized and present (new behavior).
+        assert_eq!(tile.rms.len(), 3);
+        assert_eq!(tile.rms[0], dequantize_rms(1000u16));
+        assert_eq!(tile.rms[1], dequantize_rms(2000u16));
+        assert_eq!(tile.rms[2], dequantize_rms(3000u16));
     }
 }

@@ -62,7 +62,7 @@ describe("levels cache invalidation", () => {
       channels: 2,
       levels: [{ level: 0, peaksPerSecond: 1000, peakCount: 10_000 }],
     });
-    vi.mocked(getWaveformTile).mockResolvedValue({ peaksPerSecond: 1000, min: [], max: [] });
+    vi.mocked(getWaveformTile).mockResolvedValue({ peaksPerSecond: 1000, min: [], max: [], rms: [] });
 
     await ensureWaveformWindow("m1", 0, 0, 1_000_000, 100, engine);
     expect(vi.mocked(getWaveformLevels)).toHaveBeenCalledTimes(1);

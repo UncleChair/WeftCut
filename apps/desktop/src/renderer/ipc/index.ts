@@ -1110,9 +1110,10 @@ export async function getWaveformLevels(mediaId: string): Promise<WaveformLevels
 
 export interface WaveformTile {
   peaksPerSecond: number;
-  /// Parallel arrays; each value is a normalized sample in [-1, 1].
+  /// Parallel arrays; min/max are normalized samples in [-1, 1], rms in [0, 1].
   min: number[];
   max: number[];
+  rms: number[];
 }
 
 /// Read `count` (min,max) windows for one channel of one LOD level, starting at
