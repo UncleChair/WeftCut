@@ -1,5 +1,25 @@
-import { describe, it, expect } from "vitest";
-import { chooseLevel, tileRangeForWindow, TILE_PEAKS } from "./WaveformTileProducer";
+import { describe, it, expect, vi } from "vitest";
+import {
+  chooseLevel,
+  tileRangeForWindow,
+  TILE_PEAKS,
+  WAVEFORM_KIND,
+  registerWaveformProducer,
+  ensureWaveformWindow,
+} from "./WaveformTileProducer";
+import { TileEngine } from "./TileEngine";
+import { getWaveformLevels, getWaveformTile } from "../../ipc";
+
+vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock("../../ipc", () => ({
+  MEDIA_JOB_EVENTS: {
+    started: "media:job_started",
+    complete: "media:job_complete",
+    error: "media:job_error",
+  },
+  getWaveformLevels: vi.fn(),
+  getWaveformTile: vi.fn(),
+}));
 
 describe("chooseLevel", () => {
   const levels = [
@@ -31,5 +51,26 @@ describe("tileRangeForWindow", () => {
     expect(r.endPeak).toBe(3000);
     expect(r.firstTile).toBe(Math.floor(1000 / TILE_PEAKS)); // 0
     expect(r.lastTile).toBe(Math.floor((3000 - 1) / TILE_PEAKS)); // 1
+  });
+});
+
+describe("levels cache invalidation", () => {
+  it("re-fetches the level table after invalidateMedia (regenerated waveform)", async () => {
+    const engine = new TileEngine(1024 * 1024);
+    registerWaveformProducer(engine);
+    vi.mocked(getWaveformLevels).mockResolvedValue({
+      channels: 2,
+      levels: [{ level: 0, peaksPerSecond: 1000, peakCount: 10_000 }],
+    });
+    vi.mocked(getWaveformTile).mockResolvedValue({ peaksPerSecond: 1000, min: [], max: [] });
+
+    await ensureWaveformWindow("m1", 0, 0, 1_000_000, 100, engine);
+    expect(vi.mocked(getWaveformLevels)).toHaveBeenCalledTimes(1);
+
+    // Waveform regenerated (media:job_complete) -> tile slots are dropped; the
+    // level table must be re-fetched too, not served from the pinned cache.
+    engine.invalidateMedia("m1", WAVEFORM_KIND);
+    await ensureWaveformWindow("m1", 0, 0, 1_000_000, 100, engine);
+    expect(vi.mocked(getWaveformLevels)).toHaveBeenCalledTimes(2);
   });
 });

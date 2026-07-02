@@ -74,4 +74,12 @@ describe("TileEngine", () => {
     engine.invalidateMedia("m", "test");
     expect(engine.get(key)).toBeUndefined();
   });
+
+  it("invalidateMedia forwards to the producer's invalidate hook", () => {
+    const invalidated: string[] = [];
+    const { producer } = makeProducer({ invalidate: (mediaId) => invalidated.push(mediaId) });
+    engine.register(producer);
+    engine.invalidateMedia("m", "test");
+    expect(invalidated).toEqual(["m"]);
+  });
 });

@@ -21,6 +21,9 @@ export interface TileProducer<T> {
   bytes(value: T): number;
   /// Called when an entry is evicted or invalidated. Use for ImageBitmap.close().
   dispose?(value: T): void;
+  /// Called on invalidateMedia so producers can drop their own per-media state
+  /// (e.g. cached level tables) — the engine only owns tile slots.
+  invalidate?(mediaId: string): void;
 }
 
 export const DEFAULT_TILE_BUDGET_BYTES = 192 * 1024 * 1024;
@@ -116,6 +119,7 @@ export class TileEngine {
         this.freeSlot(ks, slot);
       }
     }
+    this.producers.get(kind)?.invalidate?.(mediaId);
     this.notify(mediaId);
   }
 

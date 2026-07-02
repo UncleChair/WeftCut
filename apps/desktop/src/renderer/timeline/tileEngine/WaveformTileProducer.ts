@@ -55,8 +55,10 @@ interface TileValue {
   max: number[];
 }
 
-// Level tables are cheap + immutable per media file; cache them so we don't
-// re-read the header on every window assembly.
+// Level tables are cheap and stable per generated waveform file; cache them so
+// we don't re-read the header on every window assembly. NOT immutable forever:
+// a regenerated waveform (media:job_complete) gets a fresh table, so the
+// producer's `invalidate` hook below must drop the entry.
 const levelsCache = new Map<string, Promise<WaveformLevels>>();
 function fetchLevels(mediaId: string): Promise<WaveformLevels> {
   let p = levelsCache.get(mediaId);
@@ -83,6 +85,7 @@ export function registerWaveformProducer(engine: TileEngine = tileEngine): void 
       return { peaksPerSecond: tile.peaksPerSecond, min: tile.min, max: tile.max };
     },
     bytes: (v) => (v.min.length + v.max.length) * 8,
+    invalidate: (mediaId) => { levelsCache.delete(mediaId); },
   });
 }
 
