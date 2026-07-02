@@ -43,7 +43,7 @@ architecture that backs the audio waveform:
 - Use the layer's `src_in_us` and `src_out_us` as the displayed source
   interval.
 - Tiles are keyed on a time grid, one slot per `(lod, index)`: spacing starts
-  at 250ms at `lod` 0 and doubles at each higher level, up through `lod` 12.
+  at 250 ms at `lod` 0 and doubles at each higher level, up through `lod` 12.
   The grid is independent of the timeline's zoom and of the track lane's
   height, so panning, zooming, and resizing a lane never invalidate an
   already-fetched tile.
