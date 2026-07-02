@@ -670,6 +670,178 @@ describe("TimelineWaveform", () => {
     });
   });
 
+  describe("segment visibility", () => {
+    type FakeEntry = { target: Element; isIntersecting: boolean; intersectionRatio: number };
+
+    class FakeIntersectionObserver {
+      static instances: FakeIntersectionObserver[] = [];
+      observed: Element[] = [];
+      constructor(
+        readonly callback: (entries: FakeEntry[], observer: FakeIntersectionObserver) => void,
+        readonly options?: IntersectionObserverInit,
+      ) {
+        FakeIntersectionObserver.instances.push(this);
+      }
+      observe(el: Element) {
+        this.observed.push(el);
+      }
+      unobserve(el: Element) {
+        this.observed = this.observed.filter((o) => o !== el);
+      }
+      disconnect() {
+        this.observed = [];
+      }
+      takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+    }
+
+    // A 60s clip over a 5760px strip -> 3 canvas segments (2048|2048|1664px).
+    // The full-span window is [0, 60_000_000)us; the point of these tests is
+    // that only the visible segments' sub-window may be fetched.
+    const WIDE = {
+      srcInUs: 0,
+      srcOutUs: 60_000_000,
+      layerWidthPx: 5760,
+      layerHeightPx: 40,
+      pxPerSec: 96,
+    };
+
+    const ioGlobal = globalThis as typeof globalThis & {
+      IntersectionObserver?: typeof globalThis.IntersectionObserver;
+    };
+
+    beforeEach(() => {
+      FakeIntersectionObserver.instances.length = 0;
+      ioGlobal.IntersectionObserver =
+        FakeIntersectionObserver as unknown as typeof globalThis.IntersectionObserver;
+    });
+
+    afterEach(() => {
+      delete ioGlobal.IntersectionObserver;
+    });
+
+    function renderWide(mediaId: string) {
+      return render(
+        <TimelineWaveform
+          mediaId={mediaId}
+          srcInUs={WIDE.srcInUs}
+          srcOutUs={WIDE.srcOutUs}
+          layerWidthPx={WIDE.layerWidthPx}
+          layerHeightPx={WIDE.layerHeightPx}
+          colorHint="#123"
+          enabled
+          pxPerSec={WIDE.pxPerSec}
+        />,
+      );
+    }
+
+    function fireVisibility(io: FakeIntersectionObserver, el: Element, visible: boolean) {
+      act(() => {
+        io.callback(
+          [{ target: el, isIntersecting: visible, intersectionRatio: visible ? 1 : 0 }],
+          io,
+        );
+      });
+    }
+
+    it("fetches nothing until a segment reports visible, then only that segment's margin window", async () => {
+      const { getAllByTestId } = renderWide("m-vis-fetch");
+      const tiles = getAllByTestId("timeline-waveform-tile");
+      expect(tiles).toHaveLength(3);
+      const io = FakeIntersectionObserver.instances[0]!;
+      expect(io.options).toMatchObject({ root: null, rootMargin: "256px 512px" });
+      expect(io.observed).toHaveLength(3);
+
+      // No segment has reported visible yet -> no window assembly at all.
+      await flushMicrotasks();
+      expect(ensureWaveformWindow).not.toHaveBeenCalled();
+
+      fireVisibility(io, tiles[0]!, true);
+      await flushMicrotasks();
+
+      // Segment 0 spans px [0, 2048); one segment width of margin clamps to
+      // [0, 4096) -> us [0, round(4096/5760 * 60e6)) — NOT the full span.
+      expect(ensureWaveformWindow).toHaveBeenCalledWith("m-vis-fetch", 0, 0, 42_666_667, 96);
+      expect(ensureWaveformWindow).not.toHaveBeenCalledWith("m-vis-fetch", 0, 0, 60_000_000, 96);
+    });
+
+    it("refetches the union window immediately when another segment becomes visible", async () => {
+      vi.useFakeTimers();
+      try {
+        const { getAllByTestId } = renderWide("m-vis-union");
+        const tiles = getAllByTestId("timeline-waveform-tile");
+        const io = FakeIntersectionObserver.instances[0]!;
+
+        fireVisibility(io, tiles[0]!, true);
+        await flushMicrotasks();
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        fireVisibility(io, tiles[2]!, true);
+        // No timer advance: visibility changes bypass the 120ms debounce.
+        await flushMicrotasks();
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(2);
+        // Segments 0 and 2 visible -> union clamps to the whole strip.
+        expect(ensureWaveformWindow).toHaveBeenLastCalledWith("m-vis-union", 0, 0, 60_000_000, 96);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("allocates backings only for visible segments and releases on scroll-out", async () => {
+      const { getAllByTestId } = renderWide("m-vis-backing");
+      const tiles = getAllByTestId("timeline-waveform-tile") as HTMLCanvasElement[];
+      const io = FakeIntersectionObserver.instances[0]!;
+
+      // Nothing visible yet: no segment may hold a backing store (the jsdom
+      // default is 300x150 — the mount pass must zero it out).
+      await flushMicrotasks();
+      expect(tiles.map((t) => t.width)).toEqual([0, 0, 0]);
+
+      fireVisibility(io, tiles[0]!, true);
+      await flushMicrotasks();
+      // Only the visible segment allocates (placeholder draw included).
+      expect(tiles[0]!.width).toBe(2048);
+      expect(tiles[1]!.width).toBe(0);
+      expect(tiles[2]!.width).toBe(0);
+
+      fireVisibility(io, tiles[0]!, false);
+      await flushMicrotasks();
+      // Scrolled out -> backing released, not just repaint-skipped.
+      expect(tiles[0]!.width).toBe(0);
+    });
+
+    it("draws the sub-window at the correct columns for a visible segment", async () => {
+      vi.mocked(ensureWaveformWindow).mockResolvedValue({
+        peaksPerSecond: 1000,
+        startPeak: 0,
+        min: new Float32Array([-0.5, -0.7]),
+        max: new Float32Array([0.5, 0.7]),
+        rms: new Float32Array([0, 0]),
+      });
+      const { getAllByTestId } = renderWide("m-vis-draw");
+      const tiles = getAllByTestId("timeline-waveform-tile");
+      const io = FakeIntersectionObserver.instances[0]!;
+
+      fireVisibility(io, tiles[0]!, true);
+      await flushMicrotasks();
+
+      // Height 40, merged lane: midY 20, ampPx 19. Column 0 sits at the
+      // window's own origin (rel 0 -> peak 0, NOT full-strip fraction):
+      // yTop = 20 - 0.5*19 = 10.5, height 19.
+      expect(fakeContext.fillRect).toHaveBeenCalledWith(0, 10.5, 1, 19);
+    });
+
+    it("treats every segment as visible when IntersectionObserver is unavailable", async () => {
+      delete ioGlobal.IntersectionObserver;
+      renderWide("m-vis-fallback");
+      await flushMicrotasks();
+      // Fallback pin: the environment every other test in this file runs in —
+      // the mount pass covers the full strip immediately.
+      expect(ensureWaveformWindow).toHaveBeenCalledWith("m-vis-fallback", 0, 0, 60_000_000, 96);
+    });
+  });
+
   describe("engine subscribe path", () => {
     it("invalidateMedia notifies the subscribed hook and triggers an immediate refetch", async () => {
       vi.useFakeTimers();

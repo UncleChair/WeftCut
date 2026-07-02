@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDprVersion } from "./hooks/useDprVersion";
+import { useSegmentVisibility } from "./hooks/useSegmentVisibility";
 import { tileEngine } from "./tileEngine/TileEngine";
 import {
   ensureWaveformWindow,
@@ -66,23 +67,73 @@ export function mergeStereo(a: WaveformWindow, b: WaveformWindow): WaveformWindo
 
 type RenderState = "pending" | "not_ready" | "ready";
 
+interface SegmentGeom {
+  startPx: number;
+  widthPx: number;
+}
+
+/// The strip's fetch window in SOURCE time: the union of the VISIBLE canvas
+/// segments extended by one segment width each side (near-viewport peaks warm
+/// before they scroll in), clamped to the strip, then mapped px→us across the
+/// layer's [srcInUs, srcOutUs) span. Null when no segment is visible —
+/// nothing to assemble. Hidden segments contribute nothing — that clipping is
+/// the memory bound: covering a layer's entire src window would materialize
+/// every peak of a long clip (and pin its engine tiles) no matter what's on
+/// screen. Same rationale as TimelineFilmstrip's visibleSegmentWindows.
+function visibleWindowUs(
+  segments: SegmentGeom[],
+  isSegmentVisible: (startPx: number) => boolean,
+  totalWidthPx: number,
+  srcInUs: number,
+  srcOutUs: number,
+): { loUs: number; hiUs: number } | null {
+  let loPx = Infinity;
+  let hiPx = -Infinity;
+  for (const seg of segments) {
+    if (!isSegmentVisible(seg.startPx)) continue;
+    loPx = Math.min(loPx, seg.startPx - RENDER_TILE_PX);
+    hiPx = Math.max(hiPx, seg.startPx + seg.widthPx + RENDER_TILE_PX);
+  }
+  if (loPx === Infinity) return null;
+  loPx = Math.max(0, loPx);
+  hiPx = Math.min(totalWidthPx, hiPx);
+  const span = srcOutUs - srcInUs;
+  return {
+    loUs: Math.round(srcInUs + (loPx / totalWidthPx) * span),
+    hiUs: Math.round(srcInUs + (hiPx / totalWidthPx) * span),
+  };
+}
+
 interface WindowData {
   state: RenderState;
   channels: number;
   win0: WaveformWindow | null;
   win1: WaveformWindow | null;
+  /// The source-time extent win0/win1 were assembled for. The draw pass maps
+  /// peaks to columns through it, so a stale window keeps rendering at its
+  /// true positions while a scroll/zoom refetch is in flight.
+  winLoUs: number;
+  winHiUs: number;
 }
 
-const INITIAL_WINDOW_DATA: WindowData = { state: "pending", channels: 1, win0: null, win1: null };
+const INITIAL_WINDOW_DATA: WindowData = {
+  state: "pending",
+  channels: 1,
+  win0: null,
+  win1: null,
+  winLoUs: 0,
+  winHiUs: 0,
+};
 
-/// Runs one channel-count + window(s) assembly for [srcInUs, srcOutUs) at
-/// pxPerSec. Pulled out of the hook so both the immediate callers (mount,
-/// mediaId change, engine `subscribe` notifications) and the debounced
-/// param-churn caller share the exact same resolution logic.
+/// Runs one channel-count + window(s) assembly for the VISIBLE window
+/// [winLoUs, winHiUs) at pxPerSec. Pulled out of the hook so both the
+/// immediate callers (mount, mediaId change, visibility change, engine
+/// `subscribe` notifications) and the debounced param-churn caller share the
+/// exact same resolution logic.
 function assembleWindowData(
   mediaId: string,
-  srcInUs: number,
-  srcOutUs: number,
+  winLoUs: number,
+  winHiUs: number,
   pxPerSec: number,
   mediaChannels: number | undefined,
 ): Promise<WindowData> {
@@ -103,35 +154,37 @@ function assembleWindowData(
           : headerChannels;
       if (channels === 2) {
         return Promise.all([
-          ensureWaveformWindow(mediaId, 0, srcInUs, srcOutUs, pxPerSec),
-          ensureWaveformWindow(mediaId, 1, srcInUs, srcOutUs, pxPerSec),
+          ensureWaveformWindow(mediaId, 0, winLoUs, winHiUs, pxPerSec),
+          ensureWaveformWindow(mediaId, 1, winLoUs, winHiUs, pxPerSec),
         ]).then(([r0, r1]): WindowData => {
           // Ready only once BOTH channels resolve; a mismatched
           // pending/not_ready pair prefers not_ready (more definitive).
           if (r0 === "not_ready" || r1 === "not_ready") {
-            return { state: "not_ready", channels: 2, win0: null, win1: null };
+            return { state: "not_ready", channels: 2, win0: null, win1: null, winLoUs, winHiUs };
           }
           if (r0 === "pending" || r1 === "pending") {
-            return { state: "pending", channels: 2, win0: null, win1: null };
+            return { state: "pending", channels: 2, win0: null, win1: null, winLoUs, winHiUs };
           }
-          return { state: "ready", channels: 2, win0: r0, win1: r1 };
+          return { state: "ready", channels: 2, win0: r0, win1: r1, winLoUs, winHiUs };
         });
       }
-      return ensureWaveformWindow(mediaId, 0, srcInUs, srcOutUs, pxPerSec).then((r0): WindowData => {
-        if (r0 === "not_ready") return { state: "not_ready", channels: 1, win0: null, win1: null };
-        if (r0 === "pending") return { state: "pending", channels: 1, win0: null, win1: null };
-        return { state: "ready", channels: 1, win0: r0, win1: null };
+      return ensureWaveformWindow(mediaId, 0, winLoUs, winHiUs, pxPerSec).then((r0): WindowData => {
+        if (r0 === "not_ready") return { state: "not_ready", channels: 1, win0: null, win1: null, winLoUs, winHiUs };
+        if (r0 === "pending") return { state: "pending", channels: 1, win0: null, win1: null, winLoUs, winHiUs };
+        return { state: "ready", channels: 1, win0: r0, win1: null, winLoUs, winHiUs };
       });
     });
 }
 
 function useWindowData(
   mediaId: string,
-  srcInUs: number,
-  srcOutUs: number,
+  winLoUs: number,
+  winHiUs: number,
+  hasWindow: boolean,
   pxPerSec: number,
   enabled: boolean,
   mediaChannels: number | undefined,
+  visibilityVersion: number,
 ): WindowData {
   const [result, setResult] = useState<WindowData>(INITIAL_WINDOW_DATA);
   // Tracks mediaId across renders so the effect can tell a genuine media
@@ -139,12 +192,15 @@ function useWindowData(
   // param churn on the SAME media (zoom/trim — debounce, keep the stale
   // window on screen, stretched, while the new geometry assembles).
   const prevMediaIdRef = useRef<string | undefined>(undefined);
+  const prevVisibilityVersionRef = useRef(0);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     const isNewMedia = prevMediaIdRef.current !== mediaId;
     prevMediaIdRef.current = mediaId;
+    const visibilityChanged = prevVisibilityVersionRef.current !== visibilityVersion;
+    prevVisibilityVersionRef.current = visibilityVersion;
 
     // Applies a resolved assembly run, EXCEPT a transient "pending" /
     // "not_ready" must not blank out a window already on screen (zoom
@@ -160,7 +216,12 @@ function useWindowData(
       ));
     };
 
-    const run = () => { void assembleWindowData(mediaId, srcInUs, srcOutUs, pxPerSec, mediaChannels).then(apply); };
+    const run = () => {
+      // No segment visible -> nothing to assemble; the stale window (if any)
+      // keeps rendering for whatever scrolls back in until the next pass.
+      if (!hasWindow) return;
+      void assembleWindowData(mediaId, winLoUs, winHiUs, pxPerSec, mediaChannels).then(apply);
+    };
     const unsub = tileEngine.subscribe(mediaId, run);
 
     if (isNewMedia) {
@@ -169,25 +230,38 @@ function useWindowData(
       return () => { cancelled = true; unsub(); };
     }
 
+    // A segment scrolling into view is as urgent as a subscribe notify: its
+    // pixels are blank until its window is assembled, so it must not wait
+    // out the param-churn debounce.
+    if (visibilityChanged) {
+      run();
+      return () => { cancelled = true; unsub(); };
+    }
+
     const timer = setTimeout(run, WAVEFORM_REFETCH_DEBOUNCE_MS);
     return () => { cancelled = true; unsub(); clearTimeout(timer); };
-  }, [mediaId, srcInUs, srcOutUs, pxPerSec, enabled, mediaChannels]);
+  }, [mediaId, winLoUs, winHiUs, hasWindow, pxPerSec, enabled, mediaChannels, visibilityVersion]);
   return result;
 }
 
 /// Draws one lane's envelope + RMS core across all CSS-px columns in the
 /// tile. Two fill passes (envelope, then RMS core) so `fillStyle` is set once
-/// per pass instead of alternating every column.
+/// per pass instead of alternating every column. Columns map to peaks through
+/// the WINDOW's px extent (`winLoPx`/`winWidthPx`), not the strip's: the
+/// assembled window covers only the visible sub-span, and a full-span window
+/// makes the two extents coincide. Columns outside the window have no data
+/// and collapse to the 1px midline.
 function drawLane(
   ctx: CanvasRenderingContext2D,
   cssWidth: number,
   lane: WaveformLane,
   win: WaveformWindow,
   tileStartPx: number,
-  totalWidthPx: number,
+  winLoPx: number,
+  winWidthPx: number,
 ) {
   const peaks = win.min.length;
-  if (peaks === 0) return;
+  if (peaks === 0 || winWidthPx <= 0) return;
   const { midY, ampPx } = lane;
 
   // Precompute each column's [lo, hi, rmsMax] once; both fill passes below
@@ -197,8 +271,8 @@ function drawLane(
   const rmses = new Float32Array(cssWidth);
   for (let px = 0; px < cssWidth; px++) {
     const gpx = tileStartPx + px;
-    const p0 = Math.floor((gpx / totalWidthPx) * peaks);
-    const p1 = Math.max(p0 + 1, Math.floor(((gpx + 1) / totalWidthPx) * peaks));
+    const p0 = Math.floor(((gpx - winLoPx) / winWidthPx) * peaks);
+    const p1 = Math.max(p0 + 1, Math.floor(((gpx + 1 - winLoPx) / winWidthPx) * peaks));
     // Seed from the first in-range peak (not 0): a 0-seed assumes the
     // excursion straddles zero, which over-extends the envelope toward the
     // midline for DC-offset/rectified audio whose peaks sit wholly on one
@@ -207,7 +281,7 @@ function drawLane(
     let hi = -Infinity;
     let rms = 0;
     let any = false;
-    for (let p = p0; p < p1 && p < peaks; p++) {
+    for (let p = Math.max(0, p0); p < p1 && p < peaks; p++) {
       const pmin = win.min[p] ?? 0;
       const pmax = win.max[p] ?? 0;
       const prms = win.rms[p] ?? 0;
@@ -246,7 +320,8 @@ function drawTile(
   win0: WaveformWindow | null,
   win1: WaveformWindow | null,
   tileStartPx: number,
-  totalWidthPx: number,
+  winLoPx: number,
+  winWidthPx: number,
 ) {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.round(cssWidth * dpr));
@@ -278,7 +353,7 @@ function drawTile(
       win = win1;
     }
     if (!win || win.min.length === 0) continue;
-    drawLane(ctx, cssWidth, lane, win, tileStartPx, totalWidthPx);
+    drawLane(ctx, cssWidth, lane, win, tileStartPx, winLoPx, winWidthPx);
   }
 }
 
@@ -297,18 +372,37 @@ export function TimelineWaveform({
   /// (always-stereo) peaks-file header count — see assembleWindowData.
   mediaChannels?: number | undefined;
 }) {
-  const { state, channels, win0, win1 } = useWindowData(mediaId, srcInUs, srcOutUs, pxPerSec, enabled, mediaChannels);
   const dprVersion = useDprVersion();
   const totalWidthPx = Math.max(1, Math.ceil(layerWidthPx));
   const height = Math.max(1, Math.ceil(layerHeightPx));
 
-  const tiles = useMemo(() => {
+  const tiles = useMemo<SegmentGeom[]>(() => {
     const n = Math.max(1, Math.ceil(totalWidthPx / RENDER_TILE_PX));
     return Array.from({ length: n }, (_, i) => ({
       startPx: i * RENDER_TILE_PX,
       widthPx: Math.min(RENDER_TILE_PX, totalWidthPx - i * RENDER_TILE_PX),
     }));
   }, [totalWidthPx]);
+
+  const { isSegmentVisible, observeSegment, visibilityVersion } = useSegmentVisibility();
+
+  // visibilityVersion isn't read in the body: it forces the recompute when a
+  // segment's reported visibility flips (isSegmentVisible reads a ref).
+  const fetchWindow = useMemo(
+    () => visibleWindowUs(tiles, isSegmentVisible, totalWidthPx, srcInUs, srcOutUs),
+    [tiles, isSegmentVisible, totalWidthPx, srcInUs, srcOutUs, visibilityVersion],
+  );
+
+  const { state, channels, win0, win1, winLoUs, winHiUs } = useWindowData(
+    mediaId,
+    fetchWindow?.loUs ?? 0,
+    fetchWindow?.hiUs ?? 0,
+    fetchWindow !== null,
+    pxPerSec,
+    enabled,
+    mediaChannels,
+    visibilityVersion,
+  );
 
   return (
     <div
@@ -333,7 +427,13 @@ export function TimelineWaveform({
           win1={state === "ready" ? win1 : null}
           tileStartPx={tile.startPx}
           totalWidthPx={totalWidthPx}
+          srcInUs={srcInUs}
+          srcOutUs={srcOutUs}
+          winLoUs={winLoUs}
+          winHiUs={winHiUs}
           dprVersion={dprVersion}
+          visible={isSegmentVisible(tile.startPx)}
+          observe={observeSegment}
         />
       ))}
     </div>
@@ -341,7 +441,8 @@ export function TimelineWaveform({
 }
 
 function WaveformTileCanvas({
-  widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx, dprVersion,
+  widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx,
+  srcInUs, srcOutUs, winLoUs, winHiUs, dprVersion, visible, observe,
 }: {
   widthPx: number;
   height: number;
@@ -350,17 +451,60 @@ function WaveformTileCanvas({
   win1: WaveformWindow | null;
   tileStartPx: number;
   totalWidthPx: number;
+  srcInUs: number;
+  srcOutUs: number;
+  winLoUs: number;
+  winHiUs: number;
   dprVersion: number;
+  visible: boolean;
+  observe: (el: HTMLCanvasElement, startPx: number) => () => void;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    return observe(el, tileStartPx);
+  }, [observe, tileStartPx]);
+
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
-    drawTile(c, widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx);
+    if (!visible) {
+      // Offscreen: release the backing store outright (width=0 drops the
+      // buffer) — with hundreds of segments on a long clip at deep zoom,
+      // merely skipping the repaint would still pin this strip's full
+      // width×dpr² of pixels. The `visible` dep repaints the segment the
+      // moment it scrolls (near) back into view.
+      c.width = 0;
+      c.height = 0;
+      return;
+    }
+    // Map the assembled window's source-time extent into strip px under the
+    // CURRENT geometry, so a stale window drawn mid-zoom/scroll still lands
+    // at its true positions.
+    const span = srcOutUs - srcInUs;
+    const winLoPx = span > 0 ? ((winLoUs - srcInUs) / span) * totalWidthPx : 0;
+    const winHiPx = span > 0 ? ((winHiUs - srcInUs) / span) * totalWidthPx : totalWidthPx;
+    drawTile(c, widthPx, height, channels, win0, win1, tileStartPx, winLoPx, winHiPx - winLoPx);
     // dprVersion is intentionally unused in the body: drawTile re-reads
     // window.devicePixelRatio fresh on every call, so bumping the version
     // is enough to force this effect (and thus the redraw) to re-run.
-  }, [widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx, dprVersion]);
+  }, [
+    widthPx,
+    height,
+    channels,
+    win0,
+    win1,
+    tileStartPx,
+    totalWidthPx,
+    srcInUs,
+    srcOutUs,
+    winLoUs,
+    winHiUs,
+    dprVersion,
+    visible,
+  ]);
   return (
     <canvas
       ref={ref}
