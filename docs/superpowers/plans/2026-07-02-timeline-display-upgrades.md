@@ -242,12 +242,21 @@ during drag (preview reads committed params today), sample-level finest LOD.
 
 ---
 
-# Plan B — Filmstrip tile engine (design locked; expand into tasks at pickup)
+# Plan B — Filmstrip tile engine (EXPANDED into tasks)
+
+> Task-by-task implementation plan:
+> `docs/superpowers/plans/2026-07-02-timeline-filmstrip-engine.md`.
+> Both **[verify]** items are RESOLVED there (Design resolutions §1–§2):
+> (1) proxy `media:job_complete` kind strings are `"proxy"` (full) and
+> `"quick_proxy"` (quick) — the producer registers `invalidateOn` for both;
+> (2) no proxy-path lookup is needed over IPC — `get_filmstrip_tile` rides the
+> `SINGLE_MEDIA_CHANNELS` seam (full `MediaItem` forwarded), and `DecodeRoute`
+> carries the proxy paths inside its variants (`Proxied` → quick ?? full,
+> guarded by `cached_ok`, else `not_ready`).
 
 Replaces the 10-poster stretched `<img>` filmstrip with real tiles on the
-existing `TileEngine`. This section fixes the design so the implementation plan
-can be written without re-research; verify the two **[verify]** items against
-the code before task breakdown.
+existing `TileEngine`. This section fixed the design so the implementation plan
+could be written without re-research.
 
 **Display design (adopted from clipcombo):**
 - **Canonical decode height** `FILMSTRIP_TILE_HEIGHT_PX = 256`: tiles are
