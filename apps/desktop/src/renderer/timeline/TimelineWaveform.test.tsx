@@ -580,18 +580,32 @@ describe("TimelineWaveform", () => {
         );
         await waitFor(() => expect(queries.length).toBe(1));
         const firstQuery = queries[0]!;
-        // Capture the Set object itself (not just the key): the re-arm query
-        // string can collide with the first one (devicePixelRatio is static
-        // in jsdom), which would otherwise alias both registrations onto the
-        // same map entry and hide a leaked listener.
+        // Capture the Set object itself: the re-arm must create a new query
+        // string built from the current window.devicePixelRatio, not reuse the
+        // stale query.
         const firstListenerSet = listenersByQuery.get(firstQuery)!;
 
-        // Fire the listener as if the dpr just changed.
-        for (const cb of firstListenerSet) cb();
+        // Override devicePixelRatio before firing the listener.
+        const originalDpr = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+        Object.defineProperty(window, "devicePixelRatio", { value: 3, configurable: true });
+        try {
+          // Fire the listener as if the dpr just changed.
+          for (const cb of firstListenerSet) cb();
 
-        await waitFor(() => expect(queries.length).toBe(2));
-        // The old listener must have been torn down (re-arm, not accumulate).
-        expect(firstListenerSet.size).toBe(0);
+          await waitFor(() => expect(queries.length).toBe(2));
+          const secondQuery = queries[1]!;
+          // The re-armed query must be a DIFFERENT string built from the NEW DPR.
+          expect(secondQuery).not.toBe(firstQuery);
+          expect(secondQuery).toContain("3dppx");
+          // The old listener must have been torn down (re-arm, not accumulate).
+          expect(firstListenerSet.size).toBe(0);
+        } finally {
+          if (originalDpr) {
+            Object.defineProperty(window, "devicePixelRatio", originalDpr);
+          } else {
+            Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
+          }
+        }
       } finally {
         if (original) {
           Object.defineProperty(window, "matchMedia", { value: original, configurable: true });
