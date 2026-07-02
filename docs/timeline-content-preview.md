@@ -37,16 +37,52 @@ blocks.
 
 ### VideoClip
 
-Video clips render a real filmstrip based on the layer's current source window:
+Video clips render a filmstrip through the timeline tile engine — the same
+architecture that backs the audio waveform:
 
-- Use `src_in_us` and `src_out_us` as the displayed source interval.
-- Map available thumbnail frames onto that interval.
-- Stretch or compress the filmstrip to the timeline block width according to
-  the clip's rendered duration.
-- Reuse the existing ten generated thumbnails for the first pass.
-- Do not pretend there is higher temporal precision than the cache provides.
-  If the block is wider than the available representative frames, limited repeat
-  or sparse placement is acceptable.
+- Use the layer's `src_in_us` and `src_out_us` as the displayed source
+  interval.
+- Tiles are keyed on a time grid, one slot per `(lod, index)`: spacing starts
+  at 250ms at `lod` 0 and doubles at each higher level, up through `lod` 12.
+  The grid is independent of the timeline's zoom and of the track lane's
+  height, so panning, zooming, and resizing a lane never invalidate an
+  already-fetched tile.
+- Every tile decodes at one canonical height (256px) no matter the lane's
+  on-screen height; the renderer places it at its own source timestamp and
+  scales it to the lane height while preserving the media's natural aspect
+  ratio, rather than stretching frames to fill a slot. Trimming reflows which
+  grid slots are requested and where the already-decoded tiles land — it does
+  not restretch them.
+- Zooming picks a single target level of detail from the on-screen width of
+  one natural-aspect thumbnail at the current zoom, and requests only that
+  level's visible tiles. Requests are debounced (~140 ms) so a burst of zoom
+  or trim frames coalesces into one request pass; mounting, switching media,
+  and the tile engine's own completion notifications bypass the debounce and
+  request immediately.
+- Drawing never blanks the strip in either zoom direction: alongside the
+  target level, the canvas also paints levels up to three steps to either
+  side as fallback — finer levels paint first as backfill, then coarser
+  levels paint over them, with the target level painting last on top of
+  everything. Zooming in keeps already-cached coarse tiles visible until
+  finer ones land; zooming out keeps already-cached fine tiles visible until
+  coarser ones land.
+- The not-ready state — the one that surfaces a placeholder — is judged from
+  the target level's own tiles only; a fallback level having nothing yet does
+  not by itself flip the strip to not-ready. Any tile that actually paints,
+  whether from the target level or a fallback level, marks the strip ready.
+- A source that routes through a proxy extracts tiles from whichever proxy
+  has landed — quick proxy preferred, full proxy otherwise — and never falls
+  back to the original; a Bypass or DirectExport source extracts from the
+  original. Tiles are invalidated when a proxy job completes, so a freshly
+  imported Proxied source's not-ready placeholder fills in once its proxy
+  lands, without a reload.
+- Tiles are extracted on demand by ffmpeg and cached to disk at
+  `<cache>/filmstrip/<hash>/<lod>/<index>.jpg` (index zero-padded to six
+  digits); a cache hit returns the existing file without invoking ffmpeg
+  again, and extraction is capped at four concurrent ffmpeg processes so
+  scrolling or zooming can't stampede the source.
+- Canvas segments redraw at the display's current device-pixel-ratio,
+  independent of any tile request.
 
 ### Audio
 
@@ -159,29 +195,33 @@ Timeline content previews must be progressive:
 
 ## Data and IPC
 
-The existing `getMediaThumbnail(mediaId)` returns one base64 middle thumbnail and
-is optimized for media-pool thumbnails. Keep it for existing callers.
+`getMediaThumbnail(mediaId)` returns one base64 middle thumbnail and is
+optimized for media-pool thumbnails; it is unrelated to the timeline
+filmstrip and keeps serving its existing callers.
 
-Add a new timeline-oriented thumbnail manifest API:
+The timeline filmstrip fetches individual tiles on demand rather than a
+manifest:
 
 ```ts
-getMediaThumbnails(mediaId) -> {
-  frames: Array<{
-    index: number;
-    tUs: number;
-    path: string;
-  }>;
+getFilmstripTile(mediaId, lod, index) -> {
+  path: string;
+  widthPx: number;
+  heightPx: number;
 }
 ```
 
 Expected behavior:
 
-- Return `not_ready` when the thumbnail job has not produced the cache yet.
-- Return paths for the current ten cached thumbnail files.
-- `tUs` is the representative source timestamp for each frame.
-- The renderer converts each `path` with `convertFileSrc(path)` and lets the
-  browser image loader fetch the bytes.
-- Keep this API compatible with future denser thumbnail caches.
+- `lod` and `index` are time-grid coordinates (see the VideoClip rules
+  above); the base spacing doubles at each higher `lod`.
+- Rejects with `not_ready` while a Proxied source's proxy has not landed —
+  the caller never receives a path to the original in that case.
+- `path` is the cached extracted JPG; the renderer loads it with
+  `convertFileSrc` and decodes it into an `ImageBitmap`.
+- `widthPx`/`heightPx` are metadata-derived and informative; layout trusts
+  the decoded bitmap's own dimensions.
+- A repeated call for an already-extracted tile returns the cached file
+  without re-invoking ffmpeg.
 
 ## Frontend Structure
 
@@ -192,9 +232,13 @@ Recommended components:
   - owns width-based preview gating,
   - renders fallback fills.
 - `TimelineFilmstrip`
-  - fetches and caches thumbnail manifests,
-  - maps `src_in_us/src_out_us` to displayed frames,
-  - listens for `media:job_complete` with `kind === "thumbnails"`.
+  - assembles filmstrip tiles via the tile engine
+    (`timeline/tileEngine/TileEngine.ts` + `FilmstripTileProducer.ts`),
+  - places each tile at its source timestamp and natural aspect ratio within
+    the mapped `src_in_us/src_out_us` window,
+  - relies on the tile engine's `media:job_complete` invalidation, which also
+    fires on proxy completion (`kind === "proxy"` or `"quick_proxy"`) so a
+    Proxied source's placeholder fills in once its proxy lands.
 - `TimelineWaveform`
   - assembles peak windows via the tile engine
     (`timeline/tileEngine/TileEngine.ts` + `WaveformTileProducer.ts`),
@@ -221,8 +265,10 @@ First pass should use lightweight gating, not a full virtualization rewrite:
 
 Add or update focused tests around:
 
-- `get_media_thumbnails` returns a manifest from the existing cache layout.
-- Missing thumbnails return `not_ready`.
+- A repeated filmstrip tile request returns the cached extraction without
+  re-invoking ffmpeg.
+- A Proxied source with no landed proxy returns `not_ready` rather than
+  falling back to the original.
 - `LayerBlock` still selects without seeking after preview content is added.
 - Narrow clips avoid rendering labels and avoid preview requests.
 - Filmstrip maps a trimmed `src_in_us/src_out_us` window rather than always
@@ -234,8 +280,14 @@ implementation.
 
 ## Implementation Notes
 
-- Existing thumbnail job output is fixed at ten JPGs named `000.jpg` through
-  `009.jpg`.
+- The import-time thumbnail job still produces ten JPGs named `000.jpg`
+  through `009.jpg`; `getMediaThumbnail` reads the middle frame (`004.jpg`)
+  for the media-pool poster. The timeline filmstrip does not consume this
+  job — it extracts and caches its own tiles on demand (see the VideoClip
+  rules above).
+- Timeline filmstrip tiles are fetched via `getFilmstripTile(mediaId, lod,
+  index)` and cached on disk at
+  `<cache>/filmstrip/<hash>/<lod>/<index>.jpg`.
 - Timeline waveform commands are `getWaveformLevels(mediaId)` and
   `getWaveformTile(mediaId, level, channel, startPeak, count)`;
   `getWaveformPeaks(mediaId)` remains only as the coarse max-abs reader for
