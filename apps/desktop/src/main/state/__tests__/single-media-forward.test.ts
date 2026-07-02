@@ -24,4 +24,10 @@ describe('resolveSingleMediaArgs', () => {
     expect(out.item).toBe(pool.m1)
     expect(out).toMatchObject({ level: 2, channel: 1, startPeak: 0, count: 2048 })
   })
+  it('passes through extra args for get_filmstrip_tile', () => {
+    const pool = { m1: { id: 'm1' } as unknown as MediaItem }
+    const out = resolveSingleMediaArgs({ mediaId: 'm1', lod: 4, index: 12 } as never, pool)
+    expect(out.item).toBe(pool.m1)
+    expect(out).toMatchObject({ lod: 4, index: 12 })
+  })
 })

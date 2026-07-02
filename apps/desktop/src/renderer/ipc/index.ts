@@ -1135,6 +1135,24 @@ export async function getWaveformTile(
   });
 }
 
+export interface FilmstripTile {
+  /// Absolute path of the cached tile JPG; load via convertFileSrc.
+  path: string;
+  /// Metadata-derived (informative); layout should trust the ImageBitmap.
+  widthPx: number;
+  heightPx: number;
+}
+
+/// Extract-on-demand filmstrip tile at time-grid key (lod, index). Rejects
+/// "not_ready" while a Proxied source has no landed proxy (proxy-wait rule).
+export async function getFilmstripTile(
+  mediaId: string,
+  lod: number,
+  index: number,
+): Promise<FilmstripTile> {
+  return invoke<FilmstripTile>("get_filmstrip_tile", { mediaId, lod, index });
+}
+
 /// Returns a `data:image/jpeg;base64,...` URL for the middle thumbnail of a
 /// video media item. Rejects with "not_ready" if the thumbnails job is still
 /// running.

@@ -216,6 +216,65 @@ pub async fn get_waveform_tile(args: WaveformTileArgs) -> Result<WaveformTile, S
     })
 }
 
+/// Timeline filmstrip tile. `path` is the cached JPG the renderer loads via
+/// convertFileSrc; width/height are metadata-derived (informative — the
+/// renderer sizes layout from the decoded ImageBitmap).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilmstripTile {
+    pub path: PathBuf,
+    pub width_px: u32,
+    pub height_px: u32,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilmstripTileArgs {
+    pub item: MediaItem,
+    pub lod: u32,
+    pub index: u32,
+}
+
+/// The proxy-wait rule: Proxied media extract from a landed proxy and NEVER
+/// fall back to the original (heavy originals are exactly why proxies exist);
+/// direct routes extract from the original. Preference mirrors the renderer's
+/// resolveDecode preview path (quick proxy first, then the full master).
+#[cfg(feature = "jobs")]
+pub fn filmstrip_decode_source(item: &MediaItem) -> Result<PathBuf, String> {
+    if !matches!(item.kind, MediaKind::Video) {
+        return Err("filmstrip tiles only valid for Video media".to_string());
+    }
+    match &item.decode_route {
+        state::DecodeRoute::Bypass | state::DecodeRoute::DirectExport { .. } => Ok(item.path_abs.clone()),
+        state::DecodeRoute::Proxied { quick_proxy, full_proxy, .. } => [quick_proxy, full_proxy]
+            .into_iter()
+            .flatten()
+            .find(|p| crate::cache::cached_ok(p))
+            .cloned()
+            .ok_or_else(|| "not_ready".to_string()),
+    }
+}
+
+#[cfg(feature = "jobs")]
+pub async fn get_filmstrip_tile(backend: &Backend, args: FilmstripTileArgs) -> Result<FilmstripTile, String> {
+    use crate::jobs::filmstrip;
+    let src = filmstrip_decode_source(&args.item)?;
+    filmstrip::validate_lod(args.lod).map_err(|e| format!("{e:#}"))?;
+    let duration_us = args.item.metadata.duration_us;
+    let hash = args.item.file_hash_blake3.clone();
+    let path = filmstrip::extract_tile(&backend.cache, &src, &hash, duration_us, args.lod, args.index)
+        .await
+        .map_err(|e| format!("extract filmstrip tile: {e:#}"))?;
+    let (width_px, height_px) = match args.item.metadata.video.as_ref() {
+        Some(v) if v.height > 0 => {
+            let w = (v.width as u64 * filmstrip::FILMSTRIP_TILE_HEIGHT as u64 / v.height as u64) as u32;
+            (w & !1, filmstrip::FILMSTRIP_TILE_HEIGHT)
+        }
+        _ => (0, filmstrip::FILMSTRIP_TILE_HEIGHT),
+    };
+    Ok(FilmstripTile { path, width_px, height_px })
+}
+
 pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(), String> {
     let id = item.id;
     if matches!(item.decode_route, state::DecodeRoute::Proxied { full_proxy: Some(ref p), .. } if p.is_file()) {
@@ -252,7 +311,7 @@ mod mirror_tests {
     use std::sync::Arc;
     use chrono::Utc;
     use crate::state::{DecodeRoute, MediaItem, MediaKind, MediaMetadata};
-    use super::{get_media_thumbnails, TIMELINE_THUMB_COUNT};
+    use super::{filmstrip_decode_source, get_media_thumbnails, TIMELINE_THUMB_COUNT};
 
     fn mirror_only_item(id: uuid::Uuid) -> MediaItem {
         MediaItem {
@@ -394,5 +453,115 @@ mod mirror_tests {
         assert_eq!(tile.rms[0], 1000.0_f32 / 65535.0);
         assert_eq!(tile.rms[1], 2000.0_f32 / 65535.0);
         assert_eq!(tile.rms[2], 3000.0_f32 / 65535.0);
+    }
+
+    fn filmstrip_test_item(
+        path_abs: std::path::PathBuf,
+        kind: MediaKind,
+        decode_route: DecodeRoute,
+    ) -> MediaItem {
+        let id = uuid::Uuid::now_v7();
+        MediaItem {
+            id,
+            label: None,
+            path_abs,
+            path_rel: None,
+            kind,
+            metadata: MediaMetadata::default(),
+            decode_route,
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: format!("filmstrip-test-{id}"),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn filmstrip_source_bypass_and_direct_export_use_original() {
+        let mut item = filmstrip_test_item(
+            std::path::PathBuf::from("orig.mp4"),
+            MediaKind::Video,
+            DecodeRoute::Bypass,
+        );
+        assert_eq!(filmstrip_decode_source(&item).unwrap(), std::path::PathBuf::from("orig.mp4"));
+        item.decode_route = DecodeRoute::DirectExport { quick_proxy: None };
+        assert_eq!(filmstrip_decode_source(&item).unwrap(), std::path::PathBuf::from("orig.mp4"));
+    }
+
+    /// The proxy-wait rule: a Proxied item extracts from whichever proxy has
+    /// actually landed on disk and never falls back to the (possibly huge)
+    /// original. A stale route entry pointing at a deleted proxy file must
+    /// read as "not_ready", not silently retarget the original and kick off
+    /// an ffmpeg run against it on every poll.
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn filmstrip_source_proxied_waits_never_falls_back() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let quick = tmp.path().join("quick.mp4");
+        let full = tmp.path().join("full.mp4");
+
+        // No proxies landed yet -> not_ready, never the original.
+        let item = filmstrip_test_item(
+            std::path::PathBuf::from("orig.mp4"),
+            MediaKind::Video,
+            DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
+        );
+        assert_eq!(filmstrip_decode_source(&item).unwrap_err(), "not_ready");
+
+        // Quick proxy landed -> prefer it (mirrors the renderer's preview preference).
+        std::fs::write(&quick, b"x").unwrap();
+        let item = filmstrip_test_item(
+            std::path::PathBuf::from("orig.mp4"),
+            MediaKind::Video,
+            DecodeRoute::Proxied {
+                quick_proxy: Some(quick.clone()),
+                full_proxy: None,
+                format_version: 0,
+            },
+        );
+        assert_eq!(filmstrip_decode_source(&item).unwrap(), quick);
+
+        // Only the full proxy has landed -> use it.
+        std::fs::write(&full, b"x").unwrap();
+        let item = filmstrip_test_item(
+            std::path::PathBuf::from("orig.mp4"),
+            MediaKind::Video,
+            DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: Some(full.clone()),
+                format_version: 0,
+            },
+        );
+        assert_eq!(filmstrip_decode_source(&item).unwrap(), full);
+
+        // quick_proxy path is stale (file missing on disk) and there is no
+        // full proxy -> not_ready, not a fallback to the original.
+        let missing_quick = tmp.path().join("gone.mp4");
+        let item = filmstrip_test_item(
+            std::path::PathBuf::from("orig.mp4"),
+            MediaKind::Video,
+            DecodeRoute::Proxied {
+                quick_proxy: Some(missing_quick),
+                full_proxy: None,
+                format_version: 0,
+            },
+        );
+        assert_eq!(filmstrip_decode_source(&item).unwrap_err(), "not_ready");
+    }
+
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn filmstrip_rejects_non_video() {
+        let item = filmstrip_test_item(
+            std::path::PathBuf::from("orig.mp3"),
+            MediaKind::Audio,
+            DecodeRoute::Bypass,
+        );
+        let err = filmstrip_decode_source(&item).unwrap_err();
+        assert!(err.contains("filmstrip"), "expected 'filmstrip' in error, got: {err}");
     }
 }

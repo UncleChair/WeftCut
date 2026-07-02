@@ -458,6 +458,11 @@ impl Backend {
                 ser(crate::commands::media::get_waveform_tile(a).await)
             }
             #[cfg(feature = "jobs")]
+            "get_filmstrip_tile" => {
+                let a: crate::commands::media::FilmstripTileArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_filmstrip_tile(self, a).await)
+            }
+            #[cfg(feature = "jobs")]
             "ensure_full_proxy" => {
                 let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::ensure_full_proxy(self, a.item).await)
@@ -953,7 +958,7 @@ mod tests {
 
         // Phase 1 (stateless-compute-service): the single-media channels no
         // longer read the mirror — the TS host passes the resolved MediaItem.
-        for name in ["get_media_thumbnail", "get_media_thumbnails", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform"] {
+        for name in ["get_media_thumbnail", "get_media_thumbnails", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform", "get_filmstrip_tile"] {
             let start = media.find(&format!("fn {name}"))
                 .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));
             let body = &media[start..(start + 600).min(media.len())];
