@@ -53,15 +53,27 @@ Video clips render a real filmstrip based on the layer's current source window:
 Audio clips render a waveform:
 
 - Use the layer's `src_in_us` and `src_out_us` as the displayed source interval.
-- Peaks come from the tile engine: `getWaveformLevels(mediaId)` returns the
-  peaks file's LOD level table, and `getWaveformTile(mediaId, level, channel,
-  startPeak, count)` serves fixed-size min/max tiles that `TileEngine` caches
-  under a byte budget.
-- The producer picks the coarsest LOD level that still meets the on-screen
-  density for the current zoom, assembles the covering tiles into one window,
-  and the component draws it across DPR-scaled canvas segments.
-- Missing peaks render a stable center-line placeholder until the waveform job
-  completes.
+- Peaks come from the tile engine. The peaks file stores a min/max envelope
+  and an RMS plane per window across both stereo channels in an LOD mipmap
+  pyramid. `getWaveformLevels(mediaId)` returns the LOD level table, and
+  `getWaveformTile(mediaId, level, channel, startPeak, count)` serves
+  fixed-size tiles cached under a byte budget; tiles arrive as dequantized
+  floats (`min`/`max` in −1..1, `rms` in 0..1).
+- Rendering uses a two-tone style: a soft min/max envelope fill with a
+  brighter RMS core symmetric around the lane midline. A 1px visibility floor
+  ensures quiet-but-present audio never vanishes; silence renders only the
+  thin envelope line without a core.
+- Stereo slices at least 28 px tall render two lanes (left on top, right
+  below); shorter slices render one merged lane (per-peak min/max across
+  channels, maximum of the channel RMS values).
+- The producer selects the coarsest LOD level that meets the on-screen density
+  for the current zoom, assembles covering tiles into one window, and draws
+  across DPR-scaled canvas segments. Canvases redraw when the display's
+  device-pixel-ratio changes.
+- Zoom and scroll use stale-while-revalidate: the previously drawn envelope
+  keeps rendering (stretched) while the re-fetch for the new zoom level is
+  debounced (~120 ms). Switching to different media clears immediately; the
+  placeholder appears only on first load or when no waveform exists yet.
 
 ### Video + Audio on One Track
 
