@@ -120,11 +120,12 @@ impl CacheLayout {
         self.thumbnails(hash).join(format!("{idx:03}.jpg"))
     }
 
-    /// Multi-resolution audio peaks file (VPEAKS v2). The `v2` segment is the
-    /// format version — bumped when the on-disk layout changes so stale v1
-    /// caches are regenerated, not misread (mirrors `quick_proxy`'s recipe tag).
+    /// Multi-resolution audio peaks file (VPEAKS). The version segment in the
+    /// filename is bumped when the on-disk layout changes, so a stale cache
+    /// from an older layout is regenerated rather than misread (mirrors
+    /// `quick_proxy`'s recipe tag).
     pub fn waveform(&self, hash: &str) -> PathBuf {
-        self.waveforms_dir().join(format!("{hash}.v2.peaks"))
+        self.waveforms_dir().join(format!("{hash}.v3.peaks"))
     }
 
     /// Canonical conformed PCM for a hashed media file — 48 kHz, f32le,
@@ -257,7 +258,7 @@ mod tests {
         );
         assert_eq!(
             layout.waveform("abc"),
-            tmp.path().join("waveforms").join("abc.v2.peaks"),
+            tmp.path().join("waveforms").join("abc.v3.peaks"),
         );
         assert_eq!(
             layout.audio_conform("abc"),
