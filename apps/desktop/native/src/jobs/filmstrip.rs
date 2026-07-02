@@ -50,13 +50,15 @@ pub async fn extract_tile(
     index: u32,
 ) -> Result<PathBuf> {
     validate_lod(lod)?;
-    if !ffmpeg_is_installed() {
-        anyhow::bail!("ffmpeg not installed; cannot extract filmstrip tile");
-    }
 
+    // Cache hit first: an already-extracted tile must stay reachable even
+    // when the ffmpeg sidecar is broken — only the miss path needs ffmpeg.
     let dest = cache.filmstrip_tile(hash, lod, index);
     if cached_ok(&dest) {
         return Ok(dest);
+    }
+    if !ffmpeg_is_installed() {
+        anyhow::bail!("ffmpeg not installed; cannot extract filmstrip tile");
     }
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
