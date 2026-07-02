@@ -163,6 +163,36 @@ describe("TimelineFilmstrip", () => {
     ]);
   });
 
+  it("keeps painting across a zoom in EITHER direction before the debounced fetch lands", async () => {
+    const mediaId = "m-zoom-bidi";
+    const { getByTestId, rerender } = renderFilmstrip(mediaId); // pxPerSec 130 -> target lod 2
+    await waitFor(() => {
+      expect(tileEngine.get(filmstripTileKey(mediaId, 2, 3))?.state).toBe("ready");
+    });
+    await waitFor(() => {
+      expect(getByTestId("timeline-filmstrip").getAttribute("data-state")).toBe("ready");
+    });
+
+    vi.useFakeTimers();
+    try {
+      // Zoom OUT: pxPerSec 48 raises the target to lod 3 (thumb 96px ->
+      // desired spacing 2_000_000us = exactly lod 3), making the ready lod-2
+      // tiles FINER than target. The debounce timer has not advanced, so no
+      // coarser tile exists yet — only the finer backfill can keep the strip
+      // lit, and data-state must not blank to "pending".
+      rerender(<TimelineFilmstrip mediaId={mediaId} {...GEOMETRY} pxPerSec={48} />);
+      expect(getByTestId("timeline-filmstrip").getAttribute("data-state")).toBe("ready");
+
+      // Zoom IN: pxPerSec 260 lowers the target to lod 1; the same lod-2
+      // tiles are now COARSER than target and the coarse fallback keeps them
+      // painting (inverse direction of the same rule).
+      rerender(<TimelineFilmstrip mediaId={mediaId} {...GEOMETRY} pxPerSec={260} />);
+      expect(getByTestId("timeline-filmstrip").getAttribute("data-state")).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports not_ready while the proxy-wait rule holds", async () => {
     const mediaId = "m-not-ready";
     mocks.getFilmstripTile.mockRejectedValue("not_ready");

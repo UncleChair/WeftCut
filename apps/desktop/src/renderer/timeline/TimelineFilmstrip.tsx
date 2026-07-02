@@ -24,10 +24,30 @@ const RENDER_TILE_PX = 2048;
 /// notifications bypass this and request immediately.
 export const FILMSTRIP_FETCH_DEBOUNCE_MS = 140;
 
-/// How many coarser LODs above the target the painter's pass falls back to
-/// when the ideal tile isn't cached yet — a stretched-but-present thumbnail
-/// beats a blank frame while the fine tile is in flight.
+/// How far to EITHER side of the target LOD the painter's pass falls back to
+/// when the ideal tile isn't cached yet — a mis-sized-but-present thumbnail
+/// beats a blank frame while the target tile is in flight. The coarser side
+/// bridges zoom-in (cached coarse tiles hold until finer ones land); the
+/// finer side bridges zoom-out (cached fine tiles hold until coarser ones
+/// land) — without it, raising the target LOD would clear already-rendered
+/// content until the debounced fetch resolves.
 const LOD_FALLBACK_SPAN = 3;
+
+/// Painter's-pass LOD order, least → most authoritative: finer backfill
+/// (target−3 … target−1, ascending) first, then the coarse fallback down to
+/// the target (target+3 … target, descending), each side clamped to the
+/// valid LOD range — so target-LOD tiles always paint last, on top of every
+/// fallback.
+function paintLodOrder(targetLod: number): number[] {
+  const lods: number[] = [];
+  for (let lod = Math.max(targetLod - LOD_FALLBACK_SPAN, 0); lod < targetLod; lod++) {
+    lods.push(lod);
+  }
+  for (let lod = Math.min(targetLod + LOD_FALLBACK_SPAN, FILMSTRIP_MAX_LOD); lod >= targetLod; lod--) {
+    lods.push(lod);
+  }
+  return lods;
+}
 
 /// Places a decoded tile at its true source time, holding natural aspect
 /// ratio at the given lane height. Pure/canvas-free so it's unit-testable
@@ -120,11 +140,13 @@ function useFilmstripRequests(
 }
 
 /// Computes the container's data-state without touching a 2d context: reruns
-/// the exact painter's-pass key selection the canvas segments use, counting
-/// how many would actually draw (non-degenerate rect) and whether any
-/// TARGET-lod slot consulted along the way reports `not_ready` (the
-/// proxy-wait rule). Kept context-free so jsdom (whose canvas getContext
-/// returns null) can still observe ready/not_ready/pending transitions.
+/// the exact painter's-pass key selection the canvas segments use (target ±
+/// LOD_FALLBACK_SPAN), counting how many tiles would actually draw
+/// (non-degenerate rect) at ANY consulted LOD — that count drives "ready" —
+/// while the `not_ready` determination stays keyed on TARGET-lod slots only
+/// (proxy-wait semantics). Kept context-free so jsdom (whose canvas
+/// getContext returns null) can still observe ready/not_ready/pending
+/// transitions.
 function computeFilmstripDataState(
   mediaId: string,
   srcInUs: number,
@@ -135,10 +157,9 @@ function computeFilmstripDataState(
   totalWidthPx: number,
   laneHeightPx: number,
 ): FilmstripDataState {
-  const topLod = Math.min(targetLod + LOD_FALLBACK_SPAN, FILMSTRIP_MAX_LOD);
   let painted = 0;
   let targetNotReady = false;
-  for (let lod = topLod; lod >= targetLod; lod--) {
+  for (const lod of paintLodOrder(targetLod)) {
     const spacing = spacingUs(lod);
     const { first, last } = visibleTileRange(srcInUs, srcOutUs, spacing, thumbWidthUs, mediaDurationUs);
     for (let i = first; i <= last; i++) {
@@ -325,8 +346,7 @@ function FilmstripTileCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, segmentWidthPx, laneHeightPx);
 
-    const topLod = Math.min(targetLod + LOD_FALLBACK_SPAN, FILMSTRIP_MAX_LOD);
-    for (let lod = topLod; lod >= targetLod; lod--) {
+    for (const lod of paintLodOrder(targetLod)) {
       const spacing = spacingUs(lod);
       const { first, last } = visibleTileRange(srcInUs, srcOutUs, spacing, thumbWidthUs, mediaDurationUs);
       for (let i = first; i <= last; i++) {
