@@ -5,8 +5,8 @@ import type { MediaItem } from '../model'
 const item = { id: 'm1', label: null, kind: 'Video', file_hash_blake3: 'h' } as never
 
 describe('resolveSingleMediaArgs', () => {
-  it('includes timeline thumbnail manifests in the single-media channel set', () => {
-    expect(SINGLE_MEDIA_CHANNELS.has('get_media_thumbnails')).toBe(true)
+  it('includes timeline filmstrip tiles in the single-media channel set', () => {
+    expect(SINGLE_MEDIA_CHANNELS.has('get_filmstrip_tile')).toBe(true)
   })
   it('replaces { mediaId } with the resolved { item }', () => {
     const pool = { m1: item }

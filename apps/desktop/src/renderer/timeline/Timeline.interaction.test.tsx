@@ -9,7 +9,6 @@ import { Timeline } from "./Timeline";
 const ipcMocks = vi.hoisted(() => ({
   moveLayer: vi.fn().mockResolvedValue(undefined),
   trimLayer: vi.fn().mockResolvedValue(undefined),
-  getMediaThumbnails: vi.fn().mockRejectedValue("not_ready"),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   viewStateGet: vi
     .fn()
@@ -33,7 +32,6 @@ vi.mock("../ipc", async (importOriginal) => {
     ...actual,
     moveLayer: ipcMocks.moveLayer,
     trimLayer: ipcMocks.trimLayer,
-    getMediaThumbnails: ipcMocks.getMediaThumbnails,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     viewStateGet: ipcMocks.viewStateGet,
     viewStateSet: ipcMocks.viewStateSet,
@@ -160,7 +158,6 @@ describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
     ipcMocks.moveLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
-    ipcMocks.getMediaThumbnails.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
     // Show-All so the role-stamped track always renders regardless of the
     // default AB-roll filter.
@@ -234,7 +231,6 @@ describe("Timeline seek/selection coupling", () => {
     const { container, queryByText } = renderTimeline({ tracks: [tinyVideoTrack] });
     expect(queryByText("Tiny Video")).toBeNull();
     expect(container.querySelector('[data-testid="timeline-visual-preview"]')).toBeNull();
-    expect(ipcMocks.getMediaThumbnails).not.toHaveBeenCalled();
   });
 
   it("shows a blade cut preview at the hovered cut point", () => {

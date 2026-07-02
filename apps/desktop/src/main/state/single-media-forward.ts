@@ -3,7 +3,7 @@ import type { MediaItem } from './model'
 /** Channels whose Rust fn takes one MediaItem as a call argument; the TS actor
  *  (the sole state owner) resolves it by `mediaId` and forwards it. */
 export const SINGLE_MEDIA_CHANNELS: ReadonlySet<string> = new Set([
-  'get_media_thumbnail', 'get_media_thumbnails', 'get_waveform_peaks',
+  'get_media_thumbnail', 'get_waveform_peaks',
   'get_waveform_levels', 'get_waveform_tile', 'get_filmstrip_tile', 'ensure_full_proxy', 'ensure_conform',
 ])
 

@@ -1160,22 +1160,6 @@ export async function getMediaThumbnail(mediaId: string): Promise<string> {
   return invoke<string>("get_media_thumbnail", { mediaId });
 }
 
-export interface TimelineThumbnailManifest {
-  frames: Array<{
-    index: number;
-    tUs: number;
-    path: string;
-  }>;
-}
-
-/// Returns the existing timeline filmstrip thumbnail cache manifest. Rejects
-/// with "not_ready" when the ten cached JPGs are not available yet.
-export async function getMediaThumbnails(
-  mediaId: string,
-): Promise<TimelineThumbnailManifest> {
-  return invoke<TimelineThumbnailManifest>("get_media_thumbnails", { mediaId });
-}
-
 /// Ask the backend to generate the full export proxy for a media item
 /// (decode-failure recovery / per-clip generate). Idempotent on the backend.
 export async function ensureFullProxy(mediaId: string): Promise<void> {

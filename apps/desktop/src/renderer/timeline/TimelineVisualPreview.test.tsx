@@ -8,7 +8,6 @@ import { tileEngine } from "./tileEngine/TileEngine";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 
 const mocks = vi.hoisted(() => ({
-  getMediaThumbnails: vi.fn(),
   getFilmstripTile: vi.fn(),
   listen: vi.fn(async () => () => {}),
 }));
@@ -25,7 +24,6 @@ vi.mock("../ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc")>();
   return {
     ...actual,
-    getMediaThumbnails: mocks.getMediaThumbnails,
     getFilmstripTile: mocks.getFilmstripTile,
   };
 });
@@ -103,8 +101,6 @@ describe("TimelineVisualPreview", () => {
     | undefined;
 
   beforeEach(() => {
-    mocks.getMediaThumbnails.mockReset();
-    mocks.getMediaThumbnails.mockRejectedValue("not_ready");
     mocks.getFilmstripTile.mockReset();
     mocks.getFilmstripTile.mockRejectedValue("not_ready");
     mocks.listen.mockClear();
@@ -216,7 +212,6 @@ describe("TimelineVisualPreview", () => {
     );
 
     expect(queryByTestId("timeline-visual-preview")).toBeNull();
-    expect(mocks.getMediaThumbnails).not.toHaveBeenCalled();
     expect(mocks.getFilmstripTile).not.toHaveBeenCalled();
   });
 
