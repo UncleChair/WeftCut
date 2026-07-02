@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { computeLanes, mergeStereo, TimelineWaveform } from "./TimelineWaveform";
+import {
+  computeLanes,
+  mergeStereo,
+  TimelineWaveform,
+  WAVEFORM_REFETCH_DEBOUNCE_MS,
+} from "./TimelineWaveform";
 import {
   ensureWaveformWindow,
   getWaveformChannelCount,
@@ -17,6 +22,20 @@ vi.mock("./tileEngine/WaveformTileProducer", () => ({
 vi.mock("./tileEngine/TileEngine", () => ({
   tileEngine: { subscribe: vi.fn(() => () => {}) },
 }));
+
+/// Drains a bounded number of microtask turns under `act`, so chained
+/// promises (channel-count fetch -> ensure-window fetch -> setState) that
+/// aren't gated by any timer still settle before the next assertion. Needed
+/// because "immediate" (mount / mediaId change / engine notification) fetches
+/// intentionally involve no `setTimeout` for `vi.advanceTimersByTimeAsync` to
+/// hook into.
+async function flushMicrotasks(turns = 10): Promise<void> {
+  await act(async () => {
+    for (let i = 0; i < turns; i++) {
+      await Promise.resolve();
+    }
+  });
+}
 
 describe("computeLanes", () => {
   it("returns two lanes at exactly the stereo threshold height", () => {
@@ -335,5 +354,251 @@ describe("TimelineWaveform", () => {
     );
     expect(ensureWaveformWindow).not.toHaveBeenCalled();
     expect(getWaveformChannelCount).not.toHaveBeenCalled();
+  });
+
+  describe("stale-while-revalidate zoom + DPR redraw", () => {
+    const readyWindow: WaveformWindow = {
+      peaksPerSecond: 1000,
+      startPeak: 0,
+      min: new Float32Array([-0.5, -0.7]),
+      max: new Float32Array([0.5, 0.7]),
+      rms: new Float32Array([0.2, 0.3]),
+    };
+
+    it("keeps the stale window on a pxPerSec change and re-fetches once after the debounce", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(ensureWaveformWindow).mockResolvedValue(readyWindow);
+
+        const { getByTestId, rerender } = render(
+          <TimelineWaveform
+            mediaId="m"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={80}
+          />,
+        );
+        // Flush the immediate mount fetch (no timer involved) to reach ready.
+        await flushMicrotasks();
+        const wrapper = getByTestId("timeline-waveform");
+        expect(wrapper.getAttribute("data-state")).toBe("ready");
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        rerender(
+          <TimelineWaveform
+            mediaId="m"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={160}
+          />,
+        );
+        // Immediately after the prop change: still "ready" (stale window
+        // kept) and no new fetch has fired yet.
+        expect(wrapper.getAttribute("data-state")).toBe("ready");
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(WAVEFORM_REFETCH_DEBOUNCE_MS - 1);
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await flushMicrotasks();
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(2);
+        expect(ensureWaveformWindow).toHaveBeenLastCalledWith("m", 0, 0, 2_000_000, 160);
+        expect(wrapper.getAttribute("data-state")).toBe("ready");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("coalesces rapid pxPerSec churn into a single post-debounce re-fetch", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(ensureWaveformWindow).mockResolvedValue(readyWindow);
+
+        const { rerender } = render(
+          <TimelineWaveform
+            mediaId="m"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={80}
+          />,
+        );
+        await flushMicrotasks();
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        rerender(
+          <TimelineWaveform
+            mediaId="m"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={160}
+          />,
+        );
+        await vi.advanceTimersByTimeAsync(50);
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        rerender(
+          <TimelineWaveform
+            mediaId="m"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={240}
+          />,
+        );
+        // The first pxPerSec=160 timer must have been cancelled by this
+        // second churn, not merely raced.
+        await vi.advanceTimersByTimeAsync(50);
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(WAVEFORM_REFETCH_DEBOUNCE_MS);
+        await flushMicrotasks();
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(2);
+        expect(ensureWaveformWindow).toHaveBeenLastCalledWith("m", 0, 0, 2_000_000, 240);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("fetches immediately and drops the stale window on a mediaId change", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(ensureWaveformWindow).mockResolvedValue(readyWindow);
+
+        const { getByTestId, rerender } = render(
+          <TimelineWaveform
+            mediaId="media-a"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={80}
+          />,
+        );
+        await flushMicrotasks();
+        const wrapper = getByTestId("timeline-waveform");
+        expect(wrapper.getAttribute("data-state")).toBe("ready");
+        expect(ensureWaveformWindow).toHaveBeenCalledTimes(1);
+
+        vi.mocked(ensureWaveformWindow).mockClear();
+        // A different media never resolves in this assertion window — the
+        // stale window from "media-a" must not keep showing "ready".
+        vi.mocked(ensureWaveformWindow).mockImplementation(() => new Promise(() => {}));
+
+        rerender(
+          <TimelineWaveform
+            mediaId="media-b"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={80}
+          />,
+        );
+        // The stale window is dropped synchronously (no window at all until
+        // media-b resolves) before any timer or microtask has to run.
+        expect(wrapper.getAttribute("data-state")).not.toBe("ready");
+        // Called without advancing any timers: mediaId changes are immediate.
+        await flushMicrotasks();
+        expect(ensureWaveformWindow).toHaveBeenCalledWith("media-b", 0, 0, 2_000_000, 80);
+        expect(wrapper.getAttribute("data-state")).not.toBe("ready");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("renders without crashing when window.matchMedia is unavailable", () => {
+      expect(window.matchMedia).toBeUndefined();
+      const { getByTestId } = render(
+        <TimelineWaveform
+          mediaId="m"
+          srcInUs={0}
+          srcOutUs={1_000_000}
+          layerWidthPx={100}
+          layerHeightPx={24}
+          colorHint="#123"
+          enabled
+          pxPerSec={80}
+        />,
+      );
+      expect(getByTestId("timeline-waveform")).toBeTruthy();
+    });
+
+    it("re-arms the DPR change listener with a fresh matchMedia query after each firing", async () => {
+      const queries: string[] = [];
+      const listenersByQuery = new Map<string, Set<() => void>>();
+      const fakeMatchMedia = vi.fn((query: string) => {
+        queries.push(query);
+        const listeners = new Set<() => void>();
+        listenersByQuery.set(query, listeners);
+        return {
+          matches: true,
+          media: query,
+          addEventListener: (_type: string, cb: () => void) => listeners.add(cb),
+          removeEventListener: (_type: string, cb: () => void) => listeners.delete(cb),
+        } as unknown as MediaQueryList;
+      });
+      const original = window.matchMedia;
+      Object.defineProperty(window, "matchMedia", { value: fakeMatchMedia, configurable: true });
+
+      try {
+        vi.mocked(ensureWaveformWindow).mockResolvedValue(readyWindow);
+        render(
+          <TimelineWaveform
+            mediaId="m"
+            srcInUs={0}
+            srcOutUs={2_000_000}
+            layerWidthPx={200}
+            layerHeightPx={40}
+            colorHint="#123"
+            enabled
+            pxPerSec={80}
+          />,
+        );
+        await waitFor(() => expect(queries.length).toBe(1));
+        const firstQuery = queries[0]!;
+        // Capture the Set object itself (not just the key): the re-arm query
+        // string can collide with the first one (devicePixelRatio is static
+        // in jsdom), which would otherwise alias both registrations onto the
+        // same map entry and hide a leaked listener.
+        const firstListenerSet = listenersByQuery.get(firstQuery)!;
+
+        // Fire the listener as if the dpr just changed.
+        for (const cb of firstListenerSet) cb();
+
+        await waitFor(() => expect(queries.length).toBe(2));
+        // The old listener must have been torn down (re-arm, not accumulate).
+        expect(firstListenerSet.size).toBe(0);
+      } finally {
+        if (original) {
+          Object.defineProperty(window, "matchMedia", { value: original, configurable: true });
+        } else {
+          Reflect.deleteProperty(window, "matchMedia");
+        }
+      }
+    });
   });
 });

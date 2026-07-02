@@ -18,6 +18,12 @@ const RENDER_TILE_PX = 2048;
 /// one merged lane spanning the full row instead.
 export const STEREO_LANES_MIN_PX = 28;
 
+/// Param-churn (pxPerSec / src window) re-fetch delay: coalesces a burst of
+/// zoom-wheel or trim-drag frames into one assembly run instead of one per
+/// intermediate value. Mount, mediaId changes, and engine `subscribe`
+/// notifications bypass this and fetch immediately — see `useWindowData`.
+export const WAVEFORM_REFETCH_DEBOUNCE_MS = 120;
+
 export interface WaveformLane {
   channel: number | "merged";
   midY: number;
@@ -68,6 +74,46 @@ interface WindowData {
 
 const INITIAL_WINDOW_DATA: WindowData = { state: "pending", channels: 1, win0: null, win1: null };
 
+/// Runs one channel-count + window(s) assembly for [srcInUs, srcOutUs) at
+/// pxPerSec. Pulled out of the hook so both the immediate callers (mount,
+/// mediaId change, engine `subscribe` notifications) and the debounced
+/// param-churn caller share the exact same resolution logic.
+function assembleWindowData(
+  mediaId: string,
+  srcInUs: number,
+  srcOutUs: number,
+  pxPerSec: number,
+): Promise<WindowData> {
+  return getWaveformChannelCount(mediaId)
+    // A rejection here (e.g. the waveform file isn't generated yet) must
+    // never throw into render; fall back to the mono path, which will
+    // independently surface "not_ready"/"pending" from ensureWaveformWindow.
+    .catch(() => 1)
+    .then((channels) => {
+      if (channels === 2) {
+        return Promise.all([
+          ensureWaveformWindow(mediaId, 0, srcInUs, srcOutUs, pxPerSec),
+          ensureWaveformWindow(mediaId, 1, srcInUs, srcOutUs, pxPerSec),
+        ]).then(([r0, r1]): WindowData => {
+          // Ready only once BOTH channels resolve; a mismatched
+          // pending/not_ready pair prefers not_ready (more definitive).
+          if (r0 === "not_ready" || r1 === "not_ready") {
+            return { state: "not_ready", channels: 2, win0: null, win1: null };
+          }
+          if (r0 === "pending" || r1 === "pending") {
+            return { state: "pending", channels: 2, win0: null, win1: null };
+          }
+          return { state: "ready", channels: 2, win0: r0, win1: r1 };
+        });
+      }
+      return ensureWaveformWindow(mediaId, 0, srcInUs, srcOutUs, pxPerSec).then((r0): WindowData => {
+        if (r0 === "not_ready") return { state: "not_ready", channels: 1, win0: null, win1: null };
+        if (r0 === "pending") return { state: "pending", channels: 1, win0: null, win1: null };
+        return { state: "ready", channels: 1, win0: r0, win1: null };
+      });
+    });
+}
+
 function useWindowData(
   mediaId: string,
   srcInUs: number,
@@ -76,48 +122,76 @@ function useWindowData(
   enabled: boolean,
 ): WindowData {
   const [result, setResult] = useState<WindowData>(INITIAL_WINDOW_DATA);
+  // Tracks mediaId across renders so the effect can tell a genuine media
+  // swap (different content — fetch immediately, drop the stale window) from
+  // param churn on the SAME media (zoom/trim — debounce, keep the stale
+  // window on screen, stretched, while the new geometry assembles).
+  const prevMediaIdRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    const run = () => {
-      void getWaveformChannelCount(mediaId)
-        // A rejection here (e.g. the waveform file isn't generated yet) must
-        // never throw into render; fall back to the mono path, which will
-        // independently surface "not_ready"/"pending" from ensureWaveformWindow.
-        .catch(() => 1)
-        .then((channels) => {
-          if (cancelled) return;
-          if (channels === 2) {
-            void Promise.all([
-              ensureWaveformWindow(mediaId, 0, srcInUs, srcOutUs, pxPerSec),
-              ensureWaveformWindow(mediaId, 1, srcInUs, srcOutUs, pxPerSec),
-            ]).then(([r0, r1]) => {
-              if (cancelled) return;
-              // Ready only once BOTH channels resolve; a mismatched
-              // pending/not_ready pair prefers not_ready (more definitive).
-              if (r0 === "not_ready" || r1 === "not_ready") {
-                setResult({ state: "not_ready", channels: 2, win0: null, win1: null });
-              } else if (r0 === "pending" || r1 === "pending") {
-                setResult({ state: "pending", channels: 2, win0: null, win1: null });
-              } else {
-                setResult({ state: "ready", channels: 2, win0: r0, win1: r1 });
-              }
-            });
-          } else {
-            void ensureWaveformWindow(mediaId, 0, srcInUs, srcOutUs, pxPerSec).then((r0) => {
-              if (cancelled) return;
-              if (r0 === "not_ready") setResult({ state: "not_ready", channels: 1, win0: null, win1: null });
-              else if (r0 === "pending") setResult({ state: "pending", channels: 1, win0: null, win1: null });
-              else setResult({ state: "ready", channels: 1, win0: r0, win1: null });
-            });
-          }
-        });
+    const isNewMedia = prevMediaIdRef.current !== mediaId;
+    prevMediaIdRef.current = mediaId;
+
+    // Applies a resolved assembly run, EXCEPT a transient "pending" /
+    // "not_ready" must not blank out a window already on screen (zoom
+    // mid-flight, or the source briefly regenerating): the stale window
+    // keeps rendering rather than flashing a placeholder. Only a fresh
+    // media (no window ever fetched for it) shows those states.
+    const apply = (next: WindowData) => {
+      if (cancelled) return;
+      setResult((prev) => (
+        (next.state === "pending" || next.state === "not_ready") && prev.win0
+          ? prev
+          : next
+      ));
     };
+
+    const run = () => { void assembleWindowData(mediaId, srcInUs, srcOutUs, pxPerSec).then(apply); };
     const unsub = tileEngine.subscribe(mediaId, run);
-    run();
-    return () => { cancelled = true; unsub(); };
+
+    if (isNewMedia) {
+      setResult(INITIAL_WINDOW_DATA);
+      run();
+      return () => { cancelled = true; unsub(); };
+    }
+
+    const timer = setTimeout(run, WAVEFORM_REFETCH_DEBOUNCE_MS);
+    return () => { cancelled = true; unsub(); clearTimeout(timer); };
   }, [mediaId, srcInUs, srcOutUs, pxPerSec, enabled]);
   return result;
+}
+
+/// Bumps once per devicePixelRatio change (e.g. dragging a maximized window
+/// across monitors with different scale factors) so tile canvases redraw at
+/// the new backing resolution. The `matchMedia` query string embeds the OLD
+/// dpr, so it stops matching after the change fires; each firing re-arms a
+/// fresh query for the new dpr. Feature-detected: no-op (and no crash) in
+/// test/jsdom environments that don't implement `matchMedia`.
+function useDprVersion(): number {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    let disposed = false;
+    let mql: MediaQueryList | null = null;
+    const onChange = () => {
+      mql?.removeEventListener("change", onChange);
+      if (!disposed) setVersion((v) => v + 1);
+      arm();
+    };
+    function arm() {
+      if (disposed) return;
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mql.addEventListener("change", onChange);
+    }
+    arm();
+    return () => {
+      disposed = true;
+      mql?.removeEventListener("change", onChange);
+    };
+  }, []);
+  return version;
 }
 
 /// Draws one lane's envelope + RMS core across all CSS-px columns in the
@@ -240,6 +314,7 @@ export function TimelineWaveform({
   pxPerSec: number;
 }) {
   const { state, channels, win0, win1 } = useWindowData(mediaId, srcInUs, srcOutUs, pxPerSec, enabled);
+  const dprVersion = useDprVersion();
   const totalWidthPx = Math.max(1, Math.ceil(layerWidthPx));
   const height = Math.max(1, Math.ceil(layerHeightPx));
 
@@ -274,6 +349,7 @@ export function TimelineWaveform({
           win1={state === "ready" ? win1 : null}
           tileStartPx={tile.startPx}
           totalWidthPx={totalWidthPx}
+          dprVersion={dprVersion}
         />
       ))}
     </div>
@@ -281,7 +357,7 @@ export function TimelineWaveform({
 }
 
 function WaveformTileCanvas({
-  widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx,
+  widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx, dprVersion,
 }: {
   widthPx: number;
   height: number;
@@ -290,13 +366,17 @@ function WaveformTileCanvas({
   win1: WaveformWindow | null;
   tileStartPx: number;
   totalWidthPx: number;
+  dprVersion: number;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
     drawTile(c, widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx);
-  }, [widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx]);
+    // dprVersion is intentionally unused in the body: drawTile re-reads
+    // window.devicePixelRatio fresh on every call, so bumping the version
+    // is enough to force this effect (and thus the redraw) to re-run.
+  }, [widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx, dprVersion]);
   return (
     <canvas
       ref={ref}

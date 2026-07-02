@@ -95,7 +95,7 @@ function tileKey(mediaId: string, level: number, channel: number, tileIndex: num
   return { mediaId, kind: WAVEFORM_KIND, lod: level, index: channel * 1_000_000 + tileIndex };
 }
 
-/// Request + assemble the min/max envelope for a src window at the LOD that
+/// Request + assemble the min/max/rms envelope for a src window at the LOD that
 /// suits `pxPerSec`. Returns "pending" until every covering tile is ready, or
 /// "not_ready" if the waveform file isn't generated yet.
 export async function ensureWaveformWindow(
