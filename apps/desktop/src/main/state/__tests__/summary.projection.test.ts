@@ -179,4 +179,34 @@ describe('ProjectSummary projection', () => {
       format_version: 7,
     })
   })
+
+  it('projects audio_channels from media metadata: 2 when audio stream present, null when absent', () => {
+    const a = freshActor()
+
+    // Media WITH audio: set channels to 2 in the metadata fixture.
+    const mediaWithAudioId = 'dddddddd-0000-0000-0000-000000000004'
+    const itemWithAudio = mediaItemTemplate(mediaWithAudioId, 'Video', 4_000_000, true)
+    if (itemWithAudio.metadata.audio) {
+      itemWithAudio.metadata.audio.channels = 2
+    }
+    a.dispatch('add_media_item', { media: itemWithAudio })
+
+    // Media WITHOUT audio: omit the audio stream.
+    const mediaWithoutAudioId = 'eeeeeeee-0000-0000-0000-000000000005'
+    const itemWithoutAudio = mediaItemTemplate(mediaWithoutAudioId, 'Video', 4_000_000, false)
+    a.dispatch('add_media_item', { media: itemWithoutAudio })
+
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => true)
+
+    // Sort to ensure stable ordering by id.
+    const mediaByLabel = s.media.sort((x, y) => x.id.localeCompare(y.id))
+    const withAudio = mediaByLabel.find((m) => m.id === mediaWithAudioId)
+    const withoutAudio = mediaByLabel.find((m) => m.id === mediaWithoutAudioId)
+
+    expect(withAudio).toBeDefined()
+    expect(withAudio!.audio_channels).toBe(2)
+
+    expect(withoutAudio).toBeDefined()
+    expect(withoutAudio!.audio_channels).toBeNull()
+  })
 })
