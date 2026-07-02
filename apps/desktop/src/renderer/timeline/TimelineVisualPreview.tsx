@@ -124,6 +124,9 @@ export function TimelineVisualPreview({
   const audioMedia = useMediaById(
     layer.params.kind === "Audio" ? layer.params.media_id : null,
   );
+  const videoMedia = useMediaById(
+    layer.params.kind === "VideoClip" ? layer.params.media_id : null,
+  );
   if (!canRenderPreview) return null;
 
   const preview = (() => {
@@ -135,8 +138,13 @@ export function TimelineVisualPreview({
             srcInUs={layer.params.src_in_us}
             srcOutUs={layer.params.src_out_us}
             layerWidthPx={layerWidthPx}
+            layerHeightPx={layerHeightPx}
+            pxPerSec={pxPerSec}
             colorHint={layer.color_hint}
             enabled={resourceEnabled}
+            mediaWidth={videoMedia?.width ?? undefined}
+            mediaHeight={videoMedia?.height ?? undefined}
+            mediaDurationUs={videoMedia?.duration_us ?? undefined}
           />
         );
       case "Audio":

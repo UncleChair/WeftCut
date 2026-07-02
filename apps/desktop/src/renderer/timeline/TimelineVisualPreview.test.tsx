@@ -3,10 +3,13 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayerSummary } from "../ipc";
 import { LAYER_PREVIEW_MIN_PX } from "./geometry";
+import { FILMSTRIP_KIND } from "./tileEngine/FilmstripTileProducer";
+import { tileEngine } from "./tileEngine/TileEngine";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 
 const mocks = vi.hoisted(() => ({
   getMediaThumbnails: vi.fn(),
+  getFilmstripTile: vi.fn(),
   listen: vi.fn(async () => () => {}),
 }));
 
@@ -23,8 +26,17 @@ vi.mock("../ipc", async (importOriginal) => {
   return {
     ...actual,
     getMediaThumbnails: mocks.getMediaThumbnails,
+    getFilmstripTile: mocks.getFilmstripTile,
   };
 });
+
+// TimelineFilmstrip's tile engine reads these globals directly (not
+// injected) — stub them as in FilmstripTileProducer.test.ts / B4.
+vi.stubGlobal("fetch", vi.fn(async () => ({ blob: async () => new Blob() }) as unknown as Response));
+vi.stubGlobal(
+  "createImageBitmap",
+  vi.fn(async () => ({ width: 8, height: 8, close: vi.fn() }) as unknown as ImageBitmap),
+);
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
 
@@ -93,7 +105,13 @@ describe("TimelineVisualPreview", () => {
   beforeEach(() => {
     mocks.getMediaThumbnails.mockReset();
     mocks.getMediaThumbnails.mockRejectedValue("not_ready");
+    mocks.getFilmstripTile.mockReset();
+    mocks.getFilmstripTile.mockRejectedValue("not_ready");
     mocks.listen.mockClear();
+    // The tile engine is a module-level singleton, and every test here reuses
+    // the same videoLayer media id — clear its filmstrip slots so a rejected
+    // ("not_ready") tile from one test can't block the next test's request.
+    tileEngine.invalidateMedia("media-1", FILMSTRIP_KIND);
     observerCallback = null;
     observedElement = null;
     observerOptions = undefined;
@@ -150,7 +168,7 @@ describe("TimelineVisualPreview", () => {
       root: null,
       rootMargin: "256px 512px",
     });
-    expect(mocks.getMediaThumbnails).not.toHaveBeenCalled();
+    expect(mocks.getFilmstripTile).not.toHaveBeenCalled();
 
     act(() => {
       observerCallback?.(
@@ -166,7 +184,7 @@ describe("TimelineVisualPreview", () => {
     });
 
     await waitFor(() => {
-      expect(mocks.getMediaThumbnails).toHaveBeenCalledWith("media-1");
+      expect(mocks.getFilmstripTile).toHaveBeenCalledWith("media-1", expect.any(Number), expect.any(Number));
     });
   });
 
@@ -183,7 +201,7 @@ describe("TimelineVisualPreview", () => {
     );
 
     await waitFor(() => {
-      expect(mocks.getMediaThumbnails).toHaveBeenCalledWith("media-1");
+      expect(mocks.getFilmstripTile).toHaveBeenCalledWith("media-1", expect.any(Number), expect.any(Number));
     });
   });
 
@@ -199,6 +217,7 @@ describe("TimelineVisualPreview", () => {
 
     expect(queryByTestId("timeline-visual-preview")).toBeNull();
     expect(mocks.getMediaThumbnails).not.toHaveBeenCalled();
+    expect(mocks.getFilmstripTile).not.toHaveBeenCalled();
   });
 
   it("treats color alpha as the same 0-255 channel used by the compositor", () => {
