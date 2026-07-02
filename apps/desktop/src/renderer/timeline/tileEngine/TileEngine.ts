@@ -59,7 +59,13 @@ export class TileEngine {
   get<T>(key: TileKey): TileEntry<T> | undefined {
     const slot = this.slots.get(keyStr(key));
     if (!slot) return undefined;
-    slot.version = ++this.clock; // touch for LRU
+    // LRU-touch READY slots only. For a pending slot `version` is the in-flight
+    // fetch's identity: bumping it here would make the eventual resolve look
+    // stale and get dropped, wedging the tile as pending forever (a sibling
+    // tile's arrival notify re-runs window assembly, which polls this slot
+    // mid-flight). Eviction only ever considers ready slots, so pending slots
+    // need no recency.
+    if (slot.entry.state === "ready") slot.version = ++this.clock;
     return slot.entry as TileEntry<T>;
   }
 

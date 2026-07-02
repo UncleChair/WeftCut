@@ -75,6 +75,19 @@ describe("TileEngine", () => {
     expect(engine.get(key)).toBeUndefined();
   });
 
+  it("keeps an in-flight fetch valid when get() touches the pending slot", async () => {
+    const { producer, resolve } = makeProducer();
+    engine.register(producer);
+    const key: TileKey = { mediaId: "m", kind: "test", lod: 0, index: 0 };
+    engine.request(key);
+    // A consumer polling mid-flight (e.g. a sibling tile's notify re-running
+    // window assembly) must not make the eventual resolve look stale.
+    expect(engine.get(key)?.state).toBe("pending");
+    resolve("0:0", [1, 2]);
+    await Promise.resolve();
+    expect(engine.get(key)).toEqual({ state: "ready", value: [1, 2] });
+  });
+
   it("invalidateMedia forwards to the producer's invalidate hook", () => {
     const invalidated: string[] = [];
     const { producer } = makeProducer({ invalidate: (mediaId) => invalidated.push(mediaId) });
