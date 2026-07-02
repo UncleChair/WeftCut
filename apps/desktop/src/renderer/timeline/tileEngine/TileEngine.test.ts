@@ -122,6 +122,15 @@ describe("TileEngine", () => {
     expect(engine.get(keyA)?.state).toBe("ready");
     expect(engine.get(keyB)?.state).toBe("ready");
 
+    // An unknown kind is a no-op: no producer's kind or invalidateOn matches,
+    // so no invalidate fires and no slot is dropped. This IS the guard — the
+    // event handler has no registered-kind pre-filter anymore.
+    engine.handleJobComplete("m1", "some-unknown-kind");
+    expect(engine.get(keyA)?.state).toBe("ready");
+    expect(engine.get(keyB)?.state).toBe("ready");
+    expect(invalidatedA).toEqual([]);
+    expect(invalidatedB).toEqual([]);
+
     engine.handleJobComplete("m1", "proxy");
     expect(engine.get(keyA)).toBeUndefined();
     expect(invalidatedA).toEqual(["m1"]);
@@ -130,9 +139,27 @@ describe("TileEngine", () => {
     expect(engine.get(keyB)?.state).toBe("ready");
     expect(invalidatedB).toEqual([]);
 
+    // Every invalidateOn entry routes, not just the first.
+    engine.handleJobComplete("m1", "quick_proxy");
+    expect(invalidatedA).toEqual(["m1", "m1"]);
+    expect(invalidatedB).toEqual([]);
+
     engine.handleJobComplete("m1", "waveform");
     expect(engine.get(keyB)).toBeUndefined();
     expect(invalidatedB).toEqual(["m1"]);
+  });
+
+  it("invalidateMedia notifies subscribers even with zero matching slots", () => {
+    const { producer } = makeProducer();
+    engine.register(producer);
+    const cb = vi.fn();
+    engine.subscribe("m", cb);
+    // Unconditional notify is the contract: a consumer holding an assembled
+    // window must re-run assembly on invalidation even when the engine held
+    // no tile slots for the media (producer-side caches such as the waveform
+    // level table can be the only state that went stale).
+    engine.invalidateMedia("m", "test");
+    expect(cb).toHaveBeenCalledTimes(1);
   });
 
   it("re-requests an error slot only after the cooldown", async () => {
