@@ -56,6 +56,7 @@ pub async fn extract_tile(
     // when the ffmpeg sidecar is broken — only the miss path needs ffmpeg.
     let dest = cache.filmstrip_tile(hash, src_tag, lod, index);
     if cached_ok(&dest) {
+        crate::cache::touch_if_stale(&dest);
         return Ok(dest);
     }
     if !ffmpeg_is_installed() {
@@ -227,5 +228,27 @@ mod tests {
     fn rejects_lod_out_of_range() {
         assert!(validate_lod(13).is_err());
         assert!(validate_lod(12).is_ok());
+    }
+
+    #[tokio::test]
+    async fn cache_hit_refreshes_stale_mtime() {
+        use std::time::{Duration, SystemTime};
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+        let dest = cache.filmstrip_tile("h", crate::cache::FilmstripSrc::Orig, 2, 1);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, b"jpg").unwrap();
+        let f = std::fs::File::options().write(true).open(&dest).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(2 * 3600))).unwrap();
+        drop(f);
+
+        // Hit path returns before any ffmpeg concern: src may not exist.
+        let p = extract_tile(&cache, Path::new("missing.mp4"), crate::cache::FilmstripSrc::Orig, "h", None, 2, 1)
+            .await
+            .expect("cache hit");
+        assert_eq!(p, dest);
+        let m = std::fs::metadata(&dest).unwrap().modified().unwrap();
+        assert!(m > SystemTime::now() - Duration::from_secs(60), "hit must touch the LRU clock");
     }
 }

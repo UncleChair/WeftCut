@@ -88,6 +88,7 @@ pub struct AudioMeterState(
 pub async fn get_media_thumbnail(item: MediaItem) -> Result<String, String> {
     let dir = item.thumbnails_dir.clone().ok_or_else(|| "not_ready".to_string())?;
     let path = dir.join("004.jpg");
+    crate::cache::touch_if_stale(&path);
     let bytes = tokio::fs::read(&path).await.map_err(|e| format!("read thumbnail: {e}"))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:image/jpeg;base64,{b64}"))
@@ -95,6 +96,7 @@ pub async fn get_media_thumbnail(item: MediaItem) -> Result<String, String> {
 
 pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String> {
     let path = item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    crate::cache::touch_if_stale(&path);
     let peaks = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
         .await
         .map_err(|e| format!("join error: {e}"))?
@@ -143,6 +145,7 @@ pub struct WaveformTileArgs {
 
 pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, String> {
     let path = item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    crate::cache::touch_if_stale(&path);
     let header = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_header(&path))
         .await
         .map_err(|e| format!("join error: {e}"))?
@@ -164,6 +167,7 @@ pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, Stri
 
 pub async fn get_waveform_tile(args: WaveformTileArgs) -> Result<WaveformTile, String> {
     let path = args.item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    crate::cache::touch_if_stale(&path);
     let WaveformTileArgs { level, channel, start_peak, count, .. } = args;
     // The range read parses the header anyway, so it hands back the level's pps
     // (the renderer needs it to map peaks→time) — one file open per tile.

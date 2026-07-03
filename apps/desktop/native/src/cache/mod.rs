@@ -20,6 +20,7 @@ pub mod disk_lru;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 
@@ -306,6 +307,30 @@ pub fn cached_ok(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// How stale a cache entry's mtime must be before a read refreshes it —
+/// relatime semantics: hot-path hits stay at one metadata read.
+pub const TOUCH_THROTTLE: Duration = Duration::from_secs(60 * 60);
+
+/// Mark a swept-cache file as recently used by bumping its mtime. mtime IS
+/// the disk-LRU clock (`cache::disk_lru`): reads that skip this age out as
+/// if unused. Best-effort — errors are ignored (worst case the file evicts
+/// and regenerates). A future mtime (clock skew) counts as stale so it
+/// normalizes back to now.
+pub fn touch_if_stale(path: &Path) {
+    let now = SystemTime::now();
+    let Ok(meta) = fs::metadata(path) else { return };
+    let stale = match meta.modified() {
+        Ok(m) => now.duration_since(m).map(|age| age > TOUCH_THROTTLE).unwrap_or(true),
+        Err(_) => true,
+    };
+    if !stale {
+        return;
+    }
+    if let Ok(f) = fs::File::options().write(true).open(path) {
+        let _ = f.set_times(fs::FileTimes::new().set_modified(now));
+    }
+}
+
 /// Atomic write helper: write into `<dest>.tmp` then rename onto `dest`. Caller
 /// supplies the writer function that produces the temp file (e.g. an ffmpeg
 /// invocation pointed at the temp path). On error, removes the partial temp
@@ -335,7 +360,13 @@ pub fn discard_temp(dest: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, SystemTime};
     use tempfile::TempDir;
+
+    fn set_mtime(path: &Path, when: SystemTime) {
+        let f = fs::File::options().write(true).open(path).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(when)).unwrap();
+    }
 
     #[test]
     fn layout_paths_are_content_addressable() {
@@ -485,5 +516,25 @@ mod tests {
         assert!(!temp2.exists());
         // discard on missing is fine
         discard_temp(&dest2);
+    }
+
+    #[test]
+    fn touch_if_stale_updates_only_stale_mtimes() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tile.jpg");
+        fs::write(&path, b"x").unwrap();
+        let now = SystemTime::now();
+
+        // 30 min old: inside TOUCH_THROTTLE, must NOT be rewritten.
+        set_mtime(&path, now - Duration::from_secs(30 * 60));
+        touch_if_stale(&path);
+        let m = fs::metadata(&path).unwrap().modified().unwrap();
+        assert!(m < now - Duration::from_secs(29 * 60), "fresh mtime rewritten");
+
+        // 2 h old: stale, must be refreshed to ~now.
+        set_mtime(&path, now - Duration::from_secs(2 * 3600));
+        touch_if_stale(&path);
+        let m = fs::metadata(&path).unwrap().modified().unwrap();
+        assert!(m > now - Duration::from_secs(60), "stale mtime not refreshed");
     }
 }
