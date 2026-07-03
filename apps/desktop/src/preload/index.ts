@@ -151,7 +151,7 @@ const api: WeftcutApi = {
       return ipcRenderer.invoke('previewGpu:requestFrameAt', args) as Promise<void>
     },
     close(args: { streamId: string }): Promise<void> {
-      return ipcRenderer.invoke('previewGpu:close', args) as Promise<void>
+      return closePreviewGpuStream(args.streamId)
     },
     // Hand a MessagePort to the main world so it can receive decoded frames.
     // A contextBridge function MAY be called from the main world and MAY itself
@@ -184,6 +184,33 @@ const announceQueue: { streamId: string; slot: number }[] = []
 // The renderer-main-world end of the frame channel, set by requestPort().
 let mainPort: MessagePort | null = null
 
+// Tear down a session from the PRELOAD side. Electron only frees a shared
+// texture's GPU pool slot once EVERY import of it is released — main's
+// closePreviewGpu releases its own (persistent, per-slot) imports, but the
+// copy this preload holds in `importedByKey` (from setSharedTextureReceiver)
+// is a SEPARATE import that only the preload can release. Skipping this leaks
+// a whole NV12 pool per open/close cycle (decode-bench opens/closes a session
+// per source, so this compounds into GPU OOM across a run).
+// Ordering: await the main-process close FIRST — closePreviewGpu closes the
+// native session (stopping the decode thread from writing into the slots)
+// before releasing its imports, so by the time this invoke resolves it's safe
+// to drop the preload's copies too. Also drop any announce-queue entries for
+// this stream so the queue can't accumulate across repeated open/close cycles
+// (e.g. a slot whose receiver callback never fired before close).
+async function closePreviewGpuStream(streamId: string): Promise<void> {
+  await (ipcRenderer.invoke('previewGpu:close', { streamId }) as Promise<void>)
+  const prefix = `${streamId}:`
+  for (const [key, imp] of importedByKey) {
+    if (key.startsWith(prefix)) {
+      imp.release()
+      importedByKey.delete(key)
+    }
+  }
+  for (let i = announceQueue.length - 1; i >= 0; i--) {
+    if (announceQueue[i].streamId === streamId) announceQueue.splice(i, 1)
+  }
+}
+
 // Slot-correlation announce: enqueue; the next receiver callback claims it.
 ipcRenderer.on('evt:previewGpu:slot', (_e, { streamId, slot }: { streamId: string; slot: number }) => {
   announceQueue.push({ streamId, slot })
@@ -203,6 +230,13 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 // native may safely reuse the slot. Acking earlier would let native overwrite
 // the slot mid-read (tearing) and, because native's AcquireSync on a still-held
 // slot uses an INFINITE timeout, could hang the session thread and close().
+//
+// The ack must ALSO fire if createImageBitmap (or the port post) throws — once
+// getVideoFrame() has been called, the slot is spoken for, and vf.close() in
+// the inner finally already releases the GPU hold regardless of outcome. So
+// skipping the ack on failure would strand the slot: native's AcquireSync on it
+// never returns, hanging the session thread (and a later close()'s join).
+// Report the failure to the main world too, matching the eof/error relay below.
 ipcRenderer.on(
   'evt:previewGpu:frameReady',
   async (_e, { streamId, slot, ptsUs, durUs }: { streamId: string; slot: number; ptsUs: number; durUs: number }) => {
@@ -212,15 +246,21 @@ ipcRenderer.on(
     const port = mainPort
     if (!imp || !port) return
     const vf = imp.getVideoFrame()
-    let bmp: ImageBitmap
     try {
-      bmp = await createImageBitmap(vf)
+      let bmp: ImageBitmap
+      try {
+        bmp = await createImageBitmap(vf)
+      } finally {
+        vf.close?.()
+      }
+      port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp }, [bmp])
+    } catch (err) {
+      port.postMessage({ kind: 'error', streamId, message: err instanceof Error ? err.message : String(err) })
     } finally {
-      vf.close?.()
+      // AFTER the snapshot attempt (success or failure) — release the slot back
+      // to the native pool.
+      void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot })
     }
-    port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp }, [bmp])
-    // AFTER the snapshot — release the slot back to the native pool.
-    void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot })
   },
 )
 

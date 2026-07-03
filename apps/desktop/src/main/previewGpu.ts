@@ -43,26 +43,38 @@ export async function openPreviewGpu(
 ): Promise<{ width: number; height: number; poolSize: number }> {
   const info = backend.previewGpuOpen(streamId, path, poolSize)
   const imported: SharedTextureImported[] = []
-  for (let k = 0; k < info.slots.length; k++) {
-    // Slot-correlation announce FIRST (see fn doc): the preload pushes this onto
-    // its announce queue and pairs the NEXT receiver callback to slot k.
-    win.webContents.send('evt:previewGpu:slot', { streamId, slot: k })
-    const imp = sharedTexture.importSharedTexture({
-      textureInfo: {
-        codedSize: { width: info.width, height: info.height },
-        visibleRect: { x: 0, y: 0, width: info.width, height: info.height },
-        pixelFormat: 'nv12',
-        colorSpace,
-        timestamp: 0,
-        // info.slots[k].handle is the LE bytes of the slot texture's NT handle.
-        handle: { ntHandle: info.slots[k].handle },
-      },
-      // Persistent import: keep the texture importable for every frame. We never
-      // call .release() until closePreviewGpu, so this callback stays a no-op.
-      allReferencesReleased: () => {},
-    })
-    await sharedTexture.sendSharedTexture({ frame: win.webContents.mainFrame, importedSharedTexture: imp })
-    imported.push(imp)
+  try {
+    for (let k = 0; k < info.slots.length; k++) {
+      // Slot-correlation announce FIRST (see fn doc): the preload pushes this onto
+      // its announce queue and pairs the NEXT receiver callback to slot k.
+      win.webContents.send('evt:previewGpu:slot', { streamId, slot: k })
+      const imp = sharedTexture.importSharedTexture({
+        textureInfo: {
+          codedSize: { width: info.width, height: info.height },
+          visibleRect: { x: 0, y: 0, width: info.width, height: info.height },
+          pixelFormat: 'nv12',
+          colorSpace,
+          timestamp: 0,
+          // info.slots[k].handle is the LE bytes of the slot texture's NT handle.
+          handle: { ntHandle: info.slots[k].handle },
+        },
+        // Persistent import: keep the texture importable for every frame. We never
+        // call .release() until closePreviewGpu, so this callback stays a no-op.
+        allReferencesReleased: () => {},
+      })
+      // sendSharedTexture has its own internal timeout (~1000ms) and can reject.
+      await sharedTexture.sendSharedTexture({ frame: win.webContents.mainFrame, importedSharedTexture: imp })
+      imported.push(imp)
+    }
+  } catch (err) {
+    // Partial-open failure: slots 0..k-1 are already imported, but we haven't
+    // reached `sessions.set` yet, so a later close() would find no session and
+    // leak both those imports and the native session `previewGpuOpen` already
+    // created. Release what succeeded and drop the orphaned native session
+    // ourselves, then rethrow so the ipc caller sees the open failure.
+    for (const imp of imported) imp.release()
+    backend.previewGpuClose(streamId)
+    throw err
   }
   sessions.set(streamId, { imported, width: info.width, height: info.height })
   return { width: info.width, height: info.height, poolSize: info.slots.length }
