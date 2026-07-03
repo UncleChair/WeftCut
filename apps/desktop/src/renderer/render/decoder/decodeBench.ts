@@ -71,11 +71,18 @@ export function decodeBenchPhase(): string {
   return phase;
 }
 
+/// Cooperative cancellation for a scenario that lost the timebox race. Every
+/// runner polls it at each loop head and THROWS (never breaks) — partial data
+/// after cancellation must not surface as a result; the orphan's rejection is
+/// swallowed by the caller, which has already returned the timeout error.
+interface CancelToken { cancelled: boolean }
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-async function waitContains(h: SourceHandle, tUs: number): Promise<void> {
+async function waitContains(h: SourceHandle, tUs: number, token: CancelToken): Promise<void> {
   const t0 = performance.now();
   while (!h.ring.containsPts(tUs)) {
+    if (token.cancelled) throw new Error("bench run cancelled");
     if (performance.now() - t0 > SEEK_WAIT_TIMEOUT_MS) {
       throw new Error(`frame at ${tUs}us not available after ${SEEK_WAIT_TIMEOUT_MS}ms`);
     }
@@ -83,7 +90,7 @@ async function waitContains(h: SourceHandle, tUs: number): Promise<void> {
   }
 }
 
-async function runThroughput(h: SourceHandle, durationUs: number): Promise<BenchResult> {
+async function runThroughput(h: SourceHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
   phase = "warmup";
   await h.ensureReady();
   void h.requestFrameAt(0);
@@ -94,6 +101,7 @@ async function runThroughput(h: SourceHandle, durationUs: number): Promise<Bench
   const t0 = performance.now();
   let endedAtEof = false;
   for (;;) {
+    if (token.cancelled) throw new Error("bench run cancelled");
     if (performance.now() - t0 >= WINDOW_MS) break;
     const last = h.ring.lastPtsUs() ?? 0;
     if (last >= durationUs - EOF_GUARD_US) { endedAtEof = true; break; }
@@ -125,17 +133,18 @@ async function runThroughput(h: SourceHandle, durationUs: number): Promise<Bench
   };
 }
 
-async function runSeek(h: SourceHandle, durationUs: number): Promise<BenchResult> {
+async function runSeek(h: SourceHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
   phase = "warmup";
   await h.ensureReady();
   void h.requestFrameAt(10_000_000);
-  await waitContains(h, 10_000_000);
+  await waitContains(h, 10_000_000, token);
   phase = "measuring";
   const samples = new Map<SeekCategory, number[]>();
   for (const step of seekPlan(durationUs)) {
+    if (token.cancelled) throw new Error("bench run cancelled");
     const t0 = performance.now();
     void h.requestFrameAt(step.targetUs);
-    await waitContains(h, step.targetUs);
+    await waitContains(h, step.targetUs, token);
     const ms = performance.now() - t0;
     (samples.get(step.category) ?? samples.set(step.category, []).get(step.category)!).push(ms);
   }
@@ -155,16 +164,20 @@ async function runSeek(h: SourceHandle, durationUs: number): Promise<BenchResult
 async function runColdstart(
   pool: SourceDecoderPool,
   mkInit: (layerId: string) => Parameters<SourceDecoderPool["acquire"]>[0],
+  token: CancelToken,
 ): Promise<BenchResult> {
   phase = "measuring";
   const iterationsMs: number[] = [];
   for (let i = 0; i < COLD_ITERATIONS; i++) {
+    // Checked BEFORE acquire so a cancelled run never re-acquires on a pool
+    // the caller is about to dispose.
+    if (token.cancelled) throw new Error("bench run cancelled");
     const layerId = `bench-cold-${i}`;
     const h = pool.acquire(mkInit(layerId));
     const t0 = performance.now();
     await h.ensureReady();
     void h.requestFrameAt(5_000_000);
-    await waitContains(h, 5_000_000);
+    await waitContains(h, 5_000_000, token);
     iterationsMs.push(performance.now() - t0);
     // Releasing the only handle drops the SourceMedia refcount to 0 → the
     // demuxer is disposed, so the next acquire re-opens genuinely cold.
@@ -185,32 +198,54 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     return { kind: "error", error: `strategy ${args.strategy} not integrated (Stage 2)` };
   }
   phase = "setup";
-  const pool = new SourceDecoderPool();
-  const url = convertFileSrc(args.sourcePath);
-  const mkInit = (layerId: string) => ({
-    layerId,
-    mediaId: `bench:${args.sourcePath}`,
-    proxyAssetUrl: url,
-  });
-  const scenario = async (): Promise<BenchResult> => {
-    switch (args.scenario) {
-      case "throughput":
-        return runThroughput(pool.acquire(mkInit("bench-0")), args.durationUs);
-      case "seek":
-        return runSeek(pool.acquire(mkInit("bench-0")), args.durationUs);
-      case "coldstart":
-        return runColdstart(pool, mkInit);
-    }
-  };
-  const timeout = sleep(SCENARIO_TIMEBOX_MS).then(
-    (): BenchResult => ({ kind: "error", error: `timeout after ${SCENARIO_TIMEBOX_MS}ms in phase ${phase}` }),
-  );
+  const token: CancelToken = { cancelled: false };
+  let pool: SourceDecoderPool | null = null;
+  let orphaned = false;
+  let scenarioP: Promise<BenchResult> | null = null;
   try {
-    return await Promise.race([scenario(), timeout]);
+    pool = new SourceDecoderPool();
+    const livePool = pool;
+    const url = convertFileSrc(args.sourcePath);
+    const mkInit = (layerId: string) => ({
+      layerId,
+      mediaId: `bench:${args.sourcePath}`,
+      proxyAssetUrl: url,
+    });
+    scenarioP = (async (): Promise<BenchResult> => {
+      switch (args.scenario) {
+        case "throughput":
+          return runThroughput(livePool.acquire(mkInit("bench-0")), args.durationUs, token);
+        case "seek":
+          return runSeek(livePool.acquire(mkInit("bench-0")), args.durationUs, token);
+        case "coldstart":
+          return runColdstart(livePool, mkInit, token);
+      }
+    })();
+    // Always-handled: if the timeout wins the race, the orphan's eventual
+    // rejection (cancellation throw) must not surface as unhandled.
+    scenarioP.catch(() => {});
+    const timeoutP = sleep(SCENARIO_TIMEBOX_MS).then((): BenchResult => {
+      token.cancelled = true;
+      orphaned = true;
+      return { kind: "error", error: `timeout after ${SCENARIO_TIMEBOX_MS}ms in phase ${phase}` };
+    });
+    return await Promise.race([scenarioP, timeoutP]);
   } catch (e) {
     return { kind: "error", error: String(e) };
   } finally {
     phase = "idle";
-    pool.dispose();
+    const p = pool;
+    if (p) {
+      if (orphaned && scenarioP) {
+        // The losing scenario may still hold handles for a few ticks (or be
+        // parked in a hung ensureReady). The token makes its loops exit on
+        // the next poll; dispose only after it settles so nothing races a
+        // disposed pool — and a hung ensureReady's deferred dispose still
+        // closes the decoder when it eventually settles.
+        void scenarioP.catch(() => {}).finally(() => p.dispose());
+      } else {
+        p.dispose();
+      }
+    }
   }
 }
