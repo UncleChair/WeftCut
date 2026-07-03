@@ -145,6 +145,7 @@ pub(super) async fn detect_silences(
         )
     })?;
     let waveform_path = b.cache.waveform(&media.file_hash_blake3);
+    crate::cache::touch_if_stale(&waveform_path);
     if !cached_ok(&waveform_path) {
         return Err(McpToolError::invalid_request(
             format!(
