@@ -6,6 +6,13 @@
 // Spec: docs/superpowers/specs/2026-07-03-decode-bench-design.md
 import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
+import type { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
+
+/// Either decode strategy's handle. Both expose `ring: FrameRing` (so
+/// `ring.pushCount`/`lastPtsUs()`/`containsPts()` resolve without narrowing),
+/// `ensureReady`, and `requestFrameAt` — the runners below need no strategy-
+/// specific branching.
+type BenchHandle = SourceHandle | NativeGpuSourceHandle;
 
 export type BenchStrategy = "webcodecs" | "native";
 export type BenchScenario = "throughput" | "seek" | "coldstart";
@@ -80,7 +87,7 @@ interface CancelToken { cancelled: boolean }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // Exported only for the regression test that pins the re-kick contract.
-export async function waitContains(h: SourceHandle, tUs: number, token: CancelToken): Promise<void> {
+export async function waitContains(h: BenchHandle, tUs: number, token: CancelToken): Promise<void> {
   const t0 = performance.now();
   while (!h.ring.containsPts(tUs)) {
     if (token.cancelled) throw new Error("bench run cancelled");
@@ -96,7 +103,7 @@ export async function waitContains(h: SourceHandle, tUs: number, token: CancelTo
   }
 }
 
-async function runThroughput(h: SourceHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
+async function runThroughput(h: BenchHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
   phase = "warmup";
   await h.ensureReady();
   void h.requestFrameAt(0);
@@ -139,7 +146,7 @@ async function runThroughput(h: SourceHandle, durationUs: number, token: CancelT
   };
 }
 
-async function runSeek(h: SourceHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
+async function runSeek(h: BenchHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
   phase = "warmup";
   await h.ensureReady();
   void h.requestFrameAt(10_000_000);
@@ -200,9 +207,6 @@ async function runColdstart(
 }
 
 export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
-  if (args.strategy !== "webcodecs") {
-    return { kind: "error", error: `strategy ${args.strategy} not integrated (Stage 2)` };
-  }
   phase = "setup";
   const token: CancelToken = { cancelled: false };
   let pool: SourceDecoderPool | null = null;
@@ -215,7 +219,12 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     const mkInit = (layerId: string) => ({
       layerId,
       mediaId: `bench:${args.sourcePath}`,
+      // Unused by the native strategy (it decodes `sourcePath` directly) but
+      // still passed — `proxyAssetUrl` is required by `SourceHandleInit`.
       proxyAssetUrl: url,
+      ...(args.strategy === "native"
+        ? { forceStrategy: "native" as const, sourcePath: args.sourcePath }
+        : {}),
     });
     scenarioP = (async (): Promise<BenchResult> => {
       switch (args.scenario) {

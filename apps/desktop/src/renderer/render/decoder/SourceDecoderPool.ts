@@ -21,6 +21,7 @@ import { frameToSourceUs } from "./ptsOffset";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
+import { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
 
 const IDLE_DISPOSE_MS = 5_000;
 
@@ -63,6 +64,17 @@ export interface SourceHandleInit {
   /// the opened decode target's first packet instead (re-encoded proxies start
   /// at PTS 0). Kept as a fallback when the target has no packets.
   sourceStartPtsUs?: number | null;
+  /// E2E-only: force the decode strategy for this handle rather than letting
+  /// the pool pick WebCodecs. `'native'` routes to `NativeGpuSourceHandle`
+  /// (Stage 2 decode-bench) instead of the default `SourceHandle` pipeline.
+  /// Gated on `VITE_WEFTCUT_E2E === "1"` in `acquire` — inert (ignored) in
+  /// production and dev builds so this can never affect real playback.
+  forceStrategy?: "webcodecs" | "native";
+  /// E2E-only: the ORIGINAL file path for a `forceStrategy: 'native'`
+  /// handle to decode directly (native sessions bypass the shared,
+  /// proxy-backed `SourceMedia` entirely). Ignored by the WebCodecs path,
+  /// which decodes `proxyAssetUrl` instead.
+  sourcePath?: string;
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
@@ -658,7 +670,7 @@ interface MediaEntry {
 /// refcounted (so the demuxer + sample table is shared across every
 /// handle referencing the same source proxy).
 export class SourceDecoderPool {
-  private handles = new Map<string, SourceHandle>();
+  private handles = new Map<string, SourceHandle | NativeGpuSourceHandle>();
   private medias = new Map<string, MediaEntry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -666,7 +678,28 @@ export class SourceDecoderPool {
   /// share the same `mediaId`; each gets a distinct handle (decoder +
   /// ring) but references a refcounted shared `SourceMedia`. The handle
   /// is initialised lazily by the first `await ensureReady()` call.
-  acquire(init: SourceHandleInit): SourceHandle {
+  ///
+  /// E2E-only escape hatch: `forceStrategy: 'native'` (gated on
+  /// `VITE_WEFTCUT_E2E === "1"`) routes to a `NativeGpuSourceHandle`
+  /// instead, decoding `sourcePath` directly. The native branch skips
+  /// `acquireMedia` entirely — there is no shared, proxy-backed
+  /// `SourceMedia` for a native session, so `mediaId` here is just a pool
+  /// bookkeeping key (see `releaseHandle`, whose `medias.get(mediaId)` miss
+  /// is a no-op for these handles).
+  acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle {
+    if (import.meta.env.VITE_WEFTCUT_E2E === "1" && init.forceStrategy === "native") {
+      const existingNative = this.handles.get(init.layerId);
+      if (existingNative) return existingNative;
+      const nativeHandle = new NativeGpuSourceHandle(
+        init.layerId,
+        init.mediaId,
+        init.sourcePath ?? "",
+        init.sourceColor,
+      );
+      this.handles.set(init.layerId, nativeHandle);
+      this.startSweeperIfNeeded();
+      return nativeHandle;
+    }
     const existing = this.handles.get(init.layerId);
     if (existing) return existing;
     const media = this.acquireMedia(

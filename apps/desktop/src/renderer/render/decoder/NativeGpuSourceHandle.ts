@@ -25,6 +25,12 @@ import type { PreviewGpuColorSpace } from "../../../shared/ipc";
 /// no-op) should surface quickly rather than hang the caller indefinitely.
 const PORT_TIMEOUT_MS = 5_000;
 
+/// Idle-dispose threshold. Mirrors `SourceDecoderPool`'s `IDLE_DISPOSE_MS` —
+/// re-declared locally (rather than imported) so this file doesn't take a
+/// runtime dependency back on the pool module it's constructed by, which
+/// only holds a type-only import of `DecoderHandle` from here today.
+const IDLE_DISPOSE_MS = 5_000;
+
 interface PortFrameMsg {
   kind: "frame";
   streamId: string;
@@ -86,6 +92,9 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   private readyP: Promise<void> | null = null;
   private ready = false;
   private _disposed = false;
+  /// Last `ensureReady`/`requestFrameAt` call time, for the pool's idle
+  /// sweeper (`isIdle`). Mirrors `SourceHandle.lastUseMs`.
+  private lastUseMs = 0;
   /// True once an `eof` port message arrived. `requestFrameAt` stops
   /// issuing IPC once set — nudging a session that already reported
   /// end-of-stream just burns round-trips.
@@ -135,6 +144,7 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   /// session. Idempotent across concurrent callers (cached in-flight
   /// promise, like `SourceHandle.ensureReady`).
   async ensureReady(): Promise<void> {
+    this.lastUseMs = performance.now();
     if (this.ready) return;
     if (this.readyP) return this.readyP;
     this.readyP = this._doEnsureReady();
@@ -227,6 +237,7 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   /// than one extra IPC round-trip.
   async requestFrameAt(tUs: number): Promise<void> {
     if (!this.ready) await this.ensureReady();
+    this.lastUseMs = performance.now();
     if (this._disposed || this.eof) return;
     this.pendingTargetUs = tUs;
     if (this.requestInFlight) return;
@@ -249,6 +260,15 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   /// Whether the ring's lookahead window is satisfied. Dev `PerfHUD`.
   isLookaheadFull(): boolean {
     return this.ring.isLookaheadFull();
+  }
+
+  /// `nowMs` from the pool's sweep tick. Returns true if this handle has
+  /// been idle longer than the dispose threshold. Required by
+  /// `SourceDecoderPool`'s sweeper now that `handles` holds the
+  /// `SourceHandle | NativeGpuSourceHandle` union — mirrors
+  /// `SourceHandle.isIdle`.
+  isIdle(nowMs: number): boolean {
+    return this.lastUseMs > 0 && nowMs - this.lastUseMs > IDLE_DISPOSE_MS;
   }
 
   /// Tear down: stop listening for port traffic, close the native session
