@@ -20,6 +20,7 @@ import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
 import { SINGLE_MEDIA_CHANNELS, resolveSingleMediaArgs } from './state/single-media-forward.js'
 import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
+import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu } from './previewGpu.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -420,6 +421,29 @@ app.whenReady().then(async () => {
     const json = await backend!.invoke(channel, JSON.stringify(args ?? {}))
     return JSON.parse(json)
   })
+
+  // Native GPU-decode preview (Windows). Session lifecycle + the persistent
+  // shared-texture handoff live in ./previewGpu; the per-frame
+  // frameReady/eof/error pokes reach the renderer already, via the Backend
+  // onEvent relay above (they fall through to `evt:previewGpu:*`). consumeAck is
+  // driven by the preload's per-frame loop AFTER createImageBitmap resolves (the
+  // ack-after-read contract) — never earlier, or native could reuse the slot
+  // mid-read and, on a still-held slot's infinite AcquireSync, hang the session.
+  ipcMain.handle(
+    'previewGpu:open',
+    (e, a: { streamId: string; path: string; poolSize: number; colorSpace: Electron.ColorSpace }) => {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? mainWindow
+      if (!win) throw new Error('previewGpu:open — no window for sender')
+      return openPreviewGpu(backend!, win, a.streamId, a.path, a.poolSize, a.colorSpace)
+    },
+  )
+  ipcMain.handle('previewGpu:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
+    requestFrameAtPreviewGpu(backend!, a.streamId, a.targetUs),
+  )
+  ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number }) =>
+    consumeAckPreviewGpu(backend!, a.streamId, a.slot),
+  )
+  ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(backend!, a.streamId))
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options))
