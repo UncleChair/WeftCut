@@ -85,6 +85,15 @@ tempfile = "3"
 # decodes the PNG bytes; both libs together add ~150 KB to the binary.
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-compare = "0.5"
+# Windows-only GPU preview decode (decode-bench Stage 2). Library bindings;
+# needs FFMPEG_DIR + LIBCLANG_PATH set at build time (see preview_gpu module doc).
+ffmpeg-next = { version = "8.1", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", optional = true, features = [
+  "Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
+] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
@@ -97,6 +106,7 @@ jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg
 export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_conform/io::probe
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
+preview-gpu = ["dep:ffmpeg-next", "dep:windows"]  # Windows-only GPU preview decode (decode-bench Stage 2)
 
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 # (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).

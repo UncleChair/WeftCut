@@ -31,6 +31,8 @@ mod export;
 mod cloud;
 #[cfg(feature = "mcp")]
 mod mcp;
+#[cfg(all(windows, feature = "preview-gpu"))]
+mod preview_gpu;
 
 mod logs;
 mod agent_session;
