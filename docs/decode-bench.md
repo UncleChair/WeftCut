@@ -6,10 +6,11 @@ decode path at the `DecoderHandle` seam — the same seam
 profiles the shipping WebCodecs strategy; it is built to compare that against
 a native-ffmpeg GPU/shared-texture strategy once that path lands, decoding
 the identical original file on both sides. Like
-`e2e/scripts/memory-ratchet.mjs`, it's infrastructure that stays in the repo
-rather than a one-off measurement — the design rationale and full test
-matrix live in
-[`docs/superpowers/specs/2026-07-03-decode-bench-design.md`](superpowers/specs/2026-07-03-decode-bench-design.md).
+`apps/desktop/e2e/scripts/memory-ratchet.mjs`, it's infrastructure that stays
+in the repo rather than a one-off measurement: a durable regression bed for
+whichever decode paths the app ships, and the data that pins the open
+parameters of a future native path (codec coverage, concurrency cap, 4K
+viability).
 
 The driver (`apps/desktop/src/renderer/render/decoder/decodeBench.ts`) owns a
 private `SourceDecoderPool`, never the app's live one, so runs are
@@ -54,8 +55,9 @@ median.
   decode cost lands in the **renderer** and **GPU** processes. GPU engine
   utilization comes from Windows `typeperf` sampling the `VideoDecode` and
   `3D` engine counters at 1 Hz (the `3D` engine is where `createImageBitmap`
-  conversion cost shows up). Those counters are **machine-wide**, not
-  per-process — see "How to run" below.
+  conversion cost shows up). This metric is **Windows-only** — off Windows the
+  sampler is inert and the GPU columns come back empty/NaN. Those counters are
+  also **machine-wide**, not per-process — see "How to run" below.
 
 ## What it deliberately is not
 
@@ -64,10 +66,12 @@ median.
   decoder is faster," not "which user-facing experience is faster" — the
   short-GOP quick-proxy's scrub advantage (see [`preview.md`](preview.md#proxies))
   is out of scope by design.
-- **Not a CI gate.** GPU-decode numbers on a headless CI runner are
-  meaningless, so this harness never runs there — it's local-only by
-  construction, the same reasoning that keeps the analyzer-backed
-  conformance gates off CI (see [`conformance.md`](conformance.md#running)).
+- **Not a CI gate.** GPU-decode numbers measured on a headless CI runner are
+  inherently meaningless — there's no real GPU decode engine to profile — so
+  this harness is local-only by construction. (The analyzer-backed
+  conformance gates skip CI too, but for a different, closable reason: CI
+  doesn't build their cargo analyzer or fixtures. See
+  [`conformance.md`](conformance.md#running).)
 - **Informative, not pass/fail.** The process exit code is non-zero only on
   a harness or `--self-check` failure — never because a decode was slow.
   Comparing strategies is a decision input, not a regression assertion.
