@@ -4,5 +4,8 @@
 //! Lifted from poc/shared-texture (branch poc/shared-texture-import); see
 //! poc/shared-texture/INTEGRATION-DESIGN.md.
 pub mod decoder;
-// mod session;   // Task 4
-// pub use session::PreviewGpuRegistry;  // Task 4
+mod session;
+// The registry + its wire types are the seam Task 5 wires to the addon's event
+// channel; unused until then (allow keeps the base build's warning set clean).
+#[allow(unused_imports)]
+pub use session::{OpenInfo, PreviewGpuPoke, PreviewGpuRegistry};
