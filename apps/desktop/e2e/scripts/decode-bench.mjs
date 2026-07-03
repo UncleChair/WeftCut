@@ -56,6 +56,10 @@ function startGpuSampler() {
     "\\GPU Engine(*engtype_3D)\\Utilization Percentage",
   ];
   const child = spawn("typeperf", [...counters, "-si", "1"], { windowsHide: true });
+  // A failed spawn (typeperf off PATH) emits an 'error' event that Node rethrows
+  // as an unhandled exception if unhandled; swallow it and let the sampler return
+  // empty series — a missing GPU sampler must not crash the whole run.
+  child.on("error", () => {});
   let header = null;
   const videoDecode = [];
   const gpu3d = [];
@@ -127,9 +131,17 @@ async function runSession(fixture, wantScenarios) {
       const metricsTimer = setInterval(() => {
         void app.evaluate(({ app: a }) => a.getAppMetrics()).then((m) => metricSamples.push(m)).catch(() => {});
       }, 500);
-      const result = await resultP;
-      clearInterval(metricsTimer);
-      const gpuS = gpu.stop();
+      // A rejection of resultP (target crash / disconnect) must still tear down
+      // the interval and the typeperf child — otherwise the interval keeps the
+      // event loop alive forever and the sampler process is orphaned.
+      let result;
+      let gpuS;
+      try {
+        result = await resultP;
+      } finally {
+        clearInterval(metricsTimer);
+        gpuS = gpu.stop();
+      }
       const byType = {};
       for (const sample of metricSamples) {
         for (const p of sample) {
@@ -193,18 +205,27 @@ if (selfCheck) {
 
 const env = await envBlock();
 const report = { env, strategy: STRATEGY, runs, cells: [] };
+// Resolve the output path + ensure the dir up front so we can rewrite the
+// report after every fixture — a crash late in a multi-fixture batch must not
+// discard the fixtures already measured.
+fs.mkdirSync(RESULTS_DIR, { recursive: true });
+const outFile = path.join(RESULTS_DIR, `${env.date.slice(0, 10)}-${env.gitSha}.json`);
 for (const fixture of fixtures) {
   const perRun = [];
   for (let run = 0; run < runs; run++) {
     log(`${fixture.name} run ${run + 1}/${runs} …`);
-    perRun.push(await runSession(fixture, scenarios));
+    // A session that throws (launch failure, page crash) is recorded as a
+    // cell-level harnessError and the batch continues — one bad session must
+    // not abort the whole matrix.
+    try {
+      perRun.push(await runSession(fixture, scenarios));
+    } catch (e) {
+      perRun.push({ harnessError: String(e) });
+    }
   }
   report.cells.push({ fixture: fixture.name, perRun });
+  fs.writeFileSync(outFile, JSON.stringify(report, null, 2));
 }
-
-fs.mkdirSync(RESULTS_DIR, { recursive: true });
-const outFile = path.join(RESULTS_DIR, `${env.date.slice(0, 10)}-${env.gitSha}.json`);
-fs.writeFileSync(outFile, JSON.stringify(report, null, 2));
 log(`report → ${outFile}`);
 
 // Markdown summary: median across runs for the headline numbers.
@@ -221,6 +242,10 @@ for (const cell of report.cells) {
     `| ${fmt(median(cs.map((c) => c.firstMs)))} | ${fmt(median(tp.map((t) => t.resources?.gpuVideoDecode.mean)))} |`,
   );
   for (const [i, r] of cell.perRun.entries()) {
+    if (r.harnessError) {
+      console.log(`  ↳ run ${i + 1} harness: ${r.harnessError}`);
+      continue;
+    }
     for (const s of scenarios) {
       if (r[s]?.kind === "error") console.log(`  ↳ run ${i + 1} ${s}: ${r[s].error}`);
     }
