@@ -566,15 +566,8 @@ mod tests {
         // start (66_666) -> 0 (source t=0).
         assert_eq!(pts_to_source_us(1024, (1, 15360), 66_666), 0);
         // next frame pts=1536 -> 1536*1_000_000/15360 = 100_000us exactly; minus
-        // start (66_666, itself truncated from 66_666.67) -> 33_334us (~1 frame
-        // @30fps). NOTE: the task-3 brief's worked example states 33_333us here,
-        // but that doesn't match its own verbatim `pts_to_source_us` formula run
-        // on its own verbatim inputs (100_000 - 66_666 = 33_334, confirmed by
-        // hand and by `bash -c 'echo $((1536*1000000/15360 - 66666))'` => 33334).
-        // The 1us discrepancy is an artifact of `start_pts_us` having already
-        // been floor-divided once; treated as a test-fixture typo in the brief
-        // and corrected here rather than changing the (verbatim, downstream-
-        // depended-on) implementation.
+        // start (66_666, already floor-truncated by the same formula) -> 33_334us.
+        // Both operands are floor-truncated identically, so their difference is exact.
         assert_eq!(pts_to_source_us(1536, (1, 15360), 66_666), 33_334);
     }
 }
