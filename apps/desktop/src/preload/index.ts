@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron'
+import type { SharedTextureImported } from 'electron'
 import type {
   WeftcutApi,
   AppNotice,
@@ -6,6 +7,8 @@ import type {
   DialogSaveOpts,
   DirEntry,
   NotificationOpts,
+  PreviewGpuColorSpace,
+  PreviewGpuOpenReply,
   SystemStats,
   WinCreateOpts,
   WinAction,
@@ -134,7 +137,100 @@ const api: WeftcutApi = {
   videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void> {
     return ipcRenderer.invoke('export:videosink_write', bytes) as Promise<void>
   },
+
+  // Native GPU-decode preview (Windows). The three session commands are plain
+  // ipcRenderer.invoke wrappers; the decoded frames themselves flow OUT of band
+  // over a MessagePort (see requestPort + the frameReady loop below) because a
+  // MessagePort/ImageBitmap can't be handed across the contextBridge. consumeAck
+  // is NOT exposed — it's fired preload-side, after createImageBitmap resolves.
+  previewGpu: {
+    open(args: { streamId: string; path: string; poolSize: number; colorSpace: PreviewGpuColorSpace }): Promise<PreviewGpuOpenReply> {
+      return ipcRenderer.invoke('previewGpu:open', args) as Promise<PreviewGpuOpenReply>
+    },
+    requestFrameAt(args: { streamId: string; targetUs: number }): Promise<void> {
+      return ipcRenderer.invoke('previewGpu:requestFrameAt', args) as Promise<void>
+    },
+    close(args: { streamId: string }): Promise<void> {
+      return ipcRenderer.invoke('previewGpu:close', args) as Promise<void>
+    },
+    // Hand a MessagePort to the main world so it can receive decoded frames.
+    // A contextBridge function MAY be called from the main world and MAY itself
+    // call window.postMessage with a transfer list (Task 1: only PASSING a port
+    // as a bridge ARGUMENT fails). Task 7 attaches its `message` listener BEFORE
+    // calling this, then grabs `ev.ports[0]`.
+    requestPort(): void {
+      const ch = new MessageChannel()
+      mainPort = ch.port1
+      window.postMessage({ __weftcutPreviewGpu: 'port' }, '*', [ch.port2])
+    },
+  },
 }
+
+// ---------------------------------------------------------------------------
+// Native GPU-decode preview receiver (Windows). This wiring lives in the
+// isolated preload world — the ONLY world where setSharedTextureReceiver is
+// available and where the imported textures land (Task 1 spike). It bridges
+// received frames to the renderer main world over a MessagePort.
+// ---------------------------------------------------------------------------
+
+// The imported shared texture for each pool slot, keyed `${streamId}:${slot}`.
+// Populated once per slot at open by pairing the receiver callbacks (which carry
+// no slot id) to `previewGpu:slot` announces in FIFO order.
+const importedByKey = new Map<string, SharedTextureImported>()
+// Slot announces awaiting their receiver callback. Main sends one announce
+// immediately before each slot's sendSharedTexture, so the announce is enqueued
+// here before the receiver fires for that slot — pair by shift() (FIFO).
+const announceQueue: { streamId: string; slot: number }[] = []
+// The renderer-main-world end of the frame channel, set by requestPort().
+let mainPort: MessagePort | null = null
+
+// Slot-correlation announce: enqueue; the next receiver callback claims it.
+ipcRenderer.on('evt:previewGpu:slot', (_e, { streamId, slot }: { streamId: string; slot: number }) => {
+  announceQueue.push({ streamId, slot })
+})
+
+// Register the receiver ONCE at preload load. Each callback = one slot's texture
+// arriving from main; pair it FIFO to the announce enqueued just before its send.
+sharedTexture.setSharedTextureReceiver(async (data) => {
+  const a = announceQueue.shift()
+  if (a) importedByKey.set(`${a.streamId}:${a.slot}`, data.importedSharedTexture)
+})
+
+// Per-frame loop — this is where the ACK-AFTER-READ discipline lives. On a
+// frameReady poke: snapshot the slot's shared texture into an ImageBitmap, post
+// it to the main world over the MessagePort, and ONLY THEN consumeAck. The ack
+// must fire after createImageBitmap resolves — the snapshot is complete then, so
+// native may safely reuse the slot. Acking earlier would let native overwrite
+// the slot mid-read (tearing) and, because native's AcquireSync on a still-held
+// slot uses an INFINITE timeout, could hang the session thread and close().
+ipcRenderer.on(
+  'evt:previewGpu:frameReady',
+  async (_e, { streamId, slot, ptsUs, durUs }: { streamId: string; slot: number; ptsUs: number; durUs: number }) => {
+    const imp = importedByKey.get(`${streamId}:${slot}`)
+    // Snapshot mainPort into a const so its non-null narrowing survives the await
+    // below (a module-scoped `let` re-widens across await points).
+    const port = mainPort
+    if (!imp || !port) return
+    const vf = imp.getVideoFrame()
+    let bmp: ImageBitmap
+    try {
+      bmp = await createImageBitmap(vf)
+    } finally {
+      vf.close?.()
+    }
+    port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp }, [bmp])
+    // AFTER the snapshot — release the slot back to the native pool.
+    void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot })
+  },
+)
+
+// End-of-stream / error pokes → forward to the main world over the same port.
+ipcRenderer.on('evt:previewGpu:eof', (_e, { streamId }: { streamId: string }) => {
+  mainPort?.postMessage({ kind: 'eof', streamId })
+})
+ipcRenderer.on('evt:previewGpu:error', (_e, { streamId, message }: { streamId: string; message: string }) => {
+  mainPort?.postMessage({ kind: 'error', streamId, message })
+})
 
 contextBridge.exposeInMainWorld('api', api)
 

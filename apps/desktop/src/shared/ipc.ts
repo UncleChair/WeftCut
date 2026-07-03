@@ -66,6 +66,22 @@ export type SystemStats = {
 /// fire-once-before-subscribe race a pushed event had.
 export type AppNotice = { level: 'info' | 'warn' | 'error'; code: string }
 
+/// Color-space tag for a native GPU-preview shared-texture import. Mirrors
+/// Electron's `ColorSpace` structure (main passes it straight to
+/// `importSharedTexture`); typed structurally here so this DOM/electron-free
+/// contract file stays free of the Electron types. Task 7 supplies the enum
+/// values (e.g. bt709/limited) from the source's color metadata.
+export type PreviewGpuColorSpace = {
+  primaries: string
+  transfer: string
+  matrix: string
+  range: 'limited' | 'full' | 'derived' | 'invalid'
+}
+
+/// Reply of `previewGpu.open`: decoded stream dimensions + the realized pool
+/// size (native may hand back fewer slots than requested).
+export type PreviewGpuOpenReply = { width: number; height: number; poolSize: number }
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -113,6 +129,24 @@ export interface WeftcutApi {
   /// Best-effort OS font-file lookup by family name (main-side scan); null when
   /// not found, so the renderer falls back to the bundled font chain.
   font: { resolve(family: string): Promise<Uint8Array | null> }
+  /// Native GPU-decode preview (Windows). Session commands only — per-frame
+  /// `ImageBitmap`s do NOT travel over this bridge (a MessagePort/frame can't
+  /// cross contextBridge). Instead `requestPort()` hands a MessagePort to the
+  /// main world via `window.postMessage`, over which the preload posts each
+  /// decoded frame; the renderer (Task 7) listens for the one-time port message
+  /// then reads frames off `port.onmessage`. consumeAck is preload-internal
+  /// (fired after createImageBitmap), so it is deliberately NOT exposed here.
+  previewGpu: {
+    open(args: {
+      streamId: string
+      path: string
+      poolSize: number
+      colorSpace: PreviewGpuColorSpace
+    }): Promise<PreviewGpuOpenReply>
+    requestFrameAt(args: { streamId: string; targetUs: number }): Promise<void>
+    close(args: { streamId: string }): Promise<void>
+    requestPort(): void
+  }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
   /// Broadcast an event to every app window (delivered to `on()` subscribers as
