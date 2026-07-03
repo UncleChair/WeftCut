@@ -14,7 +14,10 @@ import {
 // (zero-width viewport, zero-duration project).
 export const DEFAULT_PX_PER_SEC = 80;
 export const MIN_PX_PER_SEC_FLOOR = 0.05;
-export const MAX_PX_PER_SEC = 800;
+// 2000 px/s exceeds the waveform's stored finest LOD (1000 peaks/s): past
+// ~1333 px/s the envelope stretches instead of gaining detail — accepted;
+// the filmstrip (the ceiling's driver) keeps densifying to lod 0.
+export const MAX_PX_PER_SEC = 2000;
 // Taller default row so combined V+A rows fit a thumbnail strip (top half)
 // + waveform strip (bottom half); single-class tracks still fit comfortably.
 export const DEFAULT_TRACK_HEIGHT = 56;
