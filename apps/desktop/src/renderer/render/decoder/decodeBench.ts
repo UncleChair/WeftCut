@@ -79,7 +79,8 @@ interface CancelToken { cancelled: boolean }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-async function waitContains(h: SourceHandle, tUs: number, token: CancelToken): Promise<void> {
+// Exported only for the regression test that pins the re-kick contract.
+export async function waitContains(h: SourceHandle, tUs: number, token: CancelToken): Promise<void> {
   const t0 = performance.now();
   while (!h.ring.containsPts(tUs)) {
     if (token.cancelled) throw new Error("bench run cancelled");
