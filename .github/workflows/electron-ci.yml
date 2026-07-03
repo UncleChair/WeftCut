@@ -146,7 +146,11 @@ jobs:
           # linkage, so it tests standalone. (Its wasm build is gated separately
           # via the Linux `npm test` TS goldens, which run the same fixtures.)
           cargo test -p weftcut-eval --manifest-path native/Cargo.toml
-          cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
+          # Feature union must match napi:build (the real crate features are
+          # jobs/export/mcp/cloud — motifs migrated to TS and is NOT a Cargo
+          # feature). export+cloud both pull in jobs, so this compiles every
+          # #[cfg(feature)] module. Keep in lockstep with the napi:build script.
+          cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
       # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).

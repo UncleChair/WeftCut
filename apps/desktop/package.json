@@ -18,6 +18,7 @@
     "build:wasm": "node scripts/build-eval-wasm.mjs",
     "preview": "electron-vite preview",
     "typecheck": "tsc -b",
+    "pretypecheck": "npm run build:wasm",
     "test": "vitest run --exclude '**/*.browser.test.ts'",
     "pretest": "npm run build:wasm",
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
