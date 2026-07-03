@@ -29,6 +29,11 @@ export interface TileProducer<T> {
   /// Called on invalidateMedia so producers can drop their own per-media state
   /// (e.g. cached level tables) — the engine only owns tile slots.
   invalidate?(mediaId: string): void;
+  /// Byte budget for this producer's ready tiles. Producers without one share
+  /// the engine-wide default. Eviction is per kind: one producer's byte
+  /// pressure never evicts another's tiles (filmstrip bitmaps ~466 KB would
+  /// otherwise churn the ~48 KB waveform tiles out).
+  budgetBytes?: number;
 }
 
 export const DEFAULT_TILE_BUDGET_BYTES = 192 * 1024 * 1024;
@@ -56,7 +61,7 @@ export class TileEngine {
   private producers = new Map<string, TileProducer<unknown>>();
   private slots = new Map<string, Slot<unknown>>();
   private listeners = new Map<string, Set<() => void>>();
-  private totalBytes = 0;
+  private bytesByKind = new Map<string, number>();
   private clock = 0;
   private jobListenerInstalled = false;
 
@@ -113,8 +118,8 @@ export class TileEngine {
         const bytes = producer.bytes(value);
         slot.entry = { state: "ready", value };
         slot.bytes = bytes;
-        this.totalBytes += bytes;
-        this.evictToBudget(ks);
+        this.bytesByKind.set(key.kind, (this.bytesByKind.get(key.kind) ?? 0) + bytes);
+        this.evictToBudget(ks, key.kind);
         this.notify(key.mediaId);
       })
       .catch((e: unknown) => {
@@ -154,18 +159,20 @@ export class TileEngine {
   private freeSlot(ks: string, slot: Slot<unknown>): void {
     if (slot.entry.state === "ready") {
       this.producers.get(slot.key.kind)?.dispose?.(slot.entry.value);
-      this.totalBytes -= slot.bytes;
+      this.bytesByKind.set(slot.key.kind, (this.bytesByKind.get(slot.key.kind) ?? 0) - slot.bytes);
     }
     this.slots.delete(ks);
   }
 
-  private evictToBudget(protectKs: string): void {
-    if (this.totalBytes <= this.budgetBytes) return;
+  private evictToBudget(protectKs: string, kind: string): void {
+    const budget = this.producers.get(kind)?.budgetBytes ?? this.budgetBytes;
+    const kindBytes = () => this.bytesByKind.get(kind) ?? 0;
+    if (kindBytes() <= budget) return;
     const ready = [...this.slots.entries()]
-      .filter(([ks, s]) => ks !== protectKs && s.entry.state === "ready")
+      .filter(([ks, s]) => ks !== protectKs && s.key.kind === kind && s.entry.state === "ready")
       .sort((a, b) => a[1].version - b[1].version); // oldest touch first
     for (const [ks, slot] of ready) {
-      if (this.totalBytes <= this.budgetBytes) break;
+      if (kindBytes() <= budget) break;
       this.freeSlot(ks, slot);
     }
   }

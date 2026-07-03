@@ -10,6 +10,9 @@ export const WAVEFORM_KIND = "waveform";
 export const TILE_PEAKS = 2048;
 /// Aim for ~1.5 timeline px per peak window at the chosen LOD.
 export const PX_PER_PEAK_TARGET = 1.5;
+/// Engine-side budget for waveform tiles (~48 KB each -> ~680 tiles, far
+/// above what the viewport-bounded fetch can request at once).
+export const WAVEFORM_TILE_BUDGET_BYTES = 32 * 1024 * 1024;
 
 /// Index of the coarsest level whose density still meets the on-screen demand,
 /// so we ship the least data that looks crisp. Levels are finest-first.
@@ -77,6 +80,7 @@ export function registerWaveformProducer(engine: TileEngine = tileEngine): void 
   registered = true;
   engine.register<TileValue>({
     kind: WAVEFORM_KIND,
+    budgetBytes: WAVEFORM_TILE_BUDGET_BYTES,
     // `lod` encodes level; `index` encodes channel*BIG + tileIndex.
     fetch: async (key: TileKey) => {
       const channel = Math.floor(key.index / 1_000_000);

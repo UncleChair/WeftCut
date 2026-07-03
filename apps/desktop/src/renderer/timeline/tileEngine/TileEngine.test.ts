@@ -162,6 +162,28 @@ describe("TileEngine", () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
+  it("evicts per producer kind: one kind's pressure leaves other kinds alone", async () => {
+    const big = Array.from({ length: 80 }, (_, i) => i); // 640 bytes
+    const a = makeProducer({ kind: "a", budgetBytes: 800 });
+    const b = makeProducer({ kind: "b", budgetBytes: 10_000 });
+    engine.register(a.producer);
+    engine.register(b.producer);
+
+    const kb: TileKey = { mediaId: "m", kind: "b", lod: 0, index: 0 };
+    engine.request(kb); b.resolve("0:0", big); await Promise.resolve();
+
+    const ka0: TileKey = { mediaId: "m", kind: "a", lod: 0, index: 0 };
+    const ka1: TileKey = { mediaId: "m", kind: "a", lod: 0, index: 1 };
+    engine.request(ka0); a.resolve("0:0", big); await Promise.resolve();
+    engine.request(ka1); a.resolve("0:1", big); await Promise.resolve();
+
+    // kind a is over ITS 800-byte budget (1280) -> evicts its own oldest.
+    // kind b's tile is the globally oldest touch but must be untouched.
+    expect(engine.get(kb)?.state).toBe("ready");
+    expect(engine.get(ka0)).toBeUndefined();
+    expect(engine.get(ka1)?.state).toBe("ready");
+  });
+
   it("re-requests an error slot only after the cooldown", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
