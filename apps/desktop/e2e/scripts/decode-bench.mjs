@@ -22,7 +22,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP = path.resolve(HERE, "../..");
 const MAIN = path.join(DESKTOP, "out/main/index.js");
 const RESULTS_DIR = path.join(DESKTOP, "e2e/bench-results");
-const STRATEGY = "webcodecs"; // Stage 2 adds 'native'
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const log = (m) => console.log(`[decode-bench] ${m}`);
@@ -36,6 +35,11 @@ const selfCheck = process.argv.includes("--self-check");
 const fixtureArg = arg("fixture", "all");
 const scenarioArg = arg("scenario", "all");
 const runs = Number(arg("runs", "3"));
+const STRATEGY = arg("strategy", "webcodecs"); // 'webcodecs' | 'native'
+if (STRATEGY !== "webcodecs" && STRATEGY !== "native") {
+  console.error(`[decode-bench] invalid --strategy '${STRATEGY}' (expected webcodecs|native)`);
+  process.exit(1);
+}
 const scenarios = scenarioArg === "all" ? ["throughput", "seek", "coldstart"] : [scenarioArg];
 const fixtures = (fixtureArg === "all" ? BENCH_MATRIX : BENCH_MATRIX.filter((r) => r.name === fixtureArg))
   .filter((r) => fs.existsSync(benchFixturePath(r.name)));
@@ -170,6 +174,12 @@ async function runSession(fixture, wantScenarios) {
 async function envBlock() {
   const app = await electron.launch({ args: [MAIN], env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1" } });
   try {
+    // Wait for the app to be ready before the first main-process evaluate.
+    // Evaluating immediately after launch races the main context's startup and
+    // fails with "Execution context was destroyed" — mirror runSession's
+    // readiness gate (firstWindow + domcontentloaded).
+    const w = await app.firstWindow({ timeout: 60_000 });
+    await w.waitForLoadState("domcontentloaded").catch(() => {});
     const versions = await app.evaluate(() => process.versions);
     const gpu = await app.evaluate(({ app: a }) => a.getGPUInfo("basic"));
     let ffmpeg = "unknown";
