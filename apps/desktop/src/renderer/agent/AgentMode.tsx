@@ -14,6 +14,7 @@ import {
 } from "../preview/PreviewSurface";
 import { MiniTimeline } from "./MiniTimeline";
 import { RecordPanel } from "./RecordPanel";
+import { setPlayheadTimeUs } from "../state/playheadStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 
@@ -30,8 +31,6 @@ import { WindowControls } from "../components/WindowControls";
 interface AgentModeProps {
   session: AgentSession;
   summary: ProjectSummary | null;
-  currentTimeUs: number;
-  onTimeUpdate: (tUs: number) => void;
   onPausedChange: (paused: boolean) => void;
   onSeek: (tUs: number) => void;
   /// User-side exit handler. Wired by the parent to call
@@ -43,8 +42,6 @@ export const AgentMode = forwardRef(function AgentMode(
   {
     session,
     summary,
-    currentTimeUs,
-    onTimeUpdate,
     onPausedChange,
     onSeek,
     onExit,
@@ -63,7 +60,7 @@ export const AgentMode = forwardRef(function AgentMode(
           <PreviewSurface
             ref={previewRef}
             hasContent={(summary?.layer_count ?? 0) > 0}
-            onTimeUpdate={onTimeUpdate}
+            onTimeUpdate={setPlayheadTimeUs}
             onPausedChange={onPausedChange}
           />
         </div>
@@ -71,7 +68,6 @@ export const AgentMode = forwardRef(function AgentMode(
 
       <section className="agent-mini-timeline">
         <MiniTimeline
-          currentTimeUs={currentTimeUs}
           durationUs={summary?.duration_us ?? 0}
           markers={summary?.markers ?? []}
           onSeek={onSeek}

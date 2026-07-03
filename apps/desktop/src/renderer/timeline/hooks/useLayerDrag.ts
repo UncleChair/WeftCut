@@ -15,6 +15,7 @@ import {
   type PendingLayerPlacement,
 } from "../LayerBlock";
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
+import { playheadTimeUs } from "../../state/playheadStore";
 
 /// Tracks are kind-agnostic: any layer can land on any track. This
 /// reject hook always accepts; routing is by LayerParams, not track
@@ -35,7 +36,6 @@ export function useLayerDrag(opts: {
   trackRows: { track: TrackSummary; y: number; height: number }[];
   canvasRef: React.RefObject<HTMLDivElement | null>;
   pxPerSec: number;
-  currentTimeUs: number;
   fpsNum: number;
   fpsDen: number;
   tailSnapEnabled: boolean;
@@ -56,7 +56,6 @@ export function useLayerDrag(opts: {
     trackRows,
     canvasRef,
     pxPerSec,
-    currentTimeUs,
     fpsNum,
     fpsDen,
     tailSnapEnabled,
@@ -206,7 +205,9 @@ export function useLayerDrag(opts: {
         visibleTracks: visibleSnapTracks,
         groups,
         groupByLayerId,
-        currentTimeUs,
+        // Event-time read (drag pointermove): the playhead is a snap target;
+        // its value at the event is what snapping should use.
+        currentTimeUs: playheadTimeUs(),
         fpsNum,
         fpsDen,
         pxPerSec,
@@ -215,7 +216,6 @@ export function useLayerDrag(opts: {
       });
     },
     [
-      currentTimeUs,
       fpsNum,
       fpsDen,
       groupByLayerId,

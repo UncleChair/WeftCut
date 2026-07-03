@@ -49,6 +49,7 @@ import { useTimelineView } from "./hooks/useTimelineView";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
+import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
 
 // Any media kind drops on any track (tracks are kind-agnostic; the
 // backend enforces overlap rules). Kept as a stub returning true to
@@ -71,7 +72,6 @@ interface TimelineProps {
   /// `docs/groups.md`. Empty array when no groups exist.
   groups: GroupSummary[];
   durationUs: number;
-  currentTimeUs: number;
   selectedLayerId: string | null;
   /// (`docs/data-model.md`): when set, this hidden track is
   /// included in the AB-mode ordered list at its natural accretion
@@ -118,7 +118,6 @@ export function Timeline({
   tracks,
   groups,
   durationUs,
-  currentTimeUs,
   selectedLayerId,
   revealedTrackId,
   keybindings,
@@ -320,7 +319,6 @@ export function Timeline({
       trackRows,
       canvasRef,
       pxPerSec,
-      currentTimeUs,
       fpsNum,
       fpsDen,
       tailSnapEnabled,
@@ -465,8 +463,6 @@ export function Timeline({
     requestPrebake(layerId);
   }, []);
 
-  const playheadX = (currentTimeUs / 1_000_000) * pxPerSec;
-
   const seekFromClientX = useCallback(
     (clientX: number) => {
       if (!canvasRef.current) return;
@@ -492,7 +488,10 @@ export function Timeline({
         visibleTracks: visibleSnapTracks,
         groups,
         groupByLayerId,
-        currentTimeUs,
+        // Event-time read: the playhead is a snap TARGET here, so the value
+        // at the moment of the mouse event is the correct one — no reactive
+        // subscription needed.
+        currentTimeUs: playheadTimeUs(),
         fpsNum,
         fpsDen,
         pxPerSec,
@@ -504,7 +503,6 @@ export function Timeline({
       return atUs > layer.t_start_us && atUs < layer.t_end_us ? atUs : null;
     },
     [
-      currentTimeUs,
       fpsNum,
       fpsDen,
       groupByLayerId,
@@ -619,7 +617,6 @@ export function Timeline({
               {expandedTracks.has(track.id) && (
                 <KeyframeLaneHeaders
                   track={track}
-                  currentTimeUs={currentTimeUs}
                   fpsNum={fpsNum}
                   fpsDen={fpsDen}
                   onCommitParamTrack={onCommitParamTrack}
@@ -698,15 +695,7 @@ export function Timeline({
               />
             )}
           </div>
-          {currentTimeUs >= 0 && (
-            <div
-              data-testid="timeline-playhead"
-              className="pointer-events-none absolute bottom-0 top-0.5 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
-              style={{ left: playheadX }}
-            >
-              <div className="absolute -left-1.5 top-0 h-3.5 w-3.5 bg-gradient-to-b from-[#fb7185] via-red-500 to-red-700 [clip-path:polygon(0_0,100%_0,100%_45%,50%_100%,0_45%)] [filter:drop-shadow(0_1px_1.5px_rgba(0,0,0,0.6))]" />
-            </div>
-          )}
+          <TimelinePlayhead pxPerSec={pxPerSec} />
         </div>
       </div>
     </div>
@@ -725,6 +714,33 @@ export function Timeline({
       />
     )}
     </>
+  );
+}
+
+/// The playhead line, updated at frame rate via a TRANSIENT playhead-store
+/// subscription (tier 2, see playheadStore.ts): the engine emits once per
+/// composition frame during playback, and routing that through React state
+/// re-rendered the whole Timeline (and formerly the whole App) per frame.
+/// Here the subscription mutates `style.left` on the ref'd node directly —
+/// zero React commits while playing.
+function TimelinePlayhead({ pxPerSec }: { pxPerSec: number }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const apply = (tUs: number) => {
+      if (ref.current) ref.current.style.left = `${(tUs / 1_000_000) * pxPerSec}px`;
+    };
+    apply(playheadTimeUs());
+    return usePlayheadStore.subscribe((s) => apply(s.timeUs));
+  }, [pxPerSec]);
+  return (
+    <div
+      ref={ref}
+      data-testid="timeline-playhead"
+      className="pointer-events-none absolute bottom-0 top-0.5 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
+      style={{ left: (playheadTimeUs() / 1_000_000) * pxPerSec }}
+    >
+      <div className="absolute -left-1.5 top-0 h-3.5 w-3.5 bg-gradient-to-b from-[#fb7185] via-red-500 to-red-700 [clip-path:polygon(0_0,100%_0,100%_45%,50%_100%,0_45%)] [filter:drop-shadow(0_1px_1.5px_rgba(0,0,0,0.6))]" />
+    </div>
   );
 }
 

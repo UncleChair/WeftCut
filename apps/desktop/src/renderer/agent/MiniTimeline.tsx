@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
+import { usePlayheadTimeUs } from "../state/playheadStore";
 
 /// Agent-mode mini timeline. Strip with click/drag-to-seek + a tick
 /// row + project marker pips + timecode readout. No track lanes —
@@ -13,7 +14,6 @@ import type { MarkerSummary } from "../ipc";
 ///   row 2 — scrub bar with playhead + markers   ~36 px
 ///   row 3 — timecode readout                    ~14 px
 interface MiniTimelineProps {
-  currentTimeUs: number;
   durationUs: number;
   markers: MarkerSummary[];
   onSeek: (tUs: number) => void;
@@ -62,13 +62,16 @@ function formatTickLabel(us: number): string {
 }
 
 export function MiniTimeline({
-  currentTimeUs,
   durationUs,
   markers,
   onSeek,
   fpsNum,
   fpsDen,
 }: MiniTimelineProps) {
+  // Frame-rate playhead subscription (tier 4, playheadStore.ts): the
+  // agent-mode progress strip is a tiny leaf subtree, so per-frame React
+  // updates here are cheap and keep the playhead butter-smooth.
+  const currentTimeUs = usePlayheadTimeUs();
   const stripRef = useRef<HTMLDivElement | null>(null);
   // Strip width drives tick density. ResizeObserver writes into
   // state so the next render picks up the new tick set; the setter

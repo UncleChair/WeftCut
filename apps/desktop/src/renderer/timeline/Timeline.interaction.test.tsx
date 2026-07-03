@@ -136,7 +136,6 @@ function renderTimeline(overrides: {
       tracks={overrides.tracks ?? [track]}
       groups={overrides.groups ?? []}
       durationUs={5_000_000}
-      currentTimeUs={0}
       selectedLayerId={overrides.selectedLayerId ?? null}
       keybindings={{}}
       fpsNum={30}

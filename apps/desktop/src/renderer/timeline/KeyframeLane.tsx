@@ -11,6 +11,7 @@ import {
 } from "../keyframe/selectionStore";
 import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
 import { transportSeek } from "../state/playbackStore";
+import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import {
   setKeyframeFocus,
   useFocusedParamKeyForTrackLayers,
@@ -37,18 +38,19 @@ type OpenInterpMenu = (
 /// by sharing trackKeyframeProperties + KF_SUBLANE_H.
 export function KeyframeLaneHeaders({
   track,
-  currentTimeUs,
   fpsNum,
   fpsDen,
   onCommitParamTrack,
 }: {
   track: TrackSummary;
-  currentTimeUs: number;
   fpsNum: number;
   fpsDen: number;
   onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
 }) {
   const { t } = useTranslation();
+  // Panel-rate playhead subscription (tier 3, playheadStore.ts): navigator
+  // arrows + value readouts follow playback without per-frame re-renders.
+  const currentTimeUs = usePlayheadTimeUsThrottled();
   const props = trackKeyframeProperties(track);
   const layerIds = useMemo(() => new Set(track.layers.map((l) => l.id)), [track.layers]);
   const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);

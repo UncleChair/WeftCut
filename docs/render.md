@@ -274,6 +274,36 @@ requested frame. The short proxy GOP (ADR 0008) bounds that to a few
 frames, so each re-target lands within ~1 frame-time and decode-during-
 drag works without churn.
 
+## Playhead updates
+
+The engine emits the playhead position once per composition frame during
+playback (`PlaybackEngine.emitTime`). That stream fans out through
+`renderer/state/playheadStore.ts` — a zustand store — and deliberately
+never through React state above a leaf component: a frame-rate value in
+App-level state re-renders the entire tree 30–60×/s while playing, which
+is a straight CPU tax in production and, under the React development
+build, additionally ratchets renderer memory (native-side, GC-immune)
+for as long as playback runs.
+
+Consumers pick the cheapest tier that fits (rules and examples in the
+store's header):
+
+1. **Event-time reads** — `playheadTimeUs()` inside handlers (seek
+   shortcuts, insert-at-playhead, drag/blade snapping). No subscription.
+2. **Transient subscriptions** — smooth per-frame visuals (the timeline
+   playhead line, the transport timecode readout) subscribe via
+   `usePlayheadStore.subscribe` in an effect and mutate the DOM node
+   through a ref. Zero React commits during playback.
+3. **Throttled hook** — `usePlayheadTimeUsThrottled()` for panels that
+   show "value at playhead" (inspector, peek list, keyframe headers).
+   Trailing-edge, so a pause or single seek converges on the exact
+   final frame.
+4. **Frame-rate hook** — `usePlayheadTimeUs()` only for tiny leaf
+   subtrees (agent-mode MiniTimeline).
+
+When adding any UI that follows the playhead, start at tier 1 and only
+move down the list when the UI genuinely needs to repaint continuously.
+
 ## Sprite kinds
 
 | Sprite | Source | Notes |

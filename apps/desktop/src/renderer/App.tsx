@@ -45,6 +45,11 @@ import {
   type ProjectSummary,
 } from "./ipc";
 import { formatTimecode, frameDurUs, lastFrameAnchorUs } from "./frames";
+import {
+  playheadTimeUs,
+  setPlayheadTimeUs,
+  usePlayheadStore,
+} from "./state/playheadStore";
 import { Timeline } from "./timeline/Timeline";
 import { MEDIA_DRAG_TYPE } from "./timeline/TrackLane";
 import { AgentMode } from "./agent/AgentMode";
@@ -184,14 +189,21 @@ export function App({ onCloseProject }: AppProps) {
   // selecting a layer on a different track, or by clicking another peek
   // item (which replaces the value).
   const [revealedTrackId, setRevealedTrackId] = useState<string | null>(null);
-  const [currentTimeUs, setCurrentTimeUs] = useState<number>(0);
+  // Playhead time deliberately does NOT live in React state here: the engine
+  // emits once per composition frame during playback, and routing that through
+  // App-root state re-rendered the whole tree per frame (dev-mode memory
+  // ratchet + prod CPU). It lives in playheadStore; consumers pick their tier
+  // (transient / throttled / imperative) — see playheadStore.ts.
   const [paused, setPaused] = useState<boolean>(true);
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [motifPickerOpen, setMotifPickerOpen] = useState(false);
-  const [tcEditing, setTcEditing] = useState(false);
+  // Timecode-edit state doubles as the field's seed value: capturing the
+  // playhead at the moment editing opens (instead of live-updating the field
+  // from a React-subscribed time) keeps the edit box stable during playback.
+  const [tcEditUs, setTcEditUs] = useState<number | null>(null);
   // User shortcut overrides. Loaded once on mount; refreshed when the
   // Settings → Keyboard panel writes (it calls back via the
   // `onKeybindingsChanged` prop). The map is `Record<string, string[]>`
@@ -280,9 +292,16 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
+  // Fresh project session → playhead 0. The store is module-global and would
+  // otherwise carry the previous project's position across a close/open
+  // (the pre-store `useState(0)` reset with the App mount).
+  useEffect(() => {
+    setPlayheadTimeUs(0);
+  }, []);
+
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
   // Every UI seek funnels through here so callers can pass raw boundary
-  // values (`duration_us`, `currentTimeUs + step`, parsed timecode) and
+  // values (`duration_us`, `playheadTimeUs() + step`, parsed timecode) and
   // the upper bound is enforced once. Lower bound at 0; upper at
   // `lastFrameAnchorUs` so the playhead can never sit on the
   // post-last-frame slot.
@@ -292,7 +311,9 @@ export function App({ onCloseProject }: AppProps) {
     const durationUs = summary?.duration_us ?? 0;
     const upper = lastFrameAnchorUs(durationUs, fpsNum, fpsDen);
     const clamped = Math.max(0, Math.min(tUs, upper));
-    setCurrentTimeUs(clamped);
+    // Optimistic store write: with no preview mounted (empty composition)
+    // there is no engine emit, yet the playhead UI must still move.
+    setPlayheadTimeUs(clamped);
     previewRef.current?.seekTo(clamped);
   }, [summary?.composition.fps_num, summary?.composition.fps_den, summary?.duration_us]);
 
@@ -1629,18 +1650,18 @@ export function App({ onCloseProject }: AppProps) {
     seekFrameBack: () => {
       const fps = summary?.composition;
       const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
-      void seekTo(currentTimeUs - step);
+      void seekTo(playheadTimeUs() - step);
     },
     seekFrameForward: () => {
       const fps = summary?.composition;
       const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
-      void seekTo(currentTimeUs + step);
+      void seekTo(playheadTimeUs() + step);
     },
     seekSecondBack: () => {
-      void seekTo(currentTimeUs - 1_000_000);
+      void seekTo(playheadTimeUs() - 1_000_000);
     },
     seekSecondForward: () => {
-      void seekTo(currentTimeUs + 1_000_000);
+      void seekTo(playheadTimeUs() + 1_000_000);
     },
     seekStart: () => {
       void seekTo(0);
@@ -1693,8 +1714,6 @@ export function App({ onCloseProject }: AppProps) {
           ref={previewRef}
           session={agentSession}
           summary={summary}
-          currentTimeUs={currentTimeUs}
-          onTimeUpdate={setCurrentTimeUs}
           onPausedChange={setPaused}
           onSeek={seekTo}
           onExit={exitAgentMode}
@@ -1773,7 +1792,7 @@ export function App({ onCloseProject }: AppProps) {
               <MenuItem
                 label={t("actions.add_color_layer")}
                 onSelect={async () => {
-                  const layerId = await addColorLayer({ tStartUs: currentTimeUs });
+                  const layerId = await addColorLayer({ tStartUs: playheadTimeUs() });
                   setPendingRevealLayerId(layerId);
                   await refresh();
                 }}
@@ -1781,7 +1800,7 @@ export function App({ onCloseProject }: AppProps) {
               <MenuItem
                 label={t("actions.add_text_layer")}
                 onSelect={async () => {
-                  const layerId = await addTextLayer({ tStartUs: currentTimeUs });
+                  const layerId = await addTextLayer({ tStartUs: playheadTimeUs() });
                   setPendingRevealLayerId(layerId);
                   await refresh();
                 }}
@@ -1849,43 +1868,33 @@ export function App({ onCloseProject }: AppProps) {
             <PreviewSurface
               ref={previewRef}
               hasContent={(summary?.layer_count ?? 0) > 0}
-              onTimeUpdate={setCurrentTimeUs}
+              onTimeUpdate={setPlayheadTimeUs}
               onPausedChange={setPaused}
               previewDecodableOf={(id) => decodeProbeMemo.current.get(id) === "ok"}
             />
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
-            {tcEditing ? (
+            {tcEditUs !== null ? (
               <AppTimecodeField
                 className="preview-timecode"
-                valueUs={currentTimeUs}
+                valueUs={tcEditUs}
                 fpsNum={summary?.composition.fps_num ?? 30}
                 fpsDen={summary?.composition.fps_den ?? 1}
                 autoFocus
                 ariaLabel={t("transport.timecode_label")}
                 onCommit={(us) => {
-                  setTcEditing(false);
+                  setTcEditUs(null);
                   void seekTo(us);
                 }}
-                onCancel={() => setTcEditing(false)}
+                onCancel={() => setTcEditUs(null)}
               />
             ) : (
-              <span
-                className="preview-timecode"
-                aria-live="polite"
-                role="button"
-                tabIndex={0}
-                title={t("transport.timecode_edit_hint")}
-                onClick={() => setTcEditing(true)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setTcEditing(true);
-                  }
-                }}
-              >
-                {formatTimecode(currentTimeUs, summary?.composition.fps_num ?? 30, summary?.composition.fps_den ?? 1)}
-              </span>
+              <PlayheadTimecode
+                fpsNum={summary?.composition.fps_num ?? 30}
+                fpsDen={summary?.composition.fps_den ?? 1}
+                editHint={t("transport.timecode_edit_hint")}
+                onActivate={() => setTcEditUs(playheadTimeUs())}
+              />
             )}
             <div className="transport-buttons">
               <button
@@ -1939,7 +1948,6 @@ export function App({ onCloseProject }: AppProps) {
             tracks={summary?.tracks ?? []}
             groups={summary?.groups ?? []}
             durationUs={summary?.duration_us ?? 0}
-            currentTimeUs={currentTimeUs}
             selectedLayerId={selectedLayerId}
             revealedTrackId={revealedTrackId}
             keybindings={keybindings}
@@ -1976,7 +1984,6 @@ export function App({ onCloseProject }: AppProps) {
             tracks={summary?.tracks ?? []}
             groups={summary?.groups ?? []}
             selectedLayerId={selectedLayerId}
-            currentTimeUs={currentTimeUs}
             onSelect={setSelectedLayerId}
             onMutated={refresh}
             fpsNum={summary?.composition.fps_num ?? 30}
@@ -1993,7 +2000,9 @@ export function App({ onCloseProject }: AppProps) {
       {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
           comp={summary.composition}
-          currentTimeUs={currentTimeUs}
+          // Render-time snapshot: the dialog opens via a state flip, so this
+          // reads the playhead at open — a live-updating default is pointless.
+          currentTimeUs={playheadTimeUs()}
           durationUs={summary.duration_us}
           hasTenBitSource={summary.media.some(
             (m) => m.kind === "Video" && tenBitExportCapable(m),
@@ -2087,7 +2096,7 @@ export function App({ onCloseProject }: AppProps) {
           onClose={() => setMotifPickerOpen(false)}
           onAdded={refresh}
           onDraftPlaced={setPendingRevealLayerId}
-          currentTimeUs={currentTimeUs}
+          currentTimeUs={playheadTimeUs()}
           tracks={summary?.tracks ?? []}
           fpsNum={summary?.composition.fps_num ?? 30}
           fpsDen={summary?.composition.fps_den ?? 1}
@@ -2107,6 +2116,50 @@ export function App({ onCloseProject }: AppProps) {
   );
 }
 
+
+/// Transport-bar timecode readout. Frame-rate text via a TRANSIENT
+/// playhead-store subscription (tier 2, playheadStore.ts): the subscription
+/// mutates the span's text node directly, so playback causes zero React
+/// commits here. Click / Enter / Space hands off to the edit field.
+function PlayheadTimecode({
+  fpsNum,
+  fpsDen,
+  editHint,
+  onActivate,
+}: {
+  fpsNum: number;
+  fpsDen: number;
+  editHint: string;
+  onActivate: () => void;
+}) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const apply = (tUs: number) => {
+      if (ref.current) ref.current.textContent = formatTimecode(tUs, fpsNum, fpsDen);
+    };
+    apply(playheadTimeUs());
+    return usePlayheadStore.subscribe((s) => apply(s.timeUs));
+  }, [fpsNum, fpsDen]);
+  return (
+    <span
+      ref={ref}
+      className="preview-timecode"
+      aria-live="polite"
+      role="button"
+      tabIndex={0}
+      title={editHint}
+      onClick={onActivate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onActivate();
+        }
+      }}
+    >
+      {formatTimecode(playheadTimeUs(), fpsNum, fpsDen)}
+    </span>
+  );
+}
 
 /// `docs/data-model.md` R.8: View menu — radio between A/B-roll and
 /// Show-All. Same setting the inline pill + `T` shortcut drive. Reads

@@ -37,6 +37,7 @@ import {
 } from "./peek";
 import { PropertyPanel } from "../properties/PropertyPanel";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
+import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { CaptionsPanel } from "./CaptionsPanel";
 import { MixerPanel } from "./MixerPanel";
@@ -50,7 +51,6 @@ export interface RightPanelProps {
   tracks: TrackSummary[];
   groups: GroupSummary[];
   selectedLayerId: string | null;
-  currentTimeUs: number;
   onSelect: (id: string | null) => void;
   onMutated: () => Promise<void>;
   fpsNum: number;
@@ -65,7 +65,6 @@ export function RightPanel({
   tracks,
   groups,
   selectedLayerId,
-  currentTimeUs,
   onSelect,
   onMutated,
   fpsNum,
@@ -75,6 +74,10 @@ export function RightPanel({
   const { t } = useTranslation();
   const displayMode = useDisplayMode();
   const deltaWindowUs = useDeltaWindowUs();
+  // Panel-rate playhead subscription (tier 3, playheadStore.ts): the peek
+  // window + inspector value readouts follow playback at ~10 Hz instead of
+  // re-rendering the panel per composition frame.
+  const currentTimeUs = usePlayheadTimeUsThrottled();
 
   const peekItems = useMemo(() => {
     if (displayMode !== "AbRoll") return [];
