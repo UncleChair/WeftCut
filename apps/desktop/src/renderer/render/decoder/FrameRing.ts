@@ -39,10 +39,18 @@ export class FrameRing {
   private anchorUs = 0;
   private lookaheadUs: number;
   private lookbehindUs: number;
+  private _pushCount = 0;
 
   constructor(init: FrameRingInit = {}) {
     this.lookaheadUs = init.lookaheadUs ?? DEFAULT_LOOKAHEAD_US;
     this.lookbehindUs = init.lookbehindUs ?? DEFAULT_LOOKBEHIND_US;
+  }
+
+  /// Monotonic count of frames accepted into the ring since construction.
+  /// Drops (behind the lookbehind window) don't count; eviction and flush
+  /// don't reset it. The decode-bench throughput scenario diffs this.
+  get pushCount(): number {
+    return this._pushCount;
   }
 
   /// Set the current play / scrub position. Evicts anything older
@@ -89,6 +97,7 @@ export class FrameRing {
       bitmap.close();
       return;
     }
+    this._pushCount += 1;
     // Fast path: append in order. Proxy v4 disables B-frames
     // (`-bf 0`, see proxy.rs) so the decoder emits frames in PTS
     // order; the async `createImageBitmap` step is sequenced via

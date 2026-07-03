@@ -184,3 +184,25 @@ describe("FrameRing.containsPts", () => {
     expect(ring.containsPts(0)).toBe(false);
   });
 });
+
+describe("pushCount", () => {
+  it("counts accepted pushes and ignores dropped-behind ones", () => {
+    const ring = new FrameRing();
+    ring.setAnchor(10_000_000);
+    // Ends before anchor - lookbehind (10s - 0.5s) → the drop path.
+    ring.push(makeBitmap(0), 0, 33_333);
+    expect(ring.pushCount).toBe(0);
+    ring.push(makeBitmap(10_000_000), 10_000_000, 33_333);
+    ring.push(makeBitmap(10_033_333), 10_033_333, 33_333);
+    expect(ring.pushCount).toBe(2);
+  });
+
+  it("is not reset by eviction", () => {
+    const ring = new FrameRing();
+    ring.push(makeBitmap(0), 0, 33_333);
+    ring.push(makeBitmap(33_333), 33_333, 33_333);
+    ring.setAnchor(5_000_000); // evicts both
+    expect(ring.size()).toBe(0);
+    expect(ring.pushCount).toBe(2);
+  });
+});
