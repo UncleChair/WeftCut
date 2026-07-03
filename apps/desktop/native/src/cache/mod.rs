@@ -15,6 +15,8 @@
 //! cached checks must verify both `exists()` AND non-zero size — interrupted
 //! ffmpeg leaves zero-byte files that look "done" to a naive check.
 
+pub mod disk_lru;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
