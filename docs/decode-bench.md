@@ -33,7 +33,14 @@ median.
   (`pushCount`, an always-on counter) divided by wall-seconds over that
   window. **×realtime** — content-seconds decoded per wall-second — is the
   headline number: it's what maps directly to how many simultaneous tracks a
-  strategy can sustain.
+  strategy can sustain. One ceiling to keep in mind when comparing strategies:
+  throughput is bounded by how fast the pump is fed, not only by how fast the
+  codec decodes — the driver re-nudges the anchor on a short polling cadence
+  and the pump caps its in-flight input queue, so a decoder far faster than the
+  WebCodecs baseline could clip against that feed rate and under-report its true
+  margin. `×realtime` together with an early `endedAtEof` (the fixture drained
+  before the 30 s window elapsed) still flags the faster decoder even when `fps`
+  saturates.
 - **Seek latency** (`--scenario seek`) — 40 fixed seek targets over a
   deterministic plan cycling four categories (forward-near +0.2 s,
   forward-far +15 s, backward-near −0.5 s, backward-far −20 s). Each sample
@@ -57,7 +64,12 @@ median.
   `3D` engine counters at 1 Hz (the `3D` engine is where `createImageBitmap`
   conversion cost shows up). This metric is **Windows-only** — off Windows the
   sampler is inert and the GPU columns come back empty/NaN. Those counters are
-  also **machine-wide**, not per-process — see "How to run" below.
+  also **machine-wide**, not per-process — see "How to run" below. Because
+  sampling only runs during the throughput window, a fast strategy that drains
+  the fixture well inside that window yields very few GPU samples (a clip
+  decoded at ~30× realtime empties a 60 s fixture in ~2 s, i.e. roughly one
+  1 Hz sample), so its GPU-decode column can read `—`. That is a sampling-
+  density artifact of a fast decode, not a missing measurement.
 
 ## What it deliberately is not
 
