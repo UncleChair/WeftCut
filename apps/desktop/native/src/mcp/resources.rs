@@ -237,6 +237,7 @@ async fn serve_thumbnail(
     // frame which is often a slate / black.
     const MID: usize = 5;
     let path = b.cache.thumbnail(&media.file_hash_blake3, MID);
+    crate::cache::touch_if_stale(&path);
     if !cached_ok(&path) {
         return Err(McpToolError::resource_not_found(
             format!(
@@ -269,6 +270,7 @@ async fn serve_waveform(
     media: &MediaItem,
 ) -> Result<ResourceResult, McpToolError> {
     let path = b.cache.waveform(&media.file_hash_blake3);
+    crate::cache::touch_if_stale(&path);
     if !cached_ok(&path) {
         return Err(McpToolError::resource_not_found(
             format!(
@@ -441,6 +443,45 @@ mod stateless_tests {
         assert!(
             err.message.contains("not generated yet"),
             "media:// must read the injected item (cache empty → not generated yet); got: {}", err.message
+        );
+    }
+
+    /// serve_thumbnail must touch the poster's mtime before reading it — the
+    /// disk-LRU sweep keys a thumbnail dir's survival on its MAX contained
+    /// mtime (`cache::disk_lru`), so an agent read that skips this call would
+    /// look like "unused" and get evicted out from under a live MCP client.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn thumbnail_read_touches_stale_mtime() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let id = uuid::Uuid::now_v7();
+        let hash = format!("touch-test-{id}");
+        let path = b.cache.thumbnail(&hash, 5);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"jpeg-bytes").unwrap();
+        let stale = std::time::SystemTime::now()
+            - crate::cache::TOUCH_THROTTLE
+            - std::time::Duration::from_secs(60);
+        let f = std::fs::File::options().write(true).open(&path).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(stale)).unwrap();
+
+        let item = serde_json::json!({
+            "id": id, "label": null, "path_abs": "/nonexistent", "path_rel": null,
+            "kind": "Video", "metadata": crate::state::MediaMetadata::default(),
+            "decode_route": { "route": "bypass" }, "waveform_path": null,
+            "conform_path": null, "thumbnails_dir": null,
+            "file_hash_blake3": hash, "file_size": 0, "file_mtime": 0,
+            "imported_at": chrono::Utc::now(),
+        });
+        let state = serde_json::json!({ "media": item }).to_string();
+        let uri = format!("media://{id}/thumbnail");
+        read_resource(&b, &uri, &state).await.unwrap();
+
+        let m = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert!(
+            m > stale + std::time::Duration::from_secs(30),
+            "thumbnail read must refresh a stale poster mtime"
         );
     }
 }

@@ -166,8 +166,8 @@ impl CacheLayout {
     /// On-demand filmstrip tiles for the timeline, lazy-cached per source hash.
     /// Keys mirror the renderer's time grid: `{tag}/{lod}/{index:06}.jpg` (tag =
     /// decode source: orig/quick/full) where the tile samples source time
-    /// `index * (250ms << lod)`. disk-cache LRU sweep (`cache::disk_lru`) bounds
-    /// growth; tiles are ~15-25 KB JPGs.
+    /// `index * (250ms << lod)`. The disk-cache LRU sweep (`cache::disk_lru`)
+    /// bounds growth; tiles are ~15-25 KB JPGs.
     pub fn filmstrip_root(&self) -> PathBuf {
         self.current_root().join("filmstrip")
     }
