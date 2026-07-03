@@ -200,12 +200,17 @@ jobs:
       - name: Package (unsigned)
         run: npm run build && npx electron-builder --publish never
 
+      # Installers are large (~0.4–0.9 GB each), so a 14-day retention lets a
+      # week of pushes stack into tens of GB and blow the account artifact-
+      # storage quota (which then fails EVERY upload step, reddening the whole
+      # matrix). Nothing downstream consumes this artifact — the compare job
+      # only needs determinism-* — so keep just enough to grab a build if needed.
       - name: Upload installer
         if: success()
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
-          retention-days: 14
+          retention-days: 2
           path: apps/desktop/release/*
 
   # Cross-OS SSIM comparison.  Runs after all three build jobs finish

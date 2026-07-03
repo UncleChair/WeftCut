@@ -66,6 +66,15 @@ async function sampleAt(page: import('@playwright/test').Page, tUs: number, x: n
 }
 
 test('effects: add a blur via MCP renders + persists, undo removes it', async () => {
+  // GPU-dependent, so local-only (mirrors motif-export.spec.ts): the blur
+  // pixel-diff assertion needs faithful WebGL filtering — the Pixi BlurFilter
+  // is a no-op under the Linux headless software-GL runner (xvfb/llvmpipe), so
+  // `blur` reads back byte-identical to `sharp` — and the export leg needs
+  // WebCodecs H.264 hardware encode. Neither is available on headless CI.
+  test.skip(
+    process.env.WEFTCUT_E2E_NO_EXPORT === '1',
+    'blur pixel-diff + export need a real GPU not on headless CI; verified locally',
+  )
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
 
@@ -171,6 +180,15 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
 })
 
 test('effects: blur on a Motif layer renders + exports + undo', async () => {
+  // GPU-dependent, so local-only (mirrors motif-export.spec.ts): the blur
+  // pixel-diff needs faithful WebGL filtering (no-op under the Linux headless
+  // software-GL runner), the export needs WebCodecs H.264 hardware encode, and
+  // the motif capture can exceed the 5s CDP budget on slow CI runners. None of
+  // these hold on headless CI.
+  test.skip(
+    process.env.WEFTCUT_E2E_NO_EXPORT === '1',
+    'blur pixel-diff + motif export need a real GPU not on headless CI; verified locally',
+  )
   test.setTimeout(180_000)
   const { app, page } = await launchApp()
 
@@ -269,6 +287,13 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
 })
 
 test('effects UI: add/edit/reorder/remove a blur from the inspector panel', async () => {
+  // GPU-dependent, so local-only (mirrors motif-export.spec.ts): the final
+  // blur-vs-sharp pixel-diff needs faithful WebGL filtering, which the Pixi
+  // BlurFilter does not deliver under the Linux headless software-GL runner.
+  test.skip(
+    process.env.WEFTCUT_E2E_NO_EXPORT === '1',
+    'blur pixel-diff needs a real GPU not on headless CI; verified locally',
+  )
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
 
