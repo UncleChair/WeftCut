@@ -42,6 +42,12 @@ The Rust analyzer (`media_conformance`) used by the export/conformance specs,
 fixture generation, and per-gate details are documented in
 [`../../../docs/conformance.md`](../../../docs/conformance.md).
 
+From this directory (`apps/desktop/e2e`), a separate local-only benchmark:
+
+```
+npm run bench:decode        # decode-strategy benchmark (see ../../../docs/decode-bench.md)
+```
+
 ## Layout
 
 ```
@@ -52,7 +58,9 @@ lib/                 analyzer + comparison: analyze.mjs (media_conformance),
 fixtures/            generate-fixtures.mjs (real test media via ffmpeg);
                      media/ is generated, gitignored
 scripts/             standalone color diagnostics (color-*.mjs) — invoke
-                     cargo media_conformance / ffmpeg directly, not the suite
+                     cargo media_conformance / ffmpeg directly, not the suite;
+                     decode-bench.mjs + gen-decode-bench-fixtures.mjs (the
+                     decode-strategy benchmark, see ../../../docs/decode-bench.md)
 tools/               one-shot probes/experiments (color isolation, float16,
                      10-bit GL parity, export-redundancy perf)
 ```
