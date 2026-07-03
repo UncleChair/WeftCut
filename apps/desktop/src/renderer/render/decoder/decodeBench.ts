@@ -86,6 +86,11 @@ async function waitContains(h: SourceHandle, tUs: number, token: CancelToken): P
     if (performance.now() - t0 > SEEK_WAIT_TIMEOUT_MS) {
       throw new Error(`frame at ${tUs}us not available after ${SEEK_WAIT_TIMEOUT_MS}ms`);
     }
+    // Mirrors the Compositor's per-tick nudge: the pump exits a pass on
+    // MAX_QUEUE backpressure and otherwise waits for the next
+    // requestFrameAt to resume — without this the poll loop just watches a
+    // parked pump and times out.
+    void h.requestFrameAt(tUs);
     await sleep(1);
   }
 }
