@@ -828,6 +828,7 @@ mtime is the LRU clock, so every read of a swept-cache entry must refresh it —
 - Modify: `apps/desktop/native/src/cache/mod.rs` (`TOUCH_THROTTLE` + `touch_if_stale` + test)
 - Modify: `apps/desktop/native/src/jobs/filmstrip.rs` (hit-branch touch + test)
 - Modify: `apps/desktop/native/src/commands/media.rs` (touch in `get_media_thumbnail`, `get_waveform_peaks`, `get_waveform_levels`, `get_waveform_tile`)
+- Modify: `apps/desktop/native/src/mcp/tools.rs` (touch in `detect_silences` — it reads the peaks file via `jobs::read_peaks_file`, bypassing `get_waveform_peaks`; found by Task 4's review, amended into the plan: the original reader enumeration missed this fifth swept-cache read path)
 
 **Interfaces:**
 - Produces: `pub const TOUCH_THROTTLE: Duration = Duration::from_secs(60 * 60);` and `pub fn touch_if_stale(path: &Path)` in `cache/mod.rs`.
