@@ -62,6 +62,10 @@ yarn-error.log*
 apps/desktop/e2e/fixtures/media/*
 !apps/desktop/e2e/fixtures/media/.gitkeep
 
+# Generated decode-bench fixtures + results (gen-decode-bench-fixtures.mjs / decode-bench.mjs)
+apps/desktop/e2e/fixtures/decode-bench/
+apps/desktop/e2e/bench-results/
+
 # Playwright MCP page-snapshot artifacts
 .playwright-mcp/
 .superpowers/
