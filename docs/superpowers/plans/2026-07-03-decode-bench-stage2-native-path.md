@@ -27,7 +27,16 @@
 
 ### Task 1: Sandbox shared-texture transport spike
 
-**Purpose:** Resolve — before building anything on top of it — exactly how a native shared-texture frame reaches the **sandboxed** renderer's main world, and whether a usable `VideoFrame`/`ImageBitmap` results. This is the #1 integration risk. The payload is the poc's *synthetic* NV12 texture (no decode), so this isolates the Electron transport from ffmpeg.
+> **STATUS: PASSED (2026-07-03).** Resolved cheaply with a standalone Electron 42.4.1
+> harness (`scratchpad/sandbox-probe/`) using production's exact `webPreferences`
+> (`sandbox:true, contextIsolation:true, nodeIntegration:false`) — no WeftCut build, no
+> Rust. **Resolved receiver mechanism (what Phase 2/3 must implement):**
+> 1. The receiver registers in the **preload isolated world** — `require('electron').sharedTexture.setSharedTextureReceiver` IS present under sandbox (Probe A ✅). `OffscreenCanvas`/`createImageBitmap`/`MessageChannel` are all available there too.
+> 2. In that receiver, do `data.importedSharedTexture.getVideoFrame() → await createImageBitmap(frame)` in the preload.
+> 3. Move the `ImageBitmap` to the main world via **`window.postMessage(msg, '*', [bitmap])`** from the isolated preload world — readback was byte-exact (Probe B ✅). A **`MessagePort`** handed to the main world the same way (`window.postMessage({...}, '*', [port2])`) also works and is the better fit for the persistent-import model (one channel carries all N slots' frames). **Do NOT** pass a `MessagePort`/frame as a `contextBridge` function argument — it silently fails to connect (observed timeout).
+> Residual (retired to Phase 2/3 first integration, low-risk): a *real* shared-texture `getVideoFrame()` under sandbox (the probes used a synthetic OffscreenCanvas bitmap; the poc proved `getVideoFrame→createImageBitmap` correctness in non-sandbox, and sandbox doesn't change `getVideoFrame`'s output once the receiver fires).
+
+**Purpose (as originally planned):** Resolve — before building anything on top of it — exactly how a native shared-texture frame reaches the **sandboxed** renderer's main world, and whether a usable `VideoFrame`/`ImageBitmap` results. This is the #1 integration risk. The payload is the poc's *synthetic* NV12 texture (no decode), so this isolates the Electron transport from ffmpeg. **In practice this was done even more cheaply — the sandbox unknowns were isolated from ffmpeg AND from the shared texture, using a locally-made bitmap — see STATUS above.**
 
 **This is a spike, not production code.** Its deliverable is (a) a working end-to-end synthetic-texture display in the real sandboxed app, and (b) a short written record of the resolved receiver mechanism that Phase 3 consumes. If the sandboxed renderer cannot receive the frame at all, **STOP and escalate** — the renderer-side design (and possibly a dedicated non-sandboxed preview surface) must be reconsidered before proceeding.
 
@@ -464,9 +473,15 @@ git commit -m "feat(preview-gpu): main-process shared-texture session manager + 
 
 Add to the `window.api` object the four `ipcRenderer.invoke('previewGpu:*', args)` wrappers, following the existing `backend`/`fs`/`window` patterns in the preload.
 
-- [ ] **Step 2: Implement the receiver per Task 1**
+- [ ] **Step 2: Implement the receiver per the Task-1 resolved mechanism**
 
-Implement whatever Task 1 proved works under sandbox — e.g. register `setSharedTextureReceiver` in preload, `createImageBitmap` the frame in preload, and deliver the `ImageBitmap` (with `slot`) to the renderer main world via the transfer mechanism Task 1 validated. Expose the delivery as `window.api.previewGpu.onFrame`.
+In the preload isolated world (this is the shipping preload; the mechanism is proven — Task 1 STATUS):
+- Register `require('electron').sharedTexture.setSharedTextureReceiver(async (data) => { ... })`.
+- Inside: `const frame = data.importedSharedTexture.getVideoFrame(); const bmp = await createImageBitmap(frame); frame.close?.()`.
+- Correlate the frame to a `slot` — the receiver's `data` carries the imported texture; map it to the slot index recorded when main sent it (main sends slots in a known order; or the `previewGpu:event` `frameReady` poke carries `{slot,pts,dur}` and the receiver pairs by arrival order — pin the correlation explicitly, do not assume).
+- Hand a **`MessagePort`** to the main world ONCE at setup: `const ch = new MessageChannel(); window.postMessage({ __weftcutPreviewGpu: 'port' }, '*', [ch.port2])`; thereafter `ch.port1.postMessage({ slot, bitmap }, [bitmap])` per frame. The main world (Task 7) listens via `window.addEventListener('message')` for the one-time port, then `port.onmessage` for frames. (Direct per-frame `window.postMessage(bitmap, '*', [bitmap])` also works — Task 1 — but the single MessagePort avoids per-frame main-world message-listener churn.)
+- Do NOT attempt to pass the port or bitmap as a `contextBridge` argument (Task 1: silently fails).
+Expose the command methods + a tiny `window.api.previewGpu.onPort(cb)` shim if needed, but the frame delivery itself goes over the `MessagePort`, not `contextBridge`.
 
 - [ ] **Step 3: Typecheck + commit**
 
@@ -508,7 +523,7 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement the handle**
 
-- `ensureReady`: `await window.api.previewGpu.open({streamId, path, poolSize: 3, colorSpace})`; store `{width,height}`; register `window.api.previewGpu.onFrame((slot, bitmap) => this.onFrame(slot, bitmap))` and `window.api.on('previewGpu:event', ...)` for the poke metadata (map slot→pts). **Color:** derive `colorSpace` from the source's `VideoColorSpaceInit` (same value the WebCodecs path computes via `withDefaultColorSpace`), adapting `fullRange:boolean → 'full'|'limited'` and matrix→Electron string (`bt709`/`smpte170m`/...). For the bench, the fixtures are HD → `bt709` is the correct default; still derive it rather than hardcode.
+- `ensureReady`: `await window.api.previewGpu.open({streamId, path, poolSize: 3, colorSpace})`; store `{width,height}`; frames arrive on the **main-world `MessagePort`** the preload hands over (Task 6b, Task-1 mechanism) — listen `window.addEventListener('message', e => { if (e.data.__weftcutPreviewGpu==='port') this.port = e.ports[0]; this.port.onmessage = m => this.onFrame(m.data.slot, m.data.bitmap); })`; subscribe `window.api.on('previewGpu:event', ...)` for `frameReady` poke metadata (map slot→{pts,dur}). **Color:** derive `colorSpace` as an **object** `{primaries, transfer, matrix, range}` (NOT a bare string — Electron's `importSharedTexture.colorSpace` takes the object form; the poc used e.g. `{matrix:'smpte170m', range:'limited'}` for 601, `{matrix:'bt709', range:'limited'}` for 709) from the source's `VideoColorSpaceInit` (same value the WebCodecs path computes via `withDefaultColorSpace`), adapting `fullRange:boolean → range:'full'|'limited'`. For the bench, the fixtures are HD → `bt709`/limited is the correct default; still derive rather than hardcode. (Note: this corrects the design spec's "colorSpace string" — it's an object.)
 - `onFrame(slot, bitmap)`: look up the pts/dur for that slot from the last `frameReady` poke; `this.ring.push(bitmap, ptsUs, durUs)`; fire `onFirstFrame` once; `window.api.previewGpu.consumeAck({streamId, slot})`.
 - `requestFrameAt(tUs)`: coalesce (trailing, one in-flight) then `window.api.previewGpu.requestFrameAt({streamId, targetUs: tUs})`.
 - `dispose`: `window.api.previewGpu.close({streamId})`; `ring.dispose()`; unsubscribe.
