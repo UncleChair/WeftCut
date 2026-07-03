@@ -37,6 +37,11 @@ pub struct Backend {
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
+    /// Native GPU-decode preview session registry (decode-bench Stage 2,
+    /// Windows-only). Its poke sink is wired to `events` in `build_backend` so
+    /// `FrameReady`/`Eof`/`Error` pokes surface as `previewGpu:*` events.
+    #[cfg(all(windows, feature = "preview-gpu"))]
+    pub(crate) preview_gpu: crate::preview_gpu::PreviewGpuRegistry,
     /// Plaintext cloud-provider API keys, keyed by provider tag ("openai").
     /// Pushed in by Electron main (decrypted from safeStorage) via
     /// `set_cloud_key`; read synchronously by the cloud reqwest providers.
@@ -72,6 +77,41 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
     // the `new` constructor signature stable; not stored (config stores are TS-owned).
     let _ = config_dir;
 
+    // Wire the registry's poke sink to the same `events` sink every other
+    // Backend channel emits through, so `previewGpu:*` events reach Electron
+    // main the same way `log:entry` / `media:*` / etc. do.
+    #[cfg(all(windows, feature = "preview-gpu"))]
+    let preview_gpu = {
+        let registry = crate::preview_gpu::PreviewGpuRegistry::new();
+        let sink_events = events.clone();
+        registry.set_poke_sink(Box::new(move |poke| {
+            use crate::preview_gpu::PreviewGpuPoke;
+            match poke {
+                PreviewGpuPoke::FrameReady { stream_id, slot, pts_us, dur_us } => {
+                    sink_events.emit(
+                        "previewGpu:frameReady",
+                        serde_json::json!({
+                            "streamId": stream_id,
+                            "slot": slot,
+                            "ptsUs": pts_us,
+                            "durUs": dur_us,
+                        }),
+                    );
+                }
+                PreviewGpuPoke::Eof { stream_id } => {
+                    sink_events.emit("previewGpu:eof", serde_json::json!({ "streamId": stream_id }));
+                }
+                PreviewGpuPoke::Error { stream_id, message } => {
+                    sink_events.emit(
+                        "previewGpu:error",
+                        serde_json::json!({ "streamId": stream_id, "message": message }),
+                    );
+                }
+            }
+        }));
+        registry
+    };
+
     Backend {
         events,
         cache,
@@ -87,6 +127,8 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         agent_session: AgentSessionSlot::new(),
         log_slot,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
+        #[cfg(all(windows, feature = "preview-gpu"))]
+        preview_gpu,
     }
 }
 
@@ -371,6 +413,112 @@ impl Backend {
     pub async fn mcp_get_prompt(&self, name: String, args_json: String) -> napi::Result<String> {
         let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
         Ok(crate::mcp::reply(crate::mcp::get_prompt(&name, args.as_object())))
+    }
+}
+
+/// One pool slot handed back by `preview_gpu_open`: the LE bytes of the shared
+/// D3D11 texture's NT handle (an `i64` value, not a pointer — see
+/// `preview_gpu::session::OpenInfo`). The main process re-parses these bytes
+/// and passes the handle to `importSharedTexture`.
+#[napi(object)]
+pub struct PreviewGpuSlot {
+    pub handle: Buffer,
+}
+
+/// Reply of `preview_gpu_open`: the decoded stream's dimensions + one
+/// `PreviewGpuSlot` per pool slot.
+#[napi(object)]
+pub struct PreviewGpuOpenInfo {
+    pub width: u32,
+    pub height: u32,
+    pub slots: Vec<PreviewGpuSlot>,
+}
+
+/// Native GPU-decode preview command surface (decode-bench Stage 2). Backed by
+/// `Backend::preview_gpu`; pokes (`FrameReady`/`Eof`/`Error`) surface as
+/// `previewGpu:*` events through the same `events` sink every other channel
+/// uses (wired in `build_backend`).
+#[cfg(all(windows, feature = "preview-gpu"))]
+#[napi]
+impl Backend {
+    /// Open `path` for GPU preview: spawns the session's decode thread and
+    /// returns the shared NV12 pool's slot handles + frame dimensions.
+    #[napi]
+    pub fn preview_gpu_open(
+        &self,
+        stream_id: String,
+        path: String,
+        pool_size: u32,
+    ) -> napi::Result<PreviewGpuOpenInfo> {
+        let info = self
+            .preview_gpu
+            .open(&stream_id, &path, pool_size)
+            .map_err(napi::Error::from_reason)?;
+        Ok(PreviewGpuOpenInfo {
+            width: info.width,
+            height: info.height,
+            slots: info
+                .slot_handles
+                .into_iter()
+                .map(|h| PreviewGpuSlot { handle: Buffer::from(h.to_le_bytes().to_vec()) })
+                .collect(),
+        })
+    }
+
+    /// Move the session's decode anchor. `target_us` is an `f64` (napi has no
+    /// ergonomic `i64` param binding) carrying source microseconds; cast down
+    /// to the `i64` the registry expects.
+    #[napi]
+    pub fn preview_gpu_request_frame_at(&self, stream_id: String, target_us: f64) -> napi::Result<()> {
+        self.preview_gpu
+            .request_frame_at(&stream_id, target_us as i64)
+            .map_err(napi::Error::from_reason)
+    }
+
+    /// Release a slot back to the pool after the renderer drops its last
+    /// cross-process reference to the shared texture.
+    #[napi]
+    pub fn preview_gpu_consume_ack(&self, stream_id: String, slot: u32) -> napi::Result<()> {
+        self.preview_gpu.consume_ack(&stream_id, slot).map_err(napi::Error::from_reason)
+    }
+
+    /// Tear down a session: signals its decode thread to close and joins it.
+    #[napi]
+    pub fn preview_gpu_close(&self, stream_id: String) -> napi::Result<()> {
+        self.preview_gpu.close(&stream_id).map_err(napi::Error::from_reason)
+    }
+}
+
+/// Fallback surface when the addon wasn't built with GPU preview support
+/// (non-Windows, or the `preview-gpu` feature is off): the methods still
+/// exist so JS callers get a clean rejection instead of a missing-method
+/// TypeError.
+#[cfg(not(all(windows, feature = "preview-gpu")))]
+#[napi]
+impl Backend {
+    #[napi]
+    pub fn preview_gpu_open(
+        &self,
+        _stream_id: String,
+        _path: String,
+        _pool_size: u32,
+    ) -> napi::Result<PreviewGpuOpenInfo> {
+        Err(napi::Error::from_reason("preview-gpu not built"))
+    }
+
+    #[napi]
+    pub fn preview_gpu_request_frame_at(&self, _stream_id: String, _target_us: f64) -> napi::Result<()> {
+        Err(napi::Error::from_reason("preview-gpu not built"))
+    }
+
+    #[napi]
+    pub fn preview_gpu_consume_ack(&self, _stream_id: String, _slot: u32) -> napi::Result<()> {
+        Err(napi::Error::from_reason("preview-gpu not built"))
+    }
+
+    #[napi]
+    pub fn preview_gpu_close(&self, _stream_id: String) -> napi::Result<()> {
+        Err(napi::Error::from_reason("preview-gpu not built"))
     }
 }
 
