@@ -200,17 +200,20 @@ jobs:
       - name: Package (unsigned)
         run: npm run build && npx electron-builder --publish never
 
-      # Installers are large (~0.4–0.9 GB each), so a 14-day retention lets a
-      # week of pushes stack into tens of GB and blow the account artifact-
-      # storage quota (which then fails EVERY upload step, reddening the whole
-      # matrix). Nothing downstream consumes this artifact — the compare job
-      # only needs determinism-* — so keep just enough to grab a build if needed.
+      # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
+      # step only PERSISTS the resulting installer. Installers are large
+      # (~0.4–0.9 GB per OS) and nothing downstream consumes them (the compare
+      # job only needs determinism-*). Uploading ~2 GB on every push refills the
+      # account artifact-storage quota, which then fails the essential (tiny)
+      # determinism-* upload and reddens the whole matrix. So only keep an
+      # installer when explicitly wanted — a tag build or a manual dispatch —
+      # with short retention on top.
       - name: Upload installer
-        if: success()
+        if: success() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
-          retention-days: 2
+          retention-days: 5
           path: apps/desktop/release/*
 
   # Cross-OS SSIM comparison.  Runs after all three build jobs finish
