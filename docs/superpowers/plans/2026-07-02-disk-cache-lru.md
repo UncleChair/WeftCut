@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - Gates for every task: `cargo test --lib --features jobs` (run in `apps/desktop/native`), `npx tsc -b` + `npx vitest run` (run in `apps/desktop`). Rust-only tasks may skip the TS gates and vice versa, EXCEPT the final task runs all.
+- AMENDED by final review: any task touching feature-gated code (`mcp/`, `export/`, `cloud/`) must also gate with the full union `cargo test --lib --features jobs,export,mcp,cloud` — the `jobs`-only gate never compiles those modules (the Task-4 fifth touch site shipped uncompiled by the plan's stated gate until the final review caught it).
 - Stage commits by explicit path only (`git add <paths>`); parallel sessions may be editing this checkout. Re-check `git status` before each commit.
 - Comment style per `docs/comment-style.md`: evergreen summary/why/landmine/pointer comments only; no changelog comments ("was X, now Y").
 - Never pipe the cargo gate through `tail`/`head` (masks failures).
