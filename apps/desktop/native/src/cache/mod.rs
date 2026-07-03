@@ -21,6 +21,34 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 
+/// Which decode source produced a filmstrip tile's pixels. Part of the tile's
+/// disk key: when a media's decode route changes (e.g. Bypass ->
+/// route-corrected Proxied), tiles from the old source stop matching and
+/// re-extract; the stale-source orphans age out via the disk LRU. The tag
+/// deliberately does NOT carry the proxy recipe version (see the design
+/// spec's non-goals).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilmstripSrc {
+    Orig,
+    Quick,
+    Full,
+}
+
+impl FilmstripSrc {
+    /// The exhaustive set of valid tag dir names under `filmstrip/{hash}/`.
+    /// The disk-LRU sweep treats anything else there as pre-provenance
+    /// layout and deletes it.
+    pub const DIR_NAMES: [&'static str; 3] = ["orig", "quick", "full"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FilmstripSrc::Orig => "orig",
+            FilmstripSrc::Quick => "quick",
+            FilmstripSrc::Full => "full",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CacheLayout {
     /// Current cache root. Swapped by `set_workspace` when the user opens or
@@ -84,9 +112,10 @@ impl CacheLayout {
     }
 
     /// On-demand filmstrip tiles for the timeline, lazy-cached per source hash.
-    /// Keys mirror the renderer's time grid: `{lod}/{index:06}.jpg` where the
-    /// tile samples source time `index * (250ms << lod)`. Growth is bounded by
-    /// the disk-cache LRU (follow-up plan); tiles are ~15-25 KB JPGs.
+    /// Keys mirror the renderer's time grid: `{tag}/{lod}/{index:06}.jpg` (tag =
+    /// decode source: orig/quick/full) where the tile samples source time
+    /// `index * (250ms << lod)`. Growth is bounded by the disk-cache LRU
+    /// (follow-up plan); tiles are ~15-25 KB JPGs.
     pub fn filmstrip_root(&self) -> PathBuf {
         self.current_root().join("filmstrip")
     }
@@ -156,8 +185,12 @@ impl CacheLayout {
         self.frames(hash).join(format!("{t_us}.jpg"))
     }
 
-    pub fn filmstrip_tile(&self, hash: &str, lod: u32, index: u32) -> PathBuf {
-        self.filmstrip_root().join(hash).join(lod.to_string()).join(format!("{index:06}.jpg"))
+    pub fn filmstrip_tile(&self, hash: &str, src: FilmstripSrc, lod: u32, index: u32) -> PathBuf {
+        self.filmstrip_root()
+            .join(hash)
+            .join(src.as_str())
+            .join(lod.to_string())
+            .join(format!("{index:06}.jpg"))
     }
 
     /// Audio slices extracted for cloud transcription (mono 16 kHz WAV).
@@ -290,8 +323,8 @@ mod tests {
             tmp.path().join("voiceover").join("abc.mp3"),
         );
         assert_eq!(
-            layout.filmstrip_tile("abc", 3, 7),
-            tmp.path().join("filmstrip").join("abc").join("3").join("000007.jpg"),
+            layout.filmstrip_tile("abc", FilmstripSrc::Quick, 3, 7),
+            tmp.path().join("filmstrip").join("abc").join("quick").join("3").join("000007.jpg"),
         );
     }
 

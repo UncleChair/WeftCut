@@ -44,6 +44,7 @@ pub fn validate_lod(lod: u32) -> Result<()> {
 pub async fn extract_tile(
     cache: &CacheLayout,
     src: &Path,
+    src_tag: crate::cache::FilmstripSrc,
     hash: &str,
     duration_us: Option<i64>,
     lod: u32,
@@ -53,7 +54,7 @@ pub async fn extract_tile(
 
     // Cache hit first: an already-extracted tile must stay reachable even
     // when the ffmpeg sidecar is broken — only the miss path needs ffmpeg.
-    let dest = cache.filmstrip_tile(hash, lod, index);
+    let dest = cache.filmstrip_tile(hash, src_tag, lod, index);
     if cached_ok(&dest) {
         return Ok(dest);
     }
@@ -182,7 +183,7 @@ mod tests {
         make_test_video(&video).await.expect("test fixture");
 
         // lod=2 -> spacing_us(2) = 1_000_000; index=1 -> t = 1_000_000 us.
-        let p1 = extract_tile(&cache, &video, "filmstrip-test", Some(2_000_000), 2, 1)
+        let p1 = extract_tile(&cache, &video, crate::cache::FilmstripSrc::Orig, "filmstrip-test", Some(2_000_000), 2, 1)
             .await
             .expect("first extract");
         assert!(cached_ok(&p1));
@@ -191,7 +192,7 @@ mod tests {
         // Second call should hit the disk cache (path returned without
         // re-running ffmpeg). We can't directly observe "didn't run ffmpeg"
         // but we can observe the file is unchanged.
-        let p2 = extract_tile(&cache, &video, "filmstrip-test", Some(2_000_000), 2, 1)
+        let p2 = extract_tile(&cache, &video, crate::cache::FilmstripSrc::Orig, "filmstrip-test", Some(2_000_000), 2, 1)
             .await
             .expect("cached extract");
         assert_eq!(p1, p2);
@@ -215,7 +216,7 @@ mod tests {
         // spacing_us(3) = 2_000_000; index=1 -> raw t = 2_000_000 us, which is
         // >= the 2s fixture's duration. With duration_us = Some(2_000_000) the
         // request must clamp into the source instead of erroring.
-        let p = extract_tile(&cache, &video, "filmstrip-tail-test", Some(2_000_000), 3, 1)
+        let p = extract_tile(&cache, &video, crate::cache::FilmstripSrc::Orig, "filmstrip-tail-test", Some(2_000_000), 3, 1)
             .await
             .expect("clamped extract");
         assert!(cached_ok(&p));

@@ -205,29 +205,34 @@ pub struct FilmstripTileArgs {
 /// direct routes extract from the original. Preference mirrors the renderer's
 /// resolveDecode preview path (quick proxy first, then the full master).
 #[cfg(feature = "jobs")]
-pub fn filmstrip_decode_source(item: &MediaItem) -> Result<PathBuf, String> {
+pub fn filmstrip_decode_source(item: &MediaItem) -> Result<(PathBuf, crate::cache::FilmstripSrc), String> {
+    use crate::cache::FilmstripSrc;
     if !matches!(item.kind, MediaKind::Video) {
         return Err("filmstrip tiles only valid for Video media".to_string());
     }
     match &item.decode_route {
-        state::DecodeRoute::Bypass | state::DecodeRoute::DirectExport { .. } => Ok(item.path_abs.clone()),
-        state::DecodeRoute::Proxied { quick_proxy, full_proxy, .. } => [quick_proxy, full_proxy]
-            .into_iter()
-            .flatten()
-            .find(|p| crate::cache::cached_ok(p))
-            .cloned()
-            .ok_or_else(|| "not_ready".to_string()),
+        state::DecodeRoute::Bypass | state::DecodeRoute::DirectExport { .. } => {
+            Ok((item.path_abs.clone(), FilmstripSrc::Orig))
+        }
+        state::DecodeRoute::Proxied { quick_proxy, full_proxy, .. } => {
+            [(quick_proxy, FilmstripSrc::Quick), (full_proxy, FilmstripSrc::Full)]
+                .into_iter()
+                .filter_map(|(p, tag)| p.as_ref().map(|p| (p, tag)))
+                .find(|(p, _)| crate::cache::cached_ok(p))
+                .map(|(p, tag)| (p.clone(), tag))
+                .ok_or_else(|| "not_ready".to_string())
+        }
     }
 }
 
 #[cfg(feature = "jobs")]
 pub async fn get_filmstrip_tile(backend: &Backend, args: FilmstripTileArgs) -> Result<FilmstripTile, String> {
     use crate::jobs::filmstrip;
-    let src = filmstrip_decode_source(&args.item)?;
+    let (src, src_tag) = filmstrip_decode_source(&args.item)?;
     filmstrip::validate_lod(args.lod).map_err(|e| format!("{e:#}"))?;
     let duration_us = args.item.metadata.duration_us;
     let hash = args.item.file_hash_blake3.clone();
-    let path = filmstrip::extract_tile(&backend.cache, &src, &hash, duration_us, args.lod, args.index)
+    let path = filmstrip::extract_tile(&backend.cache, &src, src_tag, &hash, duration_us, args.lod, args.index)
         .await
         .map_err(|e| format!("extract filmstrip tile: {e:#}"))?;
     let (width_px, height_px) = match args.item.metadata.video.as_ref() {
@@ -409,14 +414,21 @@ mod mirror_tests {
     #[cfg(feature = "jobs")]
     #[test]
     fn filmstrip_source_bypass_and_direct_export_use_original() {
+        use crate::cache::FilmstripSrc;
         let mut item = filmstrip_test_item(
             std::path::PathBuf::from("orig.mp4"),
             MediaKind::Video,
             DecodeRoute::Bypass,
         );
-        assert_eq!(filmstrip_decode_source(&item).unwrap(), std::path::PathBuf::from("orig.mp4"));
+        assert_eq!(
+            filmstrip_decode_source(&item).unwrap(),
+            (std::path::PathBuf::from("orig.mp4"), FilmstripSrc::Orig),
+        );
         item.decode_route = DecodeRoute::DirectExport { quick_proxy: None };
-        assert_eq!(filmstrip_decode_source(&item).unwrap(), std::path::PathBuf::from("orig.mp4"));
+        assert_eq!(
+            filmstrip_decode_source(&item).unwrap(),
+            (std::path::PathBuf::from("orig.mp4"), FilmstripSrc::Orig),
+        );
     }
 
     /// The proxy-wait rule: a Proxied item extracts from whichever proxy has
@@ -450,7 +462,7 @@ mod mirror_tests {
                 format_version: 0,
             },
         );
-        assert_eq!(filmstrip_decode_source(&item).unwrap(), quick);
+        assert_eq!(filmstrip_decode_source(&item).unwrap(), (quick.clone(), crate::cache::FilmstripSrc::Quick));
 
         // Only the full proxy has landed -> use it.
         std::fs::write(&full, b"x").unwrap();
@@ -463,7 +475,7 @@ mod mirror_tests {
                 format_version: 0,
             },
         );
-        assert_eq!(filmstrip_decode_source(&item).unwrap(), full);
+        assert_eq!(filmstrip_decode_source(&item).unwrap(), (full.clone(), crate::cache::FilmstripSrc::Full));
 
         // quick_proxy path is stale (file missing on disk) and there is no
         // full proxy -> not_ready, not a fallback to the original.
