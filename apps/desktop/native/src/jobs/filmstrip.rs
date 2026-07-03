@@ -123,6 +123,7 @@ pub async fn extract_tile(
         anyhow::bail!("ffmpeg returned success but tile is missing or zero bytes at {}", tmp.display());
     }
     promote_temp(&dest)?;
+    cache.notify_write();
     Ok(dest)
 }
 

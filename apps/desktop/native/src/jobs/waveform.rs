@@ -290,6 +290,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         anyhow::bail!("waveform peaks file is empty after write");
     }
     promote_temp(&dest)?;
+    cache.notify_write();
     Ok(dest)
 }
 

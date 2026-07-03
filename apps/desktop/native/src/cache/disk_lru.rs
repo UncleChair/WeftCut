@@ -45,7 +45,7 @@ pub struct SweepReport {
 /// the caller that should spawn the sweep task; `finish` re-arms it (called
 /// when the debounce window closes, BEFORE the walk runs, so writes landing
 /// during a long walk can schedule the next one).
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SweepState {
     scheduled: AtomicBool,
 }

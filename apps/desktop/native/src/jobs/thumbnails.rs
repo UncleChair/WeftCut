@@ -136,6 +136,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             format!("promote {} -> {}", tmp_dir.display(), dest_dir.display())
         })?;
 
+    cache.notify_write();
     Ok(dest_dir)
 }
 

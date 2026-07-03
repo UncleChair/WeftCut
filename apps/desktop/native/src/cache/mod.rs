@@ -58,6 +58,8 @@ pub struct CacheLayout {
     /// borrowed reference to the locked value or callers will deadlock on
     /// the next swap.
     root: Arc<RwLock<PathBuf>>,
+    /// Debounce latch for background disk-LRU sweeps (`cache::disk_lru`).
+    sweeper: Arc<disk_lru::SweepState>,
 }
 
 impl CacheLayout {
@@ -67,6 +69,7 @@ impl CacheLayout {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root: Arc::new(RwLock::new(root)),
+            sweeper: Arc::new(disk_lru::SweepState::default()),
         }
     }
 
@@ -83,7 +86,53 @@ impl CacheLayout {
             }
             *guard = new_root;
         }
-        self.ensure_dirs()
+        self.ensure_dirs()?;
+        // Workspace open is the prompt-sweep trigger: hygiene + budget
+        // eviction run once in the background.
+        self.sweep_soon();
+        Ok(())
+    }
+
+    /// Writers call this after landing a new derivative file. Debounced: the
+    /// first call schedules a sweep `SWEEP_DEBOUNCE` later; calls inside the
+    /// window coalesce. Outside a tokio runtime (sync unit tests) it is a
+    /// no-op — the next workspace open sweeps anyway.
+    pub fn notify_write(&self) {
+        self.schedule_sweep(disk_lru::SWEEP_DEBOUNCE);
+    }
+
+    /// Prompt full sweep (workspace open): hygiene rules + budget eviction,
+    /// no debounce. Also a no-op outside a runtime.
+    pub fn sweep_soon(&self) {
+        self.schedule_sweep(std::time::Duration::ZERO);
+    }
+
+    fn schedule_sweep(&self, delay: std::time::Duration) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
+        if !self.sweeper.try_schedule() {
+            return;
+        }
+        let layout = self.clone();
+        handle.spawn(async move {
+            tokio::time::sleep(delay).await;
+            // Re-arm BEFORE the walk: writes landing during a long sweep can
+            // schedule the next one. The walk re-reads the CURRENT root, so a
+            // workspace swap mid-schedule just sweeps the new root.
+            layout.sweeper.finish();
+            let l2 = layout.clone();
+            let report = tokio::task::spawn_blocking(move || {
+                disk_lru::sweep(&l2, disk_lru::DISK_CACHE_BUDGET_BYTES, std::time::SystemTime::now())
+            })
+            .await
+            .unwrap_or_default();
+            if report.units_deleted > 0 {
+                tracing::info!(
+                    units = report.units_deleted,
+                    mb = report.bytes_deleted / (1024 * 1024),
+                    "disk cache sweep evicted"
+                );
+            }
+        });
     }
 
     fn current_root(&self) -> PathBuf {
@@ -396,6 +445,26 @@ mod tests {
     fn cached_ok_rejects_missing_files() {
         let tmp = TempDir::new().unwrap();
         assert!(!cached_ok(&tmp.path().join("nope.mp4")));
+    }
+
+    /// End-to-end scheduling proof via a hygiene rule (budget-independent):
+    /// sweep_soon must delete an orphaned v2 peaks file in the background.
+    #[tokio::test]
+    async fn sweep_soon_runs_hygiene_in_background() {
+        let tmp = TempDir::new().unwrap();
+        let layout = CacheLayout::new(tmp.path().to_path_buf());
+        layout.ensure_dirs().unwrap();
+        let orphan = layout.waveforms_dir().join("aaa.v2.peaks");
+        fs::write(&orphan, b"old").unwrap();
+
+        layout.sweep_soon();
+        for _ in 0..200 {
+            if !orphan.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!orphan.exists(), "background sweep never ran");
     }
 
     #[test]
