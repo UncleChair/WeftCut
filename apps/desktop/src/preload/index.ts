@@ -197,17 +197,28 @@ let mainPort: MessagePort | null = null
 // to drop the preload's copies too. Also drop any announce-queue entries for
 // this stream so the queue can't accumulate across repeated open/close cycles
 // (e.g. a slot whose receiver callback never fired before close).
+//
+// The local cleanup runs in `finally` — not just after a successful invoke —
+// so it also runs if the invoke REJECTS (e.g. main's close is now idempotent
+// and could still reject for an unrelated reason). Skipping cleanup on
+// rejection would strand the preload's own imports, the exact leak this
+// function exists to close. It's safe to release them regardless of the
+// invoke's outcome: main's native close (or its absence) doesn't change what
+// the preload itself is holding.
 async function closePreviewGpuStream(streamId: string): Promise<void> {
-  await (ipcRenderer.invoke('previewGpu:close', { streamId }) as Promise<void>)
-  const prefix = `${streamId}:`
-  for (const [key, imp] of importedByKey) {
-    if (key.startsWith(prefix)) {
-      imp.release()
-      importedByKey.delete(key)
+  try {
+    await (ipcRenderer.invoke('previewGpu:close', { streamId }) as Promise<void>)
+  } finally {
+    const prefix = `${streamId}:`
+    for (const [key, imp] of importedByKey) {
+      if (key.startsWith(prefix)) {
+        imp.release()
+        importedByKey.delete(key)
+      }
     }
-  }
-  for (let i = announceQueue.length - 1; i >= 0; i--) {
-    if (announceQueue[i].streamId === streamId) announceQueue.splice(i, 1)
+    for (let i = announceQueue.length - 1; i >= 0; i--) {
+      if (announceQueue[i].streamId === streamId) announceQueue.splice(i, 1)
+    }
   }
 }
 
@@ -245,13 +256,19 @@ ipcRenderer.on(
     // below (a module-scoped `let` re-widens across await points).
     const port = mainPort
     if (!imp || !port) return
-    const vf = imp.getVideoFrame()
     try {
       let bmp: ImageBitmap
+      // getVideoFrame() lives INSIDE the try: once it's called the slot is
+      // spoken for, so any failure from here on (including getVideoFrame
+      // itself throwing) must still reach the single consumeAck below — the
+      // same stranded-slot failure mode the ack-on-error fix closed. vf stays
+      // undefined (and its close guarded) if getVideoFrame throws.
+      let vf: VideoFrame | undefined
       try {
+        vf = imp.getVideoFrame()
         bmp = await createImageBitmap(vf)
       } finally {
-        vf.close?.()
+        vf?.close?.()
       }
       port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp }, [bmp])
     } catch (err) {

@@ -62,9 +62,13 @@ export async function openPreviewGpu(
         // call .release() until closePreviewGpu, so this callback stays a no-op.
         allReferencesReleased: () => {},
       })
+      // Track the import the instant it exists (importSharedTexture holds a GPU
+      // reference from the moment it returns, per Electron docs) — BEFORE the
+      // fallible send below, so the catch's release loop covers this slot too
+      // if sendSharedTexture throws.
+      imported.push(imp)
       // sendSharedTexture has its own internal timeout (~1000ms) and can reject.
       await sharedTexture.sendSharedTexture({ frame: win.webContents.mainFrame, importedSharedTexture: imp })
-      imported.push(imp)
     }
   } catch (err) {
     // Partial-open failure: slots 0..k-1 are already imported, but we haven't
@@ -96,11 +100,17 @@ export function consumeAckPreviewGpu(backend: Backend, streamId: string, slot: n
 /// Tear down a session. Close the native side FIRST (it signals + joins the
 /// decode thread, so no frame can be mid-read afterward), THEN drop our
 /// persistent imports and forget the session.
+///
+/// Idempotent no-op when there is no live session: the open-catch above already
+/// calls backend.previewGpuClose on a partial-open failure (without ever calling
+/// sessions.set), so an ordinary dispose()->close() that follows would otherwise
+/// call the native close a SECOND time on an unknown/already-closed stream —
+/// which the native registry may reject. Gate on sessions.has() so a caller can
+/// always call close() exactly once per open() attempt, succeeded or not.
 export function closePreviewGpu(backend: Backend, streamId: string): void {
-  backend.previewGpuClose(streamId)
   const session = sessions.get(streamId)
-  if (session) {
-    for (const imp of session.imported) imp.release()
-    sessions.delete(streamId)
-  }
+  if (!session) return
+  backend.previewGpuClose(streamId)
+  for (const imp of session.imported) imp.release()
+  sessions.delete(streamId)
 }
