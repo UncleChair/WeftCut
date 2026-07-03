@@ -140,6 +140,18 @@ export class PacketPump {
   /// never read by `decideReset` while the sentinel holds (the pump
   /// short-circuits cold start via `cursor === null`).
   private lastDecodedPtsUs = Number.NEGATIVE_INFINITY;
+  /// The `targetUs` the pump last successfully seeked for, or `null` if no
+  /// seek has landed since cold start / the last cursor invalidation.
+  /// LANDMINE: `decideReset`'s far-forward arm stays true after a long-GOP
+  /// seek, because the key packet can sit well over a second before the
+  /// target — that's inherent to the GOP structure, not something the seek
+  /// can fix. Without this latch, every subsequent pass (including the
+  /// mid-fill re-check and the next `requestFrameAt` for the SAME target)
+  /// reads that same "true" and re-seeks the identical key, forever —
+  /// the pump never advances past it. The latch scopes the reset decision
+  /// to "have I already seeked for this exact target", so decideReset only
+  /// gets to fire a fresh reset when the target actually changes.
+  private seekResolvedForTargetUs: number | null = null;
   /// Single-flight guard: at most one runPump() loop is live.
   private pumping = false;
   /// Set by requestFrameAt while a loop is live; the loop re-runs its
@@ -179,6 +191,9 @@ export class PacketPump {
     this.cursor = null;
     this.lastDecodedPtsUs = Number.NEGATIVE_INFINITY;
     this.flushedThisRun = false;
+    // The fresh decoder has never been seeked; let it re-seek even for a
+    // target the OLD decoder already resolved.
+    this.seekResolvedForTargetUs = null;
   }
 
   dispose(): void {
@@ -200,13 +215,18 @@ export class PacketPump {
         const target = this.targetUs;
 
         // --- Seek / cold-start: position the decoder at a key packet ---
+        // The `target !== seekResolvedForTargetUs` guard is the livelock
+        // fix: decideReset alone would re-fire every pass for a far target
+        // whose key sits >1s before it, even though the seek already
+        // landed there (see the field doc on seekResolvedForTargetUs).
         const needsSeek =
           this.cursor === null ||
-          decideReset({
-            targetUs: target,
-            lastDecodedPtsUs: this.lastDecodedPtsUs,
-            ringFirstPtsUs: this.deps.ring.firstPtsUs(),
-          });
+          (target !== this.seekResolvedForTargetUs &&
+            decideReset({
+              targetUs: target,
+              lastDecodedPtsUs: this.lastDecodedPtsUs,
+              ringFirstPtsUs: this.deps.ring.firstPtsUs(),
+            }));
         if (needsSeek) {
           const isReset = this.cursor !== null; // cold start is not a reset
           const myGen = this.generation;
@@ -234,6 +254,7 @@ export class PacketPump {
             this.cursor = key;
             this.lastDecodedPtsUs = this.toSourcePtsUs(key);
             this.flushedThisRun = false;
+            this.seekResolvedForTargetUs = target;
           }
         }
 
@@ -243,9 +264,14 @@ export class PacketPump {
           this.deps.decoder.decodeQueueSize < MAX_QUEUE &&
           !this.deps.ring.isLookaheadFull()
         ) {
-          // A seek that arrived mid-fill is caught here synchronously
-          // (no key fetch) — break and re-seek on the next pass.
+          // A seek that arrived mid-fill is caught here synchronously (no
+          // key fetch) — break and re-seek on the next pass. Same latch as
+          // the pass-start check: once `targetUs` matches the target this
+          // pump already seeked for, decideReset's far-forward arm is
+          // expected to still read true (the key sits >1s before it) and
+          // must NOT re-trigger a break/re-seek — that's the livelock.
           if (
+            this.targetUs !== this.seekResolvedForTargetUs &&
             decideReset({
               targetUs: this.targetUs,
               lastDecodedPtsUs: this.lastDecodedPtsUs,
