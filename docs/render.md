@@ -304,6 +304,13 @@ store's header):
 When adding any UI that follows the playhead, start at tier 1 and only
 move down the list when the UI genuinely needs to repaint continuously.
 
+Enforcement: `apps/desktop/e2e/scripts/memory-ratchet.mjs` (local-only —
+the phenomenon is dev-bundle-specific, so the prod-built e2e suite
+cannot see it; needs the dev server on port 1420). It replays a 90 s
+playback against a synthesized no-media fixture and fails when the
+post-GC memory floor rises ≥ 30 MB. Run it after touching the playback
+loop, the playhead store, or anything that subscribes per frame.
+
 ## Sprite kinds
 
 | Sprite | Source | Notes |
