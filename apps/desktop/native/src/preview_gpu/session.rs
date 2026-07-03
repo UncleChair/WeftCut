@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use windows::core::{Interface, PCWSTR};
+use windows::core::{Interface, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Graphics::Direct3D11::{
     ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX,
@@ -41,10 +41,24 @@ use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
 
 use super::decoder::{StreamFrame, VideoStream};
 
-/// Wait `INFINITE` on the keyed mutex — safe because we only ever write a slot
-/// the renderer already released (via `consume_ack`), so Chromium isn't holding
-/// its read lock when we `AcquireSync`.
-const INFINITE: u32 = 0xFFFF_FFFF;
+/// Ceiling on the keyed-mutex wait in [`copy_frame_into_slot`]. We only ever
+/// write a slot the renderer already released (via `consume_ack`), so
+/// Chromium isn't holding its read lock when we `AcquireSync` — a free slot
+/// acquires in microseconds. This value is generous on purpose: it never
+/// trips on that happy path (so it can't drop frames or skew the benchmark's
+/// throughput numbers) and only fires when a slot is genuinely stuck (e.g.
+/// held by Chromium past its ack), turning what would otherwise be a
+/// permanent session-thread hang into an observable, recoverable skip.
+const ACQUIRE_TIMEOUT_MS: u32 = 1000;
+/// `WAIT_TIMEOUT` (winbase.h `0x00000102`), as it surfaces from
+/// `IDXGIKeyedMutex::AcquireSync`'s raw return code. Its sign bit is 0, so
+/// windows-rs's generated safe wrapper (`HRESULT::ok`, `windows-result` crate,
+/// which treats any non-negative code as success) collapses a timeout to
+/// `Ok(())` — indistinguishable from actually holding the mutex. We therefore
+/// call the vtable function directly in `copy_frame_into_slot` and compare
+/// the raw `HRESULT` against this sentinel ourselves instead of trusting the
+/// safe wrapper's `Result`.
+const DXGI_KEYED_MUTEX_WAIT_TIMEOUT: i32 = 0x0000_0102;
 /// `DXGI_SHARED_RESOURCE_READ (0x80000000) | DXGI_SHARED_RESOURCE_WRITE (0x1)`.
 /// Raw u32 because the windows-crate newtype OR doesn't coerce to the method's
 /// `u32` parameter.
@@ -297,16 +311,36 @@ impl SessionState {
                     self.height,
                 )
             };
-            if let Err(e) = copy {
-                self.eof = true;
-                emit(
-                    poke,
-                    PreviewGpuPoke::Error {
-                        stream_id: stream_id.to_string(),
-                        message: e,
-                    },
-                );
-                return;
+            match copy {
+                Ok(CopyOutcome::AcquireFailed(message)) => {
+                    // The slot's keyed mutex is stuck (or a transient acquire
+                    // error occurred): no GPU work happened, the slot was
+                    // never touched so it stays free, and this decoded frame
+                    // is dropped. Report it but don't halt the pump — return
+                    // to the session loop so it re-services its mailbox
+                    // (including a pending `Close`) instead of retrying in a
+                    // tight loop against a slot that may stay stuck.
+                    emit(
+                        poke,
+                        PreviewGpuPoke::Error {
+                            stream_id: stream_id.to_string(),
+                            message,
+                        },
+                    );
+                    return;
+                }
+                Err(e) => {
+                    self.eof = true;
+                    emit(
+                        poke,
+                        PreviewGpuPoke::Error {
+                            stream_id: stream_id.to_string(),
+                            message: e,
+                        },
+                    );
+                    return;
+                }
+                Ok(CopyOutcome::Copied) => {}
             }
 
             self.free[slot_idx] = false;
@@ -325,9 +359,29 @@ impl SessionState {
     }
 }
 
+/// Result of attempting to copy a decoded frame into a pool slot.
+enum CopyOutcome {
+    /// The mutex was acquired and the frame copied; the caller may mark the
+    /// slot busy and emit `FrameReady`.
+    Copied,
+    /// `AcquireSync` did not grant the mutex (timeout) or returned a genuine
+    /// error. No GPU work happened — the slot was never touched, so it stays
+    /// free — and this decoded frame is dropped. Carries the message for a
+    /// `PreviewGpuPoke::Error`.
+    AcquireFailed(String),
+}
+
 /// Copy the decoded GPU surface into a pool slot, bracketed by the slot's keyed
 /// mutex (our write vs. Chromium's read) and ffmpeg's device-context lock
 /// (decode thread vs. this copy). Lifted from the poc's in-place slot overwrite.
+///
+/// The initial `AcquireSync` uses a finite timeout (`ACQUIRE_TIMEOUT_MS`)
+/// rather than `INFINITE`: on the happy path a free slot acquires in
+/// microseconds, so the timeout never trips — it exists only so a genuinely
+/// stuck slot can never wedge the session thread (and therefore `close`/join)
+/// forever. See `ACQUIRE_TIMEOUT_MS` / `DXGI_KEYED_MUTEX_WAIT_TIMEOUT` for why
+/// this must call the vtable function directly instead of the safe
+/// `IDXGIKeyedMutex::AcquireSync` wrapper.
 ///
 /// # Safety
 /// `decoded.src_texture` must still be valid (no `next_frame` since it was
@@ -339,13 +393,30 @@ unsafe fn copy_frame_into_slot(
     decoded: &StreamFrame,
     width: u32,
     height: u32,
-) -> Result<(), String> {
+) -> Result<CopyOutcome, String> {
     let src_tex = ID3D11Texture2D::from_raw_borrowed(&decoded.src_texture)
         .ok_or_else(|| "decoded D3D11 texture is null".to_string())?;
 
-    slot.keyed_mutex
-        .AcquireSync(0, INFINITE)
-        .map_err(|e| format!("AcquireSync(slot) failed: {e}"))?;
+    // Call the vtable function directly (bypassing `IDXGIKeyedMutex::AcquireSync`'s
+    // safe wrapper) so we see the raw HRESULT: the safe wrapper's `.ok()` treats
+    // any non-negative code — including `WAIT_TIMEOUT` — as `Ok(())`, which would
+    // make a timeout indistinguishable from actually holding the mutex.
+    let acquire_hr: HRESULT = (Interface::vtable(&slot.keyed_mutex).AcquireSync)(
+        Interface::as_raw(&slot.keyed_mutex),
+        0,
+        ACQUIRE_TIMEOUT_MS,
+    );
+    if acquire_hr.0 == DXGI_KEYED_MUTEX_WAIT_TIMEOUT {
+        return Ok(CopyOutcome::AcquireFailed(format!(
+            "AcquireSync timeout on slot after {ACQUIRE_TIMEOUT_MS}ms (slot stuck)"
+        )));
+    }
+    if let Err(e) = acquire_hr.ok() {
+        return Ok(CopyOutcome::AcquireFailed(format!(
+            "AcquireSync(slot) failed: {e}"
+        )));
+    }
+
     if let Some(lock) = stream.lock {
         lock(stream.lock_ctx);
     }
@@ -374,7 +445,7 @@ unsafe fn copy_frame_into_slot(
     slot.keyed_mutex
         .ReleaseSync(0)
         .map_err(|e| format!("ReleaseSync(slot) failed: {e}"))?;
-    Ok(())
+    Ok(CopyOutcome::Copied)
 }
 
 /// Fire a poke through the shared sink if one is set. The mutex is held across
