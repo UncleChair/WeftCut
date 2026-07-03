@@ -40,6 +40,7 @@ import { decodeAnimatedImage } from "../render/sprite/animatedImageCache";
 import type { ResolvedImageOverlayView } from "../render/resolveView";
 import { convertFileSrc } from "@/bridge/ipc";
 import { buildPanGraph, constantPanGains } from "../render/audio/panGraph";
+import { decodeBenchRun, decodeBenchPhase, type BenchArgs, type BenchResult } from "../render/decoder/decodeBench";
 
 type RunExport = (
   settings: ExportSettings,
@@ -262,6 +263,12 @@ export interface E2EHook {
     pan: number;
     frames: number;
   }): Promise<{ l: number; r: number }>;
+  /// decode-bench (docs/decode-bench.md): run one benchmark scenario against
+  /// a private decoder pool. Orchestrated by e2e/scripts/decode-bench.mjs.
+  decodeBenchRun(args: BenchArgs): Promise<BenchResult>;
+  /// Current decode-bench phase ('idle'|'setup'|'warmup'|'measuring');
+  /// the orchestrator gates its resource samplers on 'measuring'.
+  decodeBenchPhase(): string;
 }
 
 /// Pixel + whole-frame diagnostics from the live composite readback. `r/g/b/a`
@@ -322,6 +329,15 @@ export function installBootstrapHook(
     await projectOpen(path);
     enterEditor();
   };
+}
+
+/// Root-side: install the decode-bench hooks (docs/decode-bench.md). No
+/// App/export state needed — the driver owns its own private
+/// SourceDecoderPool. Called once on boot from main.tsx.
+export function installDecodeBenchHooks(): void {
+  if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
+  hookSlot().decodeBenchRun = decodeBenchRun;
+  hookSlot().decodeBenchPhase = decodeBenchPhase;
 }
 
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,

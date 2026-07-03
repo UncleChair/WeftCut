@@ -115,7 +115,7 @@ function Root() {
   useEffect(() => {
     if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
     void import("./testhook/e2eHook").then(
-      ({ installBootstrapHook, installMotifTestHooks, installMotifHook, installAudioTestHooks }) => {
+      ({ installBootstrapHook, installMotifTestHooks, installMotifHook, installAudioTestHooks, installDecodeBenchHooks }) => {
         installBootstrapHook(
           () => setStage("editor"),
           () => setStage("startup"),
@@ -123,6 +123,7 @@ function Root() {
         installMotifTestHooks();
         installMotifHook();
         installAudioTestHooks();
+        installDecodeBenchHooks();
       },
     );
   }, []);
