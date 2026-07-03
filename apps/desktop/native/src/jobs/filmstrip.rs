@@ -2,7 +2,7 @@
 //!
 //! Unlike the import-time thumbnail job (10 posters per media), tiles are
 //! extracted lazily per (lod, index) time-grid key as the timeline scrolls
-//! and zooms, and cached at `<cache>/filmstrip/<hash>/<lod>/<index:06>.jpg`.
+//! and zooms, and cached at `<cache>/filmstrip/<hash>/<tag>/<lod>/<index:06>.jpg`.
 //! Repeat hits skip ffmpeg entirely. Deliberately NOT behind `ffmpeg_sem()`:
 //! interactive tile extracts must not queue behind proxy transcodes (same
 //! stance as `jobs/frame.rs`); the renderer caps its own in-flight fetches.

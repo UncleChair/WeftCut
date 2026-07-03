@@ -266,6 +266,9 @@ First pass should use lightweight gating, not a full virtualization rewrite:
 - Prefer requesting only when the layer block is in or near the viewport.
 - Cache thumbnails by `mediaId`.
 - Cache waveform peaks by `mediaId`.
+- Disk-side, the filmstrip/thumbnail/waveform caches share a 2 GiB budget:
+  reads refresh file mtimes and a background sweep evicts oldest-first
+  (`native/src/cache/disk_lru.rs`).
 - On derivative job completion, invalidate only the matching media id.
 - Multiple clips from the same media should share fetched resources.
 
