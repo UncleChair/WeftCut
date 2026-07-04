@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "@playwright/test";
 import { BENCH_MATRIX, benchFixturePath } from "./gen-decode-bench-fixtures.mjs";
+import { parsePoolSize, SWEEP_POOL_SIZES } from "./bench-cli.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP = path.resolve(HERE, "../..");
@@ -38,6 +39,17 @@ const runs = Number(arg("runs", "3"));
 const STRATEGY = arg("strategy", "webcodecs"); // 'webcodecs' | 'native'
 if (STRATEGY !== "webcodecs" && STRATEGY !== "native") {
   console.error(`[decode-bench] invalid --strategy '${STRATEGY}' (expected webcodecs|native)`);
+  process.exit(1);
+}
+const POOL_SWEEP = process.argv.includes("--pool-sweep");
+const poolSizeParsed = parsePoolSize(arg("pool-size", undefined));
+if (!poolSizeParsed.ok) {
+  console.error(`[decode-bench] ${poolSizeParsed.error}`);
+  process.exit(1);
+}
+const POOL_SIZE = poolSizeParsed.value; // undefined => native default (3)
+if ((POOL_SWEEP || POOL_SIZE !== undefined) && STRATEGY !== "native") {
+  console.error("[decode-bench] --pool-size / --pool-sweep only apply to --strategy native");
   process.exit(1);
 }
 const scenarios = scenarioArg === "all" ? ["throughput", "seek", "coldstart"] : [scenarioArg];
@@ -97,7 +109,7 @@ function startGpuSampler() {
 }
 
 // ── One app session: run the scenario list for one fixture ─────────────────
-async function runSession(fixture, wantScenarios) {
+async function runSession(fixture, wantScenarios, poolSize) {
   const app = await electron.launch({
     args: [MAIN],
     env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1" },
@@ -117,6 +129,7 @@ async function runSession(fixture, wantScenarios) {
         durationUs: fixture.durationUs,
         scenario,
         strategy: STRATEGY,
+        poolSize,
       };
       if (scenario !== "throughput") {
         out[scenario] = await page.evaluate((a) => window.__weftcutTest.decodeBenchRun(a), args);
@@ -210,6 +223,52 @@ if (selfCheck) {
   log(`fps ${a.fps.toFixed(1)} vs ${b.fps.toFixed(1)} → Δ ${(rel * 100).toFixed(2)}%`);
   if (rel >= 0.05) { console.error("[decode-bench] SELF-CHECK FAIL: variance >= 5%"); process.exit(1); }
   log("SELF-CHECK PASS");
+  process.exit(0);
+}
+
+if (POOL_SWEEP) {
+  log(`pool-sweep (native throughput): N = ${SWEEP_POOL_SIZES.join(", ")}`);
+  const env = await envBlock();
+  const report = { env, strategy: STRATEGY, mode: "pool-sweep", runs, poolSweep: [] };
+  fs.mkdirSync(RESULTS_DIR, { recursive: true });
+  const outFile = path.join(RESULTS_DIR, `${env.date.slice(0, 10)}-${env.gitSha}-poolsweep.json`);
+  for (const fixture of fixtures) {
+    for (const N of SWEEP_POOL_SIZES) {
+      const perRun = [];
+      for (let run = 0; run < runs; run++) {
+        log(`${fixture.name} N=${N} run ${run + 1}/${runs} …`);
+        try {
+          const out = await runSession(fixture, ["throughput"], N);
+          perRun.push(out.throughput);
+        } catch (e) {
+          perRun.push({ kind: "error", error: String(e) });
+        }
+      }
+      const tp = perRun.filter((t) => t?.kind === "throughput");
+      report.poolSweep.push({
+        fixture: fixture.name,
+        poolSize: N,
+        fps: median(tp.map((t) => t.fps)),
+        xRealtime: median(tp.map((t) => t.xRealtime)),
+        // Timing is identical in shape across runs; keep the median run's block.
+        timing: tp.length ? tp[Math.floor((tp.length - 1) / 2)].timing : undefined,
+        errors: perRun.filter((t) => t?.kind === "error").map((t) => t.error),
+      });
+      fs.writeFileSync(outFile, JSON.stringify(report, null, 2));
+    }
+  }
+  log(`report → ${outFile}`);
+  console.log(`\n| fixture | N | fps | ×realtime | coordRtt p50 | cib p50 | resident p50 | ipcTransit(mean) |`);
+  console.log(`|---|---|---|---|---|---|---|---|`);
+  const fmt = (x) => (Number.isFinite(x) ? x.toFixed(1) : "—");
+  for (const r of report.poolSweep) {
+    const t = r.timing;
+    console.log(
+      `| ${r.fixture} | ${r.poolSize} | ${fmt(r.fps)} | ${fmt(r.xRealtime)} ` +
+      `| ${fmt(t?.coordRttMs?.p50)} | ${fmt(t?.createImageBitmapMs?.p50)} ` +
+      `| ${fmt(t?.preloadResidentMs?.p50)} | ${fmt(t?.ipcTransitMsDerived)} |`,
+    );
+  }
   process.exit(0);
 }
 
