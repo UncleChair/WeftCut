@@ -265,15 +265,16 @@ if (POOL_SWEEP) {
     }
   }
   log(`report → ${outFile}`);
-  console.log(`\n| fixture | N | fps | ×realtime | coordRtt p50 | cib p50 | resident p50 | ipcTransit(mean) |`);
-  console.log(`|---|---|---|---|---|---|---|---|`);
+  console.log(`\n| fixture | N | fps | ×realtime | coordRtt p50 | cib p50 | resident p50 | rendererRT p50 | rustMain(mean) | mainRend(mean) |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|`);
   const fmt = (x) => (Number.isFinite(x) ? x.toFixed(1) : "—");
   for (const r of report.poolSweep) {
     const t = r.timing;
     console.log(
       `| ${r.fixture} | ${r.poolSize} | ${fmt(r.fps)} | ${fmt(r.xRealtime)} ` +
       `| ${fmt(t?.coordRttMs?.p50)} | ${fmt(t?.createImageBitmapMs?.p50)} ` +
-      `| ${fmt(t?.preloadResidentMs?.p50)} | ${fmt(t?.ipcTransitMsDerived)} |`,
+      `| ${fmt(t?.preloadResidentMs?.p50)} | ${fmt(t?.rendererRoundTripMs?.p50)} ` +
+      `| ${fmt(t?.rustMainBoundaryMs)} | ${fmt(t?.mainRendererTransitMs)} |`,
     );
   }
   process.exit(0);
