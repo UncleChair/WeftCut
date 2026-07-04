@@ -272,16 +272,53 @@ if (POOL_SWEEP) {
     }
   }
   log(`report → ${outFile}`);
-  console.log(`\n| fixture | N | fps | ×realtime | coordRtt p50 | cib p50 | resident p50 | rendererRT p50 | rustMain(mean) | mainRend(mean) |`);
-  console.log(`|---|---|---|---|---|---|---|---|---|---|`);
+  // ackToEmit sits beside coordRtt so the telescoping identity is readable at a
+  // glance: coordRtt(mean) + ackToEmit(mean) ~= per-slot period (N * 1000/fps).
+  // periodChk prints that sum vs the measured period so a mismatch (leaked time /
+  // wrong stamp) is obvious. lookaheadSkips attributes the ackToEmit idle.
+  console.log(`\n| fixture | N | fps | ×realtime | coordRtt p50 | ackToEmit p50 | coord+ack(mean) | period(N/fps) | cib p50 | resident p50 | rendererRT p50 | rustMain(mean) | mainRend(mean) | lookaheadSkips |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
   const fmt = (x) => (Number.isFinite(x) ? x.toFixed(1) : "—");
   for (const r of report.poolSweep) {
     const t = r.timing;
+    const coordAck = t ? t.coordRttMs.mean + t.ackToEmitMs.mean : NaN;
+    const period = Number.isFinite(r.fps) && r.fps > 0 ? (r.poolSize * 1000) / r.fps : NaN;
     console.log(
       `| ${r.fixture} | ${r.poolSize} | ${fmt(r.fps)} | ${fmt(r.xRealtime)} ` +
-      `| ${fmt(t?.coordRttMs?.p50)} | ${fmt(t?.createImageBitmapMs?.p50)} ` +
+      `| ${fmt(t?.coordRttMs?.p50)} | ${fmt(t?.ackToEmitMs?.p50)} | ${fmt(coordAck)} | ${fmt(period)} ` +
+      `| ${fmt(t?.createImageBitmapMs?.p50)} ` +
       `| ${fmt(t?.preloadResidentMs?.p50)} | ${fmt(t?.rendererRoundTripMs?.p50)} ` +
-      `| ${fmt(t?.rustMainBoundaryMs)} | ${fmt(t?.mainRendererTransitMs)} |`,
+      `| ${fmt(t?.rustMainBoundaryMs)} | ${fmt(t?.mainRendererTransitMs)} | ${t?.lookaheadGatedSkips ?? "—"} |`,
+    );
+  }
+  // Round-2 thread time-budget: cadence + where the session thread's wall-time goes.
+  // idle% = recvBlock.mean * recvBlock.n / window(ms) — fraction of the window the
+  // thread sat blocked in recv_timeout. Wake tallies show what unblocks it.
+  console.log(`\n| fixture | N | interEmit p50/mean | interAck p50/mean | recvBlock mean | idle% | timeoutTicks | ackMsgs | reqMsgs |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|`);
+  for (const r of report.poolSweep) {
+    const t = r.timing;
+    const window = Number.isFinite(r.fps) && r.fps > 0 ? (t?.interEmitMs?.n ?? 0) / r.fps * 1000 : NaN;
+    const idlePct = t && Number.isFinite(window) && window > 0 ? (t.recvBlockMs.mean * t.recvBlockMs.n) / window * 100 : NaN;
+    console.log(
+      `| ${r.fixture} | ${r.poolSize} ` +
+      `| ${fmt(t?.interEmitMs?.p50)}/${fmt(t?.interEmitMs?.mean)} ` +
+      `| ${fmt(t?.interAckMs?.p50)}/${fmt(t?.interAckMs?.mean)} ` +
+      `| ${fmt(t?.recvBlockMs?.mean)} | ${fmt(idlePct)} ` +
+      `| ${t?.recvTimeoutTicks ?? "—"} | ${t?.recvAckMsgs ?? "—"} | ${t?.recvReqMsgs ?? "—"} |`,
+    );
+  }
+  // Round-3 stall attribution: which pump early-return dominated + terminal state.
+  // The dominant counter names the halt (eof / poolFull / acquireFail / lookahead);
+  // finalFree/finalEof snapshot the pump's terminal condition.
+  console.log(`\n| fixture | N | eofReturns | poolFullReturns | acquireFailed | lookaheadSkips | finalFree | finalEof |`);
+  console.log(`|---|---|---|---|---|---|---|---|`);
+  for (const r of report.poolSweep) {
+    const t = r.timing;
+    console.log(
+      `| ${r.fixture} | ${r.poolSize} ` +
+      `| ${t?.eofReturns ?? "—"} | ${t?.poolFullReturns ?? "—"} | ${t?.acquireFailed ?? "—"} ` +
+      `| ${t?.lookaheadGatedSkips ?? "—"} | ${t?.finalFreeSlots ?? "—"} | ${t?.finalEof ?? "—"} |`,
     );
   }
   process.exit(0);

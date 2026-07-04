@@ -91,10 +91,33 @@ export type PreviewGpuTimingSummary = {
   p95Ms: number
   maxMs: number
 }
-/// Both native timing metrics: the coord round-trip (emit->ack) and decode+copy.
+/// Native timing metrics: the coord round-trip (emit->ack), decode+copy, and the
+/// throughput-bottleneck probe — `ackToEmit` (a slot's ConsumeAck -> its next
+/// FrameReady, the one per-slot-cycle segment coordRtt does NOT cover) plus
+/// `lookaheadGatedSkips` (how often the pump idled on the lookahead gate rather
+/// than pool-full). See docs/superpowers/decode-bench-throughput-bottleneck-handoff.md.
 export type PreviewGpuTimingReport = {
   coordRtt: PreviewGpuTimingSummary
   decodeCopy: PreviewGpuTimingSummary
+  ackToEmit: PreviewGpuTimingSummary
+  lookaheadGatedSkips: number
+  /// Round-2 thread time-budget probe: production/ack cadence (interEmit/interAck),
+  /// the session thread's recv_timeout block distribution (recvBlock — its sum ~=
+  /// total thread idle), and wake-reason tallies (idle ticks / acks / anchor nudges).
+  interEmit: PreviewGpuTimingSummary
+  interAck: PreviewGpuTimingSummary
+  recvBlock: PreviewGpuTimingSummary
+  recvTimeoutTicks: number
+  recvAckMsgs: number
+  recvReqMsgs: number
+  /// Round-3 stall attribution: which pump early-return dominated (eofReturns /
+  /// poolFullReturns / acquireFailed / lookaheadGatedSkips), plus the terminal
+  /// free-slot count + eof flag when the pump last gave up.
+  eofReturns: number
+  poolFullReturns: number
+  acquireFailed: number
+  finalFreeSlots: number
+  finalEof: boolean
 }
 
 /// Main-measured renderer round-trip (decode-bench signal attribution): the time

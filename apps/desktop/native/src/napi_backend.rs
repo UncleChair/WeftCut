@@ -445,11 +445,28 @@ pub struct PreviewGpuTimingSummary {
     pub max_ms: f64,
 }
 
-/// Both native timing metrics returned by `preview_gpu_take_timings`.
+/// Native timing metrics returned by `preview_gpu_take_timings`. `ack_to_emit` +
+/// `lookahead_gated_skips` are the throughput-bottleneck probe (the ack->next-emit
+/// gap and its lookahead-gate attribution).
 #[napi(object)]
 pub struct PreviewGpuTimingReport {
     pub coord_rtt: PreviewGpuTimingSummary,
     pub decode_copy: PreviewGpuTimingSummary,
+    pub ack_to_emit: PreviewGpuTimingSummary,
+    pub lookahead_gated_skips: u32,
+    // Round-2 thread time-budget probe (see `preview_gpu::TimingReport`).
+    pub inter_emit: PreviewGpuTimingSummary,
+    pub inter_ack: PreviewGpuTimingSummary,
+    pub recv_block: PreviewGpuTimingSummary,
+    pub recv_timeout_ticks: u32,
+    pub recv_ack_msgs: u32,
+    pub recv_req_msgs: u32,
+    // Round-3 stall attribution (see `preview_gpu::TimingReport`).
+    pub eof_returns: u32,
+    pub pool_full_returns: u32,
+    pub acquire_failed: u32,
+    pub final_free_slots: u32,
+    pub final_eof: bool,
 }
 
 /// Native GPU-decode preview command surface (decode-bench Stage 2). Backed by
@@ -513,9 +530,25 @@ impl Backend {
             .preview_gpu
             .take_timings(&stream_id)
             .map_err(napi::Error::from_reason)?;
+        // Counts stay far under u32 in a bench window (see `note_lookahead_gated_skip`);
+        // saturate defensively rather than silently wrap on the cast.
+        let clamp = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
         Ok(PreviewGpuTimingReport {
             coord_rtt: to_napi_timing_summary(rep.coord_rtt),
             decode_copy: to_napi_timing_summary(rep.decode_copy),
+            ack_to_emit: to_napi_timing_summary(rep.ack_to_emit),
+            lookahead_gated_skips: clamp(rep.lookahead_gated_skips),
+            inter_emit: to_napi_timing_summary(rep.inter_emit),
+            inter_ack: to_napi_timing_summary(rep.inter_ack),
+            recv_block: to_napi_timing_summary(rep.recv_block),
+            recv_timeout_ticks: clamp(rep.recv_timeout_ticks),
+            recv_ack_msgs: clamp(rep.recv_ack_msgs),
+            recv_req_msgs: clamp(rep.recv_req_msgs),
+            eof_returns: clamp(rep.eof_returns),
+            pool_full_returns: clamp(rep.pool_full_returns),
+            acquire_failed: clamp(rep.acquire_failed),
+            final_free_slots: rep.final_free_slots,
+            final_eof: rep.final_eof,
         })
     }
 }

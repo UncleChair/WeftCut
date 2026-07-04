@@ -72,6 +72,34 @@ export interface ThroughputTiming {
   rustMainBoundaryMs: number;
   /// Pure main<->renderer IPC/queue = rendererRoundTrip.mean - preloadResident.mean.
   mainRendererTransitMs: number;
+  /// Throughput-bottleneck probe (Rust clock): a slot's ConsumeAck -> its next
+  /// FrameReady — the per-slot-cycle segment coordRtt (emit->ack) does NOT cover.
+  /// By telescoping, coordRttMs.mean + ackToEmitMs.mean ~= the per-slot inter-emit
+  /// period (poolSize * 1000/fps); whichever dominates localises the ceiling.
+  ackToEmitMs: MsStats;
+  /// Times the pump early-returned on the lookahead gate WITH a free slot present.
+  /// Large => the ackToEmit idle is anchor/lookahead-bound (Rust-side); ~0 => the
+  /// pump never idles on the gate, so the ceiling is the ack arrival rate (renderer).
+  lookaheadGatedSkips: number;
+  /// Round-2 thread time-budget probe (Rust clock). The per-slot probes found the
+  /// ~22ms/frame is NOT per-slot; these characterise the session thread directly:
+  /// interEmit/interAck = the true production/ack cadence (expect ~1000/fps ms);
+  /// recvBlock = per-recv_timeout block distribution (sum ~= total thread idle);
+  /// the three counts = wake reasons over the window (idle ticks / acks / anchor nudges).
+  interEmitMs: MsStats;
+  interAckMs: MsStats;
+  recvBlockMs: MsStats;
+  recvTimeoutTicks: number;
+  recvAckMsgs: number;
+  recvReqMsgs: number;
+  /// Round-3 stall attribution: the dominant pump early-return names the halt
+  /// (eof / pool-full / acquire-timeout / lookahead), and final* is the terminal
+  /// state (free-slot count + eof) when the pump last gave up.
+  eofReturns: number;
+  poolFullReturns: number;
+  acquireFailed: number;
+  finalFreeSlots: number;
+  finalEof: boolean;
 }
 
 function statsOf(xs: number[]): MsStats {
@@ -109,6 +137,19 @@ export function buildThroughputTiming(
     rendererRoundTripMs,
     rustMainBoundaryMs: rust.coordRtt.meanMs - main.rendererRoundTripMs.meanMs,
     mainRendererTransitMs: main.rendererRoundTripMs.meanMs - preloadResidentMs.mean,
+    ackToEmitMs: summaryToStats(rust.ackToEmit),
+    lookaheadGatedSkips: rust.lookaheadGatedSkips,
+    interEmitMs: summaryToStats(rust.interEmit),
+    interAckMs: summaryToStats(rust.interAck),
+    recvBlockMs: summaryToStats(rust.recvBlock),
+    recvTimeoutTicks: rust.recvTimeoutTicks,
+    recvAckMsgs: rust.recvAckMsgs,
+    recvReqMsgs: rust.recvReqMsgs,
+    eofReturns: rust.eofReturns,
+    poolFullReturns: rust.poolFullReturns,
+    acquireFailed: rust.acquireFailed,
+    finalFreeSlots: rust.finalFreeSlots,
+    finalEof: rust.finalEof,
   };
 }
 
@@ -193,6 +234,14 @@ async function runThroughput(
     if (performance.now() - t0 >= WINDOW_MS) break;
     const last = h.ring.lastPtsUs() ?? 0;
     if (last >= durationUs - EOF_GUARD_US) { endedAtEof = true; break; }
+    // Evict past the lookbehind window as the Compositor does (setAnchor is the
+    // ONLY thing that evicts). Without this the ring accumulates every decoded
+    // ImageBitmap unbounded (~8MB each at 1080p), exhausting GPU VRAM after ~1300
+    // frames and making the native d3d11va decoder fail its next surface alloc
+    // ("Operation not permitted") — which halts production and made native's
+    // frames/30s read as a false ~44fps ceiling. pushCount is monotonic across
+    // eviction, so the throughput signal is unaffected.
+    h.ring.setAnchor(last);
     // Advance the anchor to the decode frontier so the pump never idles —
     // the unthrottled analogue of the Compositor's per-tick nudge.
     void h.requestFrameAt(last);

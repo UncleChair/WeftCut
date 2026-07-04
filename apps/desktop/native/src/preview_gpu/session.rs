@@ -66,6 +66,54 @@ pub struct TimingReport {
     pub coord_rtt: TimingSummary,
     /// Decode + GPU-copy cost for one delivered frame (`next_frame` + `copy_frame_into_slot`).
     pub decode_copy: TimingSummary,
+    /// Bottleneck probe: gap from a slot's `ConsumeAck` (slot freed on this thread)
+    /// to the *next* `FrameReady` emitted into that same slot. This is the one
+    /// per-slot-cycle segment `coord_rtt` (emit->ack) does NOT cover; by
+    /// telescoping, `coord_rtt.mean + ack_to_emit.mean` ~= the slot's inter-emit
+    /// period (`pool_size * frame_interval`), so whichever is larger localises the
+    /// throughput ceiling. A large `ack_to_emit` = the pump idles between freeing a
+    /// slot and refilling it (Rust-side); a small one = the ceiling is the ack
+    /// arrival rate (renderer-side). See the throughput-bottleneck handoff doc.
+    pub ack_to_emit: TimingSummary,
+    /// Corroborates `ack_to_emit`'s mechanism: count of `pump` early-returns caused
+    /// by the lookahead gate *while a free slot was available*. If large, the pump
+    /// idle is the lookahead/anchor gate (anchor not advancing); if ~0, the idle is
+    /// pool-full (waiting on the renderer's ack cadence), not the gate. The only
+    /// other early-return with a free slot is `eof`, excluded mid-stream.
+    pub lookahead_gated_skips: u64,
+    /// Round-2 thread time-budget probe (the per-slot probes above found the ~22ms
+    /// is NOT per-slot — it is whole-pipeline dead time). These characterise the
+    /// session thread's cadence directly, in its own clock:
+    /// gap between consecutive `FrameReady` emits (ANY slot) — the true production interval.
+    pub inter_emit: TimingSummary,
+    /// gap between consecutive `ConsumeAck` arrivals (ANY slot) — the ack cadence.
+    pub inter_ack: TimingSummary,
+    /// duration of each `recv_timeout` call: ~0 when a message was already queued,
+    /// ~`RECV_TIMEOUT` (4ms) when the thread blocked idle. Its sum ~= total thread
+    /// idle time; a sum near the window means the thread is starved, not busy.
+    pub recv_block: TimingSummary,
+    /// How the thread woke, tallied over the window: 4ms `recv_timeout` expirations
+    /// (idle ticks), `ConsumeAck` messages, and `RequestFrameAt` messages. Together
+    /// with `inter_emit` these say whether production is paced by acks, by anchor
+    /// nudges, or by the idle tick.
+    pub recv_timeout_ticks: u64,
+    pub recv_ack_msgs: u64,
+    pub recv_req_msgs: u64,
+    /// Round-3 stall attribution (the round-2 probe found production is a ~4s burst
+    /// then a ~26s halt while the driver keeps nudging). Every `pump` early-return
+    /// increments exactly one of these; the dominant one over the run names the
+    /// halt: `eof_returns` = decoder ended, `pool_full_returns` = no free slot
+    /// (slots stuck busy — renderer stopped acking), `acquire_failed` = keyed-mutex
+    /// AcquireSync timed out (slot held by Chromium), `lookahead_gated_skips`
+    /// (above) = anchor not advancing.
+    pub eof_returns: u64,
+    pub pool_full_returns: u64,
+    pub acquire_failed: u64,
+    /// Terminal state snapshot (last `pump` early-return wins): free-slot count and
+    /// the eof flag when the pump last gave up. `free_slots == 0` at end confirms a
+    /// pool-full stall; `eof == true` confirms a decoder end.
+    pub final_free_slots: u32,
+    pub final_eof: bool,
 }
 
 /// Session-thread timing accumulator. Nanosecond samples in; drained to ms summaries.
@@ -73,6 +121,19 @@ pub struct TimingReport {
 pub struct TimingAccum {
     coord_rtt_ns: Vec<u64>,
     decode_copy_ns: Vec<u64>,
+    ack_to_emit_ns: Vec<u64>,
+    lookahead_gated_skips: u64,
+    inter_emit_ns: Vec<u64>,
+    inter_ack_ns: Vec<u64>,
+    recv_block_ns: Vec<u64>,
+    recv_timeout_ticks: u64,
+    recv_ack_msgs: u64,
+    recv_req_msgs: u64,
+    eof_returns: u64,
+    pool_full_returns: u64,
+    acquire_failed: u64,
+    final_free_slots: u32,
+    final_eof: bool,
 }
 
 impl TimingAccum {
@@ -87,14 +148,84 @@ impl TimingAccum {
     pub fn push_decode_copy(&mut self, ns: u64) {
         Self::push_capped(&mut self.decode_copy_ns, ns);
     }
-    /// Compute both summaries and clear the buffers.
+    pub fn push_ack_to_emit(&mut self, ns: u64) {
+        Self::push_capped(&mut self.ack_to_emit_ns, ns);
+    }
+    /// A `pump` pass found a free slot but the lookahead gate stopped it decoding.
+    /// Saturating so the runaway backstop matches the sample cap's intent (a 30s
+    /// window can only tick the pump ~7.5k times via `RECV_TIMEOUT`, far under u64).
+    pub fn note_lookahead_gated_skip(&mut self) {
+        self.lookahead_gated_skips = self.lookahead_gated_skips.saturating_add(1);
+    }
+    pub fn push_inter_emit(&mut self, ns: u64) {
+        Self::push_capped(&mut self.inter_emit_ns, ns);
+    }
+    pub fn push_inter_ack(&mut self, ns: u64) {
+        Self::push_capped(&mut self.inter_ack_ns, ns);
+    }
+    pub fn push_recv_block(&mut self, ns: u64) {
+        Self::push_capped(&mut self.recv_block_ns, ns);
+    }
+    pub fn note_recv_timeout(&mut self) {
+        self.recv_timeout_ticks = self.recv_timeout_ticks.saturating_add(1);
+    }
+    pub fn note_recv_ack(&mut self) {
+        self.recv_ack_msgs = self.recv_ack_msgs.saturating_add(1);
+    }
+    pub fn note_recv_req(&mut self) {
+        self.recv_req_msgs = self.recv_req_msgs.saturating_add(1);
+    }
+    /// Round-3 pump-stop attribution. Each records the terminal free-slot count +
+    /// eof flag (last-write-wins) alongside its reason tally.
+    pub fn note_eof_return(&mut self, free_slots: u32, eof: bool) {
+        self.eof_returns = self.eof_returns.saturating_add(1);
+        self.final_free_slots = free_slots;
+        self.final_eof = eof;
+    }
+    pub fn note_pool_full_return(&mut self, free_slots: u32, eof: bool) {
+        self.pool_full_returns = self.pool_full_returns.saturating_add(1);
+        self.final_free_slots = free_slots;
+        self.final_eof = eof;
+    }
+    pub fn note_acquire_failed(&mut self, free_slots: u32, eof: bool) {
+        self.acquire_failed = self.acquire_failed.saturating_add(1);
+        self.final_free_slots = free_slots;
+        self.final_eof = eof;
+    }
+    /// Compute the summaries and clear the buffers.
     pub fn drain(&mut self) -> TimingReport {
         let report = TimingReport {
             coord_rtt: summarize(&self.coord_rtt_ns),
             decode_copy: summarize(&self.decode_copy_ns),
+            ack_to_emit: summarize(&self.ack_to_emit_ns),
+            lookahead_gated_skips: self.lookahead_gated_skips,
+            inter_emit: summarize(&self.inter_emit_ns),
+            inter_ack: summarize(&self.inter_ack_ns),
+            recv_block: summarize(&self.recv_block_ns),
+            recv_timeout_ticks: self.recv_timeout_ticks,
+            recv_ack_msgs: self.recv_ack_msgs,
+            recv_req_msgs: self.recv_req_msgs,
+            eof_returns: self.eof_returns,
+            pool_full_returns: self.pool_full_returns,
+            acquire_failed: self.acquire_failed,
+            final_free_slots: self.final_free_slots,
+            final_eof: self.final_eof,
         };
         self.coord_rtt_ns.clear();
         self.decode_copy_ns.clear();
+        self.ack_to_emit_ns.clear();
+        self.lookahead_gated_skips = 0;
+        self.inter_emit_ns.clear();
+        self.inter_ack_ns.clear();
+        self.recv_block_ns.clear();
+        self.recv_timeout_ticks = 0;
+        self.recv_ack_msgs = 0;
+        self.recv_req_msgs = 0;
+        self.eof_returns = 0;
+        self.pool_full_returns = 0;
+        self.acquire_failed = 0;
+        self.final_free_slots = 0;
+        self.final_eof = false;
         report
     }
 }
@@ -269,6 +400,16 @@ struct SessionState {
     /// turned into a coord-RTT sample when that slot's `ConsumeAck` returns. `None`
     /// when the slot is free or unacked-but-never-emitted. Sized to the pool.
     slot_emit: Vec<Option<Instant>>,
+    /// `Instant` each slot's `ConsumeAck` arrived on this thread; taken and turned
+    /// into an `ack_to_emit` sample at the next `FrameReady` for that slot. `None`
+    /// before a slot has ever been acked (its first fill has no prior ack, so it
+    /// yields no sample). Sized to the pool. See `TimingReport::ack_to_emit`.
+    slot_ack_at: Vec<Option<Instant>>,
+    /// Session-level (not per-slot) last-emit / last-ack instants for the round-2
+    /// cadence probes (`inter_emit` / `inter_ack`). NOT consumed by `take` — each
+    /// event overwrites the prior, and the delta is the inter-event gap.
+    last_emit_at: Option<Instant>,
+    last_ack_at: Option<Instant>,
 }
 
 impl Drop for SessionState {
@@ -298,14 +439,29 @@ impl SessionState {
         self.free.iter().position(|&f| f)
     }
 
-    /// Turn a slot's `FrameReady`->`ConsumeAck` gap into a coord-RTT sample.
-    /// `Option::take` guarantees at most one sample per emit; an ack with no
-    /// prior emit (shouldn't happen given the free-flag protocol) is ignored.
+    /// Turn a slot's `FrameReady`->`ConsumeAck` gap into a coord-RTT sample, and
+    /// stamp the ack instant for the `ack_to_emit` probe (sampled at this slot's
+    /// next `FrameReady`). `Option::take` guarantees at most one coord-RTT sample
+    /// per emit; an ack with no prior emit (shouldn't happen given the free-flag
+    /// protocol) contributes no coord-RTT but still stamps the ack instant.
     fn record_ack(&mut self, slot: usize) {
+        let now = Instant::now();
         if let Some(emit_at) = self.slot_emit.get_mut(slot).and_then(Option::take) {
-            let rtt_ns = emit_at.elapsed().as_nanos() as u64;
+            let rtt_ns = now.duration_since(emit_at).as_nanos() as u64;
             if let Ok(mut t) = self.timing.lock() {
                 t.push_coord_rtt(rtt_ns);
+            }
+        }
+        // Ack instant for the ack->next-emit gap probe; the next `pump` emit into
+        // this slot takes it and records `now - this`.
+        if let Some(entry) = self.slot_ack_at.get_mut(slot) {
+            *entry = Some(now);
+        }
+        // Session-level ack cadence (any slot): gap since the previous ConsumeAck.
+        if let Some(prev) = self.last_ack_at.replace(now) {
+            let gap_ns = now.duration_since(prev).as_nanos() as u64;
+            if let Ok(mut t) = self.timing.lock() {
+                t.push_inter_ack(gap_ns);
             }
         }
     }
@@ -356,6 +512,10 @@ impl SessionState {
     fn pump(&mut self, poke: &PokeSink, stream_id: &str) {
         loop {
             if self.eof {
+                let free = self.free.iter().filter(|&&f| f).count() as u32;
+                if let Ok(mut t) = self.timing.lock() {
+                    t.note_eof_return(free, true);
+                }
                 return;
             }
             // A free slot is required to decode: a deliverable frame must land
@@ -363,14 +523,23 @@ impl SessionState {
             // `next_frame`. Discarded (pre-anchor) frames don't consume the slot,
             // so one free slot covers the whole post-seek discard + first deliver.
             let Some(slot_idx) = self.free_slot() else {
-                return; // pool full; wait for a ConsumeAck.
+                // pool full (free count is 0 by definition); wait for a ConsumeAck.
+                if let Ok(mut t) = self.timing.lock() {
+                    t.note_pool_full_return(0, self.eof);
+                }
+                return;
             };
             // Lookahead gate: stop once decoded far enough ahead of the anchor.
             // (frontier is behind the anchor during post-seek discard, so this
-            // never fires mid-discard.)
+            // never fires mid-discard.) A free slot is available here (checked
+            // above), so a gate hit = the pump idling on the anchor rather than on
+            // the pool — count it to attribute the `ack_to_emit` gap (see the probe).
             if self.frontier_pts != i64::MIN
                 && self.frontier_pts >= self.anchor.saturating_add(LOOKAHEAD_US)
             {
+                if let Ok(mut t) = self.timing.lock() {
+                    t.note_lookahead_gated_skip();
+                }
                 return;
             }
 
@@ -431,6 +600,10 @@ impl SessionState {
                     // to the session loop so it re-services its mailbox
                     // (including a pending `Close`) instead of retrying in a
                     // tight loop against a slot that may stay stuck.
+                    let free = self.free.iter().filter(|&&f| f).count() as u32;
+                    if let Ok(mut t) = self.timing.lock() {
+                        t.note_acquire_failed(free, self.eof);
+                    }
                     emit(
                         poke,
                         PreviewGpuPoke::Error {
@@ -458,11 +631,31 @@ impl SessionState {
             self.free[slot_idx] = false;
             self.frontier_pts = decoded.pts_us;
             self.last_delivered_pts = decoded.pts_us;
+            // Close the ack->next-emit gap for this slot, if it was previously
+            // acked (its first fill has no prior ack -> `take` yields None -> no
+            // sample). Measured against the same `now` used to stamp the emit.
+            let now = Instant::now();
+            let ack_to_emit_ns = self
+                .slot_ack_at
+                .get_mut(slot_idx)
+                .and_then(Option::take)
+                .map(|ack_at| now.duration_since(ack_at).as_nanos() as u64);
+            // Session-level production cadence (any slot): gap since the previous emit.
+            let inter_emit_ns = self
+                .last_emit_at
+                .replace(now)
+                .map(|prev| now.duration_since(prev).as_nanos() as u64);
             // Stamp the slot BEFORE emit so the matching ack can measure the full
-            // round-trip; record decode+copy for this delivered frame.
-            self.slot_emit[slot_idx] = Some(Instant::now());
+            // round-trip; record decode+copy (+ any gaps) for this delivered frame.
+            self.slot_emit[slot_idx] = Some(now);
             if let Ok(mut t) = self.timing.lock() {
                 t.push_decode_copy(decode_copy_ns);
+                if let Some(gap_ns) = ack_to_emit_ns {
+                    t.push_ack_to_emit(gap_ns);
+                }
+                if let Some(gap_ns) = inter_emit_ns {
+                    t.push_inter_emit(gap_ns);
+                }
             }
             emit(
                 poke,
@@ -643,8 +836,9 @@ fn init_session(
         let free = vec![true; pool.len()];
         // Computed before the struct literal (like `free` above): `pool` is moved
         // into its own field within the literal, so `pool.len()` must be captured
-        // here rather than inline at the `slot_emit` field.
+        // here rather than inline at the per-slot fields.
         let slot_emit = vec![None; pool.len()];
+        let slot_ack_at = vec![None; pool.len()];
 
         Ok(SessionState {
             stream,
@@ -661,6 +855,9 @@ fn init_session(
             eof: false,
             timing,
             slot_emit,
+            slot_ack_at,
+            last_emit_at: None,
+            last_ack_at: None,
         })
     }
 }
@@ -694,7 +891,22 @@ fn session_thread(
     }
 
     loop {
-        match rx.recv_timeout(RECV_TIMEOUT) {
+        // Round-2 thread time-budget probe: time the recv itself (0 when a message
+        // was already queued; ~RECV_TIMEOUT when the thread blocked idle) and tally
+        // the wake reason, before dispatching. One uncontended lock/iteration.
+        let t_recv = Instant::now();
+        let msg = rx.recv_timeout(RECV_TIMEOUT);
+        let block_ns = t_recv.elapsed().as_nanos() as u64;
+        if let Ok(mut t) = state.timing.lock() {
+            t.push_recv_block(block_ns);
+            match &msg {
+                Ok(SessionMsg::ConsumeAck(_)) => t.note_recv_ack(),
+                Ok(SessionMsg::RequestFrameAt(_)) => t.note_recv_req(),
+                Err(RecvTimeoutError::Timeout) => t.note_recv_timeout(),
+                _ => {}
+            }
+        }
+        match msg {
             Ok(SessionMsg::RequestFrameAt(t)) => {
                 state.on_request(t, &poke, &stream_id);
                 state.pump(&poke, &stream_id);
@@ -888,8 +1100,63 @@ mod timing_tests {
     fn drain_clears_buffers() {
         let mut a = TimingAccum::default();
         a.push_decode_copy(5_000_000);
-        assert_eq!(a.drain().decode_copy.count, 1);
-        assert_eq!(a.drain().decode_copy.count, 0);
+        a.push_ack_to_emit(7_000_000);
+        a.note_lookahead_gated_skip();
+        a.push_inter_emit(22_000_000);
+        a.push_inter_ack(22_000_000);
+        a.push_recv_block(4_000_000);
+        a.note_recv_timeout();
+        a.note_recv_ack();
+        a.note_recv_req();
+        a.note_eof_return(2, true);
+        a.note_pool_full_return(0, false);
+        a.note_acquire_failed(1, false);
+        let r = a.drain();
+        assert_eq!(r.decode_copy.count, 1);
+        assert_eq!(r.ack_to_emit.count, 1);
+        assert_eq!(r.lookahead_gated_skips, 1);
+        assert_eq!(r.inter_emit.count, 1);
+        assert_eq!(r.inter_ack.count, 1);
+        assert_eq!(r.recv_block.count, 1);
+        assert_eq!(r.recv_timeout_ticks, 1);
+        assert_eq!(r.recv_ack_msgs, 1);
+        assert_eq!(r.recv_req_msgs, 1);
+        assert_eq!(r.eof_returns, 1);
+        assert_eq!(r.pool_full_returns, 1);
+        assert_eq!(r.acquire_failed, 1);
+        // final_* reflect the LAST note (note_acquire_failed(1, false) here).
+        assert_eq!(r.final_free_slots, 1);
+        assert!(!r.final_eof);
+        // Second drain sees the cleared state (buffers + counters reset).
+        let r2 = a.drain();
+        assert_eq!(r2.decode_copy.count, 0);
+        assert_eq!(r2.ack_to_emit.count, 0);
+        assert_eq!(r2.lookahead_gated_skips, 0);
+        assert_eq!(r2.inter_emit.count, 0);
+        assert_eq!(r2.recv_block.count, 0);
+        assert_eq!(r2.recv_timeout_ticks, 0);
+        assert_eq!(r2.recv_ack_msgs, 0);
+        assert_eq!(r2.recv_req_msgs, 0);
+        assert_eq!(r2.eof_returns, 0);
+        assert_eq!(r2.pool_full_returns, 0);
+        assert_eq!(r2.acquire_failed, 0);
+        assert_eq!(r2.final_free_slots, 0);
+    }
+
+    #[test]
+    fn ack_to_emit_summary_and_skip_count() {
+        let mut a = TimingAccum::default();
+        for ms in [12u64, 24, 36] {
+            a.push_ack_to_emit(ms * 1_000_000);
+        }
+        for _ in 0..5 {
+            a.note_lookahead_gated_skip();
+        }
+        let r = a.drain();
+        assert_eq!(r.ack_to_emit.count, 3);
+        assert!((r.ack_to_emit.mean_ms - 24.0).abs() < 1e-6, "mean {}", r.ack_to_emit.mean_ms);
+        assert!((r.ack_to_emit.p50_ms - 24.0).abs() < 1e-6, "p50 {}", r.ack_to_emit.p50_ms);
+        assert_eq!(r.lookahead_gated_skips, 5);
     }
 
     #[test]
@@ -898,6 +1165,9 @@ mod timing_tests {
         let r = a.drain();
         assert_eq!(r.coord_rtt.count, 0);
         assert_eq!(r.coord_rtt.p95_ms, 0.0);
+        assert_eq!(r.ack_to_emit.count, 0);
+        assert_eq!(r.ack_to_emit.p95_ms, 0.0);
+        assert_eq!(r.lookahead_gated_skips, 0);
     }
 
     #[test]
