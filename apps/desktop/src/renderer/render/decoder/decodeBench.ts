@@ -8,6 +8,8 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
 import type { PreviewGpuTimingReport } from "../../../shared/ipc";
+import { percentile } from "../../../shared/msStats";
+export { percentile } from "../../../shared/msStats";
 
 /// Either decode strategy's handle. Both expose `ring: FrameRing` (so
 /// `ring.pushCount`/`lastPtsUs()`/`containsPts()` resolve without narrowing),
@@ -102,16 +104,6 @@ const EOF_GUARD_US = 1_500_000;
 const SCENARIO_TIMEBOX_MS = 90_000;
 const SEEK_WAIT_TIMEOUT_MS = 30_000;
 const COLD_ITERATIONS = 10;
-
-/// Linear-interpolated percentile over an ASCENDING-sorted array.
-export function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return NaN;
-  const idx = (p / 100) * (sorted.length - 1);
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  if (lo === hi) return sorted[lo]!;
-  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (idx - lo);
-}
 
 /// The committed, deterministic 40-step seek plan (spec §3.2): starting from
 /// 10 s, cycle the four category deltas ten times, clamping each target into
