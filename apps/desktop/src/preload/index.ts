@@ -256,8 +256,11 @@ ipcRenderer.on(
     // below (a module-scoped `let` re-widens across await points).
     const port = mainPort
     if (!imp || !port) return
+    const tEntry = performance.now()
     try {
       let bmp: ImageBitmap
+      let gvfMs = 0
+      let cibMs = 0
       // getVideoFrame() lives INSIDE the try: once it's called the slot is
       // spoken for, so any failure from here on (including getVideoFrame
       // itself throwing) must still reach the single consumeAck below — the
@@ -265,12 +268,17 @@ ipcRenderer.on(
       // undefined (and its close guarded) if getVideoFrame throws.
       let vf: VideoFrame | undefined
       try {
+        const tGvf = performance.now()
         vf = imp.getVideoFrame()
+        gvfMs = performance.now() - tGvf
+        const tCib = performance.now()
         bmp = await createImageBitmap(vf)
+        cibMs = performance.now() - tCib
       } finally {
         vf?.close?.()
       }
-      port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp }, [bmp])
+      const residentMs = performance.now() - tEntry
+      port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs }, [bmp])
     } catch (err) {
       port.postMessage({ kind: 'error', streamId, message: err instanceof Error ? err.message : String(err) })
     } finally {

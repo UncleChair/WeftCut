@@ -360,3 +360,47 @@ describe("NativeGpuSourceHandle.isLookaheadFull", () => {
     h.dispose();
   });
 });
+
+describe("NativeGpuSourceHandle.drainBenchTiming", () => {
+  it("accumulates per-frame preload timings and clears on drain", async () => {
+    const mock = mockPreviewGpu();
+    installApi(mock.previewGpu);
+    const h = new NativeGpuSourceHandle("layer-7", "media-7", "/fake/o.mp4");
+    await h.ensureReady();
+    const port = mock.getPort()!;
+
+    port.onmessage!({
+      data: { kind: "frame", streamId: h.streamId, slot: 0, ptsUs: 0, durUs: 1, bitmap: makeFakeBitmap(1), gvfMs: 1, cibMs: 4, residentMs: 6 },
+    });
+    port.onmessage!({
+      data: { kind: "frame", streamId: h.streamId, slot: 1, ptsUs: 1, durUs: 1, bitmap: makeFakeBitmap(2), gvfMs: 2, cibMs: 5, residentMs: 8 },
+    });
+
+    const t = h.drainBenchTiming();
+    expect(t.gvfMs).toEqual([1, 2]);
+    expect(t.cibMs).toEqual([4, 5]);
+    expect(t.residentMs).toEqual([6, 8]);
+
+    // Drained — a second call is empty.
+    expect(h.drainBenchTiming()).toEqual({ gvfMs: [], cibMs: [], residentMs: [] });
+
+    h.dispose();
+  });
+
+  it("ignores a frame with no timing fields (WebCodecs-shaped or pre-instrumentation)", async () => {
+    const mock = mockPreviewGpu();
+    installApi(mock.previewGpu);
+    const h = new NativeGpuSourceHandle("layer-7b", "media-7b", "/fake/r.mp4");
+    await h.ensureReady();
+    const port = mock.getPort()!;
+
+    port.onmessage!({
+      data: { kind: "frame", streamId: h.streamId, slot: 0, ptsUs: 0, durUs: 1, bitmap: makeFakeBitmap(1) },
+    });
+
+    expect(h.drainBenchTiming()).toEqual({ gvfMs: [], cibMs: [], residentMs: [] });
+    expect(h.ring.pushCount).toBe(1);
+
+    h.dispose();
+  });
+});

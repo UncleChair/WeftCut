@@ -31,6 +31,9 @@ const PORT_TIMEOUT_MS = 5_000;
 /// only holds a type-only import of `DecoderHandle` from here today.
 const IDLE_DISPOSE_MS = 5_000;
 
+/// Cap on retained per-frame bench-timing samples (see NativeGpuSourceHandle).
+const BENCH_TIMING_CAP = 20_000;
+
 interface PortFrameMsg {
   kind: "frame";
   streamId: string;
@@ -38,6 +41,11 @@ interface PortFrameMsg {
   ptsUs: number;
   durUs: number;
   bitmap: ImageBitmap;
+  /// Bench-only per-frame preload timings (ms), attached by the preload receiver.
+  /// Absent on a non-instrumented message.
+  gvfMs?: number;
+  cibMs?: number;
+  residentMs?: number;
 }
 interface PortEofMsg {
   kind: "eof";
@@ -102,6 +110,13 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   /// issuing IPC once set — nudging a session that already reported
   /// end-of-stream just burns round-trips.
   private eof = false;
+
+  /// Bench-only: per-frame preload timings, aggregated for decode-bench Stage 3.
+  /// Capped so a long session can't grow them unbounded (native-only; the cap is
+  /// never approached at native frame rates over a 30s window). Drained by the bench.
+  private benchGvfMs: number[] = [];
+  private benchCibMs: number[] = [];
+  private benchResidentMs: number[] = [];
 
   private onFirstFrameCb: (() => void) | null = null;
   private firedFirstFrame = false;
@@ -220,6 +235,11 @@ export class NativeGpuSourceHandle implements DecoderHandle {
         return;
       }
       this.ring.push(data.bitmap, data.ptsUs, data.durUs);
+      if (typeof data.residentMs === "number" && this.benchResidentMs.length < BENCH_TIMING_CAP) {
+        this.benchGvfMs.push(data.gvfMs ?? 0);
+        this.benchCibMs.push(data.cibMs ?? 0);
+        this.benchResidentMs.push(data.residentMs);
+      }
       if (!this.firedFirstFrame) {
         this.firedFirstFrame = true;
         this.onFirstFrameCb?.();
@@ -266,6 +286,16 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   /// Whether the ring's lookahead window is satisfied. Dev `PerfHUD`.
   isLookaheadFull(): boolean {
     return this.ring.isLookaheadFull();
+  }
+
+  /// Bench-only: return and clear the accumulated per-frame preload timings.
+  /// decode-bench calls this at the end of a throughput window.
+  drainBenchTiming(): { gvfMs: number[]; cibMs: number[]; residentMs: number[] } {
+    const out = { gvfMs: this.benchGvfMs, cibMs: this.benchCibMs, residentMs: this.benchResidentMs };
+    this.benchGvfMs = [];
+    this.benchCibMs = [];
+    this.benchResidentMs = [];
+    return out;
   }
 
   /// `nowMs` from the pool's sweep tick. Returns true if this handle has
