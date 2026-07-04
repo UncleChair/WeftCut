@@ -107,11 +107,23 @@ ceiling, so WebCodecs (in-process, no per-frame handshake) is far faster there.
 The gap narrows sharply at 4K, where the heavier per-frame decode amortizes the
 fixed coordination overhead and the decoder actually engages. Native's clear win
 is **seek latency**: `av_seek_frame` to the nearest keyframe plus a short
-decode-forward resolves markedly faster than the WebCodecs seek path. The
-identified lever for closing the throughput gap is a **zero-copy** path that
-feeds the decoded frame to the GPU without the `createImageBitmap` snapshot and
-its per-frame coordination — the current snapshot is what the `3D`-engine
-resource column and this coordination cost point at.
+decode-forward resolves markedly faster than the WebCodecs seek path.
+
+Sweeping the shared-texture pool depth pins down *which* lever matters. Across a
+range of pool sizes (a few slots up to a dozen) throughput stays **flat** while
+the per-frame round-trip latency grows roughly in proportion to the depth — a
+queuing signature (Little's Law: more frames in flight, none delivered any
+sooner). So the bound is **latency, not pipeline depth**, and the cheap levers —
+a bigger pool, or batching the acks — do not move it. Tellingly, at the smallest
+pool the per-frame `getVideoFrame`/`createImageBitmap` and the emit→ack
+round-trip are each sub-millisecond, yet the delivered frame interval is far
+larger: most of the per-frame cost is dead time in the event-loop-scheduled
+signalling, not the data transfer. Closing the gap therefore requires attacking
+the per-frame coordination path itself — either a shared-memory / dedicated-port
+signalling scheme that removes the per-frame event-loop round-trip, or a
+**zero-copy pull** model where the renderer reads the latest decoded frame at
+display rate with no per-frame `frameReady`/ack and no `createImageBitmap`
+snapshot. The seek advantage is unaffected and remains native's durable value.
 
 ## What it deliberately is not
 
