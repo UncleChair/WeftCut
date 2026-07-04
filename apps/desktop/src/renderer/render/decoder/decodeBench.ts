@@ -211,6 +211,10 @@ async function runThroughput(h: BenchHandle, durationUs: number, token: CancelTo
     // (which closes the native session); decodeBenchRun's finally disposes only
     // after we return.
     const rust = await window.api.previewGpu.takeTimings(native.streamId);
+    // takeMainTimings() drains a GLOBAL (un-keyed) main-side accumulator. This is
+    // correct ONLY because the bench runs one native session per fresh process and
+    // collects throughput FIRST — a native seek/coldstart draining before throughput
+    // in the same process would contaminate this attribution. See the spec's §3.
     const main = await window.api.previewGpu.takeMainTimings();
     timing = buildThroughputTiming(native.poolSize, rust, pre, main);
   }

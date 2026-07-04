@@ -87,6 +87,8 @@ describe("buildThroughputTiming", () => {
     expect(t.mainRendererTransitMs).toBe(30);
     // sanity: the two buckets sum to the existing ipcTransitMsDerived (48)
     expect(t.ipcTransitMsDerived).toBe(48);
+    expect(t.decodeCopyMs.mean).toBe(3);
+    expect(t.createImageBitmapMs.mean).toBe(10);
   });
 
   it("yields NaN stats for empty preload arrays without throwing", () => {
