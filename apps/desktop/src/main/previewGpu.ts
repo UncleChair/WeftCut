@@ -15,6 +15,7 @@ import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
 import type { Backend } from '@weftcut/core'
 import type { PreviewGpuTimingReport } from '../shared/ipc'
+import { clearMainPendingFor } from './previewGpuTiming.js'
 
 interface GpuSession {
   // One imported texture per pool slot, indexed by the slot number the native
@@ -115,6 +116,9 @@ export function takeTimingsPreviewGpu(backend: Backend, streamId: string): Previ
 /// which the native registry may reject. Gate on sessions.has() so a caller can
 /// always call close() exactly once per open() attempt, succeeded or not.
 export function closePreviewGpu(backend: Backend, streamId: string): void {
+  // Drop any un-acked send stamps for this stream so a frame in flight at
+  // teardown can't leak a pending-map entry (decode-bench signal attribution).
+  clearMainPendingFor(streamId)
   const session = sessions.get(streamId)
   if (!session) return
   backend.previewGpuClose(streamId)

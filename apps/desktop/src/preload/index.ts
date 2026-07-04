@@ -8,6 +8,7 @@ import type {
   DirEntry,
   NotificationOpts,
   PreviewGpuColorSpace,
+  PreviewGpuMainTiming,
   PreviewGpuOpenReply,
   PreviewGpuTimingReport,
   SystemStats,
@@ -166,6 +167,9 @@ const api: WeftcutApi = {
     },
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport> {
       return ipcRenderer.invoke('previewGpu:takeTimings', { streamId }) as Promise<PreviewGpuTimingReport>
+    },
+    takeMainTimings(): Promise<PreviewGpuMainTiming> {
+      return ipcRenderer.invoke('previewGpu:takeMainTimings') as Promise<PreviewGpuMainTiming>
     },
   },
 }

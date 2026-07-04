@@ -21,6 +21,7 @@ import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-wr
 import { SINGLE_MEDIA_CHANNELS, resolveSingleMediaArgs } from './state/single-media-forward.js'
 import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
 import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu } from './previewGpu.js'
+import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -194,6 +195,10 @@ app.whenReady().then(async () => {
           return
         }
         // flag-off: Rust is authoritative and never emits this event — fall through is defensive
+      }
+      if (event === 'previewGpu:frameReady') {
+        const p = payload as { streamId: string; slot: number }
+        recordFrameReadySent(p.streamId, p.slot, performance.now())
       }
       mainWindow?.webContents.send('evt:' + event, payload)
     },
@@ -442,11 +447,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('previewGpu:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
     requestFrameAtPreviewGpu(backend!, a.streamId, a.targetUs),
   )
-  ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number }) =>
-    consumeAckPreviewGpu(backend!, a.streamId, a.slot),
-  )
+  ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number }) => {
+    // Record the round-trip at handler entry (t_ack_received) BEFORE forwarding.
+    recordConsumeAck(a.streamId, a.slot, performance.now())
+    return consumeAckPreviewGpu(backend!, a.streamId, a.slot)
+  })
   ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(backend!, a.streamId))
   ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(backend!, a.streamId))
+  ipcMain.handle('previewGpu:takeMainTimings', () => takeMainTimings())
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options))

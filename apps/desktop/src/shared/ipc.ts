@@ -97,6 +97,11 @@ export type PreviewGpuTimingReport = {
   decodeCopy: PreviewGpuTimingSummary
 }
 
+/// Main-measured renderer round-trip (decode-bench signal attribution): the time
+/// from main dispatching `frameReady` to receiving the matching `consumeAck` —
+/// main<->renderer transit + renderer work, measured in main's own clock.
+export type PreviewGpuMainTiming = { rendererRoundTripMs: PreviewGpuTimingSummary }
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -164,6 +169,8 @@ export interface WeftcutApi {
     /// E2E/bench-only: drain this session's Stage-3 timing samples. Rejects for
     /// an unknown stream, or with "preview-gpu not built" off the native path.
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport>
+    /// E2E/bench-only: drain the MAIN-measured renderer round-trip samples.
+    takeMainTimings(): Promise<PreviewGpuMainTiming>
   }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
