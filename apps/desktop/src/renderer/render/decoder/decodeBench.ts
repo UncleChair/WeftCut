@@ -34,6 +34,9 @@ export interface BenchArgs {
   strategy: BenchStrategy;
   /// Native-only: pool size (slot count) for the Stage-3 sweep. Default 3.
   poolSize?: number;
+  /// Throughput driver's per-loop pacing delay (ms). Default 10 (current behavior).
+  /// 0 = yield-only (unthrottled) — the max-throughput probe. Baseline stays 10 when absent.
+  throttleMs?: number;
 }
 
 export type SeekCategory = "forward-near" | "forward-far" | "backward-near" | "backward-far";
@@ -170,7 +173,12 @@ export async function waitContains(h: BenchHandle, tUs: number, token: CancelTok
   }
 }
 
-async function runThroughput(h: BenchHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
+async function runThroughput(
+  h: BenchHandle,
+  durationUs: number,
+  token: CancelToken,
+  throttleMs = 10,
+): Promise<BenchResult> {
   phase = "warmup";
   await h.ensureReady();
   void h.requestFrameAt(0);
@@ -188,7 +196,7 @@ async function runThroughput(h: BenchHandle, durationUs: number, token: CancelTo
     // Advance the anchor to the decode frontier so the pump never idles —
     // the unthrottled analogue of the Compositor's per-tick nudge.
     void h.requestFrameAt(last);
-    await sleep(10);
+    await sleep(throttleMs);
   }
   const measuredMs = performance.now() - t0;
   const frames = h.ring.pushCount - startFrames;
@@ -315,7 +323,7 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     scenarioP = (async (): Promise<BenchResult> => {
       switch (args.scenario) {
         case "throughput":
-          return runThroughput(livePool.acquire(mkInit("bench-0")), args.durationUs, token);
+          return runThroughput(livePool.acquire(mkInit("bench-0")), args.durationUs, token, args.throttleMs);
         case "seek":
           return runSeek(livePool.acquire(mkInit("bench-0")), args.durationUs, token);
         case "coldstart":
