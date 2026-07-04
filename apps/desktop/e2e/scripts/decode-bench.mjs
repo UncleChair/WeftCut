@@ -227,13 +227,15 @@ if (selfCheck) {
 }
 
 if (POOL_SWEEP) {
-  log(`pool-sweep (native throughput): N = ${SWEEP_POOL_SIZES.join(", ")}`);
+  // --pool-size scopes the sweep to that single point; absent → the full grid.
+  const sweepSizes = POOL_SIZE !== undefined ? [POOL_SIZE] : SWEEP_POOL_SIZES;
+  log(`pool-sweep (native throughput): N = ${sweepSizes.join(", ")}`);
   const env = await envBlock();
   const report = { env, strategy: STRATEGY, mode: "pool-sweep", runs, poolSweep: [] };
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const outFile = path.join(RESULTS_DIR, `${env.date.slice(0, 10)}-${env.gitSha}-poolsweep.json`);
   for (const fixture of fixtures) {
-    for (const N of SWEEP_POOL_SIZES) {
+    for (const N of sweepSizes) {
       const perRun = [];
       for (let run = 0; run < runs; run++) {
         log(`${fixture.name} N=${N} run ${run + 1}/${runs} …`);
@@ -287,7 +289,7 @@ for (const fixture of fixtures) {
     // cell-level harnessError and the batch continues — one bad session must
     // not abort the whole matrix.
     try {
-      perRun.push(await runSession(fixture, scenarios));
+      perRun.push(await runSession(fixture, scenarios, POOL_SIZE));
     } catch (e) {
       perRun.push({ harnessError: String(e) });
     }
