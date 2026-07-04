@@ -100,30 +100,37 @@ native set — `d3d11va` did not yield a decodable D3D11 surface for it in testi
 and WebCodecs already software-decodes AV1.
 
 **What the benchmark shows about it** (durable character, not a specific number —
-the numbers live in the reports): native throughput at 1080p is **coordination-
-bound, not decode-bound** — the hardware decoder sits mostly idle while the
-per-frame poke → `getVideoFrame` → `createImageBitmap` → ack round-trip sets the
-ceiling, so WebCodecs (in-process, no per-frame handshake) is far faster there.
-The gap narrows sharply at 4K, where the heavier per-frame decode amortizes the
-fixed coordination overhead and the decoder actually engages. Native's clear win
-is **seek latency**: `av_seek_frame` to the nearest keyframe plus a short
-decode-forward resolves markedly faster than the WebCodecs seek path.
+the numbers live in the reports): the hardware decoder sits mostly **idle** at
+both resolutions — native is never decode-bound. What sets the throughput ceiling
+differs by resolution, and the instrument's per-boundary timing pins it down. At
+1080p the per-frame coordination round-trip (poke → `getVideoFrame` →
+`createImageBitmap` → ack) is a **small fraction** of the delivered frame
+interval, so throughput there is limited by how fast the pump is **fed** — the
+driver's short re-nudge cadence and the lookahead gate — not by coordination. That
+is why a pool-size sweep leaves throughput **flat** (more slots don't help a
+feed-paced consumer) while the round-trip latency *grows* with pool depth
+(over-provisioned slots merely queue in the coordination channel — a Little's-Law
+symptom of over-provisioning, not the throughput cause). At 4K the picture
+inverts: the heavier per-frame work stretches the coordination round-trip to
+roughly the pool depth times the frame interval, so 4K genuinely *is*
+coordination/pipeline-limited and the decoder starts to engage.
 
-Sweeping the shared-texture pool depth pins down *which* lever matters. Across a
-range of pool sizes (a few slots up to a dozen) throughput stays **flat** while
-the per-frame round-trip latency grows roughly in proportion to the depth — a
-queuing signature (Little's Law: more frames in flight, none delivered any
-sooner). So the bound is **latency, not pipeline depth**, and the cheap levers —
-a bigger pool, or batching the acks — do not move it. Tellingly, at the smallest
-pool the per-frame `getVideoFrame`/`createImageBitmap` and the emit→ack
-round-trip are each sub-millisecond, yet the delivered frame interval is far
-larger: most of the per-frame cost is dead time in the event-loop-scheduled
-signalling, not the data transfer. Closing the gap therefore requires attacking
-the per-frame coordination path itself — either a shared-memory / dedicated-port
-signalling scheme that removes the per-frame event-loop round-trip, or a
+Splitting the coordination round-trip by boundary shows the **native-thread ↔
+main-process** hop (the addon's threadsafe-callback out, and the command-channel
+ack back) is the **larger** half — bigger than the **main ↔ renderer**
+cross-process IPC — at both resolutions. So a dedicated main↔renderer channel
+would address only the *smaller* half of coordination; a coordination fix has to
+take the main-process event loop out of the per-frame path entirely — shared-memory
+signalling that the native thread writes and the renderer polls directly, or a
 **zero-copy pull** model where the renderer reads the latest decoded frame at
 display rate with no per-frame `frameReady`/ack and no `createImageBitmap`
-snapshot. The seek advantage is unaffected and remains native's durable value.
+snapshot. The ceiling analysis also scopes *when* that rework is worth building:
+for **single-track, real-time** 1080p preview the feed-paced rate already
+suffices, so the coordination rework earns its keep mainly for **4K and
+multi-track** headroom. Native's clear, unconditional win remains **seek
+latency**: `av_seek_frame` to the nearest keyframe plus a short decode-forward
+resolves markedly faster than the WebCodecs seek path, independent of any
+throughput work.
 
 ## What it deliberately is not
 
