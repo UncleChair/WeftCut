@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::core::{Interface, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -40,6 +40,96 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC}
 use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
 
 use super::decoder::{StreamFrame, VideoStream};
+
+/// Cap on retained timing samples per metric. A 30s throughput window at native's
+/// ~44fps yields ~1300 samples — far under this; the cap is only a runaway backstop
+/// (timing is native-only, so WebCodecs frame rates never reach it). Stop-appending
+/// once full (keeps the earliest, steady-state samples).
+pub const TIMING_SAMPLE_CAP: usize = 20_000;
+
+/// Per-metric millisecond summary handed across the napi boundary (mapped to a
+/// `#[napi(object)]` in `napi_backend.rs`). Percentiles use linear interpolation
+/// over ascending samples, matching the TS-side `percentile` convention.
+#[derive(Clone, Copy)]
+pub struct TimingSummary {
+    pub count: u32,
+    pub mean_ms: f64,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub max_ms: f64,
+}
+
+/// Both metrics drained together.
+pub struct TimingReport {
+    /// Whole JS coordination round-trip: `FrameReady` emit -> main relay -> preload
+    /// getVideoFrame/createImageBitmap -> `consume_ack` relay back to this thread.
+    pub coord_rtt: TimingSummary,
+    /// Decode + GPU-copy cost for one delivered frame (`next_frame` + `copy_frame_into_slot`).
+    pub decode_copy: TimingSummary,
+}
+
+/// Session-thread timing accumulator. Nanosecond samples in; drained to ms summaries.
+#[derive(Default)]
+pub struct TimingAccum {
+    coord_rtt_ns: Vec<u64>,
+    decode_copy_ns: Vec<u64>,
+}
+
+impl TimingAccum {
+    fn push_capped(buf: &mut Vec<u64>, ns: u64) {
+        if buf.len() < TIMING_SAMPLE_CAP {
+            buf.push(ns);
+        }
+    }
+    pub fn push_coord_rtt(&mut self, ns: u64) {
+        Self::push_capped(&mut self.coord_rtt_ns, ns);
+    }
+    pub fn push_decode_copy(&mut self, ns: u64) {
+        Self::push_capped(&mut self.decode_copy_ns, ns);
+    }
+    /// Compute both summaries and clear the buffers.
+    pub fn drain(&mut self) -> TimingReport {
+        let report = TimingReport {
+            coord_rtt: summarize(&self.coord_rtt_ns),
+            decode_copy: summarize(&self.decode_copy_ns),
+        };
+        self.coord_rtt_ns.clear();
+        self.decode_copy_ns.clear();
+        report
+    }
+}
+
+fn summarize(samples: &[u64]) -> TimingSummary {
+    if samples.is_empty() {
+        return TimingSummary { count: 0, mean_ms: 0.0, p50_ms: 0.0, p95_ms: 0.0, max_ms: 0.0 };
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let n = sorted.len();
+    let ns_to_ms = |ns: f64| ns / 1_000_000.0;
+    let sum: f64 = sorted.iter().map(|&x| x as f64).sum();
+    TimingSummary {
+        count: n as u32,
+        mean_ms: ns_to_ms(sum / n as f64),
+        p50_ms: percentile_ms(&sorted, 50.0),
+        p95_ms: percentile_ms(&sorted, 95.0),
+        max_ms: ns_to_ms(sorted[n - 1] as f64),
+    }
+}
+
+/// Linear-interpolated percentile over an ASCENDING-sorted ns slice, returned in ms.
+fn percentile_ms(sorted: &[u64], p: f64) -> f64 {
+    let n = sorted.len();
+    if n == 1 {
+        return sorted[0] as f64 / 1_000_000.0;
+    }
+    let idx = (p / 100.0) * (n as f64 - 1.0);
+    let lo = idx.floor() as usize;
+    let hi = idx.ceil() as usize;
+    let frac = idx - lo as f64;
+    let v = sorted[lo] as f64 + (sorted[hi] as f64 - sorted[lo] as f64) * frac;
+    v / 1_000_000.0
+}
 
 /// Ceiling on the keyed-mutex wait in [`copy_frame_into_slot`]. We only ever
 /// write a slot the renderer already released (via `consume_ack`), so
@@ -713,5 +803,50 @@ impl PreviewGpuRegistry {
             }
             None => Err(format!("no preview-gpu session '{stream_id}'")),
         }
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::{TimingAccum, TIMING_SAMPLE_CAP};
+
+    #[test]
+    fn summary_percentiles_and_mean_over_known_samples() {
+        let mut a = TimingAccum::default();
+        for ms in [10u64, 20, 30, 40, 50] {
+            a.push_coord_rtt(ms * 1_000_000); // ns
+        }
+        let r = a.drain();
+        assert_eq!(r.coord_rtt.count, 5);
+        assert!((r.coord_rtt.mean_ms - 30.0).abs() < 1e-6, "mean {}", r.coord_rtt.mean_ms);
+        assert!((r.coord_rtt.p50_ms - 30.0).abs() < 1e-6, "p50 {}", r.coord_rtt.p50_ms);
+        // linear interp: idx = 0.95*(5-1) = 3.8 -> 40 + (50-40)*0.8 = 48
+        assert!((r.coord_rtt.p95_ms - 48.0).abs() < 1e-6, "p95 {}", r.coord_rtt.p95_ms);
+        assert!((r.coord_rtt.max_ms - 50.0).abs() < 1e-6, "max {}", r.coord_rtt.max_ms);
+    }
+
+    #[test]
+    fn drain_clears_buffers() {
+        let mut a = TimingAccum::default();
+        a.push_decode_copy(5_000_000);
+        assert_eq!(a.drain().decode_copy.count, 1);
+        assert_eq!(a.drain().decode_copy.count, 0);
+    }
+
+    #[test]
+    fn empty_summary_is_zeroed() {
+        let mut a = TimingAccum::default();
+        let r = a.drain();
+        assert_eq!(r.coord_rtt.count, 0);
+        assert_eq!(r.coord_rtt.p95_ms, 0.0);
+    }
+
+    #[test]
+    fn sample_cap_holds() {
+        let mut a = TimingAccum::default();
+        for _ in 0..(TIMING_SAMPLE_CAP + 100) {
+            a.push_decode_copy(1_000_000);
+        }
+        assert_eq!(a.drain().decode_copy.count as usize, TIMING_SAMPLE_CAP);
     }
 }

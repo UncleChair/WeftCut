@@ -8,4 +8,4 @@ mod session;
 // The registry + its wire types are the seam Task 5 wires to the addon's event
 // channel; unused until then (allow keeps the base build's warning set clean).
 #[allow(unused_imports)]
-pub use session::{OpenInfo, PreviewGpuPoke, PreviewGpuRegistry};
+pub use session::{OpenInfo, PreviewGpuPoke, PreviewGpuRegistry, TimingReport, TimingSummary};
