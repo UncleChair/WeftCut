@@ -223,6 +223,8 @@ struct Session {
     width: u32,
     #[allow(dead_code)]
     height: u32,
+    /// Same `Arc` the session thread appends to; `take_timings` drains it.
+    timing: Arc<Mutex<TimingAccum>>,
 }
 
 /// One reusable shared NV12 texture in the pool. Created on ffmpeg's device and
@@ -261,6 +263,12 @@ struct SessionState {
     post_seek: bool,
     /// Decoder is drained; the pump idles until a backward seek resets this.
     eof: bool,
+    /// Shared with the registry so `take_timings` can drain from the Node thread.
+    timing: Arc<Mutex<TimingAccum>>,
+    /// `Instant` the frame in each slot was announced via `FrameReady`; taken and
+    /// turned into a coord-RTT sample when that slot's `ConsumeAck` returns. `None`
+    /// when the slot is free or unacked-but-never-emitted. Sized to the pool.
+    slot_emit: Vec<Option<Instant>>,
 }
 
 impl Drop for SessionState {
@@ -288,6 +296,18 @@ impl SessionState {
     /// A slot the renderer has released, if any.
     fn free_slot(&self) -> Option<usize> {
         self.free.iter().position(|&f| f)
+    }
+
+    /// Turn a slot's `FrameReady`->`ConsumeAck` gap into a coord-RTT sample.
+    /// `Option::take` guarantees at most one sample per emit; an ack with no
+    /// prior emit (shouldn't happen given the free-flag protocol) is ignored.
+    fn record_ack(&mut self, slot: usize) {
+        if let Some(emit_at) = self.slot_emit.get_mut(slot).and_then(Option::take) {
+            let rtt_ns = emit_at.elapsed().as_nanos() as u64;
+            if let Ok(mut t) = self.timing.lock() {
+                t.push_coord_rtt(rtt_ns);
+            }
+        }
     }
 
     /// Handle a `request_frame_at`: set the anchor and, if the target left the
@@ -354,6 +374,7 @@ impl SessionState {
                 return;
             }
 
+            let decode_start = Instant::now();
             let decoded = match self.stream.next_frame() {
                 Ok(Some(f)) => f,
                 Ok(None) => {
@@ -433,9 +454,16 @@ impl SessionState {
                 Ok(CopyOutcome::Copied) => {}
             }
 
+            let decode_copy_ns = decode_start.elapsed().as_nanos() as u64;
             self.free[slot_idx] = false;
             self.frontier_pts = decoded.pts_us;
             self.last_delivered_pts = decoded.pts_us;
+            // Stamp the slot BEFORE emit so the matching ack can measure the full
+            // round-trip; record decode+copy for this delivered frame.
+            self.slot_emit[slot_idx] = Some(Instant::now());
+            if let Ok(mut t) = self.timing.lock() {
+                t.push_decode_copy(decode_copy_ns);
+            }
             emit(
                 poke,
                 PreviewGpuPoke::FrameReady {
@@ -551,7 +579,11 @@ fn emit(poke: &PokeSink, poke_val: PreviewGpuPoke) {
 /// Open the decoder + build the shared NV12 pool on ffmpeg's device. Runs on the
 /// session thread (all COM/ffmpeg objects stay here). Adapted from the poc's
 /// `poc_open_video_stream` pool-creation block.
-fn init_session(path: &str, pool_size: u32) -> Result<SessionState, String> {
+fn init_session(
+    path: &str,
+    pool_size: u32,
+    timing: Arc<Mutex<TimingAccum>>,
+) -> Result<SessionState, String> {
     let stream = VideoStream::open(path)?;
     let (width, height) = (stream.width, stream.height);
 
@@ -609,6 +641,10 @@ fn init_session(path: &str, pool_size: u32) -> Result<SessionState, String> {
         }
 
         let free = vec![true; pool.len()];
+        // Computed before the struct literal (like `free` above): `pool` is moved
+        // into its own field within the literal, so `pool.len()` must be captured
+        // here rather than inline at the `slot_emit` field.
+        let slot_emit = vec![None; pool.len()];
 
         Ok(SessionState {
             stream,
@@ -623,6 +659,8 @@ fn init_session(path: &str, pool_size: u32) -> Result<SessionState, String> {
             last_delivered_pts: i64::MIN,
             post_seek: false,
             eof: false,
+            timing,
+            slot_emit,
         })
     }
 }
@@ -636,8 +674,9 @@ fn session_thread(
     rx: Receiver<SessionMsg>,
     init_tx: Sender<Result<OpenInfo, String>>,
     poke: PokeSink,
+    timing: Arc<Mutex<TimingAccum>>,
 ) {
-    let mut state = match init_session(&path, pool_size) {
+    let mut state = match init_session(&path, pool_size, timing) {
         Ok(s) => s,
         Err(e) => {
             let _ = init_tx.send(Err(e));
@@ -661,6 +700,7 @@ fn session_thread(
                 state.pump(&poke, &stream_id);
             }
             Ok(SessionMsg::ConsumeAck(slot)) => {
+                state.record_ack(slot as usize);
                 if let Some(f) = state.free.get_mut(slot as usize) {
                     *f = true;
                 }
@@ -719,10 +759,12 @@ impl PreviewGpuRegistry {
         let sid = stream_id.to_string();
         let path_owned = path.to_string();
         let pool_size = pool_size.max(1);
+        let timing = Arc::new(Mutex::new(TimingAccum::default()));
+        let timing_thread = Arc::clone(&timing);
 
         let join = thread::Builder::new()
             .name(format!("preview-gpu-{sid}"))
-            .spawn(move || session_thread(sid, path_owned, pool_size, cmd_rx, init_tx, poke))
+            .spawn(move || session_thread(sid, path_owned, pool_size, cmd_rx, init_tx, poke, timing_thread))
             .map_err(|e| format!("spawn preview-gpu session thread failed: {e}"))?;
 
         // Block until the thread reports open success/failure. COM pointers never
@@ -737,6 +779,7 @@ impl PreviewGpuRegistry {
                         join: Some(join),
                         width,
                         height,
+                        timing,
                     },
                 );
                 Ok(info)
@@ -778,6 +821,22 @@ impl PreviewGpuRegistry {
             .tx
             .send(SessionMsg::ConsumeAck(slot))
             .map_err(|_| format!("preview-gpu session '{stream_id}' thread is gone"))
+    }
+
+    /// Drain the session's accumulated timing samples into a summary report.
+    /// Called once at the end of a bench window (before `close`), from the Node
+    /// main thread via the addon.
+    pub fn take_timings(&self, stream_id: &str) -> Result<TimingReport, String> {
+        let sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .get(stream_id)
+            .ok_or_else(|| format!("no preview-gpu session '{stream_id}'"))?;
+        // Bind before returning: the `MutexGuard` from `timing.lock()` borrows
+        // through `session` (and so `sessions`); dropping it here (end of this
+        // statement) rather than in the tail expression keeps it from outliving
+        // the `sessions` guard it's borrowed from.
+        let report = session.timing.lock().unwrap().drain();
+        Ok(report)
     }
 
     /// Signal the session thread to tear down, then join it. The thread closes
