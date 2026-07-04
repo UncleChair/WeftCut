@@ -101,33 +101,37 @@ and WebCodecs already software-decodes AV1.
 
 **What the benchmark shows about it** (durable character, not a specific number —
 the numbers live in the reports): the hardware decoder sits mostly **idle** at
-both resolutions — native is never decode-bound. What sets the throughput ceiling
-differs by resolution, and the instrument's per-boundary timing pins it down. At
-1080p the per-frame coordination round-trip (poke → `getVideoFrame` →
-`createImageBitmap` → ack) is a **small fraction** of the delivered frame
-interval, so throughput there is limited by how fast the pump is **fed** — the
-driver's short re-nudge cadence and the lookahead gate — not by coordination. That
-is why a pool-size sweep leaves throughput **flat** (more slots don't help a
-feed-paced consumer) while the round-trip latency *grows* with pool depth
-(over-provisioned slots merely queue in the coordination channel — a Little's-Law
-symptom of over-provisioning, not the throughput cause). At 4K the picture
-inverts: the heavier per-frame work stretches the coordination round-trip to
-roughly the pool depth times the frame interval, so 4K genuinely *is*
-coordination/pipeline-limited and the decoder starts to engage.
+both resolutions — native is never decode-bound. At 1080p there is a **fixed
+single-track throughput ceiling** — comfortably above real-time 30fps playback,
+but well short of 2× or 60fps. A dedicated probe established this is a *real*
+ceiling, not a measurement artifact: **neither** removing the bench driver's
+per-loop pacing delay **nor** enlarging the shared-texture pool moves it. The
+measured per-frame coordination round-trip (poke → `getVideoFrame` →
+`createImageBitmap` → ack) is only a small fraction of the delivered frame
+interval and does *not* explain the ceiling; the limiting per-frame cost sits
+**outside** that emit→ack window (the ack → next-frame-delivered gap) and is not
+yet localized. What the pool sweep *does* show is a Little's-Law signature: as
+pool depth grows, the round-trip latency grows while throughput stays fixed (more
+frames in flight, none delivered sooner). At 4K the picture differs: the heavier
+per-frame work stretches the coordination round-trip to roughly the pool depth
+times the frame interval, so 4K genuinely *is* coordination/pipeline-limited and
+the decoder starts to engage.
 
 Splitting the coordination round-trip by boundary shows the **native-thread ↔
 main-process** hop (the addon's threadsafe-callback out, and the command-channel
 ack back) is the **larger** half — bigger than the **main ↔ renderer**
 cross-process IPC — at both resolutions. So a dedicated main↔renderer channel
-would address only the *smaller* half of coordination; a coordination fix has to
-take the main-process event loop out of the per-frame path entirely — shared-memory
-signalling that the native thread writes and the renderer polls directly, or a
-**zero-copy pull** model where the renderer reads the latest decoded frame at
-display rate with no per-frame `frameReady`/ack and no `createImageBitmap`
-snapshot. The ceiling analysis also scopes *when* that rework is worth building:
-for **single-track, real-time** 1080p preview the feed-paced rate already
-suffices, so the coordination rework earns its keep mainly for **4K and
-multi-track** headroom. Native's clear, unconditional win remains **seek
+would address only the *smaller* half of coordination; any coordination fix has
+to take the main-process event loop out of the per-frame path entirely —
+shared-memory signalling that the native thread writes and the renderer polls
+directly, or a **zero-copy pull** model where the renderer reads the latest
+decoded frame at display rate with no per-frame `frameReady`/ack and no
+`createImageBitmap` snapshot. Scoping *when* that rework (or the deeper
+investigation of the unlocalized per-frame cost) is worth it: the fixed 1080p
+ceiling already covers **single-track, real-time** preview, so it earns its keep
+only for **higher-fps single-track** (60fps content, fast/2× scrub) or **4K /
+multi-track** headroom — otherwise those cases fall back to the far-faster
+in-process WebCodecs path. Native's clear, unconditional win remains **seek
 latency**: `av_seek_frame` to the nearest keyframe plus a short decode-forward
 resolves markedly faster than the WebCodecs seek path, independent of any
 throughput work.
