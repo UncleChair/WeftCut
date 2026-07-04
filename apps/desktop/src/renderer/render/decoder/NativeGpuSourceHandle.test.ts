@@ -116,6 +116,34 @@ describe("NativeGpuSourceHandle.ensureReady", () => {
 
     h.dispose();
   });
+
+  it("opens with the configured poolSize when provided", async () => {
+    const mock = mockPreviewGpu();
+    installApi(mock.previewGpu);
+    const h = new NativeGpuSourceHandle("layer-1p", "media-1p", "/fake/p.mp4", undefined, 12);
+
+    await h.ensureReady();
+
+    const arg = mock.previewGpu.open.mock.calls[0]![0] as { poolSize: number };
+    expect(arg.poolSize).toBe(12);
+    expect(h.poolSize).toBe(12);
+
+    h.dispose();
+  });
+
+  it("defaults poolSize to 3 when unspecified", async () => {
+    const mock = mockPreviewGpu();
+    installApi(mock.previewGpu);
+    const h = new NativeGpuSourceHandle("layer-1q", "media-1q", "/fake/q.mp4");
+
+    await h.ensureReady();
+
+    const arg = mock.previewGpu.open.mock.calls[0]![0] as { poolSize: number };
+    expect(arg.poolSize).toBe(3);
+    expect(h.poolSize).toBe(3);
+
+    h.dispose();
+  });
 });
 
 describe("NativeGpuSourceHandle port frame handling", () => {

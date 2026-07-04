@@ -76,6 +76,9 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   /// stamped on every port message this handle should accept. See
   /// `nextStreamSeq` for why it's not just `layerId`.
   readonly streamId: string;
+  /// Native pool size this session opens with. Default 3 mirrors the WebCodecs
+  /// lookahead headroom; decode-bench overrides it for the Stage-3 pool sweep.
+  readonly poolSize: number;
 
   private readonly sourcePath: string;
   private readonly sourceColor: VideoColorSpaceInit | undefined;
@@ -116,11 +119,13 @@ export class NativeGpuSourceHandle implements DecoderHandle {
     mediaId: string,
     sourcePath: string,
     sourceColor?: VideoColorSpaceInit,
+    poolSize = 3,
   ) {
     this.layerId = layerId;
     this.mediaId = mediaId;
     this.sourcePath = sourcePath;
     this.sourceColor = sourceColor;
+    this.poolSize = poolSize;
     this.streamId = `native-gpu:${layerId}:${nextStreamSeq++}`;
     this.ring = new FrameRing();
   }
@@ -168,13 +173,14 @@ export class NativeGpuSourceHandle implements DecoderHandle {
     window.api.previewGpu.requestPort();
     await this.waitForPort();
     if (this._disposed) return;
-    // poolSize 3 mirrors the WebCodecs path's headroom (a couple of
-    // lookahead frames in flight plus one being read) without asking the
-    // native pool for more slots than preview actually pipelines.
+    // The configured poolSize (default 3) mirrors the WebCodecs path's
+    // headroom (a couple of lookahead frames in flight plus one being read)
+    // without asking the native pool for more slots than preview actually
+    // pipelines. Decode-bench overrides this for the Stage-3 pool sweep.
     await window.api.previewGpu.open({
       streamId: this.streamId,
       path: this.sourcePath,
-      poolSize: 3,
+      poolSize: this.poolSize,
       colorSpace: deriveColorSpace(this.sourceColor),
     });
     if (this._disposed) return;

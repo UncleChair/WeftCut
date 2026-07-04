@@ -75,6 +75,10 @@ export interface SourceHandleInit {
   /// proxy-backed `SourceMedia` entirely). Ignored by the WebCodecs path,
   /// which decodes `proxyAssetUrl` instead.
   sourcePath?: string;
+  /// E2E-only: native pool size (slot count) for a `forceStrategy: 'native'`
+  /// handle. Decode-bench Stage 3 varies this to sweep pipeline depth; the
+  /// product default (3) applies when unset. Ignored by the WebCodecs path.
+  poolSize?: number;
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
@@ -695,6 +699,7 @@ export class SourceDecoderPool {
         init.mediaId,
         init.sourcePath ?? "",
         init.sourceColor,
+        init.poolSize,
       );
       this.handles.set(init.layerId, nativeHandle);
       this.startSweeperIfNeeded();
