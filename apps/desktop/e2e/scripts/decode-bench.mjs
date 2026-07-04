@@ -247,13 +247,18 @@ if (POOL_SWEEP) {
         }
       }
       const tp = perRun.filter((t) => t?.kind === "throughput");
+      // Co-select the median-BY-FPS run so fps and its timing block come from the
+      // SAME run: Stage 3 correlates fps-vs-N with coordRtt-vs-N, and a median fps
+      // paired with a different run's timing would blur that correlation.
+      const medianRun = tp.length
+        ? [...tp].sort((a, b) => a.fps - b.fps)[Math.floor((tp.length - 1) / 2)]
+        : undefined;
       report.poolSweep.push({
         fixture: fixture.name,
         poolSize: N,
-        fps: median(tp.map((t) => t.fps)),
-        xRealtime: median(tp.map((t) => t.xRealtime)),
-        // Timing is identical in shape across runs; keep the median run's block.
-        timing: tp.length ? tp[Math.floor((tp.length - 1) / 2)].timing : undefined,
+        fps: medianRun?.fps ?? NaN,
+        xRealtime: medianRun?.xRealtime ?? NaN,
+        timing: medianRun?.timing,
         errors: perRun.filter((t) => t?.kind === "error").map((t) => t.error),
       });
       fs.writeFileSync(outFile, JSON.stringify(report, null, 2));

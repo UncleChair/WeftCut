@@ -55,7 +55,11 @@ export interface ThroughputTiming {
   preloadResidentMs: MsStats;
   createImageBitmapMs: MsStats;
   /// coordRtt.mean − preloadResident.mean: the main<->renderer IPC + event-loop
-  /// scheduling cost, isolated by subtraction (see the Stage-3 spec §1).
+  /// scheduling cost, isolated by subtraction (see the Stage-3 spec §1). The
+  /// preload's residentMs is measured up to just before `port.postMessage`, so
+  /// this derived figure also folds in the ImageBitmap transfer + `consumeAck`
+  /// dispatch cost that happens after that cutoff — i.e. it is main<->renderer
+  /// coordination overhead, not pure wire transit.
   ipcTransitMsDerived: number;
 }
 

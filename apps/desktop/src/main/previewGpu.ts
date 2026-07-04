@@ -14,6 +14,7 @@
 import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
 import type { Backend } from '@weftcut/core'
+import type { PreviewGpuTimingReport } from '../shared/ipc'
 
 interface GpuSession {
   // One imported texture per pool slot, indexed by the slot number the native
@@ -99,7 +100,7 @@ export function consumeAckPreviewGpu(backend: Backend, streamId: string, slot: n
 
 /// Drain a session's Stage-3 timing samples. Delegates straight to the addon;
 /// the registry drains its accumulator and returns the ms summaries.
-export function takeTimingsPreviewGpu(backend: Backend, streamId: string) {
+export function takeTimingsPreviewGpu(backend: Backend, streamId: string): PreviewGpuTimingReport {
   return backend.previewGpuTakeTimings(streamId)
 }
 
