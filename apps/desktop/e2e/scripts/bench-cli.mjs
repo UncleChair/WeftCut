@@ -15,3 +15,15 @@ export function parsePoolSize(raw) {
   }
   return { ok: true, value: n };
 }
+
+/// Validate a --throttle-ms value: the throughput driver's per-loop pacing delay.
+/// `undefined`/absent → default (10) applies downstream. Rejects non-integers and
+/// negatives; ALLOWS 0 (the unthrottled/yield-only driver — the point of the probe).
+export function parseThrottleMs(raw) {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    return { ok: false, error: `invalid --throttle-ms '${raw}' (expected a non-negative integer)` };
+  }
+  return { ok: true, value: n };
+}
