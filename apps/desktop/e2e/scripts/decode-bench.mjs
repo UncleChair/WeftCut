@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "@playwright/test";
 import { BENCH_MATRIX, benchFixturePath } from "./gen-decode-bench-fixtures.mjs";
-import { parsePoolSize, SWEEP_POOL_SIZES } from "./bench-cli.mjs";
+import { parsePoolSize, parseThrottleMs, SWEEP_POOL_SIZES } from "./bench-cli.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP = path.resolve(HERE, "../..");
@@ -52,6 +52,12 @@ if ((POOL_SWEEP || POOL_SIZE !== undefined) && STRATEGY !== "native") {
   console.error("[decode-bench] --pool-size / --pool-sweep only apply to --strategy native");
   process.exit(1);
 }
+const throttleParsed = parseThrottleMs(arg("throttle-ms", undefined));
+if (!throttleParsed.ok) {
+  console.error(`[decode-bench] ${throttleParsed.error}`);
+  process.exit(1);
+}
+const THROTTLE_MS = throttleParsed.value; // undefined => driver default (10)
 const scenarios = scenarioArg === "all" ? ["throughput", "seek", "coldstart"] : [scenarioArg];
 const fixtures = (fixtureArg === "all" ? BENCH_MATRIX : BENCH_MATRIX.filter((r) => r.name === fixtureArg))
   .filter((r) => fs.existsSync(benchFixturePath(r.name)));
@@ -109,7 +115,7 @@ function startGpuSampler() {
 }
 
 // ── One app session: run the scenario list for one fixture ─────────────────
-async function runSession(fixture, wantScenarios, poolSize) {
+async function runSession(fixture, wantScenarios, poolSize, throttleMs) {
   const app = await electron.launch({
     args: [MAIN],
     env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1" },
@@ -130,6 +136,7 @@ async function runSession(fixture, wantScenarios, poolSize) {
         scenario,
         strategy: STRATEGY,
         poolSize,
+        throttleMs,
       };
       if (scenario !== "throughput") {
         out[scenario] = await page.evaluate((a) => window.__weftcutTest.decodeBenchRun(a), args);
@@ -240,7 +247,7 @@ if (POOL_SWEEP) {
       for (let run = 0; run < runs; run++) {
         log(`${fixture.name} N=${N} run ${run + 1}/${runs} …`);
         try {
-          const out = await runSession(fixture, ["throughput"], N);
+          const out = await runSession(fixture, ["throughput"], N, THROTTLE_MS);
           perRun.push(out.throughput);
         } catch (e) {
           perRun.push({ kind: "error", error: String(e) });
@@ -295,7 +302,7 @@ for (const fixture of fixtures) {
     // cell-level harnessError and the batch continues — one bad session must
     // not abort the whole matrix.
     try {
-      perRun.push(await runSession(fixture, scenarios, POOL_SIZE));
+      perRun.push(await runSession(fixture, scenarios, POOL_SIZE, THROTTLE_MS));
     } catch (e) {
       perRun.push({ harnessError: String(e) });
     }
