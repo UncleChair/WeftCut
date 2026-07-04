@@ -434,6 +434,24 @@ pub struct PreviewGpuOpenInfo {
     pub slots: Vec<PreviewGpuSlot>,
 }
 
+/// Per-metric ms summary of native preview timing (decode-bench Stage 3). Field
+/// names cross to JS as camelCase: `mean_ms` -> `meanMs`, etc.
+#[napi(object)]
+pub struct PreviewGpuTimingSummary {
+    pub count: u32,
+    pub mean_ms: f64,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub max_ms: f64,
+}
+
+/// Both native timing metrics returned by `preview_gpu_take_timings`.
+#[napi(object)]
+pub struct PreviewGpuTimingReport {
+    pub coord_rtt: PreviewGpuTimingSummary,
+    pub decode_copy: PreviewGpuTimingSummary,
+}
+
 /// Native GPU-decode preview command surface (decode-bench Stage 2). Backed by
 /// `Backend::preview_gpu`; pokes (`FrameReady`/`Eof`/`Error`) surface as
 /// `previewGpu:*` events through the same `events` sink every other channel
@@ -487,6 +505,30 @@ impl Backend {
     pub fn preview_gpu_close(&self, stream_id: String) -> napi::Result<()> {
         self.preview_gpu.close(&stream_id).map_err(napi::Error::from_reason)
     }
+
+    /// Drain + return this session's Stage-3 timing samples (coord-RTT + decode/copy).
+    #[napi]
+    pub fn preview_gpu_take_timings(&self, stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
+        let rep = self
+            .preview_gpu
+            .take_timings(&stream_id)
+            .map_err(napi::Error::from_reason)?;
+        Ok(PreviewGpuTimingReport {
+            coord_rtt: to_napi_timing_summary(rep.coord_rtt),
+            decode_copy: to_napi_timing_summary(rep.decode_copy),
+        })
+    }
+}
+
+#[cfg(all(windows, feature = "preview-gpu"))]
+fn to_napi_timing_summary(s: crate::preview_gpu::TimingSummary) -> PreviewGpuTimingSummary {
+    PreviewGpuTimingSummary {
+        count: s.count,
+        mean_ms: s.mean_ms,
+        p50_ms: s.p50_ms,
+        p95_ms: s.p95_ms,
+        max_ms: s.max_ms,
+    }
 }
 
 /// Fallback surface when the addon wasn't built with GPU preview support
@@ -518,6 +560,11 @@ impl Backend {
 
     #[napi]
     pub fn preview_gpu_close(&self, _stream_id: String) -> napi::Result<()> {
+        Err(napi::Error::from_reason("preview-gpu not built"))
+    }
+
+    #[napi]
+    pub fn preview_gpu_take_timings(&self, _stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 }
