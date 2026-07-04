@@ -7,7 +7,7 @@
 import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
-import type { PreviewGpuTimingReport } from "../../../shared/ipc";
+import type { PreviewGpuTimingReport, PreviewGpuMainTiming } from "../../../shared/ipc";
 import { percentile } from "../../../shared/msStats";
 export { percentile } from "../../../shared/msStats";
 
@@ -63,6 +63,12 @@ export interface ThroughputTiming {
   /// dispatch cost that happens after that cutoff — i.e. it is main<->renderer
   /// coordination overhead, not pure wire transit.
   ipcTransitMsDerived: number;
+  /// Main-measured renderer round-trip (main<->renderer transit + renderer work).
+  rendererRoundTripMs: MsStats;
+  /// Rust<->main boundary (tsfn + mpsc + main dispatch) = coordRtt.mean - rendererRoundTrip.mean.
+  rustMainBoundaryMs: number;
+  /// Pure main<->renderer IPC/queue = rendererRoundTrip.mean - preloadResident.mean.
+  mainRendererTransitMs: number;
 }
 
 function statsOf(xs: number[]): MsStats {
@@ -86,8 +92,10 @@ export function buildThroughputTiming(
   poolSize: number,
   rust: PreviewGpuTimingReport,
   pre: { gvfMs: number[]; cibMs: number[]; residentMs: number[] },
+  main: PreviewGpuMainTiming,
 ): ThroughputTiming {
   const preloadResidentMs = statsOf(pre.residentMs);
+  const rendererRoundTripMs = summaryToStats(main.rendererRoundTripMs);
   return {
     poolSize,
     decodeCopyMs: summaryToStats(rust.decodeCopy),
@@ -95,6 +103,9 @@ export function buildThroughputTiming(
     preloadResidentMs,
     createImageBitmapMs: statsOf(pre.cibMs),
     ipcTransitMsDerived: rust.coordRtt.meanMs - preloadResidentMs.mean,
+    rendererRoundTripMs,
+    rustMainBoundaryMs: rust.coordRtt.meanMs - main.rendererRoundTripMs.meanMs,
+    mainRendererTransitMs: main.rendererRoundTripMs.meanMs - preloadResidentMs.mean,
   };
 }
 
@@ -196,10 +207,12 @@ async function runThroughput(h: BenchHandle, durationUs: number, token: CancelTo
   const native = asNative(h);
   if (native) {
     const pre = native.drainBenchTiming();
-    // takeTimings must run BEFORE the pool disposes the handle (which closes the
-    // native session); decodeBenchRun's finally disposes only after we return.
+    // takeTimings/takeMainTimings must run BEFORE the pool disposes the handle
+    // (which closes the native session); decodeBenchRun's finally disposes only
+    // after we return.
     const rust = await window.api.previewGpu.takeTimings(native.streamId);
-    timing = buildThroughputTiming(native.poolSize, rust, pre);
+    const main = await window.api.previewGpu.takeMainTimings();
+    timing = buildThroughputTiming(native.poolSize, rust, pre, main);
   }
   return {
     kind: "throughput",

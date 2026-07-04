@@ -67,21 +67,25 @@ describe("waitContains", () => {
 });
 
 describe("buildThroughputTiming", () => {
-  it("maps the Rust summaries, summarizes preload arrays, and derives IPC transit", () => {
+  it("maps the Rust summaries, summarizes preload arrays, and derives the boundary buckets", () => {
     const rust = {
       coordRtt: { count: 2, meanMs: 68, p50Ms: 66, p95Ms: 90, maxMs: 92 },
       decodeCopy: { count: 2, meanMs: 3, p50Ms: 3, p95Ms: 4, maxMs: 4 },
     };
     const pre = { gvfMs: [1, 1], cibMs: [10, 10], residentMs: [20, 20] };
+    const main = { rendererRoundTripMs: { count: 2, meanMs: 50, p50Ms: 49, p95Ms: 60, maxMs: 62 } };
 
-    const t = buildThroughputTiming(6, rust, pre);
+    const t = buildThroughputTiming(6, rust, pre, main);
 
     expect(t.poolSize).toBe(6);
     expect(t.coordRttMs).toEqual({ p50: 66, p95: 90, max: 92, mean: 68, n: 2 });
-    expect(t.decodeCopyMs.mean).toBe(3);
-    expect(t.preloadResidentMs).toEqual({ p50: 20, p95: 20, max: 20, mean: 20, n: 2 });
-    expect(t.createImageBitmapMs.mean).toBe(10);
-    // 68 (coord mean) - 20 (resident mean)
+    expect(t.preloadResidentMs.mean).toBe(20);
+    expect(t.rendererRoundTripMs).toEqual({ p50: 49, p95: 60, max: 62, mean: 50, n: 2 });
+    // rustMain = coordRtt.mean - rendererRoundTrip.mean = 68 - 50
+    expect(t.rustMainBoundaryMs).toBe(18);
+    // mainRend = rendererRoundTrip.mean - preloadResident.mean = 50 - 20
+    expect(t.mainRendererTransitMs).toBe(30);
+    // sanity: the two buckets sum to the existing ipcTransitMsDerived (48)
     expect(t.ipcTransitMsDerived).toBe(48);
   });
 
@@ -90,7 +94,8 @@ describe("buildThroughputTiming", () => {
       coordRtt: { count: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 },
       decodeCopy: { count: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 },
     };
-    const t = buildThroughputTiming(3, rust, { gvfMs: [], cibMs: [], residentMs: [] });
+    const main = { rendererRoundTripMs: { count: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 } };
+    const t = buildThroughputTiming(3, rust, { gvfMs: [], cibMs: [], residentMs: [] }, main);
     expect(t.preloadResidentMs.n).toBe(0);
     expect(Number.isNaN(t.preloadResidentMs.mean)).toBe(true);
   });
