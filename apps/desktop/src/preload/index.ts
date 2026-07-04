@@ -9,6 +9,7 @@ import type {
   NotificationOpts,
   PreviewGpuColorSpace,
   PreviewGpuOpenReply,
+  PreviewGpuTimingReport,
   SystemStats,
   WinCreateOpts,
   WinAction,
@@ -162,6 +163,9 @@ const api: WeftcutApi = {
       const ch = new MessageChannel()
       mainPort = ch.port1
       window.postMessage({ __weftcutPreviewGpu: 'port' }, '*', [ch.port2])
+    },
+    takeTimings(streamId: string): Promise<PreviewGpuTimingReport> {
+      return ipcRenderer.invoke('previewGpu:takeTimings', { streamId }) as Promise<PreviewGpuTimingReport>
     },
   },
 }

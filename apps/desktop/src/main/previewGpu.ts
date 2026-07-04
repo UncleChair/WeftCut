@@ -97,6 +97,12 @@ export function consumeAckPreviewGpu(backend: Backend, streamId: string, slot: n
   backend.previewGpuConsumeAck(streamId, slot)
 }
 
+/// Drain a session's Stage-3 timing samples. Delegates straight to the addon;
+/// the registry drains its accumulator and returns the ms summaries.
+export function takeTimingsPreviewGpu(backend: Backend, streamId: string) {
+  return backend.previewGpuTakeTimings(streamId)
+}
+
 /// Tear down a session. Close the native side FIRST (it signals + joins the
 /// decode thread, so no frame can be mid-read afterward), THEN drop our
 /// persistent imports and forget the session.

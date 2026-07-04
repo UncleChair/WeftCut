@@ -20,7 +20,7 @@ import { isAllowed } from './fsGuard.js'
 import { applyDerivativesEvent, applyWorkspacePathsEvent } from './state/jobs-writeback.js'
 import { SINGLE_MEDIA_CHANNELS, resolveSingleMediaArgs } from './state/single-media-forward.js'
 import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
-import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu } from './previewGpu.js'
+import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu } from './previewGpu.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -446,6 +446,7 @@ app.whenReady().then(async () => {
     consumeAckPreviewGpu(backend!, a.streamId, a.slot),
   )
   ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(backend!, a.streamId))
+  ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(backend!, a.streamId))
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options))
