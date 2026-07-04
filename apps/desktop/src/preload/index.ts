@@ -191,35 +191,30 @@ let mainPort: MessagePort | null = null
 // is a SEPARATE import that only the preload can release. Skipping this leaks
 // a whole NV12 pool per open/close cycle (decode-bench opens/closes a session
 // per source, so this compounds into GPU OOM across a run).
-// Ordering: await the main-process close FIRST — closePreviewGpu closes the
-// native session (stopping the decode thread from writing into the slots)
-// before releasing its imports, so by the time this invoke resolves it's safe
-// to drop the preload's copies too. Also drop any announce-queue entries for
-// this stream so the queue can't accumulate across repeated open/close cycles
-// (e.g. a slot whose receiver callback never fired before close).
-//
-// The local cleanup runs in `finally` — not just after a successful invoke —
-// so it also runs if the invoke REJECTS (e.g. main's close is now idempotent
-// and could still reject for an unrelated reason). Skipping cleanup on
-// rejection would strand the preload's own imports, the exact leak this
-// function exists to close. It's safe to release them regardless of the
-// invoke's outcome: main's native close (or its absence) doesn't change what
-// the preload itself is holding.
+// Ordering: release the preload's own imports and prune this stream's
+// announce-queue entries BEFORE awaiting the main-process close, not after.
+// The renderer handle nulls its side synchronously on dispose, but a
+// `frameReady` poke can still be in flight; if it lands while this function
+// is awaiting the invoke, it must find `importedByKey` already empty for this
+// stream so the handler's `if (!imp || !mainPort) return` guard short-circuits
+// it — otherwise it snapshots a bitmap onto a gone consumer (leaked, never
+// closed) and fires a consumeAck against a session main is mid-closing.
+// Clearing first also means this cleanup no longer depends on the invoke's
+// outcome, so there's nothing left to strand if it rejects (main's close is
+// idempotent and could still reject for an unrelated reason) — a plain
+// sequential await is enough, no try/finally required.
 async function closePreviewGpuStream(streamId: string): Promise<void> {
-  try {
-    await (ipcRenderer.invoke('previewGpu:close', { streamId }) as Promise<void>)
-  } finally {
-    const prefix = `${streamId}:`
-    for (const [key, imp] of importedByKey) {
-      if (key.startsWith(prefix)) {
-        imp.release()
-        importedByKey.delete(key)
-      }
-    }
-    for (let i = announceQueue.length - 1; i >= 0; i--) {
-      if (announceQueue[i].streamId === streamId) announceQueue.splice(i, 1)
+  const prefix = `${streamId}:`
+  for (const [key, imp] of importedByKey) {
+    if (key.startsWith(prefix)) {
+      imp.release()
+      importedByKey.delete(key)
     }
   }
+  for (let i = announceQueue.length - 1; i >= 0; i--) {
+    if (announceQueue[i].streamId === streamId) announceQueue.splice(i, 1)
+  }
+  await (ipcRenderer.invoke('previewGpu:close', { streamId }) as Promise<void>)
 }
 
 // Slot-correlation announce: enqueue; the next receiver callback claims it.
@@ -239,14 +234,15 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 // it to the main world over the MessagePort, and ONLY THEN consumeAck. The ack
 // must fire after createImageBitmap resolves — the snapshot is complete then, so
 // native may safely reuse the slot. Acking earlier would let native overwrite
-// the slot mid-read (tearing) and, because native's AcquireSync on a still-held
-// slot uses an INFINITE timeout, could hang the session thread and close().
+// the slot mid-read (tearing). Native's AcquireSync on a still-held slot now
+// times out (finite, Error-poke + skip) rather than hanging, but an early ack
+// would still cost a dropped/torn frame, so the ordering stays load-bearing.
 //
 // The ack must ALSO fire if createImageBitmap (or the port post) throws — once
 // getVideoFrame() has been called, the slot is spoken for, and vf.close() in
 // the inner finally already releases the GPU hold regardless of outcome. So
-// skipping the ack on failure would strand the slot: native's AcquireSync on it
-// never returns, hanging the session thread (and a later close()'s join).
+// skipping the ack on failure would strand the slot until native's finite
+// AcquireSync times out and skips it — an avoidable dropped frame, not a hang.
 // Report the failure to the main world too, matching the eof/error relay below.
 ipcRenderer.on(
   'evt:previewGpu:frameReady',
@@ -275,8 +271,10 @@ ipcRenderer.on(
       port.postMessage({ kind: 'error', streamId, message: err instanceof Error ? err.message : String(err) })
     } finally {
       // AFTER the snapshot attempt (success or failure) — release the slot back
-      // to the native pool.
-      void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot })
+      // to the native pool. Swallow a rejection: if a dispose raced this poke
+      // and closed the session first, the ack lands on an already-closed
+      // session and napi rejects — that's expected, not an error to surface.
+      void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot }).catch(() => {})
     }
   },
 )

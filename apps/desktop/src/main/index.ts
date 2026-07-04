@@ -428,7 +428,9 @@ app.whenReady().then(async () => {
   // onEvent relay above (they fall through to `evt:previewGpu:*`). consumeAck is
   // driven by the preload's per-frame loop AFTER createImageBitmap resolves (the
   // ack-after-read contract) — never earlier, or native could reuse the slot
-  // mid-read and, on a still-held slot's infinite AcquireSync, hang the session.
+  // mid-read (tearing / a dropped frame). Native's AcquireSync on a still-held
+  // slot now backstops this with a finite timeout (Error-poke + skip) rather
+  // than hanging, but the ack ordering still exists to avoid paying that cost.
   ipcMain.handle(
     'previewGpu:open',
     (e, a: { streamId: string; path: string; poolSize: number; colorSpace: Electron.ColorSpace }) => {
