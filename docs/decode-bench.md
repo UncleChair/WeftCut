@@ -2,15 +2,15 @@
 
 decode-bench is a permanent, local-only benchmark that measures the preview
 decode path at the `DecoderHandle` seam — the same seam
-[`SourceDecoderPool`](preview.md#decode) uses in the live app. Today it
-profiles the shipping WebCodecs strategy; it is built to compare that against
-a native-ffmpeg GPU/shared-texture strategy once that path lands, decoding
-the identical original file on both sides. Like
+[`SourceDecoderPool`](preview.md#decode) uses in the live app. It compares two
+strategies decoding the identical original file: the shipping WebCodecs
+pipeline and the Windows-only native-ffmpeg GPU/shared-texture path (see
+[Native strategy](#native-strategy) below). Like
 `apps/desktop/e2e/scripts/memory-ratchet.mjs`, it's infrastructure that stays
 in the repo rather than a one-off measurement: a durable regression bed for
 whichever decode paths the app ships, and the data that pins the open
-parameters of a future native path (codec coverage, concurrency cap, 4K
-viability).
+parameters of the native path (codec coverage, concurrency cap, 4K
+viability, whether zero-copy is worth building).
 
 The driver (`apps/desktop/src/renderer/render/decoder/decodeBench.ts`) owns a
 private `SourceDecoderPool`, never the app's live one, so runs are
@@ -71,6 +71,48 @@ median.
   1 Hz sample), so its GPU-decode column can read `—`. That is a sampling-
   density artifact of a fast decode, not a missing measurement.
 
+## Native strategy
+
+The native strategy (`--strategy native`, Windows-only) decodes the **original**
+file — not a proxy — with ffmpeg `d3d11va` hardware decode, copies each decoded
+surface GPU→GPU into a small pool of shared NV12 textures, and hands them to the
+renderer over Electron's `sharedTexture` transport. The renderer snapshots each
+delivered frame to an `ImageBitmap` and pushes it into the **same `FrameRing`**
+the WebCodecs path feeds — so everything downstream (lookahead, `frameAt`, the
+painter) is identical; only the front-end differs. It is preview-only: the proxy
+still builds in the background and export is untouched.
+
+Because the shipping renderer is sandboxed (`contextIsolation` + `sandbox`), the
+shared-texture receiver runs in the **preload** isolated world, calls
+`getVideoFrame()` + `createImageBitmap()` there, and transfers the bitmap to the
+main world over a `MessagePort` (a live `VideoFrame`/`ImageBitmap` cannot cross
+the `contextBridge`). Each pool slot is imported and sent **once**; per frame the
+only cross-process traffic is a tiny `frameReady` poke and a `consume-ack` — no
+frame pixels traverse IPC. The ack is issued only **after** `createImageBitmap`
+resolves, which is the coherence guarantee that lets the producer safely reuse a
+slot (a finite keyed-mutex acquire timeout backstops it so a stuck consumer can
+never wedge the decode thread).
+
+**Scope:** the native path targets the `Proxied`-route **8-bit** codecs (HEVC,
+VP9). 10-bit (P010) import is blocked at the transport layer, so 10-bit sources
+stay on the proxy path (`hi10p-1080` has no native cell). AV1 is out of the
+native set — `d3d11va` did not yield a decodable D3D11 surface for it in testing,
+and WebCodecs already software-decodes AV1.
+
+**What the benchmark shows about it** (durable character, not a specific number —
+the numbers live in the reports): native throughput at 1080p is **coordination-
+bound, not decode-bound** — the hardware decoder sits mostly idle while the
+per-frame poke → `getVideoFrame` → `createImageBitmap` → ack round-trip sets the
+ceiling, so WebCodecs (in-process, no per-frame handshake) is far faster there.
+The gap narrows sharply at 4K, where the heavier per-frame decode amortizes the
+fixed coordination overhead and the decoder actually engages. Native's clear win
+is **seek latency**: `av_seek_frame` to the nearest keyframe plus a short
+decode-forward resolves markedly faster than the WebCodecs seek path. The
+identified lever for closing the throughput gap is a **zero-copy** path that
+feeds the decoded frame to the GPU without the `createImageBitmap` snapshot and
+its per-frame coordination — the current snapshot is what the `3D`-engine
+resource column and this coordination cost point at.
+
 ## What it deliberately is not
 
 - **Not a proxy-vs-original comparison.** Both strategies decode the
@@ -87,15 +129,11 @@ median.
 - **Informative, not pass/fail.** The process exit code is non-zero only on
   a harness or `--self-check` failure — never because a decode was slow.
   Comparing strategies is a decision input, not a regression assertion.
-- **No `native` strategy yet.** The scenario driver accepts a `strategy`
-  argument, but anything other than `"webcodecs"` currently short-circuits
-  to `kind: "error"` with a message saying that strategy isn't integrated.
-  The orchestrator itself doesn't yet expose a strategy flag either — every
-  report today is a WebCodecs-only baseline, gathered so a future native
-  path has something to compare against.
 - **`hi10p-1080` is a WebCodecs-only reference row.** 10-bit (P010) import
-  isn't wired into the native shared-texture path, so that fixture has no
-  native cell to compare against until that lands.
+  into the native shared-texture path yields a null/black frame (a transport-
+  layer block, not a decode limit), so that fixture has no native cell — it's
+  measured on WebCodecs alone. See [Native strategy](#native-strategy) for the
+  8-bit-only scope.
 - **No decode-core microbenchmark layer.** Measuring at the `DecoderHandle`
   seam already captures each strategy's true end-to-end cost, including its
   I/O path (see the asymmetry note below); a lower-level breakdown can be
@@ -121,8 +159,29 @@ npm run bench:decode:fixtures           # generate the synthetic fixture matrix 
 npm run bench:decode                    # run the full matrix
 ```
 
+To also measure the **native** strategy, the addon must be built with the
+Windows-only `preview-gpu` feature, which links `ffmpeg-next` and needs the
+FFmpeg dev libs + libclang on the build environment (`FFMPEG_DIR` and
+`LIBCLANG_PATH`; see the native path's setup notes). That feature is
+deliberately **not** in the CI feature-union (`jobs,export,mcp,cloud`) — GPU
+decode is meaningless on a headless runner — so it's added only for local
+bench builds:
+
+```bash
+FFMPEG_DIR=… LIBCLANG_PATH=… \
+  napi build --platform --release --manifest-path native/Cargo.toml \
+  --output-dir native --features jobs,export,mcp,cloud,preview-gpu
+```
+
+At run time the native strategy also needs the FFmpeg shared DLLs on `PATH`
+(the linked `ffmpeg-next`, distinct from the sidecar `ffmpeg.exe`).
+
 Useful flags, passed after `--` when invoked through npm:
 
+- `--strategy webcodecs|native` — which decode path to profile (default
+  `webcodecs`). `native` requires a `preview-gpu` build (above); it's
+  Windows-only and applies to the `Proxied`-route 8-bit codecs (see
+  [Native strategy](#native-strategy)).
 - `--fixture <name>|all` — one fixture (`h264-1080`, `hevc-1080`,
   `hevc-2160`, `vp9-1080`, `av1-1080`, `hi10p-1080`) or the whole matrix
   (default `all`).
