@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { percentile, seekPlan, waitContains } from "./decodeBench";
+import { buildThroughputTiming, percentile, seekPlan, waitContains } from "./decodeBench";
 import type { SourceHandle } from "./SourceDecoderPool";
 
 describe("percentile", () => {
@@ -63,5 +63,35 @@ describe("waitContains", () => {
     await expect(waitContains(fake, 0, { cancelled: true })).rejects.toThrow(
       "bench run cancelled",
     );
+  });
+});
+
+describe("buildThroughputTiming", () => {
+  it("maps the Rust summaries, summarizes preload arrays, and derives IPC transit", () => {
+    const rust = {
+      coordRtt: { count: 2, meanMs: 68, p50Ms: 66, p95Ms: 90, maxMs: 92 },
+      decodeCopy: { count: 2, meanMs: 3, p50Ms: 3, p95Ms: 4, maxMs: 4 },
+    };
+    const pre = { gvfMs: [1, 1], cibMs: [10, 10], residentMs: [20, 20] };
+
+    const t = buildThroughputTiming(6, rust, pre);
+
+    expect(t.poolSize).toBe(6);
+    expect(t.coordRttMs).toEqual({ p50: 66, p95: 90, max: 92, mean: 68, n: 2 });
+    expect(t.decodeCopyMs.mean).toBe(3);
+    expect(t.preloadResidentMs).toEqual({ p50: 20, p95: 20, max: 20, mean: 20, n: 2 });
+    expect(t.createImageBitmapMs.mean).toBe(10);
+    // 68 (coord mean) - 20 (resident mean)
+    expect(t.ipcTransitMsDerived).toBe(48);
+  });
+
+  it("yields NaN stats for empty preload arrays without throwing", () => {
+    const rust = {
+      coordRtt: { count: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 },
+      decodeCopy: { count: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 },
+    };
+    const t = buildThroughputTiming(3, rust, { gvfMs: [], cibMs: [], residentMs: [] });
+    expect(t.preloadResidentMs.n).toBe(0);
+    expect(Number.isNaN(t.preloadResidentMs.mean)).toBe(true);
   });
 });

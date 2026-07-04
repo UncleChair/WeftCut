@@ -7,12 +7,21 @@
 import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
+import type { PreviewGpuTimingReport } from "../../../shared/ipc";
 
 /// Either decode strategy's handle. Both expose `ring: FrameRing` (so
 /// `ring.pushCount`/`lastPtsUs()`/`containsPts()` resolve without narrowing),
 /// `ensureReady`, and `requestFrameAt` — the runners below need no strategy-
 /// specific branching.
 type BenchHandle = SourceHandle | NativeGpuSourceHandle;
+
+/// Native handles carry a `streamId` + `drainBenchTiming`; the WebCodecs
+/// `SourceHandle` has neither. Structural, so no value import of the class.
+function asNative(h: BenchHandle): (NativeGpuSourceHandle & { streamId: string }) | null {
+  return "streamId" in h && typeof (h as NativeGpuSourceHandle).drainBenchTiming === "function"
+    ? (h as NativeGpuSourceHandle & { streamId: string })
+    : null;
+}
 
 export type BenchStrategy = "webcodecs" | "native";
 export type BenchScenario = "throughput" | "seek" | "coldstart";
@@ -21,16 +30,67 @@ export interface BenchArgs {
   durationUs: number;
   scenario: BenchScenario;
   strategy: BenchStrategy;
+  /// Native-only: pool size (slot count) for the Stage-3 sweep. Default 3.
+  poolSize?: number;
 }
 
 export type SeekCategory = "forward-near" | "forward-far" | "backward-near" | "backward-far";
 interface CategoryStats { p50: number; p95: number; max: number; n: number }
 
 export type BenchResult =
-  | { kind: "throughput"; measuredMs: number; frames: number; fps: number; xRealtime: number; endedAtEof: boolean }
+  | { kind: "throughput"; measuredMs: number; frames: number; fps: number; xRealtime: number; endedAtEof: boolean; timing?: ThroughputTiming }
   | { kind: "seek"; perCategory: Record<SeekCategory, CategoryStats> }
   | { kind: "coldstart"; firstMs: number; restP50: number; restMax: number; iterationsMs: number[] }
   | { kind: "error"; error: string };
+
+/// Millisecond stats for one metric. Mirrors the Rust `TimingSummary` shape plus
+/// the raw sample count, so preload-derived and Rust-derived metrics report alike.
+export interface MsStats { p50: number; p95: number; max: number; mean: number; n: number }
+
+/// The Stage-3 throughput timing breakdown attached to a native throughput result.
+export interface ThroughputTiming {
+  poolSize: number;
+  decodeCopyMs: MsStats;
+  coordRttMs: MsStats;
+  preloadResidentMs: MsStats;
+  createImageBitmapMs: MsStats;
+  /// coordRtt.mean − preloadResident.mean: the main<->renderer IPC + event-loop
+  /// scheduling cost, isolated by subtraction (see the Stage-3 spec §1).
+  ipcTransitMsDerived: number;
+}
+
+function statsOf(xs: number[]): MsStats {
+  const sorted = [...xs].sort((a, b) => a - b);
+  return {
+    p50: percentile(sorted, 50),
+    p95: percentile(sorted, 95),
+    max: sorted.length ? sorted[sorted.length - 1]! : NaN,
+    mean: xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN,
+    n: xs.length,
+  };
+}
+
+function summaryToStats(s: PreviewGpuTimingReport["coordRtt"]): MsStats {
+  return { p50: s.p50Ms, p95: s.p95Ms, max: s.maxMs, mean: s.meanMs, n: s.count };
+}
+
+/// Assemble the throughput timing block from the Rust summaries (coord-RTT +
+/// decode/copy) and the preload-piggybacked per-frame samples. Pure — unit-tested.
+export function buildThroughputTiming(
+  poolSize: number,
+  rust: PreviewGpuTimingReport,
+  pre: { gvfMs: number[]; cibMs: number[]; residentMs: number[] },
+): ThroughputTiming {
+  const preloadResidentMs = statsOf(pre.residentMs);
+  return {
+    poolSize,
+    decodeCopyMs: summaryToStats(rust.decodeCopy),
+    coordRttMs: summaryToStats(rust.coordRtt),
+    preloadResidentMs,
+    createImageBitmapMs: statsOf(pre.cibMs),
+    ipcTransitMsDerived: rust.coordRtt.meanMs - preloadResidentMs.mean,
+  };
+}
 
 const WARMUP_MS = 2_000;
 const WINDOW_MS = 30_000;
@@ -136,6 +196,15 @@ async function runThroughput(h: BenchHandle, durationUs: number, token: CancelTo
       error: `window too small (frames=${frames}, ${measuredMs.toFixed(0)}ms) — decode outran the 60s fixture during warm-up`,
     };
   }
+  let timing: ThroughputTiming | undefined;
+  const native = asNative(h);
+  if (native) {
+    const pre = native.drainBenchTiming();
+    // takeTimings must run BEFORE the pool disposes the handle (which closes the
+    // native session); decodeBenchRun's finally disposes only after we return.
+    const rust = await window.api.previewGpu.takeTimings(native.streamId);
+    timing = buildThroughputTiming(native.poolSize, rust, pre);
+  }
   return {
     kind: "throughput",
     measuredMs,
@@ -143,6 +212,10 @@ async function runThroughput(h: BenchHandle, durationUs: number, token: CancelTo
     fps: frames / (measuredMs / 1000),
     xRealtime: contentUs / 1000 / measuredMs,
     endedAtEof,
+    // Conditional spread, not `timing: undefined` — exactOptionalPropertyTypes
+    // rejects assigning `undefined` to an optional field that's absent for
+    // non-native strategies.
+    ...(timing ? { timing } : {}),
   };
 }
 
@@ -223,7 +296,7 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
       // still passed — `proxyAssetUrl` is required by `SourceHandleInit`.
       proxyAssetUrl: url,
       ...(args.strategy === "native"
-        ? { forceStrategy: "native" as const, sourcePath: args.sourcePath }
+        ? { forceStrategy: "native" as const, sourcePath: args.sourcePath, poolSize: args.poolSize }
         : {}),
     });
     scenarioP = (async (): Promise<BenchResult> => {
