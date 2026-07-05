@@ -11,6 +11,7 @@ import type {
   PreviewGpuMainTiming,
   PreviewGpuOpenReply,
   PreviewGpuTimingReport,
+  PreviewSwFrameMsg,
   SystemStats,
   WinCreateOpts,
   WinAction,
@@ -170,6 +171,28 @@ const api: WeftcutApi = {
     },
     takeMainTimings(): Promise<PreviewGpuMainTiming> {
       return ipcRenderer.invoke('previewGpu:takeMainTimings') as Promise<PreviewGpuMainTiming>
+    },
+  },
+
+  // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
+  // WebCodecs-blind-format path). Unlike previewGpu, decoded NV12 frames DO
+  // cross the contextBridge directly — no shared texture / MessagePort dance —
+  // arriving on the dedicated `previewSw:frame` channel (NOT the generic
+  // `evt:*` EventSink relay), so `onFrame` subscribes to that channel directly.
+  previewSw: {
+    open(args: { streamId: string; path: string }): Promise<{ width: number; height: number }> {
+      return ipcRenderer.invoke('previewSw:open', args) as Promise<{ width: number; height: number }>
+    },
+    requestFrameAt(args: { streamId: string; targetUs: number }): void {
+      ipcRenderer.send('previewSw:requestFrameAt', args)
+    },
+    close(args: { streamId: string }): void {
+      ipcRenderer.send('previewSw:close', args)
+    },
+    onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void {
+      const h = (_e: unknown, f: PreviewSwFrameMsg) => cb(f)
+      ipcRenderer.on('previewSw:frame', h)
+      return () => { ipcRenderer.removeListener('previewSw:frame', h) }
     },
   },
 }

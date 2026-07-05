@@ -22,6 +22,7 @@ import { SINGLE_MEDIA_CHANNELS, resolveSingleMediaArgs } from './state/single-me
 import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-project-forward.js'
 import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu } from './previewGpu.js'
 import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
+import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -455,6 +456,20 @@ app.whenReady().then(async () => {
   ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(backend!, a.streamId))
   ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(backend!, a.streamId))
   ipcMain.handle('previewGpu:takeMainTimings', () => takeMainTimings())
+
+  // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
+  // WebCodecs-blind-format path). Frames flow out of band on the dedicated
+  // `previewSw:frame` channel (see ./previewSw), not through the generic
+  // `evt:*` EventSink relay above.
+  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string }) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) throw new Error('previewSw:open — no window for sender')
+    return openPreviewSw(backend!, win, a.streamId, a.path)
+  })
+  ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
+    requestFrameAtPreviewSw(backend!, a.streamId, a.targetUs),
+  )
+  ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => closePreviewSw(backend!, a.streamId))
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options))

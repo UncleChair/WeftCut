@@ -125,6 +125,27 @@ export type PreviewGpuTimingReport = {
 /// main<->renderer transit + renderer work, measured in main's own clock.
 export type PreviewGpuMainTiming = { rendererRoundTripMs: PreviewGpuTimingSummary }
 
+/// One software-decoded frame relayed to the renderer over the dedicated
+/// `previewSw:frame` channel (native SW-decode preview: ProRes/DNxHD/MPEG-2/
+/// VC-1 — the WebCodecs-blind-format path). Mirrors the napi `PreviewSwFrame`
+/// shape 1:1 (already camelCase); `data` is the Rust `Buffer` structured-cloned
+/// to the renderer as a `Uint8Array` (the one main→renderer copy). Color tags
+/// are canonical FFmpeg string names or absent where the stream leaves them
+/// unspecified.
+export type PreviewSwFrameMsg = {
+  streamId: string
+  ptsUs: number
+  durUs: number
+  width: number
+  height: number
+  format: 'NV12'
+  colorMatrix?: string
+  colorRange?: string
+  colorPrimaries?: string
+  colorTransfer?: string
+  data: Uint8Array
+}
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -194,6 +215,18 @@ export interface WeftcutApi {
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport>
     /// E2E/bench-only: drain the MAIN-measured renderer round-trip samples.
     takeMainTimings(): Promise<PreviewGpuMainTiming>
+  }
+  /// Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
+  /// WebCodecs-blind-format path). Unlike previewGpu, decoded frames DO cross
+  /// the contextBridge directly: each is a plain NV12 buffer (no shared
+  /// texture / MessagePort dance needed), delivered on the dedicated
+  /// `previewSw:frame` channel (NOT the generic `evt:*` relay) and surfaced via
+  /// `onFrame`.
+  previewSw: {
+    open(args: { streamId: string; path: string }): Promise<{ width: number; height: number }>
+    requestFrameAt(args: { streamId: string; targetUs: number }): void
+    close(args: { streamId: string }): void
+    onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void
   }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void

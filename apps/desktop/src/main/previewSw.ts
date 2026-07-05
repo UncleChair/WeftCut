@@ -1,0 +1,41 @@
+// Main-process manager for native SOFTWARE-decode preview sessions (the
+// WebCodecs-blind-format path: ProRes/DNxHD/MPEG-2/VC-1 — no shared-texture
+// GPU pool, no proxy). MUCH simpler than previewGpu.ts: each decoded NV12
+// frame ships as a plain napi Buffer through the addon's per-stream
+// ThreadsafeFunction callback, which we relay straight to the renderer over a
+// dedicated `previewSw:frame` channel. No slots, no consumeAck, no timings —
+// the callback captures `win`, so routing is automatic (no
+// `Map<streamId, webContents>` needed).
+import type { BrowserWindow } from 'electron'
+import type { Backend } from '@weftcut/core'
+
+/// Open a native SW-decode session. Synchronous on the addon side: returns
+/// frame dimensions immediately, and registers the frame callback BEFORE the
+/// decode thread spawns, so no early frame is dropped. Frames only start
+/// flowing after `requestFrameAtPreviewSw`.
+export function openPreviewSw(
+  backend: Backend,
+  win: BrowserWindow,
+  streamId: string,
+  path: string,
+): { width: number; height: number } {
+  const info = backend.previewSwOpen(streamId, path, (err: Error | null, frame) => {
+    if (err) return
+    if (win.isDestroyed()) return // renderer reloaded/closed mid-stream → webContents.send would throw
+    win.webContents.send('previewSw:frame', frame)
+  })
+  return { width: info.width, height: info.height }
+}
+
+/// Move the session's decode anchor. targetUs is source microseconds; the
+/// addon takes it as f64 (napi has no ergonomic i64 param) and casts down
+/// internally. Fire-and-forget: frames arrive via the registered callback.
+export function requestFrameAtPreviewSw(backend: Backend, streamId: string, targetUs: number): void {
+  backend.previewSwRequestFrameAt(streamId, targetUs)
+}
+
+/// Tear down a session. Delegates straight to the addon, which closes+joins
+/// the decode thread before dropping the per-stream ThreadsafeFunction.
+export function closePreviewSw(backend: Backend, streamId: string): void {
+  backend.previewSwClose(streamId)
+}
