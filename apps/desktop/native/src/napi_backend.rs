@@ -11,6 +11,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
+// `NonBlocking` call mode is used only by the software-preview routing sink in
+// `build_backend`; gate the import so the feature-off build stays warning-clean.
+#[cfg(feature = "preview-sw")]
+use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 use serde::Serialize;
 
@@ -42,6 +46,21 @@ pub struct Backend {
     /// `FrameReady`/`Eof`/`Error` pokes surface as `previewGpu:*` events.
     #[cfg(all(windows, feature = "preview-gpu"))]
     pub(crate) preview_gpu: crate::preview_gpu::PreviewGpuRegistry,
+    /// Cross-platform pure-software preview decode registry (WebCodecs-blind
+    /// formats: ProRes/DNxHD/MPEG-2/VC-1). Unlike `preview_gpu`, frames are owned
+    /// NV12 bytes delivered per-stream through `preview_sw_sinks`, so there is no
+    /// shared-texture pool and no `windows` gate.
+    #[cfg(feature = "preview-sw")]
+    pub(crate) preview_sw: crate::preview_sw::PreviewSwRegistry,
+    /// Per-stream JS frame callbacks for software preview. The registry holds ONE
+    /// global sink (installed in `build_backend`) that routes each `Frame` poke to
+    /// the matching stream's `ThreadsafeFunction` here; `preview_sw_open` inserts,
+    /// `preview_sw_close` removes. `EventSink` can't carry pixel bytes, so this
+    /// map is the delivery path rather than the shared `events` channel.
+    #[cfg(feature = "preview-sw")]
+    pub(crate) preview_sw_sinks: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, ThreadsafeFunction<PreviewSwFrame>>>,
+    >,
     /// Plaintext cloud-provider API keys, keyed by provider tag ("openai").
     /// Pushed in by Electron main (decrypted from safeStorage) via
     /// `set_cloud_key`; read synchronously by the cloud reqwest providers.
@@ -112,6 +131,38 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         registry
     };
 
+    // Software preview: the registry has a SINGLE global frame sink, so install
+    // ONE routing closure here (NOT per-open, which would clobber earlier streams)
+    // that dispatches each `Frame` poke to the matching stream's per-stream
+    // `ThreadsafeFunction` in `preview_sw_sinks`. `Eof`/`Error` pokes have no JS
+    // callback shape (the delivery contract is frame bytes only) — log them.
+    #[cfg(feature = "preview-sw")]
+    let (preview_sw, preview_sw_sinks) = {
+        let registry = crate::preview_sw::PreviewSwRegistry::new();
+        let sinks: std::sync::Arc<
+            std::sync::Mutex<std::collections::HashMap<String, ThreadsafeFunction<PreviewSwFrame>>>,
+        > = Default::default();
+        let sinks_for_cb = sinks.clone();
+        registry.set_frame_sink(Box::new(move |poke| {
+            use crate::preview_sw::SwFramePoke;
+            match poke {
+                SwFramePoke::Frame { stream_id, frame } => {
+                    if let Some(tsfn) = sinks_for_cb.lock().unwrap().get(&stream_id) {
+                        let _ = tsfn.call(
+                            Ok(sw_frame_to_napi(&stream_id, frame)),
+                            ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                    }
+                }
+                SwFramePoke::Eof { stream_id } => tracing::debug!(%stream_id, "preview-sw eof"),
+                SwFramePoke::Error { stream_id, message } => {
+                    tracing::warn!(%stream_id, %message, "preview-sw decode error")
+                }
+            }
+        }));
+        (registry, sinks)
+    };
+
     Backend {
         events,
         cache,
@@ -129,6 +180,10 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
         #[cfg(all(windows, feature = "preview-gpu"))]
         preview_gpu,
+        #[cfg(feature = "preview-sw")]
+        preview_sw,
+        #[cfg(feature = "preview-sw")]
+        preview_sw_sinks,
     }
 }
 
@@ -599,6 +654,145 @@ impl Backend {
     #[napi]
     pub fn preview_gpu_take_timings(&self, _stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
         Err(napi::Error::from_reason("preview-gpu not built"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Software preview (`preview-sw`): cross-platform libavcodec CPU decode of
+// WebCodecs-blind formats (ProRes/DNxHD/MPEG-2/VC-1). Decoded frames reach JS as
+// owned NV12 bytes in a `Buffer` through a per-stream `ThreadsafeFunction` — NOT
+// the shared-texture handle path `preview_gpu` uses, and NOT the JSON `EventSink`
+// (which can't carry raw pixel bytes without base64). These wire structs are
+// ALWAYS compiled (like `PreviewGpuOpenInfo`) so the feature-off fallback block
+// can still name them in its signatures.
+
+/// Reply of `preview_sw_open`: the decoded stream's frame dimensions.
+#[napi(object)]
+pub struct PreviewSwOpenInfoJs {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// One software-decoded frame delivered to JS. `data` is tightly-packed 8-bit
+/// NV12 (`Y` plane `w*h` then interleaved `UV` `w*h/2`); `format` is always
+/// `"NV12"`. `pts_us`/`dur_us` cross as `f64` (napi has no ergonomic `i64`
+/// binding — matches the `preview_gpu` `target_us` convention). Color tags are
+/// canonical FFmpeg string names (`bt709`, `tv`, …) or `null` where the stream
+/// leaves them unspecified.
+#[napi(object)]
+pub struct PreviewSwFrame {
+    pub stream_id: String,
+    pub pts_us: f64,
+    pub dur_us: f64,
+    pub width: u32,
+    pub height: u32,
+    pub format: String,
+    pub color_matrix: Option<String>,
+    pub color_range: Option<String>,
+    pub color_primaries: Option<String>,
+    pub color_transfer: Option<String>,
+    pub data: Buffer,
+}
+
+/// Move a decoded `SwFrame` into its napi wire form. `Buffer::from(f.nv12)` takes
+/// the `Vec` by value (zero-copy Rust-side); the single budgeted copy happens
+/// when napi marshals the `Buffer` across the JS boundary.
+#[cfg(feature = "preview-sw")]
+fn sw_frame_to_napi(stream_id: &str, f: crate::preview_sw::decoder::SwFrame) -> PreviewSwFrame {
+    PreviewSwFrame {
+        stream_id: stream_id.to_string(),
+        pts_us: f.pts_us as f64,
+        dur_us: f.dur_us as f64,
+        width: f.width,
+        height: f.height,
+        format: "NV12".into(),
+        color_matrix: f.color.matrix,
+        color_range: f.color.range,
+        color_primaries: f.color.primaries,
+        color_transfer: f.color.transfer,
+        data: Buffer::from(f.nv12),
+    }
+}
+
+/// Native software-decode preview command surface (cross-platform). Backed by
+/// `Backend::preview_sw`; decoded NV12 frames reach JS through the per-stream
+/// `ThreadsafeFunction` registered in `preview_sw_open` and routed by the single
+/// sink installed in `build_backend`.
+#[cfg(feature = "preview-sw")]
+#[napi]
+impl Backend {
+    /// Open `path` for software preview: register the per-stream frame callback,
+    /// then spawn the session's decode thread and return the frame dimensions.
+    /// The callback is registered BEFORE `open` so no early poke is dropped.
+    #[napi]
+    pub fn preview_sw_open(
+        &self,
+        stream_id: String,
+        path: String,
+        on_frame: ThreadsafeFunction<PreviewSwFrame>,
+    ) -> napi::Result<PreviewSwOpenInfoJs> {
+        self.preview_sw_sinks
+            .lock()
+            .unwrap()
+            .insert(stream_id.clone(), on_frame);
+        let info = self
+            .preview_sw
+            .open(&stream_id, &path)
+            .map_err(napi::Error::from_reason)?;
+        Ok(PreviewSwOpenInfoJs {
+            width: info.width,
+            height: info.height,
+        })
+    }
+
+    /// Move the session's decode anchor. `target_us` is an `f64` (napi has no
+    /// ergonomic `i64` param binding) carrying source microseconds; cast down to
+    /// the `i64` the registry expects. Fire-and-forget: frames arrive via the
+    /// registered callback.
+    #[napi]
+    pub fn preview_sw_request_frame_at(&self, stream_id: String, target_us: f64) -> napi::Result<()> {
+        self.preview_sw
+            .request_frame_at(&stream_id, target_us as i64)
+            .map_err(napi::Error::from_reason)
+    }
+
+    /// Tear down a session: close+join the decode thread FIRST (the FIFO command
+    /// channel guarantees no poke is in flight once `close` returns), THEN drop
+    /// the per-stream `ThreadsafeFunction` — so no `Frame` poke can arrive after
+    /// its callback is removed. Returns the close result either way.
+    #[napi]
+    pub fn preview_sw_close(&self, stream_id: String) -> napi::Result<()> {
+        let r = self.preview_sw.close(&stream_id).map_err(napi::Error::from_reason);
+        self.preview_sw_sinks.lock().unwrap().remove(&stream_id);
+        r
+    }
+}
+
+/// Fallback surface when the addon wasn't built with software preview support
+/// (the `preview-sw` feature is off): the methods still exist so JS callers get a
+/// clean rejection instead of a missing-method TypeError. No `windows` cfg —
+/// software decode is cross-platform, so the only gate is the feature.
+#[cfg(not(feature = "preview-sw"))]
+#[napi]
+impl Backend {
+    #[napi]
+    pub fn preview_sw_open(
+        &self,
+        _stream_id: String,
+        _path: String,
+        _on_frame: ThreadsafeFunction<PreviewSwFrame>,
+    ) -> napi::Result<PreviewSwOpenInfoJs> {
+        Err(napi::Error::from_reason("preview-sw not built"))
+    }
+
+    #[napi]
+    pub fn preview_sw_request_frame_at(&self, _stream_id: String, _target_us: f64) -> napi::Result<()> {
+        Err(napi::Error::from_reason("preview-sw not built"))
+    }
+
+    #[napi]
+    pub fn preview_sw_close(&self, _stream_id: String) -> napi::Result<()> {
+        Err(napi::Error::from_reason("preview-sw not built"))
     }
 }
 
