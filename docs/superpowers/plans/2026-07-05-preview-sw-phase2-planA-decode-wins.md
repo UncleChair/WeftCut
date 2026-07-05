@@ -285,11 +285,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 
 **Files:**
 - Create: `apps/desktop/native/tests/fixtures/tiny_mpeg2.mpg` (tiny long-GOP fixture, committed like `tiny_prores.mov`)
-- Modify: `apps/desktop/native/src/preview_sw/session.rs` (rewrite the `serve_request` burst loop; update the `LOOKAHEAD_FRAMES` doc; add a long-GOP session test)
+- Modify: `apps/desktop/native/src/preview_sw/session.rs` (rewrite `serve_request` = robust seek + decode-forward-to-target; add seek-retry consts; update the `LOOKAHEAD_FRAMES` doc; add a long-GOP session test)
 
 **Interfaces:**
-- Consumes: `SwVideoStream::next_frame() -> Result<Option<SwFrame>, String>` (each `SwFrame` carries `pts_us` + `dur_us`), `seek(target_us)` (Task 2 unchanged).
-- Produces: `serve_request` now delivers the frame that **covers** `target_us` first (then a `LOOKAHEAD_FRAMES` forward burst), correct for both intra and long-GOP sources. No signature change.
+- Consumes: `SwVideoStream::next_frame() -> Result<Option<SwFrame>, String>` (each `SwFrame` carries `pts_us` + `dur_us`), `seek(target_us)` — **both unchanged** (`decoder.rs` is NOT touched; the seek-robustness is a wrapper in `serve_request`).
+- Produces: `serve_request` now (a) re-seeks backward with a growing margin until it lands on a keyframe at/before `target_us` — needed because ffmpeg's BACKWARD seek overshoots on index-less MPEG-PS/TS — then (b) delivers the frame that **covers** `target_us` first, then a `LOOKAHEAD_FRAMES` forward burst. Correct for intra and long-GOP. No signature change.
 
 - [ ] **Step 1: Generate the long-GOP fixture**
 
@@ -345,64 +345,112 @@ In `apps/desktop/native/src/preview_sw/session.rs`, inside `mod tests`, add:
 cd apps/desktop/native
 cargo test --features jobs,export,mcp,cloud,preview-sw preview_sw::session::tests::long_gop 2>&1 | Select-String -Pattern "test result|FAILED|panicked"
 ```
-Expected: FAIL — the current burst emits the keyframe first (`pts[0]` ≈ 500_000 < 700_000).
+Expected: FAIL. Two possible signatures, both a fail: (a) if seek lands at/before target, the current burst emits the keyframe first (`pts[0]` ≈ 500_000 < 700_000); (b) on this MPEG-PS fixture ffmpeg's BACKWARD seek actually **overshoots forward**, so the current code emits `pts[0]` = 1_000_000 (> 900_000). Either way the test fails — the robust rewrite in Step 4 handles both.
 
-- [ ] **Step 4: Rewrite `serve_request` as decode-forward-to-target**
+- [ ] **Step 4: Rewrite `serve_request` with robust seek + decode-forward-to-target**
 
-In `session.rs`, replace the `for _ in 0..LOOKAHEAD_FRAMES { ... }` loop (currently :120–149) with:
+> **Amended after the Task-3 seek-overshoot finding.** ffmpeg's `av_seek_frame(..., BACKWARD)` is only approximate on index-less containers (MPEG-PS/TS): it estimates a byte offset and can **overshoot**, landing a keyframe AFTER the target (confirmed on `tiny_mpeg2.mpg`: seek to 800_000 µs lands on 1_000_000). A forward-only discard can't recover from that. So `serve_request` first probes the landed frame and re-seeks earlier with a growing margin until it lands at/before the target, then forward-decodes to the covering frame. `decoder.rs::seek()` is **unchanged** — this robustness is a wrapper in the session.
+
+First add these consts next to `LOOKAHEAD_FRAMES` near the top of `session.rs`:
 
 ```rust
-    // Decode forward from the seek's keyframe to the frame that COVERS
-    // `target_us`, discarding frames whose display interval ends at/before the
-    // target. For intra families the seek already lands on the covering frame, so
-    // nothing is discarded (behavior identical to before). For long-GOP
-    // (MPEG-2/VC-1) this skips the keyframe→target gap — the WebCodecs PacketPump
-    // equivalent. Then emit the covering frame + a small forward lookahead.
-    let mut emitted = 0usize;
-    let mut reached = false;
-    loop {
+/// Largest number of backward re-seek attempts when a container's seek overshoots
+/// the target. Index-less MPEG-PS/TS estimate the seek byte-offset and can land
+/// AFTER the requested time; each retry steps the target back by a growing margin.
+/// The final fallback (seek target 0) decodes from the start — always correct.
+const MAX_SEEK_RETRIES: u32 = 6;
+/// Initial backward step when re-seeking after an overshoot; doubles each retry.
+/// ~1 s clears a typical (≤1 s) GOP overshoot in a single retry.
+const SEEK_RETRY_MARGIN_US: i64 = 1_000_000;
+```
+
+Then replace the ENTIRE body of `serve_request` (the seek call at :110–119 AND the burst loop at :120–149) with:
+
+```rust
+    // --- Robust seek: land on a keyframe AT/BEFORE the target ---
+    // ffmpeg's BACKWARD seek is only approximate on index-less containers
+    // (MPEG-PS/TS): it estimates a byte offset and can overshoot, landing AFTER
+    // the target. Probe the first decoded frame; if it's past the target, re-seek
+    // earlier with a growing margin until it lands at/before (or we reach the file
+    // start, always a valid at-or-before landing). Indexed containers (MOV/MP4)
+    // land correctly on the first try — zero retries.
+    let mut seek_target = target_us;
+    let mut margin = SEEK_RETRY_MARGIN_US;
+    let mut attempt = 0u32;
+    let first_frame: SwFrame = loop {
+        if let Err(e) = stream.seek(seek_target) {
+            emit(
+                sink,
+                SwFramePoke::Error {
+                    stream_id: stream_id.to_string(),
+                    message: format!("seek to {seek_target}us failed: {e}"),
+                },
+            );
+            return;
+        }
         match stream.next_frame() {
-            Ok(Some(frame)) => {
-                if !reached {
-                    // A frame whose interval ends at/before the target is in the
-                    // past. `.max(1)` guards a 0/unknown duration so the covering
-                    // frame (pts ≈ target) is never skipped.
-                    if frame.pts_us + frame.dur_us.max(1) <= target_us {
-                        continue;
-                    }
-                    reached = true;
+            Ok(Some(f)) => {
+                if f.pts_us > target_us && seek_target > 0 && attempt < MAX_SEEK_RETRIES {
+                    // Overshoot — step the seek target back and retry.
+                    seek_target = (target_us - margin).max(0);
+                    margin = margin.saturating_mul(2);
+                    attempt += 1;
+                    continue;
                 }
-                emit(
-                    sink,
-                    SwFramePoke::Frame {
-                        stream_id: stream_id.to_string(),
-                        frame,
-                    },
-                );
-                emitted += 1;
-                if emitted >= LOOKAHEAD_FRAMES {
-                    break;
-                }
+                break f; // landed at/before target (or can't/needn't retry further)
             }
             Ok(None) => {
-                emit(
-                    sink,
-                    SwFramePoke::Eof {
-                        stream_id: stream_id.to_string(),
-                    },
-                );
-                break;
+                emit(sink, SwFramePoke::Eof { stream_id: stream_id.to_string() });
+                return;
             }
             Err(e) => {
-                emit(
-                    sink,
-                    SwFramePoke::Error {
-                        stream_id: stream_id.to_string(),
-                        message: e,
-                    },
-                );
-                break;
+                emit(sink, SwFramePoke::Error { stream_id: stream_id.to_string(), message: e });
+                return;
             }
+        }
+    };
+
+    // --- Forward-decode from the landing to the frame covering target_us, then
+    // emit the covering frame + a small forward lookahead. For intra families the
+    // landing IS the covering frame (zero discards). The probed `first_frame` is
+    // the first candidate, so it is never lost. ---
+    let mut emitted = 0usize;
+    let mut reached = false;
+    let mut pending: Option<SwFrame> = Some(first_frame);
+    loop {
+        let frame = match pending.take() {
+            Some(f) => f,
+            None => match stream.next_frame() {
+                Ok(Some(f)) => f,
+                Ok(None) => {
+                    emit(sink, SwFramePoke::Eof { stream_id: stream_id.to_string() });
+                    break;
+                }
+                Err(e) => {
+                    emit(sink, SwFramePoke::Error { stream_id: stream_id.to_string(), message: e });
+                    break;
+                }
+            },
+        };
+        if !reached {
+            // A frame whose interval ends at/before the target is in the past.
+            // `.max(1)` guards a 0/unknown duration so the covering frame
+            // (pts ≈ target) is never skipped.
+            if frame.pts_us + frame.dur_us.max(1) <= target_us {
+                continue;
+            }
+            reached = true;
+        }
+        emit(
+            sink,
+            SwFramePoke::Frame {
+                stream_id: stream_id.to_string(),
+                frame,
+            },
+        );
+        emitted += 1;
+        if emitted >= LOOKAHEAD_FRAMES {
+            break;
         }
     }
 ```
@@ -431,12 +479,14 @@ Expected: PASS — the new `long_gop_request_forward_decodes_to_target` AND the 
 ```powershell
 git add apps/desktop/native/src/preview_sw/session.rs apps/desktop/native/tests/fixtures/tiny_mpeg2.mpg
 git commit -m @'
-feat(preview-sw): unified decode-forward-to-target seek (long-GOP correctness)
+feat(preview-sw): robust long-GOP seek (overshoot-safe + decode-forward-to-target)
 
-serve_request now decodes forward from the seek keyframe to the frame covering
-the target before emitting, correct for both intra (zero discards, unchanged) and
-long-GOP MPEG-2/VC-1 (skips the keyframe→target gap). Adds tiny_mpeg2.mpg + a
-session test proving the covering frame, not the keyframe, is delivered.
+serve_request now re-seeks backward with a growing margin until it lands on a
+keyframe at/before the target (ffmpeg's BACKWARD seek overshoots on index-less
+MPEG-PS/TS), then decodes forward to the frame covering the target. Correct for
+intra (zero retries/discards, unchanged) and long-GOP MPEG-2/VC-1. Adds
+tiny_mpeg2.mpg + a session test proving the covering frame, not an overshot or
+pre-target keyframe, is delivered. decoder.rs::seek() unchanged.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 '@
