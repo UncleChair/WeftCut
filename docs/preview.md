@@ -126,13 +126,23 @@ What preview decodes depends on the import decode routing (see
   `probeSourceDecodable` proved decodable on this machine may temporarily
   preview from the original (`previewDecodable` in `previewPlaybackPathFor`).
   The bridge is not persisted and disappears once a proxy path exists.
+- **Native software decode** (experimental) → for WebCodecs-blind formats
+  (ProRes today), an off-by-default `experimental_native_sw_decode`
+  AppSettings toggle routes preview through a native libavcodec software
+  decoder instead of a proxy: `SwSourceHandle` decodes the original directly
+  into the same `FrameRing`, with no proxy wait. With the toggle off, the
+  clip previews via its quick/full proxy exactly like any other blind-spot
+  source — toggling never changes what's on disk. See
+  [ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md).
 
 The short fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing
 frame-accurate: any scrub target decodes at most a few frames from its
 keyframe, bounding the seek-to-key-then-decode-forward tail (ADR 0008).
 So the steady-state preview source is either the original only for friendly
-bypassed H.264, or a short-GOP quick proxy. The bridge is a temporary import
-latency optimization, not the durable preview route.
+bypassed H.264, a short-GOP quick proxy, or — behind the experimental
+toggle — the original for a WebCodecs-blind format via native software
+decode. The bridge is a temporary import latency optimization, not the
+durable preview route.
 
 The full `proxy_path` is a source-resolution **export master** (ADR 0011)
 used only at export time; preview ignores it in favor of the quick proxy.

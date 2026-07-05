@@ -163,6 +163,15 @@ enum DecodeRoute {
         full_proxy: Option<PathBuf>,
         format_version: u32,          // bump forces proxy regen on next load
     },
+    // A WebCodecs-blind source (ProRes today) that a native libavcodec
+    // software decoder can preview directly. Carries the same readiness
+    // fields as Proxied so the experimental toggle being off previews via
+    // the proxy with no regression; toggle-on overlays the native original.
+    NativeSw {
+        quick_proxy: Option<PathBuf>,
+        full_proxy: Option<PathBuf>,
+        format_version: u32,
+    },
 }
 ```
 
@@ -173,7 +182,7 @@ where export each read their pixels (ADR 0009, ADR 0028; see also
 [`CONTEXT.md`](../CONTEXT.md#decode-routing) for canonical term definitions).
 The route is decided per source on two axes: whether the export worker can
 decode the original directly and whether the original scrubs acceptably as a
-preview source. The three legal routes, all represented by distinct variants:
+preview source. The four legal routes, all represented by distinct variants:
 
 - **`Bypass`**: a friendly short-GOP H.264 source; no proxy generated —
   preview and export both read the original.
@@ -185,15 +194,24 @@ preview source. The three legal routes, all represented by distinct variants:
   — preview reads the quick proxy; export reads the source-resolution
   export master (`full_proxy`). Both fields are `None` while the respective
   derivative is pending. `format_version` forces proxy regeneration when bumped.
+- **`NativeSw { quick_proxy, full_proxy, format_version }`**: a WebCodecs-blind
+  source (ProRes today) that a native libavcodec software decoder can
+  preview directly. Fields mirror `Proxied` exactly. With the experimental
+  `experimental_native_sw_decode` AppSettings toggle off, preview reads
+  `quick_proxy` just as `Proxied` would; with the toggle on, preview reads
+  the original via the native software decoder (`SwSourceHandle`) instead.
+  See [ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md).
 
 The `Option` payloads express **readiness**: preview is ready when
 `quick_proxy` is `Some`, or the route is `Bypass`; export is ready when
-`full_proxy` is `Some`, or the route is `DirectExport` or `Bypass`. The
-illegal combination — FullProxy export with Original preview — is
-unrepresentable by construction. `resolveDecode(media)` is the single
-resolver that maps a `DecodeRoute` and optional session bridge to
-`{ previewPath, exportPath }`, replacing ad-hoc flag reads at every call
-site. See [ADR 0028](adr/0028-persist-decode-route-as-folded-enum.md).
+`full_proxy` is `Some`, or the route is `DirectExport` or `Bypass`. `NativeSw`
+follows `Proxied`'s readiness exactly — the toggle only changes which ready
+path preview reads, not readiness itself. The illegal combination — FullProxy
+export with Original preview — is unrepresentable by construction.
+`resolveDecode(media)` is the single resolver that maps a `DecodeRoute` and
+optional session bridge to `{ previewPath, exportPath }`, replacing ad-hoc
+flag reads at every call site. See
+[ADR 0028](adr/0028-persist-decode-route-as-folded-enum.md).
 
 The static import route is intentionally narrow. H.264 and AV1 8-bit,
 browser-friendly sources can be marked DirectExport; HEVC, VP9, ProRes, and

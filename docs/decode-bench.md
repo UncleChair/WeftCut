@@ -134,6 +134,18 @@ Native's clear, unconditional win remains **seek latency**: `av_seek_frame` to t
 nearest keyframe plus a short decode-forward resolves markedly faster than the
 WebCodecs seek path, independent of any throughput work.
 
+## Software-decode strategy
+
+`--strategy sw` benches the native **software**-decode preview path
+(`SwSourceHandle`) at the same `DecoderHandle` seam — the WebCodecs-blind
+route documented in [`preview.md`](preview.md#proxies) and
+[ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md).
+Unlike the `native` strategy above, this is pure libavcodec **software**
+decode (no `d3d11va`, no shared texture, no `preview-gpu` feature) and is
+cross-platform rather than Windows-only. It runs against the `prores-1080`
+/ `prores-2160` fixtures — ProRes is the only WebCodecs-blind format wired
+today, so there's no `sw` cell for the H.264/HEVC/VP9/AV1 rows.
+
 ## What it deliberately is not
 
 - **Not a proxy-vs-original comparison.** Both strategies decode the
@@ -199,10 +211,11 @@ At run time the native strategy also needs the FFmpeg shared DLLs on `PATH`
 
 Useful flags, passed after `--` when invoked through npm:
 
-- `--strategy webcodecs|native` — which decode path to profile (default
+- `--strategy webcodecs|native|sw` — which decode path to profile (default
   `webcodecs`). `native` requires a `preview-gpu` build (above); it's
   Windows-only and applies to the `Proxied`-route 8-bit codecs (see
-  [Native strategy](#native-strategy)).
+  [Native strategy](#native-strategy)). `sw` benches the native
+  **software**-decode path (see below).
 - `--fixture <name>|all` — one fixture (`h264-1080`, `hevc-1080`,
   `hevc-2160`, `vp9-1080`, `av1-1080`, `hi10p-1080`) or the whole matrix
   (default `all`).
