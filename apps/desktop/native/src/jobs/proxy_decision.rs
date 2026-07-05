@@ -84,16 +84,16 @@ pub fn decide(media: &MediaItem, source_gop_secs: Option<f64>) -> ProxyRoute {
         PreviewSource::Proxy
     };
     let mut route = ProxyRoute { export, preview };
-    // ProRes is WebCodecs-blind on every machine (never `export_decodable_statically`,
-    // never `source_is_safe_to_bypass`), so the two branches above always land it on
-    // `BOTH_PROXY`. A native ffmpeg SW decoder (later task) can preview it directly
-    // instead, so override the preview axis here. Export is intentionally left on
-    // `FullProxy` for Phase 1 — a later phase teaches export the same native path.
+    // WebCodecs-blind families (ProRes/DNxHD/MPEG-2/VC-1/WMV3) are never
+    // `export_decodable_statically` nor `source_is_safe_to_bypass`, so the two
+    // branches above always land them on `BOTH_PROXY`. A native ffmpeg SW decoder
+    // previews them directly, so override the preview axis here. Export stays on
+    // `FullProxy` until the native-export phase teaches export the same path.
     if media
         .metadata
         .video
         .as_ref()
-        .map(|v| codec_is_prores(&v.codec))
+        .map(|v| codec_is_blindspot(&v.codec))
         .unwrap_or(false)
     {
         route.preview = PreviewSource::NativeFfmpeg;
@@ -230,6 +230,19 @@ pub fn codec_is_av1(codec: &str) -> bool {
 /// routes to a native ffmpeg SW decoder for preview instead of a full proxy.
 pub fn codec_is_prores(codec: &str) -> bool {
     codec.eq_ignore_ascii_case("prores")
+}
+
+/// The WebCodecs-blind codec families a native ffmpeg SW decoder previews
+/// directly (no proxy for preview). ProRes / DNxHD / DNxHR (ffprobe reports both
+/// DNxHD and DNxHR as `dnxhd`) are intra-only; MPEG-2 / VC-1 / WMV3 (VC-1
+/// Simple/Main) are long-GOP — the session's decode-forward-to-target seek
+/// handles those. Export still proxies until the native-export phase (see
+/// `decide`). VC-1/WMV3 have no ffmpeg *encoder*, so they are covered by this
+/// routing gate + the codec-agnostic decoder, not a synthetic conformance
+/// fixture (see the Phase-2 Plan A plan, Task 4).
+pub fn codec_is_blindspot(codec: &str) -> bool {
+    let c = codec.to_ascii_lowercase();
+    codec_is_prores(&c) || matches!(c.as_str(), "dnxhd" | "mpeg2video" | "vc1" | "wmv3")
 }
 
 /// 8-bit 4:2:0 formats WebCodecs decodes on this pipeline. `yuvj420p` is
@@ -386,15 +399,37 @@ mod tests {
 
     #[test]
     fn non_family_codec_proxies_both() {
-        // A truly unhandled blind-spot codec (no native-sw route yet) — not
-        // WebCodecs-decodable on any machine and not covered by
-        // `codec_is_prores` → full proxy on both axes. ProRes now has its own
-        // route (see `prores_original_routes_preview_to_native_ffmpeg`);
-        // mpeg2video guards the general "non-family codec" fallback.
+        // A truly unhandled blind-spot codec — WebCodecs-blind on every machine
+        // AND not in the native-sw family — still full-proxies on both axes.
+        // (mpeg2video moved INTO the family in Phase 2; qtrle guards the fallback.)
         let item = video(|m| {
-            m.metadata.video.as_mut().unwrap().codec = "mpeg2video".into();
+            m.metadata.video.as_mut().unwrap().codec = "qtrle".into();
         });
         assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
+    }
+
+    #[test]
+    fn blindspot_family_routes_preview_to_native_ffmpeg() {
+        // Every WebCodecs-blind family previews natively (no proxy for preview),
+        // export still proxies in Phase 2 (native export is Phase 3).
+        for codec in ["prores", "dnxhd", "mpeg2video", "vc1", "wmv3"] {
+            let item = video(|m| {
+                m.metadata.video.as_mut().unwrap().codec = codec.into();
+            });
+            let r = decide(&item, Some(0.0));
+            assert_eq!(r.preview, PreviewSource::NativeFfmpeg, "preview for {codec}");
+            assert_eq!(r.export, ExportSource::FullProxy, "export for {codec}");
+        }
+    }
+
+    #[test]
+    fn codec_is_blindspot_matches_family_case_insensitively() {
+        for c in ["ProRes", "DNxHD", "MPEG2VIDEO", "VC1", "WMV3"] {
+            assert!(codec_is_blindspot(c), "{c} should be blindspot");
+        }
+        for c in ["h264", "av1", "hevc", "vp9", "qtrle"] {
+            assert!(!codec_is_blindspot(c), "{c} should NOT be blindspot");
+        }
     }
 
     #[test]
