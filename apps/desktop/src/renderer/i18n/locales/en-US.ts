@@ -504,6 +504,10 @@ const enUS = {
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:
       "Render motif animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
+    experimental_heading: "Experimental",
+    native_sw_decode: "Native software decode (ProRes)",
+    native_sw_decode_hint:
+      "Preview ProRes directly via native software decode instead of building a proxy. Experimental; blind-spot formats only.",
   },
   keybindings: {
     add: "+ Add",

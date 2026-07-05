@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
   setAppSettings,
+  useNativeSwDecodeEnabled,
   usePrebakeMotifsEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
@@ -218,6 +219,11 @@ export function SettingsPanel({
             <section className="settings-section">
               <h3>{t("settings.motifs_heading")}</h3>
               <PrebakeSection onError={setError} />
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.experimental_heading")}</h3>
+              <NativeSwSection onError={setError} />
             </section>
           </div>
 
@@ -447,6 +453,30 @@ function PrebakeSection({ onError }: { onError: (msg: string) => void }) {
       <span>
         <span className="settings-toggle-label">{t("settings.prebake_motifs")}</span>
         <span className="settings-toggle-hint">{t("settings.prebake_motifs_hint")}</span>
+      </span>
+    </label>
+  );
+}
+
+function NativeSwSection({ onError }: { onError: (msg: string) => void }) {
+  const { t } = useTranslation();
+  const enabled = useNativeSwDecodeEnabled();
+  return (
+    <label className="settings-toggle-row">
+      <AppSwitch
+        checked={enabled}
+        onCheckedChange={async (next) => {
+          onError("");
+          try {
+            await setAppSettings({ experimental_native_sw_decode: next });
+          } catch (err) {
+            onError(String(err));
+          }
+        }}
+      />
+      <span>
+        <span className="settings-toggle-label">{t("settings.native_sw_decode")}</span>
+        <span className="settings-toggle-hint">{t("settings.native_sw_decode_hint")}</span>
       </span>
     </label>
   );
