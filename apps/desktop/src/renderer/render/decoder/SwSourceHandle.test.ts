@@ -17,8 +17,15 @@ class FakeVideoFrame {
   constructor(
     public data: unknown,
     public init: unknown,
-  ) {}
+  ) {
+    lastVf = this;
+  }
 }
+
+/// The most recently constructed `FakeVideoFrame`, captured so tests can
+/// assert on the `init` (e.g. `colorSpace`) `handleFrame` passed to `new
+/// VideoFrame` — mirrors `lastBmp` below for the bitmap side.
+let lastVf: FakeVideoFrame | null = null;
 
 /// The most recently manufactured stub bitmap, captured so tests can assert
 /// on its `close()` — `createImageBitmap` otherwise returns an opaque
@@ -83,6 +90,7 @@ function installApi(previewSw: ReturnType<typeof mockPreviewSw>["previewSw"]): v
 beforeEach(() => {
   delete (window as unknown as { api?: unknown }).api;
   lastBmp = null;
+  lastVf = null;
   installFakeCodecGlobals();
 });
 
@@ -127,6 +135,56 @@ describe("SwSourceHandle frame handling", () => {
 
     expect(h.ring.pushCount).toBe(1);
     expect(h.ring.lastPtsUs()).toBe(33_367);
+
+    h.dispose();
+  });
+
+  it("derives colorSpace from the mapped sourceColor, not raw per-frame tags", async () => {
+    const mock = mockPreviewSw();
+    installApi(mock.previewSw);
+    const h = new SwSourceHandle("L-color", "M-color", "C:/clip.mov", {
+      primaries: "bt709",
+      transfer: "bt709",
+      matrix: "smpte170m",
+      fullRange: true,
+    });
+    await h.ensureReady();
+
+    // The frame carries an exotic raw-ffmpeg tag (`bt2020nc` is not a valid
+    // WebCodecs `VideoMatrixCoefficients`) — it must NOT leak into
+    // `new VideoFrame`'s colorSpace; only the mapped `sourceColor` should.
+    mock.emit(
+      makeFrameMsg(h.streamId, {
+        colorMatrix: "bt2020nc",
+        colorPrimaries: "bt2020",
+        colorTransfer: "smpte2084",
+        colorRange: "pc",
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(h.ring.pushCount).toBe(1);
+    const vf = lastVf;
+    expect(vf?.init).toMatchObject({
+      colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "smpte170m", fullRange: true },
+    });
+
+    h.dispose();
+  });
+
+  it("falls back to bt709/limited when the handle has no sourceColor, ignoring frame tags", async () => {
+    const mock = mockPreviewSw();
+    installApi(mock.previewSw);
+    const h = new SwSourceHandle("L-color-2", "M-color-2", "C:/clip2.mov");
+    await h.ensureReady();
+
+    mock.emit(makeFrameMsg(h.streamId, { colorMatrix: "bt2020nc", colorRange: "pc" }));
+    await flushMicrotasks();
+
+    const vf = lastVf;
+    expect(vf?.init).toMatchObject({
+      colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "bt709", fullRange: false },
+    });
 
     h.dispose();
   });

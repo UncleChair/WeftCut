@@ -126,7 +126,7 @@ export class SwSourceHandle implements DecoderHandle {
         codedWidth: f.width,
         codedHeight: f.height,
         timestamp: f.ptsUs,
-        colorSpace: this.colorSpaceFor(f),
+        colorSpace: this.colorSpaceFor(),
       });
       try {
         bmp = await createImageBitmap(vf);
@@ -154,19 +154,29 @@ export class SwSourceHandle implements DecoderHandle {
     }
   }
 
-  /// Build a `VideoColorSpaceInit` from this frame's string color tags,
-  /// falling back to the source's color (if any) and then bt709/limited —
-  /// the same HD default the WebCodecs path lands on. NOT
-  /// `NativeGpuSourceHandle.deriveColorSpace` — that returns a
-  /// `PreviewGpuColorSpace` (`range: "full" | "limited"` string), not the
-  /// `fullRange: boolean` shape `new VideoFrame` needs.
-  private colorSpaceFor(f: PreviewSwFrameMsg): VideoColorSpaceInit {
+  /// Build a `VideoColorSpaceInit` from the source's already-mapped
+  /// `sourceColor` (WebCodecs `VideoColorSpaceInit`, derived at open time via
+  /// `ffprobeColorToWebCodecs`), falling back to bt709/limited — the same HD
+  /// default the WebCodecs path lands on. Mirrors
+  /// `NativeGpuSourceHandle.deriveColorSpace`'s logic (same precedence, same
+  /// default), just returning the `fullRange: boolean` shape `new
+  /// VideoFrame` needs instead of `PreviewGpuColorSpace`'s `range: "full" |
+  /// "limited"` string.
+  ///
+  /// Deliberately does NOT read the per-frame `f.color*` tags: those are
+  /// raw FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`,
+  /// `arib-std-b67`), not valid WebCodecs enum members (`bt2020-ncl`, `pq`,
+  /// `hlg`) — casting them straight into a `VideoColorSpaceInit` would fork
+  /// the app's single color model and, for a wide-gamut/HDR source, throw
+  /// inside `new VideoFrame` (silently dropping the frame). Every other
+  /// decode path derives colorSpace from the mapped `sourceColor` only.
+  private colorSpaceFor(): VideoColorSpaceInit {
     const sc = this.sourceColor;
     return {
-      primaries: (f.colorPrimaries as VideoColorPrimaries) ?? sc?.primaries ?? "bt709",
-      transfer: (f.colorTransfer as VideoTransferCharacteristics) ?? sc?.transfer ?? "bt709",
-      matrix: (f.colorMatrix as VideoMatrixCoefficients) ?? sc?.matrix ?? "bt709",
-      fullRange: f.colorRange ? f.colorRange === "pc" || f.colorRange === "full" : sc?.fullRange ?? false,
+      primaries: sc?.primaries ?? "bt709",
+      transfer: sc?.transfer ?? "bt709",
+      matrix: sc?.matrix ?? "bt709",
+      fullRange: sc?.fullRange ?? false,
     };
   }
 
