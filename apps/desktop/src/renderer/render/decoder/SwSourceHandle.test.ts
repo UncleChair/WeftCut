@@ -292,6 +292,31 @@ describe("SwSourceHandle.requestFrameAt", () => {
     h.dispose();
   });
 
+  it("calls ring.setAnchor on every call, including a deduped repeat target", async () => {
+    const mock = mockPreviewSw();
+    installApi(mock.previewSw);
+    const h = new SwSourceHandle("layer-5c", "media-5c", "C:/fake/g2.mov");
+    await h.ensureReady();
+    const spy = vi.spyOn(h.ring, "setAnchor");
+
+    await h.requestFrameAt(1_000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenNthCalledWith(1, 1_000);
+
+    // Repeated same-target call: the native-side send is deduped (still only
+    // 1 requestFrameAt call to the transport), but setAnchor must still be
+    // called a SECOND time — it sits BEFORE the dedup return so the ring's
+    // eviction anchor tracks the playhead on every call, not just new
+    // targets. If setAnchor were ever moved after the dedup return, this
+    // second call would vanish while every other assertion here stayed green.
+    await h.requestFrameAt(1_000);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenNthCalledWith(2, 1_000);
+    expect(mock.previewSw.requestFrameAt).toHaveBeenCalledTimes(1);
+
+    h.dispose();
+  });
+
   it("stops issuing requestFrameAt after dispose", async () => {
     const mock = mockPreviewSw();
     installApi(mock.previewSw);
