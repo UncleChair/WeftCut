@@ -16,6 +16,22 @@ use ffmpeg_next::media::Type;
 use ffmpeg_next::software::scaling::{context::Context as SwsContext, flag::Flags};
 use ffmpeg_next::util::frame::video::Video as VideoFrame;
 
+// FF_THREAD_FRAME (1) / FF_THREAD_SLICE (2) from libavcodec/avcodec.h. Literals,
+// not ffs:: symbols: ffmpeg-sys-next does not re-export these #define flags
+// uniformly across versions, and the values are ABI-stable across ffmpeg majors.
+const FF_THREAD_FRAME: i32 = 1;
+const FF_THREAD_SLICE: i32 = 2;
+
+/// Threads to request for software decode: one per logical core, clamped to
+/// [1, 16]. Parallel decode is the biggest lever for 4K SW throughput; libavcodec
+/// sees diminishing returns past ~16 threads and each costs frame-buffer memory.
+fn decode_thread_count() -> i32 {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 16) as i32
+}
+
 /// FFmpeg color metadata carried alongside each decoded frame, as canonical
 /// FFmpeg string names (`bt709`, `bt470bg`, `smpte170m`, `tv`/`pc`, …) so they
 /// match the ffprobe-sourced tags the rest of the app uses (single color model,
@@ -68,6 +84,8 @@ pub struct SwVideoStream {
     pub start_pts_us: i64,
     /// Stream color metadata, read once at `open` (stable for the whole stream).
     pub color: SwColorTags,
+    /// Threads libavcodec settled on after open (1 if the codec can't thread).
+    pub thread_count: i32,
 }
 
 // The ffmpeg-next `Input`/`Video` wrappers hold raw pointers and are `!Send`.
@@ -113,10 +131,26 @@ impl SwVideoStream {
             0
         };
 
-        let codec_ctx =
+        let mut codec_ctx =
             ffmpeg_next::codec::context::Context::from_parameters(stream.parameters())
                 .map_err(map)?;
-        let decoder = codec_ctx.decoder().video().map_err(map)?;
+        // Parallel decode: set on the raw context BEFORE avcodec_open2 reads it.
+        // FRAME|SLICE lets libavcodec pick whichever the codec supports — slice
+        // for intra ProRes/DNxHD (no output-latency, keeps scrub snappy), frame
+        // for long-GOP MPEG-2/VC-1 throughput. Threaded decode is byte-identical
+        // to single-thread; only speed changes. (Threading strategy: FRAME|SLICE
+        // + a decode-bench seek-latency guard — Plan A design.)
+        let requested_threads = decode_thread_count();
+        unsafe {
+            let raw = codec_ctx.as_mut_ptr();
+            (*raw).thread_count = requested_threads;
+            (*raw).thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+        }
+        let mut decoder = codec_ctx.decoder().video().map_err(map)?;
+        // Count libavcodec actually settled on (clamped to 1 for a codec without
+        // threading support). Read via the raw context (as_mut_ptr is already used
+        // by `seek`).
+        let thread_count = unsafe { (*decoder.as_mut_ptr()).thread_count };
         let width = decoder.width();
         let height = decoder.height();
 
@@ -145,6 +179,7 @@ impl SwVideoStream {
             time_base,
             start_pts_us,
             color,
+            thread_count,
         })
     }
 
@@ -291,6 +326,25 @@ mod tests {
         assert_eq!(f.width, 320);
         assert_eq!(f.height, 240);
         // NV12: Y (w*h) + interleaved UV (w*h/2)
+        assert_eq!(f.nv12.len(), (320 * 240) + (320 * 240 / 2));
+    }
+
+    #[test]
+    fn decode_thread_count_is_positive_and_capped() {
+        let n = super::decode_thread_count();
+        assert!((1..=16).contains(&n), "thread count {n} out of [1,16]");
+    }
+
+    #[test]
+    fn threaded_decode_still_yields_correct_first_frame() {
+        // Threading must not change decode output: identical assertions to the
+        // single-threaded decode test, plus the effective thread_count is set.
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let mut s = SwVideoStream::open(p).expect("open");
+        assert!(s.thread_count >= 1, "thread_count not set (got {})", s.thread_count);
+        let f = s.next_frame().expect("decode").expect("some frame");
+        assert_eq!(f.width, 320);
+        assert_eq!(f.height, 240);
         assert_eq!(f.nv12.len(), (320 * 240) + (320 * 240 / 2));
     }
 }
