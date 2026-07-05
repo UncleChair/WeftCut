@@ -29,6 +29,12 @@ pub enum ExportSource {
 pub enum PreviewSource {
     /// The original scrubs acceptably; preview reads it directly.
     Original,
+    /// WebCodecs can't decode the original on any machine, but a native
+    /// ffmpeg software decoder can (ProRes today) — preview reads the
+    /// original through that decoder, no proxy needed for preview. Phase 1
+    /// wires only the routing decision (this variant); the decoder itself
+    /// lands in a later task. Export still proxies for now (see `decide`).
+    NativeFfmpeg,
     /// Original is heavy / long-GOP / undecodable; preview reads a proxy (the
     /// quick scrub proxy, or the full proxy for small undecodable sources).
     Proxy,
@@ -77,7 +83,23 @@ pub fn decide(media: &MediaItem, source_gop_secs: Option<f64>) -> ProxyRoute {
     } else {
         PreviewSource::Proxy
     };
-    ProxyRoute { export, preview }
+    let mut route = ProxyRoute { export, preview };
+    // ProRes is WebCodecs-blind on every machine (never `export_decodable_statically`,
+    // never `source_is_safe_to_bypass`), so the two branches above always land it on
+    // `BOTH_PROXY`. A native ffmpeg SW decoder (later task) can preview it directly
+    // instead, so override the preview axis here. Export is intentionally left on
+    // `FullProxy` for Phase 1 — a later phase teaches export the same native path.
+    if media
+        .metadata
+        .video
+        .as_ref()
+        .map(|v| codec_is_prores(&v.codec))
+        .unwrap_or(false)
+    {
+        route.preview = PreviewSource::NativeFfmpeg;
+        route.export = ExportSource::FullProxy;
+    }
+    route
 }
 
 /// The decode route a freshly *probed* import starts with, BEFORE the async
@@ -123,6 +145,13 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
         (ExportSource::FullProxy, PreviewSource::Proxy) => ProxyJob::QuickThenFull,
         (ExportSource::FullProxy, PreviewSource::Original) => {
             unreachable!("preview=Original implies export=Original (safe_to_bypass is a subset of export_decodable_statically)")
+        }
+        // Preview reads the original through the native decoder, but export
+        // still needs the full proxy master (Phase 1) — same background job
+        // as the ordinary FullProxy/Proxy pair.
+        (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => ProxyJob::QuickThenFull,
+        (ExportSource::Original, PreviewSource::NativeFfmpeg) => {
+            unreachable!("NativeFfmpeg preview implies FullProxy export (decide() always pairs them)")
         }
     }
 }
@@ -190,6 +219,12 @@ pub fn codec_is_h264(codec: &str) -> bool {
 
 pub fn codec_is_av1(codec: &str) -> bool {
     matches!(codec.to_ascii_lowercase().as_str(), "av1" | "av01")
+}
+
+/// ProRes: never WebCodecs-decodable, but the one blind-spot codec Phase 1
+/// routes to a native ffmpeg SW decoder for preview instead of a full proxy.
+pub fn codec_is_prores(codec: &str) -> bool {
+    codec.eq_ignore_ascii_case("prores")
 }
 
 /// 8-bit 4:2:0 formats WebCodecs decodes on this pipeline. `yuvj420p` is
@@ -346,11 +381,37 @@ mod tests {
 
     #[test]
     fn non_family_codec_proxies_both() {
-        // ProRes / MPEG-2 etc. are not WebCodecs-decodable on any machine → full proxy.
+        // A truly unhandled blind-spot codec (no native-sw route yet) — not
+        // WebCodecs-decodable on any machine and not covered by
+        // `codec_is_prores` → full proxy on both axes. ProRes now has its own
+        // route (see `prores_original_routes_preview_to_native_ffmpeg`);
+        // mpeg2video guards the general "non-family codec" fallback.
+        let item = video(|m| {
+            m.metadata.video.as_mut().unwrap().codec = "mpeg2video".into();
+        });
+        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
+    }
+
+    #[test]
+    fn prores_original_routes_preview_to_native_ffmpeg() {
+        // ProRes is WebCodecs-blind on every machine, but a native ffmpeg SW
+        // decoder (future work) can preview it without a proxy. Phase 1 wires
+        // only the preview axis: export still proxies (a later phase flips
+        // export to native too — see the module-level phase note in decide()).
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "prores".into();
         });
-        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
+        let r = decide(&item, Some(0.0)); // intra-frame => gop ~0, irrelevant to this route
+        assert_eq!(r.preview, PreviewSource::NativeFfmpeg);
+        assert_eq!(r.export, ExportSource::FullProxy);
+    }
+
+    #[test]
+    fn h264_friendly_still_bypasses_not_native() {
+        // Sanity check that the new ProRes branch doesn't leak into the
+        // ordinary bypass path: friendly H.264 still previews from Original.
+        let r = decide(&video(|_| {}), Some(0.2));
+        assert_eq!(r.preview, PreviewSource::Original);
     }
 
     #[test]

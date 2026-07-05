@@ -47,6 +47,18 @@ impl DecodeRoute {
             (ExportSource::FullProxy, PreviewSource::Original) => {
                 unreachable!("preview=Original implies export=Original")
             }
+            // TEMP (Phase-1 Task 1): NativeFfmpeg persists as Proxied so the
+            // proxy still builds and toggle-off-preview works as today. Task 6
+            // replaces this with a dedicated `DecodeRoute::NativeSw` variant
+            // once the native decoder actually exists.
+            (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
+            (ExportSource::Original, PreviewSource::NativeFfmpeg) => {
+                unreachable!("NativeFfmpeg preview implies FullProxy export")
+            }
         }
     }
 
