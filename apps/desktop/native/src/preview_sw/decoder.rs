@@ -32,6 +32,21 @@ fn decode_thread_count() -> i32 {
         .clamp(1, 16) as i32
 }
 
+/// Threading mode per codec family. Frame-threading (FF_THREAD_FRAME) parallelises
+/// across frames but adds a multi-frame output delay that re-primes after every
+/// seek's avcodec_flush_buffers — measured ~600ms backward-far scrub on 4K ProRes
+/// for no throughput gain on intra codecs (decode-bench, Plan A Task 5). So intra
+/// families (ProRes/DNxHD) use slice-threading only (parallel WITHIN a frame, no
+/// output delay = snappy scrub); long-GOP families (MPEG-2/VC-1/WMV3), whose many
+/// inter-frames frame-threading can actually parallelise, keep FRAME|SLICE.
+fn thread_type_for(id: ffmpeg_next::codec::Id) -> i32 {
+    use ffmpeg_next::codec::Id;
+    match id {
+        Id::PRORES | Id::DNXHD => FF_THREAD_SLICE,
+        _ => FF_THREAD_FRAME | FF_THREAD_SLICE,
+    }
+}
+
 /// FFmpeg color metadata carried alongside each decoded frame, as canonical
 /// FFmpeg string names (`bt709`, `bt470bg`, `smpte170m`, `tv`/`pc`, …) so they
 /// match the ffprobe-sourced tags the rest of the app uses (single color model,
@@ -135,16 +150,16 @@ impl SwVideoStream {
             ffmpeg_next::codec::context::Context::from_parameters(stream.parameters())
                 .map_err(map)?;
         // Parallel decode: set on the raw context BEFORE avcodec_open2 reads it.
-        // FRAME|SLICE lets libavcodec pick whichever the codec supports — slice
-        // for intra ProRes/DNxHD (no output-latency, keeps scrub snappy), frame
-        // for long-GOP MPEG-2/VC-1 throughput. Threaded decode is byte-identical
-        // to single-thread; only speed changes. (Threading strategy: FRAME|SLICE
-        // + a decode-bench seek-latency guard — Plan A design.)
+        // thread_type is per-codec-family (see `thread_type_for`): slice-only for
+        // intra ProRes/DNxHD (no output-latency, keeps scrub snappy), FRAME|SLICE
+        // for long-GOP MPEG-2/VC-1/WMV3 throughput. Threaded decode is byte-identical
+        // to single-thread; only speed changes.
         let requested_threads = decode_thread_count();
+        let thread_type = thread_type_for(stream.parameters().id());
         unsafe {
             let raw = codec_ctx.as_mut_ptr();
             (*raw).thread_count = requested_threads;
-            (*raw).thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+            (*raw).thread_type = thread_type;
         }
         let mut decoder = codec_ctx.decoder().video().map_err(map)?;
         // Count libavcodec actually settled on (clamped to 1 for a codec without
@@ -346,5 +361,15 @@ mod tests {
         assert_eq!(f.width, 320);
         assert_eq!(f.height, 240);
         assert_eq!(f.nv12.len(), (320 * 240) + (320 * 240 / 2));
+    }
+
+    #[test]
+    fn thread_type_is_slice_for_intra_frame_slice_for_long_gop() {
+        use ffmpeg_next::codec::Id;
+        assert_eq!(super::thread_type_for(Id::PRORES), super::FF_THREAD_SLICE);
+        assert_eq!(super::thread_type_for(Id::DNXHD), super::FF_THREAD_SLICE);
+        for id in [Id::MPEG2VIDEO, Id::VC1, Id::WMV3] {
+            assert_eq!(super::thread_type_for(id), super::FF_THREAD_FRAME | super::FF_THREAD_SLICE);
+        }
     }
 }
