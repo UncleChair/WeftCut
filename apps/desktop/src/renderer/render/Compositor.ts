@@ -25,9 +25,12 @@ import {
 } from "./resolveView";
 import {
   SourceDecoderPool,
+  SourceHandle,
   type DecoderHandle,
   type DecoderPool,
 } from "./decoder/SourceDecoderPool";
+import { NativeGpuSourceHandle } from "./decoder/NativeGpuSourceHandle";
+import { SwSourceHandle } from "./decoder/SwSourceHandle";
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
@@ -120,6 +123,43 @@ export interface UpcomingClipPrewarmSnapshot {
     ringSize: number;
     ringLastPtsUs: number | null;
   }>;
+}
+
+/// E2E-only diagnostic snapshot of ONE active VideoClip's decode source plus
+/// its bound sprite. The preview-sw conformance spec reads this to prove the
+/// runtime path (import → native-sw route → `nativeSwSourceFor` → acquire) ends
+/// in a real `SwSourceHandle` AND that a decoded frame reached the sprite —
+/// the single runtime fact no other surface exposes (Task 8b was typecheck-only
+/// before this). All fields are plain numbers/strings/booleans so the whole
+/// thing survives the `page.evaluate` boundary.
+export interface ActiveClipProbe {
+  layerId: string;
+  mediaId: string;
+  /// Which concrete decode handle backs `ActiveClip.source`, discriminated by
+  /// `instanceof` (NOT `constructor.name` — the minified E2E renderer build
+  /// mangles class names). `"sw"` is the native software-decode path.
+  sourceKind: "webcodecs" | "native-gpu" | "sw" | "unknown";
+  /// The `ActiveClip.isSoftware` flag the Compositor set at acquire — should
+  /// track `sourceKind === "sw"`; reported alongside so a divergence is visible.
+  isSoftware: boolean;
+  /// True once the pool's idle sweeper has reclaimed this handle.
+  sourceDisposed: boolean;
+  /// Decoded frames currently buffered in the handle's ring. For the SW path a
+  /// non-zero value means `SwSourceHandle` converted NV12 → VideoFrame →
+  /// ImageBitmap and pushed it — i.e. the native decoder produced real output.
+  ringSize: number;
+  /// PTS (µs) of the earliest / latest frame buffered in the ring, or null when
+  /// empty. The spec waits for `ringLastPtsUs >= target` so it captures the
+  /// seeked frame rather than an earlier one the ring surfaced while catching up.
+  ringFirstPtsUs: number | null;
+  ringLastPtsUs: number | null;
+  /// True once a real (non-EMPTY) texture is bound to the sprite. A VideoClip
+  /// snapshots the ring's ImageBitmap into its own canvas, so "the bitmap
+  /// reached the sprite" shows up as a bound, correctly-sized texture rather
+  /// than a live ImageBitmap resource.
+  spriteBound: boolean;
+  spriteWidth: number;
+  spriteHeight: number;
 }
 
 export interface CompositorInit {
@@ -1033,6 +1073,50 @@ export class Compositor {
   /// forever.
   resetPerfPeaks(): void {
     this.compositeMsMax = 0;
+  }
+
+  /// E2E-only (preview-sw conformance / Task 8b runtime proof): snapshot the
+  /// decode source + bound sprite of the active VideoClip named by `layerId`
+  /// (or the first live clip when omitted). Returns null when no matching clip
+  /// is active. `sourceKind` is decided by `instanceof` so it is robust to the
+  /// minified E2E build. Read-only — never mutates compositor state.
+  activeClipProbe(layerId?: string): ActiveClipProbe | null {
+    let clip: ActiveClip | undefined;
+    if (layerId != null) {
+      clip = this.clips.get(layerId);
+    } else {
+      for (const c of this.clips.values()) {
+        if (!c.source.disposed) {
+          clip = c;
+          break;
+        }
+      }
+    }
+    if (!clip) return null;
+    const s = clip.source;
+    const sourceKind: ActiveClipProbe["sourceKind"] =
+      s instanceof SwSourceHandle
+        ? "sw"
+        : s instanceof NativeGpuSourceHandle
+          ? "native-gpu"
+          : s instanceof SourceHandle
+            ? "webcodecs"
+            : "unknown";
+    const tex = clip.sprite.sprite.texture;
+    const isEmpty = tex === Texture.EMPTY;
+    return {
+      layerId: clip.layerId,
+      mediaId: clip.mediaId,
+      sourceKind,
+      isSoftware: clip.isSoftware,
+      sourceDisposed: s.disposed,
+      ringSize: s.ring.size(),
+      ringFirstPtsUs: s.ring.firstPtsUs(),
+      ringLastPtsUs: s.ring.lastPtsUs(),
+      spriteBound: !isEmpty,
+      spriteWidth: isEmpty ? 0 : tex.orig.width,
+      spriteHeight: isEmpty ? 0 : tex.orig.height,
+    };
   }
 
   /// Release every sprite + decoder + the stage container. Does NOT

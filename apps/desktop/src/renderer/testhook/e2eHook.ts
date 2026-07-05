@@ -41,6 +41,7 @@ import type { ResolvedImageOverlayView } from "../render/resolveView";
 import { convertFileSrc } from "@/bridge/ipc";
 import { buildPanGraph, constantPanGains } from "../render/audio/panGraph";
 import { decodeBenchRun, decodeBenchPhase, type BenchArgs, type BenchResult } from "../render/decoder/decodeBench";
+import type { ActiveClipProbe } from "../render/Compositor";
 
 type RunExport = (
   settings: ExportSettings,
@@ -253,6 +254,22 @@ export interface E2EHook {
   /// mounted. Dev/e2e only — this is what proves the countdown's CDP pixels
   /// reach the live compositor.
   weftcutSampleComposite(x: number, y: number): Promise<CompositeSample>;
+  /// Preview-sw conformance (Task 8b runtime proof): snapshot the active
+  /// VideoClip's decode source + bound sprite off the LIVE Compositor. Proves
+  /// the Compositor acquired a `SwSourceHandle` (native software decode) for a
+  /// native-sw ProRes clip and that a decoded frame reached the sprite. Pass
+  /// the clip's `layerId`; omit for the first live clip. Returns null until a
+  /// clip is active. Delegates to the PixiPreview bridge (Dev/e2e only).
+  activeClipProbe(layerId?: string): ActiveClipProbe | null;
+  /// Preview-sw SSIM: base64 PNG (no `data:` prefix) of the current composited
+  /// preview frame at composition resolution. The spec decodes this, produces
+  /// an ffmpeg reference PNG of the same source frame, and SSIM-compares.
+  capturePreviewFramePng(): Promise<string>;
+  /// The persisted decode-route kind for `mediaId` as the renderer store sees
+  /// it ("native-sw"/"proxied"/"bypass"/…), or null if the media isn't in the
+  /// store yet. Lets the preview-sw spec wait for the async proxy-decision to
+  /// commit `native-sw` before it seeks + asserts the software route. Dev/e2e.
+  mediaDecodeRouteKind(mediaId: string): string | null;
   /// Render the REAL buildPanGraph + constantPanGains in an OfflineAudioContext
   /// and return the mean L/R RMS energy. Drives the actual Web Audio graph
   /// wiring (splitter/4-gain/merger topology) that the headless math goldens
@@ -303,6 +320,11 @@ interface PreviewBridge {
   /// Extract an (x,y) pixel from the live composited canvas as RGBA bytes,
   /// plus whole-frame diagnostics (see CompositeSample).
   sampleComposite(x: number, y: number): Promise<CompositeSample>;
+  /// Active VideoClip decode-source + sprite snapshot off the live Compositor
+  /// (see Compositor.activeClipProbe). Null when no live clip.
+  activeClipProbe(layerId?: string): ActiveClipProbe | null;
+  /// Base64 PNG (no `data:` prefix) of the current composited preview frame.
+  capturePng(): Promise<string>;
 }
 
 function hookSlot(): Partial<E2EHook> {
@@ -678,6 +700,21 @@ export function installMotifHook(): void {
   hookSlot().weftcutSampleComposite = async (x: number, y: number) => {
     if (!previewBridge) throw new Error("weftcutSampleComposite: preview bridge not registered");
     return previewBridge.sampleComposite(x, y);
+  };
+  // Preview-sw conformance (Task 8b): read the active clip's decode source +
+  // sprite off the live Compositor, capture the composited frame, and expose
+  // the persisted decode route — the three facts the spec needs to prove the
+  // native software-decode preview path end-to-end.
+  hookSlot().activeClipProbe = (layerId?: string) => {
+    if (!previewBridge) throw new Error("activeClipProbe: preview bridge not registered");
+    return previewBridge.activeClipProbe(layerId);
+  };
+  hookSlot().capturePreviewFramePng = async () => {
+    if (!previewBridge) throw new Error("capturePreviewFramePng: preview bridge not registered");
+    return previewBridge.capturePng();
+  };
+  hookSlot().mediaDecodeRouteKind = (mediaId: string) => {
+    return useProjectStore.getState().mediaById.get(mediaId)?.decode_route?.route ?? null;
   };
 }
 

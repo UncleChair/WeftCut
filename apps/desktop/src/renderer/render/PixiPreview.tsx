@@ -298,6 +298,45 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               if (root.nonTransparent > 0) return root;
               return readFrom(compositor.stage);
             },
+            // Preview-sw conformance: report the active clip's decode source +
+            // sprite straight off the live Compositor (Task 8b runtime proof).
+            activeClipProbe: (layerId?: string) =>
+              compositor.activeClipProbe(layerId),
+            // Preview-sw SSIM: encode the current composited frame to a PNG.
+            // Extract at composition resolution (the whole renderer surface),
+            // the same reliable `extract.pixels` path `sampleComposite` uses.
+            capturePng: async (): Promise<string> => {
+              const W = app.renderer.width;
+              const H = app.renderer.height;
+              // Re-composite + render so the freshly-decoded frame is on the
+              // framebuffer before the read (mirrors sampleComposite).
+              compositor.compositeFrame(engine.positionUs());
+              app.renderer.render(app.stage);
+              const out = app.renderer.extract.pixels({
+                target: app.stage,
+                frame: new Rectangle(0, 0, W, H),
+              });
+              const canvas = new OffscreenCanvas(out.width, out.height);
+              const ctx = canvas.getContext("2d");
+              if (!ctx) throw new Error("capturePng: no 2d context");
+              ctx.putImageData(
+                new ImageData(
+                  new Uint8ClampedArray(out.pixels),
+                  out.width,
+                  out.height,
+                ),
+                0,
+                0,
+              );
+              const blob = await canvas.convertToBlob({ type: "image/png" });
+              const buf = await blob.arrayBuffer();
+              const bytes = new Uint8Array(buf);
+              let binary = "";
+              for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]!);
+              }
+              return btoa(binary);
+            },
           });
         });
       }
