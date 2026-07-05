@@ -20,11 +20,17 @@ class FakeVideoFrame {
   ) {}
 }
 
+/// The most recently manufactured stub bitmap, captured so tests can assert
+/// on its `close()` — `createImageBitmap` otherwise returns an opaque
+/// promise with no test-visible handle to the resolved value.
+let lastBmp: { width: number; height: number; close: ReturnType<typeof vi.fn> } | null = null;
+
 function installFakeCodecGlobals(): void {
   (globalThis as unknown as { VideoFrame: unknown }).VideoFrame = FakeVideoFrame;
-  (globalThis as unknown as { createImageBitmap: unknown }).createImageBitmap = vi.fn(
-    async () => ({ width: 4, height: 4, close: vi.fn() }) as unknown as ImageBitmap,
-  );
+  (globalThis as unknown as { createImageBitmap: unknown }).createImageBitmap = vi.fn(async () => {
+    lastBmp = { width: 4, height: 4, close: vi.fn() };
+    return lastBmp as unknown as ImageBitmap;
+  });
 }
 
 /// Flush pending microtasks (and the current macrotask queue) so an awaited
@@ -76,6 +82,7 @@ function installApi(previewSw: ReturnType<typeof mockPreviewSw>["previewSw"]): v
 
 beforeEach(() => {
   delete (window as unknown as { api?: unknown }).api;
+  lastBmp = null;
   installFakeCodecGlobals();
 });
 
@@ -145,14 +152,22 @@ describe("SwSourceHandle frame handling", () => {
     await h.ensureReady();
     const streamId = h.streamId;
 
-    h.dispose();
+    // Start the conversion (createImageBitmap runs, `_disposed` still
+    // false) then dispose while that already-resolved promise is still
+    // in-flight — mirrors "disposed during the await" in `handleFrame`'s
+    // post-conversion guard, which is the codepath that must close rather
+    // than leak the bitmap. (Disposing BEFORE emit instead would hit the
+    // earlier `if (this._disposed) return` guard, which returns before
+    // `createImageBitmap` is ever called — nothing to close in that case.)
     mock.emit(makeFrameMsg(streamId));
+    h.dispose();
     await flushMicrotasks();
 
     expect(h.ring.pushCount).toBe(0);
-    // The stubbed createImageBitmap always resolves the same shape; assert
-    // via the fact that no push happened rather than reaching into the
-    // (test-local) bitmap instance, which handleFrame creates internally.
+    // The disposed-guard must close the bitmap it just finished converting
+    // rather than leak it — `lastBmp` is the stub instance handleFrame
+    // created internally for this frame.
+    expect(lastBmp?.close).toHaveBeenCalledOnce();
   });
 
   it("does not crash and logs a warning when frame conversion fails", async () => {
