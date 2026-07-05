@@ -151,6 +151,10 @@ export interface CompositorInit {
   sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
+  /// Resolver: returns the ORIGINAL file path when this media should preview via the native SOFTWARE decoder
+  /// (blind-spot format routed `native-sw` AND the experimental toggle is on), else null. The caller (PixiPreview)
+  /// reads the AppSettings toggle + the media's decode_route live. Undefined in export/worker (no SW preview there).
+  nativeSwSourceFor?: (mediaId: string) => string | null;
   /// Resolver for the asset URL of a media item's conform PCM (VCONF).
   /// Drives the buffer-scheduled preview audio mixer; `null` while the
   /// conform job hasn't completed (the layer stays silent). Optional:
@@ -174,6 +178,12 @@ interface ActiveClip {
   /// original (decodable-bridge path) being replaced by a freshly-built proxy —
   /// `ensureClip` starts a no-flash overlap-swap to the new URL.
   builtFromUrl: string;
+  /// Whether this clip's `source` is a native-SW handle (`SwSourceHandle`,
+  /// decoding the ORIGINAL). Set from `nativeSwSourceFor` at acquire. Gates the
+  /// no-flash proxy swap suppression: a software clip is the intended permanent
+  /// preview source and must NEVER be auto-swapped to a proxy
+  /// (feedback_native_nle_conventions).
+  isSoftware: boolean;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
   /// found `ring.frameAt(srcTUs)` returned null. Used so the
   /// `frameAt → null` log fires once per transition rather than
@@ -300,6 +310,7 @@ export class Compositor {
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
+  private nativeSwSourceFor: (mediaId: string) => string | null;
   private conformAssetUrl: (mediaId: string) => string | null;
   /// Master audio bus (preview mode only; null in the export Worker).
   private audioGraph: AudioGraph | null = null;
@@ -430,6 +441,9 @@ export class Compositor {
     this.originalAssetUrl = init.originalAssetUrl;
     this.sourceColor = init.sourceColor;
     this.mediaById = init.mediaById;
+    // Default null-resolver so export/worker (which never pass this) are
+    // unaffected — export never acquires a software handle.
+    this.nativeSwSourceFor = init.nativeSwSourceFor ?? ((): string | null => null);
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.mode = init.mode;
@@ -1349,7 +1363,11 @@ export class Compositor {
       // URL for this media (the instant original replaced by a freshly
       // built proxy), begin an overlap-swap — but keep returning the existing
       // clip so the original stays on screen until the proxy has the frame.
-      if (this.mode === "preview") {
+      // A native-SW clip is the intended PERMANENT preview source (the native
+      // decoder previews the original directly). It must NEVER be auto-swapped
+      // to a proxy when one later lands — that is exactly the auto native→proxy
+      // swap the user rejected (feedback_native_nle_conventions).
+      if (this.mode === "preview" && !existing.isSoftware) {
         const url = this.proxyAssetUrl(layer.params.media_id);
         if (url && url !== existing.builtFromUrl) {
           this.beginSwap(existing, layer, url);
@@ -1358,8 +1376,14 @@ export class Compositor {
       return existing;
     }
     const mediaId = layer.params.media_id;
+    // A native-SW clip decodes the ORIGINAL directly (no proxy at import — that
+    // is the whole point of the blind-spot path). Preview-only: export never
+    // gets a software handle (SW export is out of Phase-1 scope), so `swPath` is
+    // gated to `mode === "preview"`.
+    const swPath = this.mode === "preview" ? this.nativeSwSourceFor(mediaId) : null;
     const proxyUrl = this.proxyAssetUrl(mediaId);
-    if (!proxyUrl) {
+    if (!swPath && !proxyUrl) {
+      // Only bail when NEITHER a SW original NOR a proxy is available.
       // eslint-disable-next-line no-console
       console.warn(`[weftcut/pixi] no proxy URL for media ${mediaId} (clip ${layer.id})`);
       return null;
@@ -1372,6 +1396,11 @@ export class Compositor {
     // unaffected; colr-less ones stop being misread as bt709/limited.
     const sourceColor = this.sourceColor(mediaId);
     const sourceStartPtsUs = this.mediaById(mediaId)?.video_start_pts_us ?? this.mediaById(mediaId)?.start_pts_us ?? null;
+    // The URL this handle is built from — the proxy for WebCodecs, or the SW
+    // original path when the software path is taken. `SwSourceHandle` ignores
+    // `proxyAssetUrl` (it decodes `sourcePath`); WebCodecs uses it. Tracked on
+    // `ActiveClip.builtFromUrl` so a later resolver flip is detected correctly.
+    const builtFromUrl = proxyUrl ?? swPath ?? "";
     const source = this.pool.acquire({
       layerId: layer.id,
       mediaId,
@@ -1381,9 +1410,11 @@ export class Compositor {
       ...(this.mode === "export"
         ? { handleKey: exportHandleKey(mediaId, layer.params.src_in_us, layer.t_start_us) }
         : {}),
-      proxyAssetUrl: proxyUrl,
+      proxyAssetUrl: builtFromUrl,
       sourceColor,
       sourceStartPtsUs,
+      // Native-SW preview: route to a `SwSourceHandle` decoding the original.
+      ...(swPath ? { forceStrategy: "software" as const, sourcePath: swPath } : {}),
     });
     // Subscribe to the first-frame notification BEFORE kicking off
     // ensureReady so we don't miss the synchronous-fire case if the
@@ -1405,7 +1436,8 @@ export class Compositor {
       // a held frame rather than a flash to EMPTY while the new
       // decoder warms up), just swap in the fresh source.
       existing.source = source;
-      existing.builtFromUrl = proxyUrl;
+      existing.builtFromUrl = builtFromUrl;
+      existing.isSoftware = !!swPath;
       existing.loggedNull = false;
       return existing;
     }
@@ -1416,7 +1448,8 @@ export class Compositor {
       source,
       sprite,
       effects: new EffectChain(),
-      builtFromUrl: proxyUrl,
+      builtFromUrl,
+      isSoftware: !!swPath,
       loggedNull: false,
     };
     this.clips.set(layer.id, clip);

@@ -23,6 +23,7 @@ import {
   setTransportPlaying,
 } from "../state/playbackStore";
 import { useProjectStore } from "../state/projectStore";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { previewPathLive } from "./decodeRoute";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
 import { subscribeMotifCatalog } from "./motifs/catalog";
@@ -142,6 +143,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
+      // Native-SW preview resolver: returns the ORIGINAL file path when the
+      // experimental toggle is ON and this media is routed `native-sw`, else
+      // null. Both stores are read imperatively (live) so a toggle flip takes
+      // effect on the next clip acquire without reconstructing the Compositor.
+      const nativeSwSourceFor = (mediaId: string): string | null => {
+        if (!useAppSettingsStore.getState().settings.experimental_native_sw_decode)
+          return null;
+        const m = useProjectStore.getState().mediaById.get(mediaId);
+        return m?.decode_route?.route === "native-sw" ? m.path : null;
+      };
       const conformAssetUrl = (mediaId: string): string | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         const p = m?.conform_path;
@@ -157,6 +168,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
+        nativeSwSourceFor,
         conformAssetUrl,
       });
       const initialSummary = useProjectStore.getState().summary;
