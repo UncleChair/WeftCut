@@ -466,10 +466,17 @@ app.whenReady().then(async () => {
     if (!win) throw new Error('previewSw:open — no window for sender')
     return openPreviewSw(backend!, win, a.streamId, a.path)
   })
-  ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
-    requestFrameAtPreviewSw(backend!, a.streamId, a.targetUs),
-  )
-  ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => closePreviewSw(backend!, a.streamId))
+  ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) => {
+    // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer
+    // race) — this is a fire-and-forget .on listener, not .handle, so an uncaught
+    // throw here would be an uncaught exception in the main process. Swallow.
+    try { requestFrameAtPreviewSw(backend!, a.streamId, a.targetUs) }
+    catch (e) { console.warn('[main] previewSw:requestFrameAt failed', e) }
+  })
+  ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => {
+    try { closePreviewSw(backend!, a.streamId) }
+    catch (e) { console.warn('[main] previewSw:close failed', e) }
+  })
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options))
