@@ -107,6 +107,7 @@ export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_c
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
 preview-gpu = ["dep:ffmpeg-next", "dep:windows"]  # Windows-only GPU preview decode (decode-bench Stage 2)
+preview-sw = ["dep:ffmpeg-next"]  # cross-platform software preview decode (ProRes/DNxHD/etc); NO dep:windows
 
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 # (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).
