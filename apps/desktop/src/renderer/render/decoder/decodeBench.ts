@@ -15,21 +15,23 @@ export { percentile } from "../../../shared/msStats";
 /// Either decode strategy's handle. All three expose `ring: FrameRing` (so
 /// `ring.pushCount`/`lastPtsUs()`/`containsPts()` resolve without narrowing),
 /// `ensureReady`, and `requestFrameAt` — the runners below need no strategy-
-/// specific branching. `SwSourceHandle` is included only so this alias stays
-/// assignable from `SourceDecoderPool.acquire`'s return type (widened for the
-/// `experimental_native_sw_decode` software branch) — `BenchStrategy` has no
-/// `"software"` member, so decode-bench never actually constructs one.
+/// specific branching. `SwSourceHandle` backs `strategy: "sw"`
+/// (`forceStrategy: "software"`) — the native libavcodec SW decode path,
+/// benched at this same `DecoderHandle` seam as the other two strategies.
 type BenchHandle = SourceHandle | NativeGpuSourceHandle | SwSourceHandle;
 
 /// Native handles carry a `streamId` + `drainBenchTiming`; the WebCodecs
-/// `SourceHandle` has neither. Structural, so no value import of the class.
+/// `SourceHandle` has neither. `SwSourceHandle` also carries a `streamId`
+/// (Task 7) but no `drainBenchTiming`, so the `typeof` check still excludes
+/// it — the sw arm gets plain throughput fps, no Rust GPU timing. Structural,
+/// so no value import of the class.
 function asNative(h: BenchHandle): (NativeGpuSourceHandle & { streamId: string }) | null {
   return "streamId" in h && typeof (h as NativeGpuSourceHandle).drainBenchTiming === "function"
     ? (h as NativeGpuSourceHandle & { streamId: string })
     : null;
 }
 
-export type BenchStrategy = "webcodecs" | "native";
+export type BenchStrategy = "webcodecs" | "native" | "sw";
 export type BenchScenario = "throughput" | "seek" | "coldstart";
 export interface BenchArgs {
   sourcePath: string; // absolute fixture path; served via weftcut-media:// (unconfined by design)
@@ -370,7 +372,15 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
       // still passed — `proxyAssetUrl` is required by `SourceHandleInit`.
       proxyAssetUrl: url,
       ...(args.strategy === "native"
-        ? { forceStrategy: "native" as const, sourcePath: args.sourcePath, poolSize: args.poolSize }
+        ? {
+            forceStrategy: "native" as const,
+            sourcePath: args.sourcePath,
+            // Conditional spread, not `poolSize: args.poolSize` — exactOptionalPropertyTypes
+            // rejects assigning `number | undefined` to the optional `poolSize: number` field.
+            ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
+          }
+        : args.strategy === "sw"
+        ? { forceStrategy: "software" as const, sourcePath: args.sourcePath }
         : {}),
     });
     scenarioP = (async (): Promise<BenchResult> => {

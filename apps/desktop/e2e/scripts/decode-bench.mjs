@@ -36,9 +36,9 @@ const selfCheck = process.argv.includes("--self-check");
 const fixtureArg = arg("fixture", "all");
 const scenarioArg = arg("scenario", "all");
 const runs = Number(arg("runs", "3"));
-const STRATEGY = arg("strategy", "webcodecs"); // 'webcodecs' | 'native'
-if (STRATEGY !== "webcodecs" && STRATEGY !== "native") {
-  console.error(`[decode-bench] invalid --strategy '${STRATEGY}' (expected webcodecs|native)`);
+const STRATEGY = arg("strategy", "webcodecs"); // 'webcodecs' | 'native' | 'sw'
+if (STRATEGY !== "webcodecs" && STRATEGY !== "native" && STRATEGY !== "sw") {
+  console.error(`[decode-bench] invalid --strategy '${STRATEGY}' (expected webcodecs|native|sw)`);
   process.exit(1);
 }
 const POOL_SWEEP = process.argv.includes("--pool-sweep");
