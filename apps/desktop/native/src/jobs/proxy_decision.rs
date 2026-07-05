@@ -30,10 +30,10 @@ pub enum PreviewSource {
     /// The original scrubs acceptably; preview reads it directly.
     Original,
     /// WebCodecs can't decode the original on any machine, but a native
-    /// ffmpeg software decoder can (ProRes today) — preview reads the
-    /// original through that decoder, no proxy needed for preview. Phase 1
-    /// wires only the routing decision (this variant); the decoder itself
-    /// lands in a later task. Export still proxies for now (see `decide`).
+    /// ffmpeg software decoder can — the whole WebCodecs-blind family
+    /// (ProRes / DNxHD / MPEG-2 / VC-1 / WMV3, see `codec_is_blindspot`)
+    /// previews through that decoder, no proxy needed for preview. Export
+    /// still proxies (native export is a later phase; see `decide`).
     NativeFfmpeg,
     /// Original is heavy / long-GOP / undecodable; preview reads a proxy (the
     /// quick scrub proxy, or the full proxy for small undecodable sources).
@@ -226,8 +226,8 @@ pub fn codec_is_av1(codec: &str) -> bool {
     matches!(codec.to_ascii_lowercase().as_str(), "av1" | "av01")
 }
 
-/// ProRes: never WebCodecs-decodable, but the one blind-spot codec Phase 1
-/// routes to a native ffmpeg SW decoder for preview instead of a full proxy.
+/// ProRes: never WebCodecs-decodable. One of the WebCodecs-blind codecs that
+/// `codec_is_blindspot` routes to native SW preview instead of a full proxy.
 pub fn codec_is_prores(codec: &str) -> bool {
     codec.eq_ignore_ascii_case("prores")
 }

@@ -111,10 +111,14 @@ fn emit(sink: &FrameSink, poke: SwFramePoke) {
     }
 }
 
-/// Service one `request_frame_at`: seek to the keyframe at/before `target_us`,
-/// then decode up to [`LOOKAHEAD_FRAMES`] frames forward, poking each. Stops early
-/// on EOF (an `Eof` poke) or a decode error (an `Error` poke). A seek failure is
-/// reported as `Error` and skips the burst — the session stays open for retry.
+/// Service one `request_frame_at`: robustly seek to a keyframe at/before
+/// `target_us` (re-seeking earlier with a growing margin if an index-less
+/// container's BACKWARD seek overshoots), decode forward to the frame that
+/// covers `target_us` (discarding earlier frames), then poke that covering
+/// frame plus a short forward lookahead (up to [`LOOKAHEAD_FRAMES`] total).
+/// Stops early on EOF (an `Eof` poke) or a decode error (an `Error` poke). A
+/// seek failure is reported as `Error` and skips the burst — the session
+/// stays open for retry.
 fn serve_request(stream: &mut SwVideoStream, target_us: i64, sink: &FrameSink, stream_id: &str) {
     // --- Robust seek: land on a keyframe AT/BEFORE the target ---
     // ffmpeg's BACKWARD seek is only approximate on index-less containers

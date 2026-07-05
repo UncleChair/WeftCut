@@ -192,7 +192,11 @@ export class SwSourceHandle implements DecoderHandle {
     // (mirrors PacketPump.requestFrameAt). Without this the native-SW ring never
     // evicts and held ImageBitmaps accumulate during playback/scrub. Set before
     // the same-target dedup so the anchor follows the playhead even when the
-    // native decode target is unchanged.
+    // native decode target is unchanged. Deliberately no flush() on a large
+    // backward jump (unlike PacketPump): the native session emits at most
+    // LOOKAHEAD frames per request, so a jump can only leave a few orphan
+    // frames ahead of it, which the anchor sweeps past on its own — bounded,
+    // so no flush is needed here.
     this.ring.setAnchor(tUs);
     if (tUs === this.lastSentTargetUs) return;
     this.lastSentTargetUs = tUs;
