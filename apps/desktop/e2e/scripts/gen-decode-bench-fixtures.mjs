@@ -44,6 +44,14 @@ export const BENCH_MATRIX = [
     args: ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le"] },
   { name: "prores-2160", ext: "mov", codec: "prores", width: 3840, height: 2160, pixFmt: "yuv422p10le", durationUs: DUR_S * 1_000_000, encoder: "prores_ks",
     args: ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le"] },
+  // preview-sw Phase 2 families (Plan A). DNxHR = intra 8-bit 4:2:2; MPEG-2 =
+  // long-GOP 8-bit 4:2:0 (exercises decode-forward-to-target seek). VC-1/WMV3
+  // are omitted: ffmpeg has no VC-1/WMV3 encoder, so no synthetic fixture is
+  // possible — they are covered by the routing test + codec-agnostic decoder.
+  { name: "dnxhr-1080", ext: "mov", codec: "dnxhd", width: 1920, height: 1080, pixFmt: "yuv422p", durationUs: DUR_S * 1_000_000, encoder: "dnxhd",
+    args: ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq", "-pix_fmt", "yuv422p"] },
+  { name: "mpeg2-1080", ext: "mpg", codec: "mpeg2video", width: 1920, height: 1080, pixFmt: "yuv420p", durationUs: DUR_S * 1_000_000, encoder: "mpeg2video",
+    args: ["-c:v", "mpeg2video", "-b:v", "20M", "-g", "15", "-bf", "2", "-pix_fmt", "yuv420p"] },
 ];
 
 export const benchFixturePath = (name) => {
