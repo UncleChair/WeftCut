@@ -34,13 +34,22 @@ use std::thread::{self, JoinHandle};
 
 use super::decoder::{SwFrame, SwVideoStream};
 
-/// How many frames a single `request_frame_at` decodes forward past the seek
-/// target before returning to the mailbox. A "handful" so a scrub pre-buffers a
-/// little smoothness without decode-and-discarding a long tail; kept small so a
-/// rapid re-scrub isn't stuck finishing a stale burst (the next `RequestFrameAt`
-/// is already queued and serviced right after). ProRes/DNxHD are intra-only, so
-/// the first decoded frame after the seek IS at/just-before the target.
+/// How many frames a single `request_frame_at` emits, starting at the frame that
+/// covers the seek target. A "handful" pre-buffers a little playback smoothness
+/// without decode-and-discarding a long tail; kept small so a rapid re-scrub
+/// isn't stuck finishing a stale burst. `serve_request` decodes forward from the
+/// seek's keyframe to the covering frame first (correct for both intra and
+/// long-GOP), then emits up to this many frames.
 const LOOKAHEAD_FRAMES: usize = 4;
+
+/// Largest number of backward re-seek attempts when a container's seek overshoots
+/// the target. Index-less MPEG-PS/TS estimate the seek byte-offset and can land
+/// AFTER the requested time; each retry steps the target back by a growing margin.
+/// The final fallback (seek target 0) decodes from the start — always correct.
+const MAX_SEEK_RETRIES: u32 = 6;
+/// Initial backward step when re-seeking after an overshoot; doubles each retry.
+/// ~1 s clears a typical (≤1 s) GOP overshoot in a single retry.
+const SEEK_RETRY_MARGIN_US: i64 = 1_000_000;
 
 /// What `open` hands back once the session thread has opened its decoder: the
 /// stream's frame dimensions. Built from `SwVideoStream`'s public `width`/`height`
@@ -107,44 +116,90 @@ fn emit(sink: &FrameSink, poke: SwFramePoke) {
 /// on EOF (an `Eof` poke) or a decode error (an `Error` poke). A seek failure is
 /// reported as `Error` and skips the burst — the session stays open for retry.
 fn serve_request(stream: &mut SwVideoStream, target_us: i64, sink: &FrameSink, stream_id: &str) {
-    if let Err(e) = stream.seek(target_us) {
-        emit(
-            sink,
-            SwFramePoke::Error {
-                stream_id: stream_id.to_string(),
-                message: format!("seek to {target_us}us failed: {e}"),
-            },
-        );
-        return;
-    }
-    for _ in 0..LOOKAHEAD_FRAMES {
-        match stream.next_frame() {
-            Ok(Some(frame)) => emit(
+    // --- Robust seek: land on a keyframe AT/BEFORE the target ---
+    // ffmpeg's BACKWARD seek is only approximate on index-less containers
+    // (MPEG-PS/TS): it estimates a byte offset and can overshoot, landing AFTER
+    // the target. Probe the first decoded frame; if it's past the target, re-seek
+    // earlier with a growing margin until it lands at/before (or we reach the file
+    // start, always a valid at-or-before landing). Indexed containers (MOV/MP4)
+    // land correctly on the first try — zero retries.
+    let mut seek_target = target_us;
+    let mut margin = SEEK_RETRY_MARGIN_US;
+    let mut attempt = 0u32;
+    let first_frame: SwFrame = loop {
+        if let Err(e) = stream.seek(seek_target) {
+            emit(
                 sink,
-                SwFramePoke::Frame {
+                SwFramePoke::Error {
                     stream_id: stream_id.to_string(),
-                    frame,
+                    message: format!("seek to {seek_target}us failed: {e}"),
                 },
-            ),
+            );
+            return;
+        }
+        match stream.next_frame() {
+            Ok(Some(f)) => {
+                if f.pts_us > target_us && seek_target > 0 && attempt < MAX_SEEK_RETRIES {
+                    // Overshoot — step the seek target back and retry.
+                    seek_target = (target_us - margin).max(0);
+                    margin = margin.saturating_mul(2);
+                    attempt += 1;
+                    continue;
+                }
+                break f; // landed at/before target (or can't/needn't retry further)
+            }
             Ok(None) => {
-                emit(
-                    sink,
-                    SwFramePoke::Eof {
-                        stream_id: stream_id.to_string(),
-                    },
-                );
-                break;
+                emit(sink, SwFramePoke::Eof { stream_id: stream_id.to_string() });
+                return;
             }
             Err(e) => {
-                emit(
-                    sink,
-                    SwFramePoke::Error {
-                        stream_id: stream_id.to_string(),
-                        message: e,
-                    },
-                );
-                break;
+                emit(sink, SwFramePoke::Error { stream_id: stream_id.to_string(), message: e });
+                return;
             }
+        }
+    };
+
+    // --- Forward-decode from the landing to the frame covering target_us, then
+    // emit the covering frame + a small forward lookahead. For intra families the
+    // landing IS the covering frame (zero discards). The probed `first_frame` is
+    // the first candidate, so it is never lost. ---
+    let mut emitted = 0usize;
+    let mut reached = false;
+    let mut pending: Option<SwFrame> = Some(first_frame);
+    loop {
+        let frame = match pending.take() {
+            Some(f) => f,
+            None => match stream.next_frame() {
+                Ok(Some(f)) => f,
+                Ok(None) => {
+                    emit(sink, SwFramePoke::Eof { stream_id: stream_id.to_string() });
+                    break;
+                }
+                Err(e) => {
+                    emit(sink, SwFramePoke::Error { stream_id: stream_id.to_string(), message: e });
+                    break;
+                }
+            },
+        };
+        if !reached {
+            // A frame whose interval ends at/before the target is in the past.
+            // `.max(1)` guards a 0/unknown duration so the covering frame
+            // (pts ≈ target) is never skipped.
+            if frame.pts_us + frame.dur_us.max(1) <= target_us {
+                continue;
+            }
+            reached = true;
+        }
+        emit(
+            sink,
+            SwFramePoke::Frame {
+                stream_id: stream_id.to_string(),
+                frame,
+            },
+        );
+        emitted += 1;
+        if emitted >= LOOKAHEAD_FRAMES {
+            break;
         }
     }
 }
@@ -311,6 +366,7 @@ impl PreviewSwRegistry {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
     #[test]
     fn open_then_request_delivers_a_frame() {
         // Each delivered Frame poke records (width, pts_us).
@@ -335,5 +391,35 @@ mod tests {
         // the synthetic testsrc fixture may leave them unspecified (None valid).
         assert_eq!(frames[0].0, 320, "frame width");
         assert!(frames[0].1 >= 0, "expected pts_us >= 0, got {}", frames[0].1);
+    }
+
+    #[test]
+    fn long_gop_request_forward_decodes_to_target() {
+        // MPEG-2 is long-GOP (GOP 15 here): AVSEEK_FLAG_BACKWARD lands on a
+        // keyframe well before the target, so serve_request must decode-forward to
+        // the frame COVERING the target. Without that it would deliver the
+        // keyframe at ~0.5 s.
+        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
+        let g2 = got.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { frame, .. } = poke {
+                g2.lock().unwrap().push(frame.pts_us);
+            }
+        }));
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
+        reg.open("m1".into(), p.into()).expect("open");
+        let _ = reg.request_frame_at("m1".into(), 800_000); // ~frame 24, mid-GOP
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = reg.close("m1".into());
+        let pts = got.lock().unwrap();
+        assert!(!pts.is_empty(), "expected at least one frame poke");
+        // FIRST delivered frame covers target 800_000, NOT the keyframe at ~500_000.
+        assert!(
+            pts[0] >= 700_000,
+            "first delivered pts {} should cover target 800_000, not the keyframe (~500_000)",
+            pts[0]
+        );
+        assert!(pts[0] <= 900_000, "first delivered pts {} overshot the target", pts[0]);
     }
 }
