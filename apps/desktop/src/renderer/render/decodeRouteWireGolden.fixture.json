@@ -1,8 +1,9 @@
 {
-  "tags": ["bypass", "direct-export", "proxied"],
+  "tags": ["bypass", "direct-export", "native-sw", "proxied"],
   "samples": {
     "bypass": { "route": "bypass" },
     "direct-export": { "route": "direct-export", "quick_proxy": null },
+    "native-sw": { "route": "native-sw", "quick_proxy": null, "full_proxy": null, "format_version": 0 },
     "proxied": { "route": "proxied", "quick_proxy": null, "full_proxy": null, "format_version": 0 }
   }
 }

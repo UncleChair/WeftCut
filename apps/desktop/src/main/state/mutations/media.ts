@@ -79,12 +79,12 @@ export function applySetMediaDerivatives(pool: Record<string, MediaItem>, id: Uu
   if ('set_route' in patch && patch.set_route) route = patch.set_route
   if ('quick_proxy_landed' in patch) {
     const q = patch.quick_proxy_landed ?? null
-    if (route.route === 'direct-export' || route.route === 'proxied') route = { ...route, quick_proxy: q }
+    if (route.route === 'direct-export' || route.route === 'proxied' || route.route === 'native-sw') route = { ...route, quick_proxy: q }
     // Bypass: no quick slot — ignore (Rust never emits this; defensive).
   }
   if ('full_proxy_landed' in patch) {
     const f = patch.full_proxy_landed
-    if (route.route === 'proxied') {
+    if (route.route === 'proxied' || route.route === 'native-sw') {
       route = { ...route, full_proxy: f?.path ?? null, format_version: f?.format_version ?? route.format_version }
     }
   }

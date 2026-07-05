@@ -133,6 +133,11 @@ pub fn route_needs_decision(route: &DecodeRoute) -> bool {
     match route {
         DecodeRoute::Bypass => false,
         DecodeRoute::Proxied { full_proxy: Some(p), .. } => !p.is_file(),
+        // A persisted native-sw with its full master already on disk is "ready"
+        // and only re-fans decorations on re-open. Without this it would fall to
+        // `_ => true` and re-run the decision, resetting the paths (transient
+        // blank preview). Mirrors the Proxied arm.
+        DecodeRoute::NativeSw { full_proxy: Some(p), .. } => !p.is_file(),
         _ => true,
     }
 }

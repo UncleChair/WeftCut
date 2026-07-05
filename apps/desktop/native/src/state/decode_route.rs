@@ -29,6 +29,20 @@ pub enum DecodeRoute {
         #[serde(default)]
         format_version: u32,
     },
+    /// Native software-decode preview (ProRes today): the original is
+    /// WebCodecs-blind but a native ffmpeg SW decoder can preview it directly.
+    /// Carries the same proxy paths as `Proxied` so that with the experimental
+    /// toggle OFF the clip previews via its proxy (no regression from today);
+    /// the resolver returns the proxy. The toggle-ON "use the native-SW
+    /// original" behavior is a later overlay, not encoded in the route.
+    NativeSw {
+        #[serde(default)]
+        quick_proxy: Option<PathBuf>,
+        #[serde(default)]
+        full_proxy: Option<PathBuf>,
+        #[serde(default)]
+        format_version: u32,
+    },
 }
 
 impl DecodeRoute {
@@ -47,11 +61,11 @@ impl DecodeRoute {
             (ExportSource::FullProxy, PreviewSource::Original) => {
                 unreachable!("preview=Original implies export=Original")
             }
-            // TEMP (Phase-1 Task 1): NativeFfmpeg persists as Proxied so the
-            // proxy still builds and toggle-off-preview works as today. Task 6
-            // replaces this with a dedicated `DecodeRoute::NativeSw` variant
-            // once the native decoder actually exists.
-            (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => DecodeRoute::Proxied {
+            // NativeFfmpeg preview persists as its own `NativeSw` variant. It
+            // carries proxy paths like `Proxied` (the proxy still builds so
+            // toggle-off preview works as today); the toggle-on "use the
+            // native-SW original" behavior is a later overlay.
+            (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => DecodeRoute::NativeSw {
                 quick_proxy: None,
                 full_proxy: None,
                 format_version: 0,
@@ -98,11 +112,18 @@ mod tests {
     #[test]
     fn wire_tags_match_golden() {
         let g = golden();
-        assert_eq!(g.tags, vec!["bypass", "direct-export", "proxied"]);
+        assert_eq!(g.tags, vec!["bypass", "direct-export", "native-sw", "proxied"]);
         let bypass = serde_json::to_value(DecodeRoute::Bypass).unwrap();
         assert_eq!(bypass, g.samples["bypass"]);
         let de = serde_json::to_value(DecodeRoute::DirectExport { quick_proxy: None }).unwrap();
         assert_eq!(de, g.samples["direct-export"]);
+        let nsw = serde_json::to_value(DecodeRoute::NativeSw {
+            quick_proxy: None,
+            full_proxy: None,
+            format_version: 0,
+        })
+        .unwrap();
+        assert_eq!(nsw, g.samples["native-sw"]);
         let px = serde_json::to_value(DecodeRoute::Proxied {
             quick_proxy: None,
             full_proxy: None,

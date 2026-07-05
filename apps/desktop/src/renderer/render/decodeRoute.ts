@@ -35,6 +35,12 @@ export function resolveDecode(media: {
       // perfectly previewable) — so a proxied source whose quick proxy was never
       // built or has been cleaned up still previews instead of going blank.
       return { route: "proxied", previewPath: r.quick_proxy ?? r.full_proxy, exportPath: r.full_proxy };
+    case "native-sw":
+      // Option B: native-sw resolves identically to proxied — with the
+      // experimental toggle OFF a ProRes clip previews via its proxy (no
+      // regression). The toggle-ON "use the native-SW original" path is a later
+      // overlay (forceStrategy), layered on top, not a resolveDecode change.
+      return { route: "native-sw", previewPath: r.quick_proxy ?? r.full_proxy, exportPath: r.full_proxy };
   }
 }
 

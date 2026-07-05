@@ -17,6 +17,12 @@ describe("resolveDecode — full route × readiness matrix", () => {
     // Quick proxy gone but full master present (e.g. an older import whose quick
     // was cleaned up): preview must fall back to the full proxy, not go blank.
     ["proxied, quick gone, full ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: "f.mp4", format_version: 3 }), "f.mp4", "f.mp4"],
+    // native-sw carries proxy paths like Proxied and resolves identically
+    // (Option B): with the experimental toggle OFF a ProRes clip previews via
+    // its proxy — no regression. The "use the native-SW original" behavior is a
+    // later overlay (forceStrategy), NOT a resolveDecode change.
+    ["native-sw, quick ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: null, format_version: 0 }), "q.mp4", null],
+    ["native-sw, both ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: "f.mp4", format_version: 3 }), "q.mp4", "f.mp4"],
     ["image is bypass-like", M("Image", { route: "bypass" }), "orig.mp4", "orig.mp4"],
   ])("%s", (_name, media, previewPath, exportPath) => {
     const r = resolveDecode(media);
@@ -40,7 +46,7 @@ describe("previewPathLive — session bridge overlay", () => {
 
 describe("DecodeRoute wire shape", () => {
   it("matches the cross-language golden tags", () => {
-    expect(golden.tags).toEqual(["bypass", "direct-export", "proxied"]);
+    expect(golden.tags).toEqual(["bypass", "direct-export", "native-sw", "proxied"]);
   });
   it("type literals construct each sample", () => {
     const bypass: DecodeRoute = { route: "bypass" };
@@ -48,8 +54,12 @@ describe("DecodeRoute wire shape", () => {
     const px: DecodeRoute = {
       route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0,
     };
+    const nsw: DecodeRoute = {
+      route: "native-sw", quick_proxy: null, full_proxy: null, format_version: 0,
+    };
     expect(bypass).toEqual(golden.samples.bypass);
     expect(de).toEqual(golden.samples["direct-export"]);
     expect(px).toEqual(golden.samples.proxied);
+    expect(nsw).toEqual(golden.samples["native-sw"]);
   });
 });

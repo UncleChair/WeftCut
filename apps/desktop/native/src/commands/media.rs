@@ -215,7 +215,12 @@ pub fn filmstrip_decode_source(item: &MediaItem) -> Result<(PathBuf, crate::cach
         return Err("filmstrip tiles only valid for Video media".to_string());
     }
     match &item.decode_route {
-        state::DecodeRoute::Bypass | state::DecodeRoute::DirectExport { .. } => {
+        // NativeSw: the ProRes original decodes directly (filmstrip already
+        // supports these formats), so thumbnails come from the original,
+        // immediately — do NOT wait on the proxy the way `Proxied` does.
+        state::DecodeRoute::Bypass
+        | state::DecodeRoute::DirectExport { .. }
+        | state::DecodeRoute::NativeSw { .. } => {
             Ok((item.path_abs.clone(), FilmstripSrc::Orig))
         }
         state::DecodeRoute::Proxied { quick_proxy, full_proxy, .. } => {

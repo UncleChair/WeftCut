@@ -200,6 +200,10 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
         route: 'proxied', quick_proxy: fileOrNull(r.quick_proxy),
         full_proxy: fileOrNull(r.full_proxy), format_version: r.format_version,
       }
+      case 'native-sw': return {
+        route: 'native-sw', quick_proxy: fileOrNull(r.quick_proxy),
+        full_proxy: fileOrNull(r.full_proxy), format_version: r.format_version,
+      }
     }
   }
   const media: MediaSummary[] = Object.values(p.media_pool).map((m: MediaItem) => {

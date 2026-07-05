@@ -70,7 +70,7 @@ export function clearSessionQuickProxies(p: Project): { project: Project; quickP
   const media_pool: Record<string, MediaItem> = {}
   for (const [id, item] of Object.entries(p.media_pool)) {
     const r = item.decode_route
-    if ((r.route === 'direct-export' || r.route === 'proxied') && r.quick_proxy) {
+    if ((r.route === 'direct-export' || r.route === 'proxied' || r.route === 'native-sw') && r.quick_proxy) {
       quickProxiesToDelete.push(r.quick_proxy)
       media_pool[id] = { ...item, decode_route: { ...r, quick_proxy: null } }
     } else media_pool[id] = item
