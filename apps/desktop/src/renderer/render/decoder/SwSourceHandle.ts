@@ -188,6 +188,12 @@ export class SwSourceHandle implements DecoderHandle {
     if (!this.ready) await this.ensureReady();
     this.lastUseMs = performance.now();
     if (this._disposed) return;
+    // Track the playhead so the ring evicts frames older than tUs - lookbehind
+    // (mirrors PacketPump.requestFrameAt). Without this the native-SW ring never
+    // evicts and held ImageBitmaps accumulate during playback/scrub. Set before
+    // the same-target dedup so the anchor follows the playhead even when the
+    // native decode target is unchanged.
+    this.ring.setAnchor(tUs);
     if (tUs === this.lastSentTargetUs) return;
     this.lastSentTargetUs = tUs;
     window.api.previewSw.requestFrameAt({ streamId: this.streamId, targetUs: tUs });
