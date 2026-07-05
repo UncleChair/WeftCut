@@ -1,0 +1,72 @@
+{
+  "electron": "42.4.1",
+  "chrome": "148.0.7778.265",
+  "arms": [
+    {
+      "arm": "arm0",
+      "reso": "1080p",
+      "bytes": 3110400,
+      "fps": 327,
+      "mbps": 1017,
+      "transferSupported": true
+    },
+    {
+      "arm": "arm1",
+      "reso": "1080p",
+      "bytes": 3110400,
+      "fps": 313.5,
+      "mbps": 975,
+      "transferSupported": true
+    },
+    {
+      "arm": "arm2",
+      "reso": "1080p",
+      "bytes": 3110400,
+      "fps": 241.3,
+      "mbps": 750,
+      "transferSupported": false
+    },
+    {
+      "arm": "arm0",
+      "reso": "4k",
+      "bytes": 12441600,
+      "fps": 85.8,
+      "mbps": 1067,
+      "transferSupported": true
+    },
+    {
+      "arm": "arm1",
+      "reso": "4k",
+      "bytes": 12441600,
+      "fps": 74.2,
+      "mbps": 923,
+      "transferSupported": true
+    },
+    {
+      "arm": "arm2",
+      "reso": "4k",
+      "bytes": 12441600,
+      "fps": 57.8,
+      "mbps": 719,
+      "transferSupported": false
+    }
+  ],
+  "cib": [
+    {
+      "w": 1920,
+      "h": 1080,
+      "avgMs": 3.2533333336313563
+    },
+    {
+      "w": 3840,
+      "h": 2160,
+      "avgMs": 11.746666666368643
+    }
+  ],
+  "errors": [
+    "arm2 1080p: MessagePortMain ArrayBuffer transfer threw -> Port at index 0 is not a valid port; falling back to copy",
+    "arm2 4k: MessagePortMain ArrayBuffer transfer threw -> Port at index 0 is not a valid port; falling back to copy"
+  ],
+  "progress": "arm2-4k",
+  "done": true
+}

@@ -1,0 +1,7 @@
+{
+  "name": "export-frame-transport-poc",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Measure-first spike: main -> renderer(-> Web Worker) raw-frame transport ceiling for the ffmpeg-SW-decode no-proxy export path. See docs/superpowers/specs/2026-07-05-ffmpeg-sw-decode-blindspot-design.md §7.",
+  "main": "main.js"
+}
