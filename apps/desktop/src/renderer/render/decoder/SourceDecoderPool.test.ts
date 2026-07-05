@@ -12,6 +12,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SourceDecoderPool, SourceHandle } from "./SourceDecoderPool";
 import { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
+import { SwSourceHandle } from "./SwSourceHandle";
 
 function installFakePreviewGpu(): void {
   (window as unknown as { api: unknown }).api = {
@@ -20,6 +21,12 @@ function installFakePreviewGpu(): void {
       requestFrameAt: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
       requestPort: vi.fn(),
+    },
+    previewSw: {
+      open: vi.fn().mockResolvedValue(undefined),
+      requestFrameAt: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+      onFrame: vi.fn(() => vi.fn()),
     },
   };
 }
@@ -94,6 +101,44 @@ describe("SourceDecoderPool.acquire forceStrategy gate", () => {
       proxyAssetUrl: "weftcut-media://unused",
       forceStrategy: "native" as const,
       sourcePath: "/fake/original.mp4",
+    };
+
+    const first = pool.acquire(init);
+    const second = pool.acquire(init);
+
+    expect(second).toBe(first);
+
+    pool.dispose();
+  });
+
+  it("returns a SwSourceHandle when forceStrategy is 'software' (NOT E2E-gated)", () => {
+    installFakePreviewGpu();
+    vi.stubEnv("VITE_WEFTCUT_E2E", undefined);
+    const pool = new SourceDecoderPool();
+
+    const h = pool.acquire({
+      layerId: "L1",
+      mediaId: "M1",
+      proxyAssetUrl: "x",
+      forceStrategy: "software",
+      sourcePath: "C:/clip.mov",
+    });
+
+    expect(h).toBeInstanceOf(SwSourceHandle);
+
+    pool.dispose();
+  });
+
+  it("caches the software handle across a repeat acquire for the same layerId", () => {
+    installFakePreviewGpu();
+    vi.stubEnv("VITE_WEFTCUT_E2E", undefined);
+    const pool = new SourceDecoderPool();
+    const init = {
+      layerId: "layer-sw-cache",
+      mediaId: "media-sw-cache",
+      proxyAssetUrl: "weftcut-media://unused",
+      forceStrategy: "software" as const,
+      sourcePath: "/fake/original.mov",
     };
 
     const first = pool.acquire(init);

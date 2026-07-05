@@ -22,6 +22,7 @@ import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
 import { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
+import { SwSourceHandle } from "./SwSourceHandle";
 
 const IDLE_DISPOSE_MS = 5_000;
 
@@ -64,16 +65,19 @@ export interface SourceHandleInit {
   /// the opened decode target's first packet instead (re-encoded proxies start
   /// at PTS 0). Kept as a fallback when the target has no packets.
   sourceStartPtsUs?: number | null;
-  /// E2E-only: force the decode strategy for this handle rather than letting
-  /// the pool pick WebCodecs. `'native'` routes to `NativeGpuSourceHandle`
-  /// (Stage 2 decode-bench) instead of the default `SourceHandle` pipeline.
-  /// Gated on `VITE_WEFTCUT_E2E === "1"` in `acquire` — inert (ignored) in
-  /// production and dev builds so this can never affect real playback.
-  forceStrategy?: "webcodecs" | "native";
-  /// E2E-only: the ORIGINAL file path for a `forceStrategy: 'native'`
-  /// handle to decode directly (native sessions bypass the shared,
-  /// proxy-backed `SourceMedia` entirely). Ignored by the WebCodecs path,
-  /// which decodes `proxyAssetUrl` instead.
+  /// Force the decode strategy for this handle rather than letting the pool
+  /// pick WebCodecs. `'native'` routes to `NativeGpuSourceHandle` (Stage 2
+  /// decode-bench), gated on `VITE_WEFTCUT_E2E === "1"` in `acquire` — inert
+  /// (ignored) in production and dev builds so this can never affect real
+  /// playback. `'software'` routes to `SwSourceHandle` (native libavcodec SW
+  /// decode) and is NOT E2E-gated — it ships behind the
+  /// `experimental_native_sw_decode` AppSettings toggle instead; the pool
+  /// just honors whatever the caller decided.
+  forceStrategy?: "webcodecs" | "native" | "software";
+  /// The ORIGINAL file path for a `forceStrategy: 'native'` or `'software'`
+  /// handle to decode directly (both bypass the shared, proxy-backed
+  /// `SourceMedia` entirely). Ignored by the WebCodecs path, which decodes
+  /// `proxyAssetUrl` instead.
   sourcePath?: string;
   /// E2E-only: native pool size (slot count) for a `forceStrategy: 'native'`
   /// handle. Decode-bench Stage 3 varies this to sweep pipeline depth; the
@@ -674,7 +678,7 @@ interface MediaEntry {
 /// refcounted (so the demuxer + sample table is shared across every
 /// handle referencing the same source proxy).
 export class SourceDecoderPool {
-  private handles = new Map<string, SourceHandle | NativeGpuSourceHandle>();
+  private handles = new Map<string, SourceHandle | NativeGpuSourceHandle | SwSourceHandle>();
   private medias = new Map<string, MediaEntry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -690,7 +694,13 @@ export class SourceDecoderPool {
   /// `SourceMedia` for a native session, so `mediaId` here is just a pool
   /// bookkeeping key (see `releaseHandle`, whose `medias.get(mediaId)` miss
   /// is a no-op for these handles).
-  acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle {
+  ///
+  /// `forceStrategy: 'software'` routes to a `SwSourceHandle` (native
+  /// libavcodec SW decode) the same way, but is NOT gated on
+  /// `VITE_WEFTCUT_E2E` — the caller only sets it when the
+  /// `experimental_native_sw_decode` AppSettings toggle is on, so the pool
+  /// simply honors it unconditionally.
+  acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle | SwSourceHandle {
     if (import.meta.env.VITE_WEFTCUT_E2E === "1" && init.forceStrategy === "native") {
       const existingNative = this.handles.get(init.layerId);
       if (existingNative) return existingNative;
@@ -704,6 +714,14 @@ export class SourceDecoderPool {
       this.handles.set(init.layerId, nativeHandle);
       this.startSweeperIfNeeded();
       return nativeHandle;
+    }
+    if (init.forceStrategy === "software") {
+      const existingSw = this.handles.get(init.layerId);
+      if (existingSw) return existingSw;
+      const swHandle = new SwSourceHandle(init.layerId, init.mediaId, init.sourcePath ?? "", init.sourceColor);
+      this.handles.set(init.layerId, swHandle);
+      this.startSweeperIfNeeded();
+      return swHandle;
     }
     const existing = this.handles.get(init.layerId);
     if (existing) return existing;

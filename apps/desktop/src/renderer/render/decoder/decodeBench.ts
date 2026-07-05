@@ -7,15 +7,19 @@
 import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
+import type { SwSourceHandle } from "./SwSourceHandle";
 import type { PreviewGpuTimingReport, PreviewGpuMainTiming } from "../../../shared/ipc";
 import { percentile } from "../../../shared/msStats";
 export { percentile } from "../../../shared/msStats";
 
-/// Either decode strategy's handle. Both expose `ring: FrameRing` (so
+/// Either decode strategy's handle. All three expose `ring: FrameRing` (so
 /// `ring.pushCount`/`lastPtsUs()`/`containsPts()` resolve without narrowing),
 /// `ensureReady`, and `requestFrameAt` — the runners below need no strategy-
-/// specific branching.
-type BenchHandle = SourceHandle | NativeGpuSourceHandle;
+/// specific branching. `SwSourceHandle` is included only so this alias stays
+/// assignable from `SourceDecoderPool.acquire`'s return type (widened for the
+/// `experimental_native_sw_decode` software branch) — `BenchStrategy` has no
+/// `"software"` member, so decode-bench never actually constructs one.
+type BenchHandle = SourceHandle | NativeGpuSourceHandle | SwSourceHandle;
 
 /// Native handles carry a `streamId` + `drainBenchTiming`; the WebCodecs
 /// `SourceHandle` has neither. Structural, so no value import of the class.
