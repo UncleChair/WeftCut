@@ -42,6 +42,7 @@ import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
 import { PackYuv420p10 } from "../tenbit/PackYuv420p10";
 import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
+import { initEval } from "@/eval";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
 // and `new Image()`. In a Worker neither exists, so any renderer
@@ -102,6 +103,8 @@ const CHUNK_FRAMES = 60;
 
 async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const startedAtMs = performance.now();
+
+  await initEval();
 
   const tenBit = req.bitDepth === 10;
 
