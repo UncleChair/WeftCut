@@ -9,6 +9,15 @@ Windows, no WKWebView on macOS, no WebKitGTK on Linux). The only native
 build dependency is the Rust toolchain, used to compile the `@weftcut/core`
 napi addon under `apps/desktop/native/`.
 
+The repo root contains `rust-toolchain.toml`, which tells `rustup` to use
+stable Rust and install the `wasm32-unknown-unknown` target used by
+`npm run build:wasm`. If your first build still reports a missing wasm
+target, run this once from inside the repo:
+
+```sh
+rustup target add wasm32-unknown-unknown
+```
+
 ## Windows 11
 
 1. **Rust** (stable, MSVC toolchain):
@@ -39,13 +48,19 @@ and launches the Electron window.
 ## macOS
 
 1. **Xcode Command Line Tools**: `xcode-select --install`.
-2. **Rust**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
+2. **Rust**:
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 3. **Node 20+**: `brew install node`.
 4. `npm install && npm run dev`.
 
 ## Linux
 
-1. **Rust**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
+1. **Rust**:
+   ```sh
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 2. **Build essentials** for the napi addon (Debian/Ubuntu — adjust for
    your distro):
    ```sh

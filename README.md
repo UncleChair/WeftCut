@@ -43,7 +43,7 @@ No local AI models. No bundled Chromium. No server backend.
 
 Prerequisites — see [docs/setup.md](docs/setup.md) for per-OS install commands:
 
-- **Rust** (stable, via `rustup`)
+- **Rust** (stable, via `rustup`; this repo declares its wasm target in `rust-toolchain.toml`)
 - **MSVC Build Tools** (Windows) / **Xcode CLT** (macOS) / build tools (Linux)
 - **Node 20+**
 
