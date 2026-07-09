@@ -44,12 +44,24 @@ void main(void)
 }
 `;
 
-export const CHROMA_FRAG_GL = `
+// LANDMINE: the `#version 300 es` line is load-bearing, not decorative. Pixi's
+// GlProgram only checks the FRAGMENT text for that literal string to decide
+// isES300; without it, Pixi silently macro-collapses `in`/`out`/`finalColor`
+// down to WebGL1 (`varying`/`gl_FragColor`) — which has no `textureLod`, so
+// the shader fails to compile (caught by the f16 parity gate's first real
+// WebGL run). The vertex source doesn't need its own copy: Pixi applies the
+// same isES300 flag to both stages when assembling the final program.
+// Also load-bearing: `uInputSize` below is declared `highp` explicitly
+// because it's shared with the vertex stage, which Pixi always gives highp
+// precision (this frag's other uniforms default to Pixi's mediump) — a real
+// ES-3.00 linker requires matching precision for a uniform across stages;
+// same fix as pixi's own displacement.frag.
+export const CHROMA_FRAG_GL = `#version 300 es
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
 uniform sampler2D uTexture;
-uniform vec4 uInputSize;
+uniform highp vec4 uInputSize;
 uniform vec4 uInputClamp;
 
 uniform vec3 uKey;

@@ -15,9 +15,11 @@
 //   ELECTRON_BIN=/path/to/electron node run.mjs
 //
 // What it checks:
-//   default-pool: BlurFilter through an 8-bit pool intermediate
+//   default-pool: BlurFilter and the chromakey pass-through through an
+//                 8-bit / f16 pool intermediate
 //                 → gradient collapses to ~256 distinct values (banding)
-//   f16-pool:     BlurFilter through an rgba16float pool intermediate
+//   f16-pool:     BlurFilter and the chromakey pass-through through an
+//                 rgba16float pool intermediate
 //                 → gradient preserves ~1024 distinct values (full precision)
 //
 // Assertions:
@@ -86,24 +88,28 @@ let failed = false;
 
 // --- Condition A: default pool ---
 const defaultResult = runCondition(false);
-const distinctDefault = defaultResult.phases?.blur?.distinct ?? -1;
-const DEFAULT_THRESHOLD = 260;
-if (distinctDefault <= DEFAULT_THRESHOLD) {
-  console.log(`[f16-parity] PASS default-pool: distinct=${distinctDefault} <= ${DEFAULT_THRESHOLD} (bands as expected)`);
-} else {
-  console.error(`[f16-parity] FAIL default-pool: distinct=${distinctDefault} > ${DEFAULT_THRESHOLD} — expected banding; Pixi may have changed pool behaviour`);
-  failed = true;
-}
-
 // --- Condition B: f16 pool ---
 const f16Result = runCondition(true);
-const distinctF16 = f16Result.phases?.blur?.distinct ?? -1;
+
+const DEFAULT_THRESHOLD = 260;
 const F16_THRESHOLD = 900;
-if (distinctF16 > F16_THRESHOLD) {
-  console.log(`[f16-parity] PASS f16-pool: distinct=${distinctF16} > ${F16_THRESHOLD} (precision preserved)`);
-} else {
-  console.error(`[f16-parity] FAIL f16-pool: distinct=${distinctF16} <= ${F16_THRESHOLD} — pool bump not preserving precision`);
-  failed = true;
+
+for (const filterPhase of ["blur", "chroma"]) {
+  const distinctDefault = defaultResult.phases?.[filterPhase]?.distinct ?? -1;
+  if (distinctDefault <= DEFAULT_THRESHOLD && distinctDefault > 0) {
+    console.log(`[f16-parity] PASS default-pool ${filterPhase}: distinct=${distinctDefault} <= ${DEFAULT_THRESHOLD} (bands as expected)`);
+  } else {
+    console.error(`[f16-parity] FAIL default-pool ${filterPhase}: distinct=${distinctDefault} — expected banding in (0, ${DEFAULT_THRESHOLD}]`);
+    failed = true;
+  }
+
+  const distinctF16 = f16Result.phases?.[filterPhase]?.distinct ?? -1;
+  if (distinctF16 > F16_THRESHOLD) {
+    console.log(`[f16-parity] PASS f16-pool ${filterPhase}: distinct=${distinctF16} > ${F16_THRESHOLD} (precision preserved)`);
+  } else {
+    console.error(`[f16-parity] FAIL f16-pool ${filterPhase}: distinct=${distinctF16} <= ${F16_THRESHOLD} — pool bump not preserving precision`);
+    failed = true;
+  }
 }
 
 if (failed) {

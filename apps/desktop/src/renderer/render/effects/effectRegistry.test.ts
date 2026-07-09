@@ -38,7 +38,7 @@ describe("listEffects", () => {
 describe("chromakey", () => {
   it("descriptor builds a ChromaKeyFilter and routes params to uniforms", () => {
     const d = getDescriptor("chromakey")!;
-    expect(d.fidelity).toBe("precision-reduced"); // flips to f16-verified in the gate task
+    expect(d.fidelity).toBe("f16-verified");
     expect(d.nameI18nKey).toBe("effects.chromakey.name");
     const f = d.create();
     expect(f).toBeInstanceOf(ChromaKeyFilter);

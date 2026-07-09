@@ -70,7 +70,7 @@ const REGISTRY: Record<string, EffectDescriptor> = {
         viewMatte: p("viewMatte", 0, [0, 1], 1),
       };
     })(),
-    fidelity: "precision-reduced",
+    fidelity: "f16-verified",
     colorspace: "display-gamma",
   },
 };
