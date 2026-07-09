@@ -59,7 +59,7 @@ See [`data-model.md`](data-model.md).
 ### Effect subsystem — beyond v1
 
 The per-layer effects subsystem ships v1: per-sprite Pixi filter chains
-driven by a `layer.effects` field — a single Blur filter, scalar
+driven by a `layer.effects` field — the Blur and Chroma Key filters, scalar
 (`Animated<f64>`) params, the `add_effect`/`update_effect`/`move_effect`/
 `remove_effect` actor + MCP surface, keyframe support via the param key
 `effects[<id>].params[<key>]`, a `preview_effects_enabled` LOD toggle, and an
@@ -68,8 +68,8 @@ rows on every visual kind). See
 [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md) and
 [`render.md`](render.md). Remaining:
 
-- **Grow the filter catalog** beyond Blur (brightness / contrast /
-  saturation, then the wider pixi-filters set). Each filter is one
+- **Grow the filter catalog** beyond Blur and Chroma Key (brightness /
+  contrast / saturation, then the wider pixi-filters set). Each filter is one
   `effectRegistry.ts` entry, classified `f16-verified` or
   `precision-reduced` by the GL-parity gate.
 - **Non-scalar params** — a `ParamValue` sum type (color / bool / enum);

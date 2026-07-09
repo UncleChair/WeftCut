@@ -18,7 +18,7 @@ final mux see [`rendering.md`](rendering.md).
   ffmpeg `-c copy`), source probing / proxy generation / waveforms /
   thumbnails (all Rust-side).
 - **Per-layer effects:** each layer carries an ordered `effects` chain of
-  Pixi filters (v1: Blur). The compositor attaches them to the layer's
+  Pixi filters (Blur, Chroma Key). The compositor attaches them to the layer's
   sprite per frame; the renderer owns the filter *catalog*
   (`render/effects/effectRegistry.ts`) while the project state holds the
   effect *instances* and their keyframeable params (authored in the TS
