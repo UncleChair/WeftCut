@@ -160,6 +160,32 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     new URL("./exportWorker.ts", import.meta.url),
     { type: "module" },
   );
+  // Latch the ready handshake NOW, before any await. The Worker posts
+  // {type:"ready"} as soon as its module top level runs; once its code cache is
+  // warm (every export after the session's first) that beats the font fetches
+  // awaited below, and a message dispatched while no listener is attached is
+  // silently dropped — start would never be posted and the export would hang at
+  // "starting" forever. The same window would swallow a worker load/parse error.
+  const workerReady = new Promise<void>((resolve, reject) => {
+    function onMsg(e: MessageEvent<ExportEvent>) {
+      if (e.data.type !== "ready") return;
+      detach();
+      resolve();
+    }
+    function onErr(e: ErrorEvent) {
+      detach();
+      reject(new Error(e.message || "export worker errored"));
+    }
+    function detach() {
+      worker.removeEventListener("message", onMsg);
+      worker.removeEventListener("error", onErr);
+    }
+    worker.addEventListener("message", onMsg);
+    worker.addEventListener("error", onErr);
+  });
+  // No-op catch: a worker load failure during the awaits below would otherwise
+  // fire unhandledrejection before the export promise wires its real handler.
+  workerReady.catch(() => {});
 
   // 5. Build the tenBitMedia map: sources whose originals Chromium/Electron can decode
   // to I420P10 (H.264 Hi10P + AV1 10-bit — `tenBitExportCapable`). Only
@@ -174,7 +200,8 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     }
   }
 
-  // 6. Wait for ready, then post start.
+  // 6. Build the start request (fonts resolve on the main thread); posted once
+  // the pre-await `workerReady` latch resolves.
   const motifFrames = init.motifFrames ?? {};
   const userFamilies = collectTextFontFamilies(summary);
   const userBytes = await resolveFontsForFamilies(userFamilies);
@@ -226,11 +253,21 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       reject(new Error(e.message || "export worker errored"));
     };
 
+    // Post start once the ready latch resolves (it usually already has by now).
+    // Rejection = the worker failed to load/parse before ever reporting ready.
+    workerReady.then(
+      () => {
+        worker.postMessage(startReq, [offscreen, ...bitmapTransfers, ...Object.values(fontBytes)]);
+      },
+      (err: unknown) => {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+
     worker.onmessage = (e: MessageEvent<ExportEvent>) => {
       const ev = e.data;
-      if (ev.type === "ready") {
-        worker.postMessage(startReq, [offscreen, ...bitmapTransfers, ...Object.values(fontBytes)]);
-      } else if (ev.type === "progress") {
+      if (ev.type === "progress") {
         framesEncoded = ev.framesEncoded;
         totalFrames = ev.totalFrames;
         init.onProgress?.(framesEncoded, totalFrames);
