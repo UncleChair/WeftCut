@@ -5,12 +5,14 @@ status: superseded
 # Templates rasterize from SVG, not foreignObject HTML/CSS
 
 > **Superseded.** Templates were rebuilt as **Motifs**: every Motif is a real
-> HTML/CSS/JS page rendered in a hidden WebView2 window and captured taint-free
-> via the DevTools Protocol (CDP screenshot), with determinism by clock
-> takeover — the "OS-level offscreen-webview screenshot" alternative this ADR
-> deferred. The SVG `render(t)` engine described below was deleted. The
-> foreignObject-taint analysis remains the accurate record of why in-webview
-> HTML rasterization is impossible. See [`docs/motifs.md`](../motifs.md).
+> HTML/CSS/JS page rendered in a hidden window and captured taint-free via the
+> DevTools Protocol (CDP screenshot), with determinism by clock takeover — the
+> "OS-level offscreen-webview screenshot" alternative this ADR deferred. The
+> SVG `render(t)` engine described below was deleted. The foreignObject-taint
+> analysis below records the WebView2-era constraint that motivated this ADR;
+> on the pinned Electron/Chromium engine the inline-content taint no longer
+> reproduces (see [`docs/notes/electron-chromium-behavior.md`](../notes/electron-chromium-behavior.md)).
+> See [`docs/motifs.md`](../motifs.md).
 
 Templates are authored as SVG documents — shapes, `<text>`, gradients, masks,
 transforms — and animated by a synchronous `render(t)` that mutates SVG
