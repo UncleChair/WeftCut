@@ -1,22 +1,12 @@
-import { listen } from "@/bridge/events";
 import { save as saveDialog } from "@/bridge/dialog";
 import { getCurrentWindow } from "@/bridge/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  AGENT_SESSION_EVENTS,
   addColorLayer,
   addTextLayer,
-  agentSessionEnd,
-  agentSessionGet,
   deleteLayer,
-  keybindingsGet,
-  type AgentSession,
-  type KeybindingsMap,
   importCancel,
-  motifStalenessReport,
-  type MotifStaleEntry,
-  ping,
   projectRedo,
   projectSave,
   projectSaveAs,
@@ -57,6 +47,7 @@ import {
   MenuSeparator,
 } from "./menu/Menu";
 import { ViewMenu } from "./app/ViewMenu";
+import { useAppWiring, useWindowTitle } from "./app/useAppWiring";
 import { useExportFlow } from "./app/useExportFlow";
 import { useImportReadiness } from "./app/useImportReadiness";
 import { ExportPanel } from "./panels/ExportPanel";
@@ -81,14 +72,12 @@ import {
 } from "./shortcuts";
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
-import { wireLogStream, useLogStore } from "./logs/store";
-import { wireProjectStore } from "./state/projectStore";
+import { useLogStore } from "./logs/store";
 import {
   setMediaPoolDrawerOpen,
   toggleDisplayMode,
   useAppSettingsStore,
   useMediaPoolDrawerOpen,
-  wireAppSettingsStream,
 } from "./settings/appSettingsStore";
 import { logEmit } from "./ipc";
 
@@ -104,7 +93,6 @@ export function App({ onCloseProject }: AppProps) {
   // Read through the atomic selector so a flip doesn't re-render anything that
   // doesn't depend on it.
   const mediaPoolDrawerOpen = useMediaPoolDrawerOpen();
-  const [pong, setPong] = useState<string>("…");
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   // Write-only: error text is surfaced through the status bar / log (see the
@@ -136,40 +124,10 @@ export function App({ onCloseProject }: AppProps) {
   // playhead at the moment editing opens (instead of live-updating the field
   // from a React-subscribed time) keeps the edit box stable during playback.
   const [tcEditUs, setTcEditUs] = useState<number | null>(null);
-  // User shortcut overrides. Loaded once on mount; refreshed when the
-  // Settings → Keyboard panel writes (it calls back via the
-  // `onKeybindingsChanged` prop). The map is `Record<string, string[]>`
-  // on the wire; we widen-cast into `OverrideMap` since the frontend
-  // catalogue (`ACTION_DEFS`) is the validator. Unknown action ids in
-  // the file are silently ignored at dispatch time.
-  const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
-  // Active agent session (null = editor mode). Set by the
-  // `agent_session:changed` event the backend emits whenever an MCP
-  // client calls `begin_agent_session` or any path clears the slot
-  // (workspace change, user-side exit). Always seeded by an explicit
-  // get on mount so the UI never blinks through the wrong mode on
-  // app start.
-  const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
   // The project preview is a DOM `<video>` driven by `<PreviewSurface>`
   // (docs/data-model.md Q10). The transport buttons here delegate to its
   // imperative handle (play / pause / seek); playhead state flows back up via callbacks.
   const previewRef = useRef<PreviewSurfaceHandle | null>(null);
-
-  // §7-B on-open staleness: App mounts exactly once per successful project
-  // open (every open path remounts it), so a mount-time pull IS the
-  // once-per-open check. Read-only; the ack happens on dismiss.
-  const [staleMotifs, setStaleMotifs] = useState<MotifStaleEntry[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void motifStalenessReport()
-      .then((r) => {
-        if (!cancelled && r.length > 0) setStaleMotifs(r);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Fresh project session → playhead 0. The store is module-global and would
   // otherwise carry the previous project's position across a close/open
@@ -265,154 +223,16 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [t]);
 
-  useEffect(() => {
-    ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
-    refresh();
-    keybindingsGet().then(setKeybindings).catch(() => {});
-    // Seed agent-session mode explicitly so the UI never flashes through
-    // editor mode on a fresh app start when an MCP client has already
-    // begun a session (e.g., on app re-launch via deeplink in the
-    // future). Subsequent flips arrive via the agent_session:changed
-    // event below.
-    agentSessionGet().then(setAgentSession).catch(() => {});
-  }, [refresh]);
-
-  // Subscribe to agent_session:changed — payload is `AgentSession | null`.
-  // Begin / replace / end all flow through here so the conditional render
-  // below stays in sync with the backend slot.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await listen<AgentSession | null>(
-        AGENT_SESSION_EVENTS.changed,
-        (e) => setAgentSession(e.payload),
-      );
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Bind the OS window title to the project name (AE-style: the
-  // project's identity lives in the window chrome, not in an in-app
-  // bar). Falls back to the bare app title when no project is loaded
-  // yet. Re-runs on locale flip so the dash / phrasing follows the
-  // user's language preference. Resets to the bare title on unmount
-  // (Save and Close) so the StartupScreen doesn't inherit a stale
-  // project name in the OS title bar.
-  useEffect(() => {
-    const win = getCurrentWindow();
-    const next = summary?.name
-      ? t("app.window_title", { name: summary.name })
-      : t("app.title");
-    void win.setTitle(next).catch(() => {});
-  }, [summary?.name, i18n.resolvedLanguage, t]);
-  useEffect(() => {
-    return () => {
-      void getCurrentWindow().setTitle("WeftCut").catch(() => {});
-    };
-  }, []);
-
-  const exitAgentMode = useCallback(async () => {
-    try {
-      await agentSessionEnd();
-    } catch (e) {
-      console.warn("agent_session_end failed:", e);
-    }
-  }, []);
-
-  // Wire the status-log stream: seed from `log_list`, then subscribe to
-  // `log:entry` events. Pre-workspace this is a no-op (backend bus is
-  // None). The Zustand store backs the status bar's selectors.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await wireLogStream();
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Project state mirror for the DOM preview (docs/preview.md). Coexists
-  // with the local-state fetches below — both subscribe to `project:changed`
-  // and re-fetch, with no cross-talk. The DOM preview engine reads from
-  // `useProjectStore`; App.tsx's own fetches still drive the panels.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await wireProjectStore();
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // App-level settings stream (`docs/data-model.md`). Seeds the store
-  // from the current value, then subscribes to `app_settings:changed`
-  // so any pill/menu/shortcut flip propagates to every consumer (the
-  // timeline filter, the right panel's peek-window width, the
-  // MediaPool drawer chevron, …).
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await wireAppSettingsStream();
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Project-change subscription — fired by the actor whenever a commit lands,
-  // regardless of source (UI command, MCP tool call, undo/redo, checkpoint
-  // restore). Without this, MCP-driven edits land in state but the panels
-  // stay frozen until the user clicks something.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await listen<unknown>("project:changed", () => {
-        refresh();
-      });
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, [refresh]);
+  const {
+    pong,
+    keybindings,
+    setKeybindings,
+    agentSession,
+    exitAgentMode,
+    staleMotifs,
+    setStaleMotifs,
+  } = useAppWiring({ refresh });
+  useWindowTitle(summary?.name);
 
   const run = useCallback(
     async (action: () => Promise<unknown>) => {
