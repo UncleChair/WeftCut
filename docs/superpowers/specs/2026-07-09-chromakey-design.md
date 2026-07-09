@@ -41,9 +41,13 @@ rollback, despot, large-radius softness) are deferred — see Deferred section.
 
 ### Files
 
+- `apps/desktop/src/renderer/render/effects/filters/chromaKeySources.ts` —
+  new; the WGSL and GLSL sources side by side (to prevent drift) plus uniform
+  defaults, kept free of TS-only syntax so the f16 parity gate can load the
+  real product shaders via a strip-`export`-and-eval of this file.
 - `apps/desktop/src/renderer/render/effects/filters/ChromaKeyFilter.ts` — new;
-  the first custom (non-stock) filter in the repo. WGSL and GLSL fragment
-  sources live side by side in this file to prevent drift.
+  the first custom (non-stock) filter in the repo: pixi program/uniform
+  plumbing over the sources module.
 - `apps/desktop/src/renderer/render/effects/effectRegistry.ts` — one new
   `chromakey` entry.
 - Locale files (en-US, zh-CN) — `effects.chromakey.*` name/label keys following
