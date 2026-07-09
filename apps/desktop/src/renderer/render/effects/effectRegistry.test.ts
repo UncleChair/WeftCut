@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { BlurFilter } from "pixi.js";
 import { getDescriptor } from "./effectRegistry";
+import { ChromaKeyFilter } from "./filters/ChromaKeyFilter";
 
 import { listEffects } from "./effectRegistry";
 
@@ -31,5 +32,35 @@ describe("listEffects", () => {
   it("blur name i18n key is a nested leaf (effects.blur.name)", () => {
     const blur = listEffects().find((d) => d.kind === "blur")!;
     expect(blur.nameI18nKey).toBe("effects.blur.name");
+  });
+});
+
+describe("chromakey", () => {
+  it("descriptor builds a ChromaKeyFilter and routes params to uniforms", () => {
+    const d = getDescriptor("chromakey")!;
+    expect(d.fidelity).toBe("precision-reduced"); // flips to f16-verified in the gate task
+    expect(d.nameI18nKey).toBe("effects.chromakey.name");
+    const f = d.create();
+    expect(f).toBeInstanceOf(ChromaKeyFilter);
+    d.params.keyR!.apply(f, 0.25);
+    d.params.balance!.apply(f, 0.9);
+    const u = (f.resources as Record<string, { uniforms: Record<string, unknown> }>)
+      .chromaUniforms!.uniforms;
+    expect((u.uKey as Float32Array)[0]).toBeCloseTo(0.25);
+    expect(u.uBalance).toBeCloseTo(0.9);
+  });
+
+  it("carries the 10 spec params, in spec order, with spec defaults", () => {
+    const d = getDescriptor("chromakey")!;
+    expect(Object.keys(d.params)).toEqual([
+      "keyR", "keyG", "keyB", "balance", "clipBlack",
+      "clipWhite", "despill", "feather", "shrink", "viewMatte",
+    ]);
+    expect(d.params.keyG!.default).toBe(1);
+    expect(d.params.balance!.default).toBe(0.5);
+    expect(d.params.clipWhite!.default).toBe(1);
+    expect(d.params.despill!.default).toBe(1);
+    expect(d.params.shrink!.range).toEqual([-5, 5]);
+    expect(d.params.feather!.range).toEqual([0, 10]);
   });
 });

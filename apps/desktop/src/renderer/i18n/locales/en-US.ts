@@ -536,6 +536,21 @@ const enUS = {
       name: "Blur",
       params: { strength: "Strength" },
     },
+    chromakey: {
+      name: "Chroma Key",
+      params: {
+        keyR: "Key red",
+        keyG: "Key green",
+        keyB: "Key blue",
+        balance: "Screen balance",
+        clipBlack: "Clip black",
+        clipWhite: "Clip white",
+        despill: "Despill",
+        feather: "Feather",
+        shrink: "Shrink",
+        viewMatte: "View matte",
+      },
+    },
   },
   property_panel: {
     heading: "Properties",

@@ -8,6 +8,7 @@
 // precision ("f16-verified") or loses range ("precision-reduced").
 
 import { BlurFilter, type Filter } from "pixi.js";
+import { ChromaKeyFilter, type ChromaParamName } from "./filters/ChromaKeyFilter";
 
 export interface EffectParamSpec {
   default: number;
@@ -43,6 +44,33 @@ const REGISTRY: Record<string, EffectDescriptor> = {
       },
     },
     fidelity: "f16-verified",
+    colorspace: "display-gamma",
+  },
+  chromakey: {
+    kind: "chromakey",
+    nameI18nKey: "effects.chromakey.name",
+    create: () => new ChromaKeyFilter(),
+    params: (() => {
+      const p = (name: ChromaParamName, def: number, range: [number, number], step: number) => ({
+        default: def,
+        range,
+        step,
+        apply: (f: Filter, v: number) => (f as ChromaKeyFilter).applyParam(name, v),
+      });
+      return {
+        keyR: p("keyR", 0, [0, 1], 0.01),
+        keyG: p("keyG", 1, [0, 1], 0.01),
+        keyB: p("keyB", 0, [0, 1], 0.01),
+        balance: p("balance", 0.5, [0, 1], 0.01),
+        clipBlack: p("clipBlack", 0, [0, 1], 0.01),
+        clipWhite: p("clipWhite", 1, [0, 1], 0.01),
+        despill: p("despill", 1, [0, 1], 0.01),
+        feather: p("feather", 0, [0, 10], 0.5),
+        shrink: p("shrink", 0, [-5, 5], 0.5),
+        viewMatte: p("viewMatte", 0, [0, 1], 1),
+      };
+    })(),
+    fidelity: "precision-reduced",
     colorspace: "display-gamma",
   },
 };

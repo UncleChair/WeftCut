@@ -359,7 +359,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'groups_rename', args: { group: parseUuid(a.group_id, 'group_id'), label: parseStrOpt(a.label, 'label') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table',
-    description: 'Add an effect to a layer\'s chain (appended to the end of the chain, applied last). `kind` is the catalog key (v1: "blur"). Returns the new effect id. The effect is created with no params set; use update_effect to set a static value first, then set_keyframe to keyframe it.',
+    description: 'Add an effect to a layer\'s chain (appended to the end of the chain, applied last). `kind` is the catalog key ("blur", "chromakey"). Returns the new effect id. The effect is created with no params set; use update_effect to set a static value first, then set_keyframe to keyframe it.',
     inputSchema: { type: 'object', properties: { kind: { type: 'string' }, layer_id: { type: 'string' } }, required: ['kind', 'layer_id'] },
     parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseStr(a.kind, 'kind') } }),
     shapeResult: (v) => toolText(v as string) },

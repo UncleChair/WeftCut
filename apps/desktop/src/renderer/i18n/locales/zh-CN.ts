@@ -522,6 +522,21 @@ const zhCN: Resources = {
       name: "模糊",
       params: { strength: "强度" },
     },
+    chromakey: {
+      name: "色度抠像",
+      params: {
+        keyR: "键色红",
+        keyG: "键色绿",
+        keyB: "键色蓝",
+        balance: "屏幕平衡",
+        clipBlack: "黑场裁剪",
+        clipWhite: "白场裁剪",
+        despill: "溢色抑制",
+        feather: "羽化",
+        shrink: "收扩边",
+        viewMatte: "查看遮罩",
+      },
+    },
   },
   property_panel: {
     heading: "属性",
