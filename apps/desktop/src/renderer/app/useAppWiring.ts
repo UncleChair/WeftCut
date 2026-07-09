@@ -206,14 +206,16 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
   };
 }
 
-/// Bind the OS window title to the project name (AE-style: the project's
-/// identity lives in the window chrome, not in an in-app bar). Falls back to
-/// the bare app title when no project is loaded yet. Re-runs on locale flip
-/// so the dash / phrasing follows the user's language preference. Resets to
-/// the bare title on unmount (Save and Close) so the StartupScreen doesn't
-/// inherit a stale project name in the OS title bar.
+/// OS window-title binding.
 export function useWindowTitle(projectName: string | null | undefined): void {
   const { t, i18n } = useTranslation();
+  // Bind the OS window title to the project name (AE-style: the
+  // project's identity lives in the window chrome, not in an in-app
+  // bar). Falls back to the bare app title when no project is loaded
+  // yet. Re-runs on locale flip so the dash / phrasing follows the
+  // user's language preference. Resets to the bare title on unmount
+  // (Save and Close) so the StartupScreen doesn't inherit a stale
+  // project name in the OS title bar.
   useEffect(() => {
     const win = getCurrentWindow();
     const next = projectName
