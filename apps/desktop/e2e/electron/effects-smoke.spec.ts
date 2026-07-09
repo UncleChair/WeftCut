@@ -397,3 +397,78 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
 
   await app.close()
 })
+
+test('effects: chromakey keys out a green color layer; viewMatte previews the matte', async () => {
+  test.skip(
+    process.env.WEFTCUT_E2E_NO_EXPORT === '1',
+    'pixel sampling needs a real GPU not on headless CI; verified locally',
+  )
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-chromakey-smoke-'))
+  await newProject(page, {
+    parentFolder: parent,
+    name: 'chromakey-smoke',
+    canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+  })
+
+  // Full-frame green screen + a white text layer on a second track.
+  const bgTrack = await invokeCmd<string>(page, 'add_track', {})
+  const bgId = await invokeCmd<string>(page, 'add_color_layer', {
+    trackId: bgTrack,
+    color: { r: 0, g: 255, b: 0, a: 255 },
+    tStartUs: 0,
+    durationUs: 2_000_000,
+  })
+  const fgTrack = await invokeCmd<string>(page, 'add_track', {})
+  await invokeCmd<string>(page, 'add_text_layer', {
+    trackId: fgTrack,
+    content: 'CHROMA',
+    tStartUs: 0,
+    durationUs: 2_000_000,
+  })
+
+  // Baseline: bottom-right corner is green (also validates the Rgba scale —
+  // if this reads black, add_color_layer took the color as 0..255).
+  const before = await sampleAt(page, 500_000, 600, 340)
+  expect(before.g).toBeGreaterThan(200)
+  expect(before.r).toBeLessThan(60)
+  expect(before.a).toBe(255)
+  const FULL = 640 * 360
+  expect(before.nonTransparent).toBe(FULL)
+
+  // Key the background via real MCP.
+  const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as McpInfo
+  const mcp = await connectMcp(info)
+  const addRes = await mcp.callTool({ name: 'add_effect', arguments: { layer_id: bgId, kind: 'chromakey' } })
+  const effectId = JSON.parse(JSON.stringify(addRes.content))[0].text as string
+  expect(effectId.length).toBeGreaterThan(0)
+
+  const keyed = await sampleAt(page, 500_000, 600, 340)
+  expect(keyed.a).toBe(0) // green screen fully keyed at the corner
+  expect(keyed.nonTransparent).toBeGreaterThan(0) // text survives
+  expect(keyed.nonTransparent).toBeLessThan(FULL * 0.25)
+
+  // viewMatte=1 → whole bg layer outputs (alpha,alpha,alpha,1): opaque black at the corner.
+  await mcp.callTool({ name: 'update_effect', arguments: {
+    layer_id: bgId, effect_id: effectId,
+    patch: { params: { viewMatte: { mode: 'Static', value: 1 } } },
+  } })
+  const matte = await sampleAt(page, 500_000, 600, 340)
+  expect(matte.a).toBe(255)
+  expect(matte.r).toBeLessThan(10)
+  expect(matte.g).toBeLessThan(10)
+  expect(matte.nonTransparent).toBe(FULL)
+
+  // Undo the param patch and the add — chain must empty.
+  await mcp.callTool({ name: 'undo', arguments: {} })
+  await mcp.callTool({ name: 'undo', arguments: {} })
+  await page.waitForTimeout(800)
+  const s = await summary(page)
+  const fx = effectsOf(s as any, bgId) as Array<{ kind: string }>
+  expect(fx).toHaveLength(0)
+  const restored = await sampleAt(page, 500_000, 600, 340)
+  expect(restored.g).toBeGreaterThan(200)
+
+  await app.close()
+})
