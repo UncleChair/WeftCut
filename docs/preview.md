@@ -127,7 +127,7 @@ What preview decodes depends on the import decode routing (see
   preview from the original (`previewDecodable` in `previewPlaybackPathFor`).
   The bridge is not persisted and disappears once a proxy path exists.
 - **Native software decode** (experimental) → for WebCodecs-blind formats
-  (ProRes today), an off-by-default `experimental_native_sw_decode`
+  (ProRes, DNxHD/DNxHR, MPEG-2, VC-1/WMV3), an off-by-default `experimental_native_sw_decode`
   AppSettings toggle routes preview through a native libavcodec software
   decoder instead of a proxy: `SwSourceHandle` decodes the original directly
   into the same `FrameRing`, with no proxy wait. With the toggle off, the

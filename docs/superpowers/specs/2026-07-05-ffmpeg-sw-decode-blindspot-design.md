@@ -1,5 +1,21 @@
 # ffmpeg universal software-decode — no-proxy preview & export for WebCodecs-blind formats — Design
 
+> **Status 2026-07-09 — partially superseded by
+> [`2026-07-09-dual-engine-decode-export-design.md`](2026-07-09-dual-engine-decode-export-design.md).**
+> Shipped from this spec: Phase 1 (ProRes preview, ADR 0029) and the Phase 2
+> Plan A subset (family widening, per-family threading, long-GOP seek,
+> frame-drop floor). Still owned here: the §4.2 playback-resolution throttle +
+> Full/½/¼/Auto UI (Phase 2 Plan B; handoff in
+> `../2026-07-05-preview-sw-phase2-kickoff.md`), now sequenced after the
+> dual-engine spec's Phase D. Superseded there: Phase 3 native export (the
+> encode side becomes Phase E; this spec's §6 main→worker decode transport
+> becomes stage D5 and remains its design of record), Phase 4 / §5 proxy
+> semantics (expanded into the stage-D6 proxy-policy flip), the
+> "WebCodecs-blind codecs only" scoping and §9's WebCodecs-path scope guards
+> (the Native engine's SW lane widens to anything ffmpeg decodes,
+> probe-arbitrated), and §3's list-based routing (probes arbitrate; lists only
+> seed).
+
 **Goal:** Give WeftCut a proxy-free path for the formats WebCodecs cannot decode at all —
 ProRes 422/4444, DNxHD/DNxHR, MPEG-2, VC-1/WMV — by adding a native libavcodec
 **software**-decode source at the existing `DecoderHandle` seam. On import these formats

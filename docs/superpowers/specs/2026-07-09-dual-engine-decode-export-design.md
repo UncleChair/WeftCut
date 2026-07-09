@@ -214,10 +214,10 @@ NativeSink direct encode, removing the two-generation loss.
 ### Boundaries
 
 - **Export-side *decode* is untouched in Phase E** (worker WebCodecs +
-  existing full-proxy routing). When Phase D lands, `ExportDecoderPool`
-  consumes the same decode-engine overlay, upgrading blind-spot exports from
-  lossy full-proxy to direct original decode. Cross-phase dependency, recorded
-  here.
+  existing full-proxy routing). When Phase D lands (stage D5),
+  `ExportDecoderPool` consumes the same decode-engine overlay, upgrading
+  blind-spot exports from lossy full-proxy to direct original decode.
+  Cross-phase dependency, recorded here.
 - **Render & Play** is a WYSIWYG preview affordance, pinned to the fast
   WebCodecs H.264 path; it does not follow `encoderEngine`.
 
@@ -290,7 +290,11 @@ change. Same idea as the export smoke-encode probe, applied to decode.
   unchanged), but **proxy jobs stop auto-enqueuing** when engine resolution
   shows the source will decode originals on any engine. Proxies build only on
   explicit user opt-in ("generate proxy" in the media panel) or when
-  resolution lands on tier 4.
+  resolution lands on tier 4. The two proxy axes flip independently: the
+  quick (preview) proxy stops when *preview* resolves to originals; the full
+  proxy (the export master, ADR 0011) stops only once the *export* path
+  decodes originals too (stage D5) — stopping it earlier would strand
+  blind-spot exports.
 - **The session bridge (original→proxy auto-swap) retires.** "Original is the
   default" removes its reason to exist — and with it the `previewPathLive`
   auto-swap behavior. The no-flash swap mechanism itself stays, now serving
@@ -367,8 +371,13 @@ to the next tier.
     (absorbs and deletes `experimental_native_sw_decode`).
   - D3: SW lane widened to probe-accepted formats + capability cache.
   - D4: HW lane productization (gate removal, VRAM budget, downgrade path).
-  - D5: proxy policy flip + session-bridge retirement + derivative-job input
-    verification.
+  - D5: export-side decode consumes the overlay — the main→renderer→worker
+    raw-frame transport (design of record: the blind-spot spec §6,
+    spike-cleared in `poc/export-frame-transport`) — so blind-spot and
+    forced-native sources export from originals.
+  - D6: proxy policy flip + session-bridge retirement + derivative-job input
+    verification. Depends on D5: a source's full-proxy (export-master)
+    auto-build stops only once its export path decodes originals.
 - **Follow-on**: Plan B (playback resolution throttle + Full/½/¼/Auto UI;
   kickoff doc remains valid) — it relieves both SW-lane 4K CPU cost and IPC
   bandwidth.
@@ -406,3 +415,7 @@ no stage migrates persisted data.
   (`decide()` — unchanged by this design).
 - `docs/superpowers/2026-07-05-preview-sw-phase2-kickoff.md` (Plan B, the
   follow-on).
+- `docs/superpowers/specs/2026-07-05-ffmpeg-sw-decode-blindspot-design.md` —
+  its §6/§7 remain the design of record for stage D5's export frame
+  transport; its Phase 3/4 phasing, blind-spot-only scoping, and list-based
+  routing are superseded by this spec (see the banner there).

@@ -112,6 +112,25 @@ regardless of which decoder produced the frame.
   decode-degrade stack (thread tuning, frame-drop, playback-resolution
   throttle) are unbuilt future work, not implied by this ADR.
 
+## Addendum (2026-07-09)
+
+Two consequence-section facts have moved since acceptance; the decision
+itself is unchanged:
+
+- **The blind-spot set widened past ProRes** (`codec_is_blindspot`):
+  DNxHD/DNxHR, MPEG-2, and VC-1/WMV3 now route here too, with per-family
+  decoder threading (intra families slice-only; long-GOP frame+slice) and a
+  re-seek-with-margin fix for index-less long-GOP backward seeks. Of the
+  decode-degrade stack, the frame-drop floor shipped; the
+  playback-resolution throttle and its UI remain unbuilt.
+- **A successor design widens the route's role.** The dual-engine
+  architecture spec
+  (`docs/superpowers/specs/2026-07-09-dual-engine-decode-export-design.md`)
+  promotes this path from a blind-spot fallback to the Native engine's
+  software lane — probe-arbitrated rather than list-gated, user-selectable,
+  and shipped as an optional native-decode component. The ship-bytes
+  transport and single-color-model decisions made here carry over unchanged.
+
 ## References
 
 - ADR 0021 — color converges at ingest; the working space is the output
