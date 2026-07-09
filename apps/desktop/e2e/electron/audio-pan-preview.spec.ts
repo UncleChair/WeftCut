@@ -1,5 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { launchApp } from './helpers/driver'
+import { launchApp, waitForHook } from './helpers/driver'
 
 // Preview pan correctness — renders the REAL buildPanGraph + panCurves in an
 // OfflineAudioContext and checks output L/R against the equal-power law. This
@@ -8,7 +8,12 @@ import { launchApp } from './helpers/driver'
 test.describe('preview pan matrix mixer (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
-  test.beforeAll(async () => { ({ app, page } = await launchApp()) })
+  test.beforeAll(async () => {
+    ;({ app, page } = await launchApp())
+    // The hook surface mounts async (main.tsx dynamic-imports e2eHook after
+    // React mounts); evaluating before it lands races → undefined __weftcutTest.
+    await waitForHook(page, 'panRenderProbe')
+  })
   test.afterAll(async () => { await app?.close() })
 
   // L/R RMS for a constant input of 1.0 per channel under the equal-power law.
