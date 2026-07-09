@@ -14,7 +14,7 @@ import {
   projectUndo,
   type ProjectSummary,
 } from "./ipc";
-import { formatTimecode, frameDurUs, lastFrameAnchorUs } from "./frames";
+import { frameDurUs, lastFrameAnchorUs } from "./frames";
 import {
   playheadTimeUs,
   setPlayheadTimeUs,
@@ -27,43 +27,20 @@ import { SettingsPanel } from "./settings/SettingsPanel";
 import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
 import { AppDialog } from "./components/AppDialog";
-import { AppTimecodeField } from "./components/AppTimecodeField";
-import { WindowControls } from "./components/WindowControls";
 import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { AppNotices } from "./components/AppNotices";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
-import {
-  PreviewSurface,
-  type PreviewSurfaceHandle,
-} from "./preview/PreviewSurface";
-import { PlayheadTimecode } from "./preview/PlayheadTimecode";
+import { type PreviewSurfaceHandle } from "./preview/PreviewSurface";
 
-import {
-  Menu,
-  MenuBar,
-  MenuItem,
-  MenuSeparator,
-} from "./menu/Menu";
-import { ViewMenu } from "./app/ViewMenu";
+import { AppMenuBar } from "./app/AppMenuBar";
+import { PreviewSection } from "./app/PreviewSection";
 import { useAppWiring, useWindowTitle } from "./app/useAppWiring";
 import { useExportFlow } from "./app/useExportFlow";
 import { useImportReadiness } from "./app/useImportReadiness";
 import { ExportPanel } from "./panels/ExportPanel";
 import { MediaDropZone, MediaPool } from "./panels/MediaPool";
-import {
-  LOCALE_LABELS,
-  SUPPORTED_LOCALES,
-  type Locale,
-} from "./i18n";
-import {
-  GlobeIcon,
-  PauseIcon,
-  PlayIcon,
-  SkipBackIcon,
-  SkipForwardIcon,
-} from "lucide-react";
 import {
   ShortcutBindingsProvider,
   useShortcuts,
@@ -88,7 +65,7 @@ interface AppProps {
 }
 
 export function App({ onCloseProject }: AppProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   // MediaPool drawer state lives in the app-pref store (docs/data-model.md R.9).
   // Read through the atomic selector so a flip doesn't re-render anything that
   // doesn't depend on it.
@@ -120,10 +97,6 @@ export function App({ onCloseProject }: AppProps) {
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [motifPickerOpen, setMotifPickerOpen] = useState(false);
-  // Timecode-edit state doubles as the field's seed value: capturing the
-  // playhead at the moment editing opens (instead of live-updating the field
-  // from a React-subscribed time) keeps the edit box stable during playback.
-  const [tcEditUs, setTcEditUs] = useState<number | null>(null);
   // The project preview is a DOM `<video>` driven by `<PreviewSurface>`
   // (docs/data-model.md Q10). The transport buttons here delegate to its
   // imperative handle (play / pause / seek); playhead state flows back up via callbacks.
@@ -445,24 +418,6 @@ export function App({ onCloseProject }: AppProps) {
     overrides: shortcutOverrides,
   });
 
-  const cycleLocale = useCallback(() => {
-    const current = i18n.language as Locale;
-    const idx = SUPPORTED_LOCALES.indexOf(current);
-    const next =
-      SUPPORTED_LOCALES[(idx + 1) % SUPPORTED_LOCALES.length] ?? "en-US";
-    i18n.changeLanguage(next);
-  }, [i18n]);
-
-  const fpsLabel =
-    summary &&
-    (summary.composition.fps_den === 1
-      ? t("project.fps_simple", { fps: summary.composition.fps_num })
-      : t("project.fps_rational", {
-          fps: (
-            summary.composition.fps_num / summary.composition.fps_den
-          ).toFixed(2),
-        }));
-
   if (agentSession) {
     // Agent mode swap: backend's `agent_session:changed` event flipped
     // the slot to Some(...). Render the simplified shell instead of the
@@ -488,223 +443,50 @@ export function App({ onCloseProject }: AppProps) {
   return (
     <ShortcutBindingsProvider overrides={shortcutOverrides}>
     <div className="app">
-      {/* Frameless window: the header doubles as the title bar. The
-          drag-region attribute only fires when the mousedown target IS
-          the carrying element, so it sits on the header AND its
-          non-interactive children — menus and buttons stay clickable. */}
-      <header className="app-header" data-drag-region>
-        <div className="header-left" data-drag-region>
-          <h1 data-drag-region>{t("app.title")}</h1>
-          <MenuBar>
-            <Menu label={t("menu.file")}>
-              <MenuItem
-                actionId="importMedia"
-                label={t("actions.import_media")}
-                onSelect={importMediaFiles}
-                disabled={busy}
-              />
-              <MenuSeparator />
-              <MenuItem
-                actionId="save"
-                label={t("actions.save")}
-                onSelect={saveProjectNow}
-                disabled={busy}
-              />
-              <MenuItem
-                actionId="saveAs"
-                label={t("actions.save_as")}
-                onSelect={saveProject}
-                disabled={busy}
-              />
-              <MenuSeparator />
-              <MenuItem
-                actionId="closeProject"
-                label={t("actions.save_and_close")}
-                hint={t("actions.save_and_close_hint")}
-                onSelect={saveAndClose}
-                disabled={busy}
-              />
-            </Menu>
-
-            <Menu label={t("menu.edit")}>
-              <MenuItem
-                actionId="undo"
-                label={t("actions.undo")}
-                onSelect={() => run(projectUndo)}
-                disabled={busy || !summary?.history.can_undo}
-              />
-              <MenuItem
-                actionId="redo"
-                label={t("actions.redo")}
-                onSelect={() => run(projectRedo)}
-                disabled={busy || !summary?.history.can_redo}
-              />
-              <MenuSeparator />
-              <MenuItem
-                actionId="toggleBladeMode"
-                label={t("actions.toggle_blade_mode")}
-                onSelect={() => setBladeMode((v) => !v)}
-                disabled={busy || !summary || summary.layer_count === 0}
-              />
-            </Menu>
-
-            <ViewMenu />
-
-
-            <Menu label={t("menu.insert")}>
-              <MenuItem
-                label={t("actions.add_color_layer")}
-                onSelect={async () => {
-                  const layerId = await addColorLayer({ tStartUs: playheadTimeUs() });
-                  setPendingRevealLayerId(layerId);
-                  await refresh();
-                }}
-              />
-              <MenuItem
-                label={t("actions.add_text_layer")}
-                onSelect={async () => {
-                  const layerId = await addTextLayer({ tStartUs: playheadTimeUs() });
-                  setPendingRevealLayerId(layerId);
-                  await refresh();
-                }}
-              />
-              <MenuItem
-                label={t("actions.motifs")}
-                hint={t("actions.motifs_hint")}
-                onSelect={() => setMotifPickerOpen(true)}
-              />
-            </Menu>
-
-            <Menu label={t("menu.export")}>
-              <MenuItem
-                actionId="export"
-                label={t("actions.export")}
-                onSelect={() => setExportDialogOpen(true)}
-                disabled={
-                  busy ||
-                  exportState?.kind === "starting" ||
-                  exportState?.kind === "progress"
-                }
-              />
-            </Menu>
-
-            <Menu label={t("menu.tools")}>
-              <MenuItem
-                label={t("actions.connect_agent")}
-                hint={t("actions.connect_agent_hint")}
-                onSelect={() => setConnectOpen(true)}
-              />
-              <MenuSeparator />
-              <MenuItem
-                label={t("actions.settings")}
-                hint={t("actions.settings_hint")}
-                onSelect={() => setSettingsOpen(true)}
-              />
-            </Menu>
-          </MenuBar>
-        </div>
-        <div className="header-right" data-drag-region>
-          {pong !== "ok" && pong !== "…" && (
-            <span className="ping" data-drag-region>
-              {t("app.core_status", { status: pong })}
-            </span>
-          )}
-          <button
-            className="locale-toggle"
-            onClick={cycleLocale}
-            title={t("language.switch_label")}
-            aria-label={t("language.switch_label")}
-          >
-            <GlobeIcon className="globe-icon" size={14} aria-hidden />
-            <span className="locale-toggle-label">
-              {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
-                "English"}
-            </span>
-          </button>
-          <WindowControls />
-        </div>
-      </header>
+      <AppMenuBar
+        busy={busy}
+        pong={pong}
+        canUndo={!!summary?.history.can_undo}
+        canRedo={!!summary?.history.can_redo}
+        canBlade={!!summary && summary.layer_count > 0}
+        exportLocked={
+          busy ||
+          exportState?.kind === "starting" ||
+          exportState?.kind === "progress"
+        }
+        onImportMedia={importMediaFiles}
+        onSave={saveProjectNow}
+        onSaveAs={saveProject}
+        onSaveAndClose={saveAndClose}
+        onUndo={() => run(projectUndo)}
+        onRedo={() => run(projectRedo)}
+        onToggleBladeMode={() => setBladeMode((v) => !v)}
+        onAddColorLayer={async () => {
+          const layerId = await addColorLayer({ tStartUs: playheadTimeUs() });
+          setPendingRevealLayerId(layerId);
+          await refresh();
+        }}
+        onAddTextLayer={async () => {
+          const layerId = await addTextLayer({ tStartUs: playheadTimeUs() });
+          setPendingRevealLayerId(layerId);
+          await refresh();
+        }}
+        onOpenMotifPicker={() => setMotifPickerOpen(true)}
+        onOpenExport={() => setExportDialogOpen(true)}
+        onOpenConnect={() => setConnectOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
 
       <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
-        <section className="preview">
-          <div id="video-surface" className="video-surface">
-            <PreviewSurface
-              ref={previewRef}
-              hasContent={(summary?.layer_count ?? 0) > 0}
-              onTimeUpdate={setPlayheadTimeUs}
-              onPausedChange={setPaused}
-              previewDecodableOf={(id) => decodeProbeMemo.current.get(id) === "ok"}
-            />
-          </div>
-          <div className="preview-transport" role="toolbar" aria-label="Preview transport">
-            {tcEditUs !== null ? (
-              <AppTimecodeField
-                className="preview-timecode"
-                valueUs={tcEditUs}
-                fpsNum={summary?.composition.fps_num ?? 30}
-                fpsDen={summary?.composition.fps_den ?? 1}
-                autoFocus
-                ariaLabel={t("transport.timecode_label")}
-                onCommit={(us) => {
-                  setTcEditUs(null);
-                  void seekTo(us);
-                }}
-                onCancel={() => setTcEditUs(null)}
-              />
-            ) : (
-              <PlayheadTimecode
-                fpsNum={summary?.composition.fps_num ?? 30}
-                fpsDen={summary?.composition.fps_den ?? 1}
-                editHint={t("transport.timecode_edit_hint")}
-                onActivate={() => setTcEditUs(playheadTimeUs())}
-              />
-            )}
-            <div className="transport-buttons">
-              <button
-                onClick={() => seekTo(0)}
-                title={t("transport.to_start_hint")}
-                aria-label={t("transport.to_start_hint")}
-              >
-                <SkipBackIcon size={16} aria-hidden />
-              </button>
-              <button
-                onClick={togglePlay}
-                title={t("transport.play_pause_hint")}
-                aria-label={t("transport.play_pause_hint")}
-                disabled={(summary?.layer_count ?? 0) === 0}
-              >
-                {paused ? (
-                  <PlayIcon size={16} aria-hidden />
-                ) : (
-                  <PauseIcon size={16} aria-hidden />
-                )}
-              </button>
-              <button
-                onClick={() => seekTo(summary?.duration_us ?? 0)}
-                title={t("transport.to_end_hint")}
-                aria-label={t("transport.to_end_hint")}
-                disabled={!summary || summary.duration_us === 0}
-              >
-                <SkipForwardIcon size={16} aria-hidden />
-              </button>
-            </div>
-            <span className="preview-meta" aria-hidden="true">
-              {summary && (
-                <>
-                  {t("project.canvas", {
-                    width: summary.composition.width,
-                    height: summary.composition.height,
-                    fps: fpsLabel,
-                  })}
-                  {" · "}
-                  {t("project.duration", {
-                    value: formatTimecode(summary.duration_us, summary.composition.fps_num, summary.composition.fps_den),
-                  })}
-                </>
-              )}
-            </span>
-          </div>
-        </section>
+        <PreviewSection
+          previewRef={previewRef}
+          summary={summary}
+          paused={paused}
+          onPausedChange={setPaused}
+          onSeek={seekTo}
+          onTogglePlay={togglePlay}
+          previewDecodableOf={(id) => decodeProbeMemo.current.get(id) === "ok"}
+        />
 
         <section className="timeline">
           <Timeline
