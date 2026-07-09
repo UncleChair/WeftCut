@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   CHROMA_FRAG_GL,
-  CHROMA_VERT_GL,
   CHROMA_WGSL,
   CHROMA_UNIFORM_DEFAULTS,
 } from "./chromaKeySources";
@@ -17,10 +16,9 @@ describe("chromaKeySources", () => {
     }
   });
 
-  it("WGSL carries both entry points; GL vertex is the pixi filter vertex", () => {
+  it("WGSL carries both entry points", () => {
     expect(CHROMA_WGSL).toContain("mainVertex");
     expect(CHROMA_WGSL).toContain("mainFragment");
-    expect(CHROMA_VERT_GL).toContain("filterVertexPosition");
   });
 
   it("stays loadable by the f16 gate's strip-export eval (no TS-only syntax)", () => {

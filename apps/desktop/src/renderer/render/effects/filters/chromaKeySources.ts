@@ -11,39 +11,6 @@
 // it with fs.readFileSync + strip-`export ` + new Function. A unit test
 // replays that loading path; type annotations here break the gate.
 
-/// Pixi v8 default filter vertex (verbatim from
-/// node_modules/pixi.js/lib/filters/defaults/defaultFilter.vert.mjs) — the
-/// gate needs it exported because pixi does not export it publicly.
-export const CHROMA_VERT_GL = `
-in vec2 aPosition;
-out vec2 vTextureCoord;
-
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-
-vec4 filterVertexPosition( void )
-{
-    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-
-    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-    position.y = position.y * (2.0*uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-
-    return vec4(position, 0.0, 1.0);
-}
-
-vec2 filterTextureCoord( void )
-{
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
-
-void main(void)
-{
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-}
-`;
-
 // LANDMINE: the `#version 300 es` line is load-bearing, not decorative. Pixi's
 // GlProgram only checks the FRAGMENT text for that literal string to decide
 // isES300; without it, Pixi silently macro-collapses `in`/`out`/`finalColor`
@@ -284,7 +251,8 @@ fn mainFragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 `;
 
 /// Uniform defaults — single source of truth for the filter constructor
-/// (Task 2), the registry param defaults (Task 3), and the gate (Task 5).
+/// (Task 2) and the gate's seed values (Task 5). NOT the registry's param
+/// defaults (Task 3) — the registry hard-codes its own.
 export const CHROMA_UNIFORM_DEFAULTS = {
   uKey: [0, 1, 0],
   uBalance: 0.5,

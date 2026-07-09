@@ -3,10 +3,9 @@
 // is the pixi plumbing — dual program + uniform group + the scalar-param
 // glue the effect registry drives every frame.
 
-import { Filter, GlProgram, GpuProgram, UniformGroup } from "pixi.js";
+import { defaultFilterVert, Filter, GlProgram, GpuProgram, UniformGroup } from "pixi.js";
 import {
   CHROMA_FRAG_GL,
-  CHROMA_VERT_GL,
   CHROMA_WGSL,
   CHROMA_UNIFORM_DEFAULTS,
 } from "./chromaKeySources";
@@ -42,7 +41,7 @@ export class ChromaKeyFilter extends Filter {
       fragment: { source: CHROMA_WGSL, entryPoint: "mainFragment" },
     });
     const glProgram = GlProgram.from({
-      vertex: CHROMA_VERT_GL,
+      vertex: defaultFilterVert,
       fragment: CHROMA_FRAG_GL,
       name: "chromakey-filter",
     });

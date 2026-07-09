@@ -115,11 +115,11 @@ void main(){ finalColor=vec4(vUV.x,vUV.x,vUV.x,1.0); }`;
           const srcText = fsMod
             .readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/chromaKeySources.ts"), "utf8")
             .replace(/^export /gm, "");
-          const S = new Function(srcText + "\nreturn { CHROMA_VERT_GL, CHROMA_FRAG_GL, CHROMA_UNIFORM_DEFAULTS };")();
-          const { Filter, GlProgram, UniformGroup } = PIXI;
+          const S = new Function(srcText + "\nreturn { CHROMA_FRAG_GL, CHROMA_UNIFORM_DEFAULTS };")();
+          const { Filter, GlProgram, UniformGroup, defaultFilterVert } = PIXI;
           const cd = S.CHROMA_UNIFORM_DEFAULTS;
           const chromaFilter = new Filter({
-            glProgram: GlProgram.from({ vertex: S.CHROMA_VERT_GL, fragment: S.CHROMA_FRAG_GL, name: "chromakey-gate" }),
+            glProgram: GlProgram.from({ vertex: defaultFilterVert, fragment: S.CHROMA_FRAG_GL, name: "chromakey-gate" }),
             resources: {
               chromaUniforms: new UniformGroup({
                 uKey: { value: new Float32Array(cd.uKey), type: "vec3<f32>" },

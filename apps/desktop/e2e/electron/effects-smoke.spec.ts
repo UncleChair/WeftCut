@@ -444,7 +444,16 @@ test('effects: chromakey keys out a green color layer; viewMatte previews the ma
   const effectId = JSON.parse(JSON.stringify(addRes.content))[0].text as string
   expect(effectId.length).toBeGreaterThan(0)
 
-  const keyed = await sampleAt(page, 500_000, 600, 340)
+  // Poll a few rounds so the project:changed → setProject event has applied
+  // the new filter chain (mirrors the blur test above).
+  let keyed = await sampleAt(page, 500_000, 600, 340)
+  {
+    const deadline = Date.now() + 6_000
+    while (keyed.a !== 0 && Date.now() < deadline) {
+      await page.waitForTimeout(400)
+      keyed = await sampleAt(page, 500_000, 600, 340)
+    }
+  }
   expect(keyed.a).toBe(0) // green screen fully keyed at the corner
   expect(keyed.nonTransparent).toBeGreaterThan(0) // text survives
   expect(keyed.nonTransparent).toBeLessThan(FULL * 0.25)
@@ -454,7 +463,14 @@ test('effects: chromakey keys out a green color layer; viewMatte previews the ma
     layer_id: bgId, effect_id: effectId,
     patch: { params: { viewMatte: { mode: 'Static', value: 1 } } },
   } })
-  const matte = await sampleAt(page, 500_000, 600, 340)
+  let matte = await sampleAt(page, 500_000, 600, 340)
+  {
+    const deadline = Date.now() + 6_000
+    while (!(matte.a === 255 && matte.nonTransparent === FULL) && Date.now() < deadline) {
+      await page.waitForTimeout(400)
+      matte = await sampleAt(page, 500_000, 600, 340)
+    }
+  }
   expect(matte.a).toBe(255)
   expect(matte.r).toBeLessThan(10)
   expect(matte.g).toBeLessThan(10)
@@ -467,7 +483,14 @@ test('effects: chromakey keys out a green color layer; viewMatte previews the ma
   const s = await summary(page)
   const fx = effectsOf(s as any, bgId) as Array<{ kind: string }>
   expect(fx).toHaveLength(0)
-  const restored = await sampleAt(page, 500_000, 600, 340)
+  let restored = await sampleAt(page, 500_000, 600, 340)
+  {
+    const deadline = Date.now() + 6_000
+    while (restored.g <= 200 && Date.now() < deadline) {
+      await page.waitForTimeout(400)
+      restored = await sampleAt(page, 500_000, 600, 340)
+    }
+  }
   expect(restored.g).toBeGreaterThan(200)
 
   await app.close()
