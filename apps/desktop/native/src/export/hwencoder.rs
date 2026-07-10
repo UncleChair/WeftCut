@@ -109,6 +109,13 @@ pub fn tenbit_encode_args(encoder: &str) -> Vec<std::ffi::OsString> {
     }
 }
 
+/// Output pixel-format flags for an 8-bit encode. Pinned explicitly so libx264
+/// never auto-picks High 4:4:4 from an odd input and HW encoders convert
+/// deterministically.
+pub fn eightbit_encode_args(_encoder: &str) -> Vec<std::ffi::OsString> {
+    vec!["-pix_fmt".into(), "yuv420p".into()]
+}
+
 /// Per-codec cache of the chosen ffmpeg encoder name (HW if probed-good,
 /// else the software encoder). Held in `Backend` state so each export reads from
 /// memory.
@@ -280,5 +287,14 @@ mod tests {
         assert_eq!(HwFamily::Nvenc.encoder_for(TargetCodec::Av1), Some("av1_nvenc"));
         // VideoToolbox has no AV1 encoder.
         assert_eq!(HwFamily::VideoToolbox.encoder_for(TargetCodec::Av1), None);
+    }
+
+    #[test]
+    fn eightbit_args_pin_yuv420p() {
+        let s = |v: &Vec<std::ffi::OsString>| -> Vec<String> {
+            v.iter().map(|o| o.to_string_lossy().into_owned()).collect()
+        };
+        assert_eq!(s(&eightbit_encode_args("libx264")), vec!["-pix_fmt", "yuv420p"]);
+        assert_eq!(s(&eightbit_encode_args("hevc_nvenc")), vec!["-pix_fmt", "yuv420p"]);
     }
 }

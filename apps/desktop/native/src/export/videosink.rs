@@ -66,6 +66,15 @@ pub struct VideoSinkStartArgs {
     pub software: bool,
     /// Empty ⇒ no ffmpeg (byte-count only; used by tests). Non-empty ⇒ encode.
     pub output_path: String,
+    /// rawvideo input format the renderer packs: "yuv420p" | "yuv420p10le"
+    /// (E3 adds "yuv422p" | "yuv422p10le"). Defaults to the legacy 10-bit
+    /// format so pre-E2 callers keep working.
+    #[serde(default = "default_sink_pix_fmt")]
+    pub pix_fmt: String,
+}
+
+fn default_sink_pix_fmt() -> String {
+    "yuv420p10le".to_string()
 }
 
 /// Build the ffmpeg-stderr suffix appended to error messages (last ≤8 lines).
@@ -115,7 +124,7 @@ pub(crate) fn sink_cmd_args(
     let mut a: Vec<OsString> = vec![
         "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
         "-f".into(), "rawvideo".into(),
-        "-pix_fmt".into(), "yuv420p10le".into(),
+        "-pix_fmt".into(), OsString::from(&args.pix_fmt),
         "-video_size".into(), format!("{}x{}", args.width, args.height).into(),
         "-framerate".into(), format!("{}/{}", args.fps_num, args.fps_den).into(),
         "-i".into(), "-".into(),
@@ -125,7 +134,11 @@ pub(crate) fn sink_cmd_args(
         "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv".into(),
     ];
     a.extend(super::video_encode_args(encoder, args.bitrate, args.cbr, args.gop));
-    a.extend(super::hwencoder::tenbit_encode_args(encoder));
+    if args.pix_fmt.ends_with("10le") {
+        a.extend(super::hwencoder::tenbit_encode_args(encoder));
+    } else {
+        a.extend(super::hwencoder::eightbit_encode_args(encoder));
+    }
     a.extend::<Vec<OsString>>(vec![
         "-colorspace".into(), "bt709".into(), "-color_primaries".into(), "bt709".into(),
         "-color_trc".into(), "bt709".into(), "-color_range".into(), "tv".into(),
@@ -150,16 +163,24 @@ pub async fn export_video_sink_start(
     if !args.output_path.is_empty() {
         let codec = super::hwencoder::TargetCodec::parse(&args.codec)
             .ok_or_else(|| format!("unknown codec {}", args.codec))?;
-        if !matches!(
-            codec,
-            super::hwencoder::TargetCodec::Hevc | super::hwencoder::TargetCodec::Av1
-        ) {
+        let ten_bit = args.pix_fmt.ends_with("10le");
+        if !matches!(args.pix_fmt.as_str(), "yuv420p" | "yuv420p10le") {
+            return Err(format!("unsupported sink pix_fmt {}", args.pix_fmt));
+        }
+        if ten_bit
+            && !matches!(
+                codec,
+                super::hwencoder::TargetCodec::Hevc | super::hwencoder::TargetCodec::Av1
+            )
+        {
             return Err(format!("10-bit export supports hevc/av1, got {}", args.codec));
         }
         let encoder = if args.software {
             codec.software_encoder().to_string()
-        } else {
+        } else if ten_bit {
             hw.encoder_for_10bit(codec).await.as_ref().clone()
+        } else {
+            hw.encoder_for(codec).await.as_ref().clone()
         };
         let mut cmd = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path());
         cmd.no_console_window();
@@ -343,7 +364,43 @@ mod tests {
             width: 1920, height: 1080, fps_num: 30, fps_den: 1,
             codec: "hevc".into(), bitrate: 8_000_000, cbr: false, gop: 30,
             software: true, output_path: "C:/tmp/out.mp4".into(),
+            pix_fmt: "yuv420p10le".into(),
         }
+    }
+
+    fn args_8bit(codec: &str) -> VideoSinkStartArgs {
+        VideoSinkStartArgs {
+            width: 1920, height: 1080, fps_num: 30, fps_den: 1,
+            codec: codec.into(), bitrate: 8_000_000, cbr: false, gop: 30,
+            software: true, output_path: "C:/tmp/out.mp4".into(),
+            pix_fmt: "yuv420p".into(),
+        }
+    }
+
+    #[test]
+    fn sink_cmd_args_8bit_h264_shape() {
+        let argv = sink_cmd_args(&args_8bit("h264"), super::super::TargetCodec::H264, "libx264");
+        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        // input is 8-bit rawvideo; output pix_fmt is yuv420p; NO main10 profile.
+        let pf: Vec<usize> = s.iter().enumerate()
+            .filter(|(_, a)| *a == "-pix_fmt").map(|(i, _)| i).collect();
+        assert_eq!(pf.len(), 2, "input + output pix_fmt: {s:?}");
+        assert_eq!(s[pf[0] + 1], "yuv420p");
+        assert_eq!(s[pf[1] + 1], "yuv420p");
+        assert!(!s.iter().any(|a| a == "main10"));
+        // color tags apply at 8-bit too (the point of the native exit).
+        assert!(s.windows(2).any(|w| w[0] == "-color_range" && w[1] == "tv"));
+        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "libx264"));
+    }
+
+    #[test]
+    fn tenbit_pix_fmt_still_defaults_and_gates() {
+        // serde default keeps old TS callers valid.
+        let v: VideoSinkStartArgs =
+            serde_json::from_str(r#"{"width":64,"height":64,"fpsNum":30,"fpsDen":1,
+              "codec":"hevc","bitrate":0,"cbr":false,"gop":30,"software":true,
+              "outputPath":""}"#).unwrap();
+        assert_eq!(v.pix_fmt, "yuv420p10le");
     }
 
     // Locks the exact argv the inline builder produced before extraction.
@@ -390,6 +447,7 @@ mod tests {
                 gop: 30,
                 software: false,
                 output_path: String::new(),
+                pix_fmt: "yuv420p10le".into(),
             },
         )
         .await

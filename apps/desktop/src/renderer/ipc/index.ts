@@ -1435,6 +1435,10 @@ export interface VideoSinkStartArgs {
   gop: number;
   software: boolean;
   outputPath: string;
+  /// rawvideo format the worker packs: "yuv420p" | "yuv420p10le"
+  /// (E3: "yuv422p" | "yuv422p10le"). Mirrors videosink.rs (serde default
+  /// keeps omission = yuv420p10le, but callers should always set it).
+  pixFmt: string;
 }
 
 /// Start a native-encode video sink.

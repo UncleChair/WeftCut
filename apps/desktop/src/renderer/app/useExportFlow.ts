@@ -538,6 +538,7 @@ export function useExportFlow(deps: {
           gop: gopFrames(settings.keyframeIntervalSec, outFps),
           software: settings.hwAccel === "software",
           outputPath: tempVideoPath,
+          pixFmt: "yuv420p10le",
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
