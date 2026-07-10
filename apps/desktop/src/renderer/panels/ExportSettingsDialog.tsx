@@ -660,6 +660,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                         : t("export_dialog.path_webcodecs")}
                 </p>
 
+                {!isIntermediateCodec(settings.codec) && (
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.bit_depth")}
@@ -681,6 +682,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     ]}
                   />
                 </div>
+                )}
                 {hasTenBitSource && settings.bitDepth === 8 && (
                   <p className="settings-blurb">
                     {t("export_dialog.bit_depth_hint")}
