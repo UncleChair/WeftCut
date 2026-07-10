@@ -663,8 +663,12 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                       ]} />
                   </div>
                 )}
+                {/* Only an explicit WebCodecs pin exports via WebCodecs
+                    (resolveEncodeTarget: auto always resolves native, and
+                    intermediates/10-bit are native-only) — everything else
+                    shows the native wording. */}
                 <p className="settings-blurb">
-                  {settings.encoderEngine === "native" || isIntermediateCodec(settings.codec) || settings.bitDepth === 10
+                  {settings.encoderEngine !== "webcodecs"
                     ? t("export_dialog.path_native")
                     : webcodecsOk === null
                       ? t("export_dialog.checking_codec")

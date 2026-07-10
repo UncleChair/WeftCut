@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { probeEncoderSupported } from "./exportCodecProbe";
+import { probeEncoderSupported, smokeEncode } from "./exportCodecProbe";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -31,5 +31,21 @@ describe("probeEncoderSupported", () => {
     const isConfigSupported = vi.fn().mockRejectedValue(new Error("nope"));
     vi.stubGlobal("VideoEncoder", { isConfigSupported });
     expect(await probeEncoderSupported("hevc", 1920, 1080, 30)).toBe(false);
+  });
+});
+
+// smokeEncode backs three live call sites: the export flow's explicit-pin
+// probe + consent-gated fallback (useExportFlow) and the dialog's support
+// badge (ExportSettingsDialog). Ported from the deleted resolveEncodePath
+// tests — same intent, calling the primitive directly.
+describe("smokeEncode", () => {
+  it("short-circuits H.264 to true without touching VideoEncoder", async () => {
+    vi.stubGlobal("VideoEncoder", undefined);
+    expect(await smokeEncode("h264", 1920, 1080, 30)).toBe(true);
+  });
+  it("returns false for AV1/HEVC when VideoEncoder is unavailable", async () => {
+    vi.stubGlobal("VideoEncoder", undefined);
+    expect(await smokeEncode("hevc", 1920, 1080, 30)).toBe(false);
+    expect(await smokeEncode("av1", 1920, 1080, 30)).toBe(false);
   });
 });
