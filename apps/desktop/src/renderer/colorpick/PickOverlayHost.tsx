@@ -111,8 +111,10 @@ function PickOverlay({ session }: { session: PickSession }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return;
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         session.settle(null);
       } else if (
         (e.key === "s" || e.key === "S") &&
