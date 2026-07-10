@@ -130,6 +130,10 @@ describe("mergeSettings", () => {
   it("returns defaults for null", () => {
     expect(mergeSettings(null)).toEqual(DEFAULT_EXPORT_SETTINGS);
   });
+  it("back-fills encoderEngine for old blobs", () => {
+    const merged = mergeSettings({ codec: "h264" } as Partial<ExportSettings>);
+    expect(merged.encoderEngine).toBe("auto");
+  });
 });
 
 describe("default-export baseline", () => {

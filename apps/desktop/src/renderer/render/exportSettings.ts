@@ -6,6 +6,10 @@ export type CodecId = "h264" | "av1" | "hevc";
 export type BitDepth = 8 | 10;
 export type QualityPreset = "low" | "medium" | "high" | "custom";
 export type RateMode = "vbr" | "cbr";
+/// Which encode engine writes the video stream. "auto" resolves per machine
+/// (E2: legacy behavior; E4: native-first). "native" = the ffmpeg sink;
+/// "webcodecs" = the in-renderer VideoEncoder + fMP4 path.
+export type EncoderEngine = "auto" | "native" | "webcodecs";
 /// Output container. H.264/HEVC can target all three; AV1+MOV is rejected by
 /// ffmpeg's MOV muxer, so AV1 is limited to MP4/MKV. WebM is deferred.
 export type Container = "mp4" | "mov" | "mkv";
@@ -63,6 +67,8 @@ export interface ExportSettings {
   /// per bitrate and bit-reproducible across machines. Not a color setting:
   /// color is governed by the colorspace tags + the conformance gate either way.
   hwAccel: "auto" | "software";
+  /// Encode engine. Persisted per project; "auto" re-resolves on each machine.
+  encoderEngine: EncoderEngine;
   /// Output bit depth. 10 runs the f16/WebGL2 + native-encode pipeline
   /// (HEVC Main10 / AV1 10-bit); 8 uses the standard 8-bit pipeline.
   /// H.264 output is always 8 (Hi10P output compatibility is poor).
@@ -84,6 +90,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   rateMode: "vbr",
   keyframeIntervalSec: 1,
   hwAccel: "auto",
+  encoderEngine: "auto",
   bitDepth: 8,
   container: "mp4",
   audio: DEFAULT_AUDIO_SETTINGS,

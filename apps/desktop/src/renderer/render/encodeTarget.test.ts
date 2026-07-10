@@ -43,3 +43,23 @@ describe("resolveEncodeTarget (E1: mirrors today's three branches)", () => {
     expect(needsEncoderProbe(s({ codec: "hevc" }))).toBe(true);
   });
 });
+
+describe("encoderEngine pins (E2)", () => {
+  it("native pin → native sink with bit-depth-matched pixFmt", () => {
+    expect(resolveEncodeTarget(s({ codec: "h264", encoderEngine: "native" }), true))
+      .toEqual({ engine: "native", pixFmt: "yuv420p" });
+    expect(resolveEncodeTarget(s({ codec: "hevc", bitDepth: 10, encoderEngine: "native" }), true))
+      .toEqual({ engine: "native", pixFmt: "yuv420p10le" });
+    expect(needsEncoderProbe(s({ codec: "hevc", encoderEngine: "native" }))).toBe(false);
+  });
+
+  it("webcodecs pin keeps legacy probe behavior (mezzanine until E4)", () => {
+    expect(resolveEncodeTarget(s({ codec: "hevc", encoderEngine: "webcodecs" }), false))
+      .toEqual({ engine: "webcodecs", workerCodec: "h264", transcodeAfter: true });
+  });
+
+  it("auto is unchanged legacy behavior in E2", () => {
+    expect(resolveEncodeTarget(s({ codec: "av1", encoderEngine: "auto" }), true).engine)
+      .toBe("webcodecs");
+  });
+});

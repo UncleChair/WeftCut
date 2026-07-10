@@ -23,9 +23,16 @@ export interface NativeTarget {
 
 export type EncodeTarget = WebCodecsTarget | NativeTarget;
 
-/// The 10-bit native route needs no WebCodecs smoke-encode; everything else
-/// consults it. Callers skip the (async) probe when this is false.
+/// rawvideo format the native sink consumes for these settings. E3 extends
+/// this for the intermediate codecs (ProRes → yuv422p10le, DNxHR → yuv422p).
+export function nativePixFmtFor(settings: ExportSettings): NativePixFmt {
+  return settings.bitDepth === 10 ? "yuv420p10le" : "yuv420p";
+}
+
+/// True when resolution depends on the WebCodecs smoke-encode. Pinned-native
+/// and the 10-bit native route never consult it.
 export function needsEncoderProbe(settings: ExportSettings): boolean {
+  if (settings.encoderEngine === "native") return false;
   return !(settings.bitDepth === 10 && settings.codec !== "h264");
 }
 
@@ -34,8 +41,10 @@ export function resolveEncodeTarget(
   smokeOk: boolean,
 ): EncodeTarget {
   if (!needsEncoderProbe(settings)) {
-    return { engine: "native", pixFmt: "yuv420p10le" };
+    return { engine: "native", pixFmt: nativePixFmtFor(settings) };
   }
+  // "webcodecs" pin and "auto" share the legacy probe behavior until E4
+  // flips auto to native-first (the mezzanine still backstops smoke failures).
   if (smokeOk) {
     return { engine: "webcodecs", workerCodec: settings.codec, transcodeAfter: false };
   }
