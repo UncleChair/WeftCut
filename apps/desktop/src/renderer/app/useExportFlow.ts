@@ -28,8 +28,11 @@ import {
   type ExportSettings,
   type WebCodecsCodecId,
   codecString,
+  compositeBitDepth,
   computeBitrate,
+  defaultCrf,
   gopFrames,
+  isIntermediateCodec,
   mezzanineBitrate,
   resolveOutputDims,
 } from "../render/exportSettings";
@@ -447,7 +450,9 @@ export function useExportFlow(deps: {
     // can hit them whether or not the respective stage completed.
     const tempBase = await tempDir();
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.mp4`);
+    const tempVideoExt =
+      settings.codec === "prores" || settings.codec === "dnxhr" ? "mov" : "mp4";
+    const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.${tempVideoExt}`);
     const audioExt = settings.audio.codec === "opus" ? "mka" : "m4a";
     const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.${audioExt}`);
 
@@ -552,7 +557,14 @@ export function useExportFlow(deps: {
           bitrate: computeBitrate(settings, dims.width, dims.height, outFps),
           cbr: settings.rateMode === "cbr",
           gop: gopFrames(settings.keyframeIntervalSec, outFps),
-          software: settings.hwAccel === "software",
+          software:
+            settings.hwAccel === "software" || settings.rateMode === "quality",
+          ...(settings.rateMode === "quality" && !isIntermediateCodec(settings.codec)
+            ? { crf: settings.crf ?? defaultCrf(settings.codec) }
+            : {}),
+          preset: settings.preset,
+          ...(settings.codec === "prores" ? { profile: settings.proresProfile } : {}),
+          ...(settings.codec === "dnxhr" ? { profile: settings.dnxhrProfile } : {}),
           outputPath: tempVideoPath,
         });
       } catch (e) {
@@ -646,7 +658,7 @@ export function useExportFlow(deps: {
         keyframeIntervalSec: settings.keyframeIntervalSec,
         writeChunk,
         motifFrames,
-        bitDepth: settings.bitDepth === 10 ? 10 : 8,
+        bitDepth: compositeBitDepth(settings),
         ...(nativeSink ? { nativeSinkPixFmt: sinkTarget!.pixFmt } : {}),
       });
     } catch (e) {
