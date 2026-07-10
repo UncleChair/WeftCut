@@ -472,9 +472,12 @@ buffer pool and false-negative a decodable source (ADR 0013). See ADRs
 how the Worker's composited frames leave the process: a `NativeTarget { pixFmt }`
 or a `WebCodecsTarget { workerCodec }`. `auto` — the default — always resolves
 native, for every codec and bit depth; WebCodecs is reached only by an explicit
-user pin, and only for an 8-bit delivery codec (H.264/HEVC/AV1) — the dialog
-snaps a WebCodecs pin back to `auto` the moment the user picks an intermediate
-codec or 10-bit, since WebCodecs can emit neither. If the native sink fails to
+user pin, and only for an 8-bit delivery codec (H.264/HEVC/AV1) — WebCodecs
+can emit neither an intermediate codec nor 10-bit, so the dialog disables the
+conflicting options (the WebCodecs engine choice while an intermediate or
+10-bit is selected; the intermediate codecs under a WebCodecs pin), and
+`mergeSettings` snaps a stale or hand-edited saved blob that holds such a
+combo back to `auto` on load. If the native sink fails to
 start under `auto`, and the target was an 8-bit non-intermediate to begin with,
 the user gets a consent-gated retry on WebCodecs; a pinned-native, 10-bit, or
 intermediate failure, or a declined retry, is a hard error instead. The engine
@@ -534,10 +537,12 @@ tags, ProRes, and DNxHR through the real app and checks the resulting codec
 shape, container, and (for the 10-bit case) distinct-step counts above the
 8-bit ceiling at the analyzer's gradient-row meter.
 
-Cross-reference: ADR 0022 records the 10-bit decision and its probe-backed
-rationale (WebGL2 stock f16, the native-IPC transport, copyTo ingest, deferred
-HDR); ADR 0021 describes the color model this exit's frame+stream tagging
-realizes for export.
+Cross-reference: ADR 0022 records the f16-composite + native-encode-exit
+decision and its probe-backed rationale (WebGL2 stock f16, copyTo ingest,
+deferred HDR) — its transport section is superseded;
+[`export-ipc-transport.md`](export-ipc-transport.md) describes the current
+frame transport. ADR 0021 describes the color model this exit's frame+stream
+tagging realizes for export.
 
 ### Backpressure
 
