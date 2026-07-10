@@ -19,6 +19,7 @@ import {
   playheadTimeUs,
   setPlayheadTimeUs,
 } from "./state/playheadStore";
+import { setSelectedLayerId, useSelectedLayerId } from "./state/selectionStore";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
@@ -75,7 +76,7 @@ export function App({ onCloseProject }: AppProps) {
   // Write-only: error text is surfaced through the status bar / log (see the
   // setError call sites), not rendered here, so we keep only the setter.
   const [, setError] = useState<string | null>(null);
-  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const selectedLayerId = useSelectedLayerId();
   // Blade-tool mode: pressing `C` toggles it; clicks on layers in the
   // timeline split the layer at the click point instead of selecting it.
   // Exits on a second `C` press or `Esc`. Living at App level so the
@@ -107,6 +108,7 @@ export function App({ onCloseProject }: AppProps) {
   // (the pre-store `useState(0)` reset with the App mount).
   useEffect(() => {
     setPlayheadTimeUs(0);
+    setSelectedLayerId(null);
   }, []);
 
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
