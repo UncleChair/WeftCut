@@ -19,10 +19,15 @@ import {
   type BitDepth,
   type CodecId,
   type Container,
+  type DnxhrProfile,
+  type EncoderEngine,
   type ExportSettings,
+  type ProresProfile,
   type QualityPreset,
   type RateMode,
+  type SpeedPreset,
   containersForCodec,
+  defaultCrf,
   exportIncludesVideo,
   exportIncludesAudio,
   exportOutputExtension,
@@ -543,6 +548,28 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
+                    {t("export_dialog.encoder_engine")}
+                  </span>
+                  <AppSelect
+                    className="export-select"
+                    value={settings.encoderEngine}
+                    onValueChange={(v) =>
+                      patch({ encoderEngine: v as EncoderEngine })
+                    }
+                    options={[
+                      { value: "auto", label: t("export_dialog.engine_auto") },
+                      { value: "native", label: t("export_dialog.engine_native") },
+                      {
+                        value: "webcodecs",
+                        label: t("export_dialog.engine_webcodecs"),
+                        disabled: isIntermediateCodec(settings.codec) || settings.bitDepth === 10,
+                      },
+                    ]}
+                  />
+                </div>
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
                     {t("export_dialog.codec")}
                   </span>
                   <AppSelect
@@ -550,39 +577,88 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     value={settings.codec}
                     onValueChange={(v) => {
                       const codec = v as CodecId;
-                      // Snap bitDepth: H.264 cannot produce Hi10P output.
-                      const bitDepth: BitDepth =
-                        codec === "h264"
+                      // Snap bitDepth: intermediates imply depth by profile
+                      // (ProRes=10, DNxHR=8); H.264 cannot produce Hi10P
+                      // output; other delivery codecs keep the existing
+                      // smart-default (auto-10 on a 10-bit-capable source,
+                      // once, until the user touches the selector).
+                      const bitDepth: BitDepth = isIntermediateCodec(codec)
+                        ? codec === "prores"
+                          ? 10
+                          : 8
+                        : codec === "h264"
                           ? 8
                           : !userTouchedBitDepth.current && hasTenBitSource
                             ? 10
                             : settings.bitDepth;
-                      if (!isCodecContainerValid(codec, settings.container)) {
-                        // Falls back to MP4 → Opus (MKV-only) must also reset.
-                        const audio = { ...settings.audio, codec: "aac" as AudioCodecId };
-                        patch({ codec, container: "mp4", audio, bitDepth });
-                      } else {
-                        patch({ codec, bitDepth });
-                      }
+                      const container: Container = isIntermediateCodec(codec)
+                        ? "mov"
+                        : !isCodecContainerValid(codec, settings.container)
+                          ? containersForCodec(codec)[0]!
+                          : settings.container;
+                      // Falls back to MP4/MOV → Opus (MKV-only) must also reset.
+                      const audio =
+                        container !== settings.container &&
+                        !isAudioCodecContainerValid(settings.audio.codec, container)
+                          ? { ...settings.audio, codec: "aac" as AudioCodecId }
+                          : settings.audio;
+                      patch({
+                        codec,
+                        bitDepth,
+                        container,
+                        audio,
+                        ...(isIntermediateCodec(codec)
+                          ? { rateMode: "vbr" as RateMode }
+                          : {}),
+                      });
                     }}
                     options={[
                       { value: "h264", label: "H.264" },
                       { value: "av1", label: "AV1" },
                       { value: "hevc", label: "HEVC" },
+                      {
+                        value: "prores",
+                        label: "ProRes 422",
+                        disabled: settings.encoderEngine === "webcodecs",
+                      },
+                      {
+                        value: "dnxhr",
+                        label: "DNxHR",
+                        disabled: settings.encoderEngine === "webcodecs",
+                      },
                     ]}
                   />
                 </div>
-                {encodePath === null ? (
-                  <p className="settings-blurb">
-                    {t("export_dialog.checking_codec")}
-                  </p>
-                ) : (
-                  <p className="settings-blurb">
-                    {encodePath === "ffmpeg"
-                      ? t("export_dialog.path_ffmpeg")
-                      : t("export_dialog.path_webcodecs")}
-                  </p>
+                {settings.codec === "prores" && (
+                  <div className="export-row">
+                    <span className="settings-toggle-label">{t("export_dialog.prores_profile")}</span>
+                    <AppSelect className="export-select" value={settings.proresProfile}
+                      onValueChange={(v) => patch({ proresProfile: v as ProresProfile })}
+                      options={[
+                        { value: "proxy", label: "Proxy" }, { value: "lt", label: "LT" },
+                        { value: "422", label: "422" }, { value: "hq", label: "422 HQ" },
+                      ]} />
+                  </div>
                 )}
+                {settings.codec === "dnxhr" && (
+                  <div className="export-row">
+                    <span className="settings-toggle-label">{t("export_dialog.dnxhr_profile")}</span>
+                    <AppSelect className="export-select" value={settings.dnxhrProfile}
+                      onValueChange={(v) => patch({ dnxhrProfile: v as DnxhrProfile })}
+                      options={[
+                        { value: "lb", label: "LB" }, { value: "sq", label: "SQ" }, { value: "hq", label: "HQ" },
+                      ]} />
+                  </div>
+                )}
+                <p className="settings-blurb">
+                  {settings.encoderEngine === "native" || isIntermediateCodec(settings.codec) || settings.bitDepth === 10
+                    ? t("export_dialog.path_native")
+                    : encodePath === null
+                      ? t("export_dialog.checking_codec")
+                      : encodePath === "ffmpeg"
+                        ? t("export_dialog.path_ffmpeg")
+                        : t("export_dialog.path_webcodecs")}
+                </p>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
@@ -616,6 +692,8 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                   </p>
                 )}
 
+                {!isIntermediateCodec(settings.codec) && (
+                  <>
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.quality")}
@@ -668,9 +746,26 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     options={[
                       { value: "vbr", label: "VBR" },
                       { value: "cbr", label: "CBR" },
+                      {
+                        value: "quality", label: t("export_dialog.rate_quality"),
+                        disabled: settings.encoderEngine === "webcodecs" || isIntermediateCodec(settings.codec),
+                      },
                     ]}
                   />
                 </div>
+                {settings.rateMode === "quality" && !isIntermediateCodec(settings.codec) && (
+                  <div className="export-row">
+                    <span className="settings-toggle-label">{t("export_dialog.crf")}</span>
+                    <AppNumberField
+                      value={settings.crf ?? defaultCrf(settings.codec)}
+                      min={0} max={51} step={1} align="center"
+                      className="settings-input-narrow"
+                      ariaLabel={t("export_dialog.crf")}
+                      onValueChange={(v) => patch({ crf: Math.round(v) })}
+                      onClear={() => patch({ crf: null })}
+                    />
+                  </div>
+                )}
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
@@ -708,6 +803,20 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     ]}
                   />
                 </div>
+                  </>
+                )}
+                {!isIntermediateCodec(settings.codec) && (
+                  <div className="export-row">
+                    <span className="settings-toggle-label">{t("export_dialog.speed_preset")}</span>
+                    <AppSelect className="export-select" value={settings.preset}
+                      onValueChange={(v) => patch({ preset: v as SpeedPreset })}
+                      options={[
+                        { value: "fast", label: t("export_dialog.preset_fast") },
+                        { value: "medium", label: t("export_dialog.preset_medium") },
+                        { value: "slow", label: t("export_dialog.preset_slow") },
+                      ]} />
+                  </div>
+                )}
                   </>
                 )}
               </div>
