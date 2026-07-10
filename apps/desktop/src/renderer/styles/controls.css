@@ -290,6 +290,33 @@
   cursor: not-allowed;
 }
 
+/* Swatch + eyedropper pairing (AppColorField withEyeDropper). */
+.app-color-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.app-color-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.app-color-pick:hover {
+  color: var(--foreground);
+}
+.app-color-pick:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Timecode field: one .app-input-skinned box holding four borderless numeric
  * segments with static ":" separators. Content-width (overrides .app-input's
  * width:100%); the box shows the focus ring via :focus-within. */
