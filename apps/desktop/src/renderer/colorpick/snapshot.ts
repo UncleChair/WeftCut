@@ -10,7 +10,7 @@ export interface WindowSnapshot {
 
 export async function captureWindowSnapshot(): Promise<WindowSnapshot> {
   const png = await window.api.window.captureSnapshot();
-  const bmp = await createImageBitmap(new Blob([png as unknown as BlobPart], { type: "image/png" }));
+  const bmp = await createImageBitmap(new Blob([png], { type: "image/png" }));
   const w = bmp.width;
   const h = bmp.height;
   const canvas = new OffscreenCanvas(w, h);
