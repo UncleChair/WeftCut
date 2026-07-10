@@ -1,25 +1,12 @@
-//! Export commands — audio-only mix/encode, final mux/transcode, and the
+//! Export commands — audio-only mix/encode, final mux, and the
 //! export-audio conform gate. Gated behind `export`. The video-sink commands
 //! live in `export::videosink` (native-IPC 10-bit frame path) and are dispatched
 //! directly — they need only the two Backend stores, not a project snapshot.
 
 use std::path::PathBuf;
 
-use crate::export::{self, AudioEncodeSpec, TargetCodec};
+use crate::export::{self, AudioEncodeSpec};
 use crate::napi_backend::Backend;
-
-/// Transcode spec for the ffmpeg export path. Absent ⇒ stream-copy mux.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscodeSpec {
-    pub video_codec: String, // "h264" | "hevc" | "av1" | "vp9"
-    pub bitrate: u64,
-    pub cbr: bool,
-    pub duration_us: i64,
-    pub gop: u64,
-    #[serde(default)]
-    pub software: bool,
-}
 
 /// Audio-only export → `output_path` (.m4a AAC / .mka Opus). The mix is Rust
 /// (sample-accurate over conform PCM); ffmpeg is the encode tail. Emits no
@@ -45,16 +32,14 @@ pub async fn export_project_audio_only(
 
 /// Mux `video_path` (+ `audio_path` if it exists on disk) into `output_path`.
 /// `audio_path` is always passed by the caller; a nonexistent file means
-/// video-only (no audio track). With no `transcode`, stream-copies (`-c copy`);
-/// with one, re-encodes the video to the target codec (HW-first via the cached
-/// probe, software fallback) and emits `export:transcode_progress`. Container =
-/// the output extension.
+/// video-only (no audio track). Always a stream-copy mux (`-c copy`) — every
+/// export path (WebCodecs direct-encode, or the native-encode video sink)
+/// already writes `video_path` in its final target codec. Container = the
+/// output extension.
 pub async fn mux_export(
-    backend: &Backend,
     video_path: String,
     audio_path: String,
     output_path: String,
-    transcode: Option<TranscodeSpec>,
 ) -> Result<(), String> {
     let video = PathBuf::from(video_path);
     let audio = PathBuf::from(audio_path);
@@ -65,34 +50,9 @@ pub async fn mux_export(
                 .map_err(|e| format!("create output dir {}: {e}", parent.display()))?;
         }
     }
-    match transcode {
-        None => export::mux_to_file(&video, &audio, &out)
-            .await
-            .map_err(|e| format!("{e:#}")),
-        Some(spec) => {
-            let codec = TargetCodec::parse(&spec.video_codec)
-                .ok_or_else(|| format!("unknown codec {}", spec.video_codec))?;
-            let encoder: String = if spec.software {
-                codec.software_encoder().to_string()
-            } else {
-                (*backend.hw_encoder.encoder_for(codec).await).clone()
-            };
-            export::transcode_and_mux(
-                &backend.events,
-                &encoder,
-                codec,
-                spec.bitrate,
-                spec.cbr,
-                spec.gop,
-                spec.duration_us,
-                &video,
-                &audio,
-                &out,
-            )
-            .await
-            .map_err(|e| format!("{e:#}"))
-        }
-    }
+    export::mux_to_file(&video, &audio, &out)
+        .await
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Export-readiness audio gate: media ids of audible in-window audio layers

@@ -274,7 +274,6 @@ const enUS = {
   export: {
     title: "Export",
     phase_encode: "Encoding",
-    phase_transcode: "Transcoding",
     starting: "Starting export…",
     preparing:
       "Preparing optimized media for {{labels}} — export will start automatically.",
@@ -325,7 +324,6 @@ const enUS = {
     engine_webcodecs: "WebCodecs",
     path_native: "Encoder: native FFmpeg (full control, explicit color tags)",
     path_webcodecs: "Encoder: WebCodecs (hardware if available)",
-    path_ffmpeg: "Encoder: ffmpeg transcode (slower)",
     checking_codec: "Checking codec support…",
     codec_unsupported:
       "{{codec}} can't be encoded on this machine — pick another codec.",

@@ -402,25 +402,3 @@ export function clampExportRange(
   if (hi <= lo) return { startUs: 0, endUs: durationUs };
   return { startUs: lo, endUs: hi };
 }
-
-/// H.264 bitrate for the ffmpeg-path mezzanine. The worker WebCodecs-encodes
-/// this; ffmpeg then transcodes it to the target codec. The mezzanine should be
-/// a clean source, but not larger than a normal H.264 export of the same
-/// quality — that gives the codec-discounted final target enough headroom
-/// without inflating temp-file IO or transcode cost. A >=1.5x floor over the
-/// final target covers the custom-bitrate case.
-export function mezzanineBitrate(
-  settings: ExportSettings,
-  width: number,
-  height: number,
-  fps: number,
-): number {
-  const h264Equiv = computeBitrate(
-    { ...settings, codec: "h264" },
-    width,
-    height,
-    fps,
-  );
-  const finalTarget = computeBitrate(settings, width, height, fps);
-  return Math.max(h264Equiv, Math.round(finalTarget * 1.5));
-}

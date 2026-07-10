@@ -1,10 +1,11 @@
-//! Audio-only export + final mux/transcode. The Pixi/WebCodecs worker streams
+//! Audio-only export + final mux. The Pixi/WebCodecs worker streams
 //! the video temp file; Rust fills in an optional audio temp file and ffmpeg
 //! writes the user's output.
 //!
-//! This module owns only the audio-only export and the final mux/transcode
-//! tail. Video composition + encode is the renderer's Pixi/WebCodecs worker;
-//! ffmpeg here never composites frames.
+//! This module owns only the audio-only export and the final mux
+//! tail (always a stream-copy — see `mux_to_file`). Video composition +
+//! encode is the renderer's Pixi/WebCodecs worker or the native-encode video
+//! sink (`videosink`); ffmpeg here never composites or re-encodes frames.
 
 mod hwencoder;
 pub use hwencoder::{HwEncoderCache, TargetCodec};
@@ -12,12 +13,10 @@ pub mod videosink;
 
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 
-use crate::events::EventSink;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -55,8 +54,8 @@ fn audio_encode_args(codec: &str, bitrate_bps: u64) -> Vec<std::ffi::OsString> {
 /// Opus `.mka`) containing the project's mixed audio. The mix itself happens
 /// in Rust (`audio::mix`, sample-accurate over conform PCM); ffmpeg's role is
 /// reduced to the encode tail — `alimiter` ceiling + AAC/Opus encode. The
-/// PixiJS export Worker streams the temp video file; `mux_to_file` /
-/// `transcode_and_mux` combine them. ADR 0019.
+/// PixiJS export Worker streams the temp video file; `mux_to_file` combines
+/// them. ADR 0019.
 pub async fn export_audio_only(
     project: &Project,
     output: &Path,
@@ -284,106 +283,6 @@ pub async fn mux_to_file(
     Ok(())
 }
 
-/// napi event emitted while ffmpeg transcodes the video (ffmpeg-path codecs
-/// like HEVC). Payload: an `f64` percent in 0.0..=1.0.
-pub const EVENT_TRANSCODE_PROGRESS: &str = "export:transcode_progress";
-
-/// Transcode `video_path` (the WebCodecs H.264 mezzanine) to `encoder` and
-/// mux with `audio_path` into `output` (container = output extension). Parses
-/// `-progress pipe:1` and emits `EVENT_TRANSCODE_PROGRESS` against `duration_us`.
-pub async fn transcode_and_mux(
-    events: &Arc<dyn EventSink>,
-    encoder: &str,
-    codec: TargetCodec,
-    bitrate: u64,
-    cbr: bool,
-    gop: u64,
-    duration_us: i64,
-    video_path: &Path,
-    audio_path: &Path,
-    output: &Path,
-) -> Result<()> {
-    if !ffmpeg_is_installed() {
-        anyhow::bail!("ffmpeg is not installed");
-    }
-    let has_audio = audio_path.exists();
-    let mut cmd = Command::new(ffmpeg_path());
-    cmd.no_console_window();
-    cmd.arg("-y").arg("-hide_banner").arg("-nostats");
-    cmd.arg("-i").arg(video_path);
-    if has_audio {
-        cmd.arg("-i").arg(audio_path);
-    }
-    for arg in video_encode_args(encoder, bitrate, cbr, gop) {
-        cmd.arg(arg);
-    }
-    // HEVC in MP4/MOV must carry the `hvc1` fourcc; ffmpeg defaults to `hev1`,
-    // which Apple/Premiere/Chromium/Electron refuse to play.
-    for arg in hvc1_tag_args(codec, output) {
-        cmd.arg(arg);
-    }
-    // Audio is already encoded by export_audio_only; stream-copy it.
-    if has_audio {
-        cmd.args(["-c:a", "copy"]);
-    }
-    // Machine-readable progress on stdout.
-    cmd.args(["-progress", "pipe:1"]);
-    cmd.arg(output);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    info!(
-        "ffmpeg transcode ({encoder}): {} -> {}",
-        video_path.display(),
-        output.display()
-    );
-    let mut child = cmd.spawn().context("spawn ffmpeg transcode")?;
-
-    // Parse `-progress` key=value lines from stdout; emit percent.
-    let stdout = child.stdout.take().context("take ffmpeg stdout")?;
-    let events_for_progress = events.clone();
-    let total_us = duration_us.max(1) as f64;
-    let progress_task = tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            if let Some(v) = line.strip_prefix("out_time_us=") {
-                if let Ok(us) = v.trim().parse::<f64>() {
-                    let pct = (us / total_us).clamp(0.0, 1.0);
-                    events_for_progress.emit(EVENT_TRANSCODE_PROGRESS, serde_json::json!(pct));
-                }
-            }
-        }
-    });
-
-    let stderr = child.stderr.take().context("take ffmpeg stderr")?;
-    let stderr_task = tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr).lines();
-        let mut tail: Vec<String> = Vec::new();
-        while let Ok(Some(line)) = reader.next_line().await {
-            tail.push(line);
-            if tail.len() > 50 {
-                tail.remove(0);
-            }
-        }
-        tail.join("\n")
-    });
-
-    let status = child.wait().await.context("await ffmpeg transcode")?;
-    let _ = progress_task.await;
-    let stderr_tail = stderr_task.await.unwrap_or_default();
-    if !status.success() {
-        anyhow::bail!(
-            "ffmpeg transcode exited {}. Tail:\n{}",
-            status,
-            stderr_tail.lines().rev().take(8).collect::<Vec<_>>().join("\n")
-        );
-    }
-    events.emit(EVENT_TRANSCODE_PROGRESS, serde_json::json!(1.0));
-    Ok(())
-}
-
 /// HEVC in MP4/MOV needs the `hvc1` fourcc tag; ffmpeg defaults to `hev1`
 /// which Apple/Premiere/Chromium/Electron won't play. MKV uses no such tag, and other
 /// codecs (H.264 `avc1`, AV1 `av01`) already get correct defaults.
@@ -400,60 +299,9 @@ pub(crate) fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::
     }
 }
 
-/// Build the ffmpeg `-c:v …` video-encode args for a transcode. `encoder` is
-/// the resolved ffmpeg encoder name (HW like `hevc_nvenc` or software like
-/// `libx265`). VBR uses `-b:v` as the average target; CBR additionally pins
-/// maxrate/minrate + a 2× bufsize. `gop` pins the keyframe interval (frames) so
-/// the ffmpeg output matches the WebCodecs path's cadence. Software encoders
-/// get a speed preset so AV1/HEVC don't take minutes.
-pub(crate) fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool, gop: u64) -> Vec<std::ffi::OsString> {
-    use std::ffi::OsString;
-    let mut a: Vec<OsString> = vec!["-c:v".into(), encoder.into()];
-    a.push("-b:v".into());
-    a.push(bitrate.to_string().into());
-    if cbr {
-        a.push("-maxrate".into());
-        a.push(bitrate.to_string().into());
-        a.push("-minrate".into());
-        a.push(bitrate.to_string().into());
-        a.push("-bufsize".into());
-        a.push((bitrate * 2).to_string().into());
-    }
-    // Pin the keyframe interval. `-g` (max GOP) + `-keyint_min` (min GOP) force
-    // a fixed cadence across encoders; `-sc_threshold 0` (added below for x264/
-    // x265) stops scene-cut detection from inserting extra keyframes.
-    let g = gop.max(1).to_string();
-    a.push("-g".into());
-    a.push(g.clone().into());
-    a.push("-keyint_min".into());
-    a.push(g.into());
-    // Speed presets for the slow software encoders only.
-    match encoder {
-        "libsvtav1" => {
-            a.push("-preset".into());
-            a.push("8".into());
-        }
-        "libx265" | "libx264" => {
-            a.push("-preset".into());
-            a.push("medium".into());
-            a.push("-sc_threshold".into());
-            a.push("0".into());
-        }
-        "libvpx-vp9" => {
-            a.push("-deadline".into());
-            a.push("good".into());
-            a.push("-cpu-used".into());
-            a.push("4".into());
-        }
-        _ => {} // HW encoders: no preset (their defaults are already fast)
-    }
-    a
-}
-
 #[cfg(test)]
 mod tests {
     use super::mux_args;
-    use super::video_encode_args;
 
     #[test]
     fn audio_encode_args_aac_and_opus() {
@@ -466,40 +314,6 @@ mod tests {
         assert_eq!(o, vec!["-c:a", "libopus", "-b:a", "128000"]);
     }
     use tempfile::TempDir;
-
-    #[test]
-    fn video_encode_args_vbr_software() {
-        let argv = video_encode_args("libx265", 8_000_000, false, 60);
-        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "libx265"));
-        assert!(s.windows(2).any(|w| w[0] == "-b:v" && w[1] == "8000000"));
-        assert!(!s.iter().any(|a| a == "-minrate"));
-        // GOP pinned: -g/-keyint_min at the requested frame count, scene-cut off.
-        assert!(s.windows(2).any(|w| w[0] == "-g" && w[1] == "60"));
-        assert!(s.windows(2).any(|w| w[0] == "-keyint_min" && w[1] == "60"));
-        assert!(s.windows(2).any(|w| w[0] == "-sc_threshold" && w[1] == "0"));
-    }
-
-    #[test]
-    fn video_encode_args_cbr_pins_rate() {
-        let argv = video_encode_args("hevc_nvenc", 8_000_000, true, 48);
-        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "hevc_nvenc"));
-        assert!(s.windows(2).any(|w| w[0] == "-maxrate" && w[1] == "8000000"));
-        assert!(s.windows(2).any(|w| w[0] == "-minrate" && w[1] == "8000000"));
-        assert!(s.windows(2).any(|w| w[0] == "-bufsize" && w[1] == "16000000"));
-        assert!(s.windows(2).any(|w| w[0] == "-g" && w[1] == "48"));
-        // HW encoder: no -sc_threshold (that's an x264/x265 option only).
-        assert!(!s.iter().any(|a| a == "-sc_threshold"));
-    }
-
-    #[test]
-    fn video_encode_args_sets_software_preset() {
-        let argv = video_encode_args("libsvtav1", 4_000_000, false, 120);
-        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-preset" && w[1] == "8"));
-        assert!(s.windows(2).any(|w| w[0] == "-g" && w[1] == "120"));
-    }
 
     #[test]
     fn hvc1_tag_only_for_hevc_in_mp4_mov() {

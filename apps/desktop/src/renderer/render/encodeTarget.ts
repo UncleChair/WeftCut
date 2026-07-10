@@ -12,10 +12,6 @@ export interface WebCodecsTarget {
   /// intermediate — those are native-only (needsEncoderProbe is false for
   /// them, so this branch is never reached with settings.codec set to one).
   workerCodec: WebCodecsCodecId;
-  /// ALWAYS false as of E4 — the mezzanine (ffmpeg re-encoding a throwaway
-  /// H.264 worker output to settings.codec) is unreachable dead code; Task 16
-  /// deletes this field and every consumer.
-  transcodeAfter: boolean;
 }
 
 export interface NativeTarget {
@@ -53,7 +49,6 @@ export function resolveEncodeTarget(
     return {
       engine: "webcodecs",
       workerCodec: settings.codec as WebCodecsCodecId,
-      transcodeAfter: false,
     };
   }
   return { engine: "native", pixFmt: nativePixFmtFor(settings) };

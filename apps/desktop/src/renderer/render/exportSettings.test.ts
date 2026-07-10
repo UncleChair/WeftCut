@@ -20,7 +20,6 @@ import {
   estimateBytes,
   formatBytes,
   mergeSettings,
-  mezzanineBitrate,
   resolveOutputDims,
   clampExportRange,
   gopFrames,
@@ -187,36 +186,6 @@ describe("codec/container compatibility", () => {
     expect(containersForCodec("hevc")).toEqual(["mp4", "mov", "mkv"]);
     expect(isCodecContainerValid("av1", "mp4")).toBe(true);
     expect(isCodecContainerValid("av1", "mkv")).toBe(true);
-  });
-});
-
-describe("mezzanineBitrate", () => {
-  it("equals the H.264-equivalent of the chosen quality (not a fixed 20Mbps floor)", () => {
-    const s = {
-      ...DEFAULT_EXPORT_SETTINGS,
-      codec: "hevc" as const,
-      quality: "medium" as const,
-    };
-    const mezz = mezzanineBitrate(s, 1920, 1080, 30);
-    // ≈ a normal H.264 export of the same quality → no worse memory than H.264.
-    expect(mezz).toBe(computeBitrate({ ...s, codec: "h264" }, 1920, 1080, 30));
-    // A medium HEVC mezzanine stays well under 12 Mbps.
-    expect(mezz).toBeLessThan(12_000_000);
-  });
-  it("keeps >=1.5x headroom over the final target for custom bitrate", () => {
-    const s = {
-      ...DEFAULT_EXPORT_SETTINGS,
-      codec: "hevc" as const,
-      quality: "custom" as const,
-      customBitrate: 4_000_000,
-    };
-    expect(mezzanineBitrate(s, 1920, 1080, 30)).toBe(6_000_000);
-  });
-  it("scales with resolution", () => {
-    const s = { ...DEFAULT_EXPORT_SETTINGS, codec: "hevc" as const };
-    expect(mezzanineBitrate(s, 3840, 2160, 30)).toBeGreaterThan(
-      mezzanineBitrate(s, 1920, 1080, 30),
-    );
   });
 });
 

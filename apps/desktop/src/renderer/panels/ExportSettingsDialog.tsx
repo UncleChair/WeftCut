@@ -11,10 +11,7 @@ import { AppCheckbox } from "../components/AppCheckbox";
 import { AppSelect } from "../components/AppSelect";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import { Button } from "@/components/ui/button";
-import {
-  type EncodePath,
-  resolveEncodePath,
-} from "../render/exportCodecProbe";
+import { smokeEncode } from "../render/exportCodecProbe";
 import {
   type BitDepth,
   type CodecId,
@@ -88,7 +85,12 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [location, setLocation] = useState<string>("");
   const [filename, setFilename] = useState<string>("weftcut-export");
-  const [encodePath, setEncodePath] = useState<EncodePath | null>(null);
+  /// True once a one-frame WebCodecs smoke-encode confirms the current
+  /// codec/dims/fps combo actually encodes; false if it fails; null while
+  /// checking. Purely informational (which branch encodes is decided by
+  /// resolveEncodeTarget, not by this probe) — it gates the Export button
+  /// against a mid-check state and drives the blurb text below.
+  const [webcodecsOk, setWebcodecsOk] = useState<boolean | null>(null);
   const [rangeMode, setRangeMode] = useState<"full" | "custom">("full");
   const [rangeStartUs, setRangeStartUs] = useState<number>(0);
   const [rangeEndUs, setRangeEndUs] = useState<number>(durationUs);
@@ -185,24 +187,26 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     };
   }, []);
 
-  // Resolve the encode path (webcodecs vs ffmpeg) whenever codec / output
-  // dims / fps change, so the dialog can show a path badge. Path depends only
-  // on codec + output dims + fps — not quality/container/rate.
+  // Smoke-test whether WebCodecs can actually encode the current codec /
+  // output dims / fps combo, so the dialog can show a support badge. Purely
+  // informational — no fallback exists on the encode path itself; see
+  // `webcodecsOk`'s doc comment. Depends only on codec + output dims + fps —
+  // not quality/container/rate.
   useEffect(() => {
     if (!settings) return;
     let cancelled = false;
-    setEncodePath(null);
+    setWebcodecsOk(null);
     // Intermediates (ProRes/DNxHR) are native-only — never probed via
-    // WebCodecs. Placeholder path badge only; real intermediate UI (profile
+    // WebCodecs. Placeholder gate value only; real intermediate UI (profile
     // pickers, no path badge at all) lands in Task 13.
     if (isIntermediateCodec(settings.codec)) {
-      setEncodePath("ffmpeg");
+      setWebcodecsOk(true);
       return;
     }
     const d = resolveOutputDims(comp, settings);
     const fps = settings.fps != null ? settings.fps : compFps;
-    void resolveEncodePath(settings.codec, d.width, d.height, fps).then((p) => {
-      if (!cancelled) setEncodePath(p);
+    void smokeEncode(settings.codec, d.width, d.height, fps).then((ok) => {
+      if (!cancelled) setWebcodecsOk(ok);
     });
     return () => {
       cancelled = true;
@@ -259,9 +263,9 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   const canExport =
     !!location &&
     filename.trim().length > 0 &&
-    // Need at least one stream; video (if included) needs its encode-path probe.
+    // Need at least one stream; video (if included) needs its WebCodecs probe.
     !!(settings?.includeVideo || settings?.includeAudio) &&
-    (!settings?.includeVideo || encodePath !== null) &&
+    (!settings?.includeVideo || webcodecsOk !== null) &&
     (rangeMode === "full" || rangeStartUs < rangeEndUs);
 
   return (
@@ -662,11 +666,9 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                 <p className="settings-blurb">
                   {settings.encoderEngine === "native" || isIntermediateCodec(settings.codec) || settings.bitDepth === 10
                     ? t("export_dialog.path_native")
-                    : encodePath === null
+                    : webcodecsOk === null
                       ? t("export_dialog.checking_codec")
-                      : encodePath === "ffmpeg"
-                        ? t("export_dialog.path_ffmpeg")
-                        : t("export_dialog.path_webcodecs")}
+                      : t("export_dialog.path_webcodecs")}
                 </p>
 
                 {!isIntermediateCodec(settings.codec) && (

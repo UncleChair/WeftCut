@@ -60,7 +60,6 @@ pub struct MuxExportArgs {
     pub video_path: String,
     pub audio_path: String,
     pub output_path: String,
-    pub transcode: Option<crate::commands::export::TranscodeSpec>,
 }
 
 #[cfg(feature = "export")]

@@ -100,19 +100,3 @@ export async function smokeEncode(
     }
   });
 }
-
-export type EncodePath = "webcodecs" | "ffmpeg";
-
-/// Decide the export path for a codec: if a one-frame WebCodecs encode
-/// succeeds (hardware or software — no hw hint is forced), the browser
-/// encodes it directly; otherwise ffmpeg transcodes a mezzanine. H.264 is
-/// always WebCodecs (smokeEncode short-circuits true).
-export async function resolveEncodePath(
-  codec: WebCodecsCodecId,
-  width: number,
-  height: number,
-  fps: number,
-): Promise<EncodePath> {
-  const ok = await smokeEncode(codec, width, height, fps);
-  return ok ? "webcodecs" : "ffmpeg";
-}

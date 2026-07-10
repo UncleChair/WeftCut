@@ -10,10 +10,10 @@ const s = (over: Partial<ExportSettings>): ExportSettings => ({
 describe("resolveEncodeTarget (E1: mirrors today's three branches)", () => {
   it("webcodecs pin + smoke ok → WebCodecs direct (path A)", () => {
     expect(resolveEncodeTarget(s({ codec: "h264", encoderEngine: "webcodecs" }), true)).toEqual({
-      engine: "webcodecs", workerCodec: "h264", transcodeAfter: false,
+      engine: "webcodecs", workerCodec: "h264",
     });
     expect(resolveEncodeTarget(s({ codec: "av1", encoderEngine: "webcodecs" }), true)).toEqual({
-      engine: "webcodecs", workerCodec: "av1", transcodeAfter: false,
+      engine: "webcodecs", workerCodec: "av1",
     });
   });
 
@@ -49,9 +49,9 @@ describe("encoderEngine pins (E2)", () => {
     expect(needsEncoderProbe(s({ codec: "h264" }))).toBe(false);
   });
 
-  it("webcodecs pin without smoke → stays webcodecs direct (dialog gates combos; no mezzanine)", () => {
+  it("webcodecs pin without smoke → stays webcodecs direct (dialog gates combos; no ffmpeg fallback)", () => {
     expect(resolveEncodeTarget(s({ codec: "hevc", encoderEngine: "webcodecs" }), false))
-      .toEqual({ engine: "webcodecs", workerCodec: "hevc", transcodeAfter: false });
+      .toEqual({ engine: "webcodecs", workerCodec: "hevc" });
   });
 });
 

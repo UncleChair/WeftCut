@@ -4,10 +4,6 @@ import { AppDialog } from "../components/AppDialog";
 import { Button } from "@/components/ui/button";
 
 export interface ExportProgress {
-  /// Which stage this progress is for. The ffmpeg path runs "encode" (the
-  /// WebCodecs mezzanine, 0→100) then "transcode" (ffmpeg → target codec,
-  /// 0→100); labeling the stage stops the bar's reset from reading as a stall.
-  phase: "encode" | "transcode";
   progress: number;
   currentTimeUs: number;
   frame: number;
@@ -67,24 +63,15 @@ export function ExportPanel({
       break;
     case "progress": {
       percent = Math.round(state.progress.progress * 100);
-      const phaseLabel =
-        state.progress.phase === "transcode"
-          ? t("export.phase_transcode")
-          : t("export.phase_encode");
-      // The transcode stage has no per-frame fps/speed (ffmpeg `-progress`
-      // gives time only), so show just the stage + percent there.
-      const detail =
-        state.progress.phase === "transcode"
-          ? `${percent}%`
-          : t("export.progress_label", {
-              percent,
-              frame: state.progress.frame,
-              fps: state.progress.fps.toFixed(1),
-              speed: state.progress.speed.toFixed(2),
-            });
+      const detail = t("export.progress_label", {
+        percent,
+        frame: state.progress.frame,
+        fps: state.progress.fps.toFixed(1),
+        speed: state.progress.speed.toFixed(2),
+      });
       body = (
         <p className="export-progress-status">
-          <strong>{phaseLabel}</strong>
+          <strong>{t("export.phase_encode")}</strong>
           <span className="export-progress-detail">{detail}</span>
         </p>
       );

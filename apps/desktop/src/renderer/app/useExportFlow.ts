@@ -15,7 +15,6 @@ import {
   ensureFullProxy,
   exportProjectAudioOnly,
   muxExport,
-  EXPORT_TRANSCODE_PROGRESS,
   MEDIA_JOB_EVENTS,
   type MediaJobEvent,
   projectSummary,
@@ -33,7 +32,6 @@ import {
   defaultCrf,
   gopFrames,
   isIntermediateCodec,
-  mezzanineBitrate,
   resolveOutputDims,
 } from "../render/exportSettings";
 import {
@@ -42,7 +40,7 @@ import {
   exportVideoSinkCancel,
   exportVideoSinkWrite,
 } from "../ipc";
-import { resolveEncodePath } from "../render/exportCodecProbe";
+import { smokeEncode } from "../render/exportCodecProbe";
 import { needsEncoderProbe, resolveEncodeTarget } from "../render/encodeTarget";
 import { exportBakeMotifs } from "../render/exportBake";
 import { getMotif } from "../render/motifs/catalog";
@@ -462,7 +460,6 @@ export function useExportFlow(deps: {
       startUs: range?.startUs ?? 0,
       endUs: range?.endUs ?? summary.duration_us,
     };
-    const exportSpanUs = exportRange.endUs - exportRange.startUs;
 
     // ---- Bake Motif layers --------------------------------------------
     // The export Worker has no DOM, so it can't run the SVG capture harness.
@@ -522,12 +519,12 @@ export function useExportFlow(deps: {
     // isIntermediateCodec(settings.codec) — so settings.codec here is always
     // a WebCodecsCodecId, never "prores"/"dnxhr".
     const smokeOk = needsEncoderProbe(settings)
-      ? (await resolveEncodePath(
+      ? await smokeEncode(
           settings.codec as WebCodecsCodecId,
           dims.width,
           dims.height,
           outFps,
-        )) === "webcodecs"
+        )
       : true;
     // `let`, not `const`: a native sink-start failure under `auto` can flip
     // this trio to a consent-gated WebCodecs retry below (E4). `sinkTarget`
@@ -579,13 +576,12 @@ export function useExportFlow(deps: {
           canFallBack &&
           window.confirm(t("export_dialog.native_unavailable_fallback"))
         ) {
-          const fallbackOk =
-            (await resolveEncodePath(
-              settings.codec as WebCodecsCodecId,
-              dims.width,
-              dims.height,
-              outFps,
-            )) === "webcodecs";
+          const fallbackOk = await smokeEncode(
+            settings.codec as WebCodecsCodecId,
+            dims.width,
+            dims.height,
+            outFps,
+          );
           if (!fallbackOk) {
             setExportState({
               kind: "error",
@@ -596,7 +592,6 @@ export function useExportFlow(deps: {
           target = {
             engine: "webcodecs",
             workerCodec: settings.codec as WebCodecsCodecId,
-            transcodeAfter: false,
           };
           nativeSink = false;
           sinkTarget = null;
@@ -608,26 +603,19 @@ export function useExportFlow(deps: {
     }
     // `target`/`nativeSink` are final past this point (the only reassignment
     // is the fallback retry above) — safe to derive the worker-facing values
-    // that feed the encoder config and bitrate calc below.
-    const encodePath =
-      target.engine === "webcodecs" && target.transcodeAfter
-        ? ("ffmpeg" as const)
-        : ("webcodecs" as const);
+    // that feed the encoder config and bitrate calc below. `workerCodec` is
+    // only meaningful on the webcodecs path (the native-sink path's
+    // encoderConfig below is dead — see the comment on `codec:` there).
     const workerCodec =
       target.engine === "webcodecs" ? target.workerCodec : settings.codec;
-    const workerBitrate =
-      encodePath === "ffmpeg"
-        ? mezzanineBitrate(settings, dims.width, dims.height, outFps)
-        : computeBitrate(settings, dims.width, dims.height, outFps);
-    // Encoder-acceleration hint. On the WebCodecs path the worker IS the final
-    // encode, so honor the user's HW/SW choice ("software" → prefer-software).
-    // On the ffmpeg path the worker only makes a throwaway H.264 mezzanine —
-    // keep that hardware-fast; the HW/SW choice flows to ffmpeg via the
-    // transcode spec instead. Auto keeps today's behavior: H.264 forces
+    const workerBitrate = computeBitrate(settings, dims.width, dims.height, outFps);
+    // Encoder-acceleration hint (WebCodecs path only — the worker IS the
+    // final encode there, so honor the user's HW/SW choice ("software" →
+    // prefer-software). Auto keeps today's behavior: H.264 forces
     // prefer-hardware (Electron's Chromium engine treats it as mandatory, so AV1/HEVC omit it and
     // let the browser fall back to software).
     let hwHint: VideoEncoderConfig["hardwareAcceleration"] | undefined;
-    if (encodePath !== "ffmpeg" && settings.hwAccel === "software") {
+    if (settings.hwAccel === "software") {
       hwHint = "prefer-software";
     } else if (workerCodec === "h264") {
       hwHint = "prefer-hardware";
@@ -661,7 +649,6 @@ export function useExportFlow(deps: {
       setExportState({
         kind: "progress",
         progress: {
-          phase: "encode",
           progress: encoded / total,
           currentTimeUs,
           frame: encoded,
@@ -718,26 +705,6 @@ export function useExportFlow(deps: {
       return;
     }
 
-    // Transcode-progress listener (ffmpeg path only). Maps 0..1 onto the
-    // panel's progress phase; detached after the mux resolves. Awaited so the
-    // listener is registered before the transcode starts.
-    const offTranscode =
-      encodePath === "ffmpeg"
-        ? await listen<number>(EXPORT_TRANSCODE_PROGRESS, (ev) => {
-            setExportState({
-              kind: "progress",
-              progress: {
-                phase: "transcode",
-                progress: ev.payload,
-                currentTimeUs: Math.round(ev.payload * exportSpanUs),
-                frame: 0,
-                fps: 0,
-                speed: 0,
-              },
-            });
-          })
-        : null;
-
     // On the native-sink path, signal the sink that all frames have been
     // sent. The sink flushes its encoder + muxer and writes the final
     // tempVideoPath. Must run BEFORE the audio export + mux.
@@ -770,31 +737,10 @@ export function useExportFlow(deps: {
         );
       }
 
-      // (3) Mux → user-chosen path. WebCodecs path = stream-copy into the
-      // chosen container; ffmpeg path = transcode the mezzanine to the target
-      // codec (HW-first) then mux.
-      const transcode =
-        encodePath === "ffmpeg"
-          ? {
-              // Cast is sound: encodePath is only "ffmpeg" when target.engine
-              // was "webcodecs" with transcodeAfter (resolveEncodeTarget),
-              // which resolveEncodeTarget only reaches when
-              // needsEncoderProbe(settings) was true — excluding
-              // isIntermediateCodec(settings.codec). Never "prores"/"dnxhr" here.
-              videoCodec: settings.codec as WebCodecsCodecId,
-              bitrate: computeBitrate(
-                settings,
-                dims.width,
-                dims.height,
-                outFps,
-              ),
-              cbr: settings.rateMode === "cbr",
-              durationUs: exportSpanUs,
-              gop: gopFrames(settings.keyframeIntervalSec, outFps),
-              software: settings.hwAccel === "software",
-            }
-          : undefined;
-      await muxExport(tempVideoPath, tempAudioPath, path, transcode);
+      // (3) Mux → user-chosen path. Every path already wrote the final codec
+      // to tempVideoPath (WebCodecs direct-encode, or the native-encode video
+      // sink) — the mux step is always a stream-copy into the chosen container.
+      await muxExport(tempVideoPath, tempAudioPath, path);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] finalize failed:", e);
@@ -805,7 +751,6 @@ export function useExportFlow(deps: {
       });
       return;
     } finally {
-      offTranscode?.();
       // Best-effort cleanup. Failures here are intentionally
       // swallowed — the user's output is already at `path`.
       void remove(tempVideoPath).catch(() => {});

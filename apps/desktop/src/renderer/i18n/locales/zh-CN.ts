@@ -272,7 +272,6 @@ const zhCN: Resources = {
   export: {
     title: "导出",
     phase_encode: "编码中",
-    phase_transcode: "转码中",
     starting: "正在启动导出…",
     preparing: "正在为 {{labels}} 准备优化媒体 —— 准备好后将自动开始导出。",
     preparing_cancel: "取消",
@@ -318,7 +317,6 @@ const zhCN: Resources = {
     engine_webcodecs: "WebCodecs",
     path_native: "编码器：原生 FFmpeg（完整参数控制，显式色彩标记）",
     path_webcodecs: "编码器：WebCodecs(有硬件则用硬件)",
-    path_ffmpeg: "编码器：ffmpeg 转码(较慢)",
     checking_codec: "正在检测编码支持…",
     codec_unsupported: "本机无法编码 {{codec}}——请换一种编码。",
     prores_profile: "ProRes 档位",

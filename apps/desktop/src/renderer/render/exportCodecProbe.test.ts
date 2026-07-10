@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { probeEncoderSupported, resolveEncodePath } from "./exportCodecProbe";
+import { probeEncoderSupported } from "./exportCodecProbe";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -31,17 +31,5 @@ describe("probeEncoderSupported", () => {
     const isConfigSupported = vi.fn().mockRejectedValue(new Error("nope"));
     vi.stubGlobal("VideoEncoder", { isConfigSupported });
     expect(await probeEncoderSupported("hevc", 1920, 1080, 30)).toBe(false);
-  });
-});
-
-describe("resolveEncodePath", () => {
-  it("routes H.264 to webcodecs without touching VideoEncoder", async () => {
-    vi.stubGlobal("VideoEncoder", undefined);
-    expect(await resolveEncodePath("h264", 1920, 1080, 30)).toBe("webcodecs");
-  });
-  it("routes to ffmpeg when WebCodecs can't encode (no VideoEncoder)", async () => {
-    vi.stubGlobal("VideoEncoder", undefined);
-    expect(await resolveEncodePath("hevc", 1920, 1080, 30)).toBe("ffmpeg");
-    expect(await resolveEncodePath("av1", 1920, 1080, 30)).toBe("ffmpeg");
   });
 });
