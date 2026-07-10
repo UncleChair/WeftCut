@@ -110,14 +110,15 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
   near(p.keyG?.value, 0)
   near(p.keyB?.value, 1)
 
-  // ONE undo reverts all three (single batched entry). Lazily-created tracks
-  // disappear (undefined) OR revert to the green defaults — accept either.
+  // ONE undo reverts all three (single batched entry). add_effect creates
+  // params:{} and undo restores that snapshot verbatim, so the lazily-created
+  // tracks deterministically vanish (src/main/state/mutations/effects.ts +
+  // history.ts snapshot restore).
   await invokeCmd(page, 'project_undo', {})
   p = chromaParams(await summary(page), layerId)
-  const g = p.keyG?.value
-  const b = p.keyB?.value
-  expect(b === undefined || Math.abs(b) < 0.02).toBe(true)
-  expect(g === undefined || Math.abs(g - 1) < 0.02).toBe(true)
+  expect(p.keyR?.value).toBeUndefined()
+  expect(p.keyG?.value).toBeUndefined()
+  expect(p.keyB?.value).toBeUndefined()
 
   await app.close()
 })
