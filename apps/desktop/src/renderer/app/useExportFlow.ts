@@ -638,13 +638,13 @@ export function useExportFlow(deps: {
       hwHint = undefined;
     }
     const encoderConfig: VideoEncoderConfig = {
-      // Cast is a formality, not a runtime-safety claim: on the native-sink
-      // branch workerCodec falls back to settings.codec, which CAN be
-      // "prores"/"dnxhr" — but this whole encoderConfig is dead there (the
-      // Worker's exportWorker.ts never constructs an EncoderSink from it when
-      // nativeSink is set; only .width/.height are read). Task 12 owns the
-      // real native-intermediate wiring.
-      codec: codecString(workerCodec as WebCodecsCodecId),
+      // codecString only runs on the WebCodecs path, where target.workerCodec
+      // is a genuine WebCodecsCodecId. On the native-sink path settings.codec
+      // can be a prores/dnxhr intermediate — codecString throws on those — so
+      // the field carries an inert "": the Worker never constructs an
+      // EncoderSink from this config when nativeSink is set (exportWorker.ts
+      // reads only .width/.height there).
+      codec: target.engine === "webcodecs" ? codecString(target.workerCodec) : "",
       width: dims.width,
       height: dims.height,
       bitrate: workerBitrate,

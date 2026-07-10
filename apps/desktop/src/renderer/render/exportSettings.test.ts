@@ -109,6 +109,10 @@ describe("codecString", () => {
     expect(codecString("av1")).toMatch(/^av01\./);
     expect(codecString("hevc")).toMatch(/^hev1\./);
   });
+  it("throws on a codec with no WebCodecs string (intermediates are native-only)", () => {
+    expect(() => codecString("prores" as WebCodecsCodecId)).toThrow(/prores/);
+    expect(() => codecString("dnxhr" as WebCodecsCodecId)).toThrow(/dnxhr/);
+  });
 });
 
 describe("estimateBytes / formatBytes", () => {

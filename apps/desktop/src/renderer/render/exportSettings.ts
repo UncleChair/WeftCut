@@ -248,6 +248,13 @@ export function codecString(codec: WebCodecsCodecId): string {
       return "av01.0.13M.08"; // Main profile, ~level 5.1, 8-bit
     case "hevc":
       return "hev1.1.6.L153.B0"; // Main profile, level 5.1
+    default:
+      // Unreachable by construction: intermediates (prores/dnxhr) are
+      // native-only and every caller gates on the WebCodecs engine before
+      // calling. Throw loudly if a cast site ever drifts.
+      throw new Error(
+        `codecString: no WebCodecs codec string for "${String(codec)}"`,
+      );
   }
 }
 
