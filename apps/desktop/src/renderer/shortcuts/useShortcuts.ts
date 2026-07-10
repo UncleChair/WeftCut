@@ -8,6 +8,7 @@ import {
   type ParsedBinding,
 } from "./match";
 import { logEmit } from "../ipc";
+import { usePickSessionStore } from "../colorpick/pickColor";
 
 export type Handler = () => void | Promise<void>;
 export type HandlerMap = Partial<Record<ActionId, Handler>>;
@@ -125,6 +126,10 @@ export function useShortcuts({
 
     function dispatch(e: KeyboardEvent, candidates: ResolvedEntry[]): void {
       if (disabledRef.current) return;
+      // Color-pick session = modal: the overlay owns the keyboard (Esc/S); every
+      // app shortcut — including captureGlobal ones registered before the
+      // overlay's listener — must stay dead until the session settles.
+      if (usePickSessionStore.getState().session) return;
       const editing = isEditableTarget(e.target);
       const inWidget = isInTransientWidget(e.target);
       for (const entry of candidates) {

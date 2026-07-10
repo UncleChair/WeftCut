@@ -2,6 +2,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { useShortcuts, type HandlerMap } from "./useShortcuts";
+import { usePickSessionStore } from "../colorpick/pickColor";
 
 // useShortcuts only reaches `logEmit` for activity-log breadcrumbs; stub the
 // whole ipc surface so the dispatcher runs without a backend host (and keeps the
@@ -102,5 +103,19 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     expect(deleteSelected).not.toHaveBeenCalled();
 
     window.removeEventListener("keydown", preempt, true);
+  });
+
+  it("shortcuts are inert while a color-pick session is active", () => {
+    const togglePlay = vi.fn();
+    render(<Harness handlers={{ togglePlay }} />);
+
+    usePickSessionStore.setState({ session: {} as never });
+    try {
+      const ev = dispatchKey(document.body, " ");
+      expect(togglePlay).not.toHaveBeenCalled();
+      expect(ev.defaultPrevented).toBe(false);
+    } finally {
+      usePickSessionStore.setState({ session: null });
+    }
   });
 });
