@@ -22,12 +22,23 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-codecs-proj')
 const REPO = path.resolve(__dirname, '..', '..', '..', '..')
 
 // ---------------------------------------------------------------------------
-// Export settings per codec. The `codec` field is the routing discriminator:
+// Export settings per codec. The `codec` field is the routing discriminator.
+// E4 flipped `encoderEngine:'auto'` to native-first and Task 16 deleted the
+// H.264-mezzanine transcode path (`resolveEncodePath`/`TranscodeSpec`/
+// `transcode_and_mux` are gone) — a WebCodecs fallback now only happens via
+// an explicit user-consent dialog when the native sink fails to start.
 //
-//   AV1 (8-bit): `codec:'av1'` → WebCodecs sw encode → ffmpeg mux_export.
+//   AV1 (8-bit): `codec:'av1'` + `encoderEngine:'webcodecs'` (explicit pin —
+//     under `auto` this would ride native like every other codec below) →
+//     WebCodecs sw encode → ffmpeg mux_export. Kept as the living e2e
+//     regression guard for the WebCodecs engine, since nothing else here
+//     still exercises it.
 //
-//   HEVC (8-bit): `codec:'hevc'` → ffmpeg transcode_and_mux (H.264 mezzanine),
-//     emitting `export:transcode_progress` events.
+//   HEVC (8-bit): `codec:'hevc'` on `auto` → E4 native-first resolves the
+//     ffmpeg video sink directly (no mezzanine, no
+//     `export:transcode_progress` events) → PackYuvPlanar yuv420p →
+//     chunk/ack IPC → native ffmpeg video sink, tagged with the explicit
+//     bt709/limited color 4-tuple like every other native-sink codec below.
 //
 //   10-bit HEVC: `codec:'hevc'` + `bitDepth:10` → ffmpeg HEVC Main10.
 //     See ExportSettings in exportSettings.ts.
@@ -45,8 +56,13 @@ const REPO = path.resolve(__dirname, '..', '..', '..', '..')
 //     (-profile:v dnxhr_sq) → yuv422p in a MOV container.
 // ---------------------------------------------------------------------------
 
+// Explicit WebCodecs pin (E4 changed `auto` to native-first, so this codec
+// would otherwise ride the native ffmpeg video sink like HEVC/H.264 below).
+// This is the one cell that still exercises the WebCodecs engine end to end —
+// its living regression guard, not a routing default any real user hits.
 const AV1_SETTINGS = {
   codec: 'av1',
+  encoderEngine: 'webcodecs',
   bitDepth: 8,
   container: 'mp4',
   audio: { include: false },
@@ -144,9 +160,16 @@ test.describe('multi-codec export smoke (Electron)', () => {
   test.beforeAll(() => mkdirSync(PROJECT_PARENT, { recursive: true }))
 
   // -------------------------------------------------------------------------
-  // AV1 (WebCodecs sw encode) — settings from ExportSettings type.
+  // AV1, pinned `encoderEngine:'webcodecs'` (WebCodecs sw encode → ffmpeg
+  // mux_export) — settings from ExportSettings type. Since E4 flipped `auto`
+  // to native-first, this explicit pin is what keeps the WebCodecs engine
+  // under a living e2e regression guard (everything else in this file now
+  // rides the native ffmpeg video sink).
   // Source: test_1080p_30fps.mp4 (standard 10s fixture, always present).
   // Asserts: export completes, output is frame-aligned (analyze SSIM ≥ 0.6).
+  // Deliberately does NOT assert the explicit bt709/limited color 4-tuple —
+  // that's the native sink's contract; the WebCodecs/mux_export lane relies
+  // on implicit/inferred tags instead.
   // -------------------------------------------------------------------------
   test('AV1 export produces an aligned file (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
@@ -188,9 +211,14 @@ test.describe('multi-codec export smoke (Electron)', () => {
   })
 
   // -------------------------------------------------------------------------
-  // HEVC (ffmpeg transcode_and_mux → export:transcode_progress).
+  // HEVC on `auto` (E4 native-first → the native ffmpeg video sink directly;
+  // the H.264-mezzanine transcode_and_mux path Task 16 deleted no longer
+  // exists, so this no longer emits export:transcode_progress).
   // Source: test_1080p_30fps.mp4.
-  // Asserts: export completes, output is HEVC-tagged, frame-aligned (SSIM ≥ 0.6).
+  // Asserts: export completes, output is HEVC-tagged + 8-bit, carries the
+  // explicit bt709/limited color 4-tuple (the native sink's assertable
+  // color-tagging contract, same as the pinned-native H.264 cell below), and
+  // is frame-aligned (SSIM ≥ 0.6).
   // -------------------------------------------------------------------------
   test('HEVC export produces an aligned file (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
@@ -213,13 +241,24 @@ test.describe('multi-codec export smoke (Electron)', () => {
       )
       expect(existsSync(OUTPUT), 'HEVC output file must exist').toBe(true)
 
-      const st = probeVideoStream(OUTPUT, 'codec_name,profile,pix_fmt')
+      const st = probeVideoStream(
+        OUTPUT,
+        'codec_name,profile,pix_fmt,color_space,color_transfer,color_primaries,color_range',
+      )
       console.log('[e2e] HEVC output stream:', JSON.stringify(st))
       expect(st.codec_name).toBe('hevc')
       // 8-bit HEVC — pixel format must NOT be a 10-bit format.
       if (st.pix_fmt) {
         expect(['p010le', 'yuv420p10le']).not.toContain(st.pix_fmt)
       }
+      // Native-sink codecs all get the explicit bt709/limited 4-tuple
+      // (setparams + -colorspace/-color_primaries/-color_trc/-color_range in
+      // videosink.rs) — HEVC-on-auto is no exception now that it rides the
+      // native sink instead of the deleted mezzanine.
+      expect(st.color_space).toBe('bt709')
+      expect(st.color_transfer).toBe('bt709')
+      expect(st.color_primaries).toBe('bt709')
+      expect(st.color_range).toBe('tv')
 
       const SSIM_FLOOR = 0.6
       const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
