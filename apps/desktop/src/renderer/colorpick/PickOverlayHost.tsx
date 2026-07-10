@@ -114,7 +114,11 @@ function PickOverlay({ session }: { session: PickSession }) {
       if (e.key === "Escape") {
         e.preventDefault();
         session.settle(null);
-      } else if ((e.key === "s" || e.key === "S") && eyeDropperAvailable()) {
+      } else if (
+        (e.key === "s" || e.key === "S") &&
+        !e.ctrlKey && !e.metaKey && !e.altKey &&
+        eyeDropperAvailable()
+      ) {
         e.preventDefault();
         // Native handoff: drop the overlay FIRST (the session object keeps the
         // promise open), then settle from the native result. keydown carries

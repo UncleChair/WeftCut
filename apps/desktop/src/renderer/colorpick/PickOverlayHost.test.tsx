@@ -128,4 +128,30 @@ describe("PickOverlayHost", () => {
       expect(settle).toHaveBeenCalledWith({ hex: "#123456", source: "screen" }),
     );
   });
+
+  it("modified S chords (Ctrl+S) do NOT trigger the screen handoff", () => {
+    registerPreviewSampler(sampler);
+    const { settle } = seedSession();
+    render(<PickOverlayHost />);
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    expect(usePickSessionStore.getState().session).not.toBeNull();
+    expect(screenPick).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+  });
+
+  it("letterbox bars inside the canvas rect fall through to the snapshot", () => {
+    // Same rect as `sampler`, but the top 20px band maps to nothing
+    // (composition letterbox) — a click there must sample the window snapshot.
+    registerPreviewSampler({
+      ...sampler,
+      mapClientToComposition: (x, y) =>
+        y >= 120 && y < 200 && x >= 100 && x < 200
+          ? { x: Math.floor((x - 100) / 10), y: Math.floor((y - 120) / 10) }
+          : null,
+    });
+    const { settle } = seedSession();
+    render(<PickOverlayHost />);
+    fireEvent.click(screen.getByTestId("colorpick-overlay"), { clientX: 150, clientY: 110 });
+    expect(settle).toHaveBeenCalledWith({ hex: "#ff0000", source: "ui" });
+  });
 });
