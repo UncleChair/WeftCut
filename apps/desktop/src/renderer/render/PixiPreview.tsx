@@ -24,8 +24,18 @@ import {
 } from "../state/playbackStore";
 import { useProjectStore } from "../state/projectStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { containMap } from "../colorpick/pixel";
+import {
+  clearPreviewSampler,
+  registerPreviewSampler,
+  type PreviewSampler,
+} from "../colorpick/previewSamplerRegistry";
 import { previewPathLive } from "./decodeRoute";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
+import {
+  setEffectDisabled,
+  subscribeEffectOverrides,
+} from "./effects/effectOverrides";
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
@@ -55,6 +65,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   /// MCP meter push timer; set in `onInit`, cleared on unmount (the mount
   /// effect is async and can't return a cleanup itself).
   const meterTimerRef = useRef<number | null>(null);
+  const samplerRef = useRef<PreviewSampler | null>(null);
+  const unsubOverridesRef = useRef<(() => void) | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
 
   useImperativeHandle(
@@ -191,6 +203,45 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // play/pause without polling.
       engine.onPlayStateChange(setTransportPlaying);
       registerTransport(engine);
+
+      // Color picker: register the sampling surface (same replace-on-remount
+      // lifecycle as the transport registration above). captureFrame reuses the
+      // compositeFrame→render→extract discipline the e2e sampleComposite path
+      // proved; excludeEffectId freezes the PRE-key frame the chromakey
+      // eyedropper samples. Spec: docs/superpowers/specs/2026-07-11-color-picker-design.md
+      unsubOverridesRef.current?.();
+      const previewSampler: PreviewSampler = {
+        captureFrame: async (opts) => {
+          const excludeId = opts?.excludeEffectId;
+          if (excludeId) setEffectDisabled(excludeId, true);
+          try {
+            compositor.compositeFrame(engine.positionUs());
+            app.renderer.render(app.stage);
+            const out = app.renderer.extract.pixels({
+              target: app.stage,
+              frame: new Rectangle(0, 0, app.renderer.width, app.renderer.height),
+            });
+            return { pixels: out.pixels, width: out.width, height: out.height };
+          } finally {
+            if (excludeId) {
+              setEffectDisabled(excludeId, false);
+              compositor.compositeFrame(engine.positionUs());
+            }
+          }
+        },
+        mapClientToComposition: (clientX, clientY) => {
+          const rect = (app.canvas as HTMLCanvasElement).getBoundingClientRect();
+          return containMap(clientX, clientY, rect, app.renderer.width, app.renderer.height);
+        },
+        canvasRect: () => (app.canvas as HTMLCanvasElement).getBoundingClientRect(),
+      };
+      registerPreviewSampler(previewSampler);
+      samplerRef.current = previewSampler;
+      // Hover live-apply while paused: sync() only runs inside compositeFrame,
+      // so poke one on every transient-override change.
+      unsubOverridesRef.current = subscribeEffectOverrides(() => {
+        compositor.compositeFrame(engine.positionUs());
+      });
 
       // Master-bus meter push (~2 Hz while playing) for the MCP
       // `composition://meter` resource. dB values clamp at -120 — JSON
@@ -386,6 +437,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // Identity-guarded release: a stale unmount can't tear down a newer
       // mount's registration.
       if (engineRef.current) releaseTransport(engineRef.current);
+      if (samplerRef.current) clearPreviewSampler(samplerRef.current);
+      samplerRef.current = null;
+      unsubOverridesRef.current?.();
+      unsubOverridesRef.current = null;
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
       compositorRef.current = null;
