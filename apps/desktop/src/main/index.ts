@@ -508,6 +508,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:close', (e) => ctlWin(e)?.close())
   ipcMain.handle('window:isMaximized', (e) => !!ctlWin(e)?.isMaximized())
   ipcMain.handle('window:setTitle', (e, title: string) => ctlWin(e)?.setTitle(title))
+  // Color picker: freeze the invoking window for in-app (non-canvas) sampling.
+  // PNG keeps the IPC payload small; the renderer derives the CSS→device pixel
+  // scale from the decoded bitmap size vs window.innerWidth (robust across
+  // display scale factors).
+  ipcMain.handle('window:captureSnapshot', async (e) => {
+    const img = await e.sender.capturePage()
+    return img.toPNG()
+  })
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
   ipcMain.handle('path:join', (_e, payload: { parts?: string[]; paths?: string[] }) => path.join(...(payload.parts ?? payload.paths ?? [])))
   ipcMain.handle('path:tempDir', () => app.getPath('temp'))
