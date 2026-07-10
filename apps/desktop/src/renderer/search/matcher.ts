@@ -35,6 +35,11 @@ export function rankEntries(
   const q = query.trim();
   if (!q) {
     // Browse mode: no query yet — list commands in registration order.
+    // Floor the browse-mode cap at 8 (independent of limitPerGroup): an
+    // empty palette should still list a useful batch of commands even for
+    // callers configured with a small per-group display cap. The UI layer
+    // does its own display slicing on top of this, so a larger list here
+    // doesn't force a larger render.
     const rows = entries
       .filter((e) => e.type === "command")
       .slice(0, Math.max(limitPerGroup, 8))

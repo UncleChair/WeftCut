@@ -64,4 +64,19 @@ describe("rankEntries", () => {
     const viaPinyin = rankEntries("zm", [mk("caption", "字幕")]).get("caption")![0]!;
     expect(viaPinyin.highlight).toHaveLength(0);
   });
+
+  it("command boost raises score over an identical-label non-command", () => {
+    const out = rankEntries("export", [mk("clip", "Export project"), mk("command", "Export project")]);
+    expect(out.get("command")![0]!.score).toBeGreaterThan(out.get("clip")![0]!.score);
+  });
+
+  it("prefix matches rank first within a group", () => {
+    const out = rankEntries("save", [mk("clip", "project saver"), mk("clip", "save project")]);
+    expect(out.get("clip")![0]!.entry.label).toBe("save project");
+  });
+
+  it("browse mode floors the command cap at 8 even when limitPerGroup is smaller", () => {
+    const cmds = Array.from({ length: 10 }, (_, i) => mk("command", `command ${i}`));
+    expect(rankEntries("", cmds, 3).get("command")).toHaveLength(8);
+  });
 });
