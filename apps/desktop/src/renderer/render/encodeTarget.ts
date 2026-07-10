@@ -8,13 +8,13 @@ export type NativePixFmt = "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le"
 
 export interface WebCodecsTarget {
   engine: "webcodecs";
-  /// Codec the worker's VideoEncoder actually encodes. Differs from
-  /// settings.codec on the mezzanine path (H.264 intermediate). Never a
-  /// ProRes/DNxHR intermediate — those are native-only (needsEncoderProbe is
-  /// false for them, so this branch is never reached with settings.codec
-  /// set to one).
+  /// Codec the worker's VideoEncoder actually encodes. Never a ProRes/DNxHR
+  /// intermediate — those are native-only (needsEncoderProbe is false for
+  /// them, so this branch is never reached with settings.codec set to one).
   workerCodec: WebCodecsCodecId;
-  /// ffmpeg re-encodes the mezzanine to settings.codec after the worker.
+  /// ALWAYS false as of E4 — the mezzanine (ffmpeg re-encoding a throwaway
+  /// H.264 worker output to settings.codec) is unreachable dead code; Task 16
+  /// deletes this field and every consumer.
   transcodeAfter: boolean;
 }
 
@@ -34,31 +34,27 @@ export function nativePixFmtFor(settings: ExportSettings): NativePixFmt {
   return settings.bitDepth === 10 ? "yuv420p10le" : "yuv420p";
 }
 
-/// True when resolution depends on the WebCodecs smoke-encode. Pinned-native,
-/// the 10-bit native route, and the native-only intermediates never consult it.
+/// True only for an explicit WebCodecs pin on a non-intermediate codec — the
+/// only case that still needs the smoke-encode result (E4: `auto` resolves
+/// native unconditionally and never consults the probe; native-only
+/// intermediates never route through WebCodecs at all).
 export function needsEncoderProbe(settings: ExportSettings): boolean {
-  if (settings.encoderEngine === "native") return false;
-  if (isIntermediateCodec(settings.codec)) return false; // native-only codecs
-  return !(settings.bitDepth === 10 && settings.codec !== "h264");
+  return settings.encoderEngine === "webcodecs" && !isIntermediateCodec(settings.codec);
 }
 
 export function resolveEncodeTarget(
   settings: ExportSettings,
   smokeOk: boolean,
 ): EncodeTarget {
-  if (!needsEncoderProbe(settings)) {
-    return { engine: "native", pixFmt: nativePixFmtFor(settings) };
-  }
-  // "webcodecs" pin and "auto" share the legacy probe behavior until E4
-  // flips auto to native-first (the mezzanine still backstops smoke failures).
+  void smokeOk; // probe result now only informs the fallback dialog's live gating (useExportFlow)
   // The cast is sound: needsEncoderProbe returns false for intermediates, so
   // this branch is only reached with settings.codec in WebCodecsCodecId.
-  if (smokeOk) {
+  if (needsEncoderProbe(settings)) {
     return {
       engine: "webcodecs",
       workerCodec: settings.codec as WebCodecsCodecId,
       transcodeAfter: false,
     };
   }
-  return { engine: "webcodecs", workerCodec: "h264", transcodeAfter: true };
+  return { engine: "native", pixFmt: nativePixFmtFor(settings) };
 }

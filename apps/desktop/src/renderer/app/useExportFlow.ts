@@ -514,9 +514,11 @@ export function useExportFlow(deps: {
     // `path` already carries the chosen container extension (set by the dialog).
 
     // One resolution seam for the encode engine (dual-engine spec §Export).
-    // Probe injected: the smoke-encode only runs when the target needs it.
-    // Cast is sound: this branch only runs when needsEncoderProbe(settings)
-    // is true, which needsEncoderProbe itself defines as excluding
+    // Probe injected: the smoke-encode only runs when the target needs it —
+    // as of E4 that's only an explicit WebCodecs pin; `auto` always resolves
+    // native and this ternary short-circuits to `true` unconsulted. Cast is
+    // sound: this branch only runs when needsEncoderProbe(settings) is true,
+    // which needsEncoderProbe itself defines as excluding
     // isIntermediateCodec(settings.codec) — so settings.codec here is always
     // a WebCodecsCodecId, never "prores"/"dnxhr".
     const smokeOk = needsEncoderProbe(settings)
@@ -527,25 +529,19 @@ export function useExportFlow(deps: {
           outFps,
         )) === "webcodecs"
       : true;
-    const target = resolveEncodeTarget(settings, smokeOk);
-    const nativeSink = target.engine === "native";
-    // Typed access to the native-sink's pixFmt without a cast — null whenever
-    // `nativeSink` is false. `nativeSink` and `sinkTarget` are independent
-    // variables derived from the same `target.engine === "native"` test, so
-    // consumers below assert non-null (`sinkTarget!`) inside `if (nativeSink)`
-    // blocks rather than relying on TS to link the two.
-    const sinkTarget = target.engine === "native" ? target : null;
-    const encodePath =
-      target.engine === "webcodecs" && target.transcodeAfter
-        ? ("ffmpeg" as const)
-        : ("webcodecs" as const);
-    const workerCodec =
-      target.engine === "webcodecs" ? target.workerCodec : settings.codec;
+    // `let`, not `const`: a native sink-start failure under `auto` can flip
+    // this trio to a consent-gated WebCodecs retry below (E4). `sinkTarget`
+    // is nulled out alongside the flip so its type (`NativeTarget | null`)
+    // stays honest — no consumer below may assert it non-null with `!`;
+    // each site re-checks `sinkTarget` (or reads it after the flip settles).
+    let target = resolveEncodeTarget(settings, smokeOk);
+    let nativeSink = target.engine === "native";
+    let sinkTarget = target.engine === "native" ? target : null;
 
     // Native-sink path: start the native-encode video sink (ffmpeg, frames
     // streamed over IPC) before the Worker starts. On the WebCodecs path the
     // existing fMP4 streaming path is used.
-    if (nativeSink) {
+    if (nativeSink && sinkTarget) {
       try {
         await exportVideoSinkStart({
           width: dims.width,
@@ -553,7 +549,7 @@ export function useExportFlow(deps: {
           fpsNum,
           fpsDen,
           codec: settings.codec,
-          pixFmt: sinkTarget!.pixFmt,
+          pixFmt: sinkTarget.pixFmt,
           bitrate: computeBitrate(settings, dims.width, dims.height, outFps),
           cbr: settings.rateMode === "cbr",
           gop: gopFrames(settings.keyframeIntervalSec, outFps),
@@ -570,10 +566,55 @@ export function useExportFlow(deps: {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[weftcut/pixi] video sink start failed:", e);
-        setExportState({ kind: "error", detail: `Failed to start the native encoder: ${msg}` });
-        return;
+        // Native encoder unavailable under `auto`, on a combo WebCodecs can
+        // actually take (8-bit, non-intermediate): offer an explicit-consent
+        // fallback instead of hard-erroring — never a silent encoder swap.
+        // Pinned-native / 10-bit / intermediate-codec failures, and a
+        // declined dialog, keep the original hard error.
+        const canFallBack =
+          settings.encoderEngine === "auto" &&
+          !isIntermediateCodec(settings.codec) &&
+          settings.bitDepth === 8;
+        if (
+          canFallBack &&
+          window.confirm(t("export_dialog.native_unavailable_fallback"))
+        ) {
+          const fallbackOk =
+            (await resolveEncodePath(
+              settings.codec as WebCodecsCodecId,
+              dims.width,
+              dims.height,
+              outFps,
+            )) === "webcodecs";
+          if (!fallbackOk) {
+            setExportState({
+              kind: "error",
+              detail: t("export_dialog.native_unavailable_no_fallback"),
+            });
+            return;
+          }
+          target = {
+            engine: "webcodecs",
+            workerCodec: settings.codec as WebCodecsCodecId,
+            transcodeAfter: false,
+          };
+          nativeSink = false;
+          sinkTarget = null;
+        } else {
+          setExportState({ kind: "error", detail: `Failed to start the native encoder: ${msg}` });
+          return;
+        }
       }
     }
+    // `target`/`nativeSink` are final past this point (the only reassignment
+    // is the fallback retry above) — safe to derive the worker-facing values
+    // that feed the encoder config and bitrate calc below.
+    const encodePath =
+      target.engine === "webcodecs" && target.transcodeAfter
+        ? ("ffmpeg" as const)
+        : ("webcodecs" as const);
+    const workerCodec =
+      target.engine === "webcodecs" ? target.workerCodec : settings.codec;
     const workerBitrate =
       encodePath === "ffmpeg"
         ? mezzanineBitrate(settings, dims.width, dims.height, outFps)
@@ -659,7 +700,7 @@ export function useExportFlow(deps: {
         writeChunk,
         motifFrames,
         bitDepth: compositeBitDepth(settings),
-        ...(nativeSink ? { nativeSinkPixFmt: sinkTarget!.pixFmt } : {}),
+        ...(nativeSink && sinkTarget ? { nativeSinkPixFmt: sinkTarget.pixFmt } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

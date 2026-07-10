@@ -387,6 +387,10 @@ const enUS = {
     experimental_point_reliability:
       "Some sources (e.g. HEVC Main10 originals) get transcoded and may be less reliable.",
     experimental_proceed: "Export anyway",
+    native_unavailable_fallback:
+      "The native FFmpeg encoder is unavailable. Export with the WebCodecs encoder instead? (Bitrate mode only; color tags rely on defaults.)",
+    native_unavailable_no_fallback:
+      "The native FFmpeg encoder is unavailable and this format has no WebCodecs fallback.",
   },
   app_notice: {
     dismiss: "Got it",

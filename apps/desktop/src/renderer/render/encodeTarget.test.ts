@@ -8,18 +8,12 @@ const s = (over: Partial<ExportSettings>): ExportSettings => ({
 });
 
 describe("resolveEncodeTarget (E1: mirrors today's three branches)", () => {
-  it("8-bit + smoke ok → WebCodecs direct (path A)", () => {
-    expect(resolveEncodeTarget(s({ codec: "h264" }), true)).toEqual({
+  it("webcodecs pin + smoke ok → WebCodecs direct (path A)", () => {
+    expect(resolveEncodeTarget(s({ codec: "h264", encoderEngine: "webcodecs" }), true)).toEqual({
       engine: "webcodecs", workerCodec: "h264", transcodeAfter: false,
     });
-    expect(resolveEncodeTarget(s({ codec: "av1" }), true)).toEqual({
+    expect(resolveEncodeTarget(s({ codec: "av1", encoderEngine: "webcodecs" }), true)).toEqual({
       engine: "webcodecs", workerCodec: "av1", transcodeAfter: false,
-    });
-  });
-
-  it("8-bit + smoke fail → H.264 mezzanine + ffmpeg transcode (path B)", () => {
-    expect(resolveEncodeTarget(s({ codec: "hevc" }), false)).toEqual({
-      engine: "webcodecs", workerCodec: "h264", transcodeAfter: true,
     });
   });
 
@@ -33,14 +27,8 @@ describe("resolveEncodeTarget (E1: mirrors today's three branches)", () => {
     }
   });
 
-  it("10-bit H.264 (invalid combo, snapped upstream) probes like 8-bit", () => {
-    const st = s({ codec: "h264", bitDepth: 10 });
-    expect(needsEncoderProbe(st)).toBe(true);
-    expect(resolveEncodeTarget(st, true).engine).toBe("webcodecs");
-  });
-
-  it("8-bit paths report needsEncoderProbe", () => {
-    expect(needsEncoderProbe(s({ codec: "hevc" }))).toBe(true);
+  it("webcodecs-pinned paths report needsEncoderProbe", () => {
+    expect(needsEncoderProbe(s({ codec: "hevc", encoderEngine: "webcodecs" }))).toBe(true);
   });
 });
 
@@ -53,14 +41,17 @@ describe("encoderEngine pins (E2)", () => {
     expect(needsEncoderProbe(s({ codec: "hevc", encoderEngine: "native" }))).toBe(false);
   });
 
-  it("webcodecs pin keeps legacy probe behavior (mezzanine until E4)", () => {
-    expect(resolveEncodeTarget(s({ codec: "hevc", encoderEngine: "webcodecs" }), false))
-      .toEqual({ engine: "webcodecs", workerCodec: "h264", transcodeAfter: true });
+  it("auto prefers native for every codec (E4)", () => {
+    expect(resolveEncodeTarget(s({ codec: "h264" }), true))
+      .toEqual({ engine: "native", pixFmt: "yuv420p" });
+    expect(resolveEncodeTarget(s({ codec: "hevc" }), false))
+      .toEqual({ engine: "native", pixFmt: "yuv420p" });
+    expect(needsEncoderProbe(s({ codec: "h264" }))).toBe(false);
   });
 
-  it("auto is unchanged legacy behavior in E2", () => {
-    expect(resolveEncodeTarget(s({ codec: "av1", encoderEngine: "auto" }), true).engine)
-      .toBe("webcodecs");
+  it("webcodecs pin without smoke → stays webcodecs direct (dialog gates combos; no mezzanine)", () => {
+    expect(resolveEncodeTarget(s({ codec: "hevc", encoderEngine: "webcodecs" }), false))
+      .toEqual({ engine: "webcodecs", workerCodec: "hevc", transcodeAfter: false });
   });
 });
 

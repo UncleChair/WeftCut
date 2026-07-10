@@ -378,6 +378,10 @@ const zhCN: Resources = {
     experimental_point_reliability:
       "部分素材（如 HEVC Main10 原始文件）会被转码，可靠性较低。",
     experimental_proceed: "仍要导出",
+    native_unavailable_fallback:
+      "原生 FFmpeg 编码器不可用。改用 WebCodecs 编码器导出？（仅码率模式；色彩标记依赖默认值。）",
+    native_unavailable_no_fallback:
+      "原生 FFmpeg 编码器不可用，且该格式没有 WebCodecs 兜底。",
   },
   app_notice: {
     dismiss: "知道了",
