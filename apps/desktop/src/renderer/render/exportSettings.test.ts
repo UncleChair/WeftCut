@@ -5,10 +5,14 @@ import {
   DEFAULT_EXPORT_SETTINGS,
   DEFAULT_AUDIO_SETTINGS,
   codecString,
+  compositeBitDepth,
   computeBitrate,
   containerExtension,
   containersForCodec,
+  defaultCrf,
+  isBitDepthValid,
   isCodecContainerValid,
+  isIntermediateCodec,
   isAudioCodecContainerValid,
   audioCodecsForContainer,
   downscaleFpsOptions,
@@ -22,6 +26,7 @@ import {
   gopFrames,
   tenBitExportCapable,
   type ExportSettings,
+  type WebCodecsCodecId,
 } from "./exportSettings";
 
 const comp = { width: 1920, height: 1080, fps_num: 30, fps_den: 1 };
@@ -141,7 +146,10 @@ describe("default-export baseline", () => {
     const comp1080 = { width: 1920, height: 1080 };
     const dims = resolveOutputDims(comp1080, DEFAULT_EXPORT_SETTINGS);
     expect(dims).toEqual({ width: 1920, height: 1080 });
-    expect(codecString(DEFAULT_EXPORT_SETTINGS.codec)).toBe("avc1.640028");
+    // Cast is sound: the default codec is the literal "h264"; ExportSettings
+    // widens the field to CodecId (which now includes the native-only
+    // intermediates codecString never accepts).
+    expect(codecString(DEFAULT_EXPORT_SETTINGS.codec as WebCodecsCodecId)).toBe("avc1.640028");
     const bitrate = computeBitrate(
       DEFAULT_EXPORT_SETTINGS,
       dims.width,
@@ -336,5 +344,56 @@ describe("bitDepth", () => {
     expect(tenBitExportCapable({ codec: "h264", pix_fmt: "yuv420p" })).toBe(false);
     expect(tenBitExportCapable({ codec: "av1", pix_fmt: "yuv420p" })).toBe(false);
     expect(tenBitExportCapable({ codec: null, pix_fmt: null })).toBe(false);
+  });
+});
+
+describe("E3 schema", () => {
+  it("intermediates are MOV-only and native-implied", () => {
+    expect(containersForCodec("prores")).toEqual(["mov"]);
+    expect(containersForCodec("dnxhr")).toEqual(["mov"]);
+    expect(isIntermediateCodec("prores")).toBe(true);
+    expect(isIntermediateCodec("h264")).toBe(false);
+  });
+
+  it("bit depth is implied: prores=10, dnxhr=8", () => {
+    expect(isBitDepthValid("prores", 10)).toBe(true);
+    expect(isBitDepthValid("prores", 8)).toBe(false);
+    expect(isBitDepthValid("dnxhr", 8)).toBe(true);
+    expect(isBitDepthValid("dnxhr", 10)).toBe(false);
+  });
+
+  it("mergeSettings snaps stale blobs onto valid combos", () => {
+    const m = mergeSettings({ codec: "prores", container: "mp4", bitDepth: 8 } as Partial<ExportSettings>);
+    expect(m.container).toBe("mov");
+    expect(m.bitDepth).toBe(10);
+    const d = mergeSettings({ codec: "dnxhr" } as Partial<ExportSettings>);
+    expect(d.bitDepth).toBe(8);
+    expect(d.proresProfile).toBe("422");
+    expect(d.dnxhrProfile).toBe("sq");
+    expect(d.rateMode === "vbr" || d.rateMode === "cbr" || d.rateMode === "quality").toBe(true);
+    expect(d.preset).toBe("medium");
+    expect(d.crf).toBeNull();
+  });
+
+  it("quality rate mode has per-codec CRF defaults", () => {
+    expect(defaultCrf("h264")).toBe(18);
+    expect(defaultCrf("hevc")).toBe(22);
+    expect(defaultCrf("av1")).toBe(30);
+  });
+
+  it("computeBitrate for intermediates estimates from the profile table", () => {
+    // 1080p30 ProRes 422 ≈ 147 Mbps (Apple whitepaper nominal; size-estimate only).
+    const br = computeBitrate(
+      mergeSettings({ codec: "prores", proresProfile: "422" } as Partial<ExportSettings>),
+      1920, 1080, 30,
+    );
+    expect(br).toBeGreaterThan(100_000_000);
+    expect(br).toBeLessThan(200_000_000);
+  });
+
+  it("compositeBitDepth: prores composites f16, dnxhr stays 8", () => {
+    expect(compositeBitDepth(mergeSettings({ codec: "prores" } as Partial<ExportSettings>))).toBe(10);
+    expect(compositeBitDepth(mergeSettings({ codec: "dnxhr" } as Partial<ExportSettings>))).toBe(8);
+    expect(compositeBitDepth(mergeSettings({ codec: "hevc", bitDepth: 10 } as Partial<ExportSettings>))).toBe(10);
   });
 });

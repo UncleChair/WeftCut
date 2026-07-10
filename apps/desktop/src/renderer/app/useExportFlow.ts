@@ -26,6 +26,7 @@ import { probeSourceDecodable } from "../render/decoder/probeSourceDecodable";
 import { hasVisibleContent, referencedVideoMediaIds } from "../render/activeVideoLayers";
 import {
   type ExportSettings,
+  type WebCodecsCodecId,
   codecString,
   computeBitrate,
   gopFrames,
@@ -509,9 +510,17 @@ export function useExportFlow(deps: {
 
     // One resolution seam for the encode engine (dual-engine spec §Export).
     // Probe injected: the smoke-encode only runs when the target needs it.
+    // Cast is sound: this branch only runs when needsEncoderProbe(settings)
+    // is true, which needsEncoderProbe itself defines as excluding
+    // isIntermediateCodec(settings.codec) — so settings.codec here is always
+    // a WebCodecsCodecId, never "prores"/"dnxhr".
     const smokeOk = needsEncoderProbe(settings)
-      ? (await resolveEncodePath(settings.codec, dims.width, dims.height, outFps)) ===
-        "webcodecs"
+      ? (await resolveEncodePath(
+          settings.codec as WebCodecsCodecId,
+          dims.width,
+          dims.height,
+          outFps,
+        )) === "webcodecs"
       : true;
     const target = resolveEncodeTarget(settings, smokeOk);
     const nativeSink = target.engine === "native";
@@ -573,7 +582,13 @@ export function useExportFlow(deps: {
       hwHint = undefined;
     }
     const encoderConfig: VideoEncoderConfig = {
-      codec: codecString(workerCodec),
+      // Cast is a formality, not a runtime-safety claim: on the native-sink
+      // branch workerCodec falls back to settings.codec, which CAN be
+      // "prores"/"dnxhr" — but this whole encoderConfig is dead there (the
+      // Worker's exportWorker.ts never constructs an EncoderSink from it when
+      // nativeSink is set; only .width/.height are read). Task 12 owns the
+      // real native-intermediate wiring.
+      codec: codecString(workerCodec as WebCodecsCodecId),
       width: dims.width,
       height: dims.height,
       bitrate: workerBitrate,
@@ -708,7 +723,12 @@ export function useExportFlow(deps: {
       const transcode =
         encodePath === "ffmpeg"
           ? {
-              videoCodec: settings.codec,
+              // Cast is sound: encodePath is only "ffmpeg" when target.engine
+              // was "webcodecs" with transcodeAfter (resolveEncodeTarget),
+              // which resolveEncodeTarget only reaches when
+              // needsEncoderProbe(settings) was true — excluding
+              // isIntermediateCodec(settings.codec). Never "prores"/"dnxhr" here.
+              videoCodec: settings.codec as WebCodecsCodecId,
               bitrate: computeBitrate(
                 settings,
                 dims.width,

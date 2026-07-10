@@ -2,10 +2,18 @@
 // function here is unit-tested in exportSettings.test.ts. The renderer owns
 // this schema end to end; Rust persists it as an opaque JSON blob.
 
-export type CodecId = "h264" | "av1" | "hevc";
+export type CodecId = "h264" | "av1" | "hevc" | "prores" | "dnxhr";
+/// Codecs a WebCodecs VideoEncoder can emit; intermediates are native-only.
+export type WebCodecsCodecId = "h264" | "av1" | "hevc";
+export function isIntermediateCodec(c: CodecId): c is "prores" | "dnxhr" {
+  return c === "prores" || c === "dnxhr";
+}
 export type BitDepth = 8 | 10;
 export type QualityPreset = "low" | "medium" | "high" | "custom";
-export type RateMode = "vbr" | "cbr";
+export type RateMode = "vbr" | "cbr" | "quality";
+export type ProresProfile = "proxy" | "lt" | "422" | "hq";
+export type DnxhrProfile = "lb" | "sq" | "hq";
+export type SpeedPreset = "fast" | "medium" | "slow";
 /// Which encode engine writes the video stream. "auto" resolves per machine
 /// (E2: legacy behavior; E4: native-first). "native" = the ffmpeg sink;
 /// "webcodecs" = the in-renderer VideoEncoder + fMP4 path.
@@ -58,6 +66,16 @@ export interface ExportSettings {
   /// Bits per second, used only when quality === "custom".
   customBitrate: number | null;
   rateMode: RateMode;
+  /// ProRes flavor (prores_ks profile). Only meaningful when codec === "prores".
+  proresProfile: ProresProfile;
+  /// DNxHR flavor. Only meaningful when codec === "dnxhr".
+  dnxhrProfile: DnxhrProfile;
+  /// Constant-quality value for rateMode === "quality" (native engine only;
+  /// forces a software encoder). null ⇒ defaultCrf(codec).
+  crf: number | null;
+  /// Software-encoder speed/quality preset (native engine; HW encoders and
+  /// intermediates ignore it). "medium" matches the pre-E3 hardcoded value.
+  preset: SpeedPreset;
   /// Seconds between forced keyframes (IDR cadence). Both encode paths derive
   /// their GOP from this via gopFrames, so WebCodecs and the ffmpeg transcode
   /// agree.
@@ -88,6 +106,10 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   quality: "medium",
   customBitrate: null,
   rateMode: "vbr",
+  proresProfile: "422",
+  dnxhrProfile: "sq",
+  crf: null,
+  preset: "medium",
   keyframeIntervalSec: 1,
   hwAccel: "auto",
   encoderEngine: "auto",
@@ -159,10 +181,23 @@ const BASE_BPP: Record<Exclude<QualityPreset, "custom">, number> = {
 
 // Codec efficiency: AV1/HEVC reach the same perceptual quality at a fraction
 // of H.264's bitrate. Keeps the size estimate honest per codec.
-const CODEC_BPP_MULTIPLIER: Record<CodecId, number> = {
+const CODEC_BPP_MULTIPLIER: Record<WebCodecsCodecId, number> = {
   h264: 1.0,
   hevc: 0.55,
   av1: 0.5,
+};
+
+/// Nominal profile bitrates at 1080p30 (bits/px/frame), SIZE-ESTIMATE ONLY —
+/// intra codecs are quality-fixed; these never feed encoder args. Sources:
+/// Apple ProRes whitepaper / Avid DNxHR spec sheets, rounded.
+const INTERMEDIATE_BPF: Record<ProresProfile | `dnxhr_${DnxhrProfile}`, number> = {
+  proxy: 45_000_000 / 62_208_000,
+  lt: 102_000_000 / 62_208_000,
+  "422": 147_000_000 / 62_208_000,
+  hq: 220_000_000 / 62_208_000,
+  dnxhr_lb: 45_000_000 / 62_208_000,
+  dnxhr_sq: 115_000_000 / 62_208_000,
+  dnxhr_hq: 175_000_000 / 62_208_000,
 };
 
 export function computeBitrate(
@@ -171,6 +206,12 @@ export function computeBitrate(
   height: number,
   fps: number,
 ): number {
+  if (settings.codec === "prores") {
+    return Math.round(width * height * fps * INTERMEDIATE_BPF[settings.proresProfile]);
+  }
+  if (settings.codec === "dnxhr") {
+    return Math.round(width * height * fps * INTERMEDIATE_BPF[`dnxhr_${settings.dnxhrProfile}`]);
+  }
   if (settings.quality === "custom" && settings.customBitrate) {
     return settings.customBitrate;
   }
@@ -179,10 +220,27 @@ export function computeBitrate(
   return Math.round(width * height * fps * bpp);
 }
 
+export function defaultCrf(codec: CodecId): number {
+  switch (codec) {
+    case "h264": return 18;
+    case "hevc": return 22;
+    case "av1": return 30;
+    default: return 0; // intermediates: fixed-quality by profile, CRF unused
+  }
+}
+
+/// Composite precision: ProRes is a 10-bit family (f16 composite) even though
+/// the user-facing bitDepth control is hidden for it; DNxHR LB/SQ/HQ are 8-bit.
+export function compositeBitDepth(s: ExportSettings): 8 | 10 {
+  if (s.codec === "prores") return 10;
+  if (s.codec === "dnxhr") return 8;
+  return s.bitDepth;
+}
+
 /// WebCodecs codec strings. H.264 keeps the existing baseline string so a
 /// default export matches today byte-for-byte. AV1/HEVC use levels generous
 /// enough for up to 4K (downscale-only never exceeds composition size).
-export function codecString(codec: CodecId): string {
+export function codecString(codec: WebCodecsCodecId): string {
   switch (codec) {
     case "h264":
       return "avc1.640028"; // High@4.0 — existing default
@@ -234,9 +292,14 @@ export function mergeSettings(
   ) {
     merged.audio = { ...merged.audio, codec: "aac" };
   }
-  // Snap an invalid bit depth (e.g. 10 saved with H.264 from a future downgrade).
+  // Intermediates imply container + bit depth; snap stale/hand-edited blobs.
+  if (isIntermediateCodec(merged.codec) && merged.container !== "mov") {
+    merged.container = "mov";
+  }
+  // Snap an invalid bit depth (e.g. 10 saved with H.264 from a future
+  // downgrade, or a non-implied depth saved with an intermediate codec).
   if (!isBitDepthValid(merged.codec, merged.bitDepth)) {
-    merged.bitDepth = 8;
+    merged.bitDepth = merged.codec === "prores" ? 10 : 8;
   }
   return merged;
 }
@@ -265,6 +328,8 @@ export function exportOutputExtension(settings: ExportSettings): string {
 }
 
 export function isBitDepthValid(codec: CodecId, d: BitDepth): boolean {
+  if (codec === "prores") return d === 10;
+  if (codec === "dnxhr") return d === 8;
   return d === 8 || codec !== "h264";
 }
 
@@ -284,11 +349,13 @@ export function tenBitExportCapable(m: {
 }
 
 /// ffmpeg's MOV muxer rejects AV1 ("av1 only supported in MP4 and AVIF"), so
-/// AV1+MOV is invalid. Everything else is valid across mp4/mov/mkv.
+/// AV1+MOV is invalid. Intermediates (ProRes/DNxHR) are MOV-only native
+/// codecs. Everything else is valid across mp4/mov/mkv.
 export function isCodecContainerValid(
   codec: CodecId,
   container: Container,
 ): boolean {
+  if (isIntermediateCodec(codec)) return container === "mov";
   return !(container === "mov" && codec === "av1");
 }
 

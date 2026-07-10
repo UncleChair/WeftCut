@@ -28,6 +28,7 @@ import {
   exportOutputExtension,
   isBitDepthValid,
   isCodecContainerValid,
+  isIntermediateCodec,
   downscaleFpsOptions,
   downscaleHeightOptions,
   mergeSettings,
@@ -186,6 +187,13 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     if (!settings) return;
     let cancelled = false;
     setEncodePath(null);
+    // Intermediates (ProRes/DNxHR) are native-only — never probed via
+    // WebCodecs. Placeholder path badge only; real intermediate UI (profile
+    // pickers, no path badge at all) lands in Task 13.
+    if (isIntermediateCodec(settings.codec)) {
+      setEncodePath("ffmpeg");
+      return;
+    }
     const d = resolveOutputDims(comp, settings);
     const fps = settings.fps != null ? settings.fps : compFps;
     void resolveEncodePath(settings.codec, d.width, d.height, fps).then((p) => {

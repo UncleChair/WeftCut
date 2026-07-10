@@ -63,3 +63,14 @@ describe("encoderEngine pins (E2)", () => {
       .toBe("webcodecs");
   });
 });
+
+describe("intermediates route native with 422 formats (E3)", () => {
+  it("prores → yuv422p10le, dnxhr → yuv422p; no probe", () => {
+    const p = s({ codec: "prores", bitDepth: 10, container: "mov" });
+    expect(needsEncoderProbe(p)).toBe(false);
+    expect(resolveEncodeTarget(p, false)).toEqual({ engine: "native", pixFmt: "yuv422p10le" });
+    const d = s({ codec: "dnxhr", container: "mov" });
+    expect(needsEncoderProbe(d)).toBe(false);
+    expect(resolveEncodeTarget(d, false)).toEqual({ engine: "native", pixFmt: "yuv422p" });
+  });
+});

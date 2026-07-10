@@ -5,12 +5,14 @@
 // isConfigSupported, but selecting AV1/HEVC runs a one-frame real-encode
 // smoke, and a thrown error during the actual export falls back to H.264.
 
-import { type CodecId, codecString } from "./exportSettings";
+import { type WebCodecsCodecId, codecString } from "./exportSettings";
 
 /// Fast feasibility check used to populate the codec dropdown. H.264 is the
-/// guaranteed baseline. AV1/HEVC delegate to isConfigSupported.
+/// guaranteed baseline. AV1/HEVC delegate to isConfigSupported. Intermediates
+/// (ProRes/DNxHR) never reach this — they're native-only, never probed via
+/// WebCodecs.
 export async function probeEncoderSupported(
-  codec: CodecId,
+  codec: WebCodecsCodecId,
   width: number,
   height: number,
   fps: number,
@@ -38,7 +40,7 @@ export async function probeEncoderSupported(
 /// deadline or an error. Mirrors raceFirstDecode (probeSourceDecodable.ts).
 /// Catches Chromium/Electron's "isConfigSupported lied" case for AV1/HEVC.
 export async function smokeEncode(
-  codec: CodecId,
+  codec: WebCodecsCodecId,
   width: number,
   height: number,
   fps: number,
@@ -106,7 +108,7 @@ export type EncodePath = "webcodecs" | "ffmpeg";
 /// encodes it directly; otherwise ffmpeg transcodes a mezzanine. H.264 is
 /// always WebCodecs (smokeEncode short-circuits true).
 export async function resolveEncodePath(
-  codec: CodecId,
+  codec: WebCodecsCodecId,
   width: number,
   height: number,
   fps: number,
