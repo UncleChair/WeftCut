@@ -29,6 +29,7 @@ import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
 import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
+import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
 import { resolveDecode } from "../render/decodeRoute";
 import { exists, readDir } from "@/bridge/fs";
@@ -286,6 +287,10 @@ export interface E2EHook {
   /// Current decode-bench phase ('idle'|'setup'|'warmup'|'measuring');
   /// the orchestrator gates its resource samplers on 'measuring'.
   decodeBenchPhase(): string;
+  /// Imperative read of the global playhead store (µs). Search-palette e2e
+  /// uses this to prove a caption/clip jump (Enter on a result row) actually
+  /// moved the playhead, without importing the bundled store module.
+  getPlayheadUs(): number;
 }
 
 /// Pixel + whole-frame diagnostics from the live composite readback. `r/g/b/a`
@@ -351,6 +356,7 @@ export function installBootstrapHook(
     await projectOpen(path);
     enterEditor();
   };
+  hookSlot().getPlayheadUs = () => playheadTimeUs();
 }
 
 /// Root-side: install the decode-bench hooks (docs/decode-bench.md). No
