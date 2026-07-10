@@ -151,4 +151,27 @@ describe("effect color pick", () => {
     expect(clearTransientOverrides).toHaveBeenCalledWith("E1");
     expect(updateLayerParamTracks).not.toHaveBeenCalled();
   });
+
+  it("commit is skipped when the effect vanished mid-session", async () => {
+    getDescriptor.mockReturnValue(chromaDescriptor);
+    let resolvePick!: (r: { hex: string; source: "composition" } | null) => void;
+    pickColor.mockImplementationOnce(
+      (() =>
+        new Promise((r) => {
+          resolvePick = r;
+        })) as never,
+    );
+    const { rerender } = render(
+      <EffectsSection layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+    );
+    await userEvent.click(screen.getByTestId("effect-colorpick-0"));
+
+    // The effect is deleted from the track mid-session — its row unmounts —
+    // before the pending pick settles.
+    rerender(<EffectsSection layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+
+    resolvePick({ hex: "#0000ff", source: "composition" });
+    await vi.waitFor(() => expect(clearTransientOverrides).toHaveBeenCalledWith("E1"));
+    expect(updateLayerParamTracks).not.toHaveBeenCalled();
+  });
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pipette } from "lucide-react";
 import { AppSelect } from "../components/AppSelect";
@@ -42,6 +42,16 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
   const [pendingKind, setPendingKind] = useState(catalog[0]?.kind ?? "");
   const [err, setErr] = useState<string | null>(null);
 
+  // A pick session (EffectRow.pickColorGroup) is modal and long-lived. If its
+  // own effect is deleted mid-session, the EffectRow holding it unmounts
+  // along with it — a ref scoped to that row would go stale at exactly the
+  // moment it needs to report "gone". This section-level ref keeps updating
+  // on every EffectsSection render regardless of which child rows currently
+  // exist, so the commit path's existence check survives the row's unmount
+  // (spec error table: effect deleted mid-session → treat as cancel).
+  const liveRef = useRef({ layer, tInLayerUs });
+  liveRef.current = { layer, tInLayerUs };
+
   const add = () => {
     setErr(null);
     addEffect(layer.id, pendingKind).then(onMutated).catch((e) => setErr(String(e)));
@@ -60,6 +70,7 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
           tInLayerUs={tInLayerUs}
           playheadInSpan={playheadInSpan}
           onMutated={onMutated}
+          liveRef={liveRef}
         />
       ))}
       <div className="prop-effect-add">
@@ -86,6 +97,7 @@ function EffectRow({
   tInLayerUs,
   playheadInSpan,
   onMutated,
+  liveRef,
 }: {
   layer: LayerSummary;
   effect: EffectView;
@@ -94,6 +106,10 @@ function EffectRow({
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
+  /// Section-level "freshest known state" ref (see EffectsSection) — read at
+  /// commit time instead of this render's closure, which predates the pick
+  /// session and can't observe concurrent edits (or this row's own removal).
+  liveRef: { current: { layer: LayerSummary; tInLayerUs: number } };
 }) {
   const { t } = useTranslation();
   const [err, setErr] = useState<string | null>(null);
@@ -124,18 +140,21 @@ function EffectRow({
     });
     clearTransientOverrides(effect.id);
     if (!result) return;
+    const live = liveRef.current;
+    const liveEffect = live.layer.effects.find((f) => f.id === effect.id);
+    if (!liveEffect) return; // deleted mid-session → cancel (spec error table)
     const rgb = hexToRgb01(result.hex);
-    const spec = getDescriptor(effect.kind)?.params ?? {};
+    const spec = getDescriptor(liveEffect.kind)?.params ?? {};
     const entries: [string, AnimTrack<number>][] = params.map((p, i) => [
       `effects[${effect.id}].params[${p}]`,
       autoKeyTrack(
-        effect.params[p] ?? { mode: "Static", value: spec[p]?.default ?? 0 },
-        tInLayerUs,
+        liveEffect.params[p] ?? { mode: "Static", value: spec[p]?.default ?? 0 },
+        live.tInLayerUs,
         rgb[i]!,
       ),
     ]);
     try {
-      await updateLayerParamTracks(layer.id, entries);
+      await updateLayerParamTracks(live.layer.id, entries);
       await onMutated();
     } catch (e) {
       setErr(String(e));
