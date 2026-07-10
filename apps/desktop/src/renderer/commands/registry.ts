@@ -1,0 +1,75 @@
+import { useEffect, useRef } from "react";
+import type { ActionId } from "../shortcuts/defs";
+
+/// The unified user-invocable command surface. Today's actions live in two
+/// disconnected places — App.tsx's shortcut HandlerMap and menu `on*`
+/// props; providers registered here are the one catalog the search
+/// palette (and, later, menus) read. Module-level, playbackStore-style:
+/// readers don't thread props; components register providers on mount.
+export interface CommandDef {
+  /// Unique id. Shortcut-backed commands reuse their ActionId string so
+  /// ids stay one namespace.
+  id: string;
+  labelKey: string;
+  /// Set for shortcut-backed commands — the palette shows the effective
+  /// binding via useEffectiveBindings(actionId).
+  actionId?: ActionId;
+  /// Evaluated at palette render time; absent = always enabled.
+  enabled?: () => boolean;
+  run: () => void | Promise<void>;
+}
+
+type Provider = () => CommandDef[];
+
+const providers = new Set<Provider>();
+const listeners = new Set<() => void>();
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+export function registerCommandProvider(p: Provider): () => void {
+  providers.add(p);
+  notify();
+  return () => {
+    if (providers.delete(p)) notify();
+  };
+}
+
+/// Registry-change signal — the search index re-snapshots command labels
+/// when providers mount/unmount (App mount lands after wireSearchIndex).
+export function subscribeCommandRegistry(l: () => void): () => void {
+  listeners.add(l);
+  return () => {
+    listeners.delete(l);
+  };
+}
+
+export function listCommands(): CommandDef[] {
+  const out: CommandDef[] = [];
+  const seen = new Set<string>();
+  for (const p of providers) {
+    for (const d of p()) {
+      if (seen.has(d.id)) {
+        console.warn(`commands: duplicate id "${d.id}" ignored`);
+        continue;
+      }
+      seen.add(d.id);
+      out.push(d);
+    }
+  }
+  return out;
+}
+
+export function getCommand(id: string): CommandDef | undefined {
+  return listCommands().find((c) => c.id === id);
+}
+
+/// React binding: register a provider for this component's lifetime.
+/// `getDefs` is read through a ref so handler identities may churn per
+/// render without re-registering (same pattern as useShortcuts).
+export function useCommandProvider(getDefs: () => CommandDef[]): void {
+  const ref = useRef(getDefs);
+  ref.current = getDefs;
+  useEffect(() => registerCommandProvider(() => ref.current()), []);
+}
