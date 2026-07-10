@@ -58,7 +58,7 @@ pub struct VideoSinkStartArgs {
     pub height: u32,
     pub fps_num: u32,
     pub fps_den: u32,
-    /// "hevc" | "av1".
+    /// "h264" | "hevc" | "av1".
     pub codec: String,
     pub bitrate: u64,
     pub cbr: bool,
@@ -163,6 +163,14 @@ pub async fn export_video_sink_start(
     if !args.output_path.is_empty() {
         let codec = super::hwencoder::TargetCodec::parse(&args.codec)
             .ok_or_else(|| format!("unknown codec {}", args.codec))?;
+        if !matches!(
+            codec,
+            super::hwencoder::TargetCodec::H264
+                | super::hwencoder::TargetCodec::Hevc
+                | super::hwencoder::TargetCodec::Av1
+        ) {
+            return Err(format!("video sink supports h264/hevc/av1, got {}", args.codec));
+        }
         let ten_bit = args.pix_fmt.ends_with("10le");
         if !matches!(args.pix_fmt.as_str(), "yuv420p" | "yuv420p10le") {
             return Err(format!("unsupported sink pix_fmt {}", args.pix_fmt));
@@ -401,6 +409,19 @@ mod tests {
               "codec":"hevc","bitrate":0,"cbr":false,"gop":30,"software":true,
               "outputPath":""}"#).unwrap();
         assert_eq!(v.pix_fmt, "yuv420p10le");
+    }
+
+    // The sink encodes h264/hevc/av1 only — parseable-but-unsupported codecs
+    // (vp9) must be rejected up front, not silently routed to libvpx-vp9.
+    #[tokio::test]
+    async fn start_rejects_vp9_at_8bit() {
+        let state = VideoSinkState::default();
+        let hw = super::super::hwencoder::HwEncoderCache::default();
+        let err = export_video_sink_start(&state, &hw, args_8bit("vp9"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("h264/hevc/av1"), "unexpected error: {err}");
+        assert!(state.0.lock().unwrap().is_none(), "no sink left active");
     }
 
     // Locks the exact argv the inline builder produced before extraction.
