@@ -314,7 +314,7 @@ export function useExportFlow(deps: {
     // still encoding put the panel into "preparing" and auto-start when ready.
     {
       const store = useProjectStore.getState();
-      const proj = store.summary; // block-scoped; avoids shadowing App `summary`
+      const proj = store.summary; // block-scoped; avoids shadowing the later `summary` local
       if (!proj) {
         setExportState({ kind: "error", detail: "No project loaded." });
         return;
