@@ -39,6 +39,7 @@ import {
   exportVideoSinkWrite,
 } from "../ipc";
 import { resolveEncodePath } from "../render/exportCodecProbe";
+import { needsEncoderProbe, resolveEncodeTarget } from "../render/encodeTarget";
 import { exportBakeMotifs } from "../render/exportBake";
 import { getMotif } from "../render/motifs/catalog";
 import {
@@ -506,10 +507,24 @@ export function useExportFlow(deps: {
     const outFps = fpsNum / fpsDen;
     // `path` already carries the chosen container extension (set by the dialog).
 
+    // One resolution seam for the encode engine (dual-engine spec §Export).
+    // Probe injected: the smoke-encode only runs when the target needs it.
+    const smokeOk = needsEncoderProbe(settings)
+      ? (await resolveEncodePath(settings.codec, dims.width, dims.height, outFps)) ===
+        "webcodecs"
+      : true;
+    const target = resolveEncodeTarget(settings, smokeOk);
+    const tenBit = target.engine === "native";
+    const encodePath =
+      target.engine === "webcodecs" && target.transcodeAfter
+        ? ("ffmpeg" as const)
+        : ("webcodecs" as const);
+    const workerCodec =
+      target.engine === "webcodecs" ? target.workerCodec : settings.codec;
+
     // 10-bit path: start the native-encode video sink (ffmpeg HEVC Main10 /
     // AV1 10-bit, frames streamed over IPC) before the Worker starts. On the
     // 8-bit path the existing fMP4 streaming path is used.
-    const tenBit = settings.bitDepth === 10 && settings.codec !== "h264";
     if (tenBit) {
       try {
         await exportVideoSinkStart({
@@ -531,24 +546,6 @@ export function useExportFlow(deps: {
         return;
       }
     }
-
-    // Decide the path for the chosen codec: WebCodecs when the browser can
-    // encode it (hw/sw auto), else ffmpeg transcodes a mezzanine. On the
-    // 10-bit path the Worker streams raw frames to the Rust sink — skip the
-    // encode-path probe and treat it as "webcodecs" so no transcode spec is
-    // generated downstream.
-    const encodePath = tenBit
-      ? ("webcodecs" as const)
-      : await resolveEncodePath(
-          settings.codec,
-          dims.width,
-          dims.height,
-          outFps,
-        );
-
-    // WebCodecs path → worker encodes the target codec directly. ffmpeg path →
-    // worker encodes a high-quality H.264 mezzanine; Rust transcodes it.
-    const workerCodec = encodePath === "ffmpeg" ? "h264" : settings.codec;
     const workerBitrate =
       encodePath === "ffmpeg"
         ? mezzanineBitrate(settings, dims.width, dims.height, outFps)
