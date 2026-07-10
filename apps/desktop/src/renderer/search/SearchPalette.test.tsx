@@ -47,6 +47,15 @@ function fixtureSummary(): ProjectSummary {
         available: true, decode_route: { kind: "Original" } as never,
         codec: "h264", pix_fmt: "yuv420p",
       },
+      // Unused (no layer references it) — only here to exercise the
+      // UTF-16 highlight-offset regression test below; must not disturb
+      // the "beach" query tests above (distinct label, distinct query).
+      {
+        id: "m2", label: "🌊 sunset.mp4", path: "C:/x/sunset.mp4", kind: "Video",
+        duration_us: 5_000_000, width: 1920, height: 1080, size_bytes: 1,
+        available: true, decode_route: { kind: "Original" } as never,
+        codec: "h264", pix_fmt: "yuv420p",
+      },
     ],
     tracks: [
       {
@@ -152,6 +161,23 @@ describe("SearchPalette", () => {
     await userEvent.keyboard("beach");
     await userEvent.keyboard("{Enter}{Enter}");
     expect(revealInMediaPool).toHaveBeenCalledWith("m1");
+  });
+
+  it("highlights astral characters by code point, not code unit index", async () => {
+    // Regression test: fuzzysort's `indexes` are UTF-16 code-unit offsets.
+    // "🌊 sunset.mp4" has a leading surrogate pair (2 code units, 1 code
+    // point) — a naive Array.from(label) code-point walk misreads those
+    // offsets and shifts every highlighted mark by one character.
+    const onClose = vi.fn();
+    render(<SearchPalette onClose={onClose} />);
+    await userEvent.keyboard("sunset");
+    const options = await screen.findAllByRole("option");
+    const row = options.find((el) => el.getAttribute("aria-selected") === "true");
+    expect(row).toBeTruthy();
+    const marked = Array.from(row!.querySelectorAll("mark"))
+      .map((m) => m.textContent)
+      .join("");
+    expect(marked).toBe("sunset");
   });
 
   it("keeps the keyboard cursor on its row when an earlier group expands", async () => {

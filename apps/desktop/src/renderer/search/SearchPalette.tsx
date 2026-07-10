@@ -7,7 +7,7 @@ import { AppInput } from "../components/AppInput";
 import { getCommand } from "../commands/registry";
 import { formatTimecode } from "../frames";
 import { logEmit } from "../ipc";
-import { useEffectiveBindings } from "../shortcuts";
+import { resolveAccelerator, useEffectiveBindings } from "../shortcuts";
 import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
 import { GROUP_ORDER, rankEntries, type RankedResult } from "./matcher";
@@ -257,13 +257,16 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
 function HighlightedLabel({ label, indexes }: { label: string; indexes: number[] }) {
   if (indexes.length === 0) return <>{label}</>;
   const set = new Set(indexes);
-  return (
-    <>
-      {Array.from(label).map((ch, i) =>
-        set.has(i) ? <mark key={i}>{ch}</mark> : <span key={i}>{ch}</span>,
-      )}
-    </>
-  );
+  const out: React.ReactNode[] = [];
+  // fuzzysort indexes are UTF-16 code units; render per code point so
+  // surrogate pairs (emoji in labels) stay whole and offsets stay aligned.
+  let unit = 0;
+  for (const ch of label) {
+    const hit = set.has(unit) || (ch.length === 2 && set.has(unit + 1));
+    out.push(hit ? <mark key={unit}>{ch}</mark> : <span key={unit}>{ch}</span>);
+    unit += ch.length;
+  }
+  return <>{out}</>;
 }
 
 function ResultRow({
@@ -280,6 +283,7 @@ function ResultRow({
   const { t } = useTranslation();
   const p = r.entry.payload;
   const binding = useEffectiveBindings(p.type === "command" ? p.actionId : undefined);
+  const accelerator = binding ? resolveAccelerator(binding) : "";
   const disabled =
     p.type === "command" && getCommand(p.commandId)?.enabled?.() === false;
   const unused = p.type === "media" && p.usages.length === 0;
@@ -306,7 +310,7 @@ function ResultRow({
       <span className="search-row-context">
         {unused ? t("search.unused") : r.entry.context}
       </span>
-      {binding && <kbd className="search-row-kbd">{binding}</kbd>}
+      {accelerator && <kbd className="search-row-kbd">{accelerator}</kbd>}
     </div>
   );
 }

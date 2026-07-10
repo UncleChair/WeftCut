@@ -101,11 +101,19 @@ export function MediaPool({
   );
   useEffect(() => {
     if (flashId === null) return;
-    document
-      .querySelector(`[data-media-id="${CSS.escape(flashId)}"]`)
-      ?.scrollIntoView({ block: "nearest" });
-    const t = setTimeout(() => setFlashId(null), 1600);
-    return () => clearTimeout(t);
+    // Reveal can arrive while the drawer is mid-open (~160ms width
+    // transition, see the drawer's CSS), so an immediate scrollIntoView can
+    // land off-target against the pre-transition layout. Defer past it.
+    const scrollTimer = setTimeout(() => {
+      document
+        .querySelector(`[data-media-id="${CSS.escape(flashId)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }, 200);
+    const timer = setTimeout(() => setFlashId(null), 1600);
+    return () => {
+      clearTimeout(scrollTimer);
+      clearTimeout(timer);
+    };
   }, [flashId]);
 
   if (media.length === 0) {

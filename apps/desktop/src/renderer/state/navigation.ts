@@ -53,19 +53,24 @@ export function clampSeekUs(tUs: number): number {
   return Math.max(0, Math.min(tUs, upper));
 }
 
-/// Clamped seek through the module-level transport. Optimistic
-/// playheadStore write first: with no preview mounted there is no engine
-/// emit, yet the playhead UI must still move (mirrors App.tsx seekTo).
-/// Play state is untouched — seek-while-playing keeps playing (NLE norm).
+/// Optimistic playheadStore write first: with no preview mounted there is
+/// no engine emit, yet the playhead UI must still move (mirrors App.tsx
+/// seekTo). Play state is untouched — seek-while-playing keeps playing
+/// (NLE norm). `clampedUs` must already be clamped — callers go through
+/// `seekToClamped` or `jumpToTimeUs`, both of which clamp exactly once.
+function seekExact(clampedUs: number): void {
+  setPlayheadTimeUs(clampedUs);
+  transportSeek(clampedUs);
+}
+
+/// Clamped seek through the module-level transport.
 export function seekToClamped(tUs: number): void {
-  const clamped = clampSeekUs(tUs);
-  setPlayheadTimeUs(clamped);
-  transportSeek(clamped);
+  seekExact(clampSeekUs(tUs));
 }
 
 export function jumpToTimeUs(tUs: number): void {
   const clamped = clampSeekUs(tUs);
-  seekToClamped(clamped);
+  seekExact(clamped);
   scrollToTimeFn?.(clamped);
 }
 

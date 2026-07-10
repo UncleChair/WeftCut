@@ -48,6 +48,7 @@ export function rankEntries(
     return grouped;
   }
 
+  const qLower = q.toLowerCase();
   const scored: RankedResult[] = [];
   for (const entry of entries) {
     let bestScore = -1;
@@ -61,7 +62,7 @@ export function rankEntries(
     if (bestScore < MIN_SCORE) continue;
     let score = bestScore;
     if (entry.type === "command") score += COMMAND_BOOST;
-    if (entry.label.toLowerCase().startsWith(q.toLowerCase())) score += PREFIX_BOOST;
+    if (entry.label.toLowerCase().startsWith(qLower)) score += PREFIX_BOOST;
     scored.push({ entry, score, highlight: bestHighlight });
   }
   scored.sort((a, b) => b.score - a.score);

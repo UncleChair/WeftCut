@@ -412,7 +412,11 @@ export function App({ onCloseProject }: AppProps) {
     seekEnd: () => {
       void seekTo(summary?.duration_us ?? 0);
     },
-    openSearchPalette: () => setPaletteOpen(true),
+    openSearchPalette: () => {
+      // Agent mode doesn't mount the palette — setting the flag would sit
+      // latent and pop the palette open when the session ends.
+      if (!agentSession) setPaletteOpen(true);
+    },
   };
   // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each
   // render. The backend's `Record<string, string[]>` is structurally
