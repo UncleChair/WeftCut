@@ -1,3 +1,10 @@
+// THE font authority: all runtime font acquisition — bundled bytes, OS
+// resolution, and the hand-out-copies transfer policy — lives in this module.
+// Don't grow private font loaders at use sites. Deliberate exception: motif
+// capture host pages load their own fonts via explicit document.fonts.load
+// (they run in a separate CDP browser context this module can't reach, and
+// their explicit-load discipline carries the deterministic-capture guarantee).
+//
 // Bundled fonts are loaded into BOTH the preview Compositor (main thread,
 // document.fonts) and the export Worker (self.fonts) so burned-in captions
 // render identically — this carries the cross-OS determinism guarantee.
@@ -57,6 +64,13 @@ async function fetchBundledFontBytes(): Promise<Record<string, ArrayBuffer>> {
   return out;
 }
 
+/// Per-family OS-resolution cache (main-thread realm). A session's verdict for
+/// a family is stable, so hits cache the pristine bytes and misses cache the
+/// null verdict — an absent font stops re-paying the IPC round-trip on every
+/// export. Rejections reset the slot (a transient IPC failure must not poison
+/// the session). Same hand-out-copies LANDMINE as the bundled cache above.
+const resolvedFontCache = new Map<string, Promise<ArrayBuffer | null>>();
+
 /// Resolve OS fonts for non-bundled families used in a project (best-effort).
 /// Bundled families are skipped (already loaded). Unresolved families are
 /// omitted so the renderer falls back to the bundled default chain (no tofu).
@@ -71,11 +85,27 @@ export async function resolveFontsForFamilies(families: string[]): Promise<Recor
     for (const leaf of family.split(",").map((s) => s.trim()).filter(Boolean)) {
       if (bundled.has(leaf) || seen.has(leaf)) continue;
       seen.add(leaf);
-      const bytes = await window.api.font.resolve(leaf);
-      if (bytes && bytes.byteLength > 0) {
-        out[leaf] = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      let p = resolvedFontCache.get(leaf);
+      if (!p) {
+        const attempt: Promise<ArrayBuffer | null> = resolveOsFontBytes(leaf).catch((err: unknown) => {
+          // Only clear if no newer attempt has replaced the slot meanwhile.
+          if (resolvedFontCache.get(leaf) === attempt) resolvedFontCache.delete(leaf);
+          throw err;
+        });
+        resolvedFontCache.set(leaf, attempt);
+        p = attempt;
       }
+      const pristine = await p;
+      if (pristine) out[leaf] = pristine.slice(0);
     }
   }
   return out;
+}
+
+async function resolveOsFontBytes(leaf: string): Promise<ArrayBuffer | null> {
+  const bytes = await window.api.font.resolve(leaf);
+  if (bytes && bytes.byteLength > 0) {
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  }
+  return null;
 }
