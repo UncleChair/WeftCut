@@ -594,14 +594,18 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                       // (ProRes=10, DNxHR=8); H.264 cannot produce Hi10P
                       // output; other delivery codecs keep the existing
                       // smart-default (auto-10 on a 10-bit-capable source,
-                      // once, until the user touches the selector).
+                      // once, until the user touches the selector) —
+                      // suppressed under an explicit WebCodecs pin, which is
+                      // 8-bit-only (would auto-snap into an invalid combo).
                       const bitDepth: BitDepth = isIntermediateCodec(codec)
                         ? codec === "prores"
                           ? 10
                           : 8
                         : codec === "h264"
                           ? 8
-                          : !userTouchedBitDepth.current && hasTenBitSource
+                          : !userTouchedBitDepth.current &&
+                              hasTenBitSource &&
+                              settings.encoderEngine !== "webcodecs"
                             ? 10
                             : settings.bitDepth;
                       const container: Container = isIntermediateCodec(codec)
@@ -692,7 +696,11 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                       {
                         value: "10",
                         label: t("export_dialog.bit_depth_10"),
-                        disabled: !isBitDepthValid(settings.codec, 10),
+                        // 10-bit is native-only — mirrors the engine row
+                        // disabling its webcodecs option at 10-bit.
+                        disabled:
+                          !isBitDepthValid(settings.codec, 10) ||
+                          settings.encoderEngine === "webcodecs",
                       },
                     ]}
                   />
