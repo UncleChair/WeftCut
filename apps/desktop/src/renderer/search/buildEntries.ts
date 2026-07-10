@@ -44,7 +44,11 @@ export function buildEntries(
       label: c.label,
       context: "",
       haystacks: withPinyin(c.label === c.enLabel ? [c.label] : [c.label, c.enLabel]),
-      payload: { type: "command", commandId: c.id, actionId: c.actionId },
+      payload: {
+        type: "command",
+        commandId: c.id,
+        ...(c.actionId !== undefined ? { actionId: c.actionId } : {}),
+      },
     });
   }
   if (!summary) return entries;
