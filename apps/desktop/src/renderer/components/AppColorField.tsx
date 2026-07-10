@@ -40,6 +40,10 @@ export function AppColorField({
     />
   );
   if (!withEyeDropper) return input;
+  // Input BEFORE button: the input must stay this <span>'s first labelable
+  // descendant — consumers render AppColorField inside a <label>, and the
+  // label's activation target follows DOM order (see PropertyPanel's
+  // Tooltip.Trigger comment for the same trap).
   return (
     <span className="app-color-field">
       {input}
@@ -49,9 +53,11 @@ export function AppColorField({
         disabled={disabled ?? false}
         aria-label={t("colorpick.pick")}
         onClick={() => {
-          void pickColor().then((r) => {
-            if (r) onValueChange(r.hex);
-          });
+          void pickColor()
+            .then((r) => {
+              if (r) onValueChange(r.hex);
+            })
+            .catch((e) => console.warn("colorpick:", e));
         }}
       >
         <Pipette size={12} />
