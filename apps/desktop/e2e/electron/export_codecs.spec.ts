@@ -35,6 +35,14 @@ const REPO = path.resolve(__dirname, '..', '..', '..', '..')
 //   Pinned-native H.264 (8-bit): `codec:'h264'` + `encoderEngine:'native'` →
 //     PackYuvPlanar yuv420p → chunk/ack IPC → native ffmpeg video sink
 //     (bypasses WebCodecs entirely; asserts explicit bt709/limited color tags).
+//
+//   ProRes 422 (intermediate, MOV-only): `codec:'prores'` + `proresProfile:'422'`
+//     → PackYuvPlanar + f16 10-bit composite → native ffmpeg video sink →
+//     prores_ks (-profile:v 2, -vendor apl0) → yuv422p10le in a MOV container.
+//
+//   DNxHR SQ (intermediate, MOV-only): `codec:'dnxhr'` + `dnxhrProfile:'sq'`
+//     → PackYuvPlanar 8-bit composite → native ffmpeg video sink → dnxhd
+//     (-profile:v dnxhr_sq) → yuv422p in a MOV container.
 // ---------------------------------------------------------------------------
 
 const AV1_SETTINGS = {
@@ -66,6 +74,25 @@ const NATIVE_H264_SETTINGS = {
   encoderEngine: 'native',
   bitDepth: 8,
   container: 'mp4',
+  audio: { include: false },
+} as const
+
+// ProRes 422 — intermediate codec, native-only, MOV-only. bitDepth/container
+// are implied by isIntermediateCodec + mergeSettings' snap (compositeBitDepth
+// forces 10 for ProRes), so they're omitted here like the other settings
+// consts omit encoderEngine.
+const PRORES_SETTINGS = {
+  codec: 'prores',
+  proresProfile: '422',
+  container: 'mov',
+  audio: { include: false },
+} as const
+
+// DNxHR SQ — intermediate codec, native-only, MOV-only, 8-bit composite.
+const DNXHR_SETTINGS = {
+  codec: 'dnxhr',
+  dnxhrProfile: 'sq',
+  container: 'mov',
   audio: { include: false },
 } as const
 
@@ -320,6 +347,99 @@ test.describe('multi-codec export smoke (Electron)', () => {
       const SSIM_FLOOR = 0.6
       const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
       console.log('[e2e] native H.264 conformance report:', JSON.stringify(report))
+      const misaligned = report.samples.filter((s: any) => !s.aligned)
+      expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
+    } finally {
+      await app.close()
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // ProRes 422 (intermediate; native ffmpeg video sink, f16 10-bit composite →
+  // prores_ks). Source: test_1080p_30fps.mp4.
+  // Asserts: export completes, output is prores/yuv422p10le with an explicit
+  // tv (limited) color_range in a MOV container, and frame-aligned (SSIM ≥ 0.6).
+  // Timeout matches the 10-bit HEVC cell (600000/560000): ProRes composites at
+  // 10-bit (same f16/PackYuvPlanar pipeline cost) even though the source here
+  // is 8-bit test_1080p_30fps.mp4.
+  // -------------------------------------------------------------------------
+  test('ProRes 422 export lands in MOV with 10-bit 4:2:2 (Electron)', async () => {
+    test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
+    test.setTimeout(600000)
+    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-prores.mov')
+    rmSync(OUTPUT, { force: true })
+
+    const { app, page } = await launchApp()
+    try {
+      await newProject(page, {
+        parentFolder: PROJECT_PARENT,
+        name: 'e2e-prores-' + Date.now(),
+        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+      })
+      await exportTo(
+        page,
+        'ProRes',
+        { mediaAbsPath: SOURCE, outputAbsPath: OUTPUT, settings: PRORES_SETTINGS },
+        560000,
+      )
+      expect(existsSync(OUTPUT), 'ProRes output file must exist').toBe(true)
+
+      // Codec shape: ProRes 422, 10-bit 4:2:2, explicit limited range (the
+      // sink tags every intermediate/delivery codec with the bt709/limited
+      // 4-tuple; ProRes further requires the pix_fmt to actually be 10-bit).
+      const st = probeVideoStream(OUTPUT, 'codec_name,profile,pix_fmt,color_range')
+      console.log('[e2e] ProRes output stream:', JSON.stringify(st))
+      expect(st.codec_name).toBe('prores')
+      expect(st.pix_fmt).toBe('yuv422p10le')
+      expect(st.color_range).toBe('tv')
+
+      const SSIM_FLOOR = 0.6
+      const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
+      console.log('[e2e] ProRes conformance report:', JSON.stringify(report))
+      const misaligned = report.samples.filter((s: any) => !s.aligned)
+      expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
+    } finally {
+      await app.close()
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // DNxHR SQ (intermediate; native ffmpeg video sink, 8-bit composite → dnxhd).
+  // Source: test_1080p_30fps.mp4.
+  // Asserts: export completes, output is dnxhd/yuv422p (ffprobe reports the
+  // codec FAMILY name `dnxhd`, with the specific profile string carrying the
+  // "DNXHR SQ" flavor), and frame-aligned (SSIM ≥ 0.6).
+  // -------------------------------------------------------------------------
+  test('DNxHR SQ export lands in MOV as 8-bit 4:2:2 (Electron)', async () => {
+    test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
+    test.setTimeout(300000)
+    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-dnxhr.mov')
+    rmSync(OUTPUT, { force: true })
+
+    const { app, page } = await launchApp()
+    try {
+      await newProject(page, {
+        parentFolder: PROJECT_PARENT,
+        name: 'e2e-dnxhr-' + Date.now(),
+        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+      })
+      await exportTo(
+        page,
+        'DNxHR',
+        { mediaAbsPath: SOURCE, outputAbsPath: OUTPUT, settings: DNXHR_SETTINGS },
+        280000,
+      )
+      expect(existsSync(OUTPUT), 'DNxHR output file must exist').toBe(true)
+
+      const st = probeVideoStream(OUTPUT, 'codec_name,profile,pix_fmt')
+      console.log('[e2e] DNxHR output stream:', JSON.stringify(st))
+      expect(st.codec_name).toBe('dnxhd')
+      expect(st.pix_fmt).toBe('yuv422p')
+      expect(String(st.profile)).toMatch(/DNXHR SQ/i)
+
+      const SSIM_FLOOR = 0.6
+      const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
+      console.log('[e2e] DNxHR conformance report:', JSON.stringify(report))
       const misaligned = report.samples.filter((s: any) => !s.aligned)
       expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
     } finally {
