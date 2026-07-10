@@ -31,6 +31,10 @@ const REPO = path.resolve(__dirname, '..', '..', '..', '..')
 //
 //   10-bit HEVC: `codec:'hevc'` + `bitDepth:10` → ffmpeg HEVC Main10.
 //     See ExportSettings in exportSettings.ts.
+//
+//   Pinned-native H.264 (8-bit): `codec:'h264'` + `encoderEngine:'native'` →
+//     PackYuvPlanar yuv420p → chunk/ack IPC → native ffmpeg video sink
+//     (bypasses WebCodecs entirely; asserts explicit bt709/limited color tags).
 // ---------------------------------------------------------------------------
 
 const AV1_SETTINGS = {
@@ -51,6 +55,16 @@ const HEVC_SETTINGS = {
 const TEN_BIT_SETTINGS = {
   codec: 'hevc',
   bitDepth: 10,
+  container: 'mp4',
+  audio: { include: false },
+} as const
+
+// Pinned-native H.264 (8-bit) — encoderEngine:'native' bypasses "auto"
+// resolution and forces the ffmpeg video sink lane regardless of machine.
+const NATIVE_H264_SETTINGS = {
+  codec: 'h264',
+  encoderEngine: 'native',
+  bitDepth: 8,
   container: 'mp4',
   audio: { include: false },
 } as const
@@ -254,6 +268,60 @@ test.describe('multi-codec export smoke (Electron)', () => {
       // gradient clip's PTS grid can shift by 1–2 frames through the video-sink path.
       const lowSsim = report.samples.filter((s: any) => s.ssim < SSIM_FLOOR)
       expect(lowSsim, 'SSIM must exceed ' + SSIM_FLOOR + ': ' + JSON.stringify(lowSsim)).toHaveLength(0)
+    } finally {
+      await app.close()
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // Pinned-native H.264 (encoderEngine:'native' → PackYuvPlanar yuv420p →
+  // chunk/ack IPC → ffmpeg video sink, bypassing WebCodecs entirely).
+  // Source: test_1080p_30fps.mp4.
+  // Asserts: export completes, output is h264/yuv420p, EXPLICIT bt709/limited
+  // color tags (the native sink's assertable color-tagging contract), and
+  // frame-aligned (SSIM ≥ 0.6).
+  // -------------------------------------------------------------------------
+  test('pinned-native H.264 export is conformant with explicit color tags (Electron)', async () => {
+    test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
+    test.setTimeout(300000)
+    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-native-h264.mp4')
+    rmSync(OUTPUT, { force: true })
+
+    const { app, page } = await launchApp()
+    try {
+      await newProject(page, {
+        parentFolder: PROJECT_PARENT,
+        name: 'e2e-native-h264-' + Date.now(),
+        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+      })
+      await exportTo(
+        page,
+        'native H.264',
+        { mediaAbsPath: SOURCE, outputAbsPath: OUTPUT, settings: NATIVE_H264_SETTINGS },
+        280000,
+      )
+      expect(existsSync(OUTPUT), 'native H.264 output file must exist').toBe(true)
+
+      // Codec shape + the EXPLICIT bt709/limited 4-tuple — the native ffmpeg
+      // video sink's assertable color-tagging contract (as opposed to the
+      // WebCodecs/mux_export lane, which relies on implicit/inferred tags).
+      const st = probeVideoStream(
+        OUTPUT,
+        'codec_name,pix_fmt,color_space,color_transfer,color_primaries,color_range',
+      )
+      console.log('[e2e] native H.264 output stream:', JSON.stringify(st))
+      expect(st.codec_name).toBe('h264')
+      expect(st.pix_fmt).toBe('yuv420p')
+      expect(st.color_space).toBe('bt709')
+      expect(st.color_transfer).toBe('bt709')
+      expect(st.color_primaries).toBe('bt709')
+      expect(st.color_range).toBe('tv')
+
+      const SSIM_FLOOR = 0.6
+      const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
+      console.log('[e2e] native H.264 conformance report:', JSON.stringify(report))
+      const misaligned = report.samples.filter((s: any) => !s.aligned)
+      expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
     } finally {
       await app.close()
     }
