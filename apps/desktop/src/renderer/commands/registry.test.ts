@@ -60,10 +60,13 @@ describe("useCommandProvider", () => {
     const spy = vi.fn();
     const unsub = subscribeCommandRegistry(spy);
 
-    let defs = [def("play")];
+    // The two getDefs closures share NO state: "pause" below is only
+    // reachable if the hook reads the rerender-time closure through its ref —
+    // a ref-less hook stuck on the mount-time closure would keep listing
+    // "play" and fail here.
     const { rerender, unmount } = renderHook(
       ({ getDefs }: { getDefs: () => CommandDef[] }) => useCommandProvider(getDefs),
-      { initialProps: { getDefs: () => defs } },
+      { initialProps: { getDefs: () => [def("play")] } },
     );
 
     // Mount registers exactly once.
@@ -72,8 +75,7 @@ describe("useCommandProvider", () => {
 
     // A fresh getDefs identity on rerender is read through the ref — the
     // provider itself never re-registers, so the listener count stays put.
-    defs = [def("pause")];
-    rerender({ getDefs: () => defs });
+    rerender({ getDefs: () => [def("pause")] });
     expect(listCommands().map((c) => c.id)).toEqual(["pause"]);
     expect(spy).toHaveBeenCalledTimes(1);
 
