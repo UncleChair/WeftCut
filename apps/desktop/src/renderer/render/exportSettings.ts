@@ -304,6 +304,17 @@ export function mergeSettings(
   if (!isBitDepthValid(merged.codec, merged.bitDepth)) {
     merged.bitDepth = merged.codec === "prores" ? 10 : 8;
   }
+  // A "webcodecs" pin can't carry the native-only intermediates or 10-bit
+  // output (the WebCodecs 10-bit direct encode was reverted as
+  // deadlock-prone). Invalid pin combos fall back to "auto", which always
+  // resolves validly. Runs after the bit-depth snap so it sees the FINAL
+  // depth (a snapped-to-8 blob keeps its pin).
+  if (
+    merged.encoderEngine === "webcodecs" &&
+    (isIntermediateCodec(merged.codec) || merged.bitDepth === 10)
+  ) {
+    merged.encoderEngine = "auto";
+  }
   return merged;
 }
 

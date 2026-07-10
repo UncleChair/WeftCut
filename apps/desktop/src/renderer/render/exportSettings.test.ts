@@ -380,4 +380,39 @@ describe("E3 schema", () => {
     expect(isAudioCodecContainerValid(m.audio.codec, m.container)).toBe(true);
     expect(m.audio.codec).toBe("aac");
   });
+
+  it("snaps a webcodecs pin with surviving 10-bit output back to auto", () => {
+    // hevc keeps bitDepth 10 through the bit-depth snap, so the pin is the
+    // invalid part: WebCodecs can't run the 10-bit direct encode (reverted
+    // as deadlock-prone). The pin falls back to auto.
+    const m = mergeSettings({
+      encoderEngine: "webcodecs",
+      codec: "hevc",
+      bitDepth: 10,
+    } as Partial<ExportSettings>);
+    expect(m.bitDepth).toBe(10);
+    expect(m.encoderEngine).toBe("auto");
+  });
+
+  it("snaps a webcodecs pin with an intermediate codec back to auto", () => {
+    const p = mergeSettings({
+      encoderEngine: "webcodecs",
+      codec: "prores",
+    } as Partial<ExportSettings>);
+    expect(p.encoderEngine).toBe("auto");
+    const d = mergeSettings({
+      encoderEngine: "webcodecs",
+      codec: "dnxhr",
+    } as Partial<ExportSettings>);
+    expect(d.encoderEngine).toBe("auto");
+  });
+
+  it("keeps a valid webcodecs pin (8-bit h264) unsnapped", () => {
+    const m = mergeSettings({
+      encoderEngine: "webcodecs",
+      codec: "h264",
+      bitDepth: 8,
+    } as Partial<ExportSettings>);
+    expect(m.encoderEngine).toBe("webcodecs");
+  });
 });
