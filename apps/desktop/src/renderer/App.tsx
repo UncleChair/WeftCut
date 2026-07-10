@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { AppNotices } from "./components/AppNotices";
+import { PickOverlayHost } from "./colorpick/PickOverlayHost";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import { type PreviewSurfaceHandle } from "./preview/PreviewSurface";
 import { SearchPalette } from "./search/SearchPalette";
@@ -648,6 +649,7 @@ export function App({ onCloseProject }: AppProps) {
         />
       )}
       <AppNotices />
+      <PickOverlayHost />
       {connectOpen && (
         <ConnectAgentPanel onClose={() => setConnectOpen(false)} />
       )}

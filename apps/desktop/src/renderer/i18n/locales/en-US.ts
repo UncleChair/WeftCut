@@ -547,6 +547,11 @@ const enUS = {
     reset_blocked:
       "Can't reset: {{chord}} is bound to {{action}}. Unset it there first.",
   },
+  colorpick: {
+    pick: "Pick color",
+    hint_cancel: "Esc — cancel",
+    hint_screen: "S — pick from screen",
+  },
   effects: {
     heading: "Effects",
     add: "Add effect",

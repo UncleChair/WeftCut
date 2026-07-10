@@ -533,6 +533,11 @@ const zhCN: Resources = {
     reset_blocked:
       "无法重置：{{chord}} 已绑定到「{{action}}」，请先在该操作中取消。",
   },
+  colorpick: {
+    pick: "取色",
+    hint_cancel: "Esc — 取消",
+    hint_screen: "S — 从屏幕取色",
+  },
   effects: {
     heading: "效果",
     add: "添加效果",
