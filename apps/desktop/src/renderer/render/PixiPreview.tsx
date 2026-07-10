@@ -213,8 +213,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       const previewSampler: PreviewSampler = {
         captureFrame: async (opts) => {
           const excludeId = opts?.excludeEffectId;
-          if (excludeId) setEffectDisabled(excludeId, true);
           try {
+            if (excludeId) setEffectDisabled(excludeId, true);
             compositor.compositeFrame(engine.positionUs());
             app.renderer.render(app.stage);
             const out = app.renderer.extract.pixels({
