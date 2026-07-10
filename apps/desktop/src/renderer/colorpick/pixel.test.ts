@@ -62,4 +62,8 @@ describe("containMap", () => {
   it("returns null for degenerate rects", () => {
     expect(containMap(0, 0, { left: 0, top: 0, width: 0, height: 0 }, 1920, 1080)).toBeNull();
   });
+  it("returns null for non-finite client coordinates", () => {
+    expect(containMap(NaN, 500, rect, 1920, 1080)).toBeNull();
+    expect(containMap(500, NaN, rect, 1920, 1080)).toBeNull();
+  });
 });

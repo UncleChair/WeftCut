@@ -63,6 +63,6 @@ export function containMap(
   const offY = rect.top + (rect.height - contentH * scale) / 2;
   const x = Math.floor((clientX - offX) / scale);
   const y = Math.floor((clientY - offY) / scale);
-  if (x < 0 || y < 0 || x >= contentW || y >= contentH) return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= contentW || y >= contentH) return null;
   return { x, y };
 }
