@@ -5,6 +5,7 @@
 import type { Filter } from "pixi.js";
 import type { EffectView } from "../../ipc";
 import { resolveAnimated } from "../animated";
+import { isEffectDisabled, overrideFor } from "./effectOverrides";
 import { getDescriptor } from "./effectRegistry";
 
 interface Instance { id: string; kind: string; filter: Filter; }
@@ -41,10 +42,14 @@ export class EffectChain {
       const spec = getDescriptor(inst.kind)!.params;
       for (const [key, paramSpec] of Object.entries(spec)) {
         const v = resolveAnimated(view.params[key], tInLayerUs, paramSpec.default);
-        paramSpec.apply(inst.filter, v);
+        // Color-pick hover live-apply: a transient override (never recorded)
+        // wins over the resolved track value for this frame only.
+        paramSpec.apply(inst.filter, overrideFor(inst.id, key) ?? v);
       }
     }
-    return this.instances.map((i) => i.filter);
+    // Color-pick freeze: an override-disabled effect is excluded from THIS
+    // frame's filter list but keeps its instance (no destroy/recompile churn).
+    return this.instances.filter((i) => !isEffectDisabled(i.id)).map((i) => i.filter);
   }
 
   dispose(): void {
