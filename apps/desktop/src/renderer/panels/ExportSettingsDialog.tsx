@@ -196,6 +196,11 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     if (!settings) return;
     let cancelled = false;
     setWebcodecsOk(null);
+    // Only an explicit WebCodecs pin ever consults this result
+    // (resolveEncodeTarget ignores it for auto/native, which always resolve
+    // native) — skip the round trip entirely rather than dead-waiting on
+    // smokeEncode's up-to-4s deadline for a result nothing reads.
+    if (settings.encoderEngine !== "webcodecs") return;
     // Intermediates (ProRes/DNxHR) are native-only — never probed via
     // WebCodecs. Placeholder gate value only; real intermediate UI (profile
     // pickers, no path badge at all) lands in Task 13.
@@ -212,7 +217,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings?.codec, settings?.fps, settings?.resolutionHeight, comp, compFps]);
+  }, [settings?.encoderEngine, settings?.codec, settings?.fps, settings?.resolutionHeight, comp, compFps]);
 
   const patch = (p: Partial<ExportSettings>) =>
     setSettings((s) => (s ? { ...s, ...p } : s));
@@ -252,8 +257,14 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     // 10-bit export is experimental — gate it behind an explicit confirmation
     // (the on-screen preview can't be guaranteed to match the 10-bit output;
     // see the inline warning). 8-bit export proceeds directly. Audio-only has
-    // no video, so the bit-depth gate doesn't apply.
-    if (exportIncludesVideo(settings) && settings.bitDepth === 10) {
+    // no video, so the bit-depth gate doesn't apply. Intermediates are
+    // excluded: ProRes's bitDepth is always 10 as its STANDARD format (not
+    // the experimental delivery-codec 10-bit lane), and DNxHR is always 8.
+    if (
+      exportIncludesVideo(settings) &&
+      !isIntermediateCodec(settings.codec) &&
+      settings.bitDepth === 10
+    ) {
       setConfirmExperimental(true);
       return;
     }
@@ -263,9 +274,13 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   const canExport =
     !!location &&
     filename.trim().length > 0 &&
-    // Need at least one stream; video (if included) needs its WebCodecs probe.
+    // Need at least one stream; video (if included) needs its WebCodecs probe
+    // to have settled — but only under an explicit WebCodecs pin (auto/native
+    // never consult the probe, so it never gates them).
     !!(settings?.includeVideo || settings?.includeAudio) &&
-    (!settings?.includeVideo || webcodecsOk !== null) &&
+    (!settings?.includeVideo ||
+      settings?.encoderEngine !== "webcodecs" ||
+      webcodecsOk === true) &&
     (rangeMode === "full" || rangeStartUs < rangeEndUs);
 
   return (
@@ -676,7 +691,11 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     ? t("export_dialog.path_native")
                     : webcodecsOk === null
                       ? t("export_dialog.checking_codec")
-                      : t("export_dialog.path_webcodecs")}
+                      : webcodecsOk === false
+                        ? t("export_dialog.codec_unsupported", {
+                            codec: settings.codec.toUpperCase(),
+                          })
+                        : t("export_dialog.path_webcodecs")}
                 </p>
 
                 {!isIntermediateCodec(settings.codec) && (
@@ -706,12 +725,14 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                   />
                 </div>
                 )}
-                {hasTenBitSource && settings.bitDepth === 8 && (
-                  <p className="settings-blurb">
-                    {t("export_dialog.bit_depth_hint")}
-                  </p>
-                )}
-                {settings.bitDepth === 10 && (
+                {!isIntermediateCodec(settings.codec) &&
+                  hasTenBitSource &&
+                  settings.bitDepth === 8 && (
+                    <p className="settings-blurb">
+                      {t("export_dialog.bit_depth_hint")}
+                    </p>
+                  )}
+                {!isIntermediateCodec(settings.codec) && settings.bitDepth === 10 && (
                   <p className="settings-warn">
                     {t("export_dialog.bit_depth_experimental_warning")}
                   </p>

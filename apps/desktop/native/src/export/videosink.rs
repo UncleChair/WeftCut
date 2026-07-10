@@ -1,5 +1,7 @@
-//! Native-IPC video sink for the 10-bit export. The renderer composites in a
-//! Worker, packs each frame to yuv420p10le, and posts it over the export
+//! Native-IPC video sink for the export pipeline. The renderer composites in
+//! a Worker, packs each frame to the sink's configured rawvideo pix_fmt
+//! (yuv420p / yuv420p10le for 8/10-bit delivery codecs, yuv422p / yuv422p10le
+//! for the DNxHR / ProRes intermediates), and posts it over the export
 //! `chunk` channel; the main process forwards each frame to `video_sink_write`,
 //! which pipes it into an ffmpeg encode. `finish` drops stdin (EOF) and reaps
 //! ffmpeg directly. See docs/export-ipc-transport.md.
@@ -341,9 +343,10 @@ pub async fn export_video_sink_start(
     Ok(())
 }
 
-/// Write one raw yuv420p10le frame to the active sink's ffmpeg stdin (None =>
-/// byte-count only) and bump the counters reported by finish. The blocking pipe
-/// write runs on a blocking thread; awaiting it is the renderer's backpressure.
+/// Write one raw frame, in the sink's configured rawvideo pix_fmt, to the
+/// active sink's ffmpeg stdin (None => byte-count only) and bump the counters
+/// reported by finish. The blocking pipe write runs on a blocking thread;
+/// awaiting it is the renderer's backpressure.
 pub async fn video_sink_write(
     state: &VideoSinkState,
     data: Vec<u8>,

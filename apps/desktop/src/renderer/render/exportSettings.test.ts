@@ -339,7 +339,11 @@ describe("E3 schema", () => {
     expect(d.bitDepth).toBe(8);
     expect(d.proresProfile).toBe("422");
     expect(d.dnxhrProfile).toBe("sq");
-    expect(d.rateMode === "vbr" || d.rateMode === "cbr" || d.rateMode === "quality").toBe(true);
+    // mergeSettings has no rateMode snap of its own for intermediates (the
+    // UI's codec-select handler sets rateMode:"vbr" on an explicit user
+    // switch — see ExportSettingsDialog's onValueChange) — a saved blob with
+    // no rateMode field back-fills to the default, unchanged.
+    expect(d.rateMode).toBe("vbr");
     expect(d.preset).toBe("medium");
     expect(d.crf).toBeNull();
   });

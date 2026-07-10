@@ -448,8 +448,7 @@ export function useExportFlow(deps: {
     // can hit them whether or not the respective stage completed.
     const tempBase = await tempDir();
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const tempVideoExt =
-      settings.codec === "prores" || settings.codec === "dnxhr" ? "mov" : "mp4";
+    const tempVideoExt = isIntermediateCodec(settings.codec) ? "mov" : "mp4";
     const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.${tempVideoExt}`);
     const audioExt = settings.audio.codec === "opus" ? "mka" : "m4a";
     const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.${audioExt}`);
@@ -518,7 +517,8 @@ export function useExportFlow(deps: {
     // which needsEncoderProbe itself defines as excluding
     // isIntermediateCodec(settings.codec) — so settings.codec here is always
     // a WebCodecsCodecId, never "prores"/"dnxhr".
-    const smokeOk = needsEncoderProbe(settings)
+    const needsProbe = needsEncoderProbe(settings);
+    const smokeOk = needsProbe
       ? await smokeEncode(
           settings.codec as WebCodecsCodecId,
           dims.width,
@@ -526,6 +526,21 @@ export function useExportFlow(deps: {
           outFps,
         )
       : true;
+    // A pinned WebCodecs export that fails its own smoke test has no
+    // fallback — the pin is explicit user intent, unlike `auto`'s
+    // fallback-carrying native-first path (handled below at the native
+    // sink-start catch). Fail loudly, before the sink or the export Worker
+    // ever starts, instead of letting resolveEncodeTarget silently proceed
+    // with an encoder that just proved it can't run.
+    if (needsProbe && !smokeOk) {
+      setExportState({
+        kind: "error",
+        detail: t("export_dialog.codec_unsupported", {
+          codec: settings.codec.toUpperCase(),
+        }),
+      });
+      return;
+    }
     // `let`, not `const`: a native sink-start failure under `auto` can flip
     // this trio to a consent-gated WebCodecs retry below (E4). `sinkTarget`
     // is nulled out alongside the flip so its type (`NativeTarget | null`)
