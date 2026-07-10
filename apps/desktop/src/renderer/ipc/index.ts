@@ -1439,6 +1439,13 @@ export interface VideoSinkStartArgs {
   /// (E3: "yuv422p" | "yuv422p10le"). Mirrors videosink.rs (serde default
   /// keeps omission = yuv420p10le, but callers should always set it).
   pixFmt: string;
+  /// Constant-quality value (rateMode "quality"). Present ⇒ CRF/quality args
+  /// replace -b:v. Only sent with software=true.
+  crf?: number;
+  /// Software-encoder speed preset: "fast" | "medium" | "slow".
+  preset?: string;
+  /// Intermediate-codec profile: prores proxy|lt|422|hq, dnxhr lb|sq|hq.
+  profile?: string;
 }
 
 /// Start a native-encode video sink.
