@@ -26,6 +26,10 @@ export interface EffectDescriptor {
   params: Record<string, EffectParamSpec>;
   fidelity: "f16-verified" | "precision-reduced";
   colorspace: "display-gamma";
+  /// RGB triplets of 0–1 scalar params that get an inspector eyedropper
+  /// (docs/superpowers/specs/2026-07-11-color-picker-design.md). Names must
+  /// exist in `params`.
+  colorGroups?: Array<{ params: [string, string, string] }>;
 }
 
 const REGISTRY: Record<string, EffectDescriptor> = {
@@ -70,6 +74,7 @@ const REGISTRY: Record<string, EffectDescriptor> = {
         viewMatte: p("viewMatte", 0, [0, 1], 1),
       };
     })(),
+    colorGroups: [{ params: ["keyR", "keyG", "keyB"] }],
     fidelity: "f16-verified",
     colorspace: "display-gamma",
   },

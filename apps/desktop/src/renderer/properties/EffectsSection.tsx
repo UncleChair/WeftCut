@@ -1,10 +1,27 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Pipette } from "lucide-react";
 import { AppSelect } from "../components/AppSelect";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
-import { addEffect, updateEffect, moveEffect, removeEffect, type EffectView, type LayerSummary } from "../ipc";
-import { listEffects } from "../render/effects/effectRegistry";
+import {
+  addEffect,
+  updateEffect,
+  moveEffect,
+  removeEffect,
+  updateLayerParamTracks,
+  type AnimTrack,
+  type EffectView,
+  type LayerSummary,
+} from "../ipc";
+import { listEffects, getDescriptor } from "../render/effects/effectRegistry";
+import { autoKeyTrack } from "../keyframe/autoKey";
+import { hexToRgb01 } from "../colorpick/pixel";
+import { pickColor } from "../colorpick/pickColor";
+import {
+  clearTransientOverrides,
+  setTransientOverrides,
+} from "../render/effects/effectOverrides";
 import { EffectParamFields } from "./EffectParamField";
 
 interface Props {
@@ -86,10 +103,61 @@ function EffectRow({
     fn().then(onMutated).catch((e) => setErr(String(e)));
   };
 
+  // Chromakey (and any future color-triplet effect): one eyedropper writes the
+  // three scalars as ONE undo entry via the batch API. Hover live-applies
+  // through transient overrides (never recorded); pickColor resolving — commit
+  // OR cancel — is followed by clearing them, so Esc restores the pre-pick
+  // matte. Keyframe semantics per param = autoKeyTrack, identical to a manual
+  // number edit.
+  const pickColorGroup = async (params: [string, string, string]) => {
+    setErr(null);
+    const result = await pickColor({
+      excludeEffectId: effect.id,
+      onHover: (hex) => {
+        const [r, g, b] = hexToRgb01(hex);
+        setTransientOverrides(effect.id, {
+          [params[0]]: r,
+          [params[1]]: g,
+          [params[2]]: b,
+        });
+      },
+    });
+    clearTransientOverrides(effect.id);
+    if (!result) return;
+    const rgb = hexToRgb01(result.hex);
+    const spec = getDescriptor(effect.kind)?.params ?? {};
+    const entries: [string, AnimTrack<number>][] = params.map((p, i) => [
+      `effects[${effect.id}].params[${p}]`,
+      autoKeyTrack(
+        effect.params[p] ?? { mode: "Static", value: spec[p]?.default ?? 0 },
+        tInLayerUs,
+        rgb[i]!,
+      ),
+    ]);
+    try {
+      await updateLayerParamTracks(layer.id, entries);
+      await onMutated();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
   return (
     <div className="prop-effect-row" data-testid={`effect-row-${index}`}>
       <div className="prop-effect-head">
         <span className="prop-effect-name">{name}</span>
+        {getDescriptor(effect.kind)?.colorGroups?.map((group, gi) => (
+          <button
+            key={`cg-${gi}`}
+            type="button"
+            className="app-color-pick"
+            data-testid={`effect-colorpick-${index}`}
+            aria-label={t("colorpick.pick")}
+            onClick={() => void pickColorGroup(group.params)}
+          >
+            <Pipette size={12} />
+          </button>
+        ))}
         <AppSwitch
           data-testid={`effect-enable-${index}`}
           checked={effect.enabled}

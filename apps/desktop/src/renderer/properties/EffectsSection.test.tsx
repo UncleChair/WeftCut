@@ -3,20 +3,34 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { addEffect, updateEffect, moveEffect, removeEffect } = vi.hoisted(() => ({
+const { addEffect, updateEffect, moveEffect, removeEffect, getDescriptor } = vi.hoisted(() => ({
   addEffect: vi.fn(async () => "new-id"),
   updateEffect: vi.fn(async () => {}),
   moveEffect: vi.fn(async () => {}),
   removeEffect: vi.fn(async () => {}),
+  getDescriptor: vi.fn((): unknown => null),
 }));
-vi.mock("../ipc", () => ({ addEffect, updateEffect, moveEffect, removeEffect }));
+const { updateLayerParamTracks } = vi.hoisted(() => ({
+  updateLayerParamTracks: vi.fn(async (_layerId: string, _entries: [string, unknown][]) => {}),
+}));
+vi.mock("../ipc", () => ({ addEffect, updateEffect, moveEffect, removeEffect, updateLayerParamTracks }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string, o?: { defaultValue?: string }) => o?.defaultValue ?? k }),
 }));
 vi.mock("../render/effects/effectRegistry", () => ({
   listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name" }],
+  getDescriptor,
 }));
 vi.mock("./EffectParamField", () => ({ EffectParamFields: () => null }));
+const { pickColor } = vi.hoisted(() => ({
+  pickColor: vi.fn(async () => ({ hex: "#0000ff", source: "composition" as const })),
+}));
+vi.mock("../colorpick/pickColor", () => ({ pickColor }));
+const { setTransientOverrides, clearTransientOverrides } = vi.hoisted(() => ({
+  setTransientOverrides: vi.fn(),
+  clearTransientOverrides: vi.fn(),
+}));
+vi.mock("../render/effects/effectOverrides", () => ({ setTransientOverrides, clearTransientOverrides }));
 // Mock AppSwitch to a plain button so jsdom never hits Base UI's PointerEvent
 // constructor (which jsdom doesn't implement). EffectsSection tests cover the
 // wiring, not the switch widget itself.
@@ -87,5 +101,54 @@ describe("EffectsSection", () => {
     expect((screen.getByTestId("effect-up-0") as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByTestId("effect-down-0"));
     expect(moveEffect).toHaveBeenCalledWith("L1", "E1", 1);
+  });
+});
+
+describe("effect color pick", () => {
+  const chroma = (id: string): EffectView => ({
+    id,
+    kind: "chromakey",
+    enabled: true,
+    params: {},
+  });
+  const chromaDescriptor = {
+    kind: "chromakey",
+    colorGroups: [{ params: ["keyR", "keyG", "keyB"] }],
+    params: {
+      keyR: { default: 0 },
+      keyG: { default: 1 },
+      keyB: { default: 0 },
+    },
+  };
+
+  it("commits a pick as ONE batched three-track write", async () => {
+    getDescriptor.mockReturnValue(chromaDescriptor);
+    render(<EffectsSection layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    await userEvent.click(screen.getByTestId("effect-colorpick-0"));
+    expect(pickColor).toHaveBeenCalledWith(
+      expect.objectContaining({ excludeEffectId: "E1" }),
+    );
+    expect(clearTransientOverrides).toHaveBeenCalledWith("E1");
+    expect(updateLayerParamTracks).toHaveBeenCalledTimes(1);
+    const [layerId, entries] = updateLayerParamTracks.mock.calls[0]!;
+    expect(layerId).toBe("L1");
+    expect(entries).toEqual([
+      ["effects[E1].params[keyR]", { mode: "Static", value: 0 }],
+      ["effects[E1].params[keyG]", { mode: "Static", value: 0 }],
+      ["effects[E1].params[keyB]", { mode: "Static", value: 1 }],
+    ]);
+  });
+
+  it("hover routes through transient overrides", async () => {
+    getDescriptor.mockReturnValue(chromaDescriptor);
+    pickColor.mockImplementationOnce((async (opts?: { onHover?: (hex: string) => void }) => {
+      opts?.onHover?.("#ff0000");
+      return null; // then cancel
+    }) as never);
+    render(<EffectsSection layer={layerWith([chroma("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    await userEvent.click(screen.getByTestId("effect-colorpick-0"));
+    expect(setTransientOverrides).toHaveBeenCalledWith("E1", { keyR: 1, keyG: 0, keyB: 0 });
+    expect(clearTransientOverrides).toHaveBeenCalledWith("E1");
+    expect(updateLayerParamTracks).not.toHaveBeenCalled();
   });
 });

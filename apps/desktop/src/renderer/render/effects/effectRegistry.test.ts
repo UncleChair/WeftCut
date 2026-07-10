@@ -63,4 +63,9 @@ describe("chromakey", () => {
     expect(d.params.shrink!.range).toEqual([-5, 5]);
     expect(d.params.feather!.range).toEqual([0, 10]);
   });
+
+  it("declares the key color as an eyedropper color group", () => {
+    const d = getDescriptor("chromakey")!;
+    expect(d.colorGroups).toEqual([{ params: ["keyR", "keyG", "keyB"] }]);
+  });
 });
