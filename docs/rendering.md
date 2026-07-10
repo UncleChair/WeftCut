@@ -11,9 +11,10 @@ The render pipeline has three concerns:
    (limiter + AAC/Opus), producing a temporary audio file when the
    user includes audio. The full audio architecture (conform cache,
    envelope contract, preview mixer) lives in [`audio.md`](audio.md).
-3. **Final mux / transcode** — Rust either stream-copy muxes the
-   WebCodecs video with optional audio, or transcodes the H.264
-   mezzanine before muxing for codecs not handled directly by WebCodecs.
+3. **Final mux** — Rust stream-copy muxes the already-encoded video —
+   written either by the WebCodecs path or by the native `ffmpeg` encode
+   sink ([`render.md`](render.md)'s "Encode exits") — with the optional
+   audio track into the user's chosen container.
 
 This doc covers (2)'s export entry point and (3). For (1) see
 [`render.md`](render.md) and [`preview.md`](preview.md); for the audio
@@ -53,7 +54,6 @@ keeps the span ordered and inside `[0, durationUs]`.
   half-open range and resets output video timestamps to start at 0.
 - `exportProjectAudioOnly` receives the same range so Rust trims the final
   audio mix to match.
-- ffmpeg transcode progress uses `endUs - startUs` as its denominator.
 
 ## Audio-only export
 
@@ -120,12 +120,11 @@ The audio input is optional. If the user excluded audio, or the project has no
 audio layers and `export_audio_only` produced no temp file, `mux_args` omits the
 audio `-i` and writes a video-only file.
 
-For codec/container combinations that cannot be emitted directly by the
-WebCodecs path, the Worker first writes a high-quality H.264 mezzanine. Rust
-then calls `transcode_and_mux`, selects a hardware or software ffmpeg encoder,
-pins the requested GOP, copies the optional audio stream, and writes the
-user-chosen container. HEVC in MP4/MOV is tagged as `hvc1` for downstream
-compatibility.
+Every export has already written its final codec before this step runs —
+either the WebCodecs path's direct encode, or the native `ffmpeg` sink
+described in [`render.md`](render.md)'s "Encode exits", which also applies the
+`hvc1` tag HEVC needs in MP4/MOV. `mux_to_file` never re-encodes; it only
+copies streams into the user-chosen container.
 
 ## Coverage
 

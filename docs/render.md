@@ -401,7 +401,7 @@ encoded frame; the final `done` event carries perf counters only, because the
 file has already been streamed to disk.
 
 The main thread then optionally awaits the Rust audio-only export into a
-sibling temp audio file and asks Rust to mux or transcode into the user's
+sibling temp audio file and asks Rust to stream-copy mux both into the user's
 chosen output; see [`rendering.md`](rendering.md).
 
 ### Export decode pipelines (one per media × phase)
@@ -468,109 +468,76 @@ buffer pool and false-negative a decodable source (ADR 0013). See ADRs
 
 ### Encode exits
 
-The Worker supports two encode exits, selected by the export settings'
-bit-depth choice.
+`resolveEncodeTarget` (`render/encodeTarget.ts`) is the one seam that decides
+how the Worker's composited frames leave the process: a `NativeTarget { pixFmt }`
+or a `WebCodecsTarget { workerCodec }`. `auto` — the default — always resolves
+native, for every codec and bit depth; WebCodecs is reached only by an explicit
+user pin, and only for an 8-bit delivery codec (H.264/HEVC/AV1) — the dialog
+snaps a WebCodecs pin back to `auto` the moment the user picks an intermediate
+codec or 10-bit, since WebCodecs can emit neither. If the native sink fails to
+start under `auto`, and the target was an 8-bit non-intermediate to begin with,
+the user gets a consent-gated retry on WebCodecs; a pinned-native, 10-bit, or
+intermediate failure, or a declined retry, is a hard error instead. The engine
+is never swapped silently.
 
-**8-bit (default):** the existing WebCodecs path described above.
-`VideoEncoder` receives each composited `VideoFrame` from the PixiJS
-`OffscreenCanvas`, streams encoded chunks through mediabunny `Output`,
-and the fMP4 slices land on disk via the chunk/`writeFile(append)`
-loop. No changes to this path.
+**Native (default).** The Worker forces the WebGL2 backend (the pack shaders
+below need a GL renderer; the WebCodecs exit prefers WebGPU to match the
+preview surface instead). After compositing, a GPU pack pass — `PackYuvPlanar`
+for yuv420p/yuv422p/yuv422p10le, or the parity-gated `PackYuv420p10` for
+yuv420p10le — writes the target's rawvideo bytes, which stream over the export
+`chunk`/`chunk-ack` IPC loop into a native `ffmpeg` sink (`export/videosink.rs`);
+see [`export-ipc-transport.md`](export-ipc-transport.md) for the transport.
+The sink owns every encoder argument: bitrate with optional CBR bounds, or CRF
+quality mode (software encoders only); the speed preset; GOP; a hardware
+encoder chosen from `hwencoder.rs`'s probe cache unless `hwAccel` is pinned to
+software; and — the property this exit can assert that WebCodecs can't —
+explicit `bt709`/`limited` color tags written onto the frames (`setparams`)
+*and* onto the output stream, so the file's declared color always matches what
+was encoded, independent of container or player.
 
-**10-bit (HEVC Main10 or AV1, via the export settings bit-depth
-selector):** the Worker switches to the WebGL2 backend for the
-composite. The encode exit diverges at three points:
+10-bit delivery (HEVC Main10 or AV1 10-bit, via the bit-depth selector) and
+ProRes (always 10-bit) composite through an `rgba16float` render target instead
+of the normal 8-bit one; DNxHR stays 8-bit. 10-bit-capable sources (H.264 Hi10P
+and AV1 10-bit originals, detected by ffprobe metadata via `tenBitExportCapable`)
+decode through a CPU-plane lane forced to software — for AV1 this is a
+correctness requirement, since the hardware decoder "succeeds" but emits opaque
+frames that can't `copyTo`. `TenBitIngest` uploads the extracted planes as RG8
+textures and unpacks them into the f16 target via a GLSL pass; a reorder-margin
++ ring-high-water pair (`TENBIT_REORDER_MARGIN`, sized from resolution) keeps
+the decoder fed ahead of the serialized copy chain without deadlocking, and
+each simultaneous 10-bit source carries its own ring. This lane ships
+**experimental**: the export-settings UI labels it and confirms the export
+click, since the on-screen preview stays 8-bit/SDR (no HDR/wide-gamut preview
+on the web platform) and the path runs below realtime — especially at 4K —
+with HEVC Main10 source conform still pending (ADR 0022).
 
-- **Source ingest.** 10-bit-capable sources (H.264 Hi10P and AV1
-  10-bit originals, identified at export time by a pure
-  ffprobe-metadata rule — codec h264 or av1 + pix_fmt yuv420p10le —
-  that sets `tenBitExportCapable`) are decoded through a CPU-plane
-  lane, configured prefer-software up front. For Hi10P that skips a
-  doomed hardware attempt (no HW path exists); for AV1 it is a
-  correctness requirement — the hardware decoder "succeeds" but emits
-  opaque `format=null` frames that cannot `copyTo`, and only dav1d
-  software decode yields readable `I420P10` planes. The decoder's
-  output callback
-  runs `VideoFrame.copyTo` into a typed `I420P10` buffer and closes the
-  source frame immediately — the copy-then-close pattern satisfies
-  ADR 0004's buffer-pool discipline outright, returning the hardware
-  slot before the ring ever takes ownership. The extracted planes are
-  handed to `TenBitIngest` as an RG8→f16 conversion pass: each chroma-
-  and luma-plane pair is uploaded as an RG8 texture and a GLSL shader
-  unpacks and scales the 10-bit samples into an `rgba16float`
-  `RenderTexture`. The serialized copy chain inside the decoder output
-  callback preserves PTS order; EOS finalization (the `SourceHandle`'s
-  flush and ring drain) runs after all in-flight copies complete, so
-  the PTS-order invariant is never broken at stream end.
+**WebCodecs (explicit pin only).** `VideoEncoder` receives each composited
+`VideoFrame` from the PixiJS `OffscreenCanvas`, streams encoded chunks through
+mediabunny `Output`, and the fMP4 slices land on disk via the chunk/
+`writeFile(append)` loop. Color tags are whatever the encoder defaults to —
+this exit has no equivalent assertion.
 
-  A software-decoder reorder margin (`TENBIT_REORDER_MARGIN`) accounts
-  for B-frame reorder depth: the ring high-water entry count gates the
-  serialized copy chain — un-copied frames wait in the decoder output
-  queue until occupancy falls below the high-water mark — while the
-  reorder margin is a separate dispatch lead-in that keeps the decoder
-  fed ahead of the copy chain. The high-water derives from resolution:
-  a per-ring byte target divided by the first frame's actual plane
-  bytes (frame size is constant within a ring — one source, one coded
-  size), clamped to an entry floor and ceiling. 1080p sits at the
-  ceiling (~300 MB); 4K clamps to the floor (~500 MB). The floor is
-  the deadlock guard — decoder output is presentation-ordered, so a
-  parked consumer can always evict behind itself and reopen the gate.
-  Multiple simultaneous 10-bit sources each carry their own ring (no
-  cross-ring global budget — a known limitation).
+**Intermediates.** ProRes (`prores_ks`, profiles proxy/lt/422/hq, `yuv422p10le`)
+and DNxHR (`dnxhd`, profiles lb/sq/hq, `yuv422p`) are native-only and MOV-only —
+the dialog snaps the container to `.mov` and hides the bit-depth/CRF/preset/GOP
+controls, since the profile alone fixes rate control (every frame is a
+keyframe; there is no `-b:v` or `-g`).
 
-  8-bit sources are unchanged on the ingest side — they go through the
-  normal `createImageBitmap` / `drawImage` snapshot path — but they
-  also composite into the same `rgba16float` `RenderTexture`, gaining
-  the intermediate-rounding benefit (blends and gradient layers see 16-
-  bit precision throughout the composite rather than 8-bit fixed-point
-  accumulation).
+Earlier revisions routed any codec/container WebCodecs couldn't emit directly
+through an intermediate H.264 encode that ffmpeg then transcoded to the final
+codec; once the native sink generalized to every bit depth and to the
+intermediate codecs themselves, that path became redundant and was deleted.
 
-- **Composite.** The WebGL2 `Compositor` instance targets an
-  `rgba16float` `RenderTexture`. The working space is display-referred
-  gamma-encoded BT.709 — there is no linear-light blending (ADR 0021:
-  color converges once at ingest; the f16 composite is not a linear
-  scene-light space but a precision-preserving carry of the already-
-  encoded signal). All sprite operations — transforms, opacity, blend
-  modes — run in this space identically to the 8-bit path.
+The standing guard for all of the above is `export_codecs.spec.ts`, which
+exercises AV1/HEVC direct, 10-bit HEVC, pinned-native H.264 with explicit color
+tags, ProRes, and DNxHR through the real app and checks the resulting codec
+shape, container, and (for the 10-bit case) distinct-step counts above the
+8-bit ceiling at the analyzer's gradient-row meter.
 
-- **GPU byte-pack and native encode sink.** After each composited
-  frame, `PackYuv420p10` runs GLSL fragment passes over the
-  `rgba16float` RenderTexture: they apply the BT.709 limited-range
-  matrix and 10-bit quantization and write luma and chroma planes
-  (byte-packed, two 10-bit samples per RGBA8 texel) into an output
-  buffer sized for `yuv420p10le`. This
-  pack pass is the output transform — the encode-domain color
-  conversion is folded into it — and it also handles any encoder
-  downscale via the sampler, eliminating a separate blit. The resulting
-  raw buffer streams to the Rust video sink (`export/videosink.rs`)
-  over a one-shot loopback WebSocket, which pipes ffmpeg `-f rawvideo
-  -pix_fmt yuv420p10le` into the probed Main10 encoder
-  (`hwencoder.rs`'s 10-bit lane: NVENC/QSV/AMF Main10 with libx265 /
-  libsvtav1 software fallbacks). Raw-invoke IPC is the fallback
-  transport if the loopback WebSocket cannot be established.
-
-The CPU `yuv10.ts` reference (the BT.709/601 matrix constants, the
-sample packing, and the round-trip rounding margin) is pinned by the
-colocated unit test `yuv10.test.ts`; the WebGL2 f16 ingest and pack
-fragment passes were checked against it on known inputs during
-development via a since-retired diagnostic. The standing guard is the
-end-to-end gate (`export_10bit.e2e.js`), which exports a
-Hi10P H.264 source, an AV1 10-bit source, and a 4K Hi10P source (the
-ring cap's entry-floor case) through the full 10-bit path and confirms
-distinct-step counts above the 8-bit ceiling at the analyzer's
-gradient-row meter, plus a long-GOP B-frame reorder-tail regression.
-
-This exit ships as **experimental**: the export-settings UI labels the
-10-bit option experimental and confirms the export click. The preview
-cannot be guaranteed to match the 10-bit output — there is no HDR/wide-
-gamut preview on the web platform, so the preview stays 8-bit/SDR — and
-the path runs below realtime (4K especially), with HEVC Main10 source
-conform still pending (ADR 0022).
-
-Cross-reference: ADR 0022 records the decision and its probe-backed
-rationale (WebGL2 stock f16, the WebSocket transport, copyTo ingest,
-deferred HDR); ADR 0021 describes the color model whose named revisit
-trigger the f16 composite realizes for the export path.
+Cross-reference: ADR 0022 records the 10-bit decision and its probe-backed
+rationale (WebGL2 stock f16, the native-IPC transport, copyTo ingest, deferred
+HDR); ADR 0021 describes the color model this exit's frame+stream tagging
+realizes for export.
 
 ### Backpressure
 

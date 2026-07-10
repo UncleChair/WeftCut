@@ -98,8 +98,8 @@ conformance matrix.
   matrix/range, then compare patch errors from `color_manifest.json`.
 
 The analyzer is intentionally file-based. It validates what the user would
-receive on disk, including WebCodecs encode, Rust audio export, and ffmpeg mux
-or transcode.
+receive on disk, including WebCodecs encode, the native ffmpeg encode sink,
+Rust audio export, and the final mux.
 
 ## Gates
 

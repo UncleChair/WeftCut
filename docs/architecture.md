@@ -100,9 +100,9 @@ logic needs it (notably frame snapping). One source of truth instead of
 hand-mirrored Rust + TS copies that could drift.
 See [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md).
 
-### 3. ffmpeg shrinks to audio + mux
+### 3. ffmpeg never composites
 
-The Rust side runs ffmpeg only at:
+The Rust side runs ffmpeg at:
 
 - **Import** — proxy generation (a 720p short-GOP scrub proxy for
   preview, plus a source-resolution H.264 export master for sources
@@ -112,13 +112,19 @@ The Rust side runs ffmpeg only at:
 - **Audio export** — the encode tail only: the mix itself happens in
   Rust (`audio::mix`, sample-accurate over conform PCM); ffmpeg applies
   the limiter ceiling and encodes AAC/Opus into a temporary audio file.
-- **Final mux / transcode** — ffmpeg stream-copy muxes WebCodecs video with
-  optional audio, or transcodes the H.264 mezzanine for codecs not emitted
-  directly by WebCodecs.
+- **Video export** — the native encode engine (the default) streams
+  GPU-packed rawvideo frames over IPC into an ffmpeg sink that owns the
+  video encode itself (bitrate/CRF, presets, GOP, explicit color tags;
+  see [`render.md`](render.md)'s "Encode exits"). The WebCodecs engine
+  (an explicit user pin) encodes video in the renderer instead and never
+  reaches ffmpeg for it.
+- **Final mux** — ffmpeg stream-copies the already-encoded video, from
+  whichever engine produced it, with the optional audio track into the
+  user-chosen container; this step never re-encodes.
 
 No ffmpeg-driven visual compositor, no offscreen rasterizer, no
 libmpv preview. The visual half of the old IR was deleted with the
-PixiJS migration.
+PixiJS migration; ffmpeg's remaining jobs are encode and mux, never pixels.
 
 ## Data flow: a single edit
 
@@ -158,7 +164,7 @@ directly; no encode-and-swap step.
 | Renderer → workspace files | The `weftcut-media://localhost/<encoded-abs-path>` custom protocol (registered privileged + `supportFetchAPI`/`stream`; HTTP `Range`, served from main) — used by the Pixi decoder pool to fetch proxies and originals. The `fs:*` IPC surface (confined to temp / userData / active-workspace roots) handles export-scratch writes and reads. |
 | External agent → main (MCP host) | MCP over streamable-HTTP on localhost (`@modelcontextprotocol/sdk` host in the main process; bearer enforced by main, token in `app_config_dir/mcp_auth.json`). The tool catalog + resources are merged in TS — the TS-routed tool defs plus the Rust compute/hybrid tools. |
 | Main → External agent | The TS host's change notification, relayed by the in-process MCP host as a streamable-HTTP notification. |
-| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for cloud transcription, and final mux/transcode. |
+| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), the native video encode sink (the default export engine's ffmpeg-backed encoder), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for cloud transcription, and final mux (stream-copy only). |
 
 ## Repository layout
 

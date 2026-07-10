@@ -1,14 +1,18 @@
-# 10-bit export frame transport
+# Export frame transport (native encode engine)
 
-The 10-bit export path (HEVC Main10 / AV1 10-bit) composites in a Web Worker, packs
-each frame to `yuv420p10le`, and streams it to a native `ffmpeg` encode over Electron
-main↔renderer IPC. The 8-bit path is separate (WebCodecs → mediabunny → fragmented-MP4 to disk) and
-does not use this transport.
+The native encode engine composites in a Web Worker, packs each frame to the
+target's rawvideo format (yuv420p, yuv422p, yuv420p10le, or yuv422p10le), and
+streams it to a native `ffmpeg` encode over Electron main↔renderer IPC. The
+WebCodecs engine is separate (VideoEncoder → mediabunny → fragmented-MP4 to
+disk) and does not use this transport.
 
 ## How a frame reaches ffmpeg
 
-1. The export Worker composites into an `rgba16float` target and `PackYuv420p10` packs
-   it to `yuv420p10le` bytes.
+1. The export Worker composites into a render target sized for the target
+   format (`rgba16float` for the yuv420p10le lane, `rgba8unorm` otherwise); a
+   GPU pack pass — `PackYuvPlanar` for yuv420p/yuv422p/yuv422p10le, or the
+   parity-gated `PackYuv420p10` for yuv420p10le — writes the sink's rawvideo
+   bytes.
 2. The Worker posts the frame to the renderer main thread over the export `chunk`
    channel (zero-copy `postMessage` transfer) and awaits a `chunk-ack`. That ack is the
    backpressure: the next frame is not produced until the previous one has been written.
@@ -33,8 +37,9 @@ Native renderer→main IPC was chosen over two alternatives:
   deadline, and `bufferedAmount` polling. Native IPC is faster and simpler.
 - **GPU shared-texture import** (e.g. Electron offscreen rendering → FFmpeg hardware
   frames): Electron's offscreen shared texture is 8-bit BGRA, so it cannot carry the
-  16-bit-float 10-bit composite. It would serve only the 8-bit path and would add a
-  separate native dependency.
+  10-bit lane's 16-bit-float composite or the intermediate codecs' 10-bit planes. It
+  would cover only part of the native engine's format range and would add a separate
+  native dependency without letting this transport go away.
 
 ## Deferred optimization: eliminate the per-frame copy
 
@@ -62,5 +67,6 @@ hotspot rather than ffmpeg encode:
   blocked worker. This changes `start`/`finish`/`cancel` to the async-process API and is
   the cleaner end state.
 
-The 10-bit HEVC export-codec conformance e2e (which drives this path end to end, with an
-SSIM check) is the regression gate for any such change.
+The export-codec conformance e2e (`export_codecs.spec.ts`, which drives this path end to
+end across 8-bit, 10-bit, and intermediate targets, with an SSIM check) is the regression
+gate for any such change.
