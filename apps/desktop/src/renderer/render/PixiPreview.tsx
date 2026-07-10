@@ -481,6 +481,9 @@ async function handlePixiExport(
     motifFrames?: Record<string, ImageBitmap[]>;
     /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
     bitDepth?: 8 | 10;
+    /// Present ⇒ the worker packs frames to this format and streams them to
+    /// the native ffmpeg sink instead of WebCodecs-encoding.
+    nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
   },
   compositor: Compositor | null,
   engine: PlaybackEngine | null,
@@ -516,6 +519,9 @@ async function handlePixiExport(
         : {}),
       ...(opts.motifFrames ? { motifFrames: opts.motifFrames } : {}),
       ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
+      ...(opts.nativeSinkPixFmt != null
+        ? { nativeSinkPixFmt: opts.nativeSinkPixFmt }
+        : {}),
     });
     const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
     const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;

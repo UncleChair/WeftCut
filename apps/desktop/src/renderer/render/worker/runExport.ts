@@ -203,15 +203,6 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     }
   }
 
-  // nativeSinkPixFmt is the general native-sink signal (any pixFmt, from an
-  // encoderEngine:"native" pin). A caller that only threads `bitDepth` (the
-  // pre-existing, narrower contract every current caller actually satisfies —
-  // see the PixiPreview.tsx/pixiPreviewFlag.ts gap noted in the Task 8 report)
-  // still gets the native sink at bitDepth 10, so the historical 10-bit route
-  // keeps working unchanged even where nativeSinkPixFmt itself doesn't arrive.
-  const nativeSinkPixFmt =
-    init.nativeSinkPixFmt ?? (init.bitDepth === 10 ? "yuv420p10le" : undefined);
-
   // 6. Build the start request (fonts resolve on the main thread); posted once
   // the pre-await `workerReady` latch resolves.
   const motifFrames = init.motifFrames ?? {};
@@ -230,7 +221,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     canvas: offscreen,
     motifFrames,
     bitDepth: init.bitDepth ?? 8,
-    ...(nativeSinkPixFmt ? { nativeSink: { pixFmt: nativeSinkPixFmt } } : {}),
+    ...(init.nativeSinkPixFmt ? { nativeSink: { pixFmt: init.nativeSinkPixFmt } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
     fonts: fontBytes,
   };
