@@ -41,6 +41,7 @@ import { EncoderSink } from "./encoder";
 import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
 import { PackYuv420p10 } from "../tenbit/PackYuv420p10";
+import { PackYuvPlanar } from "../yuv/PackYuvPlanar";
 import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
 import { initEval } from "@/eval";
 
@@ -107,6 +108,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   await initEval();
 
   const tenBit = req.bitDepth === 10;
+  const sinkFmt = req.nativeSink?.pixFmt ?? null;
+  const nativeSink = sinkFmt !== null;
 
   // Register bundled fonts into the Worker's font set BEFORE the renderer
   // initializes. OffscreenCanvas has no system-font fallback chain, so
@@ -119,10 +122,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   );
 
   // 1. PixiJS Application against the transferred OffscreenCanvas.
-  // For the 10-bit path we force WebGL2 (PackYuv420p10 needs a GL renderer
-  // with EXT_color_buffer_float for rgba16float targets). For the 8-bit
-  // path we prefer WebGPU to match the preview surface; PixiJS auto-falls
-  // back to WebGL when the worker context doesn't expose `navigator.gpu`.
+  // Any native-sink export (8-bit or 10-bit) forces WebGL2 — the pack shaders
+  // (PackYuv420p10 / PackYuvPlanar) need a GL renderer, and 10-bit additionally
+  // needs EXT_color_buffer_float for rgba16float targets. The WebCodecs path
+  // prefers WebGPU to match the preview surface; PixiJS auto-falls back to
+  // WebGL when the worker context doesn't expose `navigator.gpu`.
   const app = new Application();
   await app.init({
     canvas: req.canvas as unknown as HTMLCanvasElement,
@@ -130,7 +134,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     height: req.project.height,
     background: 0x000000,
     autoStart: false,
-    preference: tenBit ? "webgl" : "webgpu",
+    preference: nativeSink || tenBit ? "webgl" : "webgpu",
   });
 
   if (tenBit) {
@@ -235,9 +239,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     outWidth !== req.project.width || outHeight !== req.project.height;
 
   // 4. Encoder pipeline. Dims/fps come from the encoder config + output fps.
-  // For the 10-bit path, encoding rides the Rust ffmpeg sink (PackYuv420p10
-  // + IPC write), so the WebCodecs EncoderSink is not created.
-  const encoder = tenBit
+  // For the native-sink path, encoding rides the Rust ffmpeg sink (pack +
+  // IPC write), so the WebCodecs EncoderSink is not created.
+  const encoder = nativeSink
     ? null
     : new EncoderSink({
         config: req.encoderConfig,
@@ -248,18 +252,22 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         onChunk: postChunk,
       });
 
-  // 4b. 10-bit-path resources: composite render target (rgba16float) and
-  // YUV packer. pack() ctor throws on odd-ish dims — that propagates out of
-  // runExport as an `error` event (desired; don't catch it here).
+  // 4b. native-sink resources: composite render target (rgba16float for the
+  // 10-bit precision lane, rgba8unorm otherwise) and YUV packer. pack() ctor
+  // throws on odd-ish dims — that propagates out of runExport as an `error`
+  // event (desired; don't catch it here).
   let compositeRT: RenderTexture | null = null;
-  let pack: PackYuv420p10 | null = null;
-  if (tenBit) {
+  let pack: PackYuv420p10 | PackYuvPlanar | null = null;
+  if (nativeSink) {
     compositeRT = RenderTexture.create({
       width: req.project.width,
       height: req.project.height,
-      format: "rgba16float",
+      format: tenBit ? "rgba16float" : "rgba8unorm",
     });
-    pack = new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight);
+    pack =
+      sinkFmt === "yuv420p10le"
+        ? new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight)
+        : new PackYuvPlanar(app.renderer as WebGLRenderer, outWidth, outHeight, sinkFmt!);
   }
 
   // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
@@ -287,9 +295,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const gop = gopFrames(req.keyframeIntervalSec ?? 1, outFps);
 
   // Reusable downscale target — allocated once, drawn into per frame.
-  // Not used in the 10-bit path: PackYuv420p10 samples the composite at
-  // output dims directly via its GLSL shaders.
-  const scaleCanvas = !tenBit && needsScale
+  // Not used on the native-sink path: the pack shaders (PackYuv420p10 /
+  // PackYuvPlanar) sample the composite at output dims directly.
+  const scaleCanvas = !nativeSink && needsScale
     ? new OffscreenCanvas(outWidth, outHeight)
     : null;
   const scaleCtx = scaleCanvas
@@ -412,9 +420,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       compositor.setAnchorTime(tUs);
       compositor.compositeFrame(tUs);
 
-      if (tenBit) {
-        // 10-bit path: render into the rgba16float RenderTexture, pack to
-        // yuv420p10le, then stream to the Rust sink over the chunk/ack IPC channel.
+      if (nativeSink) {
+        // Native-sink path: render into the composite RenderTexture (rgba16float
+        // for the 10-bit precision lane, rgba8unorm otherwise), pack to `sinkFmt`,
+        // then stream to the Rust sink over the chunk/ack IPC channel.
         app.renderer.render({ container: app.stage, target: compositeRT! });
         compositeMs += performance.now() - compT0;
 
@@ -423,13 +432,13 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         captureMs += performance.now() - capT0;
 
         const encT0 = performance.now();
-        // 10-bit frames go to the main thread over the chunk/ack channel, which
-        // forwards them to export_video_sink_write. Copy because postChunk
+        // Native-sink frames go to the main thread over the chunk/ack channel,
+        // which forwards them to export_video_sink_write. Copy because postChunk
         // transfers the buffer and pack() reuses its output.
         await postChunk(bytes.slice());
         encodeMs += performance.now() - encT0;
       } else {
-        // 8-bit path: render to the OffscreenCanvas, capture as a VideoFrame,
+        // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
         // push to the WebCodecs EncoderSink — UNCHANGED.
         app.render();
         compositeMs += performance.now() - compT0;
@@ -483,7 +492,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         post({ type: "progress", framesEncoded: i, totalFrames });
       }
       const qT0 = performance.now();
-      if (!tenBit) {
+      if (!nativeSink) {
         await encoder!.awaitQueueBelow(8);
       }
       queueWaitMs += performance.now() - qT0;
@@ -550,11 +559,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   );
 
   // 7. Finalize.
-  // 10-bit: all frames already streamed via the chunk/ack channel; the main
-  // thread calls exportVideoSinkFinish after receiving `done`.
-  // 8-bit: flush the WebCodecs encoder and finalize the mediabunny mux
-  // (flushes trailing fMP4 fragments through the same onChunk path).
-  if (!tenBit) {
+  // Native sink: all frames already streamed via the chunk/ack channel; the
+  // main thread calls exportVideoSinkFinish after receiving `done`.
+  // WebCodecs: flush the encoder and finalize the mediabunny mux (flushes
+  // trailing fMP4 fragments through the same onChunk path).
+  if (!nativeSink) {
     await encoder!.finalize();
   }
   post({ type: "progress", framesEncoded: totalFrames, totalFrames });
@@ -587,7 +596,7 @@ interface CleanupArgs {
   compositor: Compositor;
   pool: ExportDecoderPool;
   app: Application;
-  pack: PackYuv420p10 | null;
+  pack: PackYuv420p10 | PackYuvPlanar | null;
   compositeRT: RenderTexture | null;
 }
 

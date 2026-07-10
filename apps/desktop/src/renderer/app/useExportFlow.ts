@@ -514,7 +514,13 @@ export function useExportFlow(deps: {
         "webcodecs"
       : true;
     const target = resolveEncodeTarget(settings, smokeOk);
-    const tenBit = target.engine === "native";
+    const nativeSink = target.engine === "native";
+    // Typed access to the native-sink's pixFmt without a cast — null whenever
+    // `nativeSink` is false. `nativeSink` and `sinkTarget` are independent
+    // variables derived from the same `target.engine === "native"` test, so
+    // consumers below assert non-null (`sinkTarget!`) inside `if (nativeSink)`
+    // blocks rather than relying on TS to link the two.
+    const sinkTarget = target.engine === "native" ? target : null;
     const encodePath =
       target.engine === "webcodecs" && target.transcodeAfter
         ? ("ffmpeg" as const)
@@ -522,10 +528,10 @@ export function useExportFlow(deps: {
     const workerCodec =
       target.engine === "webcodecs" ? target.workerCodec : settings.codec;
 
-    // 10-bit path: start the native-encode video sink (ffmpeg HEVC Main10 /
-    // AV1 10-bit, frames streamed over IPC) before the Worker starts. On the
-    // 8-bit path the existing fMP4 streaming path is used.
-    if (tenBit) {
+    // Native-sink path: start the native-encode video sink (ffmpeg, frames
+    // streamed over IPC) before the Worker starts. On the WebCodecs path the
+    // existing fMP4 streaming path is used.
+    if (nativeSink) {
       try {
         await exportVideoSinkStart({
           width: dims.width,
@@ -533,17 +539,17 @@ export function useExportFlow(deps: {
           fpsNum,
           fpsDen,
           codec: settings.codec,
+          pixFmt: sinkTarget!.pixFmt,
           bitrate: computeBitrate(settings, dims.width, dims.height, outFps),
           cbr: settings.rateMode === "cbr",
           gop: gopFrames(settings.keyframeIntervalSec, outFps),
           software: settings.hwAccel === "software",
           outputPath: tempVideoPath,
-          pixFmt: "yuv420p10le",
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[weftcut/pixi] video sink start failed:", e);
-        setExportState({ kind: "error", detail: `Failed to start the 10-bit encoder: ${msg}` });
+        setExportState({ kind: "error", detail: `Failed to start the native encoder: ${msg}` });
         return;
       }
     }
@@ -603,9 +609,9 @@ export function useExportFlow(deps: {
     // with `append` is used instead of an open FileHandle because the fs bridge
     // exposes append-write but no open-handle API. The temp path is a fresh
     // UUID, so the first append creates it (create defaults true).
-    // On the 10-bit path the Worker streams raw yuv420p10le frames via the
+    // On the native-sink path the Worker streams raw packed frames via the
     // chunk/ack channel; the main thread forwards them to export_video_sink_write.
-    const writeChunk = tenBit
+    const writeChunk = nativeSink
       ? async (data: ArrayBuffer): Promise<void> => {
           await exportVideoSinkWrite(new Uint8Array(data));
         }
@@ -625,17 +631,18 @@ export function useExportFlow(deps: {
         keyframeIntervalSec: settings.keyframeIntervalSec,
         writeChunk,
         motifFrames,
-        bitDepth: tenBit ? 10 : 8,
+        bitDepth: settings.bitDepth === 10 ? 10 : 8,
+        ...(nativeSink ? { nativeSinkPixFmt: sinkTarget!.pixFmt } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] export failed:", e);
-      if (tenBit) await exportVideoSinkCancel().catch(() => {});
+      if (nativeSink) await exportVideoSinkCancel().catch(() => {});
       setExportState({ kind: "error", detail: msg });
       return;
     }
     if (!result) {
-      if (tenBit) await exportVideoSinkCancel().catch(() => {});
+      if (nativeSink) await exportVideoSinkCancel().catch(() => {});
       setExportState({
         kind: "error",
         detail: "Preview not initialized.",
@@ -663,10 +670,10 @@ export function useExportFlow(deps: {
           })
         : null;
 
-    // On the 10-bit path, signal the native sink that all frames have been
+    // On the native-sink path, signal the sink that all frames have been
     // sent. The sink flushes its encoder + muxer and writes the final
     // tempVideoPath. Must run BEFORE the audio export + mux.
-    if (tenBit) {
+    if (nativeSink) {
       try {
         await exportVideoSinkFinish();
       } catch (e) {
@@ -718,7 +725,7 @@ export function useExportFlow(deps: {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] finalize failed:", e);
-      // tenBit sink-finish already ran (above); mux failure doesn't need cancel.
+      // nativeSink sink-finish already ran (above); mux failure doesn't need cancel.
       setExportState({
         kind: "error",
         detail: `Finalize failed: ${msg}`,

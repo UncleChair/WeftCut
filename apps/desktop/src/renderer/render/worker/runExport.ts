@@ -60,6 +60,9 @@ export interface RunExportInit {
   /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
   /// Absent ⇒ 8.
   bitDepth?: 8 | 10;
+  /// Present ⇒ the worker packs frames to this format and streams them to the
+  /// native ffmpeg sink instead of WebCodecs-encoding.
+  nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
 }
 
 export interface RunExportResult {
@@ -200,6 +203,15 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     }
   }
 
+  // nativeSinkPixFmt is the general native-sink signal (any pixFmt, from an
+  // encoderEngine:"native" pin). A caller that only threads `bitDepth` (the
+  // pre-existing, narrower contract every current caller actually satisfies —
+  // see the PixiPreview.tsx/pixiPreviewFlag.ts gap noted in the Task 8 report)
+  // still gets the native sink at bitDepth 10, so the historical 10-bit route
+  // keeps working unchanged even where nativeSinkPixFmt itself doesn't arrive.
+  const nativeSinkPixFmt =
+    init.nativeSinkPixFmt ?? (init.bitDepth === 10 ? "yuv420p10le" : undefined);
+
   // 6. Build the start request (fonts resolve on the main thread); posted once
   // the pre-await `workerReady` latch resolves.
   const motifFrames = init.motifFrames ?? {};
@@ -218,6 +230,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     canvas: offscreen,
     motifFrames,
     bitDepth: init.bitDepth ?? 8,
+    ...(nativeSinkPixFmt ? { nativeSink: { pixFmt: nativeSinkPixFmt } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
     fonts: fontBytes,
   };

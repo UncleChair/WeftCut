@@ -84,10 +84,14 @@ export type ExportRequest =
       /// (`undefined` before the export-range's first comp-frame) for a
       /// mid-layer export start — the Worker never requests those indices.
       motifFrames: Record<string, ImageBitmap[]>;
-      /// 10 ⇒ the f16/WebGL2 pipeline: composite into an rgba16float target,
-      /// pack to yuv420p10le, stream to the Rust video sink. Absent/8 ⇒ the
-      /// existing WebCodecs pipeline, untouched.
+      /// 10 ⇒ f16/WebGL2 composite precision. Whether frames go to the native
+      /// sink is `nativeSink` below — the two are independent (8-bit native
+      /// composites RGBA8 but still packs + streams).
       bitDepth?: 8 | 10;
+      /// Present ⇒ pack each frame to `pixFmt` and stream raw frames over the
+      /// chunk/ack channel to the ffmpeg video sink (no WebCodecs encoder).
+      /// Absent ⇒ the WebCodecs EncoderSink/fMP4 path.
+      nativeSink?: { pixFmt: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le" };
       /// mediaIds whose ORIGINAL decodes 10-bit in the renderer; these acquire
       /// originalAssetUrls + tenBitLane + preferSoftware.
       tenBitMedia?: Record<string, boolean>;

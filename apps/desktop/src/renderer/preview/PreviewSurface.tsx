@@ -56,6 +56,9 @@ export interface PreviewSurfaceHandle {
     motifFrames?: Record<string, ImageBitmap[]>;
     /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
     bitDepth?: 8 | 10;
+    /// Present ⇒ the worker packs frames to this format and streams them to
+    /// the native ffmpeg sink instead of WebCodecs-encoding.
+    nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
   }): Promise<PixiExportResult>;
 }
 
