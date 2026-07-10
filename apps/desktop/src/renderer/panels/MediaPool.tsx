@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { MediaThumbnail } from "./MediaThumbnail";
@@ -7,6 +7,7 @@ import { MEDIA_DRAG_TYPE } from "../timeline/TrackLane";
 import { AppInput } from "../components/AppInput";
 import { formatTimecode } from "../frames";
 import { type MediaSummary } from "../ipc";
+import { registerRevealMedia } from "../state/navigation";
 
 /// The media-pool column doubles as the drop target for Explorer file
 /// drags. HTML5 drag events fire because the OS-level drop interception is
@@ -87,6 +88,26 @@ export function MediaPool({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
 
+  // Palette "reveal in media pool": clear any filter (the target must be
+  // in the filtered list), then flash + scroll the row into view.
+  const [flashId, setFlashId] = useState<string | null>(null);
+  useEffect(
+    () =>
+      registerRevealMedia((id) => {
+        setQuery("");
+        setFlashId(id);
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (flashId === null) return;
+    document
+      .querySelector(`[data-media-id="${CSS.escape(flashId)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+    const t = setTimeout(() => setFlashId(null), 1600);
+    return () => clearTimeout(t);
+  }, [flashId]);
+
   if (media.length === 0) {
     return (
       <div className="media-pool-inner">
@@ -142,12 +163,14 @@ export function MediaPool({
             return (
             <li
               key={m.id}
+              data-media-id={m.id}
               className={[
                 "media-item",
                 reason === "importing" ? "is-importing" : "",
                 reason === "missing" ? "is-missing" : "",
                 reason === "proxy_pending" ? "is-proxy-pending" : "",
                 reason === "proxy_failed" ? "is-proxy-failed" : "",
+                flashId === m.id ? "is-search-flash" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}

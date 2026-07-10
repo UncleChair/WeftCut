@@ -14,12 +14,13 @@ import {
   projectUndo,
   type ProjectSummary,
 } from "./ipc";
-import { frameDurUs, lastFrameAnchorUs } from "./frames";
+import { frameDurUs } from "./frames";
 import {
   playheadTimeUs,
   setPlayheadTimeUs,
 } from "./state/playheadStore";
 import { setSelectedLayerId, useSelectedLayerId } from "./state/selectionStore";
+import { clampSeekUs, registerRevealTrack } from "./state/navigation";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
@@ -118,16 +119,12 @@ export function App({ onCloseProject }: AppProps) {
   // `lastFrameAnchorUs` so the playhead can never sit on the
   // post-last-frame slot.
   const seekTo = useCallback((tUs: number) => {
-    const fpsNum = summary?.composition.fps_num ?? 30;
-    const fpsDen = summary?.composition.fps_den ?? 1;
-    const durationUs = summary?.duration_us ?? 0;
-    const upper = lastFrameAnchorUs(durationUs, fpsNum, fpsDen);
-    const clamped = Math.max(0, Math.min(tUs, upper));
+    const clamped = clampSeekUs(tUs);
     // Optimistic store write: with no preview mounted (empty composition)
     // there is no engine emit, yet the playhead UI must still move.
     setPlayheadTimeUs(clamped);
     previewRef.current?.seekTo(clamped);
-  }, [summary?.composition.fps_num, summary?.composition.fps_den, summary?.duration_us]);
+  }, []);
 
   // R.7: click on a peek item → reveal that hidden track inline at its
   // natural accretion slot AND select the clicked layer. Single-track
@@ -136,6 +133,10 @@ export function App({ onCloseProject }: AppProps) {
     setRevealedTrackId(trackId);
     setSelectedLayerId(layerId);
   }, []);
+
+  // Palette navigation reaches R.7 reveal-track through the module-level
+  // registry (state/navigation.ts) — App owns the revealedTrackId state.
+  useEffect(() => registerRevealTrack(revealTrack), [revealTrack]);
 
   // "New Motif" auto-places the fresh draft (MotifPicker.onDraftPlaced) and
   // should land the user on its property panel with the layer visible. The

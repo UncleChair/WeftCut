@@ -50,6 +50,7 @@ import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
+import { registerScrollToTime } from "../state/navigation";
 
 // Any media kind drops on any track (tracks are kind-agnostic; the
 // backend enforces overlap rules). Kept as a stub returning true to
@@ -162,6 +163,25 @@ export function Timeline({
     expandedTracks,
     toggleExpanded,
   } = useTimelineView({ rootRef, tracks, durationUs });
+
+  // Net-new capability: horizontal scroll-to-time for palette jumps.
+  // pxPerSec is React state; the registered closure reads it through a ref
+  // so registration happens once per mount.
+  const pxPerSecForScrollRef = useRef(pxPerSec);
+  pxPerSecForScrollRef.current = pxPerSec;
+  useEffect(
+    () =>
+      registerScrollToTime((tUs) => {
+        const root = rootRef.current;
+        if (!root) return;
+        const x = (tUs / 1_000_000) * pxPerSecForScrollRef.current;
+        const viewport = root.clientWidth - HEADER_COL_PX;
+        // Center the target time in the lane area (the first HEADER_COL_PX
+        // of the viewport is the sticky track-header column).
+        root.scrollLeft = Math.max(0, x - viewport / 2);
+      }),
+    [],
+  );
 
   const totalSec = Math.max(durationUs / 1_000_000, 5);
   const widthPx = totalSec * pxPerSec;

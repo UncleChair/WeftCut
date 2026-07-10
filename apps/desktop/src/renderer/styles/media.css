@@ -345,3 +345,10 @@
   border-top-color: var(--color-blue-300);
   animation: preview-spin 0.9s linear infinite;
 }
+
+/* Search-palette "reveal in media pool" flash (cleared after ~1.6 s). */
+.media-item.is-search-flash {
+  outline: 2px solid #6ea8ff;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
