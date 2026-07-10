@@ -1,0 +1,46 @@
+/* Global search palette (Mod+K). The Base UI Popup carries positioning
+   only; rows/groups own the look. Top-anchored, unlike the centered
+   AppDialog skins. */
+.search-palette {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: min(560px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  background: #1e1f24;
+  border: 1px solid #33353c;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  outline: none;
+}
+.search-palette-input { padding: 10px; border-bottom: 1px solid #33353c; }
+.search-palette-input .app-input-wrap, .search-palette-input .app-input { width: 100%; }
+.search-palette-list { max-height: 48vh; overflow-y: auto; padding: 6px 0; }
+.search-group-header {
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.search-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; }
+.search-row.is-active { background: rgba(255, 255, 255, 0.08); }
+.search-row.is-disabled { opacity: 0.4; cursor: default; }
+.search-row-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-row-label mark { background: none; color: #6ea8ff; font-weight: 600; }
+.search-row-context {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 11px; opacity: 0.55; text-align: right;
+}
+.search-row-badge {
+  font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  background: rgba(255, 99, 99, 0.2); color: #ff9b9b;
+}
+.search-row-kbd { font-size: 10px; opacity: 0.6; border: 1px solid #33353c; border-radius: 4px; padding: 1px 5px; }
+.search-show-more { padding: 4px 12px; font-size: 11px; opacity: 0.6; cursor: pointer; }
+.search-show-more:hover { opacity: 1; }
+.search-empty { padding: 18px 12px; text-align: center; opacity: 0.55; }

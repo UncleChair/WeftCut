@@ -36,6 +36,7 @@ interface AppMenuBarProps {
   onOpenExport: () => void;
   onOpenConnect: () => void;
   onOpenSettings: () => void;
+  onOpenSearch: () => void;
 }
 
 /// The frameless-window header: app title, menu bar, core-status pill,
@@ -64,6 +65,7 @@ export function AppMenuBar({
   onOpenExport,
   onOpenConnect,
   onOpenSettings,
+  onOpenSearch,
 }: AppMenuBarProps) {
   const { t, i18n } = useTranslation();
 
@@ -169,6 +171,11 @@ export function AppMenuBar({
               label={t("actions.connect_agent")}
               hint={t("actions.connect_agent_hint")}
               onSelect={onOpenConnect}
+            />
+            <MenuItem
+              actionId="openSearchPalette"
+              label={t("actions.open_search")}
+              onSelect={onOpenSearch}
             />
             <MenuSeparator />
             <MenuItem

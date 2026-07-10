@@ -35,6 +35,7 @@ import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { AppNotices } from "./components/AppNotices";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import { type PreviewSurfaceHandle } from "./preview/PreviewSurface";
+import { SearchPalette } from "./search/SearchPalette";
 
 import { AppMenuBar } from "./app/AppMenuBar";
 import { PreviewSection } from "./app/PreviewSection";
@@ -98,6 +99,7 @@ export function App({ onCloseProject }: AppProps) {
   const [paused, setPaused] = useState<boolean>(true);
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [motifPickerOpen, setMotifPickerOpen] = useState(false);
@@ -410,6 +412,7 @@ export function App({ onCloseProject }: AppProps) {
     seekEnd: () => {
       void seekTo(summary?.duration_us ?? 0);
     },
+    openSearchPalette: () => setPaletteOpen(true),
   };
   // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each
   // render. The backend's `Record<string, string[]>` is structurally
@@ -507,6 +510,7 @@ export function App({ onCloseProject }: AppProps) {
         onOpenExport={() => setExportDialogOpen(true)}
         onOpenConnect={() => setConnectOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSearch={() => setPaletteOpen(true)}
       />
 
       <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
@@ -687,6 +691,7 @@ export function App({ onCloseProject }: AppProps) {
           onClose={() => setLogConsoleOpen(false)}
         />
       )}
+      {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
       <StatusBar onToggleLogs={toggleLogConsole} />
     </div>
     </ShortcutBindingsProvider>
