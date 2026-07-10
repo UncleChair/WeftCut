@@ -50,9 +50,21 @@ function warn(message: string): void {
   });
 }
 
+/// A call still freezing its buffers (not yet installed in the store).
+/// pickColor() must preempt BOTH phases of the previous call — the installed
+/// session (store) AND a still-capturing one (this claim) — or the loser's
+/// promise leaks unresolved forever.
+interface Claim {
+  cancelled: boolean;
+}
+let inFlight: Claim | null = null;
+
 export async function pickColor(opts: PickOptions = {}): Promise<PickResult | null> {
+  if (inFlight) inFlight.cancelled = true;
   usePickSessionStore.getState().session?.settle(null);
   transportPause();
+  const claim: Claim = { cancelled: false };
+  inFlight = claim;
 
   const sampler = getPreviewSampler();
   const [comp, snap] = await Promise.all([
@@ -69,6 +81,11 @@ export async function pickColor(opts: PickOptions = {}): Promise<PickResult | nu
       return null;
     }),
   ]);
+
+  // Preempted while capturing: the newer call owns the store — resolve null
+  // WITHOUT installing (installing here would clobber the winner's session).
+  if (claim.cancelled) return null;
+  if (inFlight === claim) inFlight = null;
 
   if (!comp && !snap) {
     void logEmit({

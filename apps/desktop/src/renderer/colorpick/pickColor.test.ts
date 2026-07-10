@@ -68,4 +68,26 @@ describe("pickColor", () => {
     expect(usePickSessionStore.getState().session).toBeNull();
     expect(logEmit).toHaveBeenCalled();
   });
+  it("preempts a call still capturing buffers (no orphaned promise, no clobber)", async () => {
+    const release: Array<() => void> = [];
+    registerPreviewSampler({
+      captureFrame: () =>
+        new Promise((res) =>
+          release.push(() => res({ pixels: new Uint8Array([1, 2, 3, 255]), width: 1, height: 1 })),
+        ),
+      mapClientToComposition: () => null,
+      canvasRect: () => null,
+    });
+    const first = pickColor();
+    const second = pickColor(); // no await between — both mid-capture
+    expect(release.length).toBe(2);
+    release[1]!(); // the NEWER call's capture lands first
+    await vi.waitFor(() => expect(usePickSessionStore.getState().session).not.toBeNull());
+    release[0]!(); // the OLDER call's capture lands after the winner installed
+    await expect(first).resolves.toBeNull(); // resolved (not hung), and…
+    const live = usePickSessionStore.getState().session!;
+    live.settle({ hex: "#010203", source: "composition" });
+    // …the winner's session was NOT clobbered by the loser's late install.
+    await expect(second).resolves.toEqual({ hex: "#010203", source: "composition" });
+  });
 });
