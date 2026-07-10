@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerCommandProvider } from "../commands/registry";
+import i18n from "../i18n";
 import type { ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { useSearchIndexStore, wireSearchIndex } from "./searchIndexStore";
@@ -111,5 +112,35 @@ describe("searchIndexStore", () => {
     expect(
       useSearchIndexStore.getState().entries.some((e) => e.key === "command:save"),
     ).toBe(false);
+  });
+
+  it("re-snapshots command labels on languageChanged", async () => {
+    // Pin the starting locale explicitly — the LanguageDetector may resolve
+    // either supported language from the host environment, and the signal
+    // under test is the en→zh transition, not the detector.
+    await i18n.changeLanguage("en-US");
+    const un = registerCommandProvider(() => [
+      { id: "save", labelKey: "actions.save", run: () => {} },
+    ]);
+    teardown = wireSearchIndex();
+    await flushDebounce();
+    const en = useSearchIndexStore
+      .getState()
+      .entries.find((e) => e.key === "command:save");
+    expect(en?.label).toBe("Save");
+
+    await i18n.changeLanguage("zh-CN");
+    await flushDebounce();
+    const zh = useSearchIndexStore
+      .getState()
+      .entries.find((e) => e.key === "command:save");
+    expect(zh?.label).toBe("保存");
+    // en-US label stays a haystack so English queries still hit on zh-CN UI.
+    expect(zh?.haystacks).toContain("Save");
+
+    un();
+    // Restore — i18n locale (and its localStorage cache, where present) is
+    // process-global; don't leak zh-CN into other suites.
+    await i18n.changeLanguage("en-US");
   });
 });

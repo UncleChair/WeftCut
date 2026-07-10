@@ -28,6 +28,7 @@ export const useSearchEntries = (): SearchEntry[] =>
 
 const DEBOUNCE_MS = 300;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let rebuildSliceTimer: ReturnType<typeof setTimeout> | null = null;
 let wired = false;
 
 function commandInputs(): CommandInput[] {
@@ -54,8 +55,13 @@ export function markSearchIndexDirty(): void {
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     // Extra async slice keeps the rebuild off the dirty signal's own
-    // stack — project:changed subscribers must stay cheap.
-    setTimeout(rebuildNow, 0);
+    // stack — project:changed subscribers must stay cheap. Tracked so
+    // teardown can cancel a scheduled-but-unfired rebuild too.
+    if (rebuildSliceTimer !== null) clearTimeout(rebuildSliceTimer);
+    rebuildSliceTimer = setTimeout(() => {
+      rebuildSliceTimer = null;
+      rebuildNow();
+    }, 0);
   }, DEBOUNCE_MS);
 }
 
@@ -81,6 +87,8 @@ export function wireSearchIndex(): () => void {
     i18n.off("languageChanged", onLocale);
     if (debounceTimer !== null) clearTimeout(debounceTimer);
     debounceTimer = null;
+    if (rebuildSliceTimer !== null) clearTimeout(rebuildSliceTimer);
+    rebuildSliceTimer = null;
     wired = false;
   };
 }
