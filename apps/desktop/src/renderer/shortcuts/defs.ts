@@ -44,7 +44,8 @@ export type ActionId =
   | "seekSecondBack"
   | "seekSecondForward"
   | "seekStart"
-  | "seekEnd";
+  | "seekEnd"
+  | "openSearchPalette";
 
 export interface ActionDef {
   defaultKeys: string[];
@@ -98,6 +99,9 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   seekSecondForward: { defaultKeys: ["Shift+ArrowRight"],  labelKey: "actions.seek_second_forward", repeatable: true },
   seekStart:         { defaultKeys: ["Home"],              labelKey: "actions.seek_start" },
   seekEnd:           { defaultKeys: ["End"],               labelKey: "actions.seek_end" },
+  // Global search palette. A chord, so it fires while a text input is
+  // focused (default chord behavior) — expected for a Spotlight-style UI.
+  openSearchPalette: { defaultKeys: ["Mod+K"], labelKey: "actions.open_search" },
 };
 
 export const ACTION_IDS = Object.keys(ACTION_DEFS) as ActionId[];

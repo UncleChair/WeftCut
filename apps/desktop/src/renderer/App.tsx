@@ -52,6 +52,8 @@ import {
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
+import { useCommandProvider } from "./commands/registry";
+import { buildAppCommands } from "./commands/appCommands";
 import {
   setMediaPoolDrawerOpen,
   toggleDisplayMode,
@@ -421,6 +423,41 @@ export function App({ onCloseProject }: AppProps) {
     overrides: shortcutOverrides,
   });
 
+  // Shared by the Insert menu and the search palette — one implementation,
+  // two entry points.
+  const handleAddColorLayer = useCallback(async () => {
+    const layerId = await addColorLayer({ tStartUs: playheadTimeUs() });
+    setPendingRevealLayerId(layerId);
+    await refresh();
+  }, [refresh]);
+
+  const handleAddTextLayer = useCallback(async () => {
+    const layerId = await addTextLayer({ tStartUs: playheadTimeUs() });
+    setPendingRevealLayerId(layerId);
+    await refresh();
+  }, [refresh]);
+
+  useCommandProvider(() =>
+    buildAppCommands(
+      shortcutHandlers,
+      {
+        addColorLayer: handleAddColorLayer,
+        addTextLayer: handleAddTextLayer,
+        openMotifPicker: () => setMotifPickerOpen(true),
+        openConnect: () => setConnectOpen(true),
+        openSettings: () => setSettingsOpen(true),
+      },
+      {
+        busy,
+        canUndo: !!summary?.history.can_undo,
+        canRedo: !!summary?.history.can_redo,
+        canBlade: !!summary && summary.layer_count > 0,
+        exportLocked:
+          busy || exportState?.kind === "starting" || exportState?.kind === "progress",
+      },
+    ),
+  );
+
   if (agentSession) {
     // Agent mode swap: backend's `agent_session:changed` event flipped
     // the slot to Some(...). Render the simplified shell instead of the
@@ -464,16 +501,8 @@ export function App({ onCloseProject }: AppProps) {
         onUndo={() => run(projectUndo)}
         onRedo={() => run(projectRedo)}
         onToggleBladeMode={() => setBladeMode((v) => !v)}
-        onAddColorLayer={async () => {
-          const layerId = await addColorLayer({ tStartUs: playheadTimeUs() });
-          setPendingRevealLayerId(layerId);
-          await refresh();
-        }}
-        onAddTextLayer={async () => {
-          const layerId = await addTextLayer({ tStartUs: playheadTimeUs() });
-          setPendingRevealLayerId(layerId);
-          await refresh();
-        }}
+        onAddColorLayer={handleAddColorLayer}
+        onAddTextLayer={handleAddTextLayer}
         onOpenMotifPicker={() => setMotifPickerOpen(true)}
         onOpenExport={() => setExportDialogOpen(true)}
         onOpenConnect={() => setConnectOpen(true)}

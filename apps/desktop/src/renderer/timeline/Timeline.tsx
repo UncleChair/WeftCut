@@ -31,6 +31,8 @@ import {
   useTailSnapStrengthPx,
 } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
+import { ACTION_DEFS } from "../shortcuts/defs";
+import { useCommandProvider } from "../commands/registry";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
@@ -277,39 +279,60 @@ export function Timeline({
     () => keybindings as OverrideMap,
     [keybindings],
   );
+  // Named so the search-palette command provider below can reference the
+  // exact same function objects the shortcut dispatcher uses.
+  const handleGroupSelected = useCallback(async () => {
+    const sel = selectedLayerIdsRef.current;
+    if (sel.size < 2) return;
+    try {
+      await groupsCreate(Array.from(sel), null, false);
+      await onMutatedRef.current();
+    } catch (err) {
+      console.error("groups_create failed:", err);
+    }
+  }, []);
+
+  const handleDissolveSelectedGroup = useCallback(async () => {
+    const sel = selectedLayerIdsRef.current;
+    if (sel.size < 1) return;
+    const targetGroups = new Set<string>();
+    sel.forEach((lid) => {
+      const gid = groupByLayerIdRef.current.get(lid);
+      if (gid) targetGroups.add(gid);
+    });
+    if (targetGroups.size === 0) return;
+    try {
+      for (const gid of targetGroups) {
+        await groupsDissolve(gid);
+      }
+      await onMutatedRef.current();
+    } catch (err) {
+      console.error("groups_dissolve failed:", err);
+    }
+  }, []);
+
   useShortcuts({
     overrides: shortcutOverrides,
     handlers: {
-      groupSelected: async () => {
-        const sel = selectedLayerIdsRef.current;
-        if (sel.size < 2) return;
-        try {
-          await groupsCreate(Array.from(sel), null, false);
-          await onMutatedRef.current();
-        } catch (err) {
-          console.error("groups_create failed:", err);
-        }
-      },
-      dissolveSelectedGroup: async () => {
-        const sel = selectedLayerIdsRef.current;
-        if (sel.size < 1) return;
-        const targetGroups = new Set<string>();
-        sel.forEach((lid) => {
-          const gid = groupByLayerIdRef.current.get(lid);
-          if (gid) targetGroups.add(gid);
-        });
-        if (targetGroups.size === 0) return;
-        try {
-          for (const gid of targetGroups) {
-            await groupsDissolve(gid);
-          }
-          await onMutatedRef.current();
-        } catch (err) {
-          console.error("groups_dissolve failed:", err);
-        }
-      },
+      groupSelected: handleGroupSelected,
+      dissolveSelectedGroup: handleDissolveSelectedGroup,
     },
   });
+
+  useCommandProvider(() => [
+    {
+      id: "groupSelected",
+      actionId: "groupSelected",
+      labelKey: ACTION_DEFS.groupSelected.labelKey,
+      run: handleGroupSelected,
+    },
+    {
+      id: "dissolveSelectedGroup",
+      actionId: "dissolveSelectedGroup",
+      labelKey: ACTION_DEFS.dissolveSelectedGroup.labelKey,
+      run: handleDissolveSelectedGroup,
+    },
+  ]);
 
   // Cumulative (y, height) per visible track row. Heights vary now, so
   // hit-testing for "which track is the pointer over" needs a real
