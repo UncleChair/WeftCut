@@ -14,6 +14,7 @@ import {
   ping,
 } from "../ipc";
 import { wireLogStream } from "../logs/store";
+import { wireSearchIndex } from "../search/searchIndexStore";
 import { wireProjectStore } from "../state/projectStore";
 import { wireAppSettingsStream } from "../settings/appSettingsStore";
 
@@ -133,20 +134,28 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
   // with the local-state fetches below — both subscribe to `project:changed`
   // and re-fetch, with no cross-talk. The DOM preview engine reads from
   // `useProjectStore`; App.tsx's own fetches still drive the panels.
+  // The search index rides along on the same effect: it reads
+  // `useProjectStore`'s summary, so it wires right after the store itself
+  // is live.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let unwireSearch: (() => void) | null = null;
     let cancelled = false;
     (async () => {
       const u = await wireProjectStore();
+      const unwire = wireSearchIndex();
       if (cancelled) {
         u();
+        unwire();
         return;
       }
       unlisten = u;
+      unwireSearch = unwire;
     })();
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
+      if (unwireSearch) unwireSearch();
     };
   }, []);
 
