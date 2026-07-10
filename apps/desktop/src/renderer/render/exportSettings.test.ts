@@ -396,4 +396,19 @@ describe("E3 schema", () => {
     expect(compositeBitDepth(mergeSettings({ codec: "dnxhr" } as Partial<ExportSettings>))).toBe(8);
     expect(compositeBitDepth(mergeSettings({ codec: "hevc", bitDepth: 10 } as Partial<ExportSettings>))).toBe(10);
   });
+
+  it("intermediate container snap runs before the audio-codec validity check", () => {
+    // Stale blob: prores + MKV + Opus. Opus is valid in MKV, so an audio
+    // check against the SAVED container would pass — but the intermediate
+    // snap then forces MOV, where Opus is invalid. The audio check must see
+    // the final container, yielding a fully valid combo (mov + aac).
+    const m = mergeSettings({
+      codec: "prores",
+      container: "mkv",
+      audio: { codec: "opus" } as unknown as ExportSettings["audio"],
+    } as Partial<ExportSettings>);
+    expect(m.container).toBe("mov");
+    expect(isAudioCodecContainerValid(m.audio.codec, m.container)).toBe(true);
+    expect(m.audio.codec).toBe("aac");
+  });
 });

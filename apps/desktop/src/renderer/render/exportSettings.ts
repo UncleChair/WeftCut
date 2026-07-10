@@ -283,6 +283,13 @@ export function mergeSettings(
     merged.includeAudio = saved.audio.include;
   }
   merged.audio = { ...merged.audio, include: merged.includeAudio };
+  // Intermediates imply container + bit depth; snap stale/hand-edited blobs.
+  // Must run before the audio-codec check below so that check validates
+  // against the FINAL container (e.g. prores+mkv+opus: opus is mkv-valid but
+  // the snap forces mov, where opus isn't).
+  if (isIntermediateCodec(merged.codec) && merged.container !== "mov") {
+    merged.container = "mov";
+  }
   // Defend against a stale/hand-edited blob whose audio codec the container
   // can't hold (e.g. Opus in MP4). Only matters when audio is muxed into the
   // video container; audio-only writes .m4a/.mka regardless. Snap to AAC.
@@ -291,10 +298,6 @@ export function mergeSettings(
     !isAudioCodecContainerValid(merged.audio.codec, merged.container)
   ) {
     merged.audio = { ...merged.audio, codec: "aac" };
-  }
-  // Intermediates imply container + bit depth; snap stale/hand-edited blobs.
-  if (isIntermediateCodec(merged.codec) && merged.container !== "mov") {
-    merged.container = "mov";
   }
   // Snap an invalid bit depth (e.g. 10 saved with H.264 from a future
   // downgrade, or a non-implied depth saved with an intermediate codec).
