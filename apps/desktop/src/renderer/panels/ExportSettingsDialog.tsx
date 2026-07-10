@@ -553,9 +553,18 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                   <AppSelect
                     className="export-select"
                     value={settings.encoderEngine}
-                    onValueChange={(v) =>
-                      patch({ encoderEngine: v as EncoderEngine })
-                    }
+                    onValueChange={(v) => {
+                      const engine = v as EncoderEngine;
+                      // Snap rateMode: quality (CRF) is native-only — pinning
+                      // WebCodecs while holding it would leave the dialog on a
+                      // combo the export silently ignores.
+                      patch({
+                        encoderEngine: engine,
+                        ...(engine === "webcodecs" && settings.rateMode === "quality"
+                          ? { rateMode: "vbr" as RateMode }
+                          : {}),
+                      });
+                    }}
                     options={[
                       { value: "auto", label: t("export_dialog.engine_auto") },
                       { value: "native", label: t("export_dialog.engine_native") },
