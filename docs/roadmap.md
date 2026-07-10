@@ -183,7 +183,7 @@ to verify on real macOS + Linux hardware:
 - **Cross-platform video decode + export conformance.** The conformance and
   export e2e specs self-skip in CI: no fixture media is generated there and the
   export-disabling hook is set, so WebCodecs / mediabunny decode of real proxies
-  and the ffmpeg transcode/mux exit have only been gated on Windows. Run the
+  and the ffmpeg encode + mux exit have only been gated on Windows. Run the
   conformance + export suite (`npm run fixtures`, then the e2e) on macOS and
   Linux to confirm frame-identical decode and conformant output.
 - **Hardware decode / encode + real-display color.** CI runners are headless
