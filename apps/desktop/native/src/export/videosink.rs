@@ -103,6 +103,38 @@ fn reclaim_stale_sink(state: &Mutex<Option<ActiveSink>>) {
     }
 }
 
+/// The full ffmpeg argv (minus program name) for one sink run. Pure — unit
+/// tests lock the shape without spawning. `encoder` is already resolved
+/// (HW-probed or software).
+pub(crate) fn sink_cmd_args(
+    args: &VideoSinkStartArgs,
+    codec: super::hwencoder::TargetCodec,
+    encoder: &str,
+) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    let mut a: Vec<OsString> = vec![
+        "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+        "-f".into(), "rawvideo".into(),
+        "-pix_fmt".into(), "yuv420p10le".into(),
+        "-video_size".into(), format!("{}x{}", args.width, args.height).into(),
+        "-framerate".into(), format!("{}/{}", args.fps_num, args.fps_den).into(),
+        "-i".into(), "-".into(),
+        // Tag the FRAMES (rawvideo carries no colour metadata) so every encoder
+        // family emits the full bt709/limited 4-tuple (export_10bit gate).
+        "-vf".into(),
+        "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv".into(),
+    ];
+    a.extend(super::video_encode_args(encoder, args.bitrate, args.cbr, args.gop));
+    a.extend(super::hwencoder::tenbit_encode_args(encoder));
+    a.extend::<Vec<OsString>>(vec![
+        "-colorspace".into(), "bt709".into(), "-color_primaries".into(), "bt709".into(),
+        "-color_trc".into(), "bt709".into(), "-color_range".into(), "tv".into(),
+    ]);
+    a.extend(super::hvc1_tag_args(codec, std::path::Path::new(&args.output_path)));
+    a.push(OsString::from(&args.output_path));
+    a
+}
+
 pub async fn export_video_sink_start(
     state: &VideoSinkState,
     hw: &super::hwencoder::HwEncoderCache,
@@ -131,31 +163,9 @@ pub async fn export_video_sink_start(
         };
         let mut cmd = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path());
         cmd.no_console_window();
-        cmd.args(["-y", "-hide_banner", "-loglevel", "error"]);
-        cmd.args(["-f", "rawvideo", "-pix_fmt", "yuv420p10le"]);
-        cmd.arg("-video_size").arg(format!("{}x{}", args.width, args.height));
-        cmd.arg("-framerate").arg(format!("{}/{}", args.fps_num, args.fps_den));
-        cmd.args(["-i", "-"]);
-        // Tag the FRAMES (rawvideo carries no colour metadata) so every encoder
-        // family emits the full bt709/limited 4-tuple (export_10bit gate).
-        cmd.args([
-            "-vf",
-            "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
-        ]);
-        for arg in super::video_encode_args(&encoder, args.bitrate, args.cbr, args.gop) {
+        for arg in sink_cmd_args(&args, codec, &encoder) {
             cmd.arg(arg);
         }
-        for arg in super::hwencoder::tenbit_encode_args(&encoder) {
-            cmd.arg(arg);
-        }
-        cmd.args([
-            "-colorspace", "bt709", "-color_primaries", "bt709",
-            "-color_trc", "bt709", "-color_range", "tv",
-        ]);
-        for arg in super::hvc1_tag_args(codec, std::path::Path::new(&args.output_path)) {
-            cmd.arg(arg);
-        }
-        cmd.arg(&args.output_path);
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
@@ -326,6 +336,37 @@ mod tests {
         let state: Mutex<Option<ActiveSink>> = Mutex::new(None);
         reclaim_stale_sink(&state);
         assert!(state.lock().unwrap().is_none());
+    }
+
+    fn args_10bit() -> VideoSinkStartArgs {
+        VideoSinkStartArgs {
+            width: 1920, height: 1080, fps_num: 30, fps_den: 1,
+            codec: "hevc".into(), bitrate: 8_000_000, cbr: false, gop: 30,
+            software: true, output_path: "C:/tmp/out.mp4".into(),
+        }
+    }
+
+    // Locks the exact argv the inline builder produced before extraction.
+    #[test]
+    fn sink_cmd_args_matches_legacy_10bit_shape() {
+        let argv = sink_cmd_args(&args_10bit(), super::super::TargetCodec::Hevc, "libx265");
+        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        // rawvideo input header
+        assert!(s.windows(2).any(|w| w[0] == "-f" && w[1] == "rawvideo"));
+        assert!(s.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "yuv420p10le"));
+        assert!(s.windows(2).any(|w| w[0] == "-video_size" && w[1] == "1920x1080"));
+        assert!(s.windows(2).any(|w| w[0] == "-framerate" && w[1] == "30/1"));
+        // frame tagging vf + encoder + 10-bit profile + color tags + hvc1 + output
+        assert!(s.iter().any(|a| a.starts_with("setparams=colorspace=bt709")));
+        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "libx265"));
+        assert!(s.windows(2).any(|w| w[0] == "-profile:v" && w[1] == "main10"));
+        assert!(s.windows(2).any(|w| w[0] == "-color_range" && w[1] == "tv"));
+        assert!(s.windows(2).any(|w| w[0] == "-tag:v" && w[1] == "hvc1"));
+        assert_eq!(s.last().unwrap(), "C:/tmp/out.mp4");
+        // input marker present exactly once, before the encoder args
+        let i_pos = s.iter().position(|a| a == "-i").unwrap();
+        let cv_pos = s.iter().position(|a| a == "-c:v").unwrap();
+        assert!(i_pos < cv_pos);
     }
 
     // IPC + empty output_path (no ffmpeg): push frames through video_sink_write,
