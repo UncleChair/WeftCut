@@ -72,4 +72,12 @@ describe("EffectChain × effectOverrides", () => {
     expect(after[0]).toBe(before[0]);
     chain.dispose();
   });
+  it("a literal-0 override wins (?? not ||): pure-green hover sets keyR=0", () => {
+    const chain = new EffectChain();
+    chain.sync([chromaView("E1")], 0); // chromaView's keyR Static is 0.1
+    setTransientOverrides("E1", { keyR: 0 });
+    const filters = chain.sync([chromaView("E1")], 0);
+    expect(uKey(filters[0]!)[0]).toBe(0);
+    chain.dispose();
+  });
 });
