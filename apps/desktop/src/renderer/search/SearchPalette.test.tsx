@@ -10,7 +10,7 @@ vi.mock("../state/navigation", () => ({
 }));
 
 import "../i18n"; // side-effect: init global i18next (en-US fallback)
-import { jumpToLayer, revealInMediaPool } from "../state/navigation";
+import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
 import { registerCommandProvider } from "../commands/registry";
 import { useSearchIndexStore } from "./searchIndexStore";
 import { buildEntries } from "./buildEntries";
@@ -152,5 +152,45 @@ describe("SearchPalette", () => {
     await userEvent.keyboard("beach");
     await userEvent.keyboard("{Enter}{Enter}");
     expect(revealInMediaPool).toHaveBeenCalledWith("m1");
+  });
+
+  it("keeps the keyboard cursor on its row when an earlier group expands", async () => {
+    // 6 commands "Save 0".."Save 5" (command group truncates to 5 visible +
+    // a "Show 1 more…" expander) and a marker "save point" so the query
+    // "save" produces a later group AFTER the truncated one. Expanding the
+    // command group inserts a row before the marker's flat index — the
+    // cursor must follow the marker row, not stay parked on the raw index
+    // (which would now be the 6th command).
+    const cmds = Array.from({ length: 6 }, (_, i) => ({
+      id: `save${i}`,
+      label: `Save ${i}`,
+      enLabel: `Save ${i}`,
+    }));
+    unregister?.();
+    unregister = registerCommandProvider(() =>
+      cmds.map((c) => ({ id: c.id, labelKey: "actions.save", run: runSpy })),
+    );
+    const summary = fixtureSummary();
+    summary.markers = [
+      { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "save point", color_hint: "" },
+    ];
+    useSearchIndexStore.setState({ entries: buildEntries(summary, cmds), version: 1 });
+
+    const onClose = vi.fn();
+    render(<SearchPalette onClose={onClose} />);
+    await userEvent.keyboard("save");
+    // flat: 5 visible commands (indices 0-4), then the marker (index 5).
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
+    const before = screen.getAllByRole("option");
+    expect(before).toHaveLength(6);
+    expect(before[5]?.getAttribute("aria-selected")).toBe("true");
+    expect(before[5]?.textContent).toContain("save point");
+
+    await userEvent.click(screen.getByText(/Show 1 more/i));
+    expect(screen.getAllByRole("option")).toHaveLength(7);
+    await userEvent.keyboard("{Enter}");
+    expect(jumpToTimeUs).toHaveBeenCalledWith(5_000_000);
+    expect(runSpy).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
   });
 });

@@ -43,16 +43,22 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
 
   const grouped = useMemo(() => rankEntries(query, entries, RANK_CAP), [query, entries]);
   // Visible rows after per-group slicing; `flat` drives keyboard order.
-  const { flat, truncatedCounts } = useMemo(() => {
+  // `flatIndex` is the row → keyboard-position lookup so each rendered row
+  // knows its index without a per-row O(n) search.
+  const { flat, flatIndex, truncatedCounts } = useMemo(() => {
     const flat: RankedResult[] = [];
+    const flatIndex = new Map<RankedResult, number>();
     const truncatedCounts = new Map<SearchEntryType, number>();
     for (const g of GROUP_ORDER) {
       const rows = grouped.get(g) ?? [];
       const visible = expanded.has(g) ? rows : rows.slice(0, VISIBLE_PER_GROUP);
-      flat.push(...visible);
+      for (const r of visible) {
+        flatIndex.set(r, flat.length);
+        flat.push(r);
+      }
       if (rows.length > visible.length) truncatedCounts.set(g, rows.length - visible.length);
     }
-    return { flat, truncatedCounts };
+    return { flat, flatIndex, truncatedCounts };
   }, [grouped, expanded]);
 
   type SubAction =
@@ -201,7 +207,7 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
                     ? grouped.get(g)!
                     : grouped.get(g)!.slice(0, VISIBLE_PER_GROUP)
                   ).map((r) => {
-                    const idx = flat.indexOf(r);
+                    const idx = flatIndex.get(r) ?? -1;
                     return (
                       <ResultRow
                         key={r.entry.key}
@@ -216,7 +222,24 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
                     <div
                       className="search-show-more"
                       onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => setExpanded((prev) => new Set(prev).add(g))}
+                      onClick={() => {
+                        // Expanding this group inserts `delta` rows into
+                        // `flat` BEFORE every later group — shift the
+                        // keyboard cursor by the same amount when it sits
+                        // in one of those later groups, so the highlighted
+                        // row (not just its index) survives the expansion.
+                        // Rows in/before this group keep their indices:
+                        // the visible slice is a stable prefix.
+                        const delta = truncatedCounts.get(g) ?? 0;
+                        const activeGroup = flat[clampedActive]?.entry.type;
+                        if (
+                          activeGroup !== undefined &&
+                          GROUP_ORDER.indexOf(activeGroup) > GROUP_ORDER.indexOf(g)
+                        ) {
+                          setActive(clampedActive + delta);
+                        }
+                        setExpanded((prev) => new Set(prev).add(g));
+                      }}
                     >
                       {t("search.show_more", { count: truncatedCounts.get(g) })}
                     </div>
