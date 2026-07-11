@@ -20,11 +20,20 @@ describe("pickInitialLane", () => {
   });
   it("returns hardware when an eligible codec's probe passes", async () => {
     const probe = vi.fn(async () => ({ ok: true }));
-    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe)).toBe("hardware");
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4")).toBe("hardware");
   });
   it("returns software after markHwUnusable, even for an eligible codec", async () => {
     markHwUnusable("m", "device-lost");
     const probe = vi.fn(async () => ({ ok: true }));
-    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe)).toBe("software");
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4")).toBe("software");
+  });
+  it("returns software when the component is unavailable", async () => {
+    const probe = vi.fn(async () => ({ ok: true }));
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: false }, probe, "C:/x.mp4")).toBe("software");
+    expect(probe).not.toHaveBeenCalled();
+  });
+  it("returns software when the probe declines (ok:false)", async () => {
+    const probe = vi.fn(async () => ({ ok: false }));
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4")).toBe("software");
   });
 });

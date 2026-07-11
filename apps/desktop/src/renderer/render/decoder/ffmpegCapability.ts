@@ -72,14 +72,13 @@ export function markHwUnusable(mediaId: string, _reason: string): void {
 }
 
 /// Async lane-selection entry point for `FfmpegSource` (Task 5): consults the
-/// sticky `markHwUnusable` marker and the seek-validated codec allow-list
-/// before ever spending a probe, then runs (or reuses, via the injectable
-/// `probeFn`) the GPU-keyed HW capability probe. Returns `"hardware"` only for
-/// a passed probe on an eligible codec; every other path — HW unavailable,
-/// marked unusable, ineligible codec, no classKey, no path, a failed probe, or
-/// a rejected probe — falls back to `"software"`. This is a direct probe, not
-/// the kick-and-poll rhythm `kickHwProbe` uses; it does not touch
-/// `hwProbeInFlight`/`hwLaneByMedia`.
+/// sticky `markHwUnusable` marker and the seek-validated HW codec allow-list.
+/// An HW-eligible codec with a valid classKey AND a path is probed; missing
+/// classKey or path → `"software"` (no probe). Returns `"hardware"` only if the
+/// probe succeeds (ok: true); all other failures (unavailable, marked unusable,
+/// ineligible codec, probe rejection/exception) also return `"software"`.
+/// This is a direct probe, not the kick-and-poll rhythm `kickHwProbe` uses;
+/// it does not touch `hwProbeInFlight`/`hwLaneByMedia`.
 export async function pickInitialLane(
   input: {
     mediaId: string;
@@ -95,9 +94,9 @@ export async function pickInitialLane(
   if (hwUnusable.has(input.mediaId)) return "software";
   if (!hwEligibleCodec(input.codec, input.pixFmt)) return "software";
   const classKey = classKeyOfMedia({ codec: input.codec, pix_fmt: input.pixFmt });
-  if (classKey === null) return "software";
+  if (classKey === null || !path) return "software";
   try {
-    const r = await probeFn(path ?? "", classKey);
+    const r = await probeFn(path, classKey);
     return r.ok ? "hardware" : "software";
   } catch {
     return "software";
