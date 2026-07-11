@@ -6,10 +6,20 @@
 // "session bridge" term — see CONTEXT.md.
 import { logEmit, type LogEntryInput } from "../../ipc";
 import type { EngineTier, LaneState, ResolvedSource } from "./decodeEngine";
+// HW/SW lane session state + the seek-validated codec allow-list moved to
+// ffmpegCapability.ts (Task 4) — the new `FfmpegSource` (Task 5) owns lane
+// selection there. Re-imported (same Map/Set instances) so `laneStatesFor`,
+// `setSwLane`/`setHwLane`, and `kickSwProbe`/`kickHwProbe` below keep working
+// unchanged; `hwEligibleCodec`/`classKeyOfMedia` are re-exported at the bottom
+// of this file so current importers (PixiPreview.tsx) keep compiling.
+import {
+  hwLaneByMedia,
+  swLaneByMedia,
+  hwProbeInFlight,
+  swProbeInFlight,
+} from "./ffmpegCapability";
 
 const downgradedByMedia = new Map<string, Set<EngineTier>>();
-const swLaneByMedia = new Map<string, LaneState>(); // D3 wires probe results
-const hwLaneByMedia = new Map<string, LaneState>(); // D4 wires probe results
 const lastLoggedKey = new Map<string, string>();
 
 /// Shared immutable empty set so `laneStatesFor` allocates nothing per tick when
@@ -86,8 +96,6 @@ export function setHwLane(mediaId: string, s: LaneState): void {
   hwLaneByMedia.set(mediaId, s);
 }
 
-const swProbeInFlight = new Set<string>();
-
 /// Kick the SW-lane machine-capability probe (D3's `decodeCap:probeSw`) for a
 /// source whose tier-3 lane is still "untested" — i.e. NOT pre-passed by the
 /// static blind-spot route seed (P1). Single-flight per media: a second kick
@@ -113,8 +121,6 @@ export function kickSwProbe(
       onSettled();
     });
 }
-
-const hwProbeInFlight = new Set<string>();
 
 /// Kick the HW-lane GPU capability probe (D4's `decodeCap:probeHw`) for a
 /// source whose tier-1 lane is still "untested". Single-flight per media: a
@@ -145,47 +151,9 @@ export function kickHwProbe(
     });
 }
 
-/// TWIN of main's `classKeyOf` (src/main/decode-capability.ts) — MUST produce a
-/// BYTE-IDENTICAL format string so a renderer-derived key hits the exact cache
-/// entry main's HW probe writes/reads. Same shape `codec::pixFmt:res` with the
-/// resolution class bucketed on `px = max(w, h)` (sd/hd/uhd/huge) and a null
-/// pixFmt interpolated as "unknown". Returns null when `codec` is null
-/// (audio/image — no HW video lane). Keep in lockstep with `classKeyOf` if
-/// either side's string form ever changes.
-export function classKeyOfMedia(m: {
-  codec: string | null;
-  pix_fmt: string | null;
-  width?: number | null;
-  height?: number | null;
-}): string | null {
-  if (!m.codec) return null;
-  const px = Math.max(m.width ?? 0, m.height ?? 0);
-  const res = px <= 1024 ? "sd" : px <= 2048 ? "hd" : px <= 4096 ? "uhd" : "huge";
-  return `${m.codec}::${m.pix_fmt ?? "unknown"}:${res}`;
-}
-
-/// HW-lane codec allow-list — the seek-safety dimension the one-frame HW probe
-/// CANNOT test. Main's `decode_first_d3d11_frame` decodes a single FORWARD
-/// frame: if the GPU driver HW-decodes it the probe returns ok, so the probe is
-/// NECESSARY BUT NOT SUFFICIENT — it proves decode-VIABILITY, not
-/// SEEK-SURVIVAL. A codec can decode forward cleanly yet HANG the D3D11 preview
-/// session indefinitely on a backward seek (observed: MPEG-2 on an RTX 3050 —
-/// the driver HW-decodes it, the one-frame probe says ok, then playback wedges
-/// on a backward seek with no recovery). This list encodes the seek-VALIDATED
-/// HW scope (decode-bench Stage-2, measured today: 8-bit H.264 / HEVC / VP9),
-/// gating which codecs are even PROBE-ELIGIBLE for tier 1 (spec P1: "lists may
-/// seed or short-circuit probes"). It NARROWS what's eligible; it never
-/// overrules a probe's negative verdict. Eligible = codec ∈ {h264, hevc, vp9}
-/// AND an 8-bit pixel format — anything carrying a 10-bit tag ("10le" / "p010",
-/// case-insensitive) is excluded. Callers gate the HW-probe kick on this
-/// (PixiPreview.resolveSource) so an ineligible codec never lights the HW lane;
-/// the pure resolver stays untouched.
-export function hwEligibleCodec(codec: string | null, pixFmt: string | null): boolean {
-  if (codec !== "h264" && codec !== "hevc" && codec !== "vp9") return false;
-  const pf = (pixFmt ?? "").toLowerCase();
-  if (pf.includes("10le") || pf.includes("p010")) return false;
-  return true;
-}
+/// Moved to ffmpegCapability.ts (Task 4) — re-exported so current importers
+/// (PixiPreview.tsx) keep compiling until a later task moves them there too.
+export { hwEligibleCodec, classKeyOfMedia } from "./ffmpegCapability";
 
 /// Test/e2e hook: forget session verdicts (used by decode-engine.spec.ts).
 export function resetDecodeCapabilitySession(): void {
