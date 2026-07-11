@@ -31,6 +31,10 @@ function emit(level: LogEntryInput["level"], message: string): void {
 export function laneStatesFor(
   mediaId: string,
   media: { decode_route?: { route: string } | null },
+  /// True where the native-decode component loaded — i.e. its DLLs exist, so
+  /// HW decode is *possible* on this machine (Windows v1). Defaults false so
+  /// callers that don't know (older tests) keep HW "unavailable".
+  componentAvailable = false,
 ): {
   webcodecsOriginal: LaneState;
   nativeHw: LaneState;
@@ -42,7 +46,12 @@ export function laneStatesFor(
     // this placeholder is overridden there — kept so D3/D4 callers can use
     // laneStatesFor alone.
     webcodecsOriginal: "untested",
-    nativeHw: hwLaneByMedia.get(mediaId) ?? "unavailable", // D4 flips to probe-driven
+    // D4: HW is probe-driven. Where the component loaded, default "untested" so
+    // PixiPreview kicks the GPU probe; where it's absent, "unavailable" so the
+    // resolver skips tier 1 outright. `componentAvailable` (not navigator.platform)
+    // is the sufficient HW-possible proxy — the component only loads where its
+    // DLLs exist.
+    nativeHw: hwLaneByMedia.get(mediaId) ?? (componentAvailable ? "untested" : "unavailable"),
     nativeSw:
       swLaneByMedia.get(mediaId) ??
       (media.decode_route?.route === "native-sw" ? "ok" : "untested"), // list seeds the probe (P1)
@@ -105,6 +114,56 @@ export function kickSwProbe(
     });
 }
 
+const hwProbeInFlight = new Set<string>();
+
+/// Kick the HW-lane GPU capability probe (D4's `decodeCap:probeHw`) for a
+/// source whose tier-1 lane is still "untested". Single-flight per media: a
+/// second kick while one is outstanding, or once `hwLaneByMedia` already holds
+/// a verdict, is a no-op. Unlike `kickSwProbe`, the HW probe takes the caller-
+/// derived `classKey` too (the GPU probe is comparatively expensive, so main
+/// consults its GPU-keyed cache under that format class BEFORE deciding to
+/// actually decode). The verdict lands via `setHwLane`; `onSettled` then nudges
+/// the caller (PixiPreview's `refreshSources`) so the next `ensureClip` re-runs
+/// `resolveEngineTier` against the fresh lane and the no-flash swap upgrades the
+/// clip to native-hw — the same probe→nudge rhythm `kickSwProbe` uses.
+export function kickHwProbe(
+  mediaId: string,
+  path: string,
+  classKey: string,
+  onSettled: () => void,
+  probeFn: (p: string, k: string) => Promise<{ ok: boolean }> = (p, k) =>
+    window.api.decodeCap.probeHw(p, k),
+): void {
+  if (hwProbeInFlight.has(mediaId) || hwLaneByMedia.has(mediaId)) return;
+  hwProbeInFlight.add(mediaId);
+  void probeFn(path, classKey)
+    .then((r) => setHwLane(mediaId, r.ok ? "ok" : "fail"))
+    .catch(() => setHwLane(mediaId, "fail"))
+    .finally(() => {
+      hwProbeInFlight.delete(mediaId);
+      onSettled();
+    });
+}
+
+/// TWIN of main's `classKeyOf` (src/main/decode-capability.ts) — MUST produce a
+/// BYTE-IDENTICAL format string so a renderer-derived key hits the exact cache
+/// entry main's HW probe writes/reads. Same shape `codec::pixFmt:res` with the
+/// resolution class bucketed on `px = max(w, h)` (sd/hd/uhd/huge) and a null
+/// pixFmt interpolated as "unknown". Returns null when `codec` is null
+/// (audio/image — no HW video lane). Keep in lockstep with `classKeyOf` if
+/// either side's string form ever changes.
+export function classKeyOfMedia(m: {
+  codec: string | null;
+  pix_fmt: string | null;
+  width?: number | null;
+  height?: number | null;
+}): string | null {
+  if (!m.codec) return null;
+  const px = Math.max(m.width ?? 0, m.height ?? 0);
+  const res = px <= 1024 ? "sd" : px <= 2048 ? "hd" : px <= 4096 ? "uhd" : "huge";
+  return `${m.codec}::${m.pix_fmt ?? "unknown"}:${res}`;
+}
+
 /// Test/e2e hook: forget session verdicts (used by decode-engine.spec.ts).
 export function resetDecodeCapabilitySession(): void {
   downgradedByMedia.clear();
@@ -112,4 +171,5 @@ export function resetDecodeCapabilitySession(): void {
   hwLaneByMedia.clear();
   lastLoggedKey.clear();
   swProbeInFlight.clear();
+  hwProbeInFlight.clear();
 }

@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 //
-// Task 8: the E2E-only `forceStrategy` gate in `SourceDecoderPool.acquire()`.
-// `forceStrategy: 'native'` (under `VITE_WEFTCUT_E2E === "1"`) must route to a
-// `NativeGpuSourceHandle` instead of the default WebCodecs `SourceHandle`, and
-// the gate must be INERT outside the E2E build so it can never affect real
-// playback. This suite tests the gate itself, not `NativeGpuSourceHandle`'s
-// decode behavior (see NativeGpuSourceHandle.test.ts for that) — `ensureReady`
-// is never called here, so `window.api.previewGpu` only needs to exist enough
-// that `dispose()` (which unconditionally calls `previewGpu.close`) doesn't
-// throw.
+// Task 8 + Task 17: `forceStrategy` routing in `SourceDecoderPool.acquire()`.
+// `forceStrategy: 'native'` routes to a `NativeGpuSourceHandle` and 'software'
+// to a `SwSourceHandle`, instead of the default WebCodecs `SourceHandle`.
+// Task 17 REMOVED the old `VITE_WEFTCUT_E2E === "1"` gate on the 'native'
+// branch: native is now production-legal (chosen by `resolveEngineTier` tier 1
+// behind a passed HW probe), so the flag no longer changes routing. This suite
+// tests the routing itself, not `NativeGpuSourceHandle`'s decode behavior (see
+// NativeGpuSourceHandle.test.ts) — `ensureReady` is never called here, so
+// `window.api.previewGpu` only needs to exist enough that `dispose()` (which
+// unconditionally calls `previewGpu.close`) doesn't throw.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SourceDecoderPool, SourceHandle } from "./SourceDecoderPool";
 import { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
@@ -36,10 +37,9 @@ afterEach(() => {
   delete (window as unknown as { api?: unknown }).api;
 });
 
-describe("SourceDecoderPool.acquire forceStrategy gate", () => {
-  it("returns a NativeGpuSourceHandle when E2E is on and forceStrategy is 'native'", () => {
+describe("SourceDecoderPool.acquire forceStrategy routing", () => {
+  it("returns a NativeGpuSourceHandle when forceStrategy is 'native'", () => {
     installFakePreviewGpu();
-    vi.stubEnv("VITE_WEFTCUT_E2E", "1");
     const pool = new SourceDecoderPool();
 
     const h = pool.acquire({
@@ -55,9 +55,8 @@ describe("SourceDecoderPool.acquire forceStrategy gate", () => {
     pool.dispose();
   });
 
-  it("returns a SourceHandle when E2E is on but forceStrategy is unset", () => {
+  it("returns a SourceHandle when forceStrategy is unset", () => {
     installFakePreviewGpu();
-    vi.stubEnv("VITE_WEFTCUT_E2E", "1");
     const pool = new SourceDecoderPool();
 
     const h = pool.acquire({
@@ -72,21 +71,21 @@ describe("SourceDecoderPool.acquire forceStrategy gate", () => {
     pool.dispose();
   });
 
-  it("is inert (still returns a SourceHandle) when E2E is off, even with forceStrategy: 'native'", () => {
+  it("routes forceStrategy 'native' to NativeGpuSourceHandle even with E2E off (Task 17: gate removed, native is production-legal)", () => {
     installFakePreviewGpu();
     vi.stubEnv("VITE_WEFTCUT_E2E", undefined);
     const pool = new SourceDecoderPool();
 
     const h = pool.acquire({
-      layerId: "layer-inert",
-      mediaId: "media-inert",
+      layerId: "layer-ungated",
+      mediaId: "media-ungated",
       proxyAssetUrl: "weftcut-media://unused",
       forceStrategy: "native",
       sourcePath: "/fake/original.mp4",
     });
 
-    expect(h).toBeInstanceOf(SourceHandle);
-    expect(h).not.toBeInstanceOf(NativeGpuSourceHandle);
+    expect(h).toBeInstanceOf(NativeGpuSourceHandle);
+    expect(h).not.toBeInstanceOf(SourceHandle);
 
     pool.dispose();
   });

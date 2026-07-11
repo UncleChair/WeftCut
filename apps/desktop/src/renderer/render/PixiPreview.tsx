@@ -33,11 +33,18 @@ import {
 } from "../colorpick/previewSamplerRegistry";
 import { resolveDecode } from "./decodeRoute";
 import {
+  orderFor,
   resolveEngineTier,
   type DecodeEngineSetting,
   type EngineTier,
 } from "./decoder/decodeEngine";
-import { kickSwProbe, laneStatesFor, noteResolution } from "./decoder/decodeCapability";
+import {
+  classKeyOfMedia,
+  kickHwProbe,
+  kickSwProbe,
+  laneStatesFor,
+  noteResolution,
+} from "./decoder/decodeCapability";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
 import {
   setEffectDisabled,
@@ -63,22 +70,30 @@ interface Props {
 
 const LOG = "[weftcut/pixi]";
 
-/// D3: whether tier 3 (native-sw) sits BEFORE `currentTier` in `setting`'s
-/// resolution order — i.e. the resolver only skipped it because its lane
-/// reads "untested" (not "ok" or "fail"), and a passing probe could still
-/// preempt `currentTier` on the next resolution. Mirrors `resolveEngineTier`'s
-/// per-setting order (decodeEngine.ts): under `auto`, native-sw sits AFTER
-/// webcodecs-original, so an ordinary tier-2 H.264 win never triggers the
-/// (uninterruptible, main-thread) SW probe; under `native`, native-sw sits
-/// BEFORE webcodecs-original, so it CAN preempt an otherwise-tier-2 result.
-/// Keep in sync with decodeEngine.ts's order if that table ever changes.
+/// Whether a still-"untested" native lane sits BEFORE `currentTier` in
+/// `setting`'s resolution order — i.e. the resolver only skipped that lane
+/// because its probe hasn't run yet, and a passing probe could still preempt
+/// `currentTier` on the next resolution. Both index into `orderFor` (the SINGLE
+/// order table in decodeEngine.ts) rather than re-declaring it, so a probe kick
+/// can never drift from the resolver's actual order.
+///
+/// native-sw (D3): under `auto` it sits AFTER webcodecs-original, so an ordinary
+/// tier-2 H.264 win never triggers the (uninterruptible, main-thread) SW probe;
+/// under `native` it sits BEFORE webcodecs-original and CAN preempt a tier-2
+/// result. It's absent from the `webcodecs` order entirely (indexOf → -1).
 function nativeSwCouldPreempt(setting: DecodeEngineSetting, currentTier: EngineTier): boolean {
-  if (setting === "webcodecs") return false; // native-sw isn't in this order at all
-  const order: EngineTier[] =
-    setting === "native"
-      ? ["native-hw", "native-sw", "webcodecs-original", "proxy"]
-      : ["native-hw", "webcodecs-original", "native-sw", "proxy"];
-  return order.indexOf("native-sw") < order.indexOf(currentTier);
+  const order = orderFor(setting);
+  const sw = order.indexOf("native-sw");
+  return sw !== -1 && sw < order.indexOf(currentTier);
+}
+
+/// native-hw (D4): first in every order it appears in (`auto` + `native`), so
+/// whenever its lane is "untested" it could still win tier 1 — the trigger for
+/// the GPU-probe kick. Absent from `webcodecs` (indexOf → -1).
+function nativeHwCouldPreempt(setting: DecodeEngineSetting, currentTier: EngineTier): boolean {
+  const order = orderFor(setting);
+  const hw = order.indexOf("native-hw");
+  return hw !== -1 && hw < order.indexOf(currentTier);
 }
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
@@ -181,9 +196,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       const resolveSource = (mediaId: string): ResolvedRendererSource | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         if (!m) return null;
-        const lanes = laneStatesFor(mediaId, m);
         const setting = useAppSettingsStore.getState().settings.decode_engine;
         const componentAvailable = useDecodeComponentStore.getState().available;
+        const lanes = laneStatesFor(mediaId, m, componentAvailable);
         const r = resolveEngineTier({
           setting,
           componentAvailable,
@@ -214,6 +229,25 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           nativeSwCouldPreempt(setting, r.tier)
         ) {
           kickSwProbe(mediaId, m.path, refreshSources);
+        }
+        // D4: tier 1 (native-hw) is probe-gated. When the native-decode
+        // component loaded (⇒ HW decode is possible here), the setting allows
+        // native, tier 1's lane is still "untested", and native-hw could still
+        // preempt the resolved tier, kick the GPU capability probe (single-
+        // flight per media) for the media's HW-probeable video class. The
+        // verdict lands via setHwLane; the refreshSources nudge re-runs
+        // ensureClip so a passing probe upgrades the clip to native-hw via the
+        // no-flash swap. `classKeyOfMedia` (main's classKeyOf twin) is computed
+        // last/lazily so the per-tick allocation only happens during the brief
+        // untested window, and is null for non-video media (no HW lane).
+        if (
+          componentAvailable &&
+          setting !== "webcodecs" &&
+          lanes.nativeHw === "untested" &&
+          nativeHwCouldPreempt(setting, r.tier)
+        ) {
+          const hwClassKey = classKeyOfMedia(m);
+          if (hwClassKey !== null) kickHwProbe(mediaId, m.path, hwClassKey, refreshSources);
         }
         return {
           tier: r.tier,

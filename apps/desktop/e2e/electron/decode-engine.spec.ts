@@ -25,6 +25,14 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-decode-engine-proj
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 const HEVC_FIXTURE = path.join(OUT_DIR, 'hevc-tier2.mp4')
 const PRORES_FIXTURE = path.join(OUT_DIR, 'prores-tier3.mov')
+// 8-bit H.264 yuv420p — d3d11va-decodable, so the HW capability probe passes
+// on a real GPU box. Drives Cell 5's tier-1 (native-hw) production path.
+const H264_FIXTURE = path.join(OUT_DIR, 'h264-tier1.mp4')
+// 8-bit AV1 yuv420p — NOT on the native-SW blind-spot list (ProRes/DNxHD/
+// MPEG-2/VC-1), and the app's HW capability probe returns ok:false for AV1
+// (d3d11va path declines it), while the LGPL ffmpeg (dav1d) SW-decodes it.
+// Drives Cell 4's PROBE-driven tier-3 (native-sw) path now that tier 1 is live.
+const AV1_FIXTURE = path.join(OUT_DIR, 'av1-tier3.mp4')
 // Mid-clip seek target (the 4 s fixtures run 0..4_000_000 us) — forces a real
 // composite/`ensureClip` pass without landing exactly on frame 0.
 const SEEK_US = 1_000_000
@@ -164,6 +172,14 @@ test.describe('decode-engine tier resolution (Electron)', () => {
 
     test.skip(!encoderAvailable(ffmpeg!, 'prores_ks'), 'ffmpeg build has no prores_ks encoder — ProRes fixture unavailable (lean CI build)')
     genFixture(ffmpeg!, PRORES_FIXTURE, ['-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le'])
+
+    test.skip(!encoderAvailable(ffmpeg!, 'libx264'), 'ffmpeg build has no libx264 encoder — H.264 fixture unavailable (lean CI build)')
+    genFixture(ffmpeg!, H264_FIXTURE, ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'])
+
+    // libaom-av1 in constant-quality mode with a fast cpu-used so the 4 s clip
+    // encodes in seconds (the reference encoder is glacial at its defaults).
+    test.skip(!encoderAvailable(ffmpeg!, 'libaom-av1'), 'ffmpeg build has no libaom-av1 encoder — AV1 fixture unavailable (lean CI build)')
+    genFixture(ffmpeg!, AV1_FIXTURE, ['-c:v', 'libaom-av1', '-crf', '35', '-b:v', '0', '-cpu-used', '8', '-pix_fmt', 'yuv420p'])
   })
 
   // Cell 1 — auto + HEVC: tier 2 (webcodecs-original) ends the proxy-default
@@ -285,30 +301,30 @@ test.describe('decode-engine tier resolution (Electron)', () => {
 
   // Cell 4 — probe-driven tier 3 (Task 14/D3): pinned `native` puts native-sw
   // AHEAD of webcodecs-original in the resolver's order (native-hw → native-sw
-  // → webcodecs-original → proxy). HEVC 8-bit is NOT on the static blind-spot
-  // list, so the route seed leaves `nativeSw` "untested" — under the OLD (pre-
-  // D3) resolver that lane could only ever become "ok" via the blind-spot
-  // route seed, so this cell would have stuck on webcodecs-original (this
-  // machine's Chromium can decode HEVC) and never reached tier 3. `kickSwProbe`
-  // closes that gap: PixiPreview's resolver falls to proxy on its first pass
-  // (nothing is "ok" yet), kicks the machine-capability probe, and the
-  // resulting `setSwLane` + refreshSources nudge lets native-sw win the next
-  // resolution — proving tier 3 now accepts a probe-passed format BEYOND the
-  // hardcoded list, not just the pre-classified blind-spot families Cell 2
-  // covers.
-  test('pinned native + HEVC: probe-driven native-sw (tier 3) accepts a format not on the blind-spot list', async () => {
+  // → webcodecs-original → proxy). This must use an HW-INCAPABLE, non-blind-
+  // spot format: with tier 1 live (D4/Task 17), any HW-decodable codec (H.264,
+  // HEVC on this GPU) now wins native-hw under `native` and never reaches tier
+  // 3. AV1 fits — it is NOT on the static blind-spot list (so the route seed
+  // leaves `nativeSw` "untested", forcing the PROBE, not the seed, to light the
+  // lane — unlike Cell 2's ProRes), and the app's d3d11va HW probe returns
+  // ok:false for AV1 (so tier 1 is knocked out). PixiPreview's first pass finds
+  // nothing "ok", kicks BOTH the HW probe (→ fail) and the SW probe (→ ok via
+  // dav1d); the resulting `setSwLane` + refreshSources nudge lets native-sw win
+  // the next resolution — proving tier 3 accepts a probe-passed format BEYOND
+  // the hardcoded blind-spot families Cell 2 covers.
+  test('pinned native + AV1: probe-driven native-sw (tier 3) — HW-incapable, non-blind-spot format', async () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
     let toggledOn = false
     try {
-      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'hevc-native-' + Date.now(), canvas: CANVAS })
+      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'av1-native-' + Date.now(), canvas: CANVAS })
       const after = (await invokeCmd(page, 'app_settings_set', {
         patch: { decode_engine: 'native' },
       })) as { decode_engine: string }
       expect(after.decode_engine).toBe('native')
       toggledOn = true
 
-      const { layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: HEVC_FIXTURE })
+      const { layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: AV1_FIXTURE })
       expect(kind).toBe('Video')
 
       await waitForPreviewBridge(page)
@@ -316,6 +332,44 @@ test.describe('decode-engine tier resolution (Electron)', () => {
       const probe = await waitForTier(page, layerId, 'sw', 'native-sw:')
       expect(probe.sourceKind).toBe('sw')
       expect(probe.builtFromKey!.startsWith('native-sw:')).toBe(true)
+    } finally {
+      if (toggledOn) {
+        await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
+      }
+      await app.close()
+    }
+  })
+
+  // Cell 5 — pinned native + H.264: probe-gated tier 1 (native-hw). This is the
+  // FIRST production-path exercise of NativeGpuSourceHandle (previously bench-
+  // only / E2E-gated in the pool — Task 17 removed that gate). 8-bit H.264
+  // yuv420p IS d3d11va-decodable, so the GPU capability probe (decodeCap:probeHw)
+  // passes on a real GPU box; PixiPreview's HW-probe kick lights tier 1's lane
+  // "ok", and the resolver routes forceStrategy:'native' → NativeGpuSourceHandle
+  // (sourceKind 'native-gpu', builtFromKey 'native-hw:…') through the no-flash
+  // swap. LOCAL GPU box only — guarded by WEFTCUT_DECODE_E2E like the whole
+  // describe (needs both the native-decode component AND a GPU whose driver
+  // d3d11va-decodes H.264).
+  test('pinned native + H.264: probe-gated native-gpu (tier 1) — the production HW path', async () => {
+    test.setTimeout(180_000)
+    const { app, page } = await launchApp()
+    let toggledOn = false
+    try {
+      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'h264-native-' + Date.now(), canvas: CANVAS })
+      const after = (await invokeCmd(page, 'app_settings_set', {
+        patch: { decode_engine: 'native' },
+      })) as { decode_engine: string }
+      expect(after.decode_engine).toBe('native')
+      toggledOn = true
+
+      const { layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: H264_FIXTURE })
+      expect(kind).toBe('Video')
+
+      await waitForPreviewBridge(page)
+      await seek(page, SEEK_US)
+      const probe = await waitForTier(page, layerId, 'native-gpu', 'native-hw:')
+      expect(probe.sourceKind).toBe('native-gpu')
+      expect(probe.builtFromKey!.startsWith('native-hw:')).toBe(true)
     } finally {
       if (toggledOn) {
         await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})

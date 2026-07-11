@@ -66,22 +66,24 @@ export interface SourceHandleInit {
   /// at PTS 0). Kept as a fallback when the target has no packets.
   sourceStartPtsUs?: number | null;
   /// Force the decode strategy for this handle rather than letting the pool
-  /// pick WebCodecs. `'native'` routes to `NativeGpuSourceHandle` (Stage 2
-  /// decode-bench), gated on `VITE_WEFTCUT_E2E === "1"` in `acquire` — inert
-  /// (ignored) in production and dev builds so this can never affect real
-  /// playback. `'software'` routes to `SwSourceHandle` (native libavcodec SW
-  /// decode) and is NOT E2E-gated — it ships behind the `decode_engine`
-  /// AppSettings selection instead; the pool just honors whatever the
-  /// caller decided.
+  /// pick WebCodecs. `'native'` routes to `NativeGpuSourceHandle` (native
+  /// GPU / d3d11va decode) and is now PRODUCTION-LEGAL: it is chosen ONLY by
+  /// engine resolution (`resolveEngineTier` tier 1), which requires a PASSED
+  /// HW probe on the source's format class — the pool never picks it on a
+  /// hunch, and the E2E flag no longer gates it. `'software'` routes to
+  /// `SwSourceHandle` (native libavcodec SW decode). Both ship behind the
+  /// `decode_engine` AppSettings selection; the pool just honors whatever the
+  /// resolver decided.
   forceStrategy?: "webcodecs" | "native" | "software";
   /// The ORIGINAL file path for a `forceStrategy: 'native'` or `'software'`
   /// handle to decode directly (both bypass the shared, proxy-backed
   /// `SourceMedia` entirely). Ignored by the WebCodecs path, which decodes
   /// `proxyAssetUrl` instead.
   sourcePath?: string;
-  /// E2E-only: native pool size (slot count) for a `forceStrategy: 'native'`
+  /// Bench-only: native pool size (slot count) for a `forceStrategy: 'native'`
   /// handle. Decode-bench Stage 3 varies this to sweep pipeline depth; the
-  /// product default (3) applies when unset. Ignored by the WebCodecs path.
+  /// product default (3) applies when unset — production `'native'` handles
+  /// never set it. Ignored by the WebCodecs path.
   poolSize?: number;
 }
 
@@ -687,21 +689,18 @@ export class SourceDecoderPool {
   /// ring) but references a refcounted shared `SourceMedia`. The handle
   /// is initialised lazily by the first `await ensureReady()` call.
   ///
-  /// E2E-only escape hatch: `forceStrategy: 'native'` (gated on
-  /// `VITE_WEFTCUT_E2E === "1"`) routes to a `NativeGpuSourceHandle`
-  /// instead, decoding `sourcePath` directly. The native branch skips
-  /// `acquireMedia` entirely — there is no shared, proxy-backed
-  /// `SourceMedia` for a native session, so `mediaId` here is just a pool
-  /// bookkeeping key (see `releaseHandle`, whose `medias.get(mediaId)` miss
-  /// is a no-op for these handles).
-  ///
-  /// `forceStrategy: 'software'` routes to a `SwSourceHandle` (native
-  /// libavcodec SW decode) the same way, but is NOT gated on
-  /// `VITE_WEFTCUT_E2E` — the caller only sets it when the `decode_engine`
-  /// AppSettings selection resolves to native software, so the pool
-  /// simply honors it unconditionally.
+  /// Native strategies (production-legal): `forceStrategy: 'native'` routes to
+  /// a `NativeGpuSourceHandle` and `'software'` to a `SwSourceHandle`, both
+  /// decoding `sourcePath` directly. The engine resolver (`resolveEngineTier`)
+  /// is the ONLY chooser — `'native'` requires a passed HW probe (tier 1),
+  /// `'software'` the native-SW route/probe (tier 3); neither is E2E-gated any
+  /// longer. Either native branch skips `acquireMedia` entirely — there is no
+  /// shared, proxy-backed `SourceMedia` for a native session, so `mediaId` here
+  /// is just a pool bookkeeping key (see `releaseHandle`, whose
+  /// `medias.get(mediaId)` miss is a no-op for these handles). `poolSize` stays
+  /// bench-only (decode-bench Stage 3).
   acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle | SwSourceHandle {
-    if (import.meta.env.VITE_WEFTCUT_E2E === "1" && init.forceStrategy === "native") {
+    if (init.forceStrategy === "native") {
       const existingNative = this.handles.get(init.layerId);
       if (existingNative) return existingNative;
       const nativeHandle = new NativeGpuSourceHandle(

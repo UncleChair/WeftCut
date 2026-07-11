@@ -29,6 +29,17 @@ interface GpuSession {
 
 const sessions = new Map<string, GpuSession>()
 
+/// Conservative v1 HW-session cap (spec Risk 3: bench data is single-source).
+/// 3 sessions × 3 slots × ~4.5MB/1080p-NV12-slot ≈ 40MB VRAM steady-state;
+/// widen only on measurement. Over-budget opens throw the typed reason the
+/// renderer's resolver maps to a per-source downgrade to the next tier (Task 18).
+const MAX_HW_SESSIONS = 3
+
+/// Live HW-session count (for the renderer's budget-aware resolution + tests).
+export function hwSessionCount(): number {
+  return sessions.size
+}
+
 /// Open a native GPU-decode session and hand its whole shared-texture pool to
 /// the renderer up front. For each slot we announce the slot index, import the
 /// shared handle, and transfer it to the renderer's main frame — in that order,
@@ -43,6 +54,10 @@ export async function openPreviewGpu(
   poolSize: number,
   colorSpace: ColorSpace,
 ): Promise<{ width: number; height: number; poolSize: number }> {
+  // Budget gate FIRST — before any native allocation. The throw rejects the
+  // `previewGpu:open` invoke; the renderer's resolver treats 'hw-budget-exceeded'
+  // as a sticky downgrade off tier 1 (Task 18) rather than a hard failure.
+  if (sessions.size >= MAX_HW_SESSIONS) throw new Error('hw-budget-exceeded')
   const info = backend.previewGpuOpen(streamId, path, poolSize)
   const imported: SharedTextureImported[] = []
   try {

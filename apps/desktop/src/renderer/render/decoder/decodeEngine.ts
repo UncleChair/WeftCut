@@ -39,6 +39,19 @@ export interface ResolvedSource {
   reason: string;
 }
 
+/// The per-setting tier order — the SINGLE source of truth (spec: auto =
+/// 1→2→3→4; native = 1→3→2→4; webcodecs = 2→4). `resolveEngineTier` walks it,
+/// and PixiPreview's preempt checks (the SW- and HW-probe kicks) index into it
+/// rather than re-declaring the table, so a probe kick can never drift from the
+/// resolver's actual order. Always ends in "proxy" (the guaranteed floor).
+export function orderFor(setting: DecodeEngineSetting): EngineTier[] {
+  return setting === "native"
+    ? ["native-hw", "native-sw", "webcodecs-original", "proxy"]
+    : setting === "webcodecs"
+      ? ["webcodecs-original", "proxy"]
+      : ["native-hw", "webcodecs-original", "native-sw", "proxy"];
+}
+
 export function resolveEngineTier(i: EngineInputs): ResolvedSource {
   const down = i.downgraded ?? new Set<EngineTier>();
   const trail: string[] = [];
@@ -52,13 +65,8 @@ export function resolveEngineTier(i: EngineInputs): ResolvedSource {
   const componentOk = i.componentAvailable;
   if (nativeAllowed && !componentOk) trail.push("native tiers: component unavailable");
 
-  // Tier order per setting (spec: auto = 1→2→3→4; native = 1→3→2→4; webcodecs = 2→4).
-  const order: EngineTier[] =
-    i.setting === "native"
-      ? ["native-hw", "native-sw", "webcodecs-original", "proxy"]
-      : i.setting === "webcodecs"
-        ? ["webcodecs-original", "proxy"]
-        : ["native-hw", "webcodecs-original", "native-sw", "proxy"];
+  // Tier order per setting — from the shared `orderFor` table (above).
+  const order = orderFor(i.setting);
 
   for (const tier of order) {
     switch (tier) {
