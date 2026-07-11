@@ -32,20 +32,9 @@ import {
   type PreviewSampler,
 } from "../colorpick/previewSamplerRegistry";
 import { resolveDecode } from "./decodeRoute";
-import {
-  orderFor,
-  resolveEngineTier,
-  type DecodeEngineSetting,
-  type EngineTier,
-} from "./decoder/decodeEngine";
-import {
-  classKeyOfMedia,
-  hwEligibleCodec,
-  kickHwProbe,
-  kickSwProbe,
-  laneStatesFor,
-  noteResolution,
-} from "./decoder/decodeCapability";
+import { resolveDecodeEngine } from "./decoder/decodeEngine";
+import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
+import { noteResolution } from "./decoder/decodeCapability";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
 import {
   setEffectDisabled,
@@ -70,32 +59,6 @@ interface Props {
 }
 
 const LOG = "[weftcut/pixi]";
-
-/// Whether a still-"untested" native lane sits BEFORE `currentTier` in
-/// `setting`'s resolution order — i.e. the resolver only skipped that lane
-/// because its probe hasn't run yet, and a passing probe could still preempt
-/// `currentTier` on the next resolution. Both index into `orderFor` (the SINGLE
-/// order table in decodeEngine.ts) rather than re-declaring it, so a probe kick
-/// can never drift from the resolver's actual order.
-///
-/// native-sw (D3): under `auto` it sits AFTER webcodecs-original, so an ordinary
-/// tier-2 H.264 win never triggers the (uninterruptible, main-thread) SW probe;
-/// under `native` it sits BEFORE webcodecs-original and CAN preempt a tier-2
-/// result. It's absent from the `webcodecs` order entirely (indexOf → -1).
-function nativeSwCouldPreempt(setting: DecodeEngineSetting, currentTier: EngineTier): boolean {
-  const order = orderFor(setting);
-  const sw = order.indexOf("native-sw");
-  return sw !== -1 && sw < order.indexOf(currentTier);
-}
-
-/// native-hw (D4): first in every order it appears in (`auto` + `native`), so
-/// whenever its lane is "untested" it could still win tier 1 — the trigger for
-/// the GPU-probe kick. Absent from `webcodecs` (indexOf → -1).
-function nativeHwCouldPreempt(setting: DecodeEngineSetting, currentTier: EngineTier): boolean {
-  const order = orderFor(setting);
-  const hw = order.indexOf("native-hw");
-  return hw !== -1 && hw < order.indexOf(currentTier);
-}
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
   { onTimeUpdate, onPausedChange, previewDecodableOf },
@@ -175,102 +138,43 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
 
-      // THE preview decode resolver (D2): the single injected gatherer that
-      // reads the live stores, runs the PURE `resolveEngineTier`, and returns the
-      // resolved source (tier + decode target + swap key). It collapses the old
-      // `proxyAssetUrl` + `nativeSwSourceFor` bridges into one. Impure by design
-      // (store reads) but hands only plain values into the pure core; a
-      // mid-session probe/setting/component flip takes effect on the next
-      // `ensureClip` because every input is read live per call.
-      // D3 nudge: re-run source resolution the way the outside-React
-      // `refreshSources()` imperative handle does for the import
-      // decodability sweep (useImportReadiness.ts), but reaching the local
-      // refs directly since this closure already lives inside PixiPreview.
-      const refreshSources = (): void => {
-        const c = compositorRef.current;
-        if (!c) return;
-        const t = engineRef.current?.positionUs() ?? 0;
-        c.setProject(useProjectStore.getState().summary);
-        c.setAnchorTime(t);
-        c.compositeFrame(t);
-      };
+      // THE preview decode resolver: the single injected gatherer that reads
+      // the live stores, runs the PURE `resolveDecodeEngine`, and returns the
+      // resolved source (engine + source + decode target + swap key). Impure
+      // by design (store reads) but hands only plain values into the pure
+      // core; a mid-session setting/component/probe flip takes effect on the
+      // next `ensureClip` because every input is read live per call. HW/SW
+      // lane probing is no longer gathered here — `FfmpegSource` (via
+      // `pickInitialLane`/`ffmpegCapability`) owns lane selection internally
+      // now that the pool acquires by `engine` rather than a forced strategy.
       const resolveSource = (mediaId: string): ResolvedRendererSource | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         if (!m) return null;
-        const setting = useAppSettingsStore.getState().settings.decode_engine;
+        const persisted = useAppSettingsStore.getState().settings.decode_engine;
+        // T10 renames the persisted value from "native" to "ffmpeg"; bridge
+        // until then so this resolver already speaks the collapsed vocabulary.
+        const setting = persisted === "native" ? "ffmpeg" : persisted;
         const componentAvailable = useDecodeComponentStore.getState().available;
-        const lanes = laneStatesFor(mediaId, m, componentAvailable);
-        const r = resolveEngineTier({
+        const previewPath = resolveDecode(m).previewPath;
+        const r = resolveDecodeEngine({
           setting,
           componentAvailable,
-          media: { path: m.path, decode_route: m.decode_route },
-          // Session probe memo (App's decodeProbeMemo via the prop) — read live
-          // so a mid-session probe flip feeds tier 2 on the next ensureClip.
-          webcodecsOriginal: (previewDecodableOf?.(mediaId) ?? false) ? "ok" : "untested",
-          nativeHw: lanes.nativeHw,
-          nativeSw: lanes.nativeSw,
-          downgraded: lanes.downgraded,
-          proxyPreviewPath: resolveDecode(m).previewPath,
+          useProxySource: false, // no activation path this bite (Generate-proxy follow-up)
+          proxyReady: previewPath !== null,
+          proxyUrl: previewPath !== null ? convertFileSrc(previewPath) : null,
+          originalPath: m.path,
+          // convertFileSrc HERE (the impure edge) so the Compositor + pure
+          // core stay URL-scheme-agnostic — same helper the old webcodecs-
+          // original tier applied to the same field.
+          originalUrl: convertFileSrc(m.path),
+          // Session probe memo (App's decodeProbeMemo via the prop) — read
+          // live so a mid-session probe flip feeds the webcodecs×original
+          // branch on the next ensureClip.
+          webcodecsCanDecodeOriginal: (previewDecodableOf?.(mediaId) ?? false) ? "ok" : "untested",
+          ffmpegUsable: !isFfmpegUnusable(mediaId),
         });
         noteResolution(mediaId, r);
-        // D3: the resolver settled on a tier ONLY because tier 3's SW lane is
-        // still "untested" — the static blind-spot list didn't pre-pass this
-        // format — and native-sw could still preempt that tier once probed
-        // (nativeSwCouldPreempt guards against firing the probe for an
-        // ordinary tier-2 `auto` win, where native-sw sits after
-        // webcodecs-original and could never change the outcome anyway).
-        // Kick the machine-capability probe (single-flight per media); when
-        // the verdict lands, setSwLane + the refreshSources nudge re-run
-        // ensureClip so a probe-passed format wins its rightful tier via the
-        // no-flash swap, accepting formats beyond the hardcoded blind-spot
-        // list.
-        if (
-          lanes.nativeSw === "untested" &&
-          componentAvailable &&
-          nativeSwCouldPreempt(setting, r.tier)
-        ) {
-          kickSwProbe(mediaId, m.path, refreshSources);
-        }
-        // D4: tier 1 (native-hw) is probe-gated. When the native-decode
-        // component loaded (⇒ HW decode is possible here), the setting allows
-        // native, tier 1's lane is still "untested", the codec is HW-ELIGIBLE
-        // (see below), and native-hw could still preempt the resolved tier,
-        // kick the GPU capability probe (single-flight per media) for the
-        // media's HW-probeable video class. The verdict lands via setHwLane; the
-        // refreshSources nudge re-runs ensureClip so a passing probe upgrades
-        // the clip to native-hw via the no-flash swap. `classKeyOfMedia` (main's
-        // classKeyOf twin) is computed last/lazily so the per-tick allocation
-        // only happens during the brief untested window, and is null for
-        // non-video media (no HW lane).
-        //
-        // `hwEligibleCodec` gates the kick on the seek-VALIDATED HW allow-list
-        // (8-bit H.264/HEVC/VP9). The one-frame HW probe tests decode-viability,
-        // NOT seek-survival, so a driver that HW-decodes an out-of-scope codec
-        // (e.g. MPEG-2) would otherwise promote it to tier 1 where a backward
-        // seek hangs indefinitely. Gating the kick keeps `hwLaneByMedia` unset
-        // for ineligible codecs ⇒ `laneStatesFor` reports nativeHw "untested" ⇒
-        // the resolver skips tier 1 ⇒ they fall to SW. `setHwLane` (the sole HW
-        // promotion write) is only ever called from inside `kickHwProbe`, so
-        // this single gate fully prevents ineligible HW promotion.
-        if (
-          componentAvailable &&
-          setting !== "webcodecs" &&
-          lanes.nativeHw === "untested" &&
-          hwEligibleCodec(m.codec, m.pix_fmt) &&
-          nativeHwCouldPreempt(setting, r.tier)
-        ) {
-          const hwClassKey = classKeyOfMedia(m);
-          if (hwClassKey !== null) kickHwProbe(mediaId, m.path, hwClassKey, refreshSources);
-        }
-        return {
-          tier: r.tier,
-          forceStrategy: r.forceStrategy,
-          sourcePath: r.sourcePath,
-          // convertFileSrc HERE (the impure edge) so the Compositor + pure core
-          // stay URL-scheme-agnostic; native lanes carry `sourcePath` instead.
-          assetUrl: r.url ? convertFileSrc(r.url) : null,
-          key: r.key,
-        };
+        return r;
       };
       const originalAssetUrl = (mediaId: string): string | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);

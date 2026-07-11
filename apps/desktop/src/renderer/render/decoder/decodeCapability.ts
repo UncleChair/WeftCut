@@ -5,7 +5,7 @@
 // capability cache (D3), never this map. Distinct from the (retiring)
 // "session bridge" term — see CONTEXT.md.
 import { logEmit, type LogEntryInput } from "../../ipc";
-import type { EngineTier, LaneState, ResolvedSource } from "./decodeEngine";
+import type { EngineTier, LaneState } from "./decodeEngine";
 // HW/SW lane session state + the seek-validated codec allow-list moved to
 // ffmpegCapability.ts (Task 4) — the new `FfmpegSource` (Task 5) owns lane
 // selection there. Re-imported (same Map/Set instances) so `laneStatesFor`,
@@ -81,9 +81,14 @@ export function markDowngraded(mediaId: string, tier: EngineTier, reason: string
 }
 
 /// LogBus trail: one entry per (media, resolved key) change — P3's
-/// "every step logged" without per-frame spam.
-export function noteResolution(mediaId: string, r: ResolvedSource): void {
-  const k = r.key ?? `${r.tier}:pending`;
+/// "every step logged" without per-frame spam. Param type is the minimal
+/// shape both the legacy `ResolvedSource` (tier resolver) and the collapsed
+/// `DecodeResolution` (`resolveDecodeEngine`) satisfy structurally, so either
+/// caller compiles unchanged. Falls back to `reason` (not a tier) for the
+/// dedupe key when nothing is acquirable yet, since "pending" carries no
+/// tier concept in the collapsed model.
+export function noteResolution(mediaId: string, r: { key: string | null; reason: string }): void {
+  const k = r.key ?? r.reason;
   if (lastLoggedKey.get(mediaId) === k) return;
   lastLoggedKey.set(mediaId, k);
   emit("info", `decode resolution: media ${mediaId} → ${r.reason}`);

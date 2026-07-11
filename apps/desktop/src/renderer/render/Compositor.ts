@@ -31,8 +31,7 @@ import {
 } from "./decoder/SourceDecoderPool";
 import { NativeGpuSourceHandle } from "./decoder/NativeGpuSourceHandle";
 import { SwSourceHandle } from "./decoder/SwSourceHandle";
-import type { EngineTier } from "./decoder/decodeEngine";
-import { markDowngraded } from "./decoder/decodeCapability";
+import { markFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
@@ -163,38 +162,43 @@ export interface ActiveClipProbe {
   spriteBound: boolean;
   spriteWidth: number;
   spriteHeight: number;
-  /// The resolver IDENTITY (`${tier}:${target}`) the active clip's source was
-  /// built from — see `ActiveClip.builtFromKey`. Lets the decode-engine e2e
-  /// spec (Task 10) assert the resolved TIER (prefix before the `:`) rather
-  /// than inferring it from `sourceKind` alone, which can't distinguish
-  /// webcodecs-original from proxy — both decode through the WebCodecs pool
-  /// and surface as `sourceKind: "webcodecs"`. Null only when
-  /// `activeClipProbe` itself returns null (no matching clip).
+  /// The resolver IDENTITY (`${engine}:${source}:${target}`) the active clip's
+  /// source was built from — see `ActiveClip.builtFromKey`. Lets the decode-
+  /// engine e2e spec (Task 10) assert the resolved ENGINE/SOURCE (the two
+  /// leading segments) rather than inferring it from `sourceKind` alone, which
+  /// can't distinguish webcodecs-original from webcodecs-proxy — both decode
+  /// through the WebCodecs pool and surface as `sourceKind: "webcodecs"`. Null
+  /// only when `activeClipProbe` itself returns null (no matching clip).
   builtFromKey: string | null;
 }
 
 /// Preview mode's resolved decode source for one media, produced by the injected
 /// `resolveSource` (PixiPreview gathers the store inputs and runs the pure
-/// `resolveEngineTier`). `assetUrl` is ALREADY `convertFileSrc`'d — the WebCodecs
-/// lanes decode it; the native lanes ignore it and decode `sourcePath` via
-/// `forceStrategy`. `key` = `${tier}:${target}` is the swap IDENTITY: it changes
-/// only when the resolved tier or decode target changes, so a landed proxy can
-/// never displace a higher native/original tier (feedback_native_nle_conventions).
+/// `resolveDecodeEngine`). `target` is the decode target: for `engine: "ffmpeg"`
+/// it's the original file PATH (the pool decodes it directly, ignoring
+/// `proxyAssetUrl`); for `engine: "webcodecs"` it's ALREADY `convertFileSrc`'d.
+/// `status: "unsupported"` means no decodable target exists for this media at
+/// all (surfaced via `CompositorInit.onUnsupported`); `"pending"` means the
+/// resolver expects one soon (proxy building, decodability untested) and
+/// `target` is null. `key` = `${engine}:${source}:${target}` is the swap
+/// IDENTITY: it changes only when the resolved engine, source, or decode
+/// target changes, so a landed proxy can never displace an already-decoding
+/// original (feedback_native_nle_conventions).
 export interface ResolvedRendererSource {
-  tier: EngineTier;
-  forceStrategy?: "native" | "software" | undefined;
-  sourcePath?: string | undefined;
-  assetUrl: string | null;
+  engine: import("./decoder/decodeEngine").DecodeEngine;
+  source: import("./decoder/decodeEngine").DecodeSource;
+  status: "ok" | "pending" | "unsupported";
+  target: string | null;
   key: string | null;
 }
 
-/// Export mode has exactly one tier today (the proxy/master). Wrap its asset URL
-/// in the `ResolvedRendererSource` shape so `ensureClip` runs ONE acquire path
-/// across preview + export; preview injects the real engine resolver instead.
-/// D5 will fold export onto the resolver too.
+/// Export mode has exactly one source today (the proxy/master, decoded via
+/// WebCodecs). Wrap its asset URL in the `ResolvedRendererSource` shape so
+/// `ensureClip` runs ONE acquire path across preview + export; preview injects
+/// the real engine resolver instead. D5 will fold export onto the resolver too.
 function rsFromExportProxy(url: string | null): ResolvedRendererSource | null {
   return url
-    ? { tier: "proxy", assetUrl: url, key: `proxy:${url}`, sourcePath: undefined, forceStrategy: undefined }
+    ? { engine: "webcodecs", source: "proxy", status: "ok", target: url, key: `webcodecs:proxy:${url}` }
     : null;
 }
 
@@ -215,10 +219,18 @@ export interface CompositorInit {
   /// resolver. Defaults to `() => null` when absent.
   proxyAssetUrl?: (mediaId: string) => string | null;
   /// PREVIEW mode's engine resolution: gathers store inputs and runs the pure
-  /// `resolveEngineTier`, returning the resolved decode source (tier + target +
-  /// swap key). REQUIRED in preview mode; export mode keeps `proxyAssetUrl`
-  /// (Phase D5). Defaults to `() => null` so export/worker are unaffected.
+  /// `resolveDecodeEngine`, returning the resolved decode source (engine +
+  /// source + target + swap key). REQUIRED in preview mode; export mode keeps
+  /// `proxyAssetUrl` (Phase D5). Defaults to `() => null` so export/worker are
+  /// unaffected.
   resolveSource?: (mediaId: string) => ResolvedRendererSource | null;
+  /// Preview-only: called when `resolveSource` reports `status: "unsupported"`
+  /// for a media — no engine can decode it (e.g. a pinned Standard engine with
+  /// no usable component, or WebCodecs failing the original with no proxy
+  /// underway). Export omits it; an unsupported clip is silently skipped from
+  /// the composite either way. A later task uses this to surface an
+  /// unsupported-format card in place of the clip.
+  onUnsupported?: (mediaId: string) => void;
   /// Resolver for the asset URL of a media item's ORIGINAL file.
   /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
   /// May return the same URL as `proxyAssetUrl` for media kinds
@@ -252,13 +264,14 @@ interface ActiveClip {
   source: DecoderHandle;
   sprite: VideoClipSprite;
   effects: EffectChain;
-  /// The resolver IDENTITY (`${tier}:${target}`) the current `source` was built
-  /// from. When the resolver later returns a DIFFERENT key for this media (a
-  /// proxy landed for a tier-4 clip, the engine flipped, or a D4 runtime
-  /// downgrade), `ensureClip` starts a no-flash overlap-swap to the new source.
-  /// Keying on tier+target (not URL) is what makes a landed proxy unable to
-  /// displace a native/original tier: the resolver keeps returning the higher
-  /// tier, so the key never changes (feedback_native_nle_conventions).
+  /// The resolver IDENTITY (`${engine}:${source}:${target}`) the current
+  /// `source` was built from. When the resolver later returns a DIFFERENT key
+  /// for this media (a proxy landed, the engine flipped, or a runtime ffmpeg
+  /// failure), `ensureClip` starts a no-flash overlap-swap to the new source.
+  /// Keying on engine+source+target (not URL) is what makes a landed proxy
+  /// unable to displace an already-decoding original: the resolver keeps
+  /// returning `source: "original"` while it's still decodable, so the key
+  /// never changes (feedback_native_nle_conventions).
   builtFromKey: string;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
   /// found `ring.frameAt(srcTUs)` returned null. Used so the
@@ -275,9 +288,9 @@ interface SwapState {
   handle: DecoderHandle;
   /// Pool key of the synthetic swap handle (`${layerId}#swap`).
   swapLayerId: string;
-  /// The resolver IDENTITY (`${tier}:${target}`) the swap handle is decoding
-  /// toward. Becomes the clip's `builtFromKey` on completion; the in-flight
-  /// dedupe compares it against the freshly-resolved key.
+  /// The resolver IDENTITY (`${engine}:${source}:${target}`) the swap handle
+  /// is decoding toward. Becomes the clip's `builtFromKey` on completion; the
+  /// in-flight dedupe compares it against the freshly-resolved key.
   key: string;
   /// Bounded poll driving the swap to completion (cleared on done/abandon).
   timer: ReturnType<typeof setInterval> | null;
@@ -386,6 +399,9 @@ export class Compositor {
   private layerById = new Map<string, LayerSummary>();
   private proxyAssetUrl: (mediaId: string) => string | null;
   private resolveSource: (mediaId: string) => ResolvedRendererSource | null;
+  /// Preview-only unsupported-format notification (see `CompositorInit`).
+  /// Undefined when the host doesn't wire it (export never does).
+  private onUnsupported: ((mediaId: string) => void) | undefined;
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
@@ -519,6 +535,7 @@ export class Compositor {
     // `proxyAssetUrl`; each mode's ensureClip branch reads only its own.
     this.proxyAssetUrl = init.proxyAssetUrl ?? ((): string | null => null);
     this.resolveSource = init.resolveSource ?? ((): ResolvedRendererSource | null => null);
+    this.onUnsupported = init.onUnsupported;
     this.originalAssetUrl = init.originalAssetUrl;
     this.sourceColor = init.sourceColor;
     this.mediaById = init.mediaById;
@@ -1483,34 +1500,47 @@ export class Compositor {
     // demuxer samples have been freed — a fresh `pool.acquire()` revives it.
     if (existing && !existing.source.disposed) {
       // No-flash re-resolution: when the resolver's IDENTITY for this media
-      // changes (a proxy landed for a tier-4 clip, the engine flipped, or a D4
-      // runtime downgrade), begin an overlap-swap; keep returning the existing
-      // clip so the current frame stays on screen until the new handle holds
-      // the visible frame. Keying on tier+target (not URL) means a landed proxy
-      // can NEVER displace a native/original tier — the resolver simply keeps
-      // returning the higher tier, so the key doesn't change
-      // (feedback_native_nle_conventions).
+      // changes (a proxy landed, the engine flipped, or a runtime ffmpeg
+      // failure), begin an overlap-swap; keep returning the existing clip so
+      // the current frame stays on screen until the new handle holds the
+      // visible frame. Keying on engine+source+target (not URL) means a
+      // landed proxy can NEVER displace an already-decoding original — the
+      // resolver simply keeps returning `source: "original"`, so the key
+      // doesn't change (feedback_native_nle_conventions). Only a fully
+      // resolved ("ok") result is swap-worthy; "pending"/"unsupported" leave
+      // the existing clip alone.
       if (this.mode === "preview") {
         const rs = this.resolveSource(layer.params.media_id);
-        if (rs?.key && rs.key !== existing.builtFromKey && (rs.assetUrl !== null || rs.sourcePath)) {
+        if (rs?.status === "ok" && rs.key !== null && rs.key !== existing.builtFromKey) {
           this.beginSwap(existing, layer, rs);
         }
       }
       return existing;
     }
     const mediaId = layer.params.media_id;
-    // Preview resolves the engine tier once here (native-hw / webcodecs-original
-    // / native-sw / proxy); export keeps today's single proxy tier (D5 folds
+    // Preview resolves the decode engine once here (ffmpeg vs webcodecs ×
+    // original vs proxy); export keeps today's single proxy path (D5 folds
     // export onto the resolver too). `rsFromExportProxy` wraps the proxy URL in
     // the same shape so this acquire path is shared.
     const rs =
       this.mode === "preview"
         ? this.resolveSource(mediaId)
         : rsFromExportProxy(this.proxyAssetUrl(mediaId));
-    if (!rs || (!rs.assetUrl && !rs.sourcePath)) {
-      // Nothing acquirable yet: proxy still building, or no decodable tier.
+    if (!rs) {
       // eslint-disable-next-line no-console
       console.warn(`[weftcut/pixi] no decode source for media ${mediaId} (clip ${layer.id})`);
+      return null;
+    }
+    if (rs.status === "unsupported") {
+      // No engine can decode this media at all — surface it to the host
+      // (a later task renders an unsupported-format card) and skip the clip
+      // entirely; export silently omits it (no `onUnsupported` wired there).
+      this.onUnsupported?.(mediaId);
+      return null;
+    }
+    if (rs.status !== "ok" || rs.target === null) {
+      // Pending: proxy still building, or webcodecs decodability untested.
+      // The next resolution (probe settling / proxy landing) will retry.
       return null;
     }
     // Source color tags apply to ANY decode target for this media: the
@@ -1521,10 +1551,11 @@ export class Compositor {
     // unaffected; colr-less ones stop being misread as bt709/limited.
     const sourceColor = this.sourceColor(mediaId);
     const sourceStartPtsUs = this.mediaById(mediaId)?.video_start_pts_us ?? this.mediaById(mediaId)?.start_pts_us ?? null;
-    // Swap/revival identity (tier + decode target). Non-null: the guard above
-    // bailed unless a target exists, and the resolver only nulls `key` when it
-    // has none.
+    // Swap/revival identity (engine + source + decode target). Non-null: the
+    // guard above returned unless status is "ok" with a non-null target, and
+    // the resolver only nulls `key` when `target` is null.
     const builtFromKey = rs.key!;
+    const m = this.mediaById(mediaId);
     const source = this.pool.acquire({
       layerId: layer.id,
       mediaId,
@@ -1534,12 +1565,25 @@ export class Compositor {
       ...(this.mode === "export"
         ? { handleKey: exportHandleKey(mediaId, layer.params.src_in_us, layer.t_start_us) }
         : {}),
-      // WebCodecs lanes decode this URL; native lanes ignore it and decode
-      // `sourcePath` via `forceStrategy` (spread below).
-      proxyAssetUrl: rs.assetUrl ?? "",
       sourceColor,
       sourceStartPtsUs,
-      ...(rs.forceStrategy ? { forceStrategy: rs.forceStrategy, sourcePath: rs.sourcePath ?? "" } : {}),
+      engine: rs.engine,
+      // WebCodecs decodes this URL; ffmpeg ignores it and decodes
+      // `sourcePath` directly (spread below).
+      proxyAssetUrl: rs.engine === "webcodecs" ? rs.target! : "",
+      ...(rs.engine === "ffmpeg"
+        ? {
+            sourcePath: rs.target!,
+            codec: m?.codec ?? null,
+            pixFmt: m?.pix_fmt ?? null,
+            width: m?.width ?? null,
+            height: m?.height ?? null,
+            // Always true here: the resolver only returns engine "ffmpeg" +
+            // status "ok" when the ffmpeg component is loaded (see
+            // `resolveDecodeEngine`'s "ffmpeg" and "auto" branches).
+            componentAvailable: true,
+          }
+        : {}),
     });
     // Subscribe to the first-frame notification BEFORE kicking off
     // ensureReady so we don't miss the synchronous-fire case if the
@@ -1548,21 +1592,20 @@ export class Compositor {
     source.onFirstFrame(() => {
       this.scheduleRepaint();
     });
-    // D4 sticky runtime downgrade (Task 18): a native lane (`rs.forceStrategy`
-    // set — native-hw or native-sw) that dies at runtime (GPU decode error,
-    // device loss, session crash, or the `hw-budget-exceeded` open throw from
-    // Task 17's `MAX_HW_SESSIONS` cap) fires `onFatalError`. Mark this media's
-    // tier downgraded (sticky; LogBus warns) and schedule a repaint — the next
-    // `ensureClip` re-resolves via `resolveSource`, the downgraded tier is
-    // skipped, the resolved key changes, and the no-flash swap above (the
-    // `existing` branch) rebuilds onto the next tier. No new swap mechanism:
-    // this rides the same key-based swap Task 9 already built. WebCodecs'
+    // Sticky runtime failure: an ffmpeg-engine handle (`FfmpegSource`) that
+    // dies at runtime (GPU decode error, device loss, session crash, or a
+    // budget-rejected open) fires `onFatalError`. Mark the ffmpeg engine
+    // unusable for this media (sticky this session; `isFfmpegUnusable`) and
+    // schedule a repaint — the next `ensureClip` re-resolves via
+    // `resolveSource`: an "auto" setting falls through to webcodecs, a pinned
+    // "ffmpeg" setting resolves "unsupported" (routed to `onUnsupported`
+    // above). Either way the resolved key changes, so the no-flash swap above
+    // (the `existing` branch) rebuilds onto the new source. WebCodecs'
     // `SourceHandle` has no `onFatalError` (its own downgrade-to-software
     // machinery handles GPU decode errors internally), so this is a no-op there.
-    if (rs.forceStrategy && source.onFatalError) {
-      const failedTier = rs.tier;
+    if (source.onFatalError) {
       source.onFatalError((reason) => {
-        markDowngraded(mediaId, failedTier, reason);
+        markFfmpegUnusable(mediaId, reason);
         this.scheduleRepaint();
       });
     }
@@ -1603,9 +1646,9 @@ export class Compositor {
   /// freshly-resolved source `rs`. The original stays referenced by
   /// `clip.source` (so the preview never blanks) until `pollSwap` confirms the
   /// new handle's ring holds the visible frame, at which point `completeSwap`
-  /// repoints atomically. `rs` may resolve to any tier — a native lane
-  /// (forceStrategy + sourcePath) or a WebCodecs URL — so D4's runtime
-  /// downgrades ride this same path.
+  /// repoints atomically. `rs` may resolve to either engine — an ffmpeg
+  /// `sourcePath` or a WebCodecs URL — so a runtime ffmpeg failure
+  /// (`markFfmpegUnusable`) rides this same path.
   private beginSwap(clip: ActiveClip, layer: LayerSummary, rs: ResolvedRendererSource): void {
     if (layer.params.kind !== "VideoClip") return;
     if (!rs.key) return;
@@ -1617,22 +1660,31 @@ export class Compositor {
       this.abandonSwap(clip.layerId);
     }
     const { swapLayerId, swapMediaId } = swapKeys(clip.layerId, clip.mediaId);
-    // Resolve color/start against the REAL media (`clip.mediaId`) even though we
+    // Resolve color/start (and, for an ffmpeg-engine swap, codec/pixFmt/
+    // dimensions below) against the REAL media (`clip.mediaId`) even though we
     // acquire under the synthetic `swapMediaId`: a proxy preserves the source
-    // colorimetry (its own colr tag still outranks this per-field), and a native
-    // lane decodes the original directly.
+    // colorimetry (its own colr tag still outranks this per-field), and
+    // ffmpeg decodes the original directly.
     const sourceColor = this.sourceColor(clip.mediaId);
-    const sourceStartPtsUs =
-      this.mediaById(clip.mediaId)?.video_start_pts_us ??
-      this.mediaById(clip.mediaId)?.start_pts_us ??
-      null;
+    const m = this.mediaById(clip.mediaId);
+    const sourceStartPtsUs = m?.video_start_pts_us ?? m?.start_pts_us ?? null;
     const handle = this.pool.acquire({
       layerId: swapLayerId,
       mediaId: swapMediaId,
-      proxyAssetUrl: rs.assetUrl ?? "",
       sourceColor,
       sourceStartPtsUs,
-      ...(rs.forceStrategy ? { forceStrategy: rs.forceStrategy, sourcePath: rs.sourcePath ?? "" } : {}),
+      engine: rs.engine,
+      proxyAssetUrl: rs.engine === "webcodecs" ? rs.target! : "",
+      ...(rs.engine === "ffmpeg"
+        ? {
+            sourcePath: rs.target!,
+            codec: m?.codec ?? null,
+            pixFmt: m?.pix_fmt ?? null,
+            width: m?.width ?? null,
+            height: m?.height ?? null,
+            componentAvailable: true,
+          }
+        : {}),
     });
     const state: SwapState = { handle, swapLayerId, key: rs.key, timer: null, deadline: null };
     this.swaps.set(clip.layerId, state);
