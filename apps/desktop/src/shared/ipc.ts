@@ -154,6 +154,16 @@ export interface DecodeComponentStatus {
   version: string | null
 }
 
+/// Verdict of `decodeCap:probeSw` (D3 machine capability cache): main runs the
+/// SW one-frame decode probe, derives the format-class key from what it
+/// learned, and consults/updates the per-machine cache. `classKey` is null
+/// when the probe couldn't even identify a codec (e.g. unopenable file).
+export interface DecodeCapabilityProbeResult {
+  ok: boolean
+  classKey: string | null
+  reason: string | null
+}
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -242,6 +252,9 @@ export interface WeftcutApi {
   /// gate). The renderer pulls this once on mount (availability is fixed for a
   /// process lifetime — the require is memoized in main).
   decodeComponent: { status(): Promise<DecodeComponentStatus> }
+  /// Machine capability probe (D3): runs the SW decode probe on `path` and
+  /// returns the cache-informed verdict for that file's format class.
+  decodeCap: { probeSw(path: string): Promise<DecodeCapabilityProbeResult> }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
   /// Broadcast an event to every app window (delivered to `on()` subscribers as

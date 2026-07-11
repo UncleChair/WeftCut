@@ -347,6 +347,15 @@ app.whenReady().then(async () => {
     path: path.join(app.getPath('userData'), 'recents.json'),
     dir: app.getPath('userData'),
   })
+  // Machine capability cache (dual-engine spec §"Capability probe cache") —
+  // persists <userData>/decode_capability.json. Keyed by (lane, format class),
+  // invalidated per-lane when its envKey changes (SW: ffmpeg version).
+  const { createDecodeCapabilityStore, classKeyOf } = await import('./decode-capability.js')
+  const decodeCapability = createDecodeCapabilityStore({
+    fs: atomicFs,
+    path: path.join(app.getPath('userData'), 'decode_capability.json'),
+    dir: app.getPath('userData'),
+  })
 
   tsHost = createTsActorHost({
     send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
@@ -486,6 +495,29 @@ app.whenReady().then(async () => {
     reason: nd.reason,
     version: nd.version,
   }))
+
+  // Machine capability probe (D3): runs the SW one-frame decode probe (Task 12),
+  // derives the format-class key from what it learned, and consults/updates the
+  // per-machine cache above. KNOWN LIMITATION: previewSwProbe is SYNCHRONOUS and
+  // UNINTERRUPTIBLE — it blocks the main thread until the one-frame decode
+  // finishes. Acceptable because it only ever runs on import-vetted local media
+  // (ffprobe'd at import time), so practical hang risk is low; no interrupt
+  // callback is built here (out of scope for this task).
+  ipcMain.handle('decodeCap:probeSw', (_e, a: { path: string }) => {
+    if (!nd.backend) return { ok: false, classKey: null, reason: 'component unavailable' }
+    const envKey = nd.version ?? 'unknown'
+    const probe = nd.backend.previewSwProbe(a.path)
+    const classKey = probe.codec ? classKeyOf(probe.codec, probe.pixFmt ?? null, probe.width, probe.height) : null
+    if (classKey) {
+      const cached = decodeCapability.get('sw', classKey, envKey)
+      if (cached === null) decodeCapability.put('sw', classKey, envKey, probe.ok)
+      // Cache-first shortcut: a cached true for this class skips nothing here
+      // (we already probed to LEARN the class from this file), but the verdict
+      // below prefers the cache so a one-off file glitch can't poison a class.
+      return { ok: cached ?? probe.ok, classKey, reason: probe.reason ?? null }
+    }
+    return { ok: probe.ok, classKey, reason: probe.reason ?? null }
+  })
 
   // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
   // WebCodecs-blind-format path). Frames flow out of band on the dedicated

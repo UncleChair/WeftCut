@@ -3,6 +3,7 @@ import type { SharedTextureImported } from 'electron'
 import type {
   WeftcutApi,
   AppNotice,
+  DecodeCapabilityProbeResult,
   DecodeComponentStatus,
   DialogOpenOpts,
   DialogSaveOpts,
@@ -204,6 +205,13 @@ const api: WeftcutApi = {
   // once on mount by the renderer's decodeComponentStore.
   decodeComponent: {
     status: () => ipcRenderer.invoke('decodeComponent:status') as Promise<DecodeComponentStatus>,
+  },
+
+  // Machine capability probe (D3): runs the SW decode probe + consults the
+  // per-machine capability cache for the probed file's format class.
+  decodeCap: {
+    probeSw: (path: string) =>
+      ipcRenderer.invoke('decodeCap:probeSw', { path }) as Promise<DecodeCapabilityProbeResult>,
   },
 }
 
