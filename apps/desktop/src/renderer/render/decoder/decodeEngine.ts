@@ -5,7 +5,7 @@
 // inputs (PixiPreview) and act on the output (Compositor ensureClip).
 import type { DecodeRoute } from "../../../shared/decode-route";
 
-export type DecodeEngineSetting = "auto" | "native" | "webcodecs";
+export type DecodeEngineSetting = "auto" | "native" | "ffmpeg" | "webcodecs";
 export type LaneState = "ok" | "fail" | "untested" | "unavailable";
 export type EngineTier = "native-hw" | "webcodecs-original" | "native-sw" | "proxy";
 
@@ -103,5 +103,72 @@ export function resolveEngineTier(i: EngineInputs): ResolvedSource {
       key: target ? `${tier}:${target}` : null,
       reason: trail.length ? `${tier} (skipped: ${trail.join("; ")})` : tier,
     };
+  }
+}
+
+// --- Collapsed decode model (2026-07-12). Coexists with the legacy EngineTier
+// resolver until Task 9 removes the old one; both are pure. ---
+export type DecodeEngine = "ffmpeg" | "webcodecs";
+export type DecodeSource = "original" | "proxy";
+/// PRIVATE to FfmpegSource — declared here only so the module shares one vocabulary.
+/// Never surfaced in a resolver input/output.
+export type FfmpegLane = "hardware" | "software";
+export type WebcodecsOriginalVerdict = "ok" | "fail" | "untested";
+
+export interface DecodeResolveInputs {
+  setting: DecodeEngineSetting;
+  /// FFmpeg native-decode component DLLs loaded on this machine.
+  componentAvailable: boolean;
+  /// User opt-in to decode the proxy instead of the original (per media). No
+  /// activation path in this bite — PixiPreview passes false; the Generate-proxy
+  /// follow-up wires it.
+  useProxySource: boolean;
+  proxyReady: boolean;
+  proxyUrl: string | null;
+  originalPath: string;
+  originalUrl: string;
+  /// Consulted ONLY on webcodecs × original. FFmpeg decodes any original.
+  webcodecsCanDecodeOriginal: WebcodecsOriginalVerdict;
+}
+
+export interface DecodeResolution {
+  engine: DecodeEngine;
+  source: DecodeSource;
+  /// File path (ffmpeg) or convertFileSrc URL (webcodecs); null = pending/unsupported.
+  target: string | null;
+  /// Swap identity `${engine}:${source}:${target}`; null when nothing acquirable.
+  key: string | null;
+  status: "ok" | "pending" | "unsupported";
+  reason: string;
+}
+
+export function resolveDecodeEngine(i: DecodeResolveInputs): DecodeResolution {
+  const engine: DecodeEngine =
+    i.setting === "webcodecs" ? "webcodecs"
+    : i.setting === "ffmpeg" ? "ffmpeg"
+    : i.componentAvailable ? "ffmpeg" : "webcodecs"; // auto
+  const source: DecodeSource = i.useProxySource ? "proxy" : "original";
+
+  const done = (
+    status: DecodeResolution["status"],
+    target: string | null,
+    reason: string,
+  ): DecodeResolution => ({
+    engine, source, target, status, reason,
+    key: target ? `${engine}:${source}:${target}` : null,
+  });
+
+  if (source === "proxy") {
+    return i.proxyReady
+      ? done("ok", i.proxyUrl, `${engine} on proxy`)
+      : done("pending", null, "proxy building");
+  }
+  // source === "original"
+  if (engine === "ffmpeg") return done("ok", i.originalPath, "ffmpeg on original");
+  // webcodecs × original
+  switch (i.webcodecsCanDecodeOriginal) {
+    case "ok": return done("ok", i.originalUrl, "webcodecs on original");
+    case "fail": return done("unsupported", null, "webcodecs cannot decode this original");
+    default: return done("pending", null, "webcodecs decodability untested");
   }
 }
