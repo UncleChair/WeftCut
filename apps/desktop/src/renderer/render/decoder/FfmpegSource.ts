@@ -111,6 +111,7 @@ export class FfmpegSource implements DecoderHandle {
     if (this._disposed) return;
     this.startedHardware = this.lane === "hardware";
     await this.openLane(this.lane);
+    if (this._disposed) return;
     this.ready = true;
   }
 
@@ -175,10 +176,11 @@ export class FfmpegSource implements DecoderHandle {
   async requestFrameAt(tUs: number): Promise<void> {
     if (!this.ready) await this.ensureReady();
     this.lastUseMs = performance.now();
-    if (this.eof) return; // eof seen on the current transport — no more nudges
     if (this._disposed) return;
     this.lastTargetUs = tUs;
-    this.ring.setAnchor(tUs);      // SW transport no longer sets the anchor; the source does
+    this.ring.setAnchor(tUs);      // always — drives lookbehind eviction, even post-eof
+    if (this.eof) return; // eof seen on the current transport — its own IPC is done,
+    // but the anchor above must still advance so the ring keeps evicting stale frames.
     this.transport?.requestFrameAt(tUs);
   }
 

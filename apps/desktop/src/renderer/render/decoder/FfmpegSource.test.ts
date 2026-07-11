@@ -83,6 +83,27 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps evicting via the ring anchor after eof, even though the transport is no longer nudged", async () => {
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+    );
+    await src.ensureReady();
+
+    gpu.emitFrame(0);                            // a low-pts frame, still inside the ring
+    expect(src.ring.size()).toBe(1);
+
+    gpu.finishEof();                             // transport signals end-of-stream
+    // Default lookbehind is 500_000us; a target far past that should evict
+    // the frame at pts 0 via setAnchor, even though eof gates the IPC nudge.
+    await src.requestFrameAt(2_000_000);
+
+    expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(0); // still gated post-eof
+    expect(src.ring.size()).toBe(0);                       // but the anchor still advanced and evicted
+  });
+
   it("threads media width/height into pickInitialLane for classKey correctness (mod C)", async () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
