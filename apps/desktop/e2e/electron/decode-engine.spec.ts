@@ -282,4 +282,45 @@ test.describe('decode-engine tier resolution (Electron)', () => {
       await app.close()
     }
   })
+
+  // Cell 4 — probe-driven tier 3 (Task 14/D3): pinned `native` puts native-sw
+  // AHEAD of webcodecs-original in the resolver's order (native-hw → native-sw
+  // → webcodecs-original → proxy). HEVC 8-bit is NOT on the static blind-spot
+  // list, so the route seed leaves `nativeSw` "untested" — under the OLD (pre-
+  // D3) resolver that lane could only ever become "ok" via the blind-spot
+  // route seed, so this cell would have stuck on webcodecs-original (this
+  // machine's Chromium can decode HEVC) and never reached tier 3. `kickSwProbe`
+  // closes that gap: PixiPreview's resolver falls to proxy on its first pass
+  // (nothing is "ok" yet), kicks the machine-capability probe, and the
+  // resulting `setSwLane` + refreshSources nudge lets native-sw win the next
+  // resolution — proving tier 3 now accepts a probe-passed format BEYOND the
+  // hardcoded list, not just the pre-classified blind-spot families Cell 2
+  // covers.
+  test('pinned native + HEVC: probe-driven native-sw (tier 3) accepts a format not on the blind-spot list', async () => {
+    test.setTimeout(180_000)
+    const { app, page } = await launchApp()
+    let toggledOn = false
+    try {
+      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'hevc-native-' + Date.now(), canvas: CANVAS })
+      const after = (await invokeCmd(page, 'app_settings_set', {
+        patch: { decode_engine: 'native' },
+      })) as { decode_engine: string }
+      expect(after.decode_engine).toBe('native')
+      toggledOn = true
+
+      const { layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: HEVC_FIXTURE })
+      expect(kind).toBe('Video')
+
+      await waitForPreviewBridge(page)
+      await seek(page, SEEK_US)
+      const probe = await waitForTier(page, layerId, 'sw', 'native-sw:')
+      expect(probe.sourceKind).toBe('sw')
+      expect(probe.builtFromKey!.startsWith('native-sw:')).toBe(true)
+    } finally {
+      if (toggledOn) {
+        await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
+      }
+      await app.close()
+    }
+  })
 })

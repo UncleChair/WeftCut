@@ -32,8 +32,12 @@ import {
   type PreviewSampler,
 } from "../colorpick/previewSamplerRegistry";
 import { resolveDecode } from "./decodeRoute";
-import { resolveEngineTier } from "./decoder/decodeEngine";
-import { laneStatesFor, noteResolution } from "./decoder/decodeCapability";
+import {
+  resolveEngineTier,
+  type DecodeEngineSetting,
+  type EngineTier,
+} from "./decoder/decodeEngine";
+import { kickSwProbe, laneStatesFor, noteResolution } from "./decoder/decodeCapability";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
 import {
   setEffectDisabled,
@@ -58,6 +62,24 @@ interface Props {
 }
 
 const LOG = "[weftcut/pixi]";
+
+/// D3: whether tier 3 (native-sw) sits BEFORE `currentTier` in `setting`'s
+/// resolution order — i.e. the resolver only skipped it because its lane
+/// reads "untested" (not "ok" or "fail"), and a passing probe could still
+/// preempt `currentTier` on the next resolution. Mirrors `resolveEngineTier`'s
+/// per-setting order (decodeEngine.ts): under `auto`, native-sw sits AFTER
+/// webcodecs-original, so an ordinary tier-2 H.264 win never triggers the
+/// (uninterruptible, main-thread) SW probe; under `native`, native-sw sits
+/// BEFORE webcodecs-original, so it CAN preempt an otherwise-tier-2 result.
+/// Keep in sync with decodeEngine.ts's order if that table ever changes.
+function nativeSwCouldPreempt(setting: DecodeEngineSetting, currentTier: EngineTier): boolean {
+  if (setting === "webcodecs") return false; // native-sw isn't in this order at all
+  const order: EngineTier[] =
+    setting === "native"
+      ? ["native-hw", "native-sw", "webcodecs-original", "proxy"]
+      : ["native-hw", "webcodecs-original", "native-sw", "proxy"];
+  return order.indexOf("native-sw") < order.indexOf(currentTier);
+}
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
   { onTimeUpdate, onPausedChange, previewDecodableOf },
@@ -144,13 +166,27 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // (store reads) but hands only plain values into the pure core; a
       // mid-session probe/setting/component flip takes effect on the next
       // `ensureClip` because every input is read live per call.
+      // D3 nudge: re-run source resolution the way the outside-React
+      // `refreshSources()` imperative handle does for the import
+      // decodability sweep (useImportReadiness.ts), but reaching the local
+      // refs directly since this closure already lives inside PixiPreview.
+      const refreshSources = (): void => {
+        const c = compositorRef.current;
+        if (!c) return;
+        const t = engineRef.current?.positionUs() ?? 0;
+        c.setProject(useProjectStore.getState().summary);
+        c.setAnchorTime(t);
+        c.compositeFrame(t);
+      };
       const resolveSource = (mediaId: string): ResolvedRendererSource | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         if (!m) return null;
         const lanes = laneStatesFor(mediaId, m);
+        const setting = useAppSettingsStore.getState().settings.decode_engine;
+        const componentAvailable = useDecodeComponentStore.getState().available;
         const r = resolveEngineTier({
-          setting: useAppSettingsStore.getState().settings.decode_engine,
-          componentAvailable: useDecodeComponentStore.getState().available,
+          setting,
+          componentAvailable,
           media: { path: m.path, decode_route: m.decode_route },
           // Session probe memo (App's decodeProbeMemo via the prop) — read live
           // so a mid-session probe flip feeds tier 2 on the next ensureClip.
@@ -161,6 +197,24 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           proxyPreviewPath: resolveDecode(m).previewPath,
         });
         noteResolution(mediaId, r);
+        // D3: the resolver settled on a tier ONLY because tier 3's SW lane is
+        // still "untested" — the static blind-spot list didn't pre-pass this
+        // format — and native-sw could still preempt that tier once probed
+        // (nativeSwCouldPreempt guards against firing the probe for an
+        // ordinary tier-2 `auto` win, where native-sw sits after
+        // webcodecs-original and could never change the outcome anyway).
+        // Kick the machine-capability probe (single-flight per media); when
+        // the verdict lands, setSwLane + the refreshSources nudge re-run
+        // ensureClip so a probe-passed format wins its rightful tier via the
+        // no-flash swap, accepting formats beyond the hardcoded blind-spot
+        // list.
+        if (
+          lanes.nativeSw === "untested" &&
+          componentAvailable &&
+          nativeSwCouldPreempt(setting, r.tier)
+        ) {
+          kickSwProbe(mediaId, m.path, refreshSources);
+        }
         return {
           tier: r.tier,
           forceStrategy: r.forceStrategy,

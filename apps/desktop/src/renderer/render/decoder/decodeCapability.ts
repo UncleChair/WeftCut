@@ -77,10 +77,39 @@ export function setHwLane(mediaId: string, s: LaneState): void {
   hwLaneByMedia.set(mediaId, s);
 }
 
+const swProbeInFlight = new Set<string>();
+
+/// Kick the SW-lane machine-capability probe (D3's `decodeCap:probeSw`) for a
+/// source whose tier-3 lane is still "untested" — i.e. NOT pre-passed by the
+/// static blind-spot route seed (P1). Single-flight per media: a second kick
+/// while one is outstanding, or once `swLaneByMedia` already holds a verdict,
+/// is a no-op. The verdict lands via `setSwLane`; `onSettled` then nudges the
+/// caller (PixiPreview's local `refreshSources`) so the next `ensureClip`
+/// re-runs `resolveEngineTier` against the fresh lane and the no-flash swap
+/// upgrades the clip off proxy — the same probe→nudge rhythm the import
+/// decodability sweep already uses (useImportReadiness.ts).
+export function kickSwProbe(
+  mediaId: string,
+  path: string,
+  onSettled: () => void,
+  probeFn: (p: string) => Promise<{ ok: boolean }> = (p) => window.api.decodeCap.probeSw(p),
+): void {
+  if (swProbeInFlight.has(mediaId) || swLaneByMedia.has(mediaId)) return;
+  swProbeInFlight.add(mediaId);
+  void probeFn(path)
+    .then((r) => setSwLane(mediaId, r.ok ? "ok" : "fail"))
+    .catch(() => setSwLane(mediaId, "fail"))
+    .finally(() => {
+      swProbeInFlight.delete(mediaId);
+      onSettled();
+    });
+}
+
 /// Test/e2e hook: forget session verdicts (used by decode-engine.spec.ts).
 export function resetDecodeCapabilitySession(): void {
   downgradedByMedia.clear();
   swLaneByMedia.clear();
   hwLaneByMedia.clear();
   lastLoggedKey.clear();
+  swProbeInFlight.clear();
 }
