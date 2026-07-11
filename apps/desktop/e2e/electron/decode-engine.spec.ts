@@ -23,15 +23,18 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } fr
 const OUT_DIR = path.resolve(os.tmpdir(), 'weftcut-e2e-decode-engine')
 const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-decode-engine-proj')
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
-const HEVC_FIXTURE = path.join(OUT_DIR, 'hevc-tier2.mp4')
 const PRORES_FIXTURE = path.join(OUT_DIR, 'prores-tier3.mov')
 // 8-bit H.264 yuv420p — d3d11va-decodable, so the HW capability probe passes
 // on a real GPU box. Drives Cell 5's tier-1 (native-hw) production path.
 const H264_FIXTURE = path.join(OUT_DIR, 'h264-tier1.mp4')
-// 8-bit AV1 yuv420p — NOT on the native-SW blind-spot list (ProRes/DNxHD/
-// MPEG-2/VC-1), and the app's HW capability probe returns ok:false for AV1
-// (d3d11va path declines it), while the LGPL ffmpeg (dav1d) SW-decodes it.
-// Drives Cell 4's PROBE-driven tier-3 (native-sw) path now that tier 1 is live.
+// 8-bit AV1 yuv420p — NOT HW-eligible (the allow-list is 8-bit H.264/HEVC/VP9,
+// and the app's d3d11va HW probe declines AV1 anyway), while WebCodecs decodes
+// it (browser AV1) AND the LGPL ffmpeg (dav1d) SW-decodes it. That split lets
+// ONE fixture drive two cells: Cell 1's tier-2 (webcodecs-original under `auto`,
+// since HW is skipped and WebCodecs wins the original), and Cell 4's PROBE-
+// driven tier-3 (native-sw under pinned `native`, HW skipped → SW). AV1 is also
+// NOT on the native-SW blind-spot list (ProRes/DNxHD/MPEG-2/VC-1), so Cell 4's
+// SW lane is lit by the PROBE, not the static route seed.
 const AV1_FIXTURE = path.join(OUT_DIR, 'av1-tier3.mp4')
 // Mid-clip seek target (the 4 s fixtures run 0..4_000_000 us) — forces a real
 // composite/`ensureClip` pass without landing exactly on frame 0.
@@ -167,9 +170,6 @@ test.describe('decode-engine tier resolution (Electron)', () => {
     mkdirSync(OUT_DIR, { recursive: true })
     mkdirSync(PROJECT_PARENT, { recursive: true })
 
-    test.skip(!encoderAvailable(ffmpeg!, 'libx265'), 'ffmpeg build has no libx265 encoder — HEVC fixture unavailable (lean CI build)')
-    genFixture(ffmpeg!, HEVC_FIXTURE, ['-c:v', 'libx265', '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1'])
-
     test.skip(!encoderAvailable(ffmpeg!, 'prores_ks'), 'ffmpeg build has no prores_ks encoder — ProRes fixture unavailable (lean CI build)')
     genFixture(ffmpeg!, PRORES_FIXTURE, ['-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le'])
 
@@ -182,25 +182,30 @@ test.describe('decode-engine tier resolution (Electron)', () => {
     genFixture(ffmpeg!, AV1_FIXTURE, ['-c:v', 'libaom-av1', '-crf', '35', '-b:v', '0', '-cpu-used', '8', '-pix_fmt', 'yuv420p'])
   })
 
-  // Cell 1 — auto + HEVC: tier 2 (webcodecs-original) ends the proxy-default
-  // era. HEVC 8-bit yuv420p is never `codec_is_h264`, so it ALWAYS routes to a
-  // full proxy build on the backend regardless of the frontend's decodability
-  // probe (proxy_decision::hevc_8bit_proxies_both) — the quick proxy WILL
-  // land. The resolver keys on tier+target though
+  // Cell 1 — auto + AV1: tier 2 (webcodecs-original) ends the proxy-default era.
+  // This must use a codec that resolves webcodecs-original under `auto`. HEVC
+  // used to prove this, but D4 widened the HW allow-list to include HEVC, so
+  // HEVC now wins tier 1 (native-hw) on this GPU. AV1 is the tier-2 witness that
+  // survives D4: it is NOT HW-eligible (allow-list is 8-bit H.264/HEVC/VP9, and
+  // the d3d11va probe declines AV1), so the resolver skips tier 1 and WebCodecs
+  // decodes the ORIGINAL AV1 file directly — tier 2, no proxy. AV1 8-bit routes
+  // export=Original / preview=Proxy on the backend (proxy_decision::
+  // av1_8bit_exports_original_previews_proxy), so a quick proxy WILL still land
+  // in the background. The resolver keys on tier+target though
   // (feedback_native_nle_conventions): a landed proxy can never displace an
   // already-higher tier, so `builtFromKey` must be UNCHANGED afterward.
-  test('auto + HEVC: resolves webcodecs-original (tier 2) and does not swap when the proxy lands', async () => {
+  test('auto + AV1: resolves webcodecs-original (tier 2) and does not swap when the proxy lands', async () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
     try {
-      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'hevc-auto-' + Date.now(), canvas: CANVAS })
+      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'av1-auto-' + Date.now(), canvas: CANVAS })
       const after = (await invokeCmd(page, 'app_settings_set', {
         patch: { decode_engine: 'auto' },
       })) as { decode_engine: string }
       expect(after.decode_engine).toBe('auto')
 
       await subscribeJobEvents(page)
-      const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: HEVC_FIXTURE })
+      const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: AV1_FIXTURE })
       expect(kind).toBe('Video')
 
       await waitForPreviewBridge(page)

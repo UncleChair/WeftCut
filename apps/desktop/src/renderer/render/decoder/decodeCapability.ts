@@ -164,6 +164,29 @@ export function classKeyOfMedia(m: {
   return `${m.codec}::${m.pix_fmt ?? "unknown"}:${res}`;
 }
 
+/// HW-lane codec allow-list — the seek-safety dimension the one-frame HW probe
+/// CANNOT test. Main's `decode_first_d3d11_frame` decodes a single FORWARD
+/// frame: if the GPU driver HW-decodes it the probe returns ok, so the probe is
+/// NECESSARY BUT NOT SUFFICIENT — it proves decode-VIABILITY, not
+/// SEEK-SURVIVAL. A codec can decode forward cleanly yet HANG the D3D11 preview
+/// session indefinitely on a backward seek (observed: MPEG-2 on an RTX 3050 —
+/// the driver HW-decodes it, the one-frame probe says ok, then playback wedges
+/// on a backward seek with no recovery). This list encodes the seek-VALIDATED
+/// HW scope (decode-bench Stage-2, measured today: 8-bit H.264 / HEVC / VP9),
+/// gating which codecs are even PROBE-ELIGIBLE for tier 1 (spec P1: "lists may
+/// seed or short-circuit probes"). It NARROWS what's eligible; it never
+/// overrules a probe's negative verdict. Eligible = codec ∈ {h264, hevc, vp9}
+/// AND an 8-bit pixel format — anything carrying a 10-bit tag ("10le" / "p010",
+/// case-insensitive) is excluded. Callers gate the HW-probe kick on this
+/// (PixiPreview.resolveSource) so an ineligible codec never lights the HW lane;
+/// the pure resolver stays untouched.
+export function hwEligibleCodec(codec: string | null, pixFmt: string | null): boolean {
+  if (codec !== "h264" && codec !== "hevc" && codec !== "vp9") return false;
+  const pf = (pixFmt ?? "").toLowerCase();
+  if (pf.includes("10le") || pf.includes("p010")) return false;
+  return true;
+}
+
 /// Test/e2e hook: forget session verdicts (used by decode-engine.spec.ts).
 export function resetDecodeCapabilitySession(): void {
   downgradedByMedia.clear();

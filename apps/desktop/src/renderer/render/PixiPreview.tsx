@@ -40,6 +40,7 @@ import {
 } from "./decoder/decodeEngine";
 import {
   classKeyOfMedia,
+  hwEligibleCodec,
   kickHwProbe,
   kickSwProbe,
   laneStatesFor,
@@ -232,18 +233,30 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         }
         // D4: tier 1 (native-hw) is probe-gated. When the native-decode
         // component loaded (⇒ HW decode is possible here), the setting allows
-        // native, tier 1's lane is still "untested", and native-hw could still
-        // preempt the resolved tier, kick the GPU capability probe (single-
-        // flight per media) for the media's HW-probeable video class. The
-        // verdict lands via setHwLane; the refreshSources nudge re-runs
-        // ensureClip so a passing probe upgrades the clip to native-hw via the
-        // no-flash swap. `classKeyOfMedia` (main's classKeyOf twin) is computed
-        // last/lazily so the per-tick allocation only happens during the brief
-        // untested window, and is null for non-video media (no HW lane).
+        // native, tier 1's lane is still "untested", the codec is HW-ELIGIBLE
+        // (see below), and native-hw could still preempt the resolved tier,
+        // kick the GPU capability probe (single-flight per media) for the
+        // media's HW-probeable video class. The verdict lands via setHwLane; the
+        // refreshSources nudge re-runs ensureClip so a passing probe upgrades
+        // the clip to native-hw via the no-flash swap. `classKeyOfMedia` (main's
+        // classKeyOf twin) is computed last/lazily so the per-tick allocation
+        // only happens during the brief untested window, and is null for
+        // non-video media (no HW lane).
+        //
+        // `hwEligibleCodec` gates the kick on the seek-VALIDATED HW allow-list
+        // (8-bit H.264/HEVC/VP9). The one-frame HW probe tests decode-viability,
+        // NOT seek-survival, so a driver that HW-decodes an out-of-scope codec
+        // (e.g. MPEG-2) would otherwise promote it to tier 1 where a backward
+        // seek hangs indefinitely. Gating the kick keeps `hwLaneByMedia` unset
+        // for ineligible codecs ⇒ `laneStatesFor` reports nativeHw "untested" ⇒
+        // the resolver skips tier 1 ⇒ they fall to SW. `setHwLane` (the sole HW
+        // promotion write) is only ever called from inside `kickHwProbe`, so
+        // this single gate fully prevents ineligible HW promotion.
         if (
           componentAvailable &&
           setting !== "webcodecs" &&
           lanes.nativeHw === "untested" &&
+          hwEligibleCodec(m.codec, m.pix_fmt) &&
           nativeHwCouldPreempt(setting, r.tier)
         ) {
           const hwClassKey = classKeyOfMedia(m);

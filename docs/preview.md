@@ -166,6 +166,21 @@ runtime downgrade below: the over-budget source resolves to the next tier
 instead of failing outright, so a fourth simultaneous HW clip lands on
 WebCodecs or the native-SW lane rather than erroring.
 
+**HW codec allow-list.** The native-hw lane is restricted to a seek-validated
+codec allow-list: 8-bit H.264, HEVC, and VP9. The GPU capability probe decodes a
+single forward frame, which proves the driver *can* hardware-decode a source but
+cannot prove the D3D11 preview session survives a backward seek — the probe is
+necessary but not sufficient. Some drivers hardware-decode codecs outside this
+scope (MPEG-2 is the known case), and on those the HW session can hang
+indefinitely on a backward seek with no recovery. The allow-list encodes the
+seek-safety dimension the one-frame probe can't test: a codec must be on it
+*before* its HW probe is even kicked, so an out-of-scope codec never lights the
+HW lane and instead falls to the native software lane. The list narrows what is
+probe-eligible; it never overrules a probe's negative verdict. (The underlying
+D3D11 backward-seek hang in the native HW session is a separate, pre-existing
+gap; the allow-list keeps preview from reaching it for the known-bad codecs
+rather than fixing the seek path itself — a tracked follow-up.)
+
 **Runtime downgrade is sticky and per-source.** A native lane (`native-hw` or
 `native-sw`) that fails after it opens — a GPU decode error, device loss,
 session crash, or the budget throw above — marks that tier downgraded for

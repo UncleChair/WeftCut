@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  hwEligibleCodec,
   kickSwProbe,
   laneStatesFor,
   markDowngraded,
@@ -7,6 +8,44 @@ import {
   setSwLane,
 } from "./decodeCapability";
 import { resolveEngineTier, type EngineInputs } from "./decodeEngine";
+
+// Task 19: the HW-lane codec allow-list. The one-frame HW probe tests
+// decode-viability, not seek-survival, so eligibility is gated by this static
+// seek-validated set (8-bit H.264/HEVC/VP9) — NOT by the probe alone. This is
+// what stops MPEG-2 (which some drivers HW-decode) from promoting to tier 1
+// where a backward seek hangs.
+describe("hwEligibleCodec", () => {
+  it("admits 8-bit H.264 / HEVC / VP9", () => {
+    expect(hwEligibleCodec("h264", "yuv420p")).toBe(true);
+    expect(hwEligibleCodec("hevc", "yuv420p")).toBe(true);
+    expect(hwEligibleCodec("vp9", "yuv420p")).toBe(true);
+  });
+
+  it("rejects out-of-scope codecs (MPEG-2, AV1) regardless of pixel format", () => {
+    // MPEG-2 is the production hang: driver HW-decodes it, one-frame probe
+    // passes, backward seek wedges — must never reach the HW lane.
+    expect(hwEligibleCodec("mpeg2video", "yuv420p")).toBe(false);
+    expect(hwEligibleCodec("av1", "yuv420p")).toBe(false);
+    expect(hwEligibleCodec("prores", "yuv422p10le")).toBe(false);
+  });
+
+  it("rejects a 10-bit pixel format even for an in-scope codec", () => {
+    expect(hwEligibleCodec("hevc", "yuv420p10le")).toBe(false);
+    expect(hwEligibleCodec("hevc", "P010")).toBe(false); // case-insensitive
+    expect(hwEligibleCodec("h264", "yuv420p10le")).toBe(false);
+  });
+
+  it("rejects a null codec (audio/image — no HW video lane)", () => {
+    expect(hwEligibleCodec(null, "yuv420p")).toBe(false);
+    expect(hwEligibleCodec(null, null)).toBe(false);
+  });
+
+  it("admits an in-scope codec with an unknown (null) pixel format", () => {
+    // A null pix_fmt is not a KNOWN 10-bit tag, so it isn't excluded here; the
+    // resolution/format-class probe still guards the actual open.
+    expect(hwEligibleCodec("h264", null)).toBe(true);
+  });
+});
 
 // D3 renderer-side loop (Task 14): kickSwProbe closes the probe→setSwLane→
 // onSettled rhythm without touching `window` — the injectable `probeFn`
