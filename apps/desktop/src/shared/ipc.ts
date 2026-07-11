@@ -166,6 +166,7 @@ export interface WeftcutApi {
     isMaximized(): Promise<boolean>
     setTitle(title: string): Promise<void>
     captureSnapshot(): Promise<Uint8Array<ArrayBuffer>>
+    focus(): Promise<void>
   }
   dialog: {
     open(opts: DialogOpenOpts): Promise<string | string[] | null>

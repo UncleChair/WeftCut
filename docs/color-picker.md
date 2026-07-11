@@ -34,6 +34,13 @@ touches the live pipeline.
 
 - Screen picks have no hover preview or custom magnifier (platform API limit);
   `screenPick.ts` is the seam to replace with a full-screen custom overlay.
+- Under Electron the native dropper's own magnifier clips at the app window's
+  edge, and the pick click activates the clicked foreign window — Chromium
+  hosts the dropper widget inside the window with no system-wide capture
+  (electron#27980; sampling itself is screen-wide and correct). `screenPick`
+  snaps focus back to the editor after every pick as mitigation; the full fix
+  is the custom overlay above. See
+  `docs/notes/electron-chromium-behavior.md` § EyeDropper.
 - The composition buffer is an 8-bit extract — HDR/10-bit picks read the
   tone-mapped value.
 - The window snapshot is frozen at session start; UI changes mid-session are

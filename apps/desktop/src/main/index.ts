@@ -516,6 +516,10 @@ app.whenReady().then(async () => {
     const img = await e.sender.capturePage()
     return img.toPNG()
   })
+  // Color picker: the native EyeDropper's pick click activates the foreign
+  // window (electron#27980 — the dropper widget has no system capture in
+  // Electron); the renderer snaps focus back here after the pick settles.
+  ipcMain.handle('window:focus', (e) => ctlWin(e)?.focus())
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
   ipcMain.handle('path:join', (_e, payload: { parts?: string[]; paths?: string[] }) => path.join(...(payload.parts ?? payload.paths ?? [])))
   ipcMain.handle('path:tempDir', () => app.getPath('temp'))

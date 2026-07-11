@@ -27,5 +27,11 @@ export async function screenPick(): Promise<string | null> {
     return r.sRGBHex.toLowerCase();
   } catch {
     return null;
+  } finally {
+    // Electron hosts the dropper widget inside the app window with no system
+    // capture: the pick click lands on and ACTIVATES the foreign window, and
+    // the magnifier clips at the window edge (electron#27980 — sampling is
+    // still screen-wide). Snap focus back so the editor keeps the keyboard.
+    void window.api.window.focus().catch(() => {});
   }
 }

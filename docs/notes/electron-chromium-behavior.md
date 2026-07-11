@@ -37,6 +37,26 @@ Rules:
 
 History: first hit on WebView2/Edge, but it is Chromium-wide, not Edge-specific. WeftCut's `smokeEncode` and `App.buildConfig` used to force the hint, producing a false "this machine cannot encode AV1"; fixed by omitting it for non-H.264 codecs.
 
+## EyeDropper API: sampling is screen-wide, the WIDGET is window-hosted
+
+Observed 2026-07-11 in the real app (not the probe harness), corroborated by
+upstream electron#27980 / #44916 / #44917. `new EyeDropper().open()` correctly
+samples pixels from ANY window on ANY display — the returned `sRGBHex` is
+accurate for foreign-window content. But Chromium hosts the dropper's UI
+widget inside the Electron window with no system-wide mouse capture, so:
+
+- the magnifier clips at the app window's edge (invisible while hovering
+  foreign windows, though picking there still works);
+- the pick click lands on and ACTIVATES the clicked foreign window (focus
+  steal) — in Chrome the same click does not transfer focus.
+
+Blockbench (Chrome's own EyeDropper showcase app) abandoned the native API in
+its Electron build over this same defect. Mitigation in WeftCut:
+`colorpick/screenPick.ts` snaps focus back via `window:focus` after every
+pick. Full fix = replace `screenPick.ts` with a desktopCapturer-based
+full-screen overlay (per-display always-on-top windows + own magnifier),
+which also gains hover events for screen picks.
+
 ## Not re-probed (kept as known Blink behavior)
 
 These WebCodecs behaviors live in the same Blink core WebView2 used, so they were carried forward without re-probing: Hi10P software-decodes but needs `flush()`; a lone IDR frame parks in the decoder's reorder buffer until `flush()`; held `VideoFrame`s pin the ~13-slot hardware decoder pool (ADR 0004); `VideoEncoder` ignores `VideoFrame.colorSpace` and tags color by resolution.

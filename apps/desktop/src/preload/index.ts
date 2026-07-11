@@ -65,6 +65,7 @@ const api: WeftcutApi = {
     setTitle: (title: string): Promise<void> => ipcRenderer.invoke('window:setTitle', title) as Promise<void>,
     captureSnapshot: (): Promise<Uint8Array<ArrayBuffer>> =>
       ipcRenderer.invoke('window:captureSnapshot') as Promise<Uint8Array<ArrayBuffer>>,
+    focus: (): Promise<void> => ipcRenderer.invoke('window:focus') as Promise<void>,
   },
 
   dialog: {
