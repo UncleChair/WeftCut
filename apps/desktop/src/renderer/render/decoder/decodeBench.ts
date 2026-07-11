@@ -337,6 +337,67 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
   }
 }
 
+// ── HW session-budget probe (smoke item b) ───────────────────────────────────
+// The main process caps concurrent native-hw sessions at MAX_HW_SESSIONS (3);
+// the (MAX+1)th `previewGpuOpen` throws `hw-budget-exceeded`, which
+// NativeGpuSourceHandle surfaces via `onFatalError` so the Compositor's resolver
+// downgrades that source off tier 1 (the resolver side is unit-tested in
+// decodeCapability.test.ts). This exercises the untested RUNTIME seam: that
+// opening MAX+1 real sessions actually rejects at the cap and the rejection
+// reaches the handle's fatal path with the budget reason.
+
+export interface BudgetProbeOutcome {
+  index: number;
+  ready: boolean;
+  error: string | null;
+  fatalReason: string | null;
+}
+export interface BudgetProbeResult {
+  outcomes: BudgetProbeOutcome[];
+  error?: string;
+}
+
+export async function decodeBenchBudgetProbe(args: {
+  sourcePath: string;
+  count: number;
+}): Promise<BudgetProbeResult> {
+  const pool = new SourceDecoderPool();
+  const url = convertFileSrc(args.sourcePath);
+  const outcomes: BudgetProbeOutcome[] = [];
+  try {
+    // Open sequentially WITHOUT disposing, so live session count climbs to the
+    // cap and the next open trips it. The pool is disposed in `finally`.
+    for (let i = 0; i < args.count; i++) {
+      const h = pool.acquire({
+        layerId: `budget-${i}`,
+        mediaId: `budget:${i}:${args.sourcePath}`,
+        proxyAssetUrl: url,
+        forceStrategy: "native",
+        sourcePath: args.sourcePath,
+      }) as NativeGpuSourceHandle;
+      let fatalReason: string | null = null;
+      // Register before the open attempt so a budget-rejected open is captured.
+      h.onFatalError((r: string) => {
+        fatalReason = r;
+      });
+      let ready = false;
+      let error: string | null = null;
+      try {
+        await h.ensureReady();
+        ready = true;
+      } catch (e) {
+        error = String(e);
+      }
+      outcomes.push({ index: i, ready, error, fatalReason });
+    }
+    return { outcomes };
+  } catch (e) {
+    return { outcomes, error: String(e) };
+  } finally {
+    pool.dispose();
+  }
+}
+
 /// Cooperative cancellation for a scenario that lost the timebox race. Every
 /// runner polls it at each loop head and THROWS (never breaks) — partial data
 /// after cancellation must not surface as a result; the orphan's rejection is

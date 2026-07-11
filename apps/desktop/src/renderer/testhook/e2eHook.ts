@@ -45,10 +45,12 @@ import {
   decodeBenchRun,
   decodeBenchPhase,
   decodeBenchOrderCheck,
+  decodeBenchBudgetProbe,
   type BenchArgs,
   type BenchResult,
   type OrderCheckArgs,
   type OrderCheckResult,
+  type BudgetProbeResult,
 } from "../render/decoder/decodeBench";
 import type { ActiveClipProbe } from "../render/Compositor";
 
@@ -304,6 +306,11 @@ export interface E2EHook {
   /// non-empty ⇒ the strategy presented frames out of order (pixels↔pts
   /// mispaired). See decodeBench.decodeBenchOrderCheck. Dev/e2e only.
   decodeBenchOrderCheck(args: OrderCheckArgs): Promise<OrderCheckResult>;
+  /// HW session-budget runtime probe (smoke item b): open `count` native-hw
+  /// sessions and report each open's outcome. The (MAX_HW_SESSIONS+1)th must
+  /// reject with `hw-budget-exceeded` and surface it via onFatalError (the
+  /// resolver then downgrades that source off tier 1). Dev/e2e only.
+  decodeBenchBudgetProbe(args: { sourcePath: string; count: number }): Promise<BudgetProbeResult>;
   /// Imperative read of the global playhead store (µs). Search-palette e2e
   /// uses this to prove a caption/clip jump (Enter on a result row) actually
   /// moved the playhead, without importing the bundled store module.
@@ -384,6 +391,7 @@ export function installDecodeBenchHooks(): void {
   hookSlot().decodeBenchRun = decodeBenchRun;
   hookSlot().decodeBenchPhase = decodeBenchPhase;
   hookSlot().decodeBenchOrderCheck = decodeBenchOrderCheck;
+  hookSlot().decodeBenchBudgetProbe = decodeBenchBudgetProbe;
 }
 
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,

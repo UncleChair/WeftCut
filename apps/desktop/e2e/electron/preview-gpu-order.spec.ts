@@ -102,6 +102,40 @@ test.describe('native-hw preview presents frames in order (Electron)', () => {
     })
   }
 
+  // Smoke item b — HW session budget → downgrade (runtime seam). The main
+  // process caps concurrent native-hw sessions at MAX_HW_SESSIONS (3); the 4th
+  // open must reject with `hw-budget-exceeded` and surface it via onFatalError
+  // (the resolver's downgrade-off-tier-1 on that marker is unit-tested in
+  // decodeCapability.test.ts). This opens 4 real sessions and asserts the cap
+  // bites at the 4th with the budget reason reaching the handle's fatal path.
+  test('native-hw: the 4th concurrent session hits hw-budget-exceeded (budget → fatal)', async () => {
+    test.setTimeout(120_000)
+    const { app, page } = await launchApp()
+    try {
+      await waitForHook(page, 'decodeBenchBudgetProbe')
+      const r = (await page.evaluate(
+        (args) =>
+          (window as unknown as {
+            __weftcutTest: { decodeBenchBudgetProbe(a: unknown): Promise<{ outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }> }
+          }).__weftcutTest.decodeBenchBudgetProbe(args),
+        { sourcePath: CLIP, count: 4 },
+      )) as { outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }
+      // eslint-disable-next-line no-console
+      console.log('[preview-gpu-order] budget ->\n' + JSON.stringify(r.outcomes, null, 2))
+      expect(r.error, `budget probe errored: ${r.error}`).toBeUndefined()
+      // First MAX_HW_SESSIONS (3) open cleanly.
+      expect(r.outcomes.slice(0, 3).every((o) => o.ready), 'first 3 native-hw sessions should open').toBe(true)
+      // The 4th is rejected at the cap, and the budget reason reaches the
+      // handle's fatal path (what drives the resolver's sticky downgrade).
+      const fourth = r.outcomes[3]!
+      expect(fourth.ready, 'the 4th session must NOT open (over budget)').toBe(false)
+      expect(fourth.error ?? '', 'the 4th open should reject with hw-budget-exceeded').toContain('hw-budget-exceeded')
+      expect(fourth.fatalReason ?? '', 'onFatalError should carry the budget reason').toContain('hw-budget-exceeded')
+    } finally {
+      await app.close()
+    }
+  })
+
   // Control: the native SOFTWARE lane (SwSourceHandle) shares the ring + the
   // barcode reader but NOT the shared-texture slot pool. It must pass — proving
   // any native-hw failure above is the GPU slot path, not a harness/clip/reader
