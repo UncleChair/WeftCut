@@ -32,6 +32,10 @@ describe("resolveDecodeEngine — engine selection", () => {
   it("setting=webcodecs pins webcodecs", () => {
     expect(resolveDecodeEngine(base({ setting: "webcodecs", webcodecsCanDecodeOriginal: "ok" })).engine).toBe("webcodecs");
   });
+  it("pinned ffmpeg with no component → unsupported (not optimistic ok)", () => {
+    const r = resolveDecodeEngine(base({ setting: "ffmpeg", componentAvailable: false }));
+    expect(r).toMatchObject({ engine: "ffmpeg", status: "unsupported", target: null, key: null });
+  });
 });
 
 describe("resolveDecodeEngine — webcodecs × original verdict", () => {

@@ -5,6 +5,10 @@
 // inputs (PixiPreview) and act on the output (Compositor ensureClip).
 import type { DecodeRoute } from "../../../shared/decode-route";
 
+// `"ffmpeg"` coexists with legacy `"native"` here so the collapsed
+// `resolveDecodeEngine` (checks `"ffmpeg"`) and the legacy `resolveEngineTier`
+// (checks `"native"`) both compile off one type during the migration. Narrow to
+// `"auto" | "ffmpeg" | "webcodecs"` when the legacy resolver is deleted (Task 9).
 export type DecodeEngineSetting = "auto" | "native" | "ffmpeg" | "webcodecs";
 export type LaneState = "ok" | "fail" | "untested" | "unavailable";
 export type EngineTier = "native-hw" | "webcodecs-original" | "native-sw" | "proxy";
@@ -134,7 +138,11 @@ export interface DecodeResolveInputs {
 export interface DecodeResolution {
   engine: DecodeEngine;
   source: DecodeSource;
-  /// File path (ffmpeg) or convertFileSrc URL (webcodecs); null = pending/unsupported.
+  /// Decode target: for `engine: "ffmpeg"` + `source: "original"` this is the
+  /// original file PATH; for `engine: "webcodecs"` it is a convertFileSrc URL.
+  /// The `source: "proxy"` branch always returns the proxy URL today (only
+  /// webcodecs×proxy is live; ffmpeg×proxy — which would need a proxy PATH — is
+  /// deferred with `useProxySource`). null = pending/unsupported.
   target: string | null;
   /// Swap identity `${engine}:${source}:${target}`; null when nothing acquirable.
   key: string | null;
@@ -157,6 +165,16 @@ export function resolveDecodeEngine(i: DecodeResolveInputs): DecodeResolution {
     engine, source, target, status, reason,
     key: target ? `${engine}:${source}:${target}` : null,
   });
+
+  // A pinned Standard (ffmpeg) engine with no component loaded is genuinely
+  // unusable — report it unsupported rather than optimistically "ok" (the
+  // settings UI grays out Standard when the component is absent, so this is
+  // only reachable via a stale/migrated persisted setting or a DLL load
+  // failure). `auto` never reaches here: it resolves to webcodecs when the
+  // component is absent.
+  if (engine === "ffmpeg" && !i.componentAvailable) {
+    return done("unsupported", null, "Standard (ffmpeg) engine unavailable — component not loaded");
+  }
 
   if (source === "proxy") {
     return i.proxyReady
