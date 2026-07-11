@@ -23,9 +23,10 @@
     "pretest": "npm run build:wasm",
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
     "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native --features jobs,export,mcp,cloud",
-    "napi:build:decode": "napi build --platform --release --manifest-path native/decode/Cargo.toml --output-dir native/decode",
+    "napi:build:decode": "node scripts/napi-build-decode.mjs",
     "e2e:electron": "playwright test -c playwright.config.ts",
     "fetch-ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "fetch-ffmpeg-lgpl": "node scripts/fetch-ffmpeg-lgpl.mjs",
     "package": "npm run napi:build && npm run build && electron-builder --publish never",
     "pbt:stryker": "stryker run"
   },

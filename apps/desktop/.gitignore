@@ -15,6 +15,10 @@ resources/ffmpeg/*/ffmpeg*
 resources/ffmpeg/*/ffprobe*
 resources/ffmpeg/*/ffplay*
 
+# BtbN LGPL shared ffmpeg build (fetched by fetch-ffmpeg-lgpl.mjs, Task 3):
+# bin/+include/+lib/+manifest.json are all download artifacts, never committed.
+resources/ffmpeg-lgpl/
+
 # electron-builder output (transient build artifacts)
 release/
 
