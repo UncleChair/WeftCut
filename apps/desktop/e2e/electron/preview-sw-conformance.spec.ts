@@ -79,16 +79,16 @@ test('preview-sw: Compositor uses SwSourceHandle for native-sw ProRes + SSIM (Ta
       canvas: CANVAS,
     })
 
-    // ── Turn the experimental toggle ON *before* placing the layer ──────────
-    // The Compositor reads `experimental_native_sw_decode` live at acquire
-    // (PixiPreview.nativeSwSourceFor), so it must be on before the clip is
+    // ── Pin the native engine *before* placing the layer ─────────────────────
+    // Engine resolution reads `decode_engine` live at acquire
+    // (PixiPreview.nativeSwSourceFor), so it must be set before the clip is
     // first composited. Written through the same `app_settings_set` IPC the UI
     // uses; the backend emits `app_settings:changed` which hydrates the
     // renderer store (read by nativeSwSourceFor).
     const after = (await invokeCmd(page, 'app_settings_set', {
-      patch: { experimental_native_sw_decode: true },
-    })) as { experimental_native_sw_decode: boolean }
-    expect(after.experimental_native_sw_decode).toBe(true)
+      patch: { decode_engine: 'native' },
+    })) as { decode_engine: string }
+    expect(after.decode_engine).toBe('native')
     toggledOn = true
 
     // ── Import + place the ProRes clip ──────────────────────────────────────
@@ -227,11 +227,11 @@ test('preview-sw: Compositor uses SwSourceHandle for native-sw ProRes + SSIM (Ta
     // eslint-disable-next-line no-console
     if (errs.length) console.log('[preview-sw] renderer errors during run:\n' + errs.join('\n'))
   } finally {
-    // Restore the app-level toggle so the run doesn't leave the machine with
-    // the experimental setting on (it persists cross-project).
+    // Restore the app-level setting so the run doesn't leave the machine
+    // pinned to native (it persists cross-project).
     if (toggledOn) {
       await invokeCmd(page, 'app_settings_set', {
-        patch: { experimental_native_sw_decode: false },
+        patch: { decode_engine: 'auto' },
       }).catch(() => {})
     }
     await app.close()
@@ -252,9 +252,9 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
       canvas: CANVAS_4K,
     })
     const after = (await invokeCmd(page, 'app_settings_set', {
-      patch: { experimental_native_sw_decode: true },
-    })) as { experimental_native_sw_decode: boolean }
-    expect(after.experimental_native_sw_decode).toBe(true)
+      patch: { decode_engine: 'native' },
+    })) as { decode_engine: string }
+    expect(after.decode_engine).toBe('native')
     toggledOn = true
 
     const { mediaId, layerId } = await importAndPlaceMedia(page, { mediaAbsPath: PRORES_4K })
@@ -334,7 +334,7 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
   } finally {
     if (toggledOn) {
       await invokeCmd(page, 'app_settings_set', {
-        patch: { experimental_native_sw_decode: false },
+        patch: { decode_engine: 'auto' },
       }).catch(() => {})
     }
     await app.close()

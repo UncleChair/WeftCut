@@ -65,4 +65,15 @@ describe('app-settings store', () => {
     expect(store().get().preview_effects_enabled).toBe(true)
     expect(store().apply({ preview_effects_enabled: false }).preview_effects_enabled).toBe(false)
   })
+
+  it('decode_engine defaults to auto, round-trips, and ignores unrecognized on-disk values', () => {
+    expect(store().get().decode_engine).toBe('auto')
+    expect(store().apply({ decode_engine: 'native' }).decode_engine).toBe('native')
+    expect(store().apply({ decode_engine: 'webcodecs' }).decode_engine).toBe('webcodecs')
+    // A pre-existing app_settings.json holding the field's old shape (a
+    // boolean, or any other unrecognized value) falls back to the default —
+    // no migration of a truthy old value into 'native'.
+    const s = store({ [PATH]: '{ "decode_engine": true }' })
+    expect(s.get().decode_engine).toBe('auto')
+  })
 })

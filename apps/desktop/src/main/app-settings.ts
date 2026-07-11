@@ -54,7 +54,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       tail_snap_strength_px: typeof parsed.tail_snap_strength_px === 'number' ? parsed.tail_snap_strength_px : d.tail_snap_strength_px,
       prebake_motifs: typeof parsed.prebake_motifs === 'boolean' ? parsed.prebake_motifs : d.prebake_motifs,
       preview_effects_enabled: typeof parsed.preview_effects_enabled === 'boolean' ? parsed.preview_effects_enabled : d.preview_effects_enabled,
-      experimental_native_sw_decode: typeof parsed.experimental_native_sw_decode === 'boolean' ? parsed.experimental_native_sw_decode : d.experimental_native_sw_decode,
+      decode_engine: parsed.decode_engine === 'native' || parsed.decode_engine === 'webcodecs' || parsed.decode_engine === 'auto' ? parsed.decode_engine : d.decode_engine,
     }
   }
 
@@ -76,7 +76,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.tail_snap_strength_px !== undefined) current.tail_snap_strength_px = clamp(patch.tail_snap_strength_px, TAIL_SNAP_STRENGTH_MIN_PX, TAIL_SNAP_STRENGTH_MAX_PX)
       if (patch.prebake_motifs !== undefined) current.prebake_motifs = patch.prebake_motifs
       if (patch.preview_effects_enabled !== undefined) current.preview_effects_enabled = patch.preview_effects_enabled
-      if (patch.experimental_native_sw_decode !== undefined) current.experimental_native_sw_decode = patch.experimental_native_sw_decode
+      if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine
       write(current)
       return current
     },

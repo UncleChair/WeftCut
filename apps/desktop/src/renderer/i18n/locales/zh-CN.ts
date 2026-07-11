@@ -517,10 +517,14 @@ const zhCN: Resources = {
     prebake_motifs: "预烘焙 Motifs",
     prebake_motifs_hint:
       "在后台将 Motif 动画帧渲染到磁盘，使播放更流畅、重新打开项目时即时加载。会在项目的 Cache 文件夹下占用磁盘空间。",
-    experimental_heading: "实验性功能",
-    native_sw_decode: "原生软件解码（ProRes）",
-    native_sw_decode_hint:
-      "直接使用原生软件解码预览 ProRes，无需生成代理文件。实验性功能，仅适用于解码盲区格式。",
+    decode_engine: "预览解码引擎",
+    decode_engine_hint:
+      "自动模式按素材选择最快的引擎（原生硬件 → WebCodecs 直解原片 → 原生软件 → 代理）。也可固定某个引擎。",
+    decode_engine_auto: "自动（推荐）",
+    decode_engine_native: "原生（FFmpeg）",
+    decode_engine_webcodecs: "WebCodecs",
+    decode_engine_unavailable: "原生引擎不可用：{{reason}}",
+    decode_engine_unavailable_suffix: "不可用",
   },
   keybindings: {
     add: "+ 添加",

@@ -48,9 +48,9 @@ async function runFamilyConformance(c: FamilyCase) {
   try {
     await newProject(page, { parentFolder: PROJECT_PARENT, name: `${c.label}-${Date.now()}`, canvas: CANVAS })
     const after = (await invokeCmd(page, 'app_settings_set', {
-      patch: { experimental_native_sw_decode: true },
-    })) as { experimental_native_sw_decode: boolean }
-    expect(after.experimental_native_sw_decode).toBe(true)
+      patch: { decode_engine: 'native' },
+    })) as { decode_engine: string }
+    expect(after.decode_engine).toBe('native')
     toggledOn = true
 
     const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: c.fixture })
@@ -130,7 +130,7 @@ async function runFamilyConformance(c: FamilyCase) {
     expect(best.ssim, `SSIM below floor; scores=${JSON.stringify(scores)}`).toBeGreaterThanOrEqual(SSIM_FLOOR)
   } finally {
     if (toggledOn) {
-      await invokeCmd(page, 'app_settings_set', { patch: { experimental_native_sw_decode: false } }).catch(() => {})
+      await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
     }
     await app.close()
   }

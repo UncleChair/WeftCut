@@ -44,7 +44,7 @@ const FALLBACK: AppSettings = {
   tail_snap_strength_px: 12,
   prebake_motifs: false,
   preview_effects_enabled: true,
-  experimental_native_sw_decode: false,
+  decode_engine: "auto",
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -69,8 +69,8 @@ export const useTailSnapStrengthPx = (): number =>
   useAppSettingsStore((s) => s.settings.tail_snap_strength_px);
 export const usePrebakeMotifsEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.prebake_motifs);
-export const useNativeSwDecodeEnabled = (): boolean =>
-  useAppSettingsStore((s) => s.settings.experimental_native_sw_decode);
+export const useDecodeEngine = (): AppSettings["decode_engine"] =>
+  useAppSettingsStore((s) => s.settings.decode_engine);
 export const useAppSettingsLoaded = (): boolean =>
   useAppSettingsStore((s) => s.loaded);
 

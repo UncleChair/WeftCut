@@ -70,9 +70,9 @@ export interface SourceHandleInit {
   /// decode-bench), gated on `VITE_WEFTCUT_E2E === "1"` in `acquire` — inert
   /// (ignored) in production and dev builds so this can never affect real
   /// playback. `'software'` routes to `SwSourceHandle` (native libavcodec SW
-  /// decode) and is NOT E2E-gated — it ships behind the
-  /// `experimental_native_sw_decode` AppSettings toggle instead; the pool
-  /// just honors whatever the caller decided.
+  /// decode) and is NOT E2E-gated — it ships behind the `decode_engine`
+  /// AppSettings selection instead; the pool just honors whatever the
+  /// caller decided.
   forceStrategy?: "webcodecs" | "native" | "software";
   /// The ORIGINAL file path for a `forceStrategy: 'native'` or `'software'`
   /// handle to decode directly (both bypass the shared, proxy-backed
@@ -697,8 +697,8 @@ export class SourceDecoderPool {
   ///
   /// `forceStrategy: 'software'` routes to a `SwSourceHandle` (native
   /// libavcodec SW decode) the same way, but is NOT gated on
-  /// `VITE_WEFTCUT_E2E` — the caller only sets it when the
-  /// `experimental_native_sw_decode` AppSettings toggle is on, so the pool
+  /// `VITE_WEFTCUT_E2E` — the caller only sets it when the `decode_engine`
+  /// AppSettings selection resolves to native software, so the pool
   /// simply honors it unconditionally.
   acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle | SwSourceHandle {
     if (import.meta.env.VITE_WEFTCUT_E2E === "1" && init.forceStrategy === "native") {

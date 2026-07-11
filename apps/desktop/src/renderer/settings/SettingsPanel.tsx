@@ -18,13 +18,18 @@ import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
+import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
+  useDecodeComponentAvailable,
+  useDecodeComponentReason,
+} from "./decodeComponentStore";
+import {
   setAppSettings,
-  useNativeSwDecodeEnabled,
+  useDecodeEngine,
   usePrebakeMotifsEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
@@ -222,8 +227,7 @@ export function SettingsPanel({
             </section>
 
             <section className="settings-section">
-              <h3>{t("settings.experimental_heading")}</h3>
-              <NativeSwSection onError={setError} />
+              <DecodeEngineSection onError={setError} />
             </section>
           </div>
 
@@ -458,25 +462,54 @@ function PrebakeSection({ onError }: { onError: (msg: string) => void }) {
   );
 }
 
-function NativeSwSection({ onError }: { onError: (msg: string) => void }) {
+function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
   const { t } = useTranslation();
-  const enabled = useNativeSwDecodeEnabled();
+  const engine = useDecodeEngine();
+  const componentAvailable = useDecodeComponentAvailable();
+  const componentReason = useDecodeComponentReason();
   return (
     <label className="settings-toggle-row">
-      <AppSwitch
-        checked={enabled}
-        onCheckedChange={async (next) => {
+      <AppSelect
+        value={engine}
+        onValueChange={async (next) => {
           onError("");
+          if (next === "native" && !componentAvailable) {
+            onError(
+              t("settings.decode_engine_unavailable", {
+                reason: componentReason ?? "",
+              }),
+            );
+            return;
+          }
           try {
-            await setAppSettings({ experimental_native_sw_decode: next });
+            await setAppSettings({
+              decode_engine: next as "auto" | "native" | "webcodecs",
+            });
           } catch (err) {
             onError(String(err));
           }
         }}
+        options={[
+          { value: "auto", label: t("settings.decode_engine_auto") },
+          {
+            value: "native",
+            label: componentAvailable
+              ? t("settings.decode_engine_native")
+              : `${t("settings.decode_engine_native")} — ${t("settings.decode_engine_unavailable_suffix")}`,
+            disabled: !componentAvailable,
+          },
+          { value: "webcodecs", label: t("settings.decode_engine_webcodecs") },
+        ]}
       />
       <span>
-        <span className="settings-toggle-label">{t("settings.native_sw_decode")}</span>
-        <span className="settings-toggle-hint">{t("settings.native_sw_decode_hint")}</span>
+        <span className="settings-toggle-label">{t("settings.decode_engine")}</span>
+        <span className="settings-toggle-hint">
+          {componentAvailable
+            ? t("settings.decode_engine_hint")
+            : t("settings.decode_engine_unavailable", {
+                reason: componentReason ?? "",
+              })}
+        </span>
       </span>
     </label>
   );

@@ -23,12 +23,11 @@ export interface AppSettings {
   /// When false, the preview compositor skips all effect filters (LOD
   /// toggle for scrub performance). Default true.
   preview_effects_enabled: boolean;
-  /// Experimental: when true, media on the native software-decode route
-  /// (`decode_route.route === "native-sw"`, e.g. ProRes/DNxHD/MPEG-2/VC-1)
-  /// previews via the native libavcodec SW-decode session instead of
-  /// falling back to a proxy/original. Off by default — no-proxy preview
-  /// for these formats is still experimental.
-  experimental_native_sw_decode: boolean;
+  /// Preview decode engine (dual-engine spec): `auto` resolves the fastest
+  /// available tier per source (native HW → WebCodecs-original → native SW →
+  /// proxy); `native`/`webcodecs` pin an engine. Replaces the deleted
+  /// single-boolean experimental toggle (its semantics live inside `auto`).
+  decode_engine: "auto" | "native" | "webcodecs";
 }
 
 /// Patch shape — every field optional. The store merges into the current
@@ -43,7 +42,7 @@ export interface AppSettingsPatch {
   tail_snap_strength_px?: number;
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
-  experimental_native_sw_decode?: boolean;
+  decode_engine?: "auto" | "native" | "webcodecs";
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
@@ -54,7 +53,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   tail_snap_strength_px: 12,
   prebake_motifs: false,
   preview_effects_enabled: true,
-  experimental_native_sw_decode: false,
+  decode_engine: "auto",
 };
 
 export const DELTA_WINDOW_MIN_US = 1_000_000;

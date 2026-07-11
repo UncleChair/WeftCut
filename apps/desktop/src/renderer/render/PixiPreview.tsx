@@ -156,11 +156,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
       // Native-SW preview resolver: returns the ORIGINAL file path when the
-      // experimental toggle is ON and this media is routed `native-sw`, else
-      // null. Both stores are read imperatively (live) so a toggle flip takes
-      // effect on the next clip acquire without reconstructing the Compositor.
+      // decode engine is pinned to `native` and this media is routed
+      // `native-sw`, else null. Both stores are read imperatively (live) so a
+      // setting flip takes effect on the next clip acquire without
+      // reconstructing the Compositor.
+      // TEMPORARY bridge (Task 8): preserves the old toggle-ON behavior under
+      // the new setting name. Task 9 deletes this function entirely and
+      // replaces it with the decodeEngine.ts resolver (auto/native/webcodecs
+      // tiering), so this gate intentionally does not yet handle "auto".
       const nativeSwSourceFor = (mediaId: string): string | null => {
-        if (!useAppSettingsStore.getState().settings.experimental_native_sw_decode)
+        if (useAppSettingsStore.getState().settings.decode_engine !== "native")
           return null;
         const m = useProjectStore.getState().mediaById.get(mediaId);
         return m?.decode_route?.route === "native-sw" ? m.path : null;
