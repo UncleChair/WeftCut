@@ -84,6 +84,11 @@ export async function pickInitialLane(
     mediaId: string;
     codec: string | null;
     pixFmt: string | null;
+    /// Media dimensions for the classKey's resolution bucket — omitting
+    /// these collapses `classKeyOfMedia` to the "sd" bucket for every source,
+    /// mismatching main's probe cache key.
+    width?: number | null;
+    height?: number | null;
     componentAvailable: boolean;
   },
   probeFn: (path: string, classKey: string) => Promise<{ ok: boolean }> = (p, k) =>
@@ -93,7 +98,15 @@ export async function pickInitialLane(
   if (!input.componentAvailable) return "software"; // caller shouldn't ask, but be safe
   if (hwUnusable.has(input.mediaId)) return "software";
   if (!hwEligibleCodec(input.codec, input.pixFmt)) return "software";
-  const classKey = classKeyOfMedia({ codec: input.codec, pix_fmt: input.pixFmt });
+  // Conditional spread, not `width: input.width` — exactOptionalPropertyTypes
+  // rejects assigning `number | null | undefined` to the optional `width?:
+  // number | null` field when the key is present with an `undefined` value.
+  const classKey = classKeyOfMedia({
+    codec: input.codec,
+    pix_fmt: input.pixFmt,
+    ...(input.width !== undefined ? { width: input.width } : {}),
+    ...(input.height !== undefined ? { height: input.height } : {}),
+  });
   if (classKey === null || !path) return "software";
   try {
     const r = await probeFn(path, classKey);
