@@ -139,6 +139,18 @@ async function probeNow(page: Page, layerId: string): Promise<Probe> {
 }
 
 test.describe('decode-engine tier resolution (Electron)', () => {
+  // The `encoderAvailable` probes below only defend a LOCAL machine whose
+  // ffmpeg lacks an encoder — they do NOT gate CI. CI's fetched ffmpeg builds
+  // (gyan "essentials" on Windows, BtbN GPL static on Linux, evermeet on
+  // macOS) all bundle libx265 + prores_ks, so the probes would pass there;
+  // meanwhile `@weftcut/native-decode` is Windows-only in CI (Task 5), so on
+  // the Linux/macOS legs Cell 2 (auto/ProRes → native-sw) would resolve to
+  // proxy instead and fail. This spec is local-only; require explicit opt-in.
+  test.skip(
+    process.env.WEFTCUT_DECODE_E2E !== '1',
+    'decode-engine tier e2e is local-only (needs the native-decode component + real encoders); set WEFTCUT_DECODE_E2E=1 to run',
+  )
+
   let ffmpeg: string | null = null
 
   test.beforeAll(() => {
