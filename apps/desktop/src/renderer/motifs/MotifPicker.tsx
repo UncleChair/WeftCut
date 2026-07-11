@@ -693,11 +693,7 @@ function ColorInput({
   const rgb = value.length >= 7 ? value.slice(0, 7) : value;
   return (
     <span className="motif-picker-color">
-      {/* Eyedropper off: MotifPicker is the one AppDialog-hosted
-          consumer — Base UI modal outside-pointer blocking /
-          backdrop-dismiss-on-commit-click / double-Escape were
-          never exercised. Re-enable after a manual pass. */}
-      <AppColorField value={rgb} onValueChange={onChange} withEyeDropper={false} />
+      <AppColorField value={rgb} onValueChange={onChange} />
       <code>{value}</code>
     </span>
   );
