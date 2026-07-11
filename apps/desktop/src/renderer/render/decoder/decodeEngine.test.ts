@@ -45,6 +45,10 @@ describe("resolveEngineTier — auto", () => {
     expect(r.tier).toBe("proxy");
     expect(r.reason).toContain("component");
   });
+  it("tier 2 vs tier 3: WebCodecs-original wins over native-sw when both are ok", () => {
+    const r = resolveEngineTier(base({ webcodecsOriginal: "ok", nativeSw: "ok" }));
+    expect(r.tier).toBe("webcodecs-original");
+  });
 });
 
 describe("resolveEngineTier — forced engines", () => {
@@ -54,6 +58,10 @@ describe("resolveEngineTier — forced engines", () => {
     // both native lanes out → falls to WebCodecs-original, then proxy
     expect(resolveEngineTier(base({ setting: "native", webcodecsOriginal: "ok" })).tier).toBe("webcodecs-original");
     expect(resolveEngineTier(base({ setting: "native" })).tier).toBe("proxy");
+  });
+  it("tier 3 vs tier 2: forced native prefers native-sw over WebCodecs-original when both are ok", () => {
+    const r = resolveEngineTier(base({ setting: "native", nativeSw: "ok", webcodecsOriginal: "ok" }));
+    expect(r.tier).toBe("native-sw");
   });
   it("webcodecs: skips tiers 1 and 3 even when they'd pass", () => {
     const r = resolveEngineTier(base({ setting: "webcodecs", nativeHw: "ok", nativeSw: "ok", webcodecsOriginal: "ok" }));
