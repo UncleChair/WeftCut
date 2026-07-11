@@ -53,4 +53,23 @@ describe("SwTransport", () => {
     expect(got).toEqual([15]);
     t.dispose();
   });
+
+  it("does not fire onError when disposed before a failing open() settles", async () => {
+    let rejectOpen!: (e: Error) => void;
+    const api = {
+      open: () => new Promise((_res, rej) => { rejectOpen = rej; }),
+      requestFrameAt: () => {},
+      close: () => {},
+      onFrame: () => () => {},
+    };
+    (window as unknown as { api: { previewSw: typeof api } }).api = { previewSw: api };
+    const t = new SwTransport();
+    const errors: string[] = [];
+    t.onError((r) => errors.push(r));
+    const p = t.open({ streamId: "s1", path: "C:/x.mov" });
+    t.dispose();                       // disposed BEFORE open rejects
+    rejectOpen(new Error("boom"));
+    await expect(p).rejects.toThrow("boom");   // still rethrows
+    expect(errors).toEqual([]);                 // but no stale fatal fired
+  });
 });

@@ -57,7 +57,10 @@ export class SwTransport implements DecodeTransport {
       // Open failure: surface it as the terminal error BEFORE rethrowing —
       // this is the ONLY SW error signal (see file header).
       const reason = err instanceof Error ? err.message : String(err);
-      this.errorCb?.(reason);
+      // A late open-rejection after dispose must not fire a stale fatal into a
+      // consumer that has already moved on (mirrors the old handle's fireFatal
+      // _disposed guard). Still rethrow so the caller's await settles.
+      if (!this._disposed) this.errorCb?.(reason);
       throw err;
     }
   }
