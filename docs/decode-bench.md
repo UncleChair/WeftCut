@@ -223,8 +223,11 @@ Useful flags, passed after `--` when invoked through npm:
   `webcodecs`). `native` requires the `@weftcut/native-decode` component
   build (above); it's Windows-only and applies to the `Proxied`-route 8-bit
   codecs (see
-  [Native strategy](#native-strategy)). `sw` benches the native
-  **software**-decode path (see below).
+  [Native strategy](#native-strategy)). It exercises the same
+  `SourceDecoderPool.acquire` path a real `native`/`auto` `decode_engine`
+  session uses in production — there is no separate E2E-only escape hatch
+  gating it; the only gate is the engine resolver's own HW-probe requirement.
+  `sw` benches the native **software**-decode path (see below).
 - `--fixture <name>|all` — one fixture (`h264-1080`, `hevc-1080`,
   `hevc-2160`, `vp9-1080`, `av1-1080`, `hi10p-1080`, `prores-1080`,
   `prores-2160`, `dnxhr-1080`, `mpeg2-1080`) or the whole matrix

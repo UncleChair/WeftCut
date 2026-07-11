@@ -158,6 +158,36 @@ the user explicitly asks for one. This matches how mainstream NLEs behave
 (`feedback_native_nle_conventions`): proxy is a convenience the user opts
 into, never something the app swaps to on its own mid-session.
 
+**HW session budget.** The native-hw lane caps concurrent GPU decode sessions
+at a conservative `MAX_HW_SESSIONS` (3) rather than assuming this machine's
+real ceiling from a single-source benchmark. An open past the cap throws a
+typed `hw-budget-exceeded` reason that the resolver treats exactly like the
+runtime downgrade below: the over-budget source resolves to the next tier
+instead of failing outright, so a fourth simultaneous HW clip lands on
+WebCodecs or the native-SW lane rather than erroring.
+
+**Runtime downgrade is sticky and per-source.** A native lane (`native-hw` or
+`native-sw`) that fails after it opens — a GPU decode error, device loss,
+session crash, or the budget throw above — marks that tier downgraded for
+that media for the rest of the session (a session-scoped set, distinct from
+the capability cache below). `resolveEngineTier` skips the downgraded tier on
+every subsequent resolution; the existing no-flash overlap-swap rebuilds the
+clip onto the next tier without a blank frame, and the downgrade is logged
+once to LogBus as a warning rather than spamming a per-frame trail. There is
+no re-promotion within the session — reopening the source (reload, or
+re-importing) is what clears the downgrade and lets the tier be tried again.
+
+**Capability cache.** `<userData>/decode_capability.json` persists per-machine
+probe verdicts across app restarts, keyed by lane (`sw`/`hw`) and a
+codec/pix-fmt/resolution-class string, so a source never re-probes a format
+class it already has an answer for. Each lane also carries an `env` string —
+the component's ffmpeg version for `sw`, the GPU + driver identity for
+`hw` — and a mismatch against the stored value wipes that whole lane's
+entries, since the machine truth the cache was measured against changed.
+This is a different question from the per-session downgrade above: the cache
+answers "can this machine decode this format at all," the downgrade set
+answers "did this specific open just fail."
+
 ## Scrub
 
 `scrub.ts` debounces drag input and, on commit, calls `decoder.flush()`,
