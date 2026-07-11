@@ -2606,6 +2606,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "weftcut-native-decode"
+version = "0.0.0"
+dependencies = [
+ "ffmpeg-next",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "serde_json",
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

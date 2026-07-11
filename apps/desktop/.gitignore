@@ -2,6 +2,9 @@
 native/*.node
 native/index.js
 native/index.d.ts
+native/decode/*.node
+native/decode/index.js
+native/decode/index.d.ts
 
 # Playwright-for-Electron e2e output (transient; S3b+)
 test-results/

@@ -1,0 +1,17 @@
+{
+  "name": "@weftcut/native-decode",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": ["index.js", "index.d.ts", "*.node"],
+  "napi": {
+    "binaryName": "weftcut-native-decode"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.6.2"
+  },
+  "scripts": {
+    "build": "napi build --platform --release"
+  }
+}
