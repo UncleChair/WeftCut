@@ -198,6 +198,29 @@ impl SwVideoStream {
         })
     }
 
+    /// Read codec/pix_fmt identity off the already-open decoder context, without
+    /// touching the packet/frame pump. `codec` is libavcodec's canonical short
+    /// name (`AVCodec.name` via `self.decoder.codec()`, e.g. `"prores"`);
+    /// `pix_fmt` is libavutil's canonical descriptor name (`av_pix_fmt_desc_get`
+    /// via `Pixel::descriptor()`, e.g. `"yuv422p10le"`) — both match the strings
+    /// ffprobe reports, so a probe-informed class key (Task 13) needs no
+    /// caller-side guessing. Falls back to `"unknown"` in the (should-not-happen
+    /// post-open) case either lookup comes back empty.
+    pub fn probe_identity(&self) -> (String, String, u32, u32) {
+        let codec = self
+            .decoder
+            .codec()
+            .map(|c| c.name().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let pix_fmt = self
+            .decoder
+            .format()
+            .descriptor()
+            .map(|d| d.name().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        (codec, pix_fmt, self.width, self.height)
+    }
+
     /// Decode the next frame, packed as owned NV12 bytes. Returns `Ok(None)` at
     /// end of stream.
     pub fn next_frame(&mut self) -> Result<Option<SwFrame>, String> {
@@ -342,6 +365,22 @@ mod tests {
         assert_eq!(f.height, 240);
         // NV12: Y (w*h) + interleaved UV (w*h/2)
         assert_eq!(f.nv12.len(), (320 * 240) + (320 * 240 / 2));
+    }
+
+    #[test]
+    fn probe_identity_reports_prores_codec_and_pix_fmt_then_decodes() {
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let mut s = SwVideoStream::open(p).expect("open");
+        let (codec, pix_fmt, width, height) = s.probe_identity();
+        assert!(!codec.is_empty() && codec != "unknown", "codec name missing: {codec}");
+        assert!(!pix_fmt.is_empty() && pix_fmt != "unknown", "pix_fmt name missing: {pix_fmt}");
+        assert_eq!(width, 320);
+        assert_eq!(height, 240);
+        // The probe reads identity without disturbing the packet pump: a
+        // subsequent next_frame() still decodes normally.
+        let f = s.next_frame().expect("decode").expect("some frame");
+        assert_eq!(f.width, 320);
+        assert_eq!(f.height, 240);
     }
 
     #[test]

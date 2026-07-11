@@ -90,6 +90,19 @@ pub struct PreviewSwFrame {
     pub data: Buffer,
 }
 
+/// Verdict of a one-frame SW decode probe. `codec`/`pix_fmt` echo what
+/// libavformat identified — main derives the capability-cache class key from
+/// these (probe-informed, not caller-guessed).
+#[napi(object)]
+pub struct PreviewSwProbeResult {
+    pub ok: bool,
+    pub codec: Option<String>,
+    pub pix_fmt: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    pub reason: Option<String>,
+}
+
 /// Move a decoded `SwFrame` into its napi wire form. `Buffer::from(f.nv12)` takes
 /// the `Vec` by value (zero-copy Rust-side); the single budgeted copy happens
 /// when napi marshals the `Buffer` across the JS boundary.
@@ -398,5 +411,52 @@ impl NativeDecode {
         let r = self.preview_sw.close(&stream_id).map_err(napi::Error::from_reason);
         self.preview_sw_sinks.lock().unwrap().remove(&stream_id);
         r
+    }
+
+    /// One-frame decode probe for the SW lane (P1: probes over lists). Opens a
+    /// THROWAWAY stream (never registered in the session registry), decodes one
+    /// frame, closes. Failure is a verdict, not an error — Err only for panics
+    /// worth surfacing.
+    #[napi]
+    pub fn preview_sw_probe(&self, path: String) -> napi::Result<PreviewSwProbeResult> {
+        match crate::preview_sw::decoder::SwVideoStream::open(&path) {
+            Ok(mut stream) => {
+                let (codec, pix_fmt, width, height) = stream.probe_identity();
+                match stream.next_frame() {
+                    Ok(Some(_frame)) => Ok(PreviewSwProbeResult {
+                        ok: true,
+                        codec: Some(codec),
+                        pix_fmt: Some(pix_fmt),
+                        width,
+                        height,
+                        reason: None,
+                    }),
+                    Ok(None) => Ok(PreviewSwProbeResult {
+                        ok: false,
+                        codec: Some(codec),
+                        pix_fmt: Some(pix_fmt),
+                        width,
+                        height,
+                        reason: Some("no decodable frame".into()),
+                    }),
+                    Err(e) => Ok(PreviewSwProbeResult {
+                        ok: false,
+                        codec: Some(codec),
+                        pix_fmt: Some(pix_fmt),
+                        width,
+                        height,
+                        reason: Some(e.to_string()),
+                    }),
+                }
+            }
+            Err(e) => Ok(PreviewSwProbeResult {
+                ok: false,
+                codec: None,
+                pix_fmt: None,
+                width: 0,
+                height: 0,
+                reason: Some(e.to_string()),
+            }),
+        }
     }
 }
