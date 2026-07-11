@@ -53,6 +53,15 @@ export class SwSourceHandle implements DecoderHandle {
   private onFirstFrameCb: (() => void) | null = null;
   private firedFirstFrame = false;
 
+  /// Sticky-downgrade hook (Task 18). Mirrors `NativeGpuSourceHandle`'s
+  /// fatal-error surface: the Compositor subscribes right after
+  /// `onFirstFrame` and reacts by marking this media's native-sw tier
+  /// downgraded (sticky, LogBus warn) + scheduling a repaint so the next
+  /// `ensureClip` re-resolves off this tier and the existing key-based
+  /// no-flash swap rebuilds onto the next tier.
+  private fatalCb: ((reason: string) => void) | null = null;
+  private fatalFired = false;
+
   /// Last target sent to `previewSw.requestFrameAt`, for cheap same-target
   /// dedup. Unlike `NativeGpuSourceHandle`'s coalescing pump, the transport
   /// here is a fire-and-forget `send` (Task 5's preload), so there is no
@@ -88,6 +97,25 @@ export class SwSourceHandle implements DecoderHandle {
     this.onFirstFrameCb = cb;
   }
 
+  /// Subscribe to a terminal session failure. v1 surface is OPEN-FAILURE
+  /// only: `preview_sw` sends no eof/error to the renderer mid-stream (see
+  /// the file header — Task 4 made those log-only Rust-side), so this
+  /// handle has no live signal for a session that opens fine but later
+  /// stalls or crashes. Surfacing THAT is later polish (a "no frames within
+  /// deadline" watchdog or a real mid-stream error channel) — deliberately
+  /// not built speculatively here. Fires at most once (see `fireFatal`).
+  onFatalError(cb: (reason: string) => void): void {
+    this.fatalCb = cb;
+  }
+
+  /// Invoke the fatal callback exactly once, and never after `dispose()` —
+  /// mirrors `NativeGpuSourceHandle.fireFatal`'s reasoning.
+  private fireFatal(reason: string): void {
+    if (this.fatalFired || this._disposed) return;
+    this.fatalFired = true;
+    this.fatalCb?.(reason);
+  }
+
   /// Build the session: subscribe to the frame event, then open the native
   /// session. Idempotent across concurrent callers (cached in-flight
   /// promise, like `SourceHandle.ensureReady`).
@@ -106,7 +134,16 @@ export class SwSourceHandle implements DecoderHandle {
     this.unsub = window.api.previewSw.onFrame((f) => {
       void this.handleFrame(f); // handleFrame is async; fire-and-forget
     });
-    await window.api.previewSw.open({ streamId: this.streamId, path: this.sourcePath });
+    try {
+      await window.api.previewSw.open({ streamId: this.streamId, path: this.sourcePath });
+    } catch (err) {
+      // Open failure (Task 18): surface it as fatal BEFORE rethrowing, same
+      // reasoning as `NativeGpuSourceHandle` — otherwise this handle is left
+      // with a permanently-rejected `readyP` and an empty ring.
+      const reason = err instanceof Error ? err.message : String(err);
+      this.fireFatal(reason);
+      throw err;
+    }
     if (this._disposed) return;
     this.ready = true;
   }

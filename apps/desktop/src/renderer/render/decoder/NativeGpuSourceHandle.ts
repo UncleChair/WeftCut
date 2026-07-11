@@ -121,6 +121,15 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   private onFirstFrameCb: (() => void) | null = null;
   private firedFirstFrame = false;
 
+  /// Sticky-downgrade hook (Task 18). The Compositor subscribes right after
+  /// `onFirstFrame` and reacts to a fatal signal by marking this media's
+  /// native-hw tier downgraded (sticky, LogBus warn) and scheduling a
+  /// repaint — the next `ensureClip` re-resolves off this tier and the
+  /// existing key-based no-flash swap rebuilds onto the next tier. See
+  /// `fireFatal` for the double-fire / post-dispose guard.
+  private fatalCb: ((reason: string) => void) | null = null;
+  private fatalFired = false;
+
   /// Trailing coalescer state: the latest requested target not yet sent,
   /// and whether a `previewGpu.requestFrameAt` call is currently awaited.
   /// Mirrors `ScrubCoalescer`'s intent (see scrub.ts) at a much smaller
@@ -160,6 +169,23 @@ export class NativeGpuSourceHandle implements DecoderHandle {
     this.onFirstFrameCb = cb;
   }
 
+  /// Subscribe to a terminal session failure — GPU decode error, device
+  /// loss, session crash, or a budget-rejected open (`hw-budget-exceeded`,
+  /// Task 17's `MAX_HW_SESSIONS` cap). Fires at most once (see `fireFatal`).
+  onFatalError(cb: (reason: string) => void): void {
+    this.fatalCb = cb;
+  }
+
+  /// Invoke the fatal callback exactly once, and never after `dispose()` —
+  /// a disposed handle's media has already moved on (swapped tier, or the
+  /// layer was removed), so a late failure must not downgrade a tier that
+  /// no longer applies to it.
+  private fireFatal(reason: string): void {
+    if (this.fatalFired || this._disposed) return;
+    this.fatalFired = true;
+    this.fatalCb?.(reason);
+  }
+
   /// Build the session: wire the port handoff, then open the native
   /// session. Idempotent across concurrent callers (cached in-flight
   /// promise, like `SourceHandle.ensureReady`).
@@ -172,34 +198,47 @@ export class NativeGpuSourceHandle implements DecoderHandle {
   }
 
   private async _doEnsureReady(): Promise<void> {
-    // Attach BEFORE requestPort() — the preload's handoff post is one-time
-    // and un-replayable; a listener attached after the call could miss it.
-    this.messageListener = (ev: MessageEvent) => {
-      const data = ev.data as { __weftcutPreviewGpu?: string } | null | undefined;
-      if (!data || data.__weftcutPreviewGpu !== "port") return;
-      const port = ev.ports?.[0];
-      if (!port) return;
-      this.port = port;
-      this.port.onmessage = (m: MessageEvent) => this.handlePortMessage(m.data as PortMsg);
-      this.portReadyResolve?.();
-      this.portReadyResolve = null;
-    };
-    window.addEventListener("message", this.messageListener);
-    window.api.previewGpu.requestPort();
-    await this.waitForPort();
-    if (this._disposed) return;
-    // The configured poolSize (default 3) mirrors the WebCodecs path's
-    // headroom (a couple of lookahead frames in flight plus one being read)
-    // without asking the native pool for more slots than preview actually
-    // pipelines. Decode-bench overrides this for the Stage-3 pool sweep.
-    await window.api.previewGpu.open({
-      streamId: this.streamId,
-      path: this.sourcePath,
-      poolSize: this.poolSize,
-      colorSpace: deriveColorSpace(this.sourceColor),
-    });
-    if (this._disposed) return;
-    this.ready = true;
+    try {
+      // Attach BEFORE requestPort() — the preload's handoff post is one-time
+      // and un-replayable; a listener attached after the call could miss it.
+      this.messageListener = (ev: MessageEvent) => {
+        const data = ev.data as { __weftcutPreviewGpu?: string } | null | undefined;
+        if (!data || data.__weftcutPreviewGpu !== "port") return;
+        const port = ev.ports?.[0];
+        if (!port) return;
+        this.port = port;
+        this.port.onmessage = (m: MessageEvent) => this.handlePortMessage(m.data as PortMsg);
+        this.portReadyResolve?.();
+        this.portReadyResolve = null;
+      };
+      window.addEventListener("message", this.messageListener);
+      window.api.previewGpu.requestPort();
+      await this.waitForPort();
+      if (this._disposed) return;
+      // The configured poolSize (default 3) mirrors the WebCodecs path's
+      // headroom (a couple of lookahead frames in flight plus one being read)
+      // without asking the native pool for more slots than preview actually
+      // pipelines. Decode-bench overrides this for the Stage-3 pool sweep.
+      await window.api.previewGpu.open({
+        streamId: this.streamId,
+        path: this.sourcePath,
+        poolSize: this.poolSize,
+        colorSpace: deriveColorSpace(this.sourceColor),
+      });
+      if (this._disposed) return;
+      this.ready = true;
+    } catch (err) {
+      // Terminal: the port handoff timed out, or `previewGpu.open` rejected
+      // (most commonly `hw-budget-exceeded`). Surface it as a fatal signal
+      // (Task 18) BEFORE rethrowing — without this, the handle is left with
+      // a permanently-rejected `readyP` and an empty ring that never
+      // recovers (the concrete gap Task 17's review flagged). The rethrow
+      // preserves the existing caller-side `.catch` diagnostics (Compositor's
+      // `ensureReady().catch(console.error)`).
+      const reason = err instanceof Error ? err.message : String(err);
+      this.fireFatal(reason);
+      throw err;
+    }
   }
 
   private waitForPort(): Promise<void> {
@@ -248,11 +287,21 @@ export class NativeGpuSourceHandle implements DecoderHandle {
     } else if (data.kind === "eof") {
       this.eof = true;
     } else if (data.kind === "error") {
-      // Not fatal — the native session may keep producing frames; surface
-      // for diagnosis without throwing (same posture as SourceHandle's
-      // per-frame conversion failures).
+      // Per-message this is just one bad frame (the preload's frameReady
+      // catch relays a `getVideoFrame`/`createImageBitmap` failure) — the
+      // native session may well keep producing good frames afterward, so we
+      // don't throw here. But from this handle's vantage point a single
+      // per-frame conversion glitch and a genuinely dying session/lost
+      // device look identical (there is no separate main-side "session
+      // died" event today), so we also surface it as a fatal signal
+      // (Task 18): `fireFatal` marks this media's native-hw tier downgraded
+      // and the no-flash swap carries the clip onto the next tier. Worst
+      // case a one-off glitch costs an unnecessary (but harmless) sticky
+      // downgrade for the rest of the session; that's the safer failure
+      // mode than staying on a lane that may be silently losing frames.
       // eslint-disable-next-line no-console
       console.warn(`[weftcut/pixi] native GPU decode ${this.streamId} error:`, data.message);
+      this.fireFatal(data.message);
     }
   }
 

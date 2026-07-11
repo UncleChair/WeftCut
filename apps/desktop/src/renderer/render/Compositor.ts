@@ -32,6 +32,7 @@ import {
 import { NativeGpuSourceHandle } from "./decoder/NativeGpuSourceHandle";
 import { SwSourceHandle } from "./decoder/SwSourceHandle";
 import type { EngineTier } from "./decoder/decodeEngine";
+import { markDowngraded } from "./decoder/decodeCapability";
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
@@ -1547,6 +1548,24 @@ export class Compositor {
     source.onFirstFrame(() => {
       this.scheduleRepaint();
     });
+    // D4 sticky runtime downgrade (Task 18): a native lane (`rs.forceStrategy`
+    // set — native-hw or native-sw) that dies at runtime (GPU decode error,
+    // device loss, session crash, or the `hw-budget-exceeded` open throw from
+    // Task 17's `MAX_HW_SESSIONS` cap) fires `onFatalError`. Mark this media's
+    // tier downgraded (sticky; LogBus warns) and schedule a repaint — the next
+    // `ensureClip` re-resolves via `resolveSource`, the downgraded tier is
+    // skipped, the resolved key changes, and the no-flash swap above (the
+    // `existing` branch) rebuilds onto the next tier. No new swap mechanism:
+    // this rides the same key-based swap Task 9 already built. WebCodecs'
+    // `SourceHandle` has no `onFatalError` (its own downgrade-to-software
+    // machinery handles GPU decode errors internally), so this is a no-op there.
+    if (rs.forceStrategy && source.onFatalError) {
+      const failedTier = rs.tier;
+      source.onFatalError((reason) => {
+        markDowngraded(mediaId, failedTier, reason);
+        this.scheduleRepaint();
+      });
+    }
     // Kick off the async ensureReady. After it resolves, the next
     // setAnchorTime() tick (or first decoded frame's onFirstFrame
     // callback) will paint.

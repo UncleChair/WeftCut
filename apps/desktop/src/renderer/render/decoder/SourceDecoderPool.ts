@@ -153,6 +153,15 @@ export interface DecoderHandle {
   /// True when the ring has decoded past `anchor + lookahead` — i.e. the
   /// lookahead window is satisfied rather than the decoder running behind.
   isLookaheadFull?(): boolean;
+  /// Subscribe to a terminal session failure (GPU decode error, device loss,
+  /// session crash, or a budget-rejected open). Optional: implemented by the
+  /// two native handles (`NativeGpuSourceHandle`, `SwSourceHandle`); the
+  /// WebCodecs `SourceHandle` has its own internal downgrade-to-software
+  /// machinery (`handleDecodeError`) and doesn't need this external surface.
+  /// When present, the Compositor wires it to `markDowngraded` (sticky,
+  /// LogBus warn) + `scheduleRepaint()` so the failure rides the existing
+  /// key-based no-flash swap onto the next tier (D4, Task 18).
+  onFatalError?(cb: (reason: string) => void): void;
   dispose(): void;
 }
 
