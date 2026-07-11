@@ -538,7 +538,10 @@ async function runColdstart(
     // the caller is about to dispose.
     if (token.cancelled) throw new Error("bench run cancelled");
     const layerId = `bench-cold-${i}`;
-    const h = pool.acquire(mkInit(layerId));
+    // Cast, not a `BenchHandle` widen: Task 6 widened `SourceDecoderPool.acquire`'s
+    // return type to include `FfmpegSource` (the collapsed engine model), but
+    // `mkInit` below never sets `engine`, so this bench can never actually get one.
+    const h = pool.acquire(mkInit(layerId)) as BenchHandle;
     const t0 = performance.now();
     await h.ensureReady();
     void h.requestFrameAt(5_000_000);
@@ -589,9 +592,10 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     scenarioP = (async (): Promise<BenchResult> => {
       switch (args.scenario) {
         case "throughput":
-          return runThroughput(livePool.acquire(mkInit("bench-0")), args.durationUs, token, args.throttleMs);
+          // Cast per the runColdstart comment above — `mkInit` never sets `engine`.
+          return runThroughput(livePool.acquire(mkInit("bench-0")) as BenchHandle, args.durationUs, token, args.throttleMs);
         case "seek":
-          return runSeek(livePool.acquire(mkInit("bench-0")), args.durationUs, token);
+          return runSeek(livePool.acquire(mkInit("bench-0")) as BenchHandle, args.durationUs, token);
         case "coldstart":
           return runColdstart(livePool, mkInit, token);
       }

@@ -23,6 +23,7 @@ import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
 import { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
 import { SwSourceHandle } from "./SwSourceHandle";
+import { FfmpegSource } from "./FfmpegSource";
 
 const IDLE_DISPOSE_MS = 5_000;
 
@@ -85,6 +86,24 @@ export interface SourceHandleInit {
   /// product default (3) applies when unset — production `'native'` handles
   /// never set it. Ignored by the WebCodecs path.
   poolSize?: number;
+  /// Resolved engine (collapsed decode-engine model, `resolveDecodeEngine`).
+  /// Export ignores it. Absent ⇒ falls through to the legacy `forceStrategy`
+  /// branches / WebCodecs default (existing behavior unchanged). ADDITIVE on
+  /// top of `forceStrategy` — both coexist until Task 9 removes the legacy
+  /// tier resolver + its native branches.
+  engine?: import("./decodeEngine").DecodeEngine;
+  /// Source codec/pixFmt — `FfmpegSource` needs them for lane selection.
+  codec?: string | null;
+  pixFmt?: string | null;
+  /// Media dimensions — threaded into `FfmpegSource`'s HW-probe classKey
+  /// resolution class (see `FfmpegSourceInit.width`/`height`).
+  width?: number | null;
+  height?: number | null;
+  /// FFmpeg native-decode component DLLs loaded on this machine. Gates the
+  /// FFmpeg HW lane (`FfmpegSource`/`pickInitialLane`).
+  componentAvailable?: boolean;
+  /// Bench-only lane pin, forwarded to `FfmpegSource` (decode-bench Stage 3).
+  forceLane?: import("./decodeEngine").FfmpegLane;
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
@@ -689,7 +708,7 @@ interface MediaEntry {
 /// refcounted (so the demuxer + sample table is shared across every
 /// handle referencing the same source proxy).
 export class SourceDecoderPool {
-  private handles = new Map<string, SourceHandle | NativeGpuSourceHandle | SwSourceHandle>();
+  private handles = new Map<string, SourceHandle | NativeGpuSourceHandle | SwSourceHandle | FfmpegSource>();
   private medias = new Map<string, MediaEntry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -708,7 +727,30 @@ export class SourceDecoderPool {
   /// is just a pool bookkeeping key (see `releaseHandle`, whose
   /// `medias.get(mediaId)` miss is a no-op for these handles). `poolSize` stays
   /// bench-only (decode-bench Stage 3).
-  acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle | SwSourceHandle {
+  acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle | SwSourceHandle | FfmpegSource {
+    if (init.engine === "ffmpeg") {
+      const existingFfmpeg = this.handles.get(init.layerId);
+      if (existingFfmpeg) return existingFfmpeg;
+      const ffmpegHandle = new FfmpegSource({
+        layerId: init.layerId,
+        mediaId: init.mediaId,
+        sourcePath: init.sourcePath ?? "",
+        componentAvailable: init.componentAvailable ?? false,
+        // Conditional spreads, not direct assignment — exactOptionalPropertyTypes
+        // rejects an explicit `undefined` for `FfmpegSourceInit`'s optional
+        // fields (same idiom `FfmpegSource.ts` itself uses).
+        ...(init.sourceColor !== undefined ? { sourceColor: init.sourceColor } : {}),
+        ...(init.codec !== undefined ? { codec: init.codec } : {}),
+        ...(init.pixFmt !== undefined ? { pixFmt: init.pixFmt } : {}),
+        ...(init.width !== undefined ? { width: init.width } : {}),
+        ...(init.height !== undefined ? { height: init.height } : {}),
+        ...(init.poolSize !== undefined ? { poolSize: init.poolSize } : {}),
+        ...(init.forceLane !== undefined ? { forceLane: init.forceLane } : {}),
+      });
+      this.handles.set(init.layerId, ffmpegHandle);
+      this.startSweeperIfNeeded();
+      return ffmpegHandle;
+    }
     if (init.forceStrategy === "native") {
       const existingNative = this.handles.get(init.layerId);
       if (existingNative) return existingNative;
