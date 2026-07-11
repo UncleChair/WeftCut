@@ -54,6 +54,22 @@ const isDev = !!process.env['ELECTRON_RENDERER_URL']
 // fire-once-before-subscribe race the old `evt:app:notice` send had.
 const startupNotices: { level: string; code: string }[] = []
 
+// GPU identity for the HW capability lane (D4): vendor/device/driver — a
+// driver update or GPU swap invalidates every cached HW verdict. `getGPUInfo`
+// payload shape varies by Electron version — the `catch -> 'gpu:unknown'`
+// guard makes a shape change degrade to "cache never hits," not a crash.
+async function hwEnvKey(): Promise<string> {
+  try {
+    const info = (await app.getGPUInfo('basic')) as {
+      gpuDevice?: { vendorId?: number; deviceId?: number; driverVersion?: string }[]
+    }
+    const d = info.gpuDevice?.[0]
+    return `gpu:${d?.vendorId ?? 0}:${d?.deviceId ?? 0}:${d?.driverVersion ?? 'unknown'}`
+  } catch {
+    return 'gpu:unknown'
+  }
+}
+
 async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
@@ -517,6 +533,25 @@ app.whenReady().then(async () => {
       return { ok: cached ?? probe.ok, classKey, reason: probe.reason ?? null }
     }
     return { ok: probe.ok, classKey, reason: probe.reason ?? null }
+  })
+
+  // Machine capability probe (D4): runs the HW (d3d11va) one-frame decode
+  // probe (Task 16) for a caller-supplied classKey. Unlike the SW probe, the
+  // HW probe doesn't derive the class key itself — it's expensive enough that
+  // the renderer (Task 17) computes classKey from MediaSummary BEFORE deciding
+  // to probe, so an already-cached verdict never pays for a decode. envKey is
+  // GPU identity (vendor/device/driver): a driver update or GPU swap
+  // invalidates every cached HW verdict for this machine.
+  ipcMain.handle('decodeCap:probeHw', async (_e, a: { path: string; classKey: string }) => {
+    if (process.platform !== 'win32' || !nd.backend) {
+      return { ok: false, reason: 'hw lane unavailable' }
+    }
+    const envKey = await hwEnvKey()
+    const cached = decodeCapability.get('hw', a.classKey, envKey)
+    if (cached !== null) return { ok: cached, reason: 'cached' }
+    const r = nd.backend.previewGpuProbe(a.path, 4000)
+    decodeCapability.put('hw', a.classKey, envKey, r.ok)
+    return { ok: r.ok, reason: r.reason ?? null }
   })
 
   // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the

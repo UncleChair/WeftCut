@@ -103,6 +103,16 @@ pub struct PreviewSwProbeResult {
     pub reason: Option<String>,
 }
 
+/// Verdict of a one-frame HW (d3d11va) decode probe (D4). Unlike the SW probe,
+/// main supplies `classKey` (derived from `MediaSummary` before deciding to
+/// probe, since the HW probe is comparatively expensive) — this result carries
+/// no codec/pix_fmt/width/height echo.
+#[napi(object)]
+pub struct PreviewGpuProbeResult {
+    pub ok: bool,
+    pub reason: Option<String>,
+}
+
 /// Move a decoded `SwFrame` into its napi wire form. `Buffer::from(f.nv12)` takes
 /// the `Vec` by value (zero-copy Rust-side); the single budgeted copy happens
 /// when napi marshals the `Buffer` across the JS boundary.
@@ -281,6 +291,23 @@ impl NativeDecode {
         self.preview_gpu.close(&stream_id).map_err(napi::Error::from_reason)
     }
 
+    /// One-frame HW decode probe (D4): does d3d11va yield a decodable D3D11
+    /// surface for this codec on this GPU? Calls the decoder-level primitive
+    /// directly (no session, no pool, no poke sink) — a throwaway open +
+    /// one-frame decode is self-contained and self-bounding, unlike the
+    /// streaming `preview_gpu_open` session. The `D3d11Frame` on success is
+    /// dropped immediately (its `Drop` releases the GPU texture); only the
+    /// ok/err verdict is returned. `timeout_ms` is currently advisory (kept
+    /// for API symmetry with the SW probe / design doc) — this synchronous
+    /// primitive has no internal deadline machinery to wire it to.
+    #[napi]
+    pub fn preview_gpu_probe(&self, path: String, _timeout_ms: u32) -> napi::Result<PreviewGpuProbeResult> {
+        match crate::preview_gpu::decoder::decode_first_d3d11_frame(&path) {
+            Ok(_frame) => Ok(PreviewGpuProbeResult { ok: true, reason: None }),
+            Err(e) => Ok(PreviewGpuProbeResult { ok: false, reason: Some(e) }),
+        }
+    }
+
     /// Drain + return this session's Stage-3 timing samples (coord-RTT + decode/copy).
     #[napi]
     pub fn preview_gpu_take_timings(&self, stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
@@ -356,6 +383,15 @@ impl NativeDecode {
     #[napi]
     pub fn preview_gpu_take_timings(&self, _stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
         Err(napi::Error::from_reason("preview-gpu not built"))
+    }
+
+    /// Non-Windows: the HW lane doesn't exist. Unlike the other GPU stubs
+    /// above, this returns a verdict (`Ok`) rather than an `Err` — the caller
+    /// (`decodeCap:probeHw`) treats capability probes as verdicts, never
+    /// errors, so main can cache/branch on `ok` uniformly across platforms.
+    #[napi]
+    pub fn preview_gpu_probe(&self, _path: String, _timeout_ms: u32) -> napi::Result<PreviewGpuProbeResult> {
+        Ok(PreviewGpuProbeResult { ok: false, reason: Some("preview-gpu not built".into()) })
     }
 }
 

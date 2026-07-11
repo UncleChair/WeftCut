@@ -164,6 +164,15 @@ export interface DecodeCapabilityProbeResult {
   reason: string | null
 }
 
+/// Verdict of `decodeCap:probeHw` (D4 GPU-keyed HW capability cache): main
+/// runs the one-frame d3d11va decode probe for a caller-supplied `classKey`
+/// (the renderer derives it from `MediaSummary` — the HW probe itself does
+/// not, unlike the SW probe, since probing is comparatively expensive).
+export interface DecodeHwProbeResult {
+  ok: boolean
+  reason: string | null
+}
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -254,7 +263,13 @@ export interface WeftcutApi {
   decodeComponent: { status(): Promise<DecodeComponentStatus> }
   /// Machine capability probe (D3): runs the SW decode probe on `path` and
   /// returns the cache-informed verdict for that file's format class.
-  decodeCap: { probeSw(path: string): Promise<DecodeCapabilityProbeResult> }
+  /// `probeHw` (D4) is the GPU-keyed HW-lane counterpart: caller supplies
+  /// `classKey` (probing is expensive, so the cache must be consulted before
+  /// deciding to probe, not after).
+  decodeCap: {
+    probeSw(path: string): Promise<DecodeCapabilityProbeResult>
+    probeHw(path: string, classKey: string): Promise<DecodeHwProbeResult>
+  }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
   /// Broadcast an event to every app window (delivered to `on()` subscribers as

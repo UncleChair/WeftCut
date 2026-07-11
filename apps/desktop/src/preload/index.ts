@@ -5,6 +5,7 @@ import type {
   AppNotice,
   DecodeCapabilityProbeResult,
   DecodeComponentStatus,
+  DecodeHwProbeResult,
   DialogOpenOpts,
   DialogSaveOpts,
   DirEntry,
@@ -209,9 +210,13 @@ const api: WeftcutApi = {
 
   // Machine capability probe (D3): runs the SW decode probe + consults the
   // per-machine capability cache for the probed file's format class.
+  // probeHw (D4) is the GPU-keyed HW-lane counterpart — caller supplies the
+  // classKey (Task 17 derives it from MediaSummary).
   decodeCap: {
     probeSw: (path: string) =>
       ipcRenderer.invoke('decodeCap:probeSw', { path }) as Promise<DecodeCapabilityProbeResult>,
+    probeHw: (path: string, classKey: string) =>
+      ipcRenderer.invoke('decodeCap:probeHw', { path, classKey }) as Promise<DecodeHwProbeResult>,
   },
 }
 
