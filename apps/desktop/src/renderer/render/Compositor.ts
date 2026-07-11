@@ -162,6 +162,14 @@ export interface ActiveClipProbe {
   spriteBound: boolean;
   spriteWidth: number;
   spriteHeight: number;
+  /// The resolver IDENTITY (`${tier}:${target}`) the active clip's source was
+  /// built from — see `ActiveClip.builtFromKey`. Lets the decode-engine e2e
+  /// spec (Task 10) assert the resolved TIER (prefix before the `:`) rather
+  /// than inferring it from `sourceKind` alone, which can't distinguish
+  /// webcodecs-original from proxy — both decode through the WebCodecs pool
+  /// and surface as `sourceKind: "webcodecs"`. Null only when
+  /// `activeClipProbe` itself returns null (no matching clip).
+  builtFromKey: string | null;
 }
 
 /// Preview mode's resolved decode source for one media, produced by the injected
@@ -1145,6 +1153,7 @@ export class Compositor {
       spriteBound: !isEmpty,
       spriteWidth: isEmpty ? 0 : tex.orig.width,
       spriteHeight: isEmpty ? 0 : tex.orig.height,
+      builtFromKey: clip.builtFromKey,
     };
   }
 

@@ -261,6 +261,9 @@ export interface E2EHook {
   /// native-sw ProRes clip and that a decoded frame reached the sprite. Pass
   /// the clip's `layerId`; omit for the first live clip. Returns null until a
   /// clip is active. Delegates to the PixiPreview bridge (Dev/e2e only).
+  /// `builtFromKey` (Task 10) additionally exposes the resolver's `${tier}:
+  /// ${target}` identity so the decode-engine e2e spec can assert the
+  /// resolved TIER, not just the coarser `sourceKind`.
   activeClipProbe(layerId?: string): ActiveClipProbe | null;
   /// Preview-sw SSIM: base64 PNG (no `data:` prefix) of the current composited
   /// preview frame at composition resolution. The spec decodes this, produces
