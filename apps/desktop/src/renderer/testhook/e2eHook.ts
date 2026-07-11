@@ -41,7 +41,15 @@ import { decodeAnimatedImage } from "../render/sprite/animatedImageCache";
 import type { ResolvedImageOverlayView } from "../render/resolveView";
 import { convertFileSrc } from "@/bridge/ipc";
 import { buildPanGraph, constantPanGains } from "../render/audio/panGraph";
-import { decodeBenchRun, decodeBenchPhase, type BenchArgs, type BenchResult } from "../render/decoder/decodeBench";
+import {
+  decodeBenchRun,
+  decodeBenchPhase,
+  decodeBenchOrderCheck,
+  type BenchArgs,
+  type BenchResult,
+  type OrderCheckArgs,
+  type OrderCheckResult,
+} from "../render/decoder/decodeBench";
 import type { ActiveClipProbe } from "../render/Compositor";
 
 type RunExport = (
@@ -290,6 +298,12 @@ export interface E2EHook {
   /// Current decode-bench phase ('idle'|'setup'|'warmup'|'measuring');
   /// the orchestrator gates its resource samplers on 'measuring'.
   decodeBenchPhase(): string;
+  /// Frame-CONTENT-order regression guard (native-hw reorder bug): drive
+  /// continuous forward decode of an index-encoded clip and verify each
+  /// delivered bitmap's barcode matches its pts-derived index. `mismatches`
+  /// non-empty ⇒ the strategy presented frames out of order (pixels↔pts
+  /// mispaired). See decodeBench.decodeBenchOrderCheck. Dev/e2e only.
+  decodeBenchOrderCheck(args: OrderCheckArgs): Promise<OrderCheckResult>;
   /// Imperative read of the global playhead store (µs). Search-palette e2e
   /// uses this to prove a caption/clip jump (Enter on a result row) actually
   /// moved the playhead, without importing the bundled store module.
@@ -369,6 +383,7 @@ export function installDecodeBenchHooks(): void {
   if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
   hookSlot().decodeBenchRun = decodeBenchRun;
   hookSlot().decodeBenchPhase = decodeBenchPhase;
+  hookSlot().decodeBenchOrderCheck = decodeBenchOrderCheck;
 }
 
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,

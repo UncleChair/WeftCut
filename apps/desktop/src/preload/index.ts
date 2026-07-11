@@ -283,14 +283,47 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
   if (a) importedByKey.set(`${a.streamId}:${a.slot}`, data.importedSharedTexture)
 })
 
+// Cross-device read-completion barrier (native-hw frame-REORDER fix).
+//
+// The shared NV12 slot texture is overwritten IN PLACE by the native decode
+// thread — on ffmpeg's OWN D3D11 device — as soon as the slot is `consumeAck`ed.
+// Chromium reads that texture (getVideoFrame → createImageBitmap) on the
+// SEPARATE GPU-process device. Unlike a same-process WebCodecs VideoFrame (whose
+// buffer Chromium won't recycle until its own createImageBitmap copy completes),
+// Chromium CANNOT track this cross-device write dependency, and
+// `await createImageBitmap` resolves before its read has actually GPU-completed.
+// So acking right after the await frees the slot while the read is still in
+// flight; the producer then overwrites it with the frame POOL_SIZE ahead, and
+// the ImageBitmap captures the wrong frame's pixels tagged with this frame's PTS
+// (observed: decoded index = expected + pool_size). The ring self-sorts by PTS,
+// so this surfaces as out-of-order playback, not tearing.
+//
+// Fix: before acking, rasterize a 1px sample of the bitmap. `getImageData`
+// forces Chromium to materialize the createImageBitmap copy — a GPU dependency
+// it must block on — which cannot resolve until the source-texture read has
+// landed. Once this returns, the read is done, so the slot is safe to recycle.
+// One reused 1×1 canvas; the readback is a pipeline flush, not a frame-sized
+// transfer.
+let readBarrierCtx: OffscreenCanvasRenderingContext2D | null | undefined
+function forceSharedTextureReadComplete(bmp: ImageBitmap): void {
+  if (readBarrierCtx === undefined) {
+    readBarrierCtx = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true })
+  }
+  if (!readBarrierCtx) return // no 2D context available — barrier unavailable
+  readBarrierCtx.drawImage(bmp, 0, 0, 1, 1)
+  readBarrierCtx.getImageData(0, 0, 1, 1)
+}
+
 // Per-frame loop — this is where the ACK-AFTER-READ discipline lives. On a
 // frameReady poke: snapshot the slot's shared texture into an ImageBitmap, post
 // it to the main world over the MessagePort, and ONLY THEN consumeAck. The ack
-// must fire after createImageBitmap resolves — the snapshot is complete then, so
-// native may safely reuse the slot. Acking earlier would let native overwrite
-// the slot mid-read (tearing). Native's AcquireSync on a still-held slot now
-// times out (finite, Error-poke + skip) rather than hanging, but an early ack
-// would still cost a dropped/torn frame, so the ordering stays load-bearing.
+// must fire after the snapshot's cross-device read has GPU-COMPLETED (forced by
+// `forceSharedTextureReadComplete` — `createImageBitmap` resolving is NOT that
+// guarantee across devices, see above), so native may safely reuse the slot.
+// Acking earlier lets native overwrite the slot mid-read (reorder/tearing).
+// Native's AcquireSync on a still-held slot now times out (finite, Error-poke +
+// skip) rather than hanging, but an early ack would still corrupt a frame, so
+// the ordering stays load-bearing.
 //
 // The ack must ALSO fire if createImageBitmap (or the port post) throws — once
 // getVideoFrame() has been called, the slot is spoken for, and vf.close() in
@@ -327,6 +360,11 @@ ipcRenderer.on(
       } finally {
         vf?.close?.()
       }
+      // Barrier: block until Chromium's cross-device read of the slot texture
+      // into `bmp` has GPU-completed, BEFORE the outer finally's consumeAck
+      // frees the slot for the producer to overwrite. Without this the native-hw
+      // lane presents frames pool_size out of order (see the block comment).
+      forceSharedTextureReadComplete(bmp)
       const residentMs = performance.now() - tEntry
       port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs }, [bmp])
     } catch (err) {
