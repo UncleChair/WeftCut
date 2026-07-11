@@ -147,7 +147,10 @@ cross-platform rather than Windows-only. It covers the WebCodecs-blind
 families (ProRes, DNxHD/DNxHR, MPEG-2, VC-1/WMV3) with per-family decoder
 threading (intra families slice-only; long-GOP frame+slice) and runs against
 the `prores-1080` / `prores-2160` / `dnxhr-1080` / `mpeg2-1080` fixtures;
-there's no `sw` cell for the H.264/HEVC/VP9/AV1 rows.
+there's no `sw` cell for the H.264/HEVC/VP9/AV1 rows. VC-1/WMV3 has no
+fixture here and never will: ffmpeg decodes it but has no VC-1/WMV3
+encoder, so the family can't be synthesized — it stays covered by the
+routing test and the codec-agnostic decoder instead of a bench row.
 
 ## What it deliberately is not
 
