@@ -42,6 +42,21 @@ export function assertLgplBanner(configuration) {
   }
 }
 
+/** Remove the bin/ executables (ffmpeg/ffprobe/ffplay), leaving a *.dll-only
+ *  dir. They're needed only transiently for the banner check above; they must
+ *  NOT linger. The loader (main/native-decode.ts) prepends this dir to PATH so
+ *  the addon's avcodec DLLs resolve at dlopen — which ALSO puts any bin/*.exe
+ *  ahead of the sidecar ffmpeg on PATH. This LGPL build has no libx264/x265, so
+ *  a lingering ffmpeg.exe makes every dev transcode (proxy/export) fail
+ *  `Unknown encoder 'libx264'`. The packaged app already ships this dir as
+ *  *.dll-only (extraResources filter — ADR 0030 / Task 4); strip here so the dev
+ *  dir matches. Idempotent (force: ignores already-absent). */
+function stripBinExes(binDir) {
+  for (const exe of ['ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe']) {
+    rmSync(join(binDir, exe), { force: true })
+  }
+}
+
 function main() {
   if (process.platform !== 'win32') {
     console.log('fetch-ffmpeg-lgpl: Windows-only (component ships on Windows in v1); skipping.')
@@ -50,6 +65,7 @@ function main() {
   if (existsSync(manifestPath)) {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
     assertLgplBanner(m.configuration) // re-assert even on the cached copy
+    stripBinExes(join(dest, 'bin')) // heal a dir fetched before the exe-strip fix
     console.log(`ffmpeg-lgpl already present (${m.asset}); banner clean.`)
     return
   }
@@ -82,6 +98,9 @@ function main() {
   const configLine = versionOut.split(/\r?\n/).find((l) => l.startsWith('configuration:')) ?? ''
   const configuration = configLine.replace(/^configuration:\s*/, '')
   assertLgplBanner(configuration)
+  // Banner captured — the exes have served their purpose; strip them so the dev
+  // dir is *.dll-only like the packaged one (see stripBinExes).
+  stripBinExes(join(dest, 'bin'))
   writeFileSync(manifestPath, JSON.stringify({
     asset: ASSET, url: URL, sha256, configuration,
     fetchedAt: new Date().toISOString(),
