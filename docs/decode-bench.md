@@ -195,28 +195,31 @@ npm run bench:decode:fixtures           # generate the synthetic fixture matrix 
 npm run bench:decode                    # run the full matrix
 ```
 
-To also measure the **native** strategy, the addon must be built with the
-Windows-only `preview-gpu` feature, which links `ffmpeg-next` and needs the
-FFmpeg dev libs + libclang on the build environment (`FFMPEG_DIR` and
-`LIBCLANG_PATH`; see the native path's setup notes). That feature is
-deliberately **not** in the CI feature-union (`jobs,export,mcp,cloud`) — GPU
-decode is meaningless on a headless runner — so it's added only for local
-bench builds:
+To also measure the **native** strategy, build the `@weftcut/native-decode`
+component (Windows-only, v1 distribution scope) — it links `ffmpeg-next` and
+needs the LGPL FFmpeg dev libs + libclang on the build environment
+(`FFMPEG_DIR` and `LIBCLANG_PATH`; the wrapper script defaults both from the
+fetched dir / standard LLVM install):
 
 ```bash
-FFMPEG_DIR=… LIBCLANG_PATH=… \
-  napi build --platform --release --manifest-path native/Cargo.toml \
-  --output-dir native --features jobs,export,mcp,cloud,preview-gpu
+npm run fetch-ffmpeg-lgpl                # fetch the LGPL FFmpeg dev libs into resources/ffmpeg-lgpl/win
+npm run napi:build:decode                # build @weftcut/native-decode (component; no cargo features — union rule is per-addon)
 ```
 
+This is on top of the `npm run napi:build` (core) step already run above; CI
+builds + tests the component on the Windows leg only (GPU decode is
+meaningless on a headless runner, and macOS/Linux don't fetch the LGPL dir).
+
 At run time the native strategy also needs the FFmpeg shared DLLs on `PATH`
-(the linked `ffmpeg-next`, distinct from the sidecar `ffmpeg.exe`).
+(the linked `ffmpeg-next`, distinct from the sidecar `ffmpeg.exe`) —
+`resources/ffmpeg-lgpl/win/bin`.
 
 Useful flags, passed after `--` when invoked through npm:
 
 - `--strategy webcodecs|native|sw` — which decode path to profile (default
-  `webcodecs`). `native` requires a `preview-gpu` build (above); it's
-  Windows-only and applies to the `Proxied`-route 8-bit codecs (see
+  `webcodecs`). `native` requires the `@weftcut/native-decode` component
+  build (above); it's Windows-only and applies to the `Proxied`-route 8-bit
+  codecs (see
   [Native strategy](#native-strategy)). `sw` benches the native
   **software**-decode path (see below).
 - `--fixture <name>|all` — one fixture (`h264-1080`, `hevc-1080`,

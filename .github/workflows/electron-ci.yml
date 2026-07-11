@@ -79,20 +79,6 @@ jobs:
       - name: Build napi addon
         run: npm run napi:build
 
-      # Typecheck + unit tests are OS-independent, so run them once on the Linux
-      # leg (which already skips the napi cargo tests) rather than 3x. Neither was
-      # gated by CI before — the esbuild build does no type-checking and vitest
-      # wasn't run at all — so TS-type and unit regressions could slip through
-      # green. Placed after napi:build (needs its generated .d.ts/.node) and before
-      # the heavier ffmpeg/build/e2e/package so a failure fails fast.
-      - name: Typecheck (tsc -b)
-        if: runner.os == 'Linux'
-        run: npm run typecheck
-
-      - name: Unit tests (vitest)
-        if: runner.os == 'Linux'
-        run: npm test
-
       # Cache the fetched ffmpeg/ffprobe so repeat runs skip the CDN download —
       # fetch-ffmpeg no-ops when the binaries already exist. Keyed on the OS and
       # the fetch script (which pins FFMPEG_VERSION), so a version/source change
@@ -123,6 +109,45 @@ jobs:
             echo "$PWD/resources/ffmpeg/mac" >> "$GITHUB_PATH"
           fi
 
+      # ── @weftcut/native-decode (Windows only; v1 distribution scope) ──
+      - name: Cache ffmpeg-lgpl
+        if: runner.os == 'Windows'
+        uses: actions/cache@v5
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
+
+      - name: Fetch LGPL ffmpeg (native-decode)
+        if: runner.os == 'Windows'
+        run: npm run fetch-ffmpeg-lgpl
+
+      - name: Build native-decode addon
+        if: runner.os == 'Windows'
+        run: npm run napi:build:decode
+        # windows-latest ships LLVM at C:\Program Files\LLVM; the wrapper
+        # defaults LIBCLANG_PATH there and FFMPEG_DIR to the fetched dir.
+
+      - name: Put LGPL DLLs on PATH (native-decode runtime)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
+
+      # Typecheck + unit tests are OS-independent, so run once on the Windows
+      # leg — the only leg that builds BOTH addons (native-decode's generated
+      # index.d.ts is a typecheck input). Neither was gated by CI before — the
+      # esbuild build does no type-checking and vitest wasn't run at all — so
+      # TS-type and unit regressions could slip through green. Placed after
+      # both napi:build and napi:build:decode (needs their generated
+      # .d.ts/.node) and before the heavier build/e2e/package so a failure
+      # fails fast.
+      - name: Typecheck (tsc -b)
+        if: runner.os == 'Windows'
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        if: runner.os == 'Windows'
+        run: npm test
+
       # Build the renderer + main bundles with the E2E hook env var set.
       # Must use bash shell so the inline env-var prefix works on Windows.
       - name: Build app (E2E mode)
@@ -151,6 +176,12 @@ jobs:
           # feature). export+cloud both pull in jobs, so this compiles every
           # #[cfg(feature)] module. Keep in lockstep with the napi:build script.
           cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # Component crate: no cargo features (union rule is per-addon).
+            FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win" \
+            LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin" \
+            cargo test --manifest-path native/decode/Cargo.toml
+          fi
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
       # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
