@@ -2570,7 +2570,6 @@ dependencies = [
  "base64",
  "blake3",
  "chrono",
- "ffmpeg-next",
  "ffmpeg-sidecar",
  "image",
  "image-compare",
@@ -2593,7 +2592,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "weftcut-eval",
- "windows",
 ]
 
 [[package]]

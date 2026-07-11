@@ -7,14 +7,14 @@
 // the callback captures `win`, so routing is automatic (no
 // `Map<streamId, webContents>` needed).
 import type { BrowserWindow } from 'electron'
-import type { Backend } from '@weftcut/core'
+import type { NativeDecode } from '@weftcut/native-decode'
 
 /// Open a native SW-decode session. Synchronous on the addon side: returns
 /// frame dimensions immediately, and registers the frame callback BEFORE the
 /// decode thread spawns, so no early frame is dropped. Frames only start
 /// flowing after `requestFrameAtPreviewSw`.
 export function openPreviewSw(
-  backend: Backend,
+  backend: NativeDecode,
   win: BrowserWindow,
   streamId: string,
   path: string,
@@ -30,12 +30,12 @@ export function openPreviewSw(
 /// Move the session's decode anchor. targetUs is source microseconds; the
 /// addon takes it as f64 (napi has no ergonomic i64 param) and casts down
 /// internally. Fire-and-forget: frames arrive via the registered callback.
-export function requestFrameAtPreviewSw(backend: Backend, streamId: string, targetUs: number): void {
+export function requestFrameAtPreviewSw(backend: NativeDecode, streamId: string, targetUs: number): void {
   backend.previewSwRequestFrameAt(streamId, targetUs)
 }
 
 /// Tear down a session. Delegates straight to the addon, which closes+joins
 /// the decode thread before dropping the per-stream ThreadsafeFunction.
-export function closePreviewSw(backend: Backend, streamId: string): void {
+export function closePreviewSw(backend: NativeDecode, streamId: string): void {
   backend.previewSwClose(streamId)
 }

@@ -3,6 +3,7 @@ import type { SharedTextureImported } from 'electron'
 import type {
   WeftcutApi,
   AppNotice,
+  DecodeComponentStatus,
   DialogOpenOpts,
   DialogSaveOpts,
   DirEntry,
@@ -197,6 +198,12 @@ const api: WeftcutApi = {
       ipcRenderer.on('previewSw:frame', h)
       return () => { ipcRenderer.removeListener('previewSw:frame', h) }
     },
+  },
+
+  // Availability of the optional native-decode component (level-0 gate). Pulled
+  // once on mount by the renderer's decodeComponentStore.
+  decodeComponent: {
+    status: () => ipcRenderer.invoke('decodeComponent:status') as Promise<DecodeComponentStatus>,
   },
 }
 

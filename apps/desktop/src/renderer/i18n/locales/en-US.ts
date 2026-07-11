@@ -403,6 +403,10 @@ const enUS = {
       title: "Cloud API keys aren't encrypted",
       body: "No OS keyring is available, so cloud API keys are saved to disk without encryption (cloud_keys.json). Install a keyring (e.g. GNOME Keyring / KWallet), or protect your user-data folder.",
     },
+    native_decode_unavailable: {
+      title: "Native decode engine unavailable",
+      body: "The native decode component (@weftcut/native-decode) failed to load, so previews use the WebCodecs engine only. Reinstall the app to restore it.",
+    },
   },
   import_proxy: {
     title: "Some clips need optimizing",

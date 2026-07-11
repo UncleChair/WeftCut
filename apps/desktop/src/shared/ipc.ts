@@ -146,6 +146,14 @@ export type PreviewSwFrameMsg = {
   data: Uint8Array
 }
 
+/// Availability of the optional @weftcut/native-decode component (level-0
+/// gate, dual-engine spec). `reason` is the require error when unavailable.
+export interface DecodeComponentStatus {
+  available: boolean
+  reason: string | null
+  version: string | null
+}
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -230,6 +238,10 @@ export interface WeftcutApi {
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void
   }
+  /// Availability of the optional @weftcut/native-decode component (level-0
+  /// gate). The renderer pulls this once on mount (availability is fixed for a
+  /// process lifetime — the require is memoized in main).
+  decodeComponent: { status(): Promise<DecodeComponentStatus> }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
   /// Broadcast an event to every app window (delivered to `on()` subscribers as

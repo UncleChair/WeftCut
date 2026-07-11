@@ -23,6 +23,7 @@ import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-proje
 import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu } from './previewGpu.js'
 import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
+import { loadNativeDecode } from './native-decode.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -197,15 +198,35 @@ app.whenReady().then(async () => {
         }
         // flag-off: Rust is authoritative and never emits this event — fall through is defensive
       }
-      if (event === 'previewGpu:frameReady') {
-        const p = payload as { streamId: string; slot: number }
-        recordFrameReadySent(p.streamId, p.slot, performance.now())
-      }
       mainWindow?.webContents.send('evt:' + event, payload)
     },
   )
   await backend.init()
   console.log('[main] backend init OK')
+
+  // Optional native-decode component (level-0 gate). Its events use the same
+  // {event, payload} envelope as the core backend; relay through evt:* so the
+  // preload's existing previewGpu listeners keep working unchanged.
+  const nd = loadNativeDecode((_err, json) => {
+    try {
+      const { event, payload } = JSON.parse(json) as { event: string; payload: unknown }
+      if (event === 'previewGpu:frameReady') {
+        const p = payload as { streamId: string; slot: number }
+        recordFrameReadySent(p.streamId, p.slot, performance.now())
+      }
+      mainWindow?.webContents.send('evt:' + event, payload)
+    } catch (e) {
+      console.warn('[main] native-decode event parse failed', e)
+    }
+  })
+  if (!nd.backend) {
+    console.warn('[main] native-decode component unavailable:', nd.reason)
+    startupNotices.push({ level: 'info', code: 'native_decode_unavailable' })
+  }
+  const ndBackend = (): NonNullable<typeof nd.backend> => {
+    if (!nd.backend) throw new Error('native-decode component unavailable')
+    return nd.backend
+  }
 
   const { encryptionAvailable } = await import('./keys.js')
   if (!encryptionAvailable()) {
@@ -442,20 +463,29 @@ app.whenReady().then(async () => {
     (e, a: { streamId: string; path: string; poolSize: number; colorSpace: Electron.ColorSpace }) => {
       const win = BrowserWindow.fromWebContents(e.sender) ?? mainWindow
       if (!win) throw new Error('previewGpu:open — no window for sender')
-      return openPreviewGpu(backend!, win, a.streamId, a.path, a.poolSize, a.colorSpace)
+      return openPreviewGpu(ndBackend(), win, a.streamId, a.path, a.poolSize, a.colorSpace)
     },
   )
   ipcMain.handle('previewGpu:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
-    requestFrameAtPreviewGpu(backend!, a.streamId, a.targetUs),
+    requestFrameAtPreviewGpu(ndBackend(), a.streamId, a.targetUs),
   )
   ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number }) => {
     // Record the round-trip at handler entry (t_ack_received) BEFORE forwarding.
     recordConsumeAck(a.streamId, a.slot, performance.now())
-    return consumeAckPreviewGpu(backend!, a.streamId, a.slot)
+    return consumeAckPreviewGpu(ndBackend(), a.streamId, a.slot)
   })
-  ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(backend!, a.streamId))
-  ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(backend!, a.streamId))
+  ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(ndBackend(), a.streamId))
+  ipcMain.handle('previewGpu:takeTimings', (_e, a: { streamId: string }) => takeTimingsPreviewGpu(ndBackend(), a.streamId))
   ipcMain.handle('previewGpu:takeMainTimings', () => takeMainTimings())
+
+  // Availability of the optional native-decode component (level-0 gate). The
+  // renderer pulls this once on mount to gray out the Native-engine setting +
+  // surface the startup notice when the require failed.
+  ipcMain.handle('decodeComponent:status', () => ({
+    available: !!nd.backend,
+    reason: nd.reason,
+    version: nd.version,
+  }))
 
   // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
   // WebCodecs-blind-format path). Frames flow out of band on the dedicated
@@ -464,17 +494,17 @@ app.whenReady().then(async () => {
   ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string }) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) throw new Error('previewSw:open — no window for sender')
-    return openPreviewSw(backend!, win, a.streamId, a.path)
+    return openPreviewSw(ndBackend(), win, a.streamId, a.path)
   })
   ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) => {
     // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer
     // race) — this is a fire-and-forget .on listener, not .handle, so an uncaught
     // throw here would be an uncaught exception in the main process. Swallow.
-    try { requestFrameAtPreviewSw(backend!, a.streamId, a.targetUs) }
+    try { requestFrameAtPreviewSw(ndBackend(), a.streamId, a.targetUs) }
     catch (e) { console.warn('[main] previewSw:requestFrameAt failed', e) }
   })
   ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => {
-    try { closePreviewSw(backend!, a.streamId) }
+    try { closePreviewSw(ndBackend(), a.streamId) }
     catch (e) { console.warn('[main] previewSw:close failed', e) }
   })
 

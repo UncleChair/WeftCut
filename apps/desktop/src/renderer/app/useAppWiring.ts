@@ -17,6 +17,7 @@ import { wireLogStream } from "../logs/store";
 import { wireSearchIndex } from "../search/searchIndexStore";
 import { wireProjectStore } from "../state/projectStore";
 import { wireAppSettingsStream } from "../settings/appSettingsStore";
+import { wireDecodeComponent } from "../settings/decodeComponentStore";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
 /// agent-session state (seeded on mount, kept live via
@@ -179,6 +180,13 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
       cancelled = true;
       if (unlisten) unlisten();
     };
+  }, []);
+
+  // Native-decode component availability (level-0 gate). Pulled once on mount;
+  // availability is fixed for a process lifetime (the require is memoized in
+  // main), so this is fire-and-forget — no subscription, no unlisten.
+  useEffect(() => {
+    void wireDecodeComponent();
   }, []);
 
   // Project-change subscription — fired by the actor whenever a commit lands,

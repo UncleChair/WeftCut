@@ -31,12 +31,6 @@ mod export;
 mod cloud;
 #[cfg(feature = "mcp")]
 mod mcp;
-#[cfg(all(windows, feature = "preview-gpu"))]
-mod preview_gpu;
-// Cross-platform pure-software preview decode (WebCodecs-blind formats: ProRes,
-// DNxHD, MPEG-2, VC-1). No `windows` cfg — libavcodec SW decode has no D3D11 dep.
-#[cfg(feature = "preview-sw")]
-mod preview_sw;
 
 mod logs;
 mod agent_session;

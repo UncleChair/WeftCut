@@ -13,7 +13,7 @@
 // selection gate upstream (Task 7) decides when a GPU session is even opened.
 import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
-import type { Backend } from '@weftcut/core'
+import type { NativeDecode } from '@weftcut/native-decode'
 import type { PreviewGpuTimingReport } from '../shared/ipc'
 import { clearMainPendingFor } from './previewGpuTiming.js'
 
@@ -36,7 +36,7 @@ const sessions = new Map<string, GpuSession>()
 /// FIFO order of the `previewGpu:slot` announces, and each announce must be
 /// enqueued renderer-side before its sendSharedTexture makes the receiver fire.
 export async function openPreviewGpu(
-  backend: Backend,
+  backend: NativeDecode,
   win: BrowserWindow,
   streamId: string,
   path: string,
@@ -88,20 +88,20 @@ export async function openPreviewGpu(
 
 /// Move the session's decode anchor. targetUs is source microseconds; the addon
 /// takes it as f64 (napi has no ergonomic i64 param) and casts down internally.
-export function requestFrameAtPreviewGpu(backend: Backend, streamId: string, targetUs: number): void {
+export function requestFrameAtPreviewGpu(backend: NativeDecode, streamId: string, targetUs: number): void {
   backend.previewGpuRequestFrameAt(streamId, targetUs)
 }
 
 /// Release a slot back to the native pool. Called by the preload's per-frame
 /// loop AFTER createImageBitmap resolves (the ack-after-read contract) — never
 /// before, or the native side could overwrite the slot mid-read.
-export function consumeAckPreviewGpu(backend: Backend, streamId: string, slot: number): void {
+export function consumeAckPreviewGpu(backend: NativeDecode, streamId: string, slot: number): void {
   backend.previewGpuConsumeAck(streamId, slot)
 }
 
 /// Drain a session's Stage-3 timing samples. Delegates straight to the addon;
 /// the registry drains its accumulator and returns the ms summaries.
-export function takeTimingsPreviewGpu(backend: Backend, streamId: string): PreviewGpuTimingReport {
+export function takeTimingsPreviewGpu(backend: NativeDecode, streamId: string): PreviewGpuTimingReport {
   return backend.previewGpuTakeTimings(streamId)
 }
 
@@ -115,7 +115,7 @@ export function takeTimingsPreviewGpu(backend: Backend, streamId: string): Previ
 /// call the native close a SECOND time on an unknown/already-closed stream —
 /// which the native registry may reject. Gate on sessions.has() so a caller can
 /// always call close() exactly once per open() attempt, succeeded or not.
-export function closePreviewGpu(backend: Backend, streamId: string): void {
+export function closePreviewGpu(backend: NativeDecode, streamId: string): void {
   // Drop any un-acked send stamps for this stream so a frame in flight at
   // teardown can't leak a pending-map entry (decode-bench signal attribution).
   clearMainPendingFor(streamId)
