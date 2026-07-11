@@ -12,6 +12,10 @@ files:
   - "**/node_modules/@weftcut/core/index.js"
   - "**/node_modules/@weftcut/core/index.d.ts"
   - "**/node_modules/@weftcut/core/*.node"
+  - "!**/node_modules/@weftcut/native-decode/**"
+  - "**/node_modules/@weftcut/native-decode/index.js"
+  - "**/node_modules/@weftcut/native-decode/index.d.ts"
+  - "**/node_modules/@weftcut/native-decode/*.node"
 asarUnpack:
   - "**/*.node"
 extraResources:
@@ -30,6 +34,17 @@ win:
   target: [nsis]
   icon: build/icon-256.png
   artifactName: ${productName}-${version}-${arch}.${ext}
+  extraResources:
+    # LGPL ffmpeg runtime for @weftcut/native-decode (dynamic linking + separate
+    # files satisfies LGPL §6; LICENSE + manifest.json carry the notice + exact
+    # source pointer). *.dll only — the exes in bin/ are fetch-time tooling.
+    - from: resources/ffmpeg-lgpl/win/bin
+      to: native-decode
+      filter: ["*.dll"]
+    - from: resources/ffmpeg-lgpl/win/LICENSE.txt
+      to: native-decode/LICENSE.txt
+    - from: resources/ffmpeg-lgpl/win/manifest.json
+      to: native-decode/manifest.json
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
