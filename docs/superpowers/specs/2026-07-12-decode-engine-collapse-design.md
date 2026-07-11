@@ -179,17 +179,24 @@ interface DecodeTransport {
 `FfmpegSource` wires `transport.onFrame → this.ring.push`, owns `onFirstFrame`, `isIdle`,
 `requestFrameAt` (delegates to the live transport), and `dispose`.
 
-### 4. Proxy source preference (new, minimal)
+### 4. Proxy source axis (forward-compat shape only this bite)
 
-There is no per-media "use proxy" control today. Add the smallest thing that makes the
-`source` axis real and powers the "Generate proxy" affordance:
+The `source` axis is part of the model, but its *activation* is deferred with "Generate
+proxy" (§7). Recon finding: proxy jobs are backend-orchestrated at import by route; there is
+no on-demand "build a proxy for this media" command and no per-media "use proxy" control, so
+nothing populates a proxy-source preference in this bite.
 
-- A session `Set<mediaId>` `useProxySource` in the capability/session module.
-- The "Generate proxy" affordance (§7) adds the mediaId after the proxy build completes;
-  the resolver then returns `source:"proxy"` for that media and the no-flash swap moves it
-  onto the proxy.
-- Persistence across sessions is **out of scope** for this bite (a follow-up; the set rebuilds
-  from user action). Documented, not silent.
+- The resolver **takes** `useProxySource: boolean` (the axis is real and typed).
+- PixiPreview passes `false` for now — no activation path exists yet. A one-line comment marks
+  the follow-up that flips it.
+- The `Set<mediaId>` infrastructure and its trigger are **deferred to the Generate-proxy
+  follow-up** (YAGNI — build the set alongside the thing that writes it).
+
+**Accepted consequence (documented, not silent):** on a machine with *no* FFmpeg component
+(macOS/Linux; not a shipping target — v1 bundles the component on Windows only), a media that
+WebCodecs can't decode shows `unsupported` even if a proxy already exists on disk, because the
+proxy is no longer auto-routed and there is no opt-in trigger yet. The Generate-proxy follow-up
+closes this.
 
 ### 5. Pool changes
 
@@ -214,17 +221,22 @@ sweeper are unchanged (the sweeper's `isIdle` contract is preserved by `FfmpegSo
 - `rsFromExportProxy` (`:195`) returns `{ engine:"webcodecs", source:"proxy", ... }` — a
   mechanical shape change; **export behavior is byte-identical**.
 
-### 7. Unsupported UI — full affordance
+### 7. Unsupported UI — placeholder card + Switch to Standard
 
-When `status === "unsupported"`, the Compositor renders a placeholder card over the clip
-(not a black frame) with two inline actions:
+When a clip on-screen resolves to `status === "unsupported"`, PixiPreview renders a React
+overlay card (not a black frame) with one action this bite:
 
-- **Switch to Standard** — sets `decode_engine = "ffmpeg"` (existing settings write). Only
-  shown when `componentAvailable`.
-- **Generate proxy** — triggers the existing proxy/transcode build for the media; on
-  completion, adds the media to `useProxySource` (§4) so preview swaps onto the proxy.
+- **Switch to Standard** — sets `decode_engine = "ffmpeg"` via the existing settings-apply
+  path. Only shown when `componentAvailable` (on a no-component machine the card states the
+  format is unsupported by the Lite engine, with no switch action).
 
-Copy is i18n'd (en-US + zh-CN, per project i18n policy).
+Plumbing: the Compositor surfaces unsupported media via an `onUnsupported(mediaId)`
+notification (mirroring its existing repaint/first-frame callbacks) and skips acquiring a
+handle for them; PixiPreview tracks the set of currently-on-screen unsupported media and
+renders the card. Copy is i18n'd (en-US + zh-CN).
+
+**"Generate proxy" is a separate follow-up plan** — it needs a new on-demand backend
+proxy-build command (§4 recon finding), out of scope here.
 
 ### 8. Settings + naming migration
 
@@ -307,6 +319,7 @@ Copy is i18n'd (en-US + zh-CN, per project i18n policy).
 - Preview/export **session-interface split** (`PreviewDecodeSession` / `ExportDecodeSession`)
   — the next bite; `FfmpegSource` keeps implementing the shared `DecoderHandle` for now.
 - **Export-side native decode** and the export proxy-policy flip (the old D5/D6).
-- **Persisted** per-media proxy-source preference.
+- **"Generate proxy" on-demand** — a new backend proxy-build command + button wiring + the
+  `useProxySource` `Set<mediaId>` and its persistence (its own follow-up plan).
 - Unified `DecodedFrame` metadata/ownership standardization (external suggestion #2) — safe to
   do later; the union already exists.
