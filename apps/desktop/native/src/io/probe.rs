@@ -254,7 +254,9 @@ pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => MediaKind::Video,
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" | "mpg" | "mpeg" | "m2v" => {
+            MediaKind::Video
+        }
         "wav" | "mp3" | "flac" | "aac" | "ogg" | "m4a" | "opus" => MediaKind::Audio,
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "avif" | "apng" => {
             MediaKind::Image

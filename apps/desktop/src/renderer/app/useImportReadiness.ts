@@ -352,7 +352,7 @@ export function useImportReadiness(deps: {
           // EXCEPT tif/tiff: Electron/Chromium's createImageBitmap can't decode TIFF,
           // so offering it would import a layer that composites nothing.
           extensions: [
-            "mp4", "mov", "mkv", "webm", "avi", "m4v",
+            "mp4", "mov", "mkv", "webm", "avi", "m4v", "mpg", "mpeg", "m2v",
             "wav", "mp3", "flac", "aac", "m4a", "ogg", "opus",
             "png", "jpg", "jpeg", "gif", "webp", "bmp",
             "srt", "ass", "vtt",
