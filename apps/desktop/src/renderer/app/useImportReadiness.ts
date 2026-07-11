@@ -241,9 +241,10 @@ export function useImportReadiness(deps: {
         // `if (cancelled) return` still stops STARTING new probes after cancel.)
         if (ok) {
           memo.set(m.id, "ok");
-          // A paused clip already on the timeline won't re-run ensureClip on
-          // its own; nudge the compositor to re-resolve now that the bridge is
-          // live for this source.
+          // A paused clip already on the timeline won't re-run ensureClip on its
+          // own; nudge the compositor to re-run ENGINE resolution now that this
+          // source's WebCodecs-original probe (tier 2) reads "ok" — the resolver
+          // can promote it from the proxy to decoding the original.
           previewRef.current?.refreshSources();
         } else {
           memo.delete(m.id);

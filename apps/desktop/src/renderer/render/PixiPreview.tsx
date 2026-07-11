@@ -24,20 +24,23 @@ import {
 } from "../state/playbackStore";
 import { useProjectStore } from "../state/projectStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { useDecodeComponentStore } from "../settings/decodeComponentStore";
 import { containMap } from "../colorpick/pixel";
 import {
   clearPreviewSampler,
   registerPreviewSampler,
   type PreviewSampler,
 } from "../colorpick/previewSamplerRegistry";
-import { previewPathLive } from "./decodeRoute";
+import { resolveDecode } from "./decodeRoute";
+import { resolveEngineTier } from "./decoder/decodeEngine";
+import { laneStatesFor, noteResolution } from "./decoder/decodeCapability";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
 import {
   setEffectDisabled,
   subscribeEffectOverrides,
 } from "./effects/effectOverrides";
 import { subscribeMotifCatalog } from "./motifs/catalog";
-import { Compositor } from "./Compositor";
+import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
 import { PerfHUD } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
@@ -134,15 +137,39 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
 
-      const proxyAssetUrl = (mediaId: string): string | null => {
+      // THE preview decode resolver (D2): the single injected gatherer that
+      // reads the live stores, runs the PURE `resolveEngineTier`, and returns the
+      // resolved source (tier + decode target + swap key). It collapses the old
+      // `proxyAssetUrl` + `nativeSwSourceFor` bridges into one. Impure by design
+      // (store reads) but hands only plain values into the pure core; a
+      // mid-session probe/setting/component flip takes effect on the next
+      // `ensureClip` because every input is read live per call.
+      const resolveSource = (mediaId: string): ResolvedRendererSource | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         if (!m) return null;
-        // Bridge flag is session-scoped (App's decodeProbeMemo via the prop);
-        // read live each call so a mid-session probe flip takes effect on the
-        // next ensureClip.
-        const previewDecodable = previewDecodableOf?.(mediaId) ?? false;
-        const path = previewPathLive(m, { previewDecodable });
-        return path ? convertFileSrc(path) : null;
+        const lanes = laneStatesFor(mediaId, m);
+        const r = resolveEngineTier({
+          setting: useAppSettingsStore.getState().settings.decode_engine,
+          componentAvailable: useDecodeComponentStore.getState().available,
+          media: { path: m.path, decode_route: m.decode_route },
+          // Session probe memo (App's decodeProbeMemo via the prop) — read live
+          // so a mid-session probe flip feeds tier 2 on the next ensureClip.
+          webcodecsOriginal: (previewDecodableOf?.(mediaId) ?? false) ? "ok" : "untested",
+          nativeHw: lanes.nativeHw,
+          nativeSw: lanes.nativeSw,
+          downgraded: lanes.downgraded,
+          proxyPreviewPath: resolveDecode(m).previewPath,
+        });
+        noteResolution(mediaId, r);
+        return {
+          tier: r.tier,
+          forceStrategy: r.forceStrategy,
+          sourcePath: r.sourcePath,
+          // convertFileSrc HERE (the impure edge) so the Compositor + pure core
+          // stay URL-scheme-agnostic; native lanes carry `sourcePath` instead.
+          assetUrl: r.url ? convertFileSrc(r.url) : null,
+          key: r.key,
+        };
       };
       const originalAssetUrl = (mediaId: string): string | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
@@ -155,21 +182,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
-      // Native-SW preview resolver: returns the ORIGINAL file path when the
-      // decode engine is pinned to `native` and this media is routed
-      // `native-sw`, else null. Both stores are read imperatively (live) so a
-      // setting flip takes effect on the next clip acquire without
-      // reconstructing the Compositor.
-      // TEMPORARY bridge (Task 8): preserves the old toggle-ON behavior under
-      // the new setting name. Task 9 deletes this function entirely and
-      // replaces it with the decodeEngine.ts resolver (auto/native/webcodecs
-      // tiering), so this gate intentionally does not yet handle "auto".
-      const nativeSwSourceFor = (mediaId: string): string | null => {
-        if (useAppSettingsStore.getState().settings.decode_engine !== "native")
-          return null;
-        const m = useProjectStore.getState().mediaById.get(mediaId);
-        return m?.decode_route?.route === "native-sw" ? m.path : null;
-      };
       const conformAssetUrl = (mediaId: string): string | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         const p = m?.conform_path;
@@ -181,11 +193,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         width: app.canvas.width,
         height: app.canvas.height,
         mode: "preview",
-        proxyAssetUrl,
+        resolveSource,
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
-        nativeSwSourceFor,
         conformAssetUrl,
       });
       const initialSummary = useProjectStore.getState().summary;

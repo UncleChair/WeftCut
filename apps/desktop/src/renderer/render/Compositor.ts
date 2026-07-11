@@ -31,6 +31,7 @@ import {
 } from "./decoder/SourceDecoderPool";
 import { NativeGpuSourceHandle } from "./decoder/NativeGpuSourceHandle";
 import { SwSourceHandle } from "./decoder/SwSourceHandle";
+import type { EngineTier } from "./decoder/decodeEngine";
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
@@ -127,11 +128,11 @@ export interface UpcomingClipPrewarmSnapshot {
 
 /// E2E-only diagnostic snapshot of ONE active VideoClip's decode source plus
 /// its bound sprite. The preview-sw conformance spec reads this to prove the
-/// runtime path (import → native-sw route → `nativeSwSourceFor` → acquire) ends
-/// in a real `SwSourceHandle` AND that a decoded frame reached the sprite —
-/// the single runtime fact no other surface exposes (Task 8b was typecheck-only
-/// before this). All fields are plain numbers/strings/booleans so the whole
-/// thing survives the `page.evaluate` boundary.
+/// runtime path (import → native-sw route → `resolveSource` resolves tier 3 →
+/// acquire) ends in a real `SwSourceHandle` AND that a decoded frame reached
+/// the sprite — the single runtime fact no other surface exposes (Task 8b was
+/// typecheck-only before this). All fields are plain numbers/strings/booleans
+/// so the whole thing survives the `page.evaluate` boundary.
 export interface ActiveClipProbe {
   layerId: string;
   mediaId: string;
@@ -139,8 +140,9 @@ export interface ActiveClipProbe {
   /// `instanceof` (NOT `constructor.name` — the minified E2E renderer build
   /// mangles class names). `"sw"` is the native software-decode path.
   sourceKind: "webcodecs" | "native-gpu" | "sw" | "unknown";
-  /// The `ActiveClip.isSoftware` flag the Compositor set at acquire — should
-  /// track `sourceKind === "sw"`; reported alongside so a divergence is visible.
+  /// Derived from `sourceKind === "sw"`: whether the active handle is the native
+  /// software-decode path. Kept as a distinct field so the spec can assert the
+  /// software tier explicitly (Task 10 extends the probe with the resolved key).
   isSoftware: boolean;
   /// True once the pool's idle sweeper has reclaimed this handle.
   sourceDisposed: boolean;
@@ -162,6 +164,31 @@ export interface ActiveClipProbe {
   spriteHeight: number;
 }
 
+/// Preview mode's resolved decode source for one media, produced by the injected
+/// `resolveSource` (PixiPreview gathers the store inputs and runs the pure
+/// `resolveEngineTier`). `assetUrl` is ALREADY `convertFileSrc`'d — the WebCodecs
+/// lanes decode it; the native lanes ignore it and decode `sourcePath` via
+/// `forceStrategy`. `key` = `${tier}:${target}` is the swap IDENTITY: it changes
+/// only when the resolved tier or decode target changes, so a landed proxy can
+/// never displace a higher native/original tier (feedback_native_nle_conventions).
+export interface ResolvedRendererSource {
+  tier: EngineTier;
+  forceStrategy?: "native" | "software" | undefined;
+  sourcePath?: string | undefined;
+  assetUrl: string | null;
+  key: string | null;
+}
+
+/// Export mode has exactly one tier today (the proxy/master). Wrap its asset URL
+/// in the `ResolvedRendererSource` shape so `ensureClip` runs ONE acquire path
+/// across preview + export; preview injects the real engine resolver instead.
+/// D5 will fold export onto the resolver too.
+function rsFromExportProxy(url: string | null): ResolvedRendererSource | null {
+  return url
+    ? { tier: "proxy", assetUrl: url, key: `proxy:${url}`, sourcePath: undefined, forceStrategy: undefined }
+    : null;
+}
+
 export interface CompositorInit {
   /// Pre-initialized PIXI Application. The Compositor adds its stage
   /// `Container` to `app.stage` and reads `app.renderer`. Lifecycle of
@@ -173,9 +200,16 @@ export interface CompositorInit {
   /// Preview can prefer interactive over throughput; export wants
   /// throughput. Currently advisory.
   mode: "preview" | "export";
-  /// Resolver for the asset URL of a media item's master proxy.
-  /// Used for VideoClip layers (decoded via WebCodecs).
-  proxyAssetUrl: (mediaId: string) => string | null;
+  /// EXPORT mode's resolver for the asset URL of a media item's master proxy
+  /// (decoded via WebCodecs). Preview mode uses `resolveSource` instead and does
+  /// NOT pass this; export keeps it until Phase D5 folds export onto the
+  /// resolver. Defaults to `() => null` when absent.
+  proxyAssetUrl?: (mediaId: string) => string | null;
+  /// PREVIEW mode's engine resolution: gathers store inputs and runs the pure
+  /// `resolveEngineTier`, returning the resolved decode source (tier + target +
+  /// swap key). REQUIRED in preview mode; export mode keeps `proxyAssetUrl`
+  /// (Phase D5). Defaults to `() => null` so export/worker are unaffected.
+  resolveSource?: (mediaId: string) => ResolvedRendererSource | null;
   /// Resolver for the asset URL of a media item's ORIGINAL file.
   /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
   /// May return the same URL as `proxyAssetUrl` for media kinds
@@ -191,10 +225,6 @@ export interface CompositorInit {
   sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
-  /// Resolver: returns the ORIGINAL file path when this media should preview via the native SOFTWARE decoder
-  /// (blind-spot format routed `native-sw` AND the experimental toggle is on), else null. The caller (PixiPreview)
-  /// reads the AppSettings toggle + the media's decode_route live. Undefined in export/worker (no SW preview there).
-  nativeSwSourceFor?: (mediaId: string) => string | null;
   /// Resolver for the asset URL of a media item's conform PCM (VCONF).
   /// Drives the buffer-scheduled preview audio mixer; `null` while the
   /// conform job hasn't completed (the layer stays silent). Optional:
@@ -213,17 +243,14 @@ interface ActiveClip {
   source: DecoderHandle;
   sprite: VideoClipSprite;
   effects: EffectChain;
-  /// The `proxyAssetUrl` the current `source` was built from. When the
-  /// resolver later returns a different URL for this media — the instant
-  /// original (decodable-bridge path) being replaced by a freshly-built proxy —
-  /// `ensureClip` starts a no-flash overlap-swap to the new URL.
-  builtFromUrl: string;
-  /// Whether this clip's `source` is a native-SW handle (`SwSourceHandle`,
-  /// decoding the ORIGINAL). Set from `nativeSwSourceFor` at acquire. Gates the
-  /// no-flash proxy swap suppression: a software clip is the intended permanent
-  /// preview source and must NEVER be auto-swapped to a proxy
-  /// (feedback_native_nle_conventions).
-  isSoftware: boolean;
+  /// The resolver IDENTITY (`${tier}:${target}`) the current `source` was built
+  /// from. When the resolver later returns a DIFFERENT key for this media (a
+  /// proxy landed for a tier-4 clip, the engine flipped, or a D4 runtime
+  /// downgrade), `ensureClip` starts a no-flash overlap-swap to the new source.
+  /// Keying on tier+target (not URL) is what makes a landed proxy unable to
+  /// displace a native/original tier: the resolver keeps returning the higher
+  /// tier, so the key never changes (feedback_native_nle_conventions).
+  builtFromKey: string;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
   /// found `ring.frameAt(srcTUs)` returned null. Used so the
   /// `frameAt → null` log fires once per transition rather than
@@ -239,8 +266,10 @@ interface SwapState {
   handle: DecoderHandle;
   /// Pool key of the synthetic swap handle (`${layerId}#swap`).
   swapLayerId: string;
-  /// The URL the swap handle is decoding (the freshly-built proxy).
-  newUrl: string;
+  /// The resolver IDENTITY (`${tier}:${target}`) the swap handle is decoding
+  /// toward. Becomes the clip's `builtFromKey` on completion; the in-flight
+  /// dedupe compares it against the freshly-resolved key.
+  key: string;
   /// Bounded poll driving the swap to completion (cleared on done/abandon).
   timer: ReturnType<typeof setInterval> | null;
   /// Safety deadline: abandon the swap if it never produces the frame.
@@ -347,10 +376,10 @@ export class Compositor {
   /// per active clip per tick — quadratic for long timelines.
   private layerById = new Map<string, LayerSummary>();
   private proxyAssetUrl: (mediaId: string) => string | null;
+  private resolveSource: (mediaId: string) => ResolvedRendererSource | null;
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
-  private nativeSwSourceFor: (mediaId: string) => string | null;
   private conformAssetUrl: (mediaId: string) => string | null;
   /// Master audio bus (preview mode only; null in the export Worker).
   private audioGraph: AudioGraph | null = null;
@@ -477,13 +506,13 @@ export class Compositor {
     this.app = init.app;
     this.stage = new Container();
     this.pool = init.pool ?? new SourceDecoderPool();
-    this.proxyAssetUrl = init.proxyAssetUrl;
+    // Default null-resolvers: preview passes `resolveSource`, export passes
+    // `proxyAssetUrl`; each mode's ensureClip branch reads only its own.
+    this.proxyAssetUrl = init.proxyAssetUrl ?? ((): string | null => null);
+    this.resolveSource = init.resolveSource ?? ((): ResolvedRendererSource | null => null);
     this.originalAssetUrl = init.originalAssetUrl;
     this.sourceColor = init.sourceColor;
     this.mediaById = init.mediaById;
-    // Default null-resolver so export/worker (which never pass this) are
-    // unaffected — export never acquires a software handle.
-    this.nativeSwSourceFor = init.nativeSwSourceFor ?? ((): string | null => null);
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.mode = init.mode;
@@ -1108,7 +1137,7 @@ export class Compositor {
       layerId: clip.layerId,
       mediaId: clip.mediaId,
       sourceKind,
-      isSoftware: clip.isSoftware,
+      isSoftware: sourceKind === "sw",
       sourceDisposed: s.disposed,
       ringSize: s.ring.size(),
       ringFirstPtsUs: s.ring.firstPtsUs(),
@@ -1443,33 +1472,35 @@ export class Compositor {
     // `source` points at a disposed handle whose ring is empty and whose
     // demuxer samples have been freed — a fresh `pool.acquire()` revives it.
     if (existing && !existing.source.disposed) {
-      // No-flash bridge→proxy upgrade: once the resolver returns a different
-      // URL for this media (the instant original replaced by a freshly
-      // built proxy), begin an overlap-swap — but keep returning the existing
-      // clip so the original stays on screen until the proxy has the frame.
-      // A native-SW clip is the intended PERMANENT preview source (the native
-      // decoder previews the original directly). It must NEVER be auto-swapped
-      // to a proxy when one later lands — that is exactly the auto native→proxy
-      // swap the user rejected (feedback_native_nle_conventions).
-      if (this.mode === "preview" && !existing.isSoftware) {
-        const url = this.proxyAssetUrl(layer.params.media_id);
-        if (url && url !== existing.builtFromUrl) {
-          this.beginSwap(existing, layer, url);
+      // No-flash re-resolution: when the resolver's IDENTITY for this media
+      // changes (a proxy landed for a tier-4 clip, the engine flipped, or a D4
+      // runtime downgrade), begin an overlap-swap; keep returning the existing
+      // clip so the current frame stays on screen until the new handle holds
+      // the visible frame. Keying on tier+target (not URL) means a landed proxy
+      // can NEVER displace a native/original tier — the resolver simply keeps
+      // returning the higher tier, so the key doesn't change
+      // (feedback_native_nle_conventions).
+      if (this.mode === "preview") {
+        const rs = this.resolveSource(layer.params.media_id);
+        if (rs?.key && rs.key !== existing.builtFromKey && (rs.assetUrl !== null || rs.sourcePath)) {
+          this.beginSwap(existing, layer, rs);
         }
       }
       return existing;
     }
     const mediaId = layer.params.media_id;
-    // A native-SW clip decodes the ORIGINAL directly (no proxy at import — that
-    // is the whole point of the blind-spot path). Preview-only: export never
-    // gets a software handle (SW export is out of Phase-1 scope), so `swPath` is
-    // gated to `mode === "preview"`.
-    const swPath = this.mode === "preview" ? this.nativeSwSourceFor(mediaId) : null;
-    const proxyUrl = this.proxyAssetUrl(mediaId);
-    if (!swPath && !proxyUrl) {
-      // Only bail when NEITHER a SW original NOR a proxy is available.
+    // Preview resolves the engine tier once here (native-hw / webcodecs-original
+    // / native-sw / proxy); export keeps today's single proxy tier (D5 folds
+    // export onto the resolver too). `rsFromExportProxy` wraps the proxy URL in
+    // the same shape so this acquire path is shared.
+    const rs =
+      this.mode === "preview"
+        ? this.resolveSource(mediaId)
+        : rsFromExportProxy(this.proxyAssetUrl(mediaId));
+    if (!rs || (!rs.assetUrl && !rs.sourcePath)) {
+      // Nothing acquirable yet: proxy still building, or no decodable tier.
       // eslint-disable-next-line no-console
-      console.warn(`[weftcut/pixi] no proxy URL for media ${mediaId} (clip ${layer.id})`);
+      console.warn(`[weftcut/pixi] no decode source for media ${mediaId} (clip ${layer.id})`);
       return null;
     }
     // Source color tags apply to ANY decode target for this media: the
@@ -1480,11 +1511,10 @@ export class Compositor {
     // unaffected; colr-less ones stop being misread as bt709/limited.
     const sourceColor = this.sourceColor(mediaId);
     const sourceStartPtsUs = this.mediaById(mediaId)?.video_start_pts_us ?? this.mediaById(mediaId)?.start_pts_us ?? null;
-    // The URL this handle is built from — the proxy for WebCodecs, or the SW
-    // original path when the software path is taken. `SwSourceHandle` ignores
-    // `proxyAssetUrl` (it decodes `sourcePath`); WebCodecs uses it. Tracked on
-    // `ActiveClip.builtFromUrl` so a later resolver flip is detected correctly.
-    const builtFromUrl = proxyUrl ?? swPath ?? "";
+    // Swap/revival identity (tier + decode target). Non-null: the guard above
+    // bailed unless a target exists, and the resolver only nulls `key` when it
+    // has none.
+    const builtFromKey = rs.key!;
     const source = this.pool.acquire({
       layerId: layer.id,
       mediaId,
@@ -1494,11 +1524,12 @@ export class Compositor {
       ...(this.mode === "export"
         ? { handleKey: exportHandleKey(mediaId, layer.params.src_in_us, layer.t_start_us) }
         : {}),
-      proxyAssetUrl: builtFromUrl,
+      // WebCodecs lanes decode this URL; native lanes ignore it and decode
+      // `sourcePath` via `forceStrategy` (spread below).
+      proxyAssetUrl: rs.assetUrl ?? "",
       sourceColor,
       sourceStartPtsUs,
-      // Native-SW preview: route to a `SwSourceHandle` decoding the original.
-      ...(swPath ? { forceStrategy: "software" as const, sourcePath: swPath } : {}),
+      ...(rs.forceStrategy ? { forceStrategy: rs.forceStrategy, sourcePath: rs.sourcePath ?? "" } : {}),
     });
     // Subscribe to the first-frame notification BEFORE kicking off
     // ensureReady so we don't miss the synchronous-fire case if the
@@ -1520,8 +1551,7 @@ export class Compositor {
       // a held frame rather than a flash to EMPTY while the new
       // decoder warms up), just swap in the fresh source.
       existing.source = source;
-      existing.builtFromUrl = builtFromUrl;
-      existing.isSoftware = !!swPath;
+      existing.builtFromKey = builtFromKey;
       existing.loggedNull = false;
       return existing;
     }
@@ -1532,8 +1562,7 @@ export class Compositor {
       source,
       sprite,
       effects: new EffectChain(),
-      builtFromUrl,
-      isSoftware: !!swPath,
+      builtFromKey,
       loggedNull: false,
     };
     this.clips.set(layer.id, clip);
@@ -1542,25 +1571,28 @@ export class Compositor {
     return clip;
   }
 
-  /// Begin a no-flash overlap-swap of `clip` to a second handle decoding
-  /// `newUrl`. The original stays referenced by `clip.source` (so the preview
-  /// never blanks) until `pollSwap` confirms the new handle's ring holds the
-  /// visible frame, at which point `completeSwap` repoints atomically.
-  private beginSwap(clip: ActiveClip, layer: LayerSummary, newUrl: string): void {
+  /// Begin a no-flash overlap-swap of `clip` to a second handle decoding the
+  /// freshly-resolved source `rs`. The original stays referenced by
+  /// `clip.source` (so the preview never blanks) until `pollSwap` confirms the
+  /// new handle's ring holds the visible frame, at which point `completeSwap`
+  /// repoints atomically. `rs` may resolve to any tier — a native lane
+  /// (forceStrategy + sourcePath) or a WebCodecs URL — so D4's runtime
+  /// downgrades ride this same path.
+  private beginSwap(clip: ActiveClip, layer: LayerSummary, rs: ResolvedRendererSource): void {
     if (layer.params.kind !== "VideoClip") return;
+    if (!rs.key) return;
     const inflight = this.swaps.get(clip.layerId);
     if (inflight) {
-      // Already swapping to this URL → leave it. Otherwise the target changed
-      // (or the handle died) → abandon and restart toward `newUrl`.
-      if (!inflight.handle.disposed && inflight.newUrl === newUrl) return;
+      // Already swapping to this identity → leave it. Otherwise the target
+      // changed (or the handle died) → abandon and restart toward `rs`.
+      if (!inflight.handle.disposed && inflight.key === rs.key) return;
       this.abandonSwap(clip.layerId);
     }
     const { swapLayerId, swapMediaId } = swapKeys(clip.layerId, clip.mediaId);
-    // `newUrl` may be the original or a freshly-built proxy; either way the
-    // source's ffprobe tags apply (a proxy preserves the source colorimetry,
-    // and its own colr tag outranks this per-field). Resolve against the REAL
-    // media (`clip.mediaId`) even though we acquire under the synthetic
-    // `swapMediaId`.
+    // Resolve color/start against the REAL media (`clip.mediaId`) even though we
+    // acquire under the synthetic `swapMediaId`: a proxy preserves the source
+    // colorimetry (its own colr tag still outranks this per-field), and a native
+    // lane decodes the original directly.
     const sourceColor = this.sourceColor(clip.mediaId);
     const sourceStartPtsUs =
       this.mediaById(clip.mediaId)?.video_start_pts_us ??
@@ -1569,11 +1601,12 @@ export class Compositor {
     const handle = this.pool.acquire({
       layerId: swapLayerId,
       mediaId: swapMediaId,
-      proxyAssetUrl: newUrl,
+      proxyAssetUrl: rs.assetUrl ?? "",
       sourceColor,
       sourceStartPtsUs,
+      ...(rs.forceStrategy ? { forceStrategy: rs.forceStrategy, sourcePath: rs.sourcePath ?? "" } : {}),
     });
-    const state: SwapState = { handle, swapLayerId, newUrl, timer: null, deadline: null };
+    const state: SwapState = { handle, swapLayerId, key: rs.key, timer: null, deadline: null };
     this.swaps.set(clip.layerId, state);
     void handle.ensureReady().catch(() => {
       this.abandonSwap(clip.layerId);
@@ -1587,7 +1620,7 @@ export class Compositor {
     state.timer = setInterval(poll, 120);
     state.deadline = setTimeout(() => this.abandonSwap(clip.layerId), 8000);
     // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] begin source-swap ${clip.layerId} → ${newUrl}`);
+    console.log(`[weftcut/pixi] begin source-swap ${clip.layerId} → ${rs.key}`);
   }
 
   /// Poll an in-flight swap: nudge the new handle toward the current frame and
@@ -1626,7 +1659,7 @@ export class Compositor {
     if (state.handle.ring.frameAt(srcTUs) == null) return; // lost the frame; wait
     const old = clip.source;
     clip.source = state.handle;
-    clip.builtFromUrl = state.newUrl;
+    clip.builtFromKey = state.key;
     this.clearSwapTimers(state);
     this.swaps.delete(layerId);
     // Release the ORIGINAL handle by its pool key (the clip's real layerId).
@@ -1635,7 +1668,7 @@ export class Compositor {
     if (!old.disposed) this.pool.release(layerId);
     this.scheduleRepaint();
     // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] completed source-swap ${layerId} → ${state.newUrl}`);
+    console.log(`[weftcut/pixi] completed source-swap ${layerId} → ${state.key}`);
   }
 
   /// Tear down an in-flight swap without repointing: clear its timers and

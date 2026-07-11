@@ -45,8 +45,14 @@ export function resolveDecode(media: {
 }
 
 /** Preview path with the non-persisted session bridge layered on: when this
- *  machine confirmed it can decode the original (import probe), preview reads
- *  the original until a proxy lands. */
+ *  machine confirmed it can decode the original (import probe), the original is
+ *  usable until a proxy lands.
+ *
+ *  NOTE (D2): the RENDER path no longer flows through this — PixiPreview drives
+ *  preview via the engine resolver (`resolveEngineTier`), where the bridge is
+ *  now tier 2 (webcodecs-original). This helper survives only as the Media Pool
+ *  actionability gate (`mediaReadiness.ts`): "is there any preview source right
+ *  now?" — a UI-readiness question distinct from render tiering. */
 export function previewPathLive(
   media: { kind: string; path: string; decode_route: DecodeRoute },
   opts?: { previewDecodable?: boolean },
