@@ -133,6 +133,9 @@ export interface DecodeResolveInputs {
   originalUrl: string;
   /// Consulted ONLY on webcodecs × original. FFmpeg decodes any original.
   webcodecsCanDecodeOriginal: WebcodecsOriginalVerdict;
+  /// false once the ffmpeg engine has terminally failed for this source this
+  /// session — a runtime signal, gathered by the caller; the resolver stays pure.
+  ffmpegUsable: boolean;
 }
 
 export interface DecodeResolution {
@@ -151,13 +154,10 @@ export interface DecodeResolution {
 }
 
 export function resolveDecodeEngine(i: DecodeResolveInputs): DecodeResolution {
-  const engine: DecodeEngine =
-    i.setting === "webcodecs" ? "webcodecs"
-    : i.setting === "ffmpeg" ? "ffmpeg"
-    : i.componentAvailable ? "ffmpeg" : "webcodecs"; // auto
   const source: DecodeSource = i.useProxySource ? "proxy" : "original";
 
   const done = (
+    engine: DecodeEngine,
     status: DecodeResolution["status"],
     target: string | null,
     reason: string,
@@ -166,27 +166,47 @@ export function resolveDecodeEngine(i: DecodeResolveInputs): DecodeResolution {
     key: target ? `${engine}:${source}:${target}` : null,
   });
 
-  // A pinned Standard (ffmpeg) engine with no component loaded is genuinely
-  // unusable — report it unsupported rather than optimistically "ok" (the
-  // settings UI grays out Standard when the component is absent, so this is
-  // only reachable via a stale/migrated persisted setting or a DLL load
-  // failure). `auto` never reaches here: it resolves to webcodecs when the
-  // component is absent.
-  if (engine === "ffmpeg" && !i.componentAvailable) {
-    return done("unsupported", null, "Standard (ffmpeg) engine unavailable — component not loaded");
+  // source/proxy handling shared by every setting once an engine is picked.
+  const forEngine = (engine: DecodeEngine): DecodeResolution => {
+    if (source === "proxy") {
+      return i.proxyReady
+        ? done(engine, "ok", i.proxyUrl, `${engine} on proxy`)
+        : done(engine, "pending", null, "proxy building");
+    }
+    // source === "original"
+    if (engine === "ffmpeg") return done(engine, "ok", i.originalPath, "ffmpeg on original");
+    // webcodecs × original
+    switch (i.webcodecsCanDecodeOriginal) {
+      case "ok": return done(engine, "ok", i.originalUrl, "webcodecs on original");
+      case "fail": return done(engine, "unsupported", null, "webcodecs cannot decode this original");
+      default: return done(engine, "pending", null, "webcodecs decodability untested");
+    }
+  };
+
+  if (i.setting === "webcodecs") return forEngine("webcodecs");
+
+  if (i.setting === "ffmpeg") {
+    // A pinned Standard (ffmpeg) engine with no component loaded is genuinely
+    // unusable — report it unsupported rather than optimistically "ok" (the
+    // settings UI grays out Standard when the component is absent, so this is
+    // only reachable via a stale/migrated persisted setting or a DLL load
+    // failure). These engine-level gates return BEFORE the source/proxy
+    // handling — a pinned-but-unusable engine is unsupported regardless of
+    // source.
+    if (!i.componentAvailable) {
+      return done("ffmpeg", "unsupported", null, "Standard (ffmpeg) engine unavailable — component not loaded");
+    }
+    // `ffmpegUsable` is the runtime "terminally failed for this source this
+    // session" signal (gathered by the caller); a pinned Standard engine that
+    // has already failed for this source is unsupported, not retried.
+    if (!i.ffmpegUsable) {
+      return done("ffmpeg", "unsupported", null, "Standard (ffmpeg) engine failed for this source");
+    }
+    return forEngine("ffmpeg");
   }
 
-  if (source === "proxy") {
-    return i.proxyReady
-      ? done("ok", i.proxyUrl, `${engine} on proxy`)
-      : done("pending", null, "proxy building");
-  }
-  // source === "original"
-  if (engine === "ffmpeg") return done("ok", i.originalPath, "ffmpeg on original");
-  // webcodecs × original
-  switch (i.webcodecsCanDecodeOriginal) {
-    case "ok": return done("ok", i.originalUrl, "webcodecs on original");
-    case "fail": return done("unsupported", null, "webcodecs cannot decode this original");
-    default: return done("pending", null, "webcodecs decodability untested");
-  }
+  // auto: prefer ffmpeg, fall back to webcodecs when the component is absent
+  // OR ffmpeg has already failed for this source this session.
+  const engine: DecodeEngine = i.componentAvailable && i.ffmpegUsable ? "ffmpeg" : "webcodecs";
+  return forEngine(engine);
 }

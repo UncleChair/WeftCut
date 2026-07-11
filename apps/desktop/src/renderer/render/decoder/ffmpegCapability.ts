@@ -71,6 +71,20 @@ export function markHwUnusable(mediaId: string, _reason: string): void {
   hwUnusable.add(mediaId);
 }
 
+/// Sticky per-media "ffmpeg engine terminally failed this session" marker —
+/// the runtime signal behind `DecodeResolveInputs.ffmpegUsable` (decodeEngine.ts).
+/// Nothing consumes this yet; a later task feeds `isFfmpegUnusable` into the
+/// caller-gathered `ffmpegUsable` input so the pure resolver stays untouched.
+const ffmpegUnusable = new Set<string>();
+
+export function markFfmpegUnusable(mediaId: string, _reason: string): void {
+  ffmpegUnusable.add(mediaId);
+}
+
+export function isFfmpegUnusable(mediaId: string): boolean {
+  return ffmpegUnusable.has(mediaId);
+}
+
 /// Async lane-selection entry point for `FfmpegSource` (Task 5): consults the
 /// sticky `markHwUnusable` marker and the seek-validated HW codec allow-list.
 /// An HW-eligible codec with a valid classKey AND a path is probed; missing
@@ -119,6 +133,7 @@ export async function pickInitialLane(
 /// Test/e2e hook: forget session verdicts (used by ffmpegCapability.test.ts).
 export function resetFfmpegCapabilitySession(): void {
   hwUnusable.clear();
+  ffmpegUnusable.clear();
   hwLaneByMedia.clear();
   swLaneByMedia.clear();
   hwProbeInFlight.clear();

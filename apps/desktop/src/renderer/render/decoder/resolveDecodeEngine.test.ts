@@ -11,6 +11,7 @@ function base(over: Partial<DecodeResolveInputs>): DecodeResolveInputs {
     originalPath: "C:/src/a.mov",
     originalUrl: "weftcut-media://a.mov",
     webcodecsCanDecodeOriginal: "untested",
+    ffmpegUsable: true,
     ...over,
   };
 }
@@ -35,6 +36,22 @@ describe("resolveDecodeEngine — engine selection", () => {
   it("pinned ffmpeg with no component → unsupported (not optimistic ok)", () => {
     const r = resolveDecodeEngine(base({ setting: "ffmpeg", componentAvailable: false }));
     expect(r).toMatchObject({ engine: "ffmpeg", status: "unsupported", target: null, key: null });
+  });
+});
+
+describe("resolveDecodeEngine — ffmpegUsable (runtime session signal)", () => {
+  it("auto + component available but ffmpeg unusable this session → falls back to webcodecs (ok)", () => {
+    const r = resolveDecodeEngine(base({ ffmpegUsable: false, webcodecsCanDecodeOriginal: "ok" }));
+    expect(r).toMatchObject({ engine: "webcodecs", status: "ok" });
+  });
+  it("auto + ffmpeg unusable + webcodecs also fails → unsupported", () => {
+    const r = resolveDecodeEngine(base({ ffmpegUsable: false, webcodecsCanDecodeOriginal: "fail" }));
+    expect(r).toMatchObject({ engine: "webcodecs", status: "unsupported" });
+  });
+  it("setting=ffmpeg pinned + component available but ffmpeg unusable this session → unsupported", () => {
+    const r = resolveDecodeEngine(base({ setting: "ffmpeg", ffmpegUsable: false }));
+    expect(r.status).toBe("unsupported");
+    expect(r.reason).toMatch(/failed/i);
   });
 });
 

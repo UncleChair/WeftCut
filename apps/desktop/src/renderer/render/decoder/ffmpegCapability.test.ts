@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { hwEligibleCodec, pickInitialLane, markHwUnusable, resetFfmpegCapabilitySession } from "./ffmpegCapability";
+import {
+  hwEligibleCodec,
+  pickInitialLane,
+  markHwUnusable,
+  markFfmpegUnusable,
+  isFfmpegUnusable,
+  resetFfmpegCapabilitySession,
+} from "./ffmpegCapability";
 
 beforeEach(() => resetFfmpegCapabilitySession());
 
@@ -35,5 +42,15 @@ describe("pickInitialLane", () => {
   it("returns software when the probe declines (ok:false)", async () => {
     const probe = vi.fn(async () => ({ ok: false }));
     expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4")).toBe("software");
+  });
+});
+
+describe("markFfmpegUnusable / isFfmpegUnusable", () => {
+  it("is false initially, true after marking, false again after a session reset", () => {
+    expect(isFfmpegUnusable("m")).toBe(false);
+    markFfmpegUnusable("m", "boom");
+    expect(isFfmpegUnusable("m")).toBe(true);
+    resetFfmpegCapabilitySession();
+    expect(isFfmpegUnusable("m")).toBe(false);
   });
 });
