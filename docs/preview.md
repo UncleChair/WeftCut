@@ -95,6 +95,69 @@ pulling only the bytes a packet needs; the `PacketPump`'s `getKeyPacket` /
 `getNextPacket` calls await those uncached Range reads natively. See
 [`render.md`](render.md#byte-handling) for the byte contract.
 
+## Decode engine
+
+Which decoder actually plays a source is decided per session by an overlay
+sitting above the persisted [Decode Route](../CONTEXT.md#decode-routing): the
+`decode_engine` AppSettings tier (`auto` / `native` / `webcodecs`), the
+capability cache (per-machine probe verdicts for the native lanes), and this
+session's WebCodecs-original probe. `resolveEngineTier` is a pure function of
+those three inputs — it never writes back to the route, the cache, or the
+project — and returns one of four tiers, handed to
+`SourceDecoderPool.acquire`:
+
+```
+decode_engine setting ─┐
+capability cache       ┼─► resolveEngineTier ─► SourceDecoderPool.acquire
+DecodeRoute (read-only)┘         │                (forceStrategy, sourcePath | url)
+                                  ├─ native-hw
+                                  ├─ webcodecs-original
+                                  ├─ native-sw
+                                  └─ proxy
+```
+
+- **`native-hw`** — the native engine's hardware lane (Windows d3d11va
+  today): a pooled shared GPU texture reaches the compositor with zero pixel
+  bytes crossing IPC.
+- **`webcodecs-original`** — WebCodecs decodes the original file directly;
+  no proxy involved. This is what the retiring [Session bridge](../CONTEXT.md#decode-routing)
+  used to approximate with a temporary override; the tier now covers the
+  same ground as an ordinary resolution outcome.
+- **`native-sw`** — the native engine's software lane (`SwSourceHandle`):
+  libavcodec decodes the original in the main process and ships NV12 bytes
+  to the renderer ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
+- **`proxy`** — the fallback: preview decodes whichever proxy the Decode
+  Route has already resolved for this source (see [Proxies](#proxies)).
+
+Both native tiers additionally require the optional `@weftcut/native-decode`
+component to be loadable on this machine; where it isn't, `auto` and
+`native` skip past them entirely. See [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)
+for why that component is a separate, conditionally-loaded addon and what it
+means for licensing.
+
+**Tier order is set by the `decode_engine` setting:**
+
+| Setting | Order tried |
+|---|---|
+| `auto` (default) | `native-hw` → `webcodecs-original` → `native-sw` → `proxy` |
+| `native` | `native-hw` → `native-sw` → `webcodecs-original` → `proxy` |
+| `webcodecs` | `webcodecs-original` → `proxy` |
+
+`auto` tries WebCodecs before the native software lane because a browser
+decode of the original beats a cross-process software decode when both are
+available; forcing `native` prefers the native engine's own lanes first and
+falls back to WebCodecs only if neither native lane opens the source.
+Forcing `webcodecs` never engages the native engine at all. Every step is
+logged; a tier that fails resolution (probe miss, component unavailable,
+runtime downgrade) is skipped silently in favor of the next one — no dialog,
+no retry loop.
+
+**Originals are the default.** Every tier above `proxy` decodes the original
+file; the quick proxy is reached only once nothing else resolves, or once
+the user explicitly asks for one. This matches how mainstream NLEs behave
+(`feedback_native_nle_conventions`): proxy is a convenience the user opts
+into, never something the app swaps to on its own mid-session.
+
 ## Scrub
 
 `scrub.ts` debounces drag input and, on commit, calls `decoder.flush()`,
@@ -116,39 +179,26 @@ Web Audio path is preview-only.
 
 ## Proxies
 
-What preview decodes depends on the import decode routing (see
-[`data-model.md`](data-model.md) and ADRs 0009–0011):
+Proxy is the decode engine's tier-4 fallback (see [Decode engine](#decode-engine)):
+preview reaches it only when no higher tier resolves for a source, or when
+the user opts into one explicitly from the media panel. It is never the
+steady-state preview source for a codec WebCodecs or the native engine can
+already open directly — see [`data-model.md`](data-model.md) and
+ADRs 0009–0011 for how the Decode Route decides which derivatives exist for
+a source in the first place; the decode engine only ever reads that
+decision, never writes it.
 
-- **Bypassed** friendly H.264 → preview decodes the original directly.
-- **Quick proxy ready** → preview decodes the **720p short-GOP quick proxy**
-  (`quick_proxy_path`), generated at import by `jobs/quick_proxy.rs`.
-- **Session bridge** → while a proxy is still building, sources that
-  `probeSourceDecodable` proved decodable on this machine may temporarily
-  preview from the original (`previewDecodable` in `previewPlaybackPathFor`).
-  The bridge is not persisted and disappears once a proxy path exists.
-- **Native software decode** (experimental) → for WebCodecs-blind formats
-  (ProRes, DNxHD/DNxHR, MPEG-2, VC-1/WMV3), an off-by-default `experimental_native_sw_decode`
-  AppSettings toggle routes preview through a native libavcodec software
-  decoder instead of a proxy: `SwSourceHandle` decodes the original directly
-  into the same `FrameRing`, with no proxy wait. With the toggle off, the
-  clip previews via its quick/full proxy exactly like any other blind-spot
-  source — toggling never changes what's on disk. See
-  [ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md).
-
-The short fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing
-frame-accurate: any scrub target decodes at most a few frames from its
-keyframe, bounding the seek-to-key-then-decode-forward tail (ADR 0008).
-So the steady-state preview source is either the original only for friendly
-bypassed H.264, a short-GOP quick proxy, or — behind the experimental
-toggle — the original for a WebCodecs-blind format via native software
-decode. The bridge is a temporary import latency optimization, not the
-durable preview route.
-
-The full `proxy_path` is a source-resolution **export master** (ADR 0011)
-used only at export time; preview ignores it in favor of the quick proxy.
-`MediaDerivativesPatch.proxy_path = Some(None)` (or a
-`proxy_format_version` bump) invalidates a stale proxy and triggers a
-re-encode on next open.
+- **Quick proxy** — a 720p short-GOP scrub copy (`quick_proxy_path`),
+  generated at import by `jobs/quick_proxy.rs`. This is the file tier 4
+  hands to `SourceDecoderPool.acquire` when it's the one available. Its
+  short fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing
+  frame-accurate: any scrub target decodes at most a few frames from its
+  keyframe, bounding the seek-to-key-then-decode-forward tail (ADR 0008).
+- **Export master** — the full `proxy_path`, a source-resolution copy
+  (ADR 0011) used only at export time; preview never reads it.
+  `MediaDerivativesPatch.proxy_path = Some(None)` (or a
+  `proxy_format_version` bump) invalidates a stale proxy and triggers a
+  re-encode on next open.
 
 ## Motifs
 

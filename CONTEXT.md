@@ -39,7 +39,26 @@ export source — never a preview source.
 _Avoid_: full proxy, proxy (unqualified)
 
 **Session bridge**:
-Machine-specific, non-persisted knowledge that this machine can decode a
-source's original, letting preview read the original before any proxy lands. It
-resets when the project is reopened and never crosses to another machine.
+Formerly: machine-specific, non-persisted knowledge that this machine can
+decode a source's original, letting preview read the original before any
+proxy lands. That behavior is now subsumed by the [Decode engine](#decode-routing)'s
+`webcodecs-original` tier, which resolves to the original whenever WebCodecs
+can decode it, proxy or no proxy. The term now names only the residual
+probe-memo plumbing behind that tier, on its way to full retirement in a
+later phase.
 _Avoid_: decode memo, probe cache
+
+**Decode engine**:
+The runtime overlay that resolves a per-source decode tier — `native-hw`,
+`webcodecs-original`, `native-sw`, or `proxy` — from the decode-engine
+setting, the [Capability cache](#decode-routing), and the source's read-only
+Decode Route. Re-resolved every session; never itself persisted into the
+project.
+_Avoid_: decode route (that's the persisted disk truth), preset
+
+**Capability cache**:
+Machine-level probe verdicts — can this machine's decoders open a given
+format/lane — keyed by format class, persisted by main and invalidated when
+the component's ffmpeg changes. A property of the machine, never of a
+project.
+_Avoid_: session bridge, decode memo
