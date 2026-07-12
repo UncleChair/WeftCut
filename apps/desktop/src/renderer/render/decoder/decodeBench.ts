@@ -1,4 +1,4 @@
-// E2E-only decode-strategy benchmark driver. Measures at the DecoderHandle
+// E2E-only decode-strategy benchmark driver. Measures at the DecodeSession
 // seam against a PRIVATE SourceDecoderPool (never the Compositor's live one),
 // so scenarios are deterministic and UI-independent. Installed on
 // window.__weftcutTest by e2eHook.installDecodeBenchHooks; imported only from
@@ -17,7 +17,7 @@ export { percentile } from "../../../shared/msStats";
 /// specific branching. `FfmpegSource` backs both `strategy: "native"`
 /// (`forceLane: "hardware"`) and `strategy: "sw"` (`forceLane: "software"`) —
 /// the collapsed ffmpeg engine's two lanes, benched at this same
-/// `DecoderHandle` seam as the WebCodecs strategy.
+/// `DecodeSession` seam as the WebCodecs strategy.
 type BenchHandle = SourceHandle | FfmpegSource;
 
 export type BenchStrategy = "webcodecs" | "native" | "sw";

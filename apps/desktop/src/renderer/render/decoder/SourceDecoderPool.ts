@@ -14,7 +14,6 @@
 
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
-import type { TenBitFrame } from "./tenBitFrame";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { FrameRing } from "./FrameRing";
 import { frameToSourceUs } from "./ptsOffset";
@@ -22,164 +21,9 @@ import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
 import { FfmpegSource } from "./FfmpegSource";
+import type { SourceHandleInit } from "./session";
 
 const IDLE_DISPOSE_MS = 5_000;
-
-export interface SourceHandleInit {
-  /// Per-clip identity. The preview pool keys decoder + ring instances
-  /// by this so that overlapping clips of the same source don't share
-  /// (and thrash) a single decoder. The export pool keys by `handleKey`
-  /// instead and ignores this.
-  layerId: string;
-  /// Optional pool-key override. The EXPORT pool keys handles by this when
-  /// present — the export Worker and the export-mode Compositor both pass
-  /// the shared `exportHandleKey(mediaId, srcInUs, tStartUs)` so clips of
-  /// one media that march through source time in lockstep share one decode
-  /// pipeline while clips at a different timeline→source offset get their
-  /// own. The preview pool keys by `layerId` and ignores it.
-  handleKey?: string;
-  mediaId: string;
-  /// `weftcut-media://` URL of the source's 1080p master proxy.
-  proxyAssetUrl: string;
-  /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
-  /// applied to ANY decode target for this media — the original trivially,
-  /// and proxies too (a proxy preserves the source's colorimetry; the recipe
-  /// asserts the tags outright since proxy v7). Threaded into
-  /// `withDefaultColorSpace` as the middle-priority layer (below the decode
-  /// target's own mediabunny colr tag, above the resolution default).
-  /// Undefined ⇒ untagged source ⇒ resolution default applies. The preview
-  /// pool carries it onto the shared `SourceMedia` (per-mediaId) so the once-
-  /// per-source config build at `SourceMedia.ensureReady` tags the decode.
-  sourceColor?: VideoColorSpaceInit | undefined;
-  /// Export-only: copy >8-bit decoder output to CPU planes (TenBitFrame)
-  /// instead of holding VideoFrames. Implies the 10-bit export lane.
-  tenBitLane?: boolean;
-  /// Export-only: configure the decoder prefer-software up front. For Hi10P
-  /// this skips a doomed HW attempt (no HW path exists); for AV1-10 it is a
-  /// CORRECTNESS requirement — the HW decoder succeeds but emits opaque
-  /// format=null frames with no copyTo, so the error-fallback never fires.
-  preferSoftware?: boolean;
-  /// Import-time container start PTS for the ORIGINAL file. Timeline/duration
-  /// normalization uses this from metadata; the decoder derives its offset from
-  /// the opened decode target's first packet instead (re-encoded proxies start
-  /// at PTS 0). Kept as a fallback when the target has no packets.
-  sourceStartPtsUs?: number | null;
-  /// The ORIGINAL file path for an `engine: 'ffmpeg'` handle to decode
-  /// directly (bypasses the shared, proxy-backed `SourceMedia` entirely).
-  /// Ignored by the WebCodecs path, which decodes `proxyAssetUrl` instead.
-  sourcePath?: string;
-  /// Bench-only: native pool size (slot count) for an `engine: 'ffmpeg'`
-  /// handle. Decode-bench Stage 3 varies this to sweep pipeline depth; the
-  /// product default (3) applies when unset — production handles never set
-  /// it. Ignored by the WebCodecs path.
-  poolSize?: number;
-  /// Resolved engine (collapsed decode-engine model, `resolveDecodeEngine`).
-  /// Export ignores it. Absent ⇒ falls through to the WebCodecs default.
-  engine?: import("./decodeEngine").DecodeEngine;
-  /// Source codec/pixFmt — `FfmpegSource` needs them for lane selection.
-  codec?: string | null;
-  pixFmt?: string | null;
-  /// Media dimensions — threaded into `FfmpegSource`'s HW-probe classKey
-  /// resolution class (see `FfmpegSourceInit.width`/`height`).
-  width?: number | null;
-  height?: number | null;
-  /// FFmpeg native-decode component DLLs loaded on this machine. Gates the
-  /// FFmpeg HW lane (`FfmpegSource`/`pickInitialLane`).
-  componentAvailable?: boolean;
-  /// Bench-only lane pin, forwarded to `FfmpegSource` (decode-bench Stage 3).
-  forceLane?: import("./decodeEngine").FfmpegLane;
-}
-
-/// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
-/// Preview returns `ImageBitmap` (decoupled from the WebCodecs hardware
-/// decoder's buffer pool — see the snapshot path in `SourceHandle.output`);
-/// export returns `VideoFrame` (frames are evicted after each composited
-/// output, so the pool stays drained naturally — see `ExportFrameStore`);
-/// 10-bit export returns `TenBitFrame` (CPU-plane copy, pool released on
-/// copyTo — see tenBitFrame.ts). `PixiJS v8 ImageSource` accepts VideoFrame
-/// and ImageBitmap; TenBitFrame is routed to bindExternalTexture instead.
-export type DecodedFrame = VideoFrame | ImageBitmap | TenBitFrame;
-
-/// Minimal frame-by-PTS surface the Compositor reads through. Implemented
-/// by `FrameRing` (preview) and `ExportFrameStore` (export).
-export interface FrameStore {
-  frameAt(tUs: number): DecodedFrame | null;
-  containsPts(tUs: number): boolean;
-  /// PTS in microseconds of the latest cached frame, or null if
-  /// the store is empty. Used to gauge how much lookahead the
-  /// decoder has produced past a given playhead position.
-  lastPtsUs(): number | null;
-  /// PTS in microseconds of the earliest cached frame, or null if
-  /// the store is empty. Diagnostic — `Compositor.updateClip` logs
-  /// it on frame-lookup misses.
-  firstPtsUs(): number | null;
-  /// Number of cached entries, for the dev `PerfHUD`.
-  size(): number;
-}
-
-/// Minimal decoder-handle surface the Compositor depends on. Both the
-/// preview `SourceHandle` and the export `ExportSourceHandle` satisfy
-/// it — the Compositor doesn't care which it gets.
-export interface DecoderHandle {
-  readonly mediaId: string;
-  readonly ring: FrameStore;
-  /// True once `dispose()` has run. Compositor checks this so it can
-  /// drop its cached `ActiveClip.source` reference when the pool's
-  /// idle sweeper reclaims a handle out from under it.
-  readonly disposed: boolean;
-  /// Build the decode pipeline. The return value is unused by the
-  /// Compositor (it `void`s the call). Preview returns `Promise<void>`;
-  /// export still returns `Promise<VideoTrackMeta>` (consumed internally).
-  /// Both are assignable to `Promise<unknown>`, so this stays compatible
-  /// with `ExportSourceHandle` without touching the export pool. (A future
-  /// cleanup could re-unify the two meta shapes.)
-  ensureReady(): Promise<unknown>;
-  /// Preview calls this every tick to nudge the decoder's lookahead;
-  /// export ignores it and pre-stages frames via its own driver.
-  requestFrameAt(tUs: number): Promise<void>;
-  /// Preview subscribes to repaint on first decoded frame; export
-  /// no-ops because the composite runs synchronously.
-  onFirstFrame(cb: () => void): void;
-  /// Live decoder queue depth, for the dev `PerfHUD`. Optional so the
-  /// export path (which drives decoding synchronously and has no
-  /// queue concept) doesn't have to fake a value. Preview's
-  /// `SourceHandle` returns the wrapped `VideoDecoder.decodeQueueSize`.
-  decodeQueueSize?(): number;
-  /// Cumulative frames the decoder has emitted since the last reset, for
-  /// the dev `PerfHUD` (which diffs it into a live decode fps). Optional —
-  /// preview-only, like the rest of this diagnostic surface.
-  decodedFrameCount?(): number;
-  /// True once this handle downgraded to `prefer-software` after a
-  /// hardware-decode error. Surfaced by the HUD so a sudden composite/
-  /// decode cost jump is attributable to a HW→SW fallback.
-  isDowngraded?(): boolean;
-  /// True when the ring has decoded past `anchor + lookahead` — i.e. the
-  /// lookahead window is satisfied rather than the decoder running behind.
-  isLookaheadFull?(): boolean;
-  /// Subscribe to a terminal session failure (GPU decode error, device loss,
-  /// session crash, or a budget-rejected open). Optional: implemented by
-  /// `FfmpegSource` (a total ffmpeg-engine failure, after its in-place HW→SW
-  /// fallback also fails); the WebCodecs `SourceHandle` has its own internal
-  /// downgrade-to-software machinery (`handleDecodeError`) and doesn't need
-  /// this external surface. When present, the Compositor wires it to
-  /// `markFfmpegUnusable` (sticky) + `scheduleRepaint()` so the failure rides
-  /// the existing key-based no-flash swap onto the next engine.
-  onFatalError?(cb: (reason: string) => void): void;
-  dispose(): void;
-}
-
-/// Pool surface used by the Compositor. Concrete pools may expose extra
-/// surface (preview's idle sweeper, export's `handles` access for the
-/// worker) but the Compositor only needs these methods.
-export interface DecoderPool {
-  acquire(init: SourceHandleInit): DecoderHandle;
-  /// Release a handle by its pool key (preview keys by `layerId`, export by
-  /// `mediaId`). The no-flash source-swap uses it to drop the original handle
-  /// after repointing to the proxy, and to drop the synthetic swap handle when
-  /// a swap is abandoned.
-  release(key: string): void;
-  dispose(): void;
-}
 
 /// Shared per-source state: the opened mediabunny `Input` (lazily-read
 /// proxy) + its `EncodedPacketSink`, plus the once-per-source decoder
@@ -350,7 +194,7 @@ export class SourceHandle {
   }
 
   /// MediaId mirrors `this.media.mediaId`; kept on the handle for the
-  /// `DecoderHandle` interface (and for log lines that want to identify
+  /// `DecodeSession` interface (and for log lines that want to identify
   /// the source rather than the per-layer decoder instance).
   get mediaId(): string {
     return this.media.mediaId;
@@ -376,7 +220,7 @@ export class SourceHandle {
   /// Build this handle's decoder + pump on top of the shared media's
   /// readiness. Idempotent across concurrent callers. The heavy open +
   /// parse lives on `SourceMedia`, so extra handles only pay per-handle
-  /// `VideoDecoder` construction. Returns void (see the `DecoderHandle`
+  /// `VideoDecoder` construction. Returns void (see the `DecodeSession`
   /// interface note — the value is unused by the Compositor).
   async ensureReady(): Promise<void> {
     if (this.ready && this.decoder) return;

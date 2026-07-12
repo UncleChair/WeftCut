@@ -22,7 +22,7 @@
 // can plug this in as a drop-in replacement for `SourceDecoderPool`.
 
 import type { EncodedPacket } from "mediabunny";
-import type { DecoderHandle, DecoderPool, FrameStore, SourceHandleInit } from "./SourceDecoderPool";
+import type { DecoderPool, ExportDecodeSession, FrameStore, SourceHandleInit } from "./session";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
@@ -363,7 +363,7 @@ export class ExportFrameStore implements FrameStore {
   }
 }
 
-export class ExportSourceHandle implements DecoderHandle {
+export class ExportSourceHandle implements ExportDecodeSession {
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
   /// Source color tags (ffprobe-mapped), for original AND proxy decode

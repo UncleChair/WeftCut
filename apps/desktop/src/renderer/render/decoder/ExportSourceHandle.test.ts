@@ -8,7 +8,7 @@
 // exhaustion (the observed export freeze at 12660/12731 with ~71 tail frames
 // spanning the last two chunks).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SourceHandleInit } from "./SourceDecoderPool";
+import type { SourceHandleInit } from "./session";
 import { ExportSourceHandle } from "./ExportDecoderPool";
 import { openMediaInput } from "./mediaInput";
 

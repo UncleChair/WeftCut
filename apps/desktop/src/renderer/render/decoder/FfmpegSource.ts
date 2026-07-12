@@ -2,9 +2,9 @@
 // §Decode engine, ADR 0030): owns a `FrameRing` and a swappable `DecodeTransport`
 // (GPU or SW), and does IN-PLACE HW→SW fallback on a transport failure — the
 // ring survives the swap so playback doesn't visibly reset. `implements
-// DecoderHandle` so it drops into the existing pool/Compositor seam
+// PreviewDecodeSession` so it drops into the existing pool/Compositor seam
 // (`SourceDecoderPool.ts`), which acquires it whenever the resolved engine is ffmpeg.
-import type { DecoderHandle } from "./SourceDecoderPool";
+import type { PreviewDecodeSession } from "./session";
 import type { FfmpegLane } from "./decodeEngine";
 import { FrameRing } from "./FrameRing";
 import type { DecodeTransport } from "./transports/DecodeTransport";
@@ -39,7 +39,7 @@ interface FfmpegSourceDeps {
   pickLane?: typeof pickInitialLane;
 }
 
-export class FfmpegSource implements DecoderHandle {
+export class FfmpegSource implements PreviewDecodeSession {
   readonly ring = new FrameRing();
   readonly mediaId: string;
   readonly layerId: string;

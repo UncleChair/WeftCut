@@ -23,12 +23,8 @@ import {
   resolveTextView,
   resolveVideoClipView,
 } from "./resolveView";
-import {
-  SourceDecoderPool,
-  SourceHandle,
-  type DecoderHandle,
-  type DecoderPool,
-} from "./decoder/SourceDecoderPool";
+import { SourceDecoderPool, SourceHandle } from "./decoder/SourceDecoderPool";
+import type { DecodeSession, DecoderPool } from "./decoder/session";
 import { FfmpegSource } from "./decoder/FfmpegSource";
 import { markFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
@@ -116,7 +112,7 @@ export interface UpcomingClipPrewarmSnapshot {
   clips: Array<{
     layerId: string;
     mediaId: string;
-    /// True if a DecoderHandle existed or was created and
+    /// True if a DecodeSession existed or was created and
     /// `requestFrameAt(src_in_us)` was issued.
     requested: boolean;
     decodeQueueSize: number;
@@ -271,7 +267,7 @@ export interface CompositorInit {
 interface ActiveClip {
   layerId: string;
   mediaId: string;
-  source: DecoderHandle;
+  source: DecodeSession;
   sprite: VideoClipSprite;
   effects: EffectChain;
   /// The resolver IDENTITY (`${engine}:${source}:${target}`) the current
@@ -295,7 +291,7 @@ interface ActiveClip {
 /// atomically repoints `ActiveClip.source` to it and releases the original.
 /// Keyed in `Compositor.swaps` by the clip's real layerId.
 interface SwapState {
-  handle: DecoderHandle;
+  handle: DecodeSession;
   /// Pool key of the synthetic swap handle (`${layerId}#swap`).
   swapLayerId: string;
   /// The resolver IDENTITY (`${engine}:${source}:${target}`) the swap handle

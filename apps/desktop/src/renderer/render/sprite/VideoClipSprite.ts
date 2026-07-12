@@ -59,7 +59,7 @@
 
 import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
-import type { DecodedFrame } from "../decoder/SourceDecoderPool";
+import type { DecodedFrame } from "../decoder/session";
 import { isTenBitFrame } from "../decoder/tenBitFrame";
 import type { StageableSprite } from "./StageableSprite";
 
