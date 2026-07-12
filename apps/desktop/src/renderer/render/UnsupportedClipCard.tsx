@@ -12,8 +12,10 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { setAppSettings } from "../settings/appSettingsStore";
 import { useDecodeComponentStore } from "../settings/decodeComponentStore";
+import { generateQuickProxy } from "../ipc";
+import { setProxyOverride } from "../state/proxyPreferenceStore";
 
-export function UnsupportedClipCard() {
+export function UnsupportedClipCard({ mediaId }: { mediaId: string }) {
   const { t } = useTranslation();
   const componentAvailable = useDecodeComponentStore((s) => s.available);
   return (
@@ -30,16 +32,28 @@ export function UnsupportedClipCard() {
               : "settings.decode_unsupported_body_no_component",
           )}
         </div>
-        {componentAvailable && (
+        <div className="flex justify-center gap-2">
+          {componentAvailable && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void setAppSettings({ decode_engine: "ffmpeg" });
+              }}
+            >
+              {t("settings.decode_unsupported_switch")}
+            </Button>
+          )}
           <Button
             variant="secondary"
+            data-testid="unsupported-generate-proxy"
             onClick={() => {
-              void setAppSettings({ decode_engine: "ffmpeg" });
+              void generateQuickProxy(mediaId);
+              void setProxyOverride(mediaId, true);
             }}
           >
-            {t("settings.decode_unsupported_switch")}
+            {t("settings.decode_unsupported_generate_proxy")}
           </Button>
-        )}
+        </div>
       </div>
     </div>
   );

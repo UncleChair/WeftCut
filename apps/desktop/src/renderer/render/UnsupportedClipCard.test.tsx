@@ -10,8 +10,22 @@ vi.mock("../settings/appSettingsStore", async (importActual) => {
   return { ...actual, setAppSettings: vi.fn().mockResolvedValue(undefined) };
 });
 
+vi.mock("../ipc", async (importActual) => {
+  const actual = await importActual<typeof import("../ipc")>();
+  return { ...actual, generateQuickProxy: vi.fn().mockResolvedValue(undefined) };
+});
+
+vi.mock("../state/proxyPreferenceStore", async (importActual) => {
+  const actual = await importActual<typeof import("../state/proxyPreferenceStore")>();
+  return { ...actual, setProxyOverride: vi.fn().mockResolvedValue(undefined) };
+});
+
 import { setAppSettings } from "../settings/appSettingsStore";
+import { generateQuickProxy } from "../ipc";
+import { setProxyOverride } from "../state/proxyPreferenceStore";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
+
+const MEDIA_ID = "media-123";
 
 afterEach(() => {
   cleanup();
@@ -22,7 +36,7 @@ afterEach(() => {
 describe("UnsupportedClipCard", () => {
   it("shows the Switch-to-Standard button when the ffmpeg component is available, and dispatches the patch on click", async () => {
     useDecodeComponentStore.setState({ available: true });
-    render(<UnsupportedClipCard />);
+    render(<UnsupportedClipCard mediaId={MEDIA_ID} />);
 
     expect(screen.getByText("Unsupported format")).toBeTruthy();
     const button = screen.getByRole("button", { name: "Switch to Standard" });
@@ -33,7 +47,7 @@ describe("UnsupportedClipCard", () => {
 
   it("shows the no-component body and no button when the ffmpeg component is unavailable", () => {
     useDecodeComponentStore.setState({ available: false });
-    render(<UnsupportedClipCard />);
+    render(<UnsupportedClipCard mediaId={MEDIA_ID} />);
 
     expect(
       screen.getByText(
@@ -41,5 +55,16 @@ describe("UnsupportedClipCard", () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Switch to Standard" })).toBeNull();
+  });
+
+  it("shows the Generate-proxy button regardless of component availability, and generates a proxy + sets the override on click", async () => {
+    useDecodeComponentStore.setState({ available: false });
+    render(<UnsupportedClipCard mediaId={MEDIA_ID} />);
+
+    const button = screen.getByTestId("unsupported-generate-proxy");
+    await userEvent.click(button);
+
+    expect(generateQuickProxy).toHaveBeenCalledWith(MEDIA_ID);
+    expect(setProxyOverride).toHaveBeenCalledWith(MEDIA_ID, true);
   });
 });

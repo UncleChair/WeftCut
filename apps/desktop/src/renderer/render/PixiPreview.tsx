@@ -531,6 +531,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     );
   }
 
+  // The card is a single overlay, so when multiple on-screen clips are
+  // simultaneously unsupported it targets one representative id (iteration
+  // order of `Set`, i.e. first-inserted this composite) — same MVP
+  // simplification as today's single generic overlay.
+  const unsupportedMediaId = unsupportedIds.values().next().value;
+
   return (
     <div
       style={{
@@ -582,7 +588,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       {import.meta.env.DEV && (
         <PerfHUD compositorRef={compositorRef} engineRef={engineRef} />
       )}
-      {unsupportedIds.size > 0 && <UnsupportedClipCard />}
+      {unsupportedMediaId !== undefined && (
+        <UnsupportedClipCard mediaId={unsupportedMediaId} />
+      )}
     </div>
   );
 });
