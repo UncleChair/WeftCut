@@ -182,6 +182,20 @@ pub fn enqueue_full_proxy(
     spawn_proxy(events, cache, media);
 }
 
+/// On-demand quick-proxy build (per-clip "Generate proxy" / global Prefer
+/// Proxies gap-fill). `then_full: false` — this never chains a full proxy.
+/// `source_gop_secs: None` forces a transcode (safe scrub-proxy path); the
+/// import fan-out probes the gap for its own build, on-demand keeps it simple.
+#[cfg(feature = "jobs")]
+pub fn enqueue_quick_proxy(
+    events: Arc<dyn EventSink>,
+    cache: CacheLayout,
+    media: MediaItem,
+    source_gop_secs: Option<f64>,
+) {
+    spawn_quick_proxy(events, cache, media, false, source_gop_secs);
+}
+
 /// Look at a freshly imported `MediaItem` and fan out the appropriate
 /// background jobs. Returns immediately; jobs run on tokio::spawn.
 pub fn enqueue_for_media(

@@ -268,6 +268,24 @@ pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(),
     Ok(())
 }
 
+/// Ask the backend to build the 720p quick preview proxy for a media item on
+/// demand. Idempotent: no-op on Bypass (no quick_proxy slot) or when the quick
+/// proxy already exists. See docs/preview.md §Proxies.
+#[cfg(feature = "jobs")]
+pub async fn generate_quick_proxy(backend: &Backend, item: MediaItem) -> Result<(), String> {
+    let existing = match &item.decode_route {
+        state::DecodeRoute::DirectExport { quick_proxy } => quick_proxy.clone(),
+        state::DecodeRoute::Proxied { quick_proxy, .. } => quick_proxy.clone(),
+        state::DecodeRoute::NativeSw { quick_proxy, .. } => quick_proxy.clone(),
+        state::DecodeRoute::Bypass => return Ok(()),
+    };
+    if matches!(existing, Some(ref p) if p.is_file()) {
+        return Ok(());
+    }
+    crate::jobs::enqueue_quick_proxy(backend.events.clone(), backend.cache.clone(), item, None);
+    Ok(())
+}
+
 pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), String> {
     if item.metadata.audio.is_none() {
         return Ok(());
