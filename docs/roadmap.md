@@ -113,6 +113,47 @@ source mapping is the one shape the forward-only pipelines don't
 cover. Preview keeps its own sibling item (warm-decoder handoff
 across sequential cuts, designed in [`render.md`](render.md)).
 
+### Decode engine — export-side decode, proxy activation, session split
+
+Preview decode collapsed to two engines (Standard/`ffmpeg`, Lite/`webcodecs`)
+with hardware-vs-software private to the Standard engine's `FfmpegSource` (see
+[`preview.md`](preview.md#decode-engine) and
+[ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)). Four
+pieces of that architecture are deliberately deferred:
+
+- **Export-side decode consumes the overlay.** `ExportDecoderPool` still
+  decodes WebCodecs-on-proxy. The plan is to route export decode through the
+  same engine overlay so blind-spot and forced-Standard sources export from
+  originals instead of the lossy full-proxy. It needs the
+  main→renderer→worker raw-frame transport — design of record in
+  [`export-ipc-transport.md`](export-ipc-transport.md) (the 10-bit raw-frame
+  transport this generalizes) and `poc/export-frame-transport` (~1 GB/s
+  classic-IPC ceiling, spike-cleared; no cross-process CPU zero-copy).
+- **Proxy source activation + policy flip.** The resolver already models a
+  `source: original | proxy` axis, but nothing activates `proxy`: there is no
+  on-demand "Generate proxy" command, so PixiPreview always resolves
+  `original` and the [Unsupported](preview.md#unsupported) card's second
+  action is unbuilt. The work is a backend proxy-build command, a media-panel
+  trigger, and the `useProxySource` `Set<mediaId>` (+ persistence) that flips
+  the axis — built alongside the thing that writes it (YAGNI). With it, the
+  quick-proxy job stops auto-enqueuing once preview resolves to originals; the
+  export master (full proxy) stops only once export decodes originals too
+  (depends on the item above — stopping it earlier would strand blind-spot
+  exports). The residual session-bridge probe memo retires with the flip, and
+  derivative jobs (filmstrip / waveform / thumbnails) that read the quick
+  proxy move to reading originals via the sidecar CLI.
+- **Preview/export session-interface split.** `FfmpegSource` implements the
+  shared `DecoderHandle` today; the next structural bite splits a
+  `PreviewDecodeSession` from an `ExportDecodeSession` so the two paths stop
+  sharing one handle contract.
+- **Unified `DecodedFrame` metadata/ownership.** The frame union already
+  exists across the decode paths; standardizing its metadata and ownership is
+  a safe later cleanup, not a blocker.
+
+The native-decode component ships on **Windows only** in v1; the macOS/Linux
+LGPL-ffmpeg DLL supply chain is unsettled, so on those platforms the Standard
+engine is simply unavailable (`auto` resolves to Lite) rather than broken.
+
 ### Zero-copy GPU frame upload — deprioritized, measure first
 
 Export composites a decoded `VideoFrame` by snapshotting it into a 2D

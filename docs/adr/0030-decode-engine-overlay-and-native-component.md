@@ -19,11 +19,11 @@ and the Session bridge, which folded a WebCodecs-decodability probe into a
 temporary preview-path override living beside — not inside — the persisted
 route.
 
-Widening native decode into a full second engine (a hardware lane and a
-software lane) standing beside WebCodecs multiplies this question: a source's
-decoder is now chosen from a settings tier plus two kinds of machine
-knowledge — a capability probe cached per machine, and the runtime presence
-of an optional native component. Naming where each of those facts lives, and
+Widening native decode into a full second engine (whose hardware and software
+lanes are that one engine's private concern) standing beside WebCodecs
+multiplies this question: a source's decoder is now chosen from a settings
+choice plus two kinds of machine knowledge — a capability probe cached per
+machine, and the runtime presence of an optional native component. Naming where each of those facts lives, and
 confirming none of them leak into the project file, is this ADR's first
 decision.
 
@@ -46,18 +46,30 @@ third decisions.
   invalidated on driver or component change, keyed by format class rather
   than by project or source. It is not part of any project file and does
   not travel with a project between machines.
-- **Session — the resolution.** A pure function, `resolveEngineTier`, takes
-  the decode-engine setting (`auto` / `native` / `webcodecs`), the
-  capability cache's verdicts, and the read-only `DecodeRoute`, and returns
-  one of four tiers: native-hardware, WebCodecs-original, native-software,
-  or proxy. Nothing it resolves is written back to either of the other two
-  layers — reopening a project, or moving it to another machine, re-runs
-  the resolution from nothing.
+- **Session — the resolution.** A pure function, `resolveDecodeEngine`, takes
+  the decode-engine setting (`auto` / `ffmpeg` / `webcodecs`), whether the
+  native-decode component is loaded, this session's WebCodecs-original probe
+  verdict, the user's proxy opt-in, and a runtime "has FFmpeg terminally
+  failed for this source" flag, and returns a resolution over two public axes
+  — an **engine** (Standard/`ffmpeg` or Lite/`webcodecs`) and a **source**
+  (original or proxy) — plus a first-class `status` (`ok` / `pending` /
+  `unsupported`). Hardware-vs-software is *not* an axis: it is private to the
+  Standard engine, which picks and swaps its own lane behind the resolution.
+  Nothing it resolves is written back to either of the other two layers —
+  reopening a project, or moving it to another machine, re-runs the resolution
+  from nothing.
 
-No engine state — setting, capability verdict, or resolved tier — is ever
+No engine state — setting, capability verdict, or resolved engine — is ever
 persisted into a media item or into `DecodeRoute`. Capability is a machine
 property; the project only ever records which derivatives exist, never which
 decoder should read them.
+
+An earlier revision of this design fused engine, hardware lane, and source
+into a single flat four-tier enum (`resolveEngineTier` → native-hardware /
+WebCodecs-original / native-software / proxy). Collapsing the lane into the
+Standard engine's private concern — and turning the silent proxy floor into an
+explicit `unsupported` status — is what left the resolver these two public
+axes; the overlay-over-three-layers invariant is unchanged by that reshape.
 
 ### The native runtime is a conditionally-first-class split addon
 
@@ -98,12 +110,12 @@ failure-isolation decision; it does no licensing work by itself.
 
 ## Considered options
 
-- **Persist the resolved engine tier onto the media item or `DecodeRoute`**
+- **Persist the resolved engine onto the media item or `DecodeRoute`**
   (e.g. "last known good decoder"). Rejected: reintroduces exactly the bug
   the overlay exists to avoid — a project would carry a stale, machine-bound
-  promise that either does nothing useful (faster machine, re-resolves
-  higher anyway) or actively lies (slower machine, promised tier not
-  actually available).
+  promise that either does nothing useful (faster machine, re-resolves to the
+  stronger engine anyway) or actively lies (slower machine, promised engine
+  not actually available).
 - **Fold native decode into the core addon behind a compile-time feature.**
   Rejected: a compile-time flag bakes a yes/no decision into one binary at
   build time, but the real requirement is a single shipped binary that
@@ -118,13 +130,12 @@ failure-isolation decision; it does no licensing work by itself.
 
 ## Consequences
 
-- Engine resolution is safe to reason about locally: given the same three
-  inputs it always returns the same tier, with no hidden mutable state to
-  audit.
+- Engine resolution is safe to reason about locally: given the same inputs it
+  always returns the same resolution, with no hidden mutable state to audit.
 - A project file never encodes which machine most recently played it
   fastest; opening the same project on a weaker machine degrades gracefully
-  through the same four tiers instead of inheriting a stale "this machine
-  could do it" fact.
+  to the Lite engine (or an explicit `unsupported` state) instead of
+  inheriting a stale "this machine could do it" fact.
 - The core addon keeps its existing feature set and never links
   `ffmpeg-next`; the standard build needs no `FFMPEG_DIR` or libclang. The
   native-decode component is a second build product with its own DLL
@@ -147,4 +158,4 @@ failure-isolation decision; it does no licensing work by itself.
 - [`CONTEXT.md`](../../CONTEXT.md) — Decode engine, Capability cache, Decode
   Route, Session bridge.
 - [`docs/preview.md`](../preview.md#decode-engine) — the resolution flow and
-  tier order as consumed by preview.
+  the Standard engine's internals as consumed by preview.

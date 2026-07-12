@@ -112,10 +112,11 @@ regardless of which decoder produced the frame.
   decode-degrade stack (thread tuning, frame-drop, playback-resolution
   throttle) are unbuilt future work, not implied by this ADR.
 
-## Addendum (2026-07-09)
+## Addendum
 
-Two consequence-section facts have moved since acceptance; the decision
-itself is unchanged:
+Two facts have moved since acceptance; the two decisions this ADR turns on —
+ship 8-bit NV12 bytes over classic IPC, and keep a single color model — are
+unchanged:
 
 - **The blind-spot set widened past ProRes** (`codec_is_blindspot`):
   DNxHD/DNxHR, MPEG-2, and VC-1/WMV3 now route here too, with per-family
@@ -123,13 +124,17 @@ itself is unchanged:
   re-seek-with-margin fix for index-less long-GOP backward seeks. Of the
   decode-degrade stack, the frame-drop floor shipped; the
   playback-resolution throttle and its UI remain unbuilt.
-- **A successor design widens the route's role.** The dual-engine
-  architecture spec
-  (`docs/superpowers/specs/2026-07-09-dual-engine-decode-export-design.md`)
-  promotes this path from a blind-spot fallback to the Native engine's
-  software lane — probe-arbitrated rather than list-gated, user-selectable,
-  and shipped as an optional native-decode component. The ship-bytes
-  transport and single-color-model decisions made here carry over unchanged.
+- **The route is now a transport inside one engine, not a standalone
+  handle.** Preview decode collapsed to two engines — Standard (`ffmpeg`) and
+  Lite (`webcodecs`) — with hardware-vs-software made private to the Standard
+  engine's `FfmpegSource` (see [`docs/preview.md`](../preview.md#decode-engine)
+  and [ADR 0030](0030-decode-engine-overlay-and-native-component.md)). The
+  standalone `SwSourceHandle`, the `forceStrategy: "software"` acquire seam,
+  and the `experimental_native_sw_decode` toggle are gone: this path is the
+  Standard engine's **software transport** (`SwTransport`), selected privately
+  by the engine (probe-arbitrated, `auto`-reachable) and used as the in-place
+  fallback when its hardware transport fails. The ship-bytes transport and the
+  single-color-model chokepoint decided here carry over verbatim.
 
 ## References
 

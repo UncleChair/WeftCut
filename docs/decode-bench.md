@@ -76,7 +76,8 @@ matrix for the `sw` strategy below.
 
 ## Native strategy
 
-The native strategy (`--strategy native`, Windows-only) decodes the **original**
+The native strategy (`--strategy native`, Windows-only; the Standard engine's
+`FfmpegSource` opened with `forceLane: "hardware"`) decodes the **original**
 file — not a proxy — with ffmpeg `d3d11va` hardware decode, copies each decoded
 surface GPU→GPU into a small pool of shared NV12 textures, and hands them to the
 renderer over Electron's `sharedTexture` transport. The renderer snapshots each
@@ -137,9 +138,11 @@ WebCodecs seek path, independent of any throughput work.
 
 ## Software-decode strategy
 
-`--strategy sw` benches the native **software**-decode preview path
-(`SwSourceHandle`) at the same `DecoderHandle` seam — the WebCodecs-blind
-route documented in [`preview.md`](preview.md#proxies) and
+`--strategy sw` benches the native **software**-decode preview path at the
+same `DecoderHandle` seam. Since the engine collapse this path is the Standard
+engine's software transport — `FfmpegSource` opened with
+`forceLane: "software"` — decoding the WebCodecs-blind families documented in
+[`preview.md`](preview.md#decode-engine) and
 [ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md).
 Unlike the `native` strategy above, this is pure libavcodec **software**
 decode (no `d3d11va`, no shared texture, no `preview-gpu` feature) and is
@@ -224,9 +227,9 @@ Useful flags, passed after `--` when invoked through npm:
   build (above); it's Windows-only and applies to the `Proxied`-route 8-bit
   codecs (see
   [Native strategy](#native-strategy)). It exercises the same
-  `SourceDecoderPool.acquire` path a real `native`/`auto` `decode_engine`
+  `SourceDecoderPool.acquire` path a real `ffmpeg`/`auto` `decode_engine`
   session uses in production — there is no separate E2E-only escape hatch
-  gating it; the only gate is the engine resolver's own HW-probe requirement.
+  gating it; the only gate is the Standard engine's own HW-probe requirement.
   `sw` benches the native **software**-decode path (see below).
 - `--fixture <name>|all` — one fixture (`h264-1080`, `hevc-1080`,
   `hevc-2160`, `vp9-1080`, `av1-1080`, `hi10p-1080`, `prores-1080`,

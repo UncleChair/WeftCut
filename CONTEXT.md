@@ -41,20 +41,44 @@ _Avoid_: full proxy, proxy (unqualified)
 **Session bridge**:
 Formerly: machine-specific, non-persisted knowledge that this machine can
 decode a source's original, letting preview read the original before any
-proxy lands. That behavior is now subsumed by the [Decode engine](#decode-routing)'s
-`webcodecs-original` tier, which resolves to the original whenever WebCodecs
-can decode it, proxy or no proxy. The term now names only the residual
-probe-memo plumbing behind that tier, on its way to full retirement in a
-later phase.
+proxy lands. That behavior is now the ordinary outcome of the [Decode
+engine](#decode-routing) resolving the Lite engine on an original whenever
+WebCodecs can decode it. The term names only the residual WebCodecs-original
+probe memo the resolver still consults, on its way to full retirement.
 _Avoid_: decode memo, probe cache
 
 **Decode engine**:
-The runtime overlay that resolves a per-source decode tier — `native-hw`,
-`webcodecs-original`, `native-sw`, or `proxy` — from the decode-engine
-setting, the [Capability cache](#decode-routing), and the source's read-only
-Decode Route. Re-resolved every session; never itself persisted into the
-project.
-_Avoid_: decode route (that's the persisted disk truth), preset
+The runtime overlay that resolves, per source and per session, an **engine**
+(Standard or Lite) and a **source** (original or proxy) — from the
+decode-engine setting, the [Capability cache](#decode-routing), and the
+source's read-only Decode Route. Hardware-vs-software is private to the
+Standard engine, never part of the resolution. Re-resolved every session;
+never itself persisted into the project.
+_Avoid_: decode route (that's the persisted disk truth), tier, preset
+
+**Standard engine**:
+The FFmpeg decode engine (setting value `ffmpeg`) — decodes any original
+in-process, privately choosing a hardware (d3d11va shared-texture) or software
+(NV12-over-IPC) lane. Needs the optional native-decode component.
+_Avoid_: native engine, ffmpeg lane
+
+**Lite engine**:
+The WebCodecs decode engine (setting value `webcodecs`) — the compatibility
+floor, always present, decodes whatever the browser's WebCodecs can open.
+_Avoid_: webcodecs lane, browser decoder
+
+**Automatic**:
+The default decode-engine setting (`auto`): resolves to the Standard engine
+when its component is loaded and hasn't failed for the source, otherwise the
+Lite engine. Not itself an engine — a resolution rule.
+_Avoid_: auto engine
+
+**Unsupported**:
+The Decode engine resolution state when the chosen engine cannot decode the
+chosen source (the Lite engine on an original WebCodecs can't open, or a
+pinned Standard engine with no component). Surfaced as a placeholder card with
+a Switch-to-Standard action — never a silent proxy swap.
+_Avoid_: unplayable, black frame, fallback
 
 **Capability cache**:
 Machine-level probe verdicts — can this machine's decoders open a given

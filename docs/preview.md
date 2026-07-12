@@ -97,111 +97,160 @@ pulling only the bytes a packet needs; the `PacketPump`'s `getKeyPacket` /
 
 ## Decode engine
 
-Which decoder actually plays a source is decided per session by an overlay
-sitting above the persisted [Decode Route](../CONTEXT.md#decode-routing): the
-`decode_engine` AppSettings tier (`auto` / `native` / `webcodecs`), the
-capability cache (per-machine probe verdicts for the native lanes), and this
-session's WebCodecs-original probe. `resolveEngineTier` is a pure function of
-those three inputs — it never writes back to the route, the cache, or the
-project — and returns one of four tiers, handed to
-`SourceDecoderPool.acquire`:
+Which decoder plays a source is decided per session by an overlay sitting
+above the persisted [Decode Route](../CONTEXT.md#decode-routing). Preview
+decode is a *deep module*: a caller picks an **engine**, and the engine hides
+everything below it — hardware-vs-software lane selection, capability probes,
+the per-machine cache, sticky fallback, and device-loss recovery. A resolution
+names two public axes; a third lives private inside the engine:
+
+- **Engine** — `ffmpeg` (**Standard**) or `webcodecs` (**Lite**). The
+  `decode_engine` AppSetting is `auto` / `ffmpeg` / `webcodecs`; `auto`
+  (**Automatic**) resolves to a concrete engine per source.
+- **Source** — `original` or `proxy`. The user's axis; routing never flips it
+  on its own (see [Proxies](#proxies)).
+- **Lane** — `hardware` or `software`. **Private to the Standard engine**,
+  never surfaced in a resolver input or output. HW-vs-SW is an implementation
+  detail of `FfmpegSource`, not something a caller or the Compositor sees.
+
+`resolveDecodeEngine` is a pure function of its inputs — the setting, whether
+the native-decode component is loaded, the user's proxy opt-in, this session's
+WebCodecs-original probe verdict, and a runtime "has ffmpeg terminally failed
+for this source" flag. It never writes back to the route, the cache, or the
+project; reopening a project re-runs it from nothing. It returns a
+`DecodeResolution` handed to `SourceDecoderPool.acquire`:
 
 ```
-decode_engine setting ─┐
-capability cache       ┼─► resolveEngineTier ─► SourceDecoderPool.acquire
-DecodeRoute (read-only)┘         │                (forceStrategy, sourcePath | url)
-                                  ├─ native-hw
-                                  ├─ webcodecs-original
-                                  ├─ native-sw
-                                  └─ proxy
+decode_engine setting  ─┐
+component available?    │
+proxy opt-in / ready    ┼─► resolveDecodeEngine ─► { engine, source, target,
+webcodecs probe verdict │        (pure)                 status, key }
+ffmpeg-usable (runtime) ─┘                                    │
+                          engine: ffmpeg    → FfmpegSource ───┤ (picks its own lane)
+                          engine: webcodecs → SourceHandle ───┘
 ```
 
-- **`native-hw`** — the native engine's hardware lane (Windows d3d11va
-  today): a pooled shared GPU texture reaches the compositor with zero pixel
-  bytes crossing IPC.
-- **`webcodecs-original`** — WebCodecs decodes the original file directly;
-  no proxy involved. This is what the retiring [Session bridge](../CONTEXT.md#decode-routing)
-  used to approximate with a temporary override; the tier now covers the
-  same ground as an ordinary resolution outcome.
-- **`native-sw`** — the native engine's software lane (`SwSourceHandle`):
-  libavcodec decodes the original in the main process and ships NV12 bytes
-  to the renderer ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
-- **`proxy`** — the fallback: preview decodes whichever proxy the Decode
-  Route has already resolved for this source (see [Proxies](#proxies)).
+`status` is first-class: `ok` (a `target` is acquirable), `pending` (a probe
+or proxy build is still outstanding), or `unsupported` (no engine can decode
+the chosen source — see [Unsupported](#unsupported)). `key` —
+`${engine}:${source}:${target}` — is the swap identity: it changes only on an
+engine or source flip, so the Compositor's no-flash overlap-swap now fires
+only for the rare `auto` ffmpeg→webcodecs flip or the user's original↔proxy
+switch. A lane change *inside* the Standard engine does not change the key and
+triggers no swap.
 
-Both native tiers additionally require the optional `@weftcut/native-decode`
-component to be loadable on this machine; where it isn't, `auto` and
-`native` skip past them entirely. See [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)
-for why that component is a separate, conditionally-loaded addon and what it
+**Engine selection by setting:**
+
+| Setting | Label | Resolves to |
+|---|---|---|
+| `auto` (default) | Automatic | `ffmpeg` when the component is loaded and hasn't failed for this source, else `webcodecs` |
+| `ffmpeg` | Standard | `ffmpeg` (`unsupported` if the component isn't loaded, or it already failed for this source) |
+| `webcodecs` | Lite | `webcodecs` |
+
+The stored setting value was renamed `"native" → "ffmpeg"`; a one-shot
+migration in `app-settings.ts` maps any persisted `"native"` on load. The
+settings UI grays out **Standard** when the component is absent, so a pinned
+`ffmpeg` with no component is only reachable via a stale/migrated value — the
+resolver reports it `unsupported` rather than optimistically `ok`.
+
+**Originals are the default.** Both engines decode the original file by
+default; the quick proxy is a source the user opts into, never one the app
+swaps to on its own, and `auto` never auto-proxies. This matches how
+mainstream NLEs behave (`feedback_native_nle_conventions`).
+
+### The Standard engine (`FfmpegSource`)
+
+`FfmpegSource` is the deep module: one class over two interchangeable
+*transports* against one stable `FrameRing`. It privately owns the
+capability-cache lookup, the HW allow-list, the class-key probe, and the
+sticky HW→SW verdict. It needs the optional `@weftcut/native-decode`
+component; where that isn't loadable, `auto` resolves to the Lite engine and
+**Standard** is grayed out. See [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)
+for why the component is a separate, conditionally-loaded addon and what it
 means for licensing.
 
-**Tier order is set by the `decode_engine` setting:**
+- **Lane pick at open.** HW-eligible codec + probe ok → a `GpuTransport`
+  (`lane = "hardware"`); otherwise a `SwTransport` (`lane = "software"`).
+- **HW transport** — Windows d3d11va: a pooled shared GPU texture reaches the
+  compositor with zero pixel bytes crossing IPC. The preload isolated world
+  builds each `ImageBitmap` from the shared slot and forwards it over a
+  MessagePort. A **cross-device read-completion barrier** guards correctness:
+  before a slot recycles, the preload rasterizes a 1px sample of the bitmap to
+  force Chromium to materialize its `createImageBitmap` copy — which cannot
+  finish until the GPU-process read of ffmpeg's own-device texture has landed.
+  Without it, the producer could overwrite a slot mid-read and deliver a later
+  frame's pixels tagged with an earlier PTS (the B-frame reorder that
+  `preview-gpu-order.spec.ts` locks: each frame carries a barcode of its index
+  and every delivered bitmap must match its PTS-derived index). It is
+  codec-agnostic and the readback is a pipeline flush, not a frame transfer.
+- **SW transport** — libavcodec decodes the original in the main process and
+  ships NV12 bytes over classic IPC ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
+- **HW→SW fallback is internal.** A HW decode error, device loss, or the
+  budget throw disposes the GPU transport and opens the SW transport **into
+  the same `FrameRing`** — a fresh `streamId` so no stale GPU frame lands, the
+  last HW frame held so there's no visible gap. The lane flips; nothing
+  external fires and the swap key is unchanged. `currentLane()` reads the live
+  lane for PerfHUD/diagnostics.
+- **Total failure surfaces once.** Only if the SW transport also dies (or the
+  component vanished after open) does `FfmpegSource` fire its single
+  `onFatalError` → the Compositor re-resolves (`auto` → webcodecs, or →
+  unsupported).
 
-| Setting | Order tried |
-|---|---|
-| `auto` (default) | `native-hw` → `webcodecs-original` → `native-sw` → `proxy` |
-| `native` | `native-hw` → `native-sw` → `webcodecs-original` → `proxy` |
-| `webcodecs` | `webcodecs-original` → `proxy` |
+**HW allow-list + budget** (private to the engine). The HW lane is restricted
+to a seek-validated codec allow-list — 8-bit H.264, HEVC, VP9. The GPU probe
+decodes one forward frame, which proves the driver *can* hardware-decode but
+not that the D3D11 session survives a backward seek; some drivers
+hardware-decode codecs outside this scope (MPEG-2 is the known case) and hang
+indefinitely on a backward seek. The allow-list encodes that seek-safety
+dimension the one-frame probe can't test — a codec must be on it before its
+probe is even kicked — but never overrules a probe's negative verdict. (The
+underlying D3D11 backward-seek hang is a separate pre-existing gap the
+allow-list routes around, not a fix — a tracked follow-up.) Concurrent GPU
+sessions are capped at a conservative `MAX_HW_SESSIONS` (3); an open past the
+cap throws a typed `hw-budget-exceeded` that the engine handles exactly like a
+runtime HW death — the over-budget clip falls to the SW transport rather than
+erroring.
 
-`auto` tries WebCodecs before the native software lane because a browser
-decode of the original beats a cross-process software decode when both are
-available; forcing `native` prefers the native engine's own lanes first and
-falls back to WebCodecs only if neither native lane opens the source.
-Forcing `webcodecs` never engages the native engine at all. Every step is
-logged; a tier that fails resolution (probe miss, component unavailable,
-runtime downgrade) is skipped silently in favor of the next one — no dialog,
-no retry loop.
-
-**Originals are the default.** Every tier above `proxy` decodes the original
-file; the quick proxy is reached only once nothing else resolves, or once
-the user explicitly asks for one. This matches how mainstream NLEs behave
-(`feedback_native_nle_conventions`): proxy is a convenience the user opts
-into, never something the app swaps to on its own mid-session.
-
-**HW session budget.** The native-hw lane caps concurrent GPU decode sessions
-at a conservative `MAX_HW_SESSIONS` (3) rather than assuming this machine's
-real ceiling from a single-source benchmark. An open past the cap throws a
-typed `hw-budget-exceeded` reason that the resolver treats exactly like the
-runtime downgrade below: the over-budget source resolves to the next tier
-instead of failing outright, so a fourth simultaneous HW clip lands on
-WebCodecs or the native-SW lane rather than erroring.
-
-**HW codec allow-list.** The native-hw lane is restricted to a seek-validated
-codec allow-list: 8-bit H.264, HEVC, and VP9. The GPU capability probe decodes a
-single forward frame, which proves the driver *can* hardware-decode a source but
-cannot prove the D3D11 preview session survives a backward seek — the probe is
-necessary but not sufficient. Some drivers hardware-decode codecs outside this
-scope (MPEG-2 is the known case), and on those the HW session can hang
-indefinitely on a backward seek with no recovery. The allow-list encodes the
-seek-safety dimension the one-frame probe can't test: a codec must be on it
-*before* its HW probe is even kicked, so an out-of-scope codec never lights the
-HW lane and instead falls to the native software lane. The list narrows what is
-probe-eligible; it never overrules a probe's negative verdict. (The underlying
-D3D11 backward-seek hang in the native HW session is a separate, pre-existing
-gap; the allow-list keeps preview from reaching it for the known-bad codecs
-rather than fixing the seek path itself — a tracked follow-up.)
-
-**Runtime downgrade is sticky and per-source.** A native lane (`native-hw` or
-`native-sw`) that fails after it opens — a GPU decode error, device loss,
-session crash, or the budget throw above — marks that tier downgraded for
-that media for the rest of the session (a session-scoped set, distinct from
-the capability cache below). `resolveEngineTier` skips the downgraded tier on
-every subsequent resolution; the existing no-flash overlap-swap rebuilds the
-clip onto the next tier without a blank frame, and the downgrade is logged
-once to LogBus as a warning rather than spamming a per-frame trail. There is
-no re-promotion within the session — reopening the source (reload, or
-re-importing) is what clears the downgrade and lets the tier be tried again.
+**Sticky, per-source, no re-promotion.** A HW failure marks this source
+software-only for the rest of the session; a total ffmpeg failure under `auto`
+marks the source `webcodecs` for the session. Neither re-promotes — reopening
+the source (reload / re-import) is what clears it. Each transition logs to
+LogBus once, not per frame.
 
 **Capability cache.** `<userData>/decode_capability.json` persists per-machine
-probe verdicts across app restarts, keyed by lane (`sw`/`hw`) and a
+probe verdicts across restarts, keyed by lane (`sw`/`hw`) and a
 codec/pix-fmt/resolution-class string, so a source never re-probes a format
-class it already has an answer for. Each lane also carries an `env` string —
-the component's ffmpeg version for `sw`, the GPU + driver identity for
-`hw` — and a mismatch against the stored value wipes that whole lane's
-entries, since the machine truth the cache was measured against changed.
-This is a different question from the per-session downgrade above: the cache
-answers "can this machine decode this format at all," the downgrade set
-answers "did this specific open just fail."
+class it already answered. Each lane carries an `env` string — the component's
+ffmpeg version for `sw`, the GPU + driver identity for `hw` — and a mismatch
+wipes that whole lane's entries, since the machine truth it was measured
+against changed. This is distinct from the session's sticky verdict above: the
+cache answers "can this machine decode this format at all," the sticky verdict
+answers "did this session's open just fail."
+
+### The Lite engine (`SourceHandle`)
+
+The Lite engine is WebCodecs decoding through the shared refcounted
+`SourceMedia` (§[Decode](#decode) above) — the same `VideoDecoder` +
+`FrameRing` pipeline every WebCodecs clip uses. On `original`, resolution
+consults this session's WebCodecs-original probe: `ok` → decode the original
+directly (no proxy), `untested` → `pending` while the probe kicks, `fail` →
+`unsupported`. FFmpeg decodes any original, so this probe is consulted only on
+`webcodecs × original`.
+
+### Unsupported
+
+`unsupported` replaces the old silent proxy floor: when the chosen engine
+cannot decode the chosen source, the clip resolves to that first-class status,
+the Compositor skips acquiring a handle and surfaces the media via an
+`onUnsupported(mediaId)` notification, and PixiPreview renders a placeholder
+card (not a black frame) with a **Switch to Standard** action. The action
+shows only when the component is available; on a no-component machine the card
+states the format is unsupported by the Lite engine, with no switch. Copy is
+i18n'd (en-US + zh-CN). ("Generate proxy" from that card is a
+[deferred follow-up](roadmap.md) — it needs an on-demand backend proxy-build
+command.) In practice the reachable path today is a pinned/absent Standard
+engine; the `webcodecs × original × fail` path depends on the probe emitting
+`fail` rather than `untested`, which is a known gap.
 
 ## Scrub
 
@@ -224,21 +273,27 @@ Web Audio path is preview-only.
 
 ## Proxies
 
-Proxy is the decode engine's tier-4 fallback (see [Decode engine](#decode-engine)):
-preview reaches it only when no higher tier resolves for a source, or when
-the user opts into one explicitly from the media panel. It is never the
-steady-state preview source for a codec WebCodecs or the native engine can
-already open directly — see [`data-model.md`](data-model.md) and
-ADRs 0009–0011 for how the Decode Route decides which derivatives exist for
-a source in the first place; the decode engine only ever reads that
-decision, never writes it.
+Proxy is a decode **source** the user opts into (the `source` axis of a
+[resolution](#decode-engine)), never a tier the engine falls back to on its
+own. Either engine can decode a proxy, but nothing activates the axis yet:
+PixiPreview always resolves `source: "original"`, and the on-demand "Generate
+proxy" trigger that would flip it is a [deferred follow-up](roadmap.md). So in
+practice preview decodes originals today — a WebCodecs-unsupported original on
+the Lite engine reaches [Unsupported](#unsupported) rather than silently
+proxying (the native-NLE convention;
+`feedback_native_nle_conventions`). The quick-proxy job still builds at import;
+the policy flip that would stop auto-enqueuing it once preview resolves to
+originals is deferred with the same follow-up. See
+[`data-model.md`](data-model.md) and ADRs 0009–0011 for how the Decode Route
+decides which derivatives exist for a source; the decode engine only ever
+reads that decision, never writes it.
 
 - **Quick proxy** — a 720p short-GOP scrub copy (`quick_proxy_path`),
-  generated at import by `jobs/quick_proxy.rs`. This is the file tier 4
-  hands to `SourceDecoderPool.acquire` when it's the one available. Its
-  short fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing
-  frame-accurate: any scrub target decodes at most a few frames from its
-  keyframe, bounding the seek-to-key-then-decode-forward tail (ADR 0008).
+  generated at import by `jobs/quick_proxy.rs`. Its short fixed GOP
+  (`PROXY_GOP_FRAMES`) is what makes scrubbing frame-accurate: any scrub
+  target decodes at most a few frames from its keyframe, bounding the
+  seek-to-key-then-decode-forward tail (ADR 0008). It becomes a live preview
+  source once the Generate-proxy opt-in lands.
 - **Export master** — the full `proxy_path`, a source-resolution copy
   (ADR 0011) used only at export time; preview never reads it.
   `MediaDerivativesPatch.proxy_path = Some(None)` (or a
