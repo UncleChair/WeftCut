@@ -242,8 +242,14 @@ export function MediaPool({
                   <span className="media-meta">
                     {formatBytes(m.size_bytes, t)}
                   </span>
-                  <ProxyPill media={m} />
                 </div>
+                {/* Sibling of the aria-hidden .media-item-details above, NOT
+                    nested inside it: that panel is pointer-events:none at
+                    rest, which would trap this button from keyboard/AT
+                    reach (axe aria-hidden-focus). Absolutely positioned in
+                    its own corner; CSS reveals it on hover OR
+                    focus-within so Tab can reach it. */}
+                <ProxyPill media={m} />
                 {reason === "importing" && (
                   <button
                     className="media-import-cancel"

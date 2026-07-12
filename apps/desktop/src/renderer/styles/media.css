@@ -323,13 +323,21 @@
 }
 
 /* Per-clip proxy override pill (tri-state: Auto / Force proxy / Force
-   original). Lives inside .media-item-details, the hover overlay, which
-   is pointer-events: none by default so the card's own click/drag gesture
-   passes through it; pointer-events: auto here re-enables just the pill,
-   same convention as .media-import-cancel above. Hidden entirely for
-   Bypass sources (component returns null; no class ever applied). */
+   original) — the only UI path to set the override, so it must stay
+   reachable by keyboard/AT. Rendered as a SIBLING of .media-item-details
+   (not nested inside it): that overlay is aria-hidden + pointer-events:
+   none at rest, which would trap an interactive control from keyboard/
+   screen-reader reach. Instead this is its own absolutely positioned
+   corner badge (top-left; top-right is the import-cancel/status-badge
+   corner above), hidden at rest and revealed on hover OR focus-within —
+   the focus-within is what lets Tab reach it even though the mouse
+   never entered the card. Hidden entirely for Bypass sources (component
+   returns null; no class ever applied). */
 .media-proxy-pill {
-  align-self: flex-start;
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   font: inherit;
@@ -341,8 +349,16 @@
   border-radius: 999px;
   padding: 1px 8px;
   cursor: pointer;
-  pointer-events: auto;
   white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease-out, border-color 80ms ease-out;
+}
+
+.media-item:hover .media-proxy-pill,
+.media-item:focus-within .media-proxy-pill {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .media-proxy-pill:hover {
