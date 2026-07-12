@@ -243,14 +243,17 @@ directly (no proxy), `untested` → `pending` while the probe kicks, `fail` →
 cannot decode the chosen source, the clip resolves to that first-class status,
 the Compositor skips acquiring a handle and surfaces the media via an
 `onUnsupported(mediaId)` notification, and PixiPreview renders a placeholder
-card (not a black frame) with a **Switch to Standard** action. The action
-shows only when the component is available; on a no-component machine the card
-states the format is unsupported by the Lite engine, with no switch. Copy is
-i18n'd (en-US + zh-CN). ("Generate proxy" from that card is a
-[deferred follow-up](roadmap.md) — it needs an on-demand backend proxy-build
-command.) In practice the reachable path today is a pinned/absent Standard
-engine; the `webcodecs × original × fail` path depends on the probe emitting
-`fail` rather than `untested`, which is a known gap.
+card (not a black frame) with two actions: **Switch to Standard** and
+**Generate proxy**. Switch to Standard shows only when the component is
+available; on a no-component machine the card states the format is
+unsupported by the Lite engine, with no switch. Generate proxy is shown
+either way — it forces the per-clip proxy override on and enqueues an
+on-demand build ([Proxies](#proxies)); once the quick proxy lands the clip
+resolves through it (proxy playback is always the Lite engine, so this works
+regardless of component availability) and the card clears. Copy is i18n'd
+(en-US + zh-CN). In practice the Switch-to-Standard path is reached via a
+pinned/absent Standard engine; the `webcodecs × original × fail` path depends
+on the probe emitting `fail` rather than `untested`, which is a known gap.
 
 ## Scrub
 
@@ -275,28 +278,59 @@ Web Audio path is preview-only.
 
 Proxy is a decode **source** the user opts into (the `source` axis of a
 [resolution](#decode-engine)), never a tier the engine falls back to on its
-own. Either engine can decode a proxy, but nothing activates the axis yet:
-PixiPreview always resolves `source: "original"`, and the on-demand "Generate
-proxy" trigger that would flip it is a [deferred follow-up](roadmap.md). So in
-practice preview decodes originals today — a WebCodecs-unsupported original on
-the Lite engine reaches [Unsupported](#unsupported) rather than silently
-proxying (the native-NLE convention;
-`feedback_native_nle_conventions`). The quick-proxy job still builds at import;
-the policy flip that would stop auto-enqueuing it once preview resolves to
-originals is deferred with the same follow-up. See
+own — the native-NLE convention (`feedback_native_nle_conventions`). The
+opt-in is two-layered, both persisted on `ProjectSettings` and written through
+the unrecorded `update_project_settings` mutation, so neither ever enters undo
+history (`data-model.md` §ProjectSettings):
+
+- **Prefer Proxies** — a project-scoped toggle, surfaced in the Settings
+  panel (`prefer_proxies`). On, it prefers the quick proxy for every clip in
+  the project that has one.
+- **Per-clip override** — a control in the media pool (`proxy_overrides`,
+  keyed by media id) that cycles **Auto → Proxy → Original → Auto**. Auto
+  defers to the global toggle; Proxy/Original force that one clip regardless
+  of the toggle. Hidden for `Bypass` sources (below).
+
+The effective per-clip intent is `proxy_overrides[mediaId] ?? prefer_proxies`.
+Preview uses the proxy only when that intent is true **and** the clip's quick
+proxy exists on disk (`quickProxyPath`); otherwise it decodes the original.
+That `&& quickProxyReady` gate is the whole safety net: a clip toggled onto
+proxy before its build finishes, or one whose proxy gets cache-cleaned
+mid-session, falls back to the original with no black frame and no
+special-case code, and a WebCodecs-unsupported original still reaches
+[Unsupported](#unsupported) rather than silently proxying.
+
+**Proxy always resolves to the Lite (WebCodecs) engine**, regardless of the
+`decode_engine` setting — the quick proxy is 720p H.264 short-GOP,
+WebCodecs-decodable by construction, so routing it through the Standard
+engine would need a file path the proxy branch doesn't carry and buys nothing
+on a source this light. One consequence: turning proxy on for a clip also
+rescues the pinned-Standard / no-component case, since the proxy decodes via
+WebCodecs no matter what `decode_engine` says.
+
+Both the media-pool override's Proxy state and the Unsupported card's
+**Generate proxy** action reach the same on-demand backend command,
+`generate_quick_proxy(media_id)`, which enqueues the existing quick-proxy job
+for a media that doesn't have one yet — a cache-cleaned proxy, or a source
+that wasn't heavy enough to auto-build one at import. `Bypass` sources are
+excluded: their Decode Route carries no `quick_proxy` slot and they're
+already light (short-GOP H.264 ≤1080p), so there's nothing to generate. See
 [`data-model.md`](data-model.md) and ADRs 0009–0011 for how the Decode Route
 decides which derivatives exist for a source; the decode engine only ever
 reads that decision, never writes it.
 
 - **Quick proxy** — a 720p short-GOP scrub copy (`quick_proxy_path`),
-  generated at import by `jobs/quick_proxy.rs`. Its short fixed GOP
-  (`PROXY_GOP_FRAMES`) is what makes scrubbing frame-accurate: any scrub
-  target decodes at most a few frames from its keyframe, bounding the
-  seek-to-key-then-decode-forward tail (ADR 0008). It becomes a live preview
-  source once the Generate-proxy opt-in lands.
+  generated at import by `jobs/quick_proxy.rs` for sources heavy enough to
+  need one, and on demand otherwise via `generate_quick_proxy`. Its short
+  fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing frame-accurate: any
+  scrub target decodes at most a few frames from its keyframe, bounding the
+  seek-to-key-then-decode-forward tail (ADR 0008). This is the live preview
+  source whenever the proxy axis resolves active.
 - **Export master** — the full `proxy_path`, a source-resolution copy
-  (ADR 0011) used only at export time; preview never reads it.
-  `MediaDerivativesPatch.proxy_path = Some(None)` (or a
+  (ADR 0011) used only at export time; preview never reads it, and export
+  always decodes the original master regardless of the preview proxy
+  preference — retiring that split waits on export-side decode, a separate
+  piece of work. `MediaDerivativesPatch.proxy_path = Some(None)` (or a
   `proxy_format_version` bump) invalidates a stale proxy and triggers a
   re-encode on next open.
 

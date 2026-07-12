@@ -18,9 +18,11 @@ export interface DecodeResolveInputs {
   setting: DecodeEngineSetting;
   /// FFmpeg native-decode component DLLs loaded on this machine.
   componentAvailable: boolean;
-  /// User opt-in to decode the proxy instead of the original (per media). No
-  /// activation path in this bite — PixiPreview passes false; the Generate-proxy
-  /// follow-up wires it.
+  /// User opt-in to decode the proxy instead of the original (per media).
+  /// PixiPreview feeds `intent(mediaId) && quickProxyReady(mediaId)` — the
+  /// per-clip override (falling back to the project's Prefer Proxies toggle)
+  /// gated on the quick proxy actually being on disk. See docs/preview.md
+  /// §Proxies.
   useProxySource: boolean;
   proxyReady: boolean;
   proxyUrl: string | null;
