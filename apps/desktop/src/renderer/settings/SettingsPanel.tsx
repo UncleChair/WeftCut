@@ -34,6 +34,7 @@ import {
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "./appSettingsStore";
+import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 
 const TAIL_SNAP_MIN_PX = 2;
 const TAIL_SNAP_MAX_PX = 80;
@@ -257,6 +258,7 @@ export function SettingsPanel({
               <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
               <TimelineSnapSection onError={setError} />
               <AutoDeleteEmptyTracksSection onError={setError} />
+              <PreferProxiesToggle onError={setError} />
             </section>
           </div>
 
@@ -432,6 +434,46 @@ function AutoDeleteEmptyTracksSection({
         </span>
         <span className="settings-toggle-hint">
           {t("settings.auto_delete_empty_tracks_hint")}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+/// Per-project toggle (`Project.settings.prefer_proxies`) — same markup as
+/// AutoDeleteEmptyTracksSection above, but the value is already hydrated
+/// and kept in sync by `proxyPreferenceStore` (PixiPreview reads it live
+/// per `ensureClip`), so this reads the store directly instead of
+/// fetch-on-mount, and writes through `setPreferProxies` instead of the
+/// generic `updateProjectSettings` call.
+function PreferProxiesToggle({
+  onError,
+}: {
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const enabled = useProxyPrefStore((s) => s.preferProxies);
+
+  return (
+    <label className="settings-toggle-row">
+      <AppSwitch
+        checked={enabled}
+        onCheckedChange={async (next) => {
+          onError("");
+          try {
+            await setPreferProxies(next);
+          } catch (err) {
+            onError(String(err));
+          }
+        }}
+      />
+      <span>
+        <span className="settings-toggle-label">
+          {t("settings.prefer_proxies")}
+          <ProjectBadge />
+        </span>
+        <span className="settings-toggle-hint">
+          {t("settings.prefer_proxies_hint")}
         </span>
       </span>
     </label>
