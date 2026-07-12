@@ -137,6 +137,44 @@ impl Drop for ConformGuard {
     }
 }
 
+/// Per-media in-flight set for quick-proxy builds. `quick_proxy::run` writes a
+/// DETERMINISTIC temp path (`temp_path(&dest)`) then promotes it; two
+/// concurrent builds for the same media (the Unsupported-card "Generate
+/// proxy" button, the media-pool pill, and the import-time fan-out can all
+/// reach `spawn_quick_proxy` for the same id) would interleave writes into
+/// the SAME `<dest>.tmp` and corrupt the promoted proxy. Dedupe instead — the
+/// running job's completion event serves every waiter. Mirrors
+/// `conform_in_flight`, but `try_begin_quick_proxy` returns the guard
+/// directly so a caller can't forget to construct one after a successful
+/// begin.
+fn quick_proxy_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<MediaId>> {
+    static S: OnceLock<std::sync::Mutex<std::collections::HashSet<MediaId>>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+fn try_begin_quick_proxy(id: MediaId) -> Option<QuickProxyGuard> {
+    let inserted = quick_proxy_in_flight()
+        .lock()
+        .expect("quick proxy in-flight set poisoned")
+        .insert(id);
+    inserted.then_some(QuickProxyGuard(id))
+}
+
+fn end_quick_proxy(id: MediaId) {
+    quick_proxy_in_flight()
+        .lock()
+        .expect("quick proxy in-flight set poisoned")
+        .remove(&id);
+}
+
+/// Drop guard so `end_quick_proxy` runs on every task exit path.
+struct QuickProxyGuard(MediaId);
+impl Drop for QuickProxyGuard {
+    fn drop(&mut self) {
+        end_quick_proxy(self.0);
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobKind {
@@ -485,7 +523,19 @@ fn spawn_quick_proxy(
     then_full: bool,
     source_gop_secs: Option<f64>,
 ) {
+    let Some(guard) = try_begin_quick_proxy(media.id) else {
+        // Already building — the Unsupported-card button, the media-pool
+        // pill, and the import-time fan-out can all race to call this for
+        // the same media. That job's complete/error event serves this
+        // caller's wait too.
+        info!(
+            "quick proxy already in flight for {}; skipping duplicate build",
+            media.id
+        );
+        return;
+    };
     tokio::spawn(async move {
+        let _guard = guard;
         let media_id = media.id;
         emit(
             &events,
@@ -722,6 +772,22 @@ mod tests {
         end_conform(id);
         assert!(try_begin_conform(id), "free again after end");
         end_conform(id);
+    }
+
+    #[test]
+    fn quick_proxy_in_flight_guard_dedups_until_dropped() {
+        let id = uuid::Uuid::new_v4();
+        let guard = try_begin_quick_proxy(id);
+        assert!(guard.is_some(), "first begin wins");
+        assert!(
+            try_begin_quick_proxy(id).is_none(),
+            "second begin is deduped while the first guard is held"
+        );
+        drop(guard);
+        assert!(
+            try_begin_quick_proxy(id).is_some(),
+            "free again after the guard drops"
+        );
     }
 
     #[test]
