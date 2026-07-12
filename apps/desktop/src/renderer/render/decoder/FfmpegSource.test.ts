@@ -145,6 +145,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
 
     await expect(src.ensureReady()).resolves.toBeUndefined();
 
+    expect(gpu.t.dispose).toHaveBeenCalled();
     expect(src.currentLane()).toBe("software");
     expect(src.isDowngraded()).toBe(true);
     expect(sw.t.open).toHaveBeenCalled();

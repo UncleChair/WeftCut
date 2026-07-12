@@ -120,6 +120,8 @@ export class FfmpegSource implements DecoderHandle {
       // (that IS total failure).
       if (this.startedHardware && this.lane === "hardware" && !this.init.forceLane) {
         markHwUnusable(this.mediaId, err instanceof Error ? err.message : String(err));
+        this.transport?.dispose();
+        this.transport = null;
         try {
           await this.openLane("software");
         } catch (swErr) {
