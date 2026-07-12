@@ -1,5 +1,5 @@
 # @weftcut/native-decode — the optional native preview-decode component
-# (dual-engine spec §"Conditional first-class"). Carries preview_sw +
+# (ADR 0030 §Conditional first-class). Carries preview_sw +
 # preview_gpu and the ONLY ffmpeg-next linkage in the repo; @weftcut/core
 # must never link libav. Build needs FFMPEG_DIR (shared build with
 # include/ + lib/) and LIBCLANG_PATH; run needs the matching DLLs on PATH.

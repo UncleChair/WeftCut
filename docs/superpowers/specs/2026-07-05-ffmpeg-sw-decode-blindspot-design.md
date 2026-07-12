@@ -1,13 +1,16 @@
 # ffmpeg universal software-decode — no-proxy preview & export for WebCodecs-blind formats — Design
 
-> **Status 2026-07-09 — partially superseded by
-> [`2026-07-09-dual-engine-decode-export-design.md`](2026-07-09-dual-engine-decode-export-design.md).**
+> **Status 2026-07-09 — partially superseded by the dual-engine decode/export
+> architecture, since consolidated into evergreen docs and deleted: preview decode in
+> [`../../preview.md`](../../preview.md) §Decode engine, the encode exit in
+> [`../../render.md`](../../render.md) §Encode exits, and
+> [ADR 0030](../../adr/0030-decode-engine-overlay-and-native-component.md).**
 > Shipped from this spec: Phase 1 (ProRes preview, ADR 0029) and the Phase 2
 > Plan A subset (family widening, per-family threading, long-GOP seek,
 > frame-drop floor). Still owned here: the §4.2 playback-resolution throttle +
 > Full/½/¼/Auto UI (Phase 2 Plan B; handoff in
 > `../2026-07-05-preview-sw-phase2-kickoff.md`), now sequenced after the
-> dual-engine spec's Phase D. Superseded there: Phase 3 native export (the
+> dual-engine architecture's Phase D. Superseded there: Phase 3 native export (the
 > encode side becomes Phase E; this spec's §6 main→worker decode transport
 > becomes stage D5 and remains its design of record), Phase 4 / §5 proxy
 > semantics (expanded into the stage-D6 proxy-policy flip), the

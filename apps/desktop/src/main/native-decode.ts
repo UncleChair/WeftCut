@@ -1,5 +1,5 @@
 // Level-0 availability gate for the optional @weftcut/native-decode component
-// (dual-engine spec §"Conditional first-class"). Main tries the require ONCE in
+// (ADR 0030 §Conditional first-class). Main tries the require ONCE in
 // a try/catch; failure means the Native decode engine is unavailable — the app
 // keeps working, the setting grays out with `reason`, `auto` skips Native tiers.
 //

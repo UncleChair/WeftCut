@@ -4,9 +4,10 @@
 (the multi-phase design of record; Phase 2 = §11.2 + the degrade stack §4) and `docs/adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md`.
 This note is a working handoff, not evergreen docs — delete it once Phase 2 ships.
 
-**Sequencing update (2026-07-09):** Plan B is now sequenced AFTER Phase D of the dual-engine
-architecture (`docs/superpowers/specs/2026-07-09-dual-engine-decode-export-design.md`) — the
-playback-resolution control is Native-engine UX and lands on top of the engine resolution module.
+**Sequencing update (2026-07-09):** Plan B is now sequenced AFTER the preview decode-engine
+collapse (the dual-engine architecture, since consolidated into `docs/preview.md` §Decode engine
++ ADR 0030 and deleted) — the playback-resolution control is Standard-engine UX and lands on top
+of the engine resolution module.
 
 ## Where Phase 1 left off (SHIPPED, on local `main`, not pushed)
 Native software-decode **ProRes** preview works end-to-end behind the off-by-default `experimental_native_sw_decode`
@@ -55,6 +56,6 @@ subagent-driven-development (as Phase 1). The spec §4/§11.2 is the design inpu
 
 ## Also-open (not Phase 2, but track)
 - Native EXPORT for blind-spot formats and proxy-as-pure-toggle are NO LONGER Phase 3/4 of this
-  workstream — absorbed by the dual-engine spec (encode engine = Phase E; export-side decode = stage D5;
+  workstream — absorbed by the dual-engine architecture (encode engine = Phase E; export-side decode = stage D5;
   proxy flip = stage D6).
 - The 4K memory-ratchet headroom is variable (10–20 vs 30 MB) — bump the ceiling if the conformance spec flakes.

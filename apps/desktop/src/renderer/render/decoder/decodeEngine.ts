@@ -1,7 +1,7 @@
-// The decode-engine overlay's resolution module (dual-engine spec §"Decode
-// engine", ADR 0030). PURE — a function of (setting × component availability ×
+// The decode-engine overlay's resolution module (see docs/preview.md §Decode
+// engine, ADR 0030). PURE — a function of (setting × component availability ×
 // resolve inputs × read-only route); no store reads, no probes, no hidden
-// state (spec Risk 4: any state added here re-grows the preset maze). Callers
+// state (any state added here re-grows the preset maze). Callers
 // gather inputs (PixiPreview) and act on the output (Compositor ensureClip).
 
 export type DecodeEngineSetting = "auto" | "ffmpeg" | "webcodecs";

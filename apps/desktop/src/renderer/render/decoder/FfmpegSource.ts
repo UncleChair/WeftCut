@@ -1,9 +1,9 @@
-// The deep module for the collapsed FFmpeg decode engine (dual-engine spec,
-// decode Phase, Task 5): owns a `FrameRing` and a swappable `DecodeTransport`
+// The deep module for the collapsed FFmpeg decode engine (see docs/preview.md
+// §Decode engine, ADR 0030): owns a `FrameRing` and a swappable `DecodeTransport`
 // (GPU or SW), and does IN-PLACE HW→SW fallback on a transport failure — the
 // ring survives the swap so playback doesn't visibly reset. `implements
 // DecoderHandle` so it drops into the existing pool/Compositor seam
-// (`SourceDecoderPool.ts`) unchanged; wiring it in is a later task.
+// (`SourceDecoderPool.ts`), which acquires it whenever the resolved engine is ffmpeg.
 import type { DecoderHandle } from "./SourceDecoderPool";
 import type { FfmpegLane } from "./decodeEngine";
 import { FrameRing } from "./FrameRing";

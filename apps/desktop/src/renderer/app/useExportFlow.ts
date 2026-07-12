@@ -509,7 +509,7 @@ export function useExportFlow(deps: {
     const outFps = fpsNum / fpsDen;
     // `path` already carries the chosen container extension (set by the dialog).
 
-    // One resolution seam for the encode engine (dual-engine spec §Export).
+    // One resolution seam for the encode engine (see docs/render.md §"Encode exits").
     // Probe injected: the smoke-encode only runs when the target needs it —
     // as of E4 that's only an explicit WebCodecs pin; `auto` always resolves
     // native and this ternary short-circuits to `true` unconsulted. Cast is

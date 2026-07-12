@@ -147,7 +147,7 @@ export type PreviewSwFrameMsg = {
 }
 
 /// Availability of the optional @weftcut/native-decode component (level-0
-/// gate, dual-engine spec). `reason` is the require error when unavailable.
+/// gate, ADR 0030). `reason` is the require error when unavailable.
 export interface DecodeComponentStatus {
   available: boolean
   reason: string | null

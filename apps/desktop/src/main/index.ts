@@ -363,7 +363,7 @@ app.whenReady().then(async () => {
     path: path.join(app.getPath('userData'), 'recents.json'),
     dir: app.getPath('userData'),
   })
-  // Machine capability cache (dual-engine spec §"Capability probe cache") —
+  // Machine capability cache (ADR 0030; docs/preview.md §Decode engine) —
   // persists <userData>/decode_capability.json. Keyed by (lane, format class),
   // invalidated per-lane when its envKey changes (SW: ffmpeg version).
   const { createDecodeCapabilityStore, classKeyOf } = await import('./decode-capability.js')

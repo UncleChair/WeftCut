@@ -1,4 +1,4 @@
-// The EncodeTarget resolution seam (dual-engine spec §"Export engine").
+// The EncodeTarget resolution seam (see docs/render.md §"Encode exits").
 // Pure: probe results are injected, never awaited here. E1 mirrors the three
 // legacy branches exactly; E2 adds the encoderEngine pin, E4 flips auto.
 

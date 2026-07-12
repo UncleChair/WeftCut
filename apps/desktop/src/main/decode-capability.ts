@@ -1,4 +1,4 @@
-// Machine capability cache (dual-engine spec §"Capability probe cache"):
+// Machine capability cache (ADR 0030; docs/preview.md §Decode engine):
 // probe verdicts keyed (lane, format class), persisted at
 // <userData>/decode_capability.json. envKey pins the environment the verdict
 // was measured in — SW: the component's ffmpeg version; HW (D4): the GPU +
