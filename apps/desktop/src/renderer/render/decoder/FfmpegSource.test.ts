@@ -2,13 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { FfmpegSource } from "./FfmpegSource";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 
-function fakeTransport() {
+function fakeTransport(opts?: { openRejects?: string }) {
   let frameCb: ((b: ImageBitmap, p: number, d: number) => void) | null = null;
   let errorCb: ((r: string) => void) | null = null;
   let eofCb: (() => void) | null = null;
   return {
     t: {
-      open: vi.fn(async () => {}),
+      open: opts?.openRejects
+        ? vi.fn(async () => { throw new Error(opts.openRejects); })
+        : vi.fn(async () => {}),
       requestFrameAt: vi.fn(),
       onFrame: (cb) => { frameCb = cb; },
       onError: (cb) => { errorCb = cb; },
@@ -127,5 +129,67 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
       undefined,
       "C:/x.mp4",
     );
+  });
+});
+
+describe("FfmpegSource — HW open failure fallback", () => {
+  it("falls back to SW in place when the HARDWARE open() rejects (budget/device-loss at open)", async () => {
+    const gpu = fakeTransport({ openRejects: "hw-budget-exceeded" });
+    const sw = fakeTransport();
+    const onFatal = vi.fn();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+    );
+    src.onFatalError(onFatal);
+
+    await expect(src.ensureReady()).resolves.toBeUndefined();
+
+    expect(src.currentLane()).toBe("software");
+    expect(src.isDowngraded()).toBe(true);
+    expect(sw.t.open).toHaveBeenCalled();
+    expect(onFatal).not.toHaveBeenCalled();
+
+    sw.emitFrame(1000);
+    expect(src.ring.size()).toBe(1);
+  });
+
+  it("surfaces total failure when both HARDWARE and SOFTWARE open() reject", async () => {
+    const gpu = fakeTransport({ openRejects: "hw-budget-exceeded" });
+    const sw = fakeTransport({ openRejects: "sw-open-failed" });
+    const onFatal = vi.fn();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+    );
+    src.onFatalError(onFatal);
+
+    await expect(src.ensureReady()).rejects.toThrow("sw-open-failed");
+
+    expect(onFatal).toHaveBeenCalledWith(expect.stringContaining("sw-open-failed"));
+  });
+
+  it("does NOT fall back when the lane is forced (bench) and the forced HARDWARE open() rejects", async () => {
+    const gpu = fakeTransport({ openRejects: "hw-budget-exceeded" });
+    const sw = fakeTransport();
+    const onFatal = vi.fn();
+    const src = new FfmpegSource(
+      {
+        layerId: "L",
+        mediaId: "m",
+        sourcePath: "C:/x.mp4",
+        codec: "h264",
+        pixFmt: "yuv420p",
+        componentAvailable: true,
+        forceLane: "hardware",
+      },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t },
+    );
+    src.onFatalError(onFatal);
+
+    await expect(src.ensureReady()).rejects.toThrow("hw-budget-exceeded");
+
+    expect(onFatal).toHaveBeenCalledWith(expect.stringContaining("hw-budget-exceeded"));
+    expect(sw.t.open).not.toHaveBeenCalled();
   });
 });

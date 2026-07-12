@@ -110,7 +110,28 @@ export class FfmpegSource implements DecoderHandle {
       );
     if (this._disposed) return;
     this.startedHardware = this.lane === "hardware";
-    await this.openLane(this.lane);
+    try {
+      await this.openLane(this.lane);
+    } catch (err) {
+      if (this._disposed) return;
+      // A HARDWARE open failure (hw-budget-exceeded, device lost at open) is
+      // recoverable the same way a runtime HW error is — fall to SW in place,
+      // keeping the ring. Not for a forced lane (bench) or a software open
+      // (that IS total failure).
+      if (this.startedHardware && this.lane === "hardware" && !this.init.forceLane) {
+        markHwUnusable(this.mediaId, err instanceof Error ? err.message : String(err));
+        try {
+          await this.openLane("software");
+        } catch (swErr) {
+          if (this._disposed) return;
+          this.fireFatal(swErr instanceof Error ? swErr.message : String(swErr));
+          throw swErr;
+        }
+      } else {
+        this.fireFatal(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    }
     if (this._disposed) return;
     this.ready = true;
   }
