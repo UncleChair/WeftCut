@@ -16,6 +16,7 @@ import {
 import { wireLogStream } from "../logs/store";
 import { wireSearchIndex } from "../search/searchIndexStore";
 import { wireProjectStore } from "../state/projectStore";
+import { wireProxyPrefStore } from "../state/proxyPreferenceStore";
 import { wireAppSettingsStream } from "../settings/appSettingsStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 
@@ -180,6 +181,16 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
       cancelled = true;
       if (unlisten) unlisten();
     };
+  }, []);
+
+  // Proxy-preference mirror (prefer_proxies + proxy_overrides). Hydrates
+  // immediately and re-hydrates whenever the project summary swaps (new
+  // project / reload) — see `state/proxyPreferenceStore.ts`. Unlike the
+  // other stream wirings above, `wireProxyPrefStore` is synchronous (it
+  // fires the initial fetch fire-and-forget and returns the project-store
+  // unsubscribe immediately), so no cancelled/async dance is needed.
+  useEffect(() => {
+    return wireProxyPrefStore();
   }, []);
 
   // Native-decode component availability (level-0 gate). Pulled once on mount;
