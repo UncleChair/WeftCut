@@ -32,6 +32,7 @@ import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
+import { setPreferProxies } from "../state/proxyPreferenceStore";
 import { resolveDecode } from "../render/decodeRoute";
 import { exists, readDir } from "@/bridge/fs";
 import { join as pathJoin } from "@/bridge/path";
@@ -296,6 +297,17 @@ export interface E2EHook {
   /// `quick_proxy` path alongside its tag to know an on-demand
   /// `generate_quick_proxy` build has landed. Dev/e2e only.
   mediaById(mediaId: string): MediaSummary | null;
+  /// Drive the REAL Prefer-Proxies toggle — the wrapped renderer setter
+  /// (`setPreferProxies`), NOT the raw `update_project_settings` backend
+  /// command. `PixiPreview`'s `resolveSource` gates on `proxyIntent`, which
+  /// reads the renderer's `useProxyPrefStore`; that store is updated only by
+  /// this setter (IPC invoke, then optimistic `setState`) or by
+  /// `wireProxyPrefStore`'s project_id-change rehydrate — a same-project
+  /// settings patch made through the raw command alone never reaches it. The
+  /// Prefer-Proxies e2e must go through this hook so the store (and therefore
+  /// `proxyIntent`/`resolveSource`) actually flips. Returns the setter's
+  /// promise so the caller can await the store update before proceeding.
+  setPreferProxies(v: boolean): Promise<void>;
   /// Render the REAL buildPanGraph + constantPanGains in an OfflineAudioContext
   /// and return the mean L/R RMS energy. Drives the actual Web Audio graph
   /// wiring (splitter/4-gain/merger topology) that the headless math goldens
@@ -772,6 +784,11 @@ export function installMotifHook(): void {
   hookSlot().mediaById = (mediaId: string) => {
     return useProjectStore.getState().mediaById.get(mediaId) ?? null;
   };
+  // Drive the REAL setter (IPC invoke + optimistic setState on
+  // useProxyPrefStore) rather than the raw update_project_settings command —
+  // see the E2EHook.setPreferProxies doc comment for why the raw command
+  // alone never reaches proxyIntent/resolveSource.
+  hookSlot().setPreferProxies = (v: boolean) => setPreferProxies(v);
 }
 
 /// Most-recently-mounted Pixi preview's bridge. Written by

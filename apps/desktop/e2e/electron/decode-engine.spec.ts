@@ -384,8 +384,12 @@ test.describe('decode-engine resolution (Electron)', () => {
         { timeout: 120_000 },
       )
 
-      // Flip the project toggle and assert the preview swaps to the proxy.
-      await invokeCmd(page, 'update_project_settings', { patch: { prefer_proxies: true } })
+      // Flip the project toggle through the REAL renderer setter
+      // (setPreferProxies), not the raw update_project_settings command: the
+      // resolver gates on the renderer's useProxyPrefStore, which only that
+      // setter (or a project_id-change rehydrate) updates — see the
+      // E2EHook.setPreferProxies doc comment in e2eHook.ts.
+      await page.evaluate(() => (window as any).__weftcutTest.setPreferProxies(true))
       await waitForPreviewBridge(page)
       await seek(page, SEEK_US)
       const probe = await waitForBuiltKey(page, layerId, 'webcodecs', 'webcodecs:proxy:')
