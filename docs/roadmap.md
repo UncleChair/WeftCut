@@ -122,8 +122,9 @@ with hardware-vs-software private to the Standard engine's `FfmpegSource` (see
 source activation — the per-clip override, the project-wide Prefer Proxies
 toggle, and the on-demand generate-proxy command that back the `source:
 original | proxy` axis — is built; see [`preview.md`](preview.md) §Proxies
-for how the resolver picks proxy vs. original today. Three pieces of the
-wider architecture remain deliberately deferred:
+for how the resolver picks proxy vs. original today. Two pieces of the
+wider architecture remain deliberately deferred; a third — the preview/export
+session-interface split — has shipped:
 
 - **Export-side decode consumes the overlay.** `ExportDecoderPool` still
   decodes WebCodecs-on-proxy. The plan is to route export decode through the
@@ -136,8 +137,9 @@ wider architecture remain deliberately deferred:
 - **Preview/export session-interface split — done.** The shared interface was
   split into a minimal `DecodeSession` core plus named `PreviewDecodeSession`
   and `ExportDecodeSession` roles, extracted to `decoder/session.ts`. Preview and
-  export no longer share one bloated contract; `ExportDecodeSession` gives the
-  export Worker a compiler-checked driving surface.
+  export no longer share one bloated contract; `ExportDecodeSession` names the
+  export Worker's driving surface (`decodeRange`/`evictBefore`) as an explicit
+  `ExportDecodeSession` contract.
 - **Unified `DecodedFrame` metadata/ownership.** The frame union already
   exists across the decode paths; standardizing its metadata and ownership is
   a safe later cleanup, not a blocker.
