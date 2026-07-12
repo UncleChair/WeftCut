@@ -40,7 +40,7 @@ export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
  *  or the full Project) as an injected call argument — the TS host forwards it
  *  before the rust dispatch. Safe on rust: they hold no resident state. */
 export const SLICE_INJECTED_READS: ReadonlySet<string> = new Set([
-  'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
+  'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy', 'generate_quick_proxy',
   'get_media_thumbnail', 'get_waveform_peaks',
 ])
 

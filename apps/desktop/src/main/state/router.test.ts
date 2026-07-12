@@ -36,6 +36,7 @@ const ALL_CHANNELS: readonly string[] = [
   'import_media',
   // slice-injected native reads (receive their state slice as a call argument)
   'export_project_audio_only', 'ensure_export_audio_conform', 'ensure_conform', 'ensure_full_proxy',
+  'generate_quick_proxy',
   'get_media_thumbnail', 'get_waveform_peaks',
   // backend stores (config-dir, not the project actor)
   'app_settings_get', 'app_settings_set', 'view_state_get', 'view_state_set', 'export_settings_get',
@@ -119,7 +120,7 @@ describe('routeChannel', () => {
     // import_media is now a hybrid (native-compute → TS-write), not rust.
     // list_motifs is now a motif route (Phase 2), not rust.
     // app_settings_*, view_state_*, export_settings_*, keybindings_*, and recents_* migrated off rust to TS handlers.
-    for (const ch of ['agent_session_get','log_list','ensure_full_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
+    for (const ch of ['agent_session_get','log_list','ensure_full_proxy','generate_quick_proxy','export_video_sink_start','settings_test_provider','workspace_dir','ping'])
       expect(routeChannel(ch).kind).toBe('rust')
   })
   it('routes export_settings_get/set to the exportSettings TS handler (migrated off rust)', () => {

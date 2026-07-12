@@ -1153,6 +1153,13 @@ export async function ensureFullProxy(mediaId: string): Promise<void> {
   await invoke("ensure_full_proxy", { mediaId });
 }
 
+/// Ask the backend to build the 720p quick preview proxy for a media on
+/// demand (per-clip "Use proxy" / Unsupported-card recovery). Idempotent;
+/// no-op on Bypass or when the quick proxy already exists.
+export async function generateQuickProxy(mediaId: string): Promise<void> {
+  await invoke("generate_quick_proxy", { mediaId });
+}
+
 /// Kick a conform job for one media if its VCONF file is absent (export
 /// readiness gate + pre-conform-era backfill). No-op for media without an
 /// audio stream or when already cached.

@@ -4,7 +4,7 @@ import type { MediaItem } from './model'
  *  (the sole state owner) resolves it by `mediaId` and forwards it. */
 export const SINGLE_MEDIA_CHANNELS: ReadonlySet<string> = new Set([
   'get_media_thumbnail', 'get_waveform_peaks',
-  'get_waveform_levels', 'get_waveform_tile', 'get_filmstrip_tile', 'ensure_full_proxy', 'ensure_conform',
+  'get_waveform_levels', 'get_waveform_tile', 'get_filmstrip_tile', 'ensure_full_proxy', 'ensure_conform', 'generate_quick_proxy',
 ])
 
 /** Map renderer `{ mediaId, ...rest }` args to `{ item, ...rest }` the Rust fn
