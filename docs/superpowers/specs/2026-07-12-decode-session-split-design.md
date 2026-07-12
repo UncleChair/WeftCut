@@ -1,6 +1,6 @@
 # Decode session-interface split (preview vs export) — design
 
-**Status:** approved, ready for implementation planning
+**Status:** implemented + merged to local main (FF `346c78d6`, unpushed, 2026-07-12)
 **Scope:** pure structural refactor of the decoder contract. Zero behavior change.
 
 ## Motivation
