@@ -120,6 +120,8 @@ export interface ProjectMetadata { name: string; created_at: string; modified_at
 export interface ProjectSettings {
   preview_width: number; preview_height: number; autosave_interval_secs: number | null
   history_capacity: number; auto_pair_audio_on_import: boolean; auto_delete_empty_tracks: boolean
+  prefer_proxies: boolean
+  proxy_overrides: Record<string, boolean>
 }
 export interface Project {
   schema_version: number; project_id: Uuid; metadata: ProjectMetadata; composition: Composition
@@ -139,7 +141,8 @@ function defaultComposition(): Composition {
 }
 function defaultSettings(): ProjectSettings {
   return { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
-    history_capacity: 200, auto_pair_audio_on_import: true, auto_delete_empty_tracks: true }
+    history_capacity: 200, auto_pair_audio_on_import: true, auto_delete_empty_tracks: true,
+    prefer_proxies: false, proxy_overrides: {} }
 }
 
 /** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id. */

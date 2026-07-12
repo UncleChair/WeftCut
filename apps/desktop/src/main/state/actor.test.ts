@@ -457,6 +457,20 @@ describe('dispatch: role gain + flags + project settings', () => {
     actor.dispatch('undo', {})
     expect(actor.snapshot().settings.auto_delete_empty_tracks).toBe(false) // preference persists across undo
   })
+  it('update_project_settings sets prefer_proxies + proxy_overrides (unrecorded, survives undo)', () => {
+    const { actor, a } = setup()
+    actor.dispatch('update_project_settings', { patch: { prefer_proxies: true } })
+    actor.dispatch('update_project_settings', { patch: { proxy_override: { media_id: 'm1', value: false } } })
+    expect(actor.snapshot().settings.prefer_proxies).toBe(true)
+    expect(actor.snapshot().settings.proxy_overrides).toEqual({ m1: false })
+    // clearing an override removes the key (Auto = follow global)
+    actor.dispatch('update_project_settings', { patch: { proxy_override: { media_id: 'm1', value: null } } })
+    expect(actor.snapshot().settings.proxy_overrides).toEqual({})
+    // preference survives undo
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().settings.prefer_proxies).toBe(true)
+  })
 })
 
 describe('dispatch: caption tracks', () => {

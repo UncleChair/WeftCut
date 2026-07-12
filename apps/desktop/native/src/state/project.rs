@@ -131,6 +131,15 @@ pub struct ProjectSettings {
     /// When `false`, an emptied track lingers until deleted explicitly.
     #[serde(default = "default_auto_delete_empty_tracks")]
     pub auto_delete_empty_tracks: bool,
+    /// When `true`, preview decode prefers a generated proxy over the
+    /// original source (per-clip `proxy_overrides` can force either way).
+    /// Default `false` (native-decode-always, matching NLE convention).
+    #[serde(default)]
+    pub prefer_proxies: bool,
+    /// Per-clip override of `prefer_proxies`, keyed by media id. Absent =
+    /// follow the global preference. See `project_settings_patch_convention`.
+    #[serde(default)]
+    pub proxy_overrides: std::collections::HashMap<String, bool>,
 }
 
 fn default_auto_pair_audio_on_import() -> bool {
@@ -146,6 +155,17 @@ fn default_auto_delete_empty_tracks() -> bool {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ProjectSettingsPatch {
     pub auto_delete_empty_tracks: Option<bool>,
+    pub prefer_proxies: Option<bool>,
+    #[serde(default)]
+    pub proxy_override: Option<ProxyOverridePatch>,
+}
+
+/// One entry of the `proxy_overrides` map, patched in or cleared.
+/// `value: None` clears the override (falls back to the global preference).
+#[derive(Clone, Debug, Deserialize)]
+pub struct ProxyOverridePatch {
+    pub media_id: String,
+    pub value: Option<bool>,
 }
 
 /// Patch shape for `update_track_flags` — the timeline header's
@@ -170,6 +190,8 @@ impl Default for ProjectSettings {
             history_capacity: 200,
             auto_pair_audio_on_import: true,
             auto_delete_empty_tracks: true,
+            prefer_proxies: false,
+            proxy_overrides: Default::default(),
         }
     }
 }

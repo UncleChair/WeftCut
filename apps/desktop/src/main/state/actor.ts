@@ -348,9 +348,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
 
   // ── update_project_settings (do_update_project_settings:3619) — UNRECORDED.
   //    Clone settings, apply the present fields, replace-everywhere + broadcast. ──
-  function updateProjectSettings(patch: { auto_delete_empty_tracks?: boolean | null }): void {
-    const next = { ...current().settings }
+  function updateProjectSettings(patch: {
+    auto_delete_empty_tracks?: boolean | null
+    prefer_proxies?: boolean | null
+    proxy_override?: { media_id: string; value: boolean | null } | null
+  }): void {
+    const next = { ...current().settings, proxy_overrides: { ...current().settings.proxy_overrides } }
     if (typeof patch.auto_delete_empty_tracks === 'boolean') next.auto_delete_empty_tracks = patch.auto_delete_empty_tracks
+    if (typeof patch.prefer_proxies === 'boolean') next.prefer_proxies = patch.prefer_proxies
+    if (patch.proxy_override) {
+      const { media_id, value } = patch.proxy_override
+      if (value === null) delete next.proxy_overrides[media_id]
+      else next.proxy_overrides[media_id] = value
+    }
     history.replaceSettingsEverywhere(next)
     broadcastUnrecorded('Updated project settings', current())
   }
@@ -465,7 +475,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
-        case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null }); return { ok: true, value: null }
+        case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null; prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null }); return { ok: true, value: null }
         case 'add_caption_track': return { ok: true, value: commit('Added caption track', [], { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
         case 'restyle_caption_track': commit('Restyled caption track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRestyleCaptionTrack(d, a.track as Uuid, a.patch as CaptionStylePatch)); return { ok: true, value: null }
         case 'rebind_motif': {

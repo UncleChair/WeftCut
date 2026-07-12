@@ -105,7 +105,8 @@ function makeProject(overrides?: Partial<Project>): Project {
       background: { r: 0, g: 0, b: 0, a: 255 } },
     media_pool: {}, tracks: [], markers: [], transitions: [], groups: [], audio_roles: {},
     settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
-      history_capacity: 200, auto_pair_audio_on_import: true, auto_delete_empty_tracks: true },
+      history_capacity: 200, auto_pair_audio_on_import: true, auto_delete_empty_tracks: true,
+      prefer_proxies: false, proxy_overrides: {} },
     ...overrides,
   }
   return base
@@ -284,7 +285,8 @@ describe('add_media_layer auto-pair', () => {
       decode_route: { route: 'bypass' }, conform_path: null,
       waveform_path: null, thumbnails_dir: null } },
       settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
-        history_capacity: 200, auto_pair_audio_on_import: false, auto_delete_empty_tracks: true } })
+        history_capacity: 200, auto_pair_audio_on_import: false, auto_delete_empty_tracks: true,
+        prefer_proxies: false, proxy_overrides: {} } })
     const r3 = prodMediaLayer({ mediaId: 'vid' }, p3)
     expect(r3.autoPairAudio).toBeNull()
   })

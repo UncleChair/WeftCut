@@ -994,10 +994,14 @@ export async function fitCompositionToLayers(): Promise<void> {
 /// the UI consumes are typed; the Rust struct carries more.
 export interface ProjectSettingsView {
   auto_delete_empty_tracks: boolean;
+  prefer_proxies: boolean;
+  proxy_overrides: Record<string, boolean>;
 }
 
 export interface ProjectSettingsPatch {
   auto_delete_empty_tracks?: boolean;
+  prefer_proxies?: boolean;
+  proxy_override?: { media_id: string; value: boolean | null };
 }
 
 export async function getProjectSettings(): Promise<ProjectSettingsView> {
