@@ -57,6 +57,13 @@ async function rehydrate(): Promise<void> {
 export function wireProxyPrefStore(): () => void {
   void rehydrate();
   return useProjectStore.subscribe((s, prev) => {
-    if (s.summary !== prev.summary) void rehydrate();
+    // Compare project IDENTITY, not the summary object: `projectStore.apply()`
+    // installs a brand-new `summary` object on every `project:changed` event
+    // (every edit/undo/marker/MCP call), so comparing objects re-hydrates on
+    // essentially every commit — a needless IPC round-trip, and a real
+    // out-of-order-IPC race where an unrelated edit's in-flight rehydrate()
+    // can resolve after a setProxyOverride/setPreferProxies optimistic write
+    // and clobber it with a stale settings snapshot.
+    if (s.summary?.project_id !== prev.summary?.project_id) void rehydrate();
   });
 }
