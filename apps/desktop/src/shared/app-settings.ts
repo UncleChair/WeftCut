@@ -23,10 +23,9 @@ export interface AppSettings {
   /// When false, the preview compositor skips all effect filters (LOD
   /// toggle for scrub performance). Default true.
   preview_effects_enabled: boolean;
-  /// Preview decode engine (dual-engine spec): `auto` resolves the fastest
-  /// available tier per source (native HW → WebCodecs-original → native SW →
-  /// proxy); `ffmpeg`/`webcodecs` pin an engine. Replaces the deleted
-  /// single-boolean experimental toggle (its semantics live inside `auto`).
+  /// Preview decode engine: `auto` picks the best engine per clip (FFmpeg when
+  /// its component is present, else WebCodecs); `ffmpeg` (Standard) plays every
+  /// format; `webcodecs` (Lite) is lightweight but supports fewer formats.
   decode_engine: "auto" | "ffmpeg" | "webcodecs";
 }
 

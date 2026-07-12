@@ -36,10 +36,10 @@ export function resolveDecode(media: {
       // built or has been cleaned up still previews instead of going blank.
       return { route: "proxied", previewPath: r.quick_proxy ?? r.full_proxy, exportPath: r.full_proxy };
     case "native-sw":
-      // Option B: native-sw resolves identically to proxied — with the
-      // experimental toggle OFF a ProRes clip previews via its proxy (no
-      // regression). The toggle-ON "use the native-SW original" path is a later
-      // overlay (forceStrategy), layered on top, not a resolveDecode change.
+      // Native-sw resolves identically to proxied: preview uses the lighter quick
+      // proxy (or full proxy if unavailable), export uses the full proxy. The route
+      // itself carries no original-vs-proxy decision; that is handled by the engine
+      // resolver at decode time.
       return { route: "native-sw", previewPath: r.quick_proxy ?? r.full_proxy, exportPath: r.full_proxy };
   }
 }
@@ -48,11 +48,10 @@ export function resolveDecode(media: {
  *  machine confirmed it can decode the original (import probe), the original is
  *  usable until a proxy lands.
  *
- *  NOTE (D2): the RENDER path no longer flows through this — PixiPreview drives
- *  preview via the engine resolver (`resolveEngineTier`), where the bridge is
- *  now tier 2 (webcodecs-original). This helper survives only as the Media Pool
- *  actionability gate (`mediaReadiness.ts`): "is there any preview source right
- *  now?" — a UI-readiness question distinct from render tiering. */
+ *  NOTE: the RENDER path uses the engine resolver at decode time. This helper
+ *  survives as the Media Pool actionability gate (`mediaReadiness.ts`): "is there
+ *  any preview source right now?" — a UI-readiness question distinct from engine
+ *  tier selection. */
 export function previewPathLive(
   media: { kind: string; path: string; decode_route: DecodeRoute },
   opts?: { previewDecodable?: boolean },

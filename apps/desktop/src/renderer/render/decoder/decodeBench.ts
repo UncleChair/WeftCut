@@ -228,10 +228,10 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
 // the (MAX+1)th `previewGpuOpen` throws `hw-budget-exceeded`. This exercises
 // the untested RUNTIME seam: that opening MAX+1 real sessions actually
 // rejects at the cap and the rejection reaches this probe with the budget
-// reason (via the `ensureReady()` rejection; `FfmpegSource`'s `onFatalError`
-// only fires for a RUNTIME transport failure after a session is already
-// open, not an initial-open rejection, so `fatalReason` stays null here —
-// `error` is where the budget rejection actually surfaces).
+// reason. Because the lane is forced to "hardware", `FfmpegSource._doEnsureReady`'s
+// catch calls `fireFatal` on any open failure, so `onFatalError` fires and
+// `fatalReason` is populated (e.g. `"hw-budget-exceeded"`). The e2e assertion
+// confirms both `fatalReason` and `error` carry the budget signal.
 
 export interface BudgetProbeOutcome {
   index: number;

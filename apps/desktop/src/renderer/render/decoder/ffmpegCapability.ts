@@ -60,8 +60,9 @@ export function markHwUnusable(mediaId: string, _reason: string): void {
 
 /// Sticky per-media "ffmpeg engine terminally failed this session" marker —
 /// the runtime signal behind `DecodeResolveInputs.ffmpegUsable` (decodeEngine.ts).
-/// Nothing consumes this yet; a later task feeds `isFfmpegUnusable` into the
-/// caller-gathered `ffmpegUsable` input so the pure resolver stays untouched.
+/// Consumed by `Compositor.ts` (calls `markFfmpegUnusable` on total FfmpegSource
+/// failure) and `PixiPreview.tsx` (calls `isFfmpegUnusable` to feed the resolver's
+/// `ffmpegUsable` input), keeping the pure resolver untouched.
 const ffmpegUnusable = new Set<string>();
 
 export function markFfmpegUnusable(mediaId: string, _reason: string): void {
