@@ -179,6 +179,12 @@ const enUS = {
     proxy_failed_hint: "Preview could not be prepared. Re-import to retry.",
     click_drag_hint: "Click to preview · drag onto a track to add",
     drop_to_import: "Drop files to import",
+    proxy_pill_auto: "Proxy: Auto",
+    proxy_pill_auto_hint: "Follow the project's Prefer-proxies setting.",
+    proxy_pill_proxy: "Proxy: On",
+    proxy_pill_proxy_hint: "Always preview this clip from its 720p proxy.",
+    proxy_pill_original: "Proxy: Off",
+    proxy_pill_original_hint: "Always preview this clip from the original.",
   },
   preview: {
     empty_hint: "Add a layer to start the preview",
@@ -489,6 +495,10 @@ const enUS = {
     auto_delete_empty_tracks: "Auto-delete emptied tracks",
     auto_delete_empty_tracks_hint:
       "Deleting the last clip on a track also removes the track — one undo restores both. A/B roll always stays. Saved with the project.",
+    prefer_proxies: "Prefer proxies for preview",
+    prefer_proxies_hint:
+      "Play the lightweight 720p proxy in the preview for clips that have one, for smoother scrubbing. Export still uses the original. Saved with the project.",
+    decode_unsupported_generate_proxy: "Generate proxy",
     keybindings_heading: "Keyboard shortcuts",
     keybindings_blurb:
       "Click a chord to remove it, or [+ Add] to bind a new one. Each chord must be unique across actions — unset the current owner first if you want to repurpose a key.",

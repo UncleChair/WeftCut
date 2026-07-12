@@ -178,6 +178,12 @@ const zhCN: Resources = {
     proxy_failed_hint: "预览代理生成失败，请重新导入素材。",
     click_drag_hint: "点击预览 · 拖到轨道添加",
     drop_to_import: "松开以导入文件",
+    proxy_pill_auto: "代理：自动",
+    proxy_pill_auto_hint: "跟随工程的“优先使用代理”设置。",
+    proxy_pill_proxy: "代理：开",
+    proxy_pill_proxy_hint: "该片段始终使用 720p 代理预览。",
+    proxy_pill_original: "代理：关",
+    proxy_pill_original_hint: "该片段始终使用原始文件预览。",
   },
   preview: {
     empty_hint: "添加图层后预览将自动启动",
@@ -477,6 +483,10 @@ const zhCN: Resources = {
     auto_delete_empty_tracks: "自动删除空轨道",
     auto_delete_empty_tracks_hint:
       "删除轨道上最后一个片段时一并移除该轨道，一次撤销即可同时恢复；A/B 轨始终保留。此选项随工程保存。",
+    prefer_proxies: "预览优先使用代理",
+    prefer_proxies_hint:
+      "对已生成代理的片段，在预览中播放轻量的 720p 代理以获得更流畅的拖拽体验；导出仍使用原始文件。此选项随工程保存。",
+    decode_unsupported_generate_proxy: "生成代理",
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:
       "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",
