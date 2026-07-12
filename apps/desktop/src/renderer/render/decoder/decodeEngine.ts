@@ -38,9 +38,10 @@ export interface DecodeResolution {
   source: DecodeSource;
   /// Decode target: for `engine: "ffmpeg"` + `source: "original"` this is the
   /// original file PATH; for `engine: "webcodecs"` it is a convertFileSrc URL.
-  /// The `source: "proxy"` branch always returns the proxy URL today (only
-  /// webcodecs×proxy is live; ffmpeg×proxy — which would need a proxy PATH — is
-  /// deferred with `useProxySource`). null = pending/unsupported.
+  /// The `source: "proxy"` branch always resolves `engine: "webcodecs"` and
+  /// returns the proxy URL — the quick proxy is WebCodecs-decodable by
+  /// construction, so ffmpeg×proxy (which would need a proxy PATH) never
+  /// occurs. null = pending/unsupported.
   target: string | null;
   /// Swap identity `${engine}:${source}:${target}`; null when nothing acquirable.
   key: string | null;
@@ -61,14 +62,21 @@ export function resolveDecodeEngine(i: DecodeResolveInputs): DecodeResolution {
     key: target ? `${engine}:${source}:${target}` : null,
   });
 
-  // source/proxy handling shared by every setting once an engine is picked.
+  // Proxy is always the 720p H.264 short-GOP quick proxy — WebCodecs-decodable
+  // by construction — so it decodes on the Lite engine regardless of the
+  // decode_engine setting. ffmpeg-on-proxy would need a file PATH (the proxy
+  // branch only has a convertFileSrc URL) and is pointless on a light proxy;
+  // routing to webcodecs is both the activation and the landmine fix, and it
+  // rescues the no-component / pinned-Standard case. Hoisted ABOVE the engine
+  // gates so a pinned-but-unusable engine never blocks a usable proxy.
+  if (source === "proxy") {
+    return i.proxyReady
+      ? done("webcodecs", "ok", i.proxyUrl, "webcodecs on proxy")
+      : done("webcodecs", "pending", null, "proxy building");
+  }
+
+  // source === "original" from here down.
   const forEngine = (engine: DecodeEngine): DecodeResolution => {
-    if (source === "proxy") {
-      return i.proxyReady
-        ? done(engine, "ok", i.proxyUrl, `${engine} on proxy`)
-        : done(engine, "pending", null, "proxy building");
-    }
-    // source === "original"
     if (engine === "ffmpeg") return done(engine, "ok", i.originalPath, "ffmpeg on original");
     // webcodecs × original
     switch (i.webcodecsCanDecodeOriginal) {

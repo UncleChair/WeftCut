@@ -44,6 +44,20 @@ export function resolveDecode(media: {
   }
 }
 
+/** The 720p quick proxy path for a media, or null if none exists yet or the
+ *  route is Bypass (which has no quick_proxy slot). Distinct from
+ *  resolveDecode().previewPath, which can be the original (Bypass) or the
+ *  source-res full proxy — the proxy AXIS wants the light quick proxy only. */
+export function quickProxyPath(media: { decode_route: DecodeRoute }): string | null {
+  const r = media.decode_route;
+  switch (r.route) {
+    case "bypass": return null;
+    case "direct-export": return r.quick_proxy;
+    case "proxied": return r.quick_proxy;
+    case "native-sw": return r.quick_proxy;
+  }
+}
+
 /** Preview path with the non-persisted session bridge layered on: when this
  *  machine confirmed it can decode the original (import probe), the original is
  *  usable until a proxy lands.

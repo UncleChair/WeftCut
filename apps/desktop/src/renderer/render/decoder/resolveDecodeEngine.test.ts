@@ -71,11 +71,31 @@ describe("resolveDecodeEngine — webcodecs × original verdict", () => {
 });
 
 describe("resolveDecodeEngine — source axis", () => {
-  it("useProxySource + proxyReady → decodes the proxy on either engine", () => {
+  it("useProxySource + proxyReady → decodes the proxy on webcodecs (quick proxy is always WebCodecs-decodable)", () => {
     const r = resolveDecodeEngine(base({ useProxySource: true, proxyReady: true, proxyUrl: "weftcut-media://p.mp4" }));
-    expect(r).toMatchObject({ engine: "ffmpeg", source: "proxy", status: "ok", target: "weftcut-media://p.mp4" });
+    expect(r).toMatchObject({ engine: "webcodecs", source: "proxy", status: "ok", target: "weftcut-media://p.mp4" });
   });
   it("useProxySource but proxy not built → pending", () => {
     expect(resolveDecodeEngine(base({ useProxySource: true, proxyReady: false })).status).toBe("pending");
+  });
+  it("proxy source resolves to webcodecs even when setting is ffmpeg", () => {
+    expect(resolveDecodeEngine(base({
+      setting: "ffmpeg", useProxySource: true, proxyReady: true,
+      proxyUrl: "weftcut-media://p.mp4",
+    }))).toMatchObject({
+      engine: "webcodecs", source: "proxy", status: "ok", target: "weftcut-media://p.mp4",
+      key: "webcodecs:proxy:weftcut-media://p.mp4",
+    });
+  });
+  it("proxy source with no component still resolves to webcodecs (rescue path)", () => {
+    expect(resolveDecodeEngine(base({
+      setting: "ffmpeg", componentAvailable: false, useProxySource: true,
+      proxyReady: true, proxyUrl: "weftcut-media://p.mp4",
+    }))).toMatchObject({ engine: "webcodecs", source: "proxy", status: "ok" });
+  });
+  it("proxy requested but not ready → pending on webcodecs", () => {
+    expect(resolveDecodeEngine(base({
+      useProxySource: true, proxyReady: false, proxyUrl: null,
+    }))).toMatchObject({ engine: "webcodecs", source: "proxy", status: "pending", target: null });
   });
 });
