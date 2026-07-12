@@ -139,7 +139,7 @@ session-interface split — has shipped:
   and `ExportDecodeSession` roles, extracted to `decoder/session.ts`. Preview and
   export no longer share one bloated contract; `ExportDecodeSession` names the
   export Worker's driving surface (`decodeRange`/`evictBefore`) as an explicit
-  `ExportDecodeSession` contract.
+  contract.
 - **Unified `DecodedFrame` metadata/ownership.** The frame union already
   exists across the decode paths; standardizing its metadata and ownership is
   a safe later cleanup, not a blocker.

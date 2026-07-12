@@ -93,7 +93,7 @@ export interface FrameStore {
   size(): number;
 }
 
-/// The surface the Compositor composites through (renamed from DecoderHandle).
+/// The surface the Compositor composites through (the minimal decode contract).
 /// requestFrameAt/onFirstFrame stay here: a synchronous, pre-staged source
 /// (export) satisfies them as documented no-ops (Null Object). The trailing
 /// members are honestly optional — an engine that cannot provide a value simply
