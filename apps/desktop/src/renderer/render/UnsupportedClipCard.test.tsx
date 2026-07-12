@@ -45,7 +45,7 @@ describe("UnsupportedClipCard", () => {
     expect(setAppSettings).toHaveBeenCalledWith({ decode_engine: "ffmpeg" });
   });
 
-  it("shows the no-component body and no button when the ffmpeg component is unavailable", () => {
+  it("shows the no-component body and no Switch-to-Standard button when the ffmpeg component is unavailable", () => {
     useDecodeComponentStore.setState({ available: false });
     render(<UnsupportedClipCard mediaId={MEDIA_ID} />);
 
