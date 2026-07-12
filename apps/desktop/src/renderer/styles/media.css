@@ -322,6 +322,45 @@
   z-index: 2;
 }
 
+/* Per-clip proxy override pill (tri-state: Auto / Force proxy / Force
+   original). Lives inside .media-item-details, the hover overlay, which
+   is pointer-events: none by default so the card's own click/drag gesture
+   passes through it; pointer-events: auto here re-enables just the pill,
+   same convention as .media-import-cancel above. Hidden entirely for
+   Bypass sources (component returns null; no class ever applied). */
+.media-proxy-pill {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-slate-300);
+  background: var(--secondary);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.media-proxy-pill:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.media-proxy-pill.is-proxy {
+  color: var(--color-blue-200);
+  background: rgba(96, 165, 250, 0.16);
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+.media-proxy-pill.is-original {
+  color: #fde68a;
+  background: rgba(250, 204, 21, 0.14);
+  border-color: rgba(250, 204, 21, 0.4);
+}
+
 /* Status-bar pill: "Generating N derivatives…". */
 
 .derivatives-pill {

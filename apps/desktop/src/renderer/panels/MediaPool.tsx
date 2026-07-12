@@ -6,8 +6,10 @@ import { mediaReadiness, type ProxyState } from "./mediaReadiness";
 import { MEDIA_DRAG_TYPE } from "../timeline/TrackLane";
 import { AppInput } from "../components/AppInput";
 import { formatTimecode } from "../frames";
-import { type MediaSummary } from "../ipc";
+import { type MediaSummary, generateQuickProxy } from "../ipc";
 import { registerRevealMedia } from "../state/navigation";
+import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
+import { quickProxyPath } from "../render/decodeRoute";
 
 /// The media-pool column doubles as the drop target for Explorer file
 /// drags. HTML5 drag events fire because the OS-level drop interception is
@@ -240,6 +242,7 @@ export function MediaPool({
                   <span className="media-meta">
                     {formatBytes(m.size_bytes, t)}
                   </span>
+                  <ProxyPill media={m} />
                 </div>
                 {reason === "importing" && (
                   <button
@@ -299,6 +302,32 @@ export function MediaPool({
         </ul>
       )}
     </div>
+  );
+}
+
+/// Per-clip proxy override: cycles Auto → Force proxy → Force original → Auto.
+/// Hidden for Bypass (no quick_proxy slot). Choosing Force-proxy on a source
+/// with no built proxy kicks an on-demand build.
+function ProxyPill({ media }: { media: MediaSummary }) {
+  const { t } = useTranslation();
+  const override = useProxyPrefStore((s) => s.overrides[media.id]); // boolean | undefined
+  if (media.decode_route.route === "bypass") return null;
+  const state: "auto" | "proxy" | "original" =
+    override === undefined ? "auto" : override ? "proxy" : "original";
+  const next: boolean | null = state === "auto" ? true : state === "proxy" ? false : null;
+  return (
+    <button
+      type="button"
+      className={`media-proxy-pill is-${state}`}
+      title={t(`media_pool.proxy_pill_${state}_hint`)}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (next === true && quickProxyPath(media) === null) void generateQuickProxy(media.id);
+        void setProxyOverride(media.id, next);
+      }}
+    >
+      {t(`media_pool.proxy_pill_${state}`)}
+    </button>
   );
 }
 
