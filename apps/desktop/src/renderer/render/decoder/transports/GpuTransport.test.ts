@@ -2,7 +2,7 @@
 //
 // GpuTransport.test.ts — port handoff + streamId filtering, with
 // `window.api.previewGpu` faked. Mirrors the FakePort + fake-bitmap approach
-// `../NativeGpuSourceHandle.test.ts` relies on (same environment, same
+// the deleted native-GPU handle's test relied on (same environment, same
 // helpers) rather than a real `MessageChannel`/`window.postMessage` transfer
 // or a real `createImageBitmap`/`ImageData`: verified empirically that this
 // repo's jsdom (25.0.1, via vitest 4.1.7) implements neither

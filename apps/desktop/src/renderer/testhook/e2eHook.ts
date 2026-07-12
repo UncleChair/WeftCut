@@ -267,13 +267,14 @@ export interface E2EHook {
   weftcutSampleComposite(x: number, y: number): Promise<CompositeSample>;
   /// Preview-sw conformance (Task 8b runtime proof): snapshot the active
   /// VideoClip's decode source + bound sprite off the LIVE Compositor. Proves
-  /// the Compositor acquired a `SwSourceHandle` (native software decode) for a
-  /// native-sw ProRes clip and that a decoded frame reached the sprite. Pass
-  /// the clip's `layerId`; omit for the first live clip. Returns null until a
-  /// clip is active. Delegates to the PixiPreview bridge (Dev/e2e only).
-  /// `builtFromKey` (Task 10) additionally exposes the resolver's `${tier}:
-  /// ${target}` identity so the decode-engine e2e spec can assert the
-  /// resolved TIER, not just the coarser `sourceKind`.
+  /// the Compositor acquired a `FfmpegSource` on its software lane (native
+  /// software decode) for a native-sw ProRes clip and that a decoded frame
+  /// reached the sprite. Pass the clip's `layerId`; omit for the first live
+  /// clip. Returns null until a clip is active. Delegates to the PixiPreview
+  /// bridge (Dev/e2e only). `builtFromKey` (Task 10) additionally exposes the
+  /// resolver's `${engine}:${source}:${target}` identity so the decode-engine
+  /// e2e spec can assert the resolved ENGINE/SOURCE, not just the coarser
+  /// `sourceKind`.
   activeClipProbe(layerId?: string): ActiveClipProbe | null;
   /// Preview-sw SSIM: base64 PNG (no `data:` prefix) of the current composited
   /// preview frame at composition resolution. The spec decodes this, produces

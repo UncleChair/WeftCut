@@ -21,8 +21,6 @@ import { frameToSourceUs } from "./ptsOffset";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
-import { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
-import { SwSourceHandle } from "./SwSourceHandle";
 import { FfmpegSource } from "./FfmpegSource";
 
 const IDLE_DISPOSE_MS = 5_000;
@@ -66,31 +64,17 @@ export interface SourceHandleInit {
   /// the opened decode target's first packet instead (re-encoded proxies start
   /// at PTS 0). Kept as a fallback when the target has no packets.
   sourceStartPtsUs?: number | null;
-  /// Force the decode strategy for this handle rather than letting the pool
-  /// pick WebCodecs. `'native'` routes to `NativeGpuSourceHandle` (native
-  /// GPU / d3d11va decode) and is now PRODUCTION-LEGAL: it is chosen ONLY by
-  /// engine resolution (`resolveEngineTier` tier 1), which requires a PASSED
-  /// HW probe on the source's format class — the pool never picks it on a
-  /// hunch, and the E2E flag no longer gates it. `'software'` routes to
-  /// `SwSourceHandle` (native libavcodec SW decode). Both ship behind the
-  /// `decode_engine` AppSettings selection; the pool just honors whatever the
-  /// resolver decided.
-  forceStrategy?: "webcodecs" | "native" | "software";
-  /// The ORIGINAL file path for a `forceStrategy: 'native'` or `'software'`
-  /// handle to decode directly (both bypass the shared, proxy-backed
-  /// `SourceMedia` entirely). Ignored by the WebCodecs path, which decodes
-  /// `proxyAssetUrl` instead.
+  /// The ORIGINAL file path for an `engine: 'ffmpeg'` handle to decode
+  /// directly (bypasses the shared, proxy-backed `SourceMedia` entirely).
+  /// Ignored by the WebCodecs path, which decodes `proxyAssetUrl` instead.
   sourcePath?: string;
-  /// Bench-only: native pool size (slot count) for a `forceStrategy: 'native'`
+  /// Bench-only: native pool size (slot count) for an `engine: 'ffmpeg'`
   /// handle. Decode-bench Stage 3 varies this to sweep pipeline depth; the
-  /// product default (3) applies when unset — production `'native'` handles
-  /// never set it. Ignored by the WebCodecs path.
+  /// product default (3) applies when unset — production handles never set
+  /// it. Ignored by the WebCodecs path.
   poolSize?: number;
   /// Resolved engine (collapsed decode-engine model, `resolveDecodeEngine`).
-  /// Export ignores it. Absent ⇒ falls through to the legacy `forceStrategy`
-  /// branches / WebCodecs default (existing behavior unchanged). ADDITIVE on
-  /// top of `forceStrategy` — both coexist until Task 9 removes the legacy
-  /// tier resolver + its native branches.
+  /// Export ignores it. Absent ⇒ falls through to the WebCodecs default.
   engine?: import("./decodeEngine").DecodeEngine;
   /// Source codec/pixFmt — `FfmpegSource` needs them for lane selection.
   codec?: string | null;
@@ -173,13 +157,13 @@ export interface DecoderHandle {
   /// lookahead window is satisfied rather than the decoder running behind.
   isLookaheadFull?(): boolean;
   /// Subscribe to a terminal session failure (GPU decode error, device loss,
-  /// session crash, or a budget-rejected open). Optional: implemented by the
-  /// two native handles (`NativeGpuSourceHandle`, `SwSourceHandle`); the
-  /// WebCodecs `SourceHandle` has its own internal downgrade-to-software
-  /// machinery (`handleDecodeError`) and doesn't need this external surface.
-  /// When present, the Compositor wires it to `markDowngraded` (sticky,
-  /// LogBus warn) + `scheduleRepaint()` so the failure rides the existing
-  /// key-based no-flash swap onto the next tier (D4, Task 18).
+  /// session crash, or a budget-rejected open). Optional: implemented by
+  /// `FfmpegSource` (a total ffmpeg-engine failure, after its in-place HW→SW
+  /// fallback also fails); the WebCodecs `SourceHandle` has its own internal
+  /// downgrade-to-software machinery (`handleDecodeError`) and doesn't need
+  /// this external surface. When present, the Compositor wires it to
+  /// `markFfmpegUnusable` (sticky) + `scheduleRepaint()` so the failure rides
+  /// the existing key-based no-flash swap onto the next engine.
   onFatalError?(cb: (reason: string) => void): void;
   dispose(): void;
 }
@@ -708,7 +692,7 @@ interface MediaEntry {
 /// refcounted (so the demuxer + sample table is shared across every
 /// handle referencing the same source proxy).
 export class SourceDecoderPool {
-  private handles = new Map<string, SourceHandle | NativeGpuSourceHandle | SwSourceHandle | FfmpegSource>();
+  private handles = new Map<string, SourceHandle | FfmpegSource>();
   private medias = new Map<string, MediaEntry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -717,17 +701,16 @@ export class SourceDecoderPool {
   /// ring) but references a refcounted shared `SourceMedia`. The handle
   /// is initialised lazily by the first `await ensureReady()` call.
   ///
-  /// Native strategies (production-legal): `forceStrategy: 'native'` routes to
-  /// a `NativeGpuSourceHandle` and `'software'` to a `SwSourceHandle`, both
-  /// decoding `sourcePath` directly. The engine resolver (`resolveEngineTier`)
-  /// is the ONLY chooser — `'native'` requires a passed HW probe (tier 1),
-  /// `'software'` the native-SW route/probe (tier 3); neither is E2E-gated any
-  /// longer. Either native branch skips `acquireMedia` entirely — there is no
-  /// shared, proxy-backed `SourceMedia` for a native session, so `mediaId` here
-  /// is just a pool bookkeeping key (see `releaseHandle`, whose
-  /// `medias.get(mediaId)` miss is a no-op for these handles). `poolSize` stays
-  /// bench-only (decode-bench Stage 3).
-  acquire(init: SourceHandleInit): SourceHandle | NativeGpuSourceHandle | SwSourceHandle | FfmpegSource {
+  /// `engine: 'ffmpeg'` routes to a `FfmpegSource`, decoding `sourcePath`
+  /// directly (its own hardware/software lane selection happens internally,
+  /// via `pickInitialLane`/`forceLane`). The engine resolver
+  /// (`resolveDecodeEngine`) is the chooser in production. The ffmpeg branch
+  /// skips `acquireMedia` entirely — there is no shared, proxy-backed
+  /// `SourceMedia` for an ffmpeg session, so `mediaId` here is just a pool
+  /// bookkeeping key (see `releaseHandle`, whose `medias.get(mediaId)` miss is
+  /// a no-op for these handles). `poolSize` stays bench-only (decode-bench
+  /// Stage 3).
+  acquire(init: SourceHandleInit): SourceHandle | FfmpegSource {
     if (init.engine === "ffmpeg") {
       const existingFfmpeg = this.handles.get(init.layerId);
       if (existingFfmpeg) return existingFfmpeg;
@@ -750,28 +733,6 @@ export class SourceDecoderPool {
       this.handles.set(init.layerId, ffmpegHandle);
       this.startSweeperIfNeeded();
       return ffmpegHandle;
-    }
-    if (init.forceStrategy === "native") {
-      const existingNative = this.handles.get(init.layerId);
-      if (existingNative) return existingNative;
-      const nativeHandle = new NativeGpuSourceHandle(
-        init.layerId,
-        init.mediaId,
-        init.sourcePath ?? "",
-        init.sourceColor,
-        init.poolSize,
-      );
-      this.handles.set(init.layerId, nativeHandle);
-      this.startSweeperIfNeeded();
-      return nativeHandle;
-    }
-    if (init.forceStrategy === "software") {
-      const existingSw = this.handles.get(init.layerId);
-      if (existingSw) return existingSw;
-      const swHandle = new SwSourceHandle(init.layerId, init.mediaId, init.sourcePath ?? "", init.sourceColor);
-      this.handles.set(init.layerId, swHandle);
-      this.startSweeperIfNeeded();
-      return swHandle;
     }
     const existing = this.handles.get(init.layerId);
     if (existing) return existing;

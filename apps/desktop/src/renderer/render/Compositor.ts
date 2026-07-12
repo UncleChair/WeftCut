@@ -29,8 +29,7 @@ import {
   type DecoderHandle,
   type DecoderPool,
 } from "./decoder/SourceDecoderPool";
-import { NativeGpuSourceHandle } from "./decoder/NativeGpuSourceHandle";
-import { SwSourceHandle } from "./decoder/SwSourceHandle";
+import { FfmpegSource } from "./decoder/FfmpegSource";
 import { markFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
@@ -128,17 +127,19 @@ export interface UpcomingClipPrewarmSnapshot {
 
 /// E2E-only diagnostic snapshot of ONE active VideoClip's decode source plus
 /// its bound sprite. The preview-sw conformance spec reads this to prove the
-/// runtime path (import → native-sw route → `resolveSource` resolves tier 3 →
-/// acquire) ends in a real `SwSourceHandle` AND that a decoded frame reached
-/// the sprite — the single runtime fact no other surface exposes (Task 8b was
-/// typecheck-only before this). All fields are plain numbers/strings/booleans
-/// so the whole thing survives the `page.evaluate` boundary.
+/// runtime path (import → native-sw route → `resolveSource` resolves the
+/// ffmpeg engine → acquire) ends in a real `FfmpegSource` on its software lane
+/// AND that a decoded frame reached the sprite — the single runtime fact no
+/// other surface exposes (Task 8b was typecheck-only before this). All fields
+/// are plain numbers/strings/booleans so the whole thing survives the
+/// `page.evaluate` boundary.
 export interface ActiveClipProbe {
   layerId: string;
   mediaId: string;
-  /// Which concrete decode handle backs `ActiveClip.source`, discriminated by
-  /// `instanceof` (NOT `constructor.name` — the minified E2E renderer build
-  /// mangles class names). `"sw"` is the native software-decode path.
+  /// Which concrete decode handle/lane backs `ActiveClip.source`, discriminated
+  /// by `instanceof` + `FfmpegSource.currentLane()` (NOT `constructor.name` —
+  /// the minified E2E renderer build mangles class names). `"sw"` is the
+  /// ffmpeg software-decode lane, `"native-gpu"` its hardware lane.
   sourceKind: "webcodecs" | "native-gpu" | "sw" | "unknown";
   /// Derived from `sourceKind === "sw"`: whether the active handle is the native
   /// software-decode path. Kept as a distinct field so the spec can assert the
@@ -146,9 +147,10 @@ export interface ActiveClipProbe {
   isSoftware: boolean;
   /// True once the pool's idle sweeper has reclaimed this handle.
   sourceDisposed: boolean;
-  /// Decoded frames currently buffered in the handle's ring. For the SW path a
-  /// non-zero value means `SwSourceHandle` converted NV12 → VideoFrame →
-  /// ImageBitmap and pushed it — i.e. the native decoder produced real output.
+  /// Decoded frames currently buffered in the handle's ring. For the SW lane a
+  /// non-zero value means `FfmpegSource`'s `SwTransport` converted NV12 →
+  /// VideoFrame → ImageBitmap and pushed it — i.e. the native decoder produced
+  /// real output.
   ringSize: number;
   /// PTS (µs) of the earliest / latest frame buffered in the ring, or null when
   /// empty. The spec waits for `ringLastPtsUs >= target` so it captures the
@@ -1150,13 +1152,11 @@ export class Compositor {
     if (!clip) return null;
     const s = clip.source;
     const sourceKind: ActiveClipProbe["sourceKind"] =
-      s instanceof SwSourceHandle
-        ? "sw"
-        : s instanceof NativeGpuSourceHandle
-          ? "native-gpu"
-          : s instanceof SourceHandle
-            ? "webcodecs"
-            : "unknown";
+      s instanceof FfmpegSource
+        ? (s.currentLane() === "software" ? "sw" : "native-gpu")
+        : s instanceof SourceHandle
+          ? "webcodecs"
+          : "unknown";
     const tex = clip.sprite.sprite.texture;
     const isEmpty = tex === Texture.EMPTY;
     return {

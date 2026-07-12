@@ -2,9 +2,9 @@
 //
 // SwTransport.test.ts — NV12 -> ImageBitmap conversion + streamId filter,
 // `window.api.previewSw` faked. jsdom (25.0.1, via vitest 4.1.7) implements
-// neither `VideoFrame` nor `createImageBitmap` as globals (verified in
-// `../SwSourceHandle.test.ts`), so both are stubbed on `globalThis` the same
-// way that sibling test does, rather than exercising a real NV12 decode.
+// neither `VideoFrame` nor `createImageBitmap` as globals (verified in the
+// deleted native-SW handle's test), so both are stubbed on `globalThis` the
+// same way that sibling test did, rather than exercising a real NV12 decode.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SwTransport } from "./SwTransport";
 

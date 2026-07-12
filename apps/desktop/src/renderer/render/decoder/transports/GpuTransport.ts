@@ -1,6 +1,7 @@
 // Native-GPU `DecodeTransport` — the MessagePort + shared-texture path.
-// Extracted from `NativeGpuSourceHandle` (see that file's header for the full
-// transport recap): `window.api.previewGpu.{open,requestFrameAt,close,
+// Extracted from the original native-GPU decode handle (Stage 2 of
+// decode-bench; see docs/superpowers/specs/2026-07-03-decode-bench-design.md
+// for the full transport recap): `window.api.previewGpu.{open,requestFrameAt,close,
 // requestPort}` are the only IPC-shaped calls; they carry session commands,
 // never frame bytes. Decoded frames (and eof/error pokes) arrive on a
 // `MessagePort` the PRELOAD hands to this main-world context via

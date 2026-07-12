@@ -6,30 +6,18 @@
 // Spec: docs/superpowers/specs/2026-07-03-decode-bench-design.md
 import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
-import type { NativeGpuSourceHandle } from "./NativeGpuSourceHandle";
-import type { SwSourceHandle } from "./SwSourceHandle";
-import type { PreviewGpuTimingReport, PreviewGpuMainTiming } from "../../../shared/ipc";
+import type { FfmpegSource } from "./FfmpegSource";
 import { percentile } from "../../../shared/msStats";
 export { percentile } from "../../../shared/msStats";
 
-/// Either decode strategy's handle. All three expose `ring: FrameRing` (so
+/// Either decode strategy's handle. Both expose `ring: FrameRing` (so
 /// `ring.pushCount`/`lastPtsUs()`/`containsPts()` resolve without narrowing),
 /// `ensureReady`, and `requestFrameAt` — the runners below need no strategy-
-/// specific branching. `SwSourceHandle` backs `strategy: "sw"`
-/// (`forceStrategy: "software"`) — the native libavcodec SW decode path,
-/// benched at this same `DecoderHandle` seam as the other two strategies.
-type BenchHandle = SourceHandle | NativeGpuSourceHandle | SwSourceHandle;
-
-/// Native handles carry a `streamId` + `drainBenchTiming`; the WebCodecs
-/// `SourceHandle` has neither. `SwSourceHandle` also carries a `streamId`
-/// (Task 7) but no `drainBenchTiming`, so the `typeof` check still excludes
-/// it — the sw arm gets plain throughput fps, no Rust GPU timing. Structural,
-/// so no value import of the class.
-function asNative(h: BenchHandle): (NativeGpuSourceHandle & { streamId: string }) | null {
-  return "streamId" in h && typeof (h as NativeGpuSourceHandle).drainBenchTiming === "function"
-    ? (h as NativeGpuSourceHandle & { streamId: string })
-    : null;
-}
+/// specific branching. `FfmpegSource` backs both `strategy: "native"`
+/// (`forceLane: "hardware"`) and `strategy: "sw"` (`forceLane: "software"`) —
+/// the collapsed ffmpeg engine's two lanes, benched at this same
+/// `DecoderHandle` seam as the WebCodecs strategy.
+type BenchHandle = SourceHandle | FfmpegSource;
 
 export type BenchStrategy = "webcodecs" | "native" | "sw";
 export type BenchScenario = "throughput" | "seek" | "coldstart";
@@ -49,115 +37,10 @@ export type SeekCategory = "forward-near" | "forward-far" | "backward-near" | "b
 interface CategoryStats { p50: number; p95: number; max: number; n: number }
 
 export type BenchResult =
-  | { kind: "throughput"; measuredMs: number; frames: number; fps: number; xRealtime: number; endedAtEof: boolean; timing?: ThroughputTiming }
+  | { kind: "throughput"; measuredMs: number; frames: number; fps: number; xRealtime: number; endedAtEof: boolean }
   | { kind: "seek"; perCategory: Record<SeekCategory, CategoryStats> }
   | { kind: "coldstart"; firstMs: number; restP50: number; restMax: number; iterationsMs: number[] }
   | { kind: "error"; error: string };
-
-/// Millisecond stats for one metric. Mirrors the Rust `TimingSummary` shape plus
-/// the raw sample count, so preload-derived and Rust-derived metrics report alike.
-export interface MsStats { p50: number; p95: number; max: number; mean: number; n: number }
-
-/// The Stage-3 throughput timing breakdown attached to a native throughput result.
-export interface ThroughputTiming {
-  poolSize: number;
-  decodeCopyMs: MsStats;
-  coordRttMs: MsStats;
-  preloadResidentMs: MsStats;
-  createImageBitmapMs: MsStats;
-  /// coordRtt.mean − preloadResident.mean: the main<->renderer IPC + event-loop
-  /// scheduling cost, isolated by subtraction (see the Stage-3 spec §1). The
-  /// preload's residentMs is measured up to just before `port.postMessage`, so
-  /// this derived figure also folds in the ImageBitmap transfer + `consumeAck`
-  /// dispatch cost that happens after that cutoff — i.e. it is main<->renderer
-  /// coordination overhead, not pure wire transit.
-  ipcTransitMsDerived: number;
-  /// Main-measured renderer round-trip (main<->renderer transit + renderer work).
-  rendererRoundTripMs: MsStats;
-  /// Rust<->main boundary (tsfn + mpsc + main dispatch) = coordRtt.mean - rendererRoundTrip.mean.
-  rustMainBoundaryMs: number;
-  /// Pure main<->renderer IPC/queue = rendererRoundTrip.mean - preloadResident.mean.
-  mainRendererTransitMs: number;
-  /// Throughput-bottleneck probe (Rust clock): a slot's ConsumeAck -> its next
-  /// FrameReady — the per-slot-cycle segment coordRtt (emit->ack) does NOT cover.
-  /// By telescoping, coordRttMs.mean + ackToEmitMs.mean ~= the per-slot inter-emit
-  /// period (poolSize * 1000/fps); whichever dominates localises the ceiling.
-  ackToEmitMs: MsStats;
-  /// Times the pump early-returned on the lookahead gate WITH a free slot present.
-  /// Large => the ackToEmit idle is anchor/lookahead-bound (Rust-side); ~0 => the
-  /// pump never idles on the gate, so the ceiling is the ack arrival rate (renderer).
-  lookaheadGatedSkips: number;
-  /// Round-2 thread time-budget probe (Rust clock). The per-slot probes found the
-  /// ~22ms/frame is NOT per-slot; these characterise the session thread directly:
-  /// interEmit/interAck = the true production/ack cadence (expect ~1000/fps ms);
-  /// recvBlock = per-recv_timeout block distribution (sum ~= total thread idle);
-  /// the three counts = wake reasons over the window (idle ticks / acks / anchor nudges).
-  interEmitMs: MsStats;
-  interAckMs: MsStats;
-  recvBlockMs: MsStats;
-  recvTimeoutTicks: number;
-  recvAckMsgs: number;
-  recvReqMsgs: number;
-  /// Round-3 stall attribution: the dominant pump early-return names the halt
-  /// (eof / pool-full / acquire-timeout / lookahead), and final* is the terminal
-  /// state (free-slot count + eof) when the pump last gave up.
-  eofReturns: number;
-  poolFullReturns: number;
-  acquireFailed: number;
-  finalFreeSlots: number;
-  finalEof: boolean;
-}
-
-function statsOf(xs: number[]): MsStats {
-  const sorted = [...xs].sort((a, b) => a - b);
-  return {
-    p50: percentile(sorted, 50),
-    p95: percentile(sorted, 95),
-    max: sorted.length ? sorted[sorted.length - 1]! : NaN,
-    mean: xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN,
-    n: xs.length,
-  };
-}
-
-function summaryToStats(s: PreviewGpuTimingReport["coordRtt"]): MsStats {
-  return { p50: s.p50Ms, p95: s.p95Ms, max: s.maxMs, mean: s.meanMs, n: s.count };
-}
-
-/// Assemble the throughput timing block from the Rust summaries (coord-RTT +
-/// decode/copy) and the preload-piggybacked per-frame samples. Pure — unit-tested.
-export function buildThroughputTiming(
-  poolSize: number,
-  rust: PreviewGpuTimingReport,
-  pre: { gvfMs: number[]; cibMs: number[]; residentMs: number[] },
-  main: PreviewGpuMainTiming,
-): ThroughputTiming {
-  const preloadResidentMs = statsOf(pre.residentMs);
-  const rendererRoundTripMs = summaryToStats(main.rendererRoundTripMs);
-  return {
-    poolSize,
-    decodeCopyMs: summaryToStats(rust.decodeCopy),
-    coordRttMs: summaryToStats(rust.coordRtt),
-    preloadResidentMs,
-    createImageBitmapMs: statsOf(pre.cibMs),
-    ipcTransitMsDerived: rust.coordRtt.meanMs - preloadResidentMs.mean,
-    rendererRoundTripMs,
-    rustMainBoundaryMs: rust.coordRtt.meanMs - main.rendererRoundTripMs.meanMs,
-    mainRendererTransitMs: main.rendererRoundTripMs.meanMs - preloadResidentMs.mean,
-    ackToEmitMs: summaryToStats(rust.ackToEmit),
-    lookaheadGatedSkips: rust.lookaheadGatedSkips,
-    interEmitMs: summaryToStats(rust.interEmit),
-    interAckMs: summaryToStats(rust.interAck),
-    recvBlockMs: summaryToStats(rust.recvBlock),
-    recvTimeoutTicks: rust.recvTimeoutTicks,
-    recvAckMsgs: rust.recvAckMsgs,
-    recvReqMsgs: rust.recvReqMsgs,
-    eofReturns: rust.eofReturns,
-    poolFullReturns: rust.poolFullReturns,
-    acquireFailed: rust.acquireFailed,
-    finalFreeSlots: rust.finalFreeSlots,
-    finalEof: rust.finalEof,
-  };
-}
 
 const WARMUP_MS = 2_000;
 const WINDOW_MS = 30_000;
@@ -284,12 +167,14 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
       proxyAssetUrl: url,
       ...(strategy === "native"
         ? {
-            forceStrategy: "native" as const,
+            engine: "ffmpeg" as const,
+            forceLane: "hardware" as const,
             sourcePath,
+            componentAvailable: true,
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
           }
         : strategy === "sw"
-        ? { forceStrategy: "software" as const, sourcePath }
+        ? { engine: "ffmpeg" as const, forceLane: "software" as const, sourcePath, componentAvailable: true }
         : {}),
     });
     await h.ensureReady();
@@ -339,12 +224,13 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
 
 // ── HW session-budget probe (smoke item b) ───────────────────────────────────
 // The main process caps concurrent native-hw sessions at MAX_HW_SESSIONS (3);
-// the (MAX+1)th `previewGpuOpen` throws `hw-budget-exceeded`, which
-// NativeGpuSourceHandle surfaces via `onFatalError` so the Compositor's resolver
-// downgrades that source off tier 1 (the resolver side is unit-tested in
-// decodeCapability.test.ts). This exercises the untested RUNTIME seam: that
-// opening MAX+1 real sessions actually rejects at the cap and the rejection
-// reaches the handle's fatal path with the budget reason.
+// the (MAX+1)th `previewGpuOpen` throws `hw-budget-exceeded`. This exercises
+// the untested RUNTIME seam: that opening MAX+1 real sessions actually
+// rejects at the cap and the rejection reaches this probe with the budget
+// reason (via the `ensureReady()` rejection; `FfmpegSource`'s `onFatalError`
+// only fires for a RUNTIME transport failure after a session is already
+// open, not an initial-open rejection, so `fatalReason` stays null here —
+// `error` is where the budget rejection actually surfaces).
 
 export interface BudgetProbeOutcome {
   index: number;
@@ -372,9 +258,11 @@ export async function decodeBenchBudgetProbe(args: {
         layerId: `budget-${i}`,
         mediaId: `budget:${i}:${args.sourcePath}`,
         proxyAssetUrl: url,
-        forceStrategy: "native",
+        engine: "ffmpeg",
+        forceLane: "hardware",
         sourcePath: args.sourcePath,
-      }) as NativeGpuSourceHandle;
+        componentAvailable: true,
+      }) as FfmpegSource;
       let fatalReason: string | null = null;
       // Register before the open attempt so a budget-rejected open is captured.
       h.onFatalError((r: string) => {
@@ -469,21 +357,6 @@ async function runThroughput(
       error: `window too small (frames=${frames}, ${measuredMs.toFixed(0)}ms) — decode outran the 60s fixture during warm-up`,
     };
   }
-  let timing: ThroughputTiming | undefined;
-  const native = asNative(h);
-  if (native) {
-    const pre = native.drainBenchTiming();
-    // takeTimings/takeMainTimings must run BEFORE the pool disposes the handle
-    // (which closes the native session); decodeBenchRun's finally disposes only
-    // after we return.
-    const rust = await window.api.previewGpu.takeTimings(native.streamId);
-    // takeMainTimings() drains a GLOBAL (un-keyed) main-side accumulator. This is
-    // correct ONLY because the bench runs one native session per fresh process and
-    // collects throughput FIRST — a native seek/coldstart draining before throughput
-    // in the same process would contaminate this attribution. See the spec's §3.
-    const main = await window.api.previewGpu.takeMainTimings();
-    timing = buildThroughputTiming(native.poolSize, rust, pre, main);
-  }
   return {
     kind: "throughput",
     measuredMs,
@@ -491,10 +364,6 @@ async function runThroughput(
     fps: frames / (measuredMs / 1000),
     xRealtime: contentUs / 1000 / measuredMs,
     endedAtEof,
-    // Conditional spread, not `timing: undefined` — exactOptionalPropertyTypes
-    // rejects assigning `undefined` to an optional field that's absent for
-    // non-native strategies.
-    ...(timing ? { timing } : {}),
   };
 }
 
@@ -538,10 +407,7 @@ async function runColdstart(
     // the caller is about to dispose.
     if (token.cancelled) throw new Error("bench run cancelled");
     const layerId = `bench-cold-${i}`;
-    // Cast, not a `BenchHandle` widen: Task 6 widened `SourceDecoderPool.acquire`'s
-    // return type to include `FfmpegSource` (the collapsed engine model), but
-    // `mkInit` below never sets `engine`, so this bench can never actually get one.
-    const h = pool.acquire(mkInit(layerId)) as BenchHandle;
+    const h = pool.acquire(mkInit(layerId));
     const t0 = performance.now();
     await h.ensureReady();
     void h.requestFrameAt(5_000_000);
@@ -574,28 +440,34 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     const mkInit = (layerId: string) => ({
       layerId,
       mediaId: `bench:${args.sourcePath}`,
-      // Unused by the native strategy (it decodes `sourcePath` directly) but
+      // Unused by the ffmpeg engine (it decodes `sourcePath` directly) but
       // still passed — `proxyAssetUrl` is required by `SourceHandleInit`.
       proxyAssetUrl: url,
       ...(args.strategy === "native"
         ? {
-            forceStrategy: "native" as const,
+            engine: "ffmpeg" as const,
+            forceLane: "hardware" as const,
             sourcePath: args.sourcePath,
+            componentAvailable: true,
             // Conditional spread, not `poolSize: args.poolSize` — exactOptionalPropertyTypes
             // rejects assigning `number | undefined` to the optional `poolSize: number` field.
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
           }
         : args.strategy === "sw"
-        ? { forceStrategy: "software" as const, sourcePath: args.sourcePath }
+        ? {
+            engine: "ffmpeg" as const,
+            forceLane: "software" as const,
+            sourcePath: args.sourcePath,
+            componentAvailable: true,
+          }
         : {}),
     });
     scenarioP = (async (): Promise<BenchResult> => {
       switch (args.scenario) {
         case "throughput":
-          // Cast per the runColdstart comment above — `mkInit` never sets `engine`.
-          return runThroughput(livePool.acquire(mkInit("bench-0")) as BenchHandle, args.durationUs, token, args.throttleMs);
+          return runThroughput(livePool.acquire(mkInit("bench-0")), args.durationUs, token, args.throttleMs);
         case "seek":
-          return runSeek(livePool.acquire(mkInit("bench-0")) as BenchHandle, args.durationUs, token);
+          return runSeek(livePool.acquire(mkInit("bench-0")), args.durationUs, token);
         case "coldstart":
           return runColdstart(livePool, mkInit, token);
       }

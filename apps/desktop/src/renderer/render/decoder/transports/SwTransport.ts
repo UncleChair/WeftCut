@@ -1,6 +1,8 @@
 // Native-SOFTWARE `DecodeTransport` — the per-frame NV12-over-IPC path.
-// Extracted from `SwSourceHandle` (see that file's header for the full
-// transport recap): `window.api.previewSw.{open,requestFrameAt,close}` carry
+// Extracted from the original native software-decode handle (the
+// ffmpeg-sw-decode-blindspot plan's Task 7; see
+// docs/superpowers/specs/2026-07-05-ffmpeg-sw-decode-blindspot-design.md for
+// the full transport recap): `window.api.previewSw.{open,requestFrameAt,close}` carry
 // session commands only. Decoded frames arrive as plain NV12 byte buffers
 // directly over the contextBridge (no shared texture, no MessagePort — a
 // `previewSw:frame` IPC event per frame), delivered via `onFrame`. This

@@ -1,22 +1,10 @@
-// FFmpeg-engine capability machinery: HW/SW lane session state, the
-// seek-validated HW codec allow-list, and `pickInitialLane` — the async
-// lane-selection entry point the new `FfmpegSource` (Task 5) will call so it
-// owns lane selection itself and the pure resolver never sees a lane.
-// SESSION state — resets on reload; the persisted machine truth is main's
-// capability cache (D3/D4), never these maps.
-//
-// `hwLaneByMedia` / `swLaneByMedia` / `hwProbeInFlight` / `swProbeInFlight`
-// moved here verbatim from `decodeCapability.ts` (Task 4). They are still
-// re-exported (by reference — same Map/Set instances) so `decodeCapability.ts`'s
-// existing `laneStatesFor` / `setSwLane` / `setHwLane` / `kickSwProbe` /
-// `kickHwProbe` keep compiling and behaving identically until a later task
-// moves those consumers too.
-import type { FfmpegLane, LaneState } from "./decodeEngine";
-
-export const swLaneByMedia = new Map<string, LaneState>(); // D3 wires probe results
-export const hwLaneByMedia = new Map<string, LaneState>(); // D4 wires probe results
-export const swProbeInFlight = new Set<string>();
-export const hwProbeInFlight = new Set<string>();
+// FFmpeg-engine capability machinery: the sticky per-media unusable markers,
+// the seek-validated HW codec allow-list, and `pickInitialLane` — the async
+// lane-selection entry point `FfmpegSource` calls so it owns lane selection
+// itself and the pure resolver never sees a lane. SESSION state — resets on
+// reload; the persisted machine truth is main's capability cache, never these
+// maps/sets.
+import type { FfmpegLane } from "./decodeEngine";
 
 /// TWIN of main's `classKeyOf` (src/main/decode-capability.ts) — MUST produce a
 /// BYTE-IDENTICAL format string so a renderer-derived key hits the exact cache
@@ -61,10 +49,9 @@ export function hwEligibleCodec(codec: string | null, pixFmt: string | null): bo
 }
 
 /// Sticky per-media "never try HW again this session" marker. Set when a
-/// native-HW handle dies at runtime (device loss, driver reset, session
-/// crash) — distinct from `markDowngraded` (decodeCapability.ts), which
-/// affects the OLD resolver's tier ordering; this one gates the NEW
-/// `pickInitialLane` entry point the `FfmpegSource` (Task 5) will call.
+/// native-HW transport dies at runtime (device loss, driver reset, session
+/// crash); gates `pickInitialLane`, so a subsequent `FfmpegSource` open for
+/// this media skips straight to the software lane.
 const hwUnusable = new Set<string>();
 
 export function markHwUnusable(mediaId: string, _reason: string): void {
@@ -85,14 +72,12 @@ export function isFfmpegUnusable(mediaId: string): boolean {
   return ffmpegUnusable.has(mediaId);
 }
 
-/// Async lane-selection entry point for `FfmpegSource` (Task 5): consults the
-/// sticky `markHwUnusable` marker and the seek-validated HW codec allow-list.
-/// An HW-eligible codec with a valid classKey AND a path is probed; missing
+/// Async lane-selection entry point for `FfmpegSource`: consults the sticky
+/// `markHwUnusable` marker and the seek-validated HW codec allow-list. An
+/// HW-eligible codec with a valid classKey AND a path is probed; missing
 /// classKey or path → `"software"` (no probe). Returns `"hardware"` only if the
 /// probe succeeds (ok: true); all other failures (unavailable, marked unusable,
 /// ineligible codec, probe rejection/exception) also return `"software"`.
-/// This is a direct probe, not the kick-and-poll rhythm `kickHwProbe` uses;
-/// it does not touch `hwProbeInFlight`/`hwLaneByMedia`.
 export async function pickInitialLane(
   input: {
     mediaId: string;
@@ -134,8 +119,4 @@ export async function pickInitialLane(
 export function resetFfmpegCapabilitySession(): void {
   hwUnusable.clear();
   ffmpegUnusable.clear();
-  hwLaneByMedia.clear();
-  swLaneByMedia.clear();
-  hwProbeInFlight.clear();
-  swProbeInFlight.clear();
 }

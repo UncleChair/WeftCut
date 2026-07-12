@@ -20,7 +20,7 @@ describe("resolveDecode — full route × readiness matrix", () => {
     // native-sw carries proxy paths like Proxied and resolves identically
     // (Option B): with the experimental toggle OFF a ProRes clip previews via
     // its proxy — no regression. The "use the native-SW original" behavior is a
-    // later overlay (forceStrategy), NOT a resolveDecode change.
+    // later overlay (the decode-engine resolver), NOT a resolveDecode change.
     ["native-sw, quick ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: null, format_version: 0 }), "q.mp4", null],
     ["native-sw, both ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: "f.mp4", format_version: 3 }), "q.mp4", "f.mp4"],
     ["image is bypass-like", M("Image", { route: "bypass" }), "orig.mp4", "orig.mp4"],
