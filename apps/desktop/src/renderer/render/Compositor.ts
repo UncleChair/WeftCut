@@ -231,8 +231,14 @@ export interface CompositorInit {
   /// no usable component, or WebCodecs failing the original with no proxy
   /// underway). Export omits it; an unsupported clip is silently skipped from
   /// the composite either way. A later task uses this to surface an
-  /// unsupported-format card in place of the clip.
-  onUnsupported?: (mediaId: string) => void;
+  /// unsupported-format card in place of the clip. Fires a SNAPSHOT
+  /// (`ReadonlySet<string>`) of every on-screen media currently unsupported —
+  /// not a single mediaId — and ONLY when set membership actually changes
+  /// (media added/removed from the unsupported set), never per-frame/per-
+  /// composite. `ensureClip` can run every tick; a per-tick fire here would
+  /// drive React state above a leaf and reproduce the whole-tree re-render
+  /// memory ratchet (feedback_playhead_gate_and_tiers). See `noteUnsupported`.
+  onUnsupported?: (unsupported: ReadonlySet<string>) => void;
   /// Resolver for the asset URL of a media item's ORIGINAL file.
   /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
   /// May return the same URL as `proxyAssetUrl` for media kinds
@@ -369,6 +375,11 @@ export class Compositor {
   readonly stage: Container;
   readonly pool: DecoderPool;
   private clips = new Map<string, ActiveClip>();
+  /// On-screen media currently reported `status: "unsupported"` by
+  /// `resolveSource` — mirrors `CompositorInit.onUnsupported`'s membership.
+  /// Mutate ONLY through `noteUnsupported`, which fires the callback with a
+  /// snapshot exactly when membership changes (never per-frame).
+  private unsupportedMedia = new Set<string>();
   private images = new Map<string, ActiveImage>();
   /// In-flight loadFromAsset promises, keyed by layerId. Used by `preloadImages`
   /// so the export Worker can await all image loads before the frame loop.
@@ -403,7 +414,7 @@ export class Compositor {
   private resolveSource: (mediaId: string) => ResolvedRendererSource | null;
   /// Preview-only unsupported-format notification (see `CompositorInit`).
   /// Undefined when the host doesn't wire it (export never does).
-  private onUnsupported: ((mediaId: string) => void) | undefined;
+  private onUnsupported: ((unsupported: ReadonlySet<string>) => void) | undefined;
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
@@ -660,6 +671,9 @@ export class Compositor {
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
+      // Nothing is on-screen anymore — clear every unsupported-media entry
+      // (via `noteUnsupported` so the host's card is dismissed if it was up).
+      for (const mediaId of [...this.unsupportedMedia]) this.noteUnsupported(mediaId, false);
       this.tenBitIngest?.dispose();
       this.tenBitIngest = null;
       this.baker?.setTargets([]);
@@ -683,6 +697,20 @@ export class Compositor {
         livingLayerIds.add(l.id);
         this.layerById.set(l.id, l);
       }
+    }
+    // Drop unsupported-media entries whose VideoClip layer(s) are no longer
+    // on the timeline. An unsupported media never gets an `ActiveClip` (see
+    // `ensureClip`), so the clip-teardown loop below — which only walks
+    // `this.clips` — can't see it; membership is keyed by mediaId (not
+    // layerId) since multiple layers can share a media, so this checks
+    // whether ANY living VideoClip layer still references it before
+    // clearing (`noteUnsupported(mediaId, false)` — see the CRITICAL
+    // membership-tracking note on `CompositorInit.onUnsupported`).
+    for (const mediaId of [...this.unsupportedMedia]) {
+      const stillReferenced = [...this.layerById.values()].some(
+        (l) => l.params.kind === "VideoClip" && l.params.media_id === mediaId
+      );
+      if (!stillReferenced) this.noteUnsupported(mediaId, false);
     }
     for (const [layerId, c] of this.clips) {
       if (!livingLayerIds.has(layerId)) {
@@ -1180,6 +1208,9 @@ export class Compositor {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    // Dismiss the unsupported-format card (if up) before the host's listener
+    // goes away with this Compositor.
+    for (const mediaId of [...this.unsupportedMedia]) this.noteUnsupported(mediaId, false);
     for (const c of this.clips.values()) { c.sprite.dispose(); c.effects.dispose(); }
     this.clips.clear();
     for (const i of this.images.values()) { i.sprite.dispose(); i.effects.dispose(); }
@@ -1487,6 +1518,25 @@ export class Compositor {
     setLayerBakeStatuses(byLayer);
   }
 
+  /// Add/remove `mediaId` from `unsupportedMedia` and fire `onUnsupported`
+  /// with a snapshot ONLY if that changed membership. `ensureClip` runs
+  /// every `compositeFrame` for every on-screen VideoClip layer, so calling
+  /// this unconditionally on every tick would fire `onUnsupported` (and thus
+  /// drive React state in the host) per-frame — the exact whole-tree
+  /// re-render memory ratchet this project has already been bitten by once
+  /// (feedback_playhead_gate_and_tiers). The membership check below is what
+  /// makes repeated calls with the same `isUnsupported` a no-op.
+  private noteUnsupported(mediaId: string, isUnsupported: boolean): void {
+    const had = this.unsupportedMedia.has(mediaId);
+    if (isUnsupported === had) return;
+    if (isUnsupported) {
+      this.unsupportedMedia.add(mediaId);
+    } else {
+      this.unsupportedMedia.delete(mediaId);
+    }
+    this.onUnsupported?.(new Set(this.unsupportedMedia));
+  }
+
   private ensureClip(layer: LayerSummary): ActiveClip | null {
     if (layer.params.kind !== "VideoClip") return null;
     const existing = this.clips.get(layer.id);
@@ -1532,10 +1582,11 @@ export class Compositor {
       return null;
     }
     if (rs.status === "unsupported") {
-      // No engine can decode this media at all — surface it to the host
-      // (a later task renders an unsupported-format card) and skip the clip
-      // entirely; export silently omits it (no `onUnsupported` wired there).
-      this.onUnsupported?.(mediaId);
+      // No engine can decode this media at all — surface it to the host (the
+      // unsupported-format card) and skip the clip entirely; export silently
+      // omits it (no `onUnsupported` wired there, so `noteUnsupported` is a
+      // no-op — `onUnsupported` stays undefined).
+      this.noteUnsupported(mediaId, true);
       return null;
     }
     if (rs.status !== "ok" || rs.target === null) {
@@ -1543,6 +1594,11 @@ export class Compositor {
       // The next resolution (probe settling / proxy landing) will retry.
       return null;
     }
+    // Resolved to a real decode target: this media is no longer unsupported.
+    // Only reached from the fresh-acquire path below (an already-active,
+    // non-disposed clip short-circuits above), so this fires once per real
+    // (re)acquisition — not per frame.
+    this.noteUnsupported(mediaId, false);
     // Source color tags apply to ANY decode target for this media: the
     // original carries them trivially, and a proxy/quick-proxy PRESERVES the
     // source's colorimetry (the recipe never converts matrix/range). The

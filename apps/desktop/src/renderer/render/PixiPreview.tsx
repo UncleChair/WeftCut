@@ -23,8 +23,11 @@ import {
   setTransportPlaying,
 } from "../state/playbackStore";
 import { useProjectStore } from "../state/projectStore";
-import { useAppSettingsStore } from "../settings/appSettingsStore";
-import { useDecodeComponentStore } from "../settings/decodeComponentStore";
+import { useAppSettingsStore, useDecodeEngine } from "../settings/appSettingsStore";
+import {
+  useDecodeComponentAvailable,
+  useDecodeComponentStore,
+} from "../settings/decodeComponentStore";
 import { containMap } from "../colorpick/pixel";
 import {
   clearPreviewSampler,
@@ -45,6 +48,7 @@ import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
 import { PerfHUD } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
+import { UnsupportedClipCard } from "./UnsupportedClipCard";
 import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
 
@@ -72,6 +76,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const samplerRef = useRef<PreviewSampler | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
+  // On-screen media the Compositor can't decode with any engine (see
+  // `Compositor.onUnsupported`). The Compositor fires this setter ONLY when
+  // set membership actually changes (`noteUnsupported`), never per-frame/
+  // per-composite — `ensureClip` runs every tick, so a per-tick fire here
+  // would drive React state above a leaf and reproduce the whole-tree
+  // re-render memory ratchet this project already fixed once
+  // (feedback_playhead_gate_and_tiers). Safe to hold in React state as-is.
+  const [unsupportedIds, setUnsupportedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   useImperativeHandle(
     ref,
@@ -110,6 +124,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const summary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
   const composition = summary?.composition;
+  const decodeEngine = useDecodeEngine();
+  const decodeComponentAvailable = useDecodeComponentAvailable();
 
   // Called by @pixi/react once the underlying PIXI.Application is
   // ready. Handed an already-initialized Application — we wire the
@@ -196,6 +212,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         height: app.canvas.height,
         mode: "preview",
         resolveSource,
+        // Membership-change snapshot only (see `Compositor.noteUnsupported`)
+        // — safe to feed straight into React state.
+        onUnsupported: setUnsupportedIds,
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
@@ -417,6 +436,17 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     [onTimeUpdate, onPausedChange],
   );
 
+  // Dismiss the unsupported-clip card promptly on a Standard switch (from
+  // the card's own button or the settings panel) or once the ffmpeg
+  // component finishes loading, rather than waiting for the next
+  // `compositeFrame` re-resolve to notice via `Compositor.onUnsupported`.
+  // The Compositor's OWN next resolve still re-derives the true membership
+  // (re-adding a media that's genuinely still unsupported under the new
+  // setting) — this just avoids a stale card lingering in the interim.
+  useEffect(() => {
+    setUnsupportedIds(new Set());
+  }, [decodeEngine, decodeComponentAvailable]);
+
   // Forward summary updates to the Compositor without remounting the
   // Application.
   useEffect(() => {
@@ -536,6 +566,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       {import.meta.env.DEV && (
         <PerfHUD compositorRef={compositorRef} engineRef={engineRef} />
       )}
+      {unsupportedIds.size > 0 && <UnsupportedClipCard />}
     </div>
   );
 });
