@@ -232,12 +232,14 @@ export interface CompositorInit {
   /// underway). Export omits it; an unsupported clip is silently skipped from
   /// the composite either way. A later task uses this to surface an
   /// unsupported-format card in place of the clip. Fires a SNAPSHOT
-  /// (`ReadonlySet<string>`) of every on-screen media currently unsupported —
-  /// not a single mediaId — and ONLY when set membership actually changes
-  /// (media added/removed from the unsupported set), never per-frame/per-
-  /// composite. `ensureClip` can run every tick; a per-tick fire here would
-  /// drive React state above a leaf and reproduce the whole-tree re-render
-  /// memory ratchet (feedback_playhead_gate_and_tiers). See `noteUnsupported`.
+  /// (`ReadonlySet<string>`) of every media unsupported AT THE CURRENT
+  /// COMPOSITE — not a single mediaId — and ONLY when set membership
+  /// actually changes vs. the previous composite (media added/removed from
+  /// the unsupported set), never per-frame/per-composite. `ensureClip` can
+  /// run every tick; a per-tick fire here would drive React state above a
+  /// leaf and reproduce the whole-tree re-render memory ratchet
+  /// (feedback_playhead_gate_and_tiers). See `compositeFrame`'s reset/diff/
+  /// fire around its layer sweep.
   onUnsupported?: (unsupported: ReadonlySet<string>) => void;
   /// Resolver for the asset URL of a media item's ORIGINAL file.
   /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
@@ -375,10 +377,16 @@ export class Compositor {
   readonly stage: Container;
   readonly pool: DecoderPool;
   private clips = new Map<string, ActiveClip>();
-  /// On-screen media currently reported `status: "unsupported"` by
-  /// `resolveSource` — mirrors `CompositorInit.onUnsupported`'s membership.
-  /// Mutate ONLY through `noteUnsupported`, which fires the callback with a
-  /// snapshot exactly when membership changes (never per-frame).
+  /// On-screen media reported `status: "unsupported"` by `resolveSource`
+  /// AT THE CURRENT COMPOSITE — recomputed fresh every `compositeFrame`
+  /// (reset at the start of its layer sweep), not accumulated across ticks.
+  /// `ensureClip`'s unsupported branch only ADDS to this set; `compositeFrame`
+  /// owns the reset (frame start) and the membership-change diff that fires
+  /// `onUnsupported` (frame end). This is what makes the set mean "is there
+  /// an unsupported clip on-screen right now" rather than "was one ever
+  /// unsupported since the last structural edit" — a clip the playhead has
+  /// scrolled off of, or a disabled/non-composited layer, simply isn't
+  /// visited by the sweep and so never re-adds itself.
   private unsupportedMedia = new Set<string>();
   private images = new Map<string, ActiveImage>();
   /// In-flight loadFromAsset promises, keyed by layerId. Used by `preloadImages`
@@ -671,9 +679,11 @@ export class Compositor {
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
-      // Nothing is on-screen anymore — clear every unsupported-media entry
-      // (via `noteUnsupported` so the host's card is dismissed if it was up).
-      for (const mediaId of [...this.unsupportedMedia]) this.noteUnsupported(mediaId, false);
+      // No `unsupportedMedia` bookkeeping needed here: `compositeFrame`
+      // short-circuits while `this.projectSummary` is null (no sweep, no
+      // fire), so nothing reads this set until a real project loads again —
+      // at which point the very next `compositeFrame` resets + repopulates
+      // it from scratch and fires on any resulting membership change.
       this.tenBitIngest?.dispose();
       this.tenBitIngest = null;
       this.baker?.setTargets([]);
@@ -698,20 +708,12 @@ export class Compositor {
         this.layerById.set(l.id, l);
       }
     }
-    // Drop unsupported-media entries whose VideoClip layer(s) are no longer
-    // on the timeline. An unsupported media never gets an `ActiveClip` (see
-    // `ensureClip`), so the clip-teardown loop below — which only walks
-    // `this.clips` — can't see it; membership is keyed by mediaId (not
-    // layerId) since multiple layers can share a media, so this checks
-    // whether ANY living VideoClip layer still references it before
-    // clearing (`noteUnsupported(mediaId, false)` — see the CRITICAL
-    // membership-tracking note on `CompositorInit.onUnsupported`).
-    for (const mediaId of [...this.unsupportedMedia]) {
-      const stillReferenced = [...this.layerById.values()].some(
-        (l) => l.params.kind === "VideoClip" && l.params.media_id === mediaId
-      );
-      if (!stillReferenced) this.noteUnsupported(mediaId, false);
-    }
+    // No `unsupportedMedia` reconciliation needed here: the very next
+    // `compositeFrame` resets the set and repopulates it from THIS project's
+    // truth (which VideoClip layers are actually on-screen and unsupported at
+    // the current playhead), firing `onUnsupported` on any membership change.
+    // A media whose only unsupported layer just got deleted simply won't be
+    // re-added by that sweep.
     for (const [layerId, c] of this.clips) {
       if (!livingLayerIds.has(layerId)) {
         this.abandonSwap(layerId);
@@ -918,6 +920,16 @@ export class Compositor {
         : useAppSettingsStore.getState().settings.preview_effects_enabled;
     const effectOpts = { previewEffectsEnabled };
 
+    // Fresh per-composite unsupported-media set. `ensureClip`'s
+    // `status === "unsupported"` branch (reached below, for every on-screen
+    // VideoClip layer the sweep visits) only ADDS to `this.unsupportedMedia`;
+    // this reset is what turns "ever unsupported since the last edit" into
+    // "unsupported RIGHT NOW" — a clip the playhead scrolled off of, or a
+    // disabled/non-composited layer, simply never gets visited this sweep
+    // and so drops out instead of lingering.
+    const prevUnsupported = this.unsupportedMedia;
+    this.unsupportedMedia = new Set<string>();
+
     let z = 0;
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;
@@ -955,6 +967,25 @@ export class Compositor {
           this.stageVisual(tmpl.sprite, tmpl.effects, layer, tInLayerUs, effectOpts);
         }
       }
+    }
+    // Fire `onUnsupported` ONLY when this composite's set differs from the
+    // previous one — size first (cheap), then membership (early-exits on the
+    // first mismatch; no intermediate array). `ensureClip` runs every tick
+    // for every on-screen VideoClip layer, so firing unconditionally here
+    // would drive React `setState` per frame — the whole-tree re-render
+    // memory ratchet this project has already been bitten by once
+    // (feedback_playhead_gate_and_tiers).
+    let unsupportedChanged = this.unsupportedMedia.size !== prevUnsupported.size;
+    if (!unsupportedChanged) {
+      for (const id of this.unsupportedMedia) {
+        if (!prevUnsupported.has(id)) {
+          unsupportedChanged = true;
+          break;
+        }
+      }
+    }
+    if (unsupportedChanged) {
+      this.onUnsupported?.(new Set(this.unsupportedMedia));
     }
     // One-shot diagnostic the first time we transition from "stage
     // has no children" to "stage has some" so the user can confirm
@@ -1208,9 +1239,11 @@ export class Compositor {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    // Dismiss the unsupported-format card (if up) before the host's listener
-    // goes away with this Compositor.
-    for (const mediaId of [...this.unsupportedMedia]) this.noteUnsupported(mediaId, false);
+    // No fire needed: the host's listener is going away with this Compositor
+    // (and `compositeFrame` is now a no-op per the `this.disposed` guard
+    // above), so there's no future frame that would read a stale set. Just
+    // drop the bookkeeping.
+    this.unsupportedMedia.clear();
     for (const c of this.clips.values()) { c.sprite.dispose(); c.effects.dispose(); }
     this.clips.clear();
     for (const i of this.images.values()) { i.sprite.dispose(); i.effects.dispose(); }
@@ -1518,25 +1551,6 @@ export class Compositor {
     setLayerBakeStatuses(byLayer);
   }
 
-  /// Add/remove `mediaId` from `unsupportedMedia` and fire `onUnsupported`
-  /// with a snapshot ONLY if that changed membership. `ensureClip` runs
-  /// every `compositeFrame` for every on-screen VideoClip layer, so calling
-  /// this unconditionally on every tick would fire `onUnsupported` (and thus
-  /// drive React state in the host) per-frame — the exact whole-tree
-  /// re-render memory ratchet this project has already been bitten by once
-  /// (feedback_playhead_gate_and_tiers). The membership check below is what
-  /// makes repeated calls with the same `isUnsupported` a no-op.
-  private noteUnsupported(mediaId: string, isUnsupported: boolean): void {
-    const had = this.unsupportedMedia.has(mediaId);
-    if (isUnsupported === had) return;
-    if (isUnsupported) {
-      this.unsupportedMedia.add(mediaId);
-    } else {
-      this.unsupportedMedia.delete(mediaId);
-    }
-    this.onUnsupported?.(new Set(this.unsupportedMedia));
-  }
-
   private ensureClip(layer: LayerSummary): ActiveClip | null {
     if (layer.params.kind !== "VideoClip") return null;
     const existing = this.clips.get(layer.id);
@@ -1582,11 +1596,14 @@ export class Compositor {
       return null;
     }
     if (rs.status === "unsupported") {
-      // No engine can decode this media at all — surface it to the host (the
-      // unsupported-format card) and skip the clip entirely; export silently
-      // omits it (no `onUnsupported` wired there, so `noteUnsupported` is a
-      // no-op — `onUnsupported` stays undefined).
-      this.noteUnsupported(mediaId, true);
+      // No engine can decode this media at all — add it to THIS composite's
+      // unsupported set (reset at the start of `compositeFrame`'s layer
+      // sweep, fired to the host on membership change at the sweep's end)
+      // and skip the clip entirely. Export never wires `onUnsupported`, so
+      // this add is inert bookkeeping there (nothing ever reads it back out).
+      // Only ADD here — never fire, never remove; that's `compositeFrame`'s
+      // job so the set reflects "unsupported at THIS tUs".
+      this.unsupportedMedia.add(mediaId);
       return null;
     }
     if (rs.status !== "ok" || rs.target === null) {
@@ -1594,11 +1611,9 @@ export class Compositor {
       // The next resolution (probe settling / proxy landing) will retry.
       return null;
     }
-    // Resolved to a real decode target: this media is no longer unsupported.
-    // Only reached from the fresh-acquire path below (an already-active,
-    // non-disposed clip short-circuits above), so this fires once per real
-    // (re)acquisition — not per frame.
-    this.noteUnsupported(mediaId, false);
+    // Resolved to a real decode target: nothing to do for `unsupportedMedia`
+    // — this composite's sweep already reset the set, and not adding IS the
+    // "no longer unsupported" signal.
     // Source color tags apply to ANY decode target for this media: the
     // original carries them trivially, and a proxy/quick-proxy PRESERVES the
     // source's colorimetry (the recipe never converts matrix/range). The

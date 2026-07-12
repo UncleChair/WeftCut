@@ -77,12 +77,18 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const unsubOverridesRef = useRef<(() => void) | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
   // On-screen media the Compositor can't decode with any engine (see
-  // `Compositor.onUnsupported`). The Compositor fires this setter ONLY when
-  // set membership actually changes (`noteUnsupported`), never per-frame/
-  // per-composite — `ensureClip` runs every tick, so a per-tick fire here
-  // would drive React state above a leaf and reproduce the whole-tree
-  // re-render memory ratchet this project already fixed once
-  // (feedback_playhead_gate_and_tiers). Safe to hold in React state as-is.
+  // `Compositor.onUnsupported`). The Compositor recomputes this set fresh
+  // every `compositeFrame` (reset at the start of its layer sweep) and fires
+  // this setter ONLY when set membership actually changes vs. the previous
+  // composite, never per-frame/per-composite — `ensureClip` can run every
+  // tick, so a per-tick fire here would drive React state above a leaf and
+  // reproduce the whole-tree re-render memory ratchet this project already
+  // fixed once (feedback_playhead_gate_and_tiers). Safe to hold in React
+  // state as-is — this component must NEVER clear it directly (that would
+  // desync React from the Compositor's own ground truth); the only way to
+  // react to a decode_engine / component-availability change is to trigger a
+  // re-composite (see the `scheduleRepaint()` effect below) and let the
+  // Compositor's own next resolve fire the correction.
   const [unsupportedIds, setUnsupportedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -212,8 +218,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         height: app.canvas.height,
         mode: "preview",
         resolveSource,
-        // Membership-change snapshot only (see `Compositor.noteUnsupported`)
-        // — safe to feed straight into React state.
+        // Membership-change snapshot only (see `compositeFrame`'s reset/
+        // diff/fire around its layer sweep) — safe to feed straight into
+        // React state.
         onUnsupported: setUnsupportedIds,
         originalAssetUrl,
         sourceColor,
@@ -436,15 +443,21 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     [onTimeUpdate, onPausedChange],
   );
 
-  // Dismiss the unsupported-clip card promptly on a Standard switch (from
-  // the card's own button or the settings panel) or once the ffmpeg
-  // component finishes loading, rather than waiting for the next
-  // `compositeFrame` re-resolve to notice via `Compositor.onUnsupported`.
-  // The Compositor's OWN next resolve still re-derives the true membership
-  // (re-adding a media that's genuinely still unsupported under the new
-  // setting) — this just avoids a stale card lingering in the interim.
+  // A Standard switch (from the card's own button or the settings panel) or
+  // the ffmpeg component finishing load can change whether a given media is
+  // decodable — but `unsupportedIds` must be updated ONLY by the
+  // Compositor's `onUnsupported` callback (it's the ground truth; a direct
+  // `setUnsupportedIds` here previously raced it: a still-unsupported clip's
+  // next real fire found the set unchanged from empty and, per the OLD
+  // add/remove-membership guard, silently swallowed the re-fire, permanently
+  // hiding the card even though the clip was still unsupported). Instead,
+  // request a re-composite so the Compositor re-resolves every on-screen
+  // clip against the new setting/availability on its own terms: resolved-ok
+  // clips drop out of its freshly-recomputed set (card hides), genuinely
+  // still-unsupported ones stay in it (card stays), and either way
+  // `onUnsupported` fires exactly once if membership actually changed.
   useEffect(() => {
-    setUnsupportedIds(new Set());
+    compositorRef.current?.scheduleRepaint();
   }, [decodeEngine, decodeComponentAvailable]);
 
   // Forward summary updates to the Compositor without remounting the
