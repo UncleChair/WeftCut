@@ -34,7 +34,8 @@ import {
   registerPreviewSampler,
   type PreviewSampler,
 } from "../colorpick/previewSamplerRegistry";
-import { resolveDecode } from "./decodeRoute";
+import { quickProxyPath } from "./decodeRoute";
+import { proxyIntent } from "../state/proxyPreferenceStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { noteResolution } from "./decoder/decodeCapability";
@@ -174,13 +175,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         if (!m) return null;
         const setting = useAppSettingsStore.getState().settings.decode_engine;
         const componentAvailable = useDecodeComponentStore.getState().available;
-        const previewPath = resolveDecode(m).previewPath;
+        const qp = quickProxyPath(m);
         const r = resolveDecodeEngine({
           setting,
           componentAvailable,
-          useProxySource: false, // no activation path this bite (Generate-proxy follow-up)
-          proxyReady: previewPath !== null,
-          proxyUrl: previewPath !== null ? convertFileSrc(previewPath) : null,
+          // Gate on availability: intent true but no proxy on disk keeps the
+          // original decoding until a build lands (then the swap key flips).
+          useProxySource: proxyIntent(mediaId) && qp !== null,
+          proxyReady: qp !== null,
+          proxyUrl: qp !== null ? convertFileSrc(qp) : null,
           originalPath: m.path,
           // convertFileSrc HERE (the impure edge) so the Compositor + pure
           // core stay URL-scheme-agnostic — same helper the old webcodecs-
