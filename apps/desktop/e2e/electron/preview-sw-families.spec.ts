@@ -48,9 +48,9 @@ async function runFamilyConformance(c: FamilyCase) {
   try {
     await newProject(page, { parentFolder: PROJECT_PARENT, name: `${c.label}-${Date.now()}`, canvas: CANVAS })
     const after = (await invokeCmd(page, 'app_settings_set', {
-      patch: { decode_engine: 'native' },
+      patch: { decode_engine: 'ffmpeg' },
     })) as { decode_engine: string }
-    expect(after.decode_engine).toBe('native')
+    expect(after.decode_engine).toBe('ffmpeg')
     toggledOn = true
 
     const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: c.fixture })
@@ -136,14 +136,14 @@ async function runFamilyConformance(c: FamilyCase) {
   }
 }
 
-test('preview-sw: DNxHR (intra) previews via SwSourceHandle + SSIM', async () => {
+test('preview-sw: DNxHR (intra) previews via the ffmpeg engine\'s software lane + SSIM', async () => {
   await runFamilyConformance({
     label: 'dnxhr', fixture: path.join(BENCH_DIR, 'dnxhr-1080.mov'),
     seekUs: 500_000, forwardDecodeFloorUs: 0, // intra: any frame is a keyframe
   })
 })
 
-test('preview-sw: MPEG-2 (long-GOP) previews the covering frame via SwSourceHandle + SSIM', async () => {
+test('preview-sw: MPEG-2 (long-GOP) previews the covering frame via the ffmpeg engine\'s software lane + SSIM', async () => {
   await runFamilyConformance({
     label: 'mpeg2', fixture: path.join(BENCH_DIR, 'mpeg2-1080.mpg'),
     seekUs: 800_000, forwardDecodeFloorUs: 700_000, // mid-GOP: ring must NOT hold the ~500ms keyframe

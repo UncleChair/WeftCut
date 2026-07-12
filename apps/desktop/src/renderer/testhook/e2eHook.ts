@@ -46,11 +46,14 @@ import {
   decodeBenchPhase,
   decodeBenchOrderCheck,
   decodeBenchBudgetProbe,
+  decodeBenchHwFallbackProbe,
   type BenchArgs,
   type BenchResult,
   type OrderCheckArgs,
   type OrderCheckResult,
   type BudgetProbeResult,
+  type HwFallbackProbeArgs,
+  type HwFallbackProbeResult,
 } from "../render/decoder/decodeBench";
 import type { ActiveClipProbe } from "../render/Compositor";
 
@@ -312,6 +315,14 @@ export interface E2EHook {
   /// reject with `hw-budget-exceeded` and surface it via onFatalError (the
   /// resolver then downgrades that source off tier 1). Dev/e2e only.
   decodeBenchBudgetProbe(args: { sourcePath: string; count: number }): Promise<BudgetProbeResult>;
+  /// HW→SW in-place fallback (Task 13): a REAL (unforced) counterpart to
+  /// `decodeBenchBudgetProbe` — opens `count` ffmpeg-engine sources on an
+  /// HW-eligible clip WITHOUT forcing a lane, so `pickInitialLane`'s real
+  /// probe puts the first `MAX_HW_SESSIONS` on hardware exactly as production
+  /// does; the (MAX_HW_SESSIONS+1)th's budget rejection then engages
+  /// `FfmpegSource`'s in-place HW→SW recovery instead of the forced path's
+  /// hard fatal. Dev/e2e only. See decodeBench.ts's doc comment.
+  decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Promise<HwFallbackProbeResult>;
   /// Imperative read of the global playhead store (µs). Search-palette e2e
   /// uses this to prove a caption/clip jump (Enter on a result row) actually
   /// moved the playhead, without importing the bundled store module.
@@ -393,6 +404,7 @@ export function installDecodeBenchHooks(): void {
   hookSlot().decodeBenchPhase = decodeBenchPhase;
   hookSlot().decodeBenchOrderCheck = decodeBenchOrderCheck;
   hookSlot().decodeBenchBudgetProbe = decodeBenchBudgetProbe;
+  hookSlot().decodeBenchHwFallbackProbe = decodeBenchHwFallbackProbe;
 }
 
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,

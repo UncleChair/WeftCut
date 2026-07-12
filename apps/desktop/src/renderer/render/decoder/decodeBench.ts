@@ -7,6 +7,7 @@
 import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { FfmpegSource } from "./FfmpegSource";
+import type { FfmpegLane } from "./decodeEngine";
 import { percentile } from "../../../shared/msStats";
 export { percentile } from "../../../shared/msStats";
 
@@ -281,6 +282,101 @@ export async function decodeBenchBudgetProbe(args: {
     return { outcomes };
   } catch (e) {
     return { outcomes, error: String(e) };
+  } finally {
+    pool.dispose();
+  }
+}
+
+// ── HW→SW in-place fallback probe (Task 13, REAL budget-rejection trigger) ──
+// `decodeBenchBudgetProbe` above force-pins every session's lane
+// (`forceLane: 'hardware'`) so it can assert the FORCED-lane hard-fatal path
+// the bench harness itself relies on for deterministic hardware-only
+// measurement — but `FfmpegSource._doEnsureReady`'s catch only engages its
+// in-place HW→SW recovery when `!forceLane` (see FfmpegSource.ts). This
+// driver leaves the lane UNFORCED: `pickInitialLane`'s real GPU capability
+// probe decides "hardware" for an HW-eligible clip exactly as production
+// does. Opening MAX_HW_SESSIONS+1 such sources means the LAST one's HW
+// `previewGpuOpen` genuinely trips `hw-budget-exceeded` — and because nothing
+// forced its lane, the SAME in-place recovery a runtime GPU error uses
+// engages: the ring survives, `ensureReady()` resolves normally (not a
+// fatal), and `currentLane()` reads "software" afterward. A real trigger, not
+// an injected error seam.
+
+export interface HwFallbackProbeArgs {
+  sourcePath: string; // absolute fixture path; served via weftcut-media://
+  /// HW-eligible codec (h264/hevc/vp9, 8-bit) so `pickInitialLane`'s probe
+  /// actually picks "hardware" for the first MAX_HW_SESSIONS sources.
+  codec: string;
+  pixFmt: string;
+  width: number;
+  height: number;
+  count: number; // MAX_HW_SESSIONS + 1
+}
+
+export interface HwFallbackSessionOutcome {
+  index: number;
+  ready: boolean;
+  lane: FfmpegLane;
+  error: string | null;
+}
+
+export interface HwFallbackProbeResult {
+  sessions: HwFallbackSessionOutcome[];
+  /// The last (budget-rejected) session's ring.pushCount before/after a
+  /// further nudge — proves the in-place SW recovery keeps delivering real
+  /// frames, not just that `ensureReady()` resolved.
+  lastRingPushCountBefore: number;
+  lastRingPushCountAfter: number;
+  error?: string;
+}
+
+export async function decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Promise<HwFallbackProbeResult> {
+  const pool = new SourceDecoderPool();
+  const url = convertFileSrc(args.sourcePath);
+  const sessions: HwFallbackSessionOutcome[] = [];
+  const handles: FfmpegSource[] = [];
+  try {
+    // Open sequentially WITHOUT disposing, so live session count climbs to
+    // the cap and the last open trips it — mirrors decodeBenchBudgetProbe,
+    // but with the lane left for pickInitialLane's real probe to decide.
+    for (let i = 0; i < args.count; i++) {
+      const h = pool.acquire({
+        layerId: `hwfallback-${i}`,
+        mediaId: `hwfallback:${i}:${args.sourcePath}`,
+        proxyAssetUrl: url,
+        engine: "ffmpeg",
+        sourcePath: args.sourcePath,
+        componentAvailable: true,
+        codec: args.codec,
+        pixFmt: args.pixFmt,
+        width: args.width,
+        height: args.height,
+        // No forceLane — pickInitialLane's real HW probe decides the lane.
+      }) as FfmpegSource;
+      handles.push(h);
+      let ready = false;
+      let error: string | null = null;
+      try {
+        await h.ensureReady();
+        ready = true;
+      } catch (e) {
+        error = String(e);
+      }
+      sessions.push({ index: i, ready, lane: h.currentLane(), error });
+    }
+    // Prove the last (recovered) session still delivers real frames on its
+    // new software transport: nudge it and poll the ring for growth.
+    const last = handles[handles.length - 1]!;
+    const before = last.ring.pushCount;
+    const t0 = performance.now();
+    while (last.ring.pushCount === before && performance.now() - t0 < 15_000) {
+      void last.requestFrameAt(0);
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(50);
+    }
+    return { sessions, lastRingPushCountBefore: before, lastRingPushCountAfter: last.ring.pushCount };
+  } catch (e) {
+    return { sessions, lastRingPushCountBefore: 0, lastRingPushCountAfter: 0, error: String(e) };
   } finally {
     pool.dispose();
   }

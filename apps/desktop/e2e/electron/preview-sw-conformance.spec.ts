@@ -7,14 +7,14 @@ import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } from './helpers/driver'
 
 // Runtime verification for the native software-decode ProRes preview
-// (branch feat/preview-sw-followups). This is the ONE proof Task 8b was
-// missing: that the preview Compositor actually acquires a `SwSourceHandle`
-// for a native-sw ProRes clip when the experimental toggle is on — the whole
-// real-app path (import → Rust proxy_decision routes native-sw →
-// PixiPreview.nativeSwSourceFor → Compositor.ensureClip acquires software →
-// SwSourceHandle decodes NV12 → ImageBitmap → sprite). Plus an SSIM
-// color/decode-correctness check of the rendered preview frame vs an ffmpeg
-// reference of the same source frame.
+// (Task 13 retarget: the collapsed engine model, ADR 0030). This is the ONE
+// proof Task 8b was missing: that the preview Compositor actually acquires a
+// `FfmpegSource` on its SOFTWARE lane for a `DecodeRoute::NativeSw`-routed
+// ProRes clip — the whole real-app path (import → Rust proxy_decision routes
+// `NativeSw` → PixiPreview.resolveSource resolves the ffmpeg engine →
+// Compositor.ensureClip acquires it → FfmpegSource's SwTransport decodes NV12
+// → ImageBitmap → sprite). Plus an SSIM color/decode-correctness check of the
+// rendered preview frame vs an ffmpeg reference of the same source frame.
 //
 // Model: e2e/electron/conformance.spec.ts. Requires a VITE_WEFTCUT_E2E=1
 // build (the __weftcutTest hook surface) and the current preview-sw
@@ -59,7 +59,7 @@ function parseSsimAll(stderr: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-test('preview-sw: Compositor uses SwSourceHandle for native-sw ProRes + SSIM (Task 8b runtime proof)', async () => {
+test('preview-sw: Compositor uses the ffmpeg engine\'s software lane for the NativeSw-routed ProRes clip + SSIM (Task 8b runtime proof)', async () => {
   test.skip(!existsSync(PRORES), `ProRes fixture not found at ${PRORES} (set WEFTCUT_TEST_MEDIA)`)
   test.setTimeout(240_000)
   mkdirSync(PROJECT_PARENT, { recursive: true })
@@ -79,27 +79,31 @@ test('preview-sw: Compositor uses SwSourceHandle for native-sw ProRes + SSIM (Ta
       canvas: CANVAS,
     })
 
-    // ── Pin the native engine *before* placing the layer ─────────────────────
+    // ── Pin the ffmpeg (Standard) engine *before* placing the layer ─────────
     // Engine resolution reads `decode_engine` live at acquire
-    // (PixiPreview.nativeSwSourceFor), so it must be set before the clip is
+    // (PixiPreview.resolveSource), so it must be set before the clip is
     // first composited. Written through the same `app_settings_set` IPC the UI
     // uses; the backend emits `app_settings:changed` which hydrates the
-    // renderer store (read by nativeSwSourceFor).
+    // renderer store (read by resolveSource).
     const after = (await invokeCmd(page, 'app_settings_set', {
-      patch: { decode_engine: 'native' },
+      patch: { decode_engine: 'ffmpeg' },
     })) as { decode_engine: string }
-    expect(after.decode_engine).toBe('native')
+    expect(after.decode_engine).toBe('ffmpeg')
     toggledOn = true
 
     // ── Import + place the ProRes clip ──────────────────────────────────────
     const { mediaId, layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: PRORES })
     expect(kind).toBe('Video')
 
-    // ── Wait for the async proxy-decision to commit the native-sw route ──────
+    // ── Wait for the async proxy-decision to commit the NativeSw route ──────
     // ProRes routes PreviewSource::NativeFfmpeg → DecodeRoute::NativeSw
-    // (proxy_decision.rs). Until this commits, nativeSwSourceFor returns null
-    // and ensureClip has no source (no proxy yet either), so the clip isn't
-    // acquired — gate the seek on the route being live.
+    // (proxy_decision.rs) — a still-current, unrelated backend concept (not
+    // the deleted frontend tier model): it's the "does this original need a
+    // proxy at all" decision, independent of resolveDecodeEngine's ffmpeg/
+    // webcodecs choice. Not strictly required for the frontend to acquire
+    // (resolveDecodeEngine's ffmpeg branch reads `m.path` directly), but a
+    // cheap sanity check that the backend's classification landed — gate the
+    // seek on it being live.
     await waitForHook(page, 'mediaDecodeRouteKind')
     await page.waitForFunction(
       (id) => (window as { __weftcutTest: { mediaDecodeRouteKind(m: string): string | null } }).__weftcutTest.mediaDecodeRouteKind(id) === 'native-sw',
@@ -134,9 +138,10 @@ test('preview-sw: Compositor uses SwSourceHandle for native-sw ProRes + SSIM (Ta
       spriteHeight: number
     } | null = null
 
-    await test.step('P1 — active clip source is a live SwSourceHandle with the seeked frame decoded + bound', async () => {
+    await test.step('P1 — active clip source is a live FfmpegSource (software lane) with the seeked frame decoded + bound', async () => {
       // Seek ONCE into the clip. seek() sets scrubbing=true and re-composites
-      // (which runs ensureClip → acquires the SwSourceHandle); the scrub
+      // (which runs ensureClip → acquires the FfmpegSource on its software
+      // lane); the scrub
       // coalescer then clears scrubbing and issues the real decoder
       // requestFrameAt, whose native session seeks to the target (ProRes is
       // intra) and decodes the frame. Re-seeking on every poll would restart
@@ -166,8 +171,9 @@ test('preview-sw: Compositor uses SwSourceHandle for native-sw ProRes + SSIM (Ta
       )
       probe = (await handle.jsonValue()) as typeof probe
 
-      // The whole point: the Compositor's active clip source is a SwSourceHandle
-      // (native software decode), not the WebCodecs SourceHandle or GPU path.
+      // The whole point: the Compositor's active clip source is a
+      // FfmpegSource on its software lane (native software decode), not the
+      // WebCodecs SourceHandle or the ffmpeg hardware lane.
       expect(probe!.sourceKind).toBe('sw')
       expect(probe!.isSoftware).toBe(true)
       expect(probe!.sourceDisposed).toBe(false)
@@ -252,9 +258,9 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
       canvas: CANVAS_4K,
     })
     const after = (await invokeCmd(page, 'app_settings_set', {
-      patch: { decode_engine: 'native' },
+      patch: { decode_engine: 'ffmpeg' },
     })) as { decode_engine: string }
-    expect(after.decode_engine).toBe('native')
+    expect(after.decode_engine).toBe('ffmpeg')
     toggledOn = true
 
     const { mediaId, layerId } = await importAndPlaceMedia(page, { mediaAbsPath: PRORES_4K })
@@ -277,7 +283,7 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
       { timeout: 30_000, polling: 250 },
     )
 
-    // Confirm we really are on the native-SW path at 4K before measuring.
+    // Confirm we really are on the ffmpeg engine's software lane at 4K before measuring.
     await page.evaluate((us) => (window as { __weftcutTest: { weftcutSeekUs(us: number): void } }).__weftcutTest.weftcutSeekUs(us), 1_000_000)
     const kind = await page.waitForFunction(
       (id) => {

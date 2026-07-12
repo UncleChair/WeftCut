@@ -1,5 +1,6 @@
-// Generate the index-encoded, B-frame HEVC clip that the native-hw
-// frame-CONTENT-order guard (electron/preview-gpu-order.spec.ts) decodes.
+// Generate the index-encoded, B-frame HEVC clip that the ffmpeg engine's
+// hardware-lane frame-CONTENT-order guard (electron/preview-gpu-order.spec.ts)
+// decodes.
 //
 // Each presentation frame N carries a 12-stripe binary barcode of N (stripe b
 // white iff bit b of N is set), rendered at 192x108 (fast per-pixel `geq`) then

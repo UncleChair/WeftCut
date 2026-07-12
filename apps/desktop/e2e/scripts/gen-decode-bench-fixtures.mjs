@@ -39,7 +39,8 @@ export const BENCH_MATRIX = [
     args: ["-c:v", "libx265", "-preset", "fast", "-profile:v", "main10", "-b:v", "8M",
       "-x265-params", X265_GOP, "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1"] },
   // preview-sw fixtures (ffmpeg-sw-decode-blindspot Task 9): all-intra
-  // 10-bit 4:2:2, WebCodecs-blind — decoded only via SwSourceHandle.
+  // 10-bit 4:2:2, WebCodecs-blind — decoded only via the ffmpeg engine's
+  // software lane (FfmpegSource).
   { name: "prores-1080", ext: "mov", codec: "prores", width: 1920, height: 1080, pixFmt: "yuv422p10le", durationUs: DUR_S * 1_000_000, encoder: "prores_ks",
     args: ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le"] },
   { name: "prores-2160", ext: "mov", codec: "prores", width: 3840, height: 2160, pixFmt: "yuv422p10le", durationUs: DUR_S * 1_000_000, encoder: "prores_ks",
