@@ -21,6 +21,7 @@ import {
   workspaceDir,
   type AudioPatch,
   type CanvasPreset,
+  type MediaSummary,
 } from "../ipc";
 import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/motifs/frameCache";
@@ -288,6 +289,13 @@ export interface E2EHook {
   /// store yet. Lets the preview-sw spec wait for the async proxy-decision to
   /// commit `native-sw` before it seeks + asserts the software route. Dev/e2e.
   mediaDecodeRouteKind(mediaId: string): string | null;
+  /// The full media summary for `mediaId` as the renderer project store sees
+  /// it right now (path, kind, decode_route, …), or null if the media isn't
+  /// in the store yet. Complements `mediaDecodeRouteKind` (which projects
+  /// just the route tag): the Prefer-Proxies e2e needs the route's
+  /// `quick_proxy` path alongside its tag to know an on-demand
+  /// `generate_quick_proxy` build has landed. Dev/e2e only.
+  mediaById(mediaId: string): MediaSummary | null;
   /// Render the REAL buildPanGraph + constantPanGains in an OfflineAudioContext
   /// and return the mean L/R RMS energy. Drives the actual Web Audio graph
   /// wiring (splitter/4-gain/merger topology) that the headless math goldens
@@ -760,6 +768,9 @@ export function installMotifHook(): void {
   };
   hookSlot().mediaDecodeRouteKind = (mediaId: string) => {
     return useProjectStore.getState().mediaById.get(mediaId)?.decode_route?.route ?? null;
+  };
+  hookSlot().mediaById = (mediaId: string) => {
+    return useProjectStore.getState().mediaById.get(mediaId) ?? null;
   };
 }
 

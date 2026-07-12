@@ -347,6 +347,54 @@ test.describe('decode-engine resolution (Electron)', () => {
     }
   })
 
+  // Cell 6 (Task 11, proxy source activation) — Prefer Proxies: the project
+  // toggle swaps a heavy source's preview onto its quick proxy. H264_FIXTURE
+  // is reused deliberately, NOT swapped for a new fixture: it already routes
+  // to DirectExport (has a `quick_proxy` slot), not Bypass. Verified against
+  // the real routing policy (proxy_decision.rs) rather than assumed: the
+  // lavfi-generated 4 s clip has exactly ONE keyframe (libx264's default GOP
+  // is far longer than the 4 s clip), so `probe_max_keyframe_gap_secs`
+  // reports the full scan window — way past `MAX_BYPASS_GOP_SECONDS` (0.5 s).
+  // `gop_is_scrub_friendly` is therefore false, `source_is_safe_to_bypass`
+  // is false, and `decide()` lands on `(export: Original, preview: Proxy)` →
+  // `DecodeRoute::DirectExport` (confirmed by generating the identical
+  // fixture locally and reading its keyframe pts back with ffprobe: only
+  // `0.000000` — a single IDR — comes back). `generate_quick_proxy` (Task 5)
+  // then fills the still-empty `quick_proxy` slot on demand, `update_project_
+  // settings({prefer_proxies:true})` (Task 1/2) flips the intent, and
+  // `resolveDecodeEngine`'s hoisted proxy branch (Task 3/4) resolves
+  // `webcodecs:proxy:<url>` regardless of the (default `auto`) decode_engine
+  // setting — the `ffmpeg × proxy` landmine fix.
+  test('Prefer Proxies: a source with a quick proxy previews from webcodecs:proxy', async () => {
+    test.setTimeout(180_000)
+    const { app, page } = await launchApp()
+    try {
+      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'proxy-toggle-' + Date.now(), canvas: CANVAS })
+      const { layerId, mediaId } = await importAndPlaceMedia(page, { mediaAbsPath: H264_FIXTURE })
+
+      // Build the quick proxy on demand, then wait until it lands in the route.
+      await invokeCmd(page, 'generate_quick_proxy', { mediaId })
+      await page.waitForFunction(
+        (id) => {
+          const m = (window as any).__weftcutTest?.mediaById?.(id)
+          const r = m?.decode_route
+          return !!r && r.route !== 'bypass' && !!r.quick_proxy
+        },
+        mediaId,
+        { timeout: 120_000 },
+      )
+
+      // Flip the project toggle and assert the preview swaps to the proxy.
+      await invokeCmd(page, 'update_project_settings', { patch: { prefer_proxies: true } })
+      await waitForPreviewBridge(page)
+      await seek(page, SEEK_US)
+      const probe = await waitForBuiltKey(page, layerId, 'webcodecs', 'webcodecs:proxy:')
+      expect(probe.builtFromKey!.startsWith('webcodecs:proxy:')).toBe(true)
+    } finally {
+      await app.close()
+    }
+  })
+
   // Cell 5 — NEEDS_CONTEXT (Task 13, second half of the no-auto-proxy check):
   // the brief asks for "pinned webcodecs (Lite) on a WebCodecs-unsupported
   // original resolves status:'unsupported'". `resolveDecodeEngine`'s
