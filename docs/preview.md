@@ -294,11 +294,11 @@ history (`data-model.md` §ProjectSettings):
 The effective per-clip intent is `proxy_overrides[mediaId] ?? prefer_proxies`.
 Preview uses the proxy only when that intent is true **and** the clip's quick
 proxy exists on disk (`quickProxyPath`); otherwise it decodes the original.
-That `&& quickProxyReady` gate is the whole safety net: a clip toggled onto
-proxy before its build finishes, or one whose proxy gets cache-cleaned
-mid-session, falls back to the original with no black frame and no
-special-case code, and a WebCodecs-unsupported original still reaches
-[Unsupported](#unsupported) rather than silently proxying.
+That `proxyIntent(mediaId) && quickProxyPath(media) !== null` gate is the
+whole safety net: a clip toggled onto proxy before its build finishes, or one
+whose proxy gets cache-cleaned mid-session, falls back to the original with
+no black frame and no special-case code, and a WebCodecs-unsupported original
+still reaches [Unsupported](#unsupported) rather than silently proxying.
 
 **Proxy always resolves to the Lite (WebCodecs) engine**, regardless of the
 `decode_engine` setting — the quick proxy is 720p H.264 short-GOP,
@@ -327,10 +327,16 @@ reads that decision, never writes it.
   seek-to-key-then-decode-forward tail (ADR 0008). This is the live preview
   source whenever the proxy axis resolves active.
 - **Export master** — the full `proxy_path`, a source-resolution copy
-  (ADR 0011) used only at export time; preview never reads it, and export
-  always decodes the original master regardless of the preview proxy
-  preference — retiring that split waits on export-side decode, a separate
-  piece of work. `MediaDerivativesPatch.proxy_path = Some(None)` (or a
+  (ADR 0011) used only at export time; preview never reads it. Which file
+  export decodes is governed solely by the persisted Decode Route, never by
+  the preview proxy preference: `Bypass`/`DirectExport` export the original,
+  `Proxied`/`NativeSw` export this master, and the `prefer_proxies` /
+  `proxy_overrides` toggles — which only steer the preview axis — have no
+  bearing on what export reads. For `Proxied`/`NativeSw` sources the export
+  master is still what export reads today; routing those two routes to
+  decode the original instead is separate work gated on export-side decode
+  (see [`roadmap.md`](roadmap.md) §Decode engine).
+  `MediaDerivativesPatch.proxy_path = Some(None)` (or a
   `proxy_format_version` bump) invalidates a stale proxy and triggers a
   re-encode on next open.
 

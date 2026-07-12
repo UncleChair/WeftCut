@@ -113,13 +113,17 @@ source mapping is the one shape the forward-only pipelines don't
 cover. Preview keeps its own sibling item (warm-decoder handoff
 across sequential cuts, designed in [`render.md`](render.md)).
 
-### Decode engine — export-side decode, proxy activation, session split
+### Decode engine — export-side decode, session split
 
 Preview decode collapsed to two engines (Standard/`ffmpeg`, Lite/`webcodecs`)
 with hardware-vs-software private to the Standard engine's `FfmpegSource` (see
 [`preview.md`](preview.md#decode-engine) and
-[ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)). Four
-pieces of that architecture are deliberately deferred:
+[ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)). Proxy
+source activation — the per-clip override, the project-wide Prefer Proxies
+toggle, and the on-demand generate-proxy command that back the `source:
+original | proxy` axis — is built; see [`preview.md`](preview.md) §Proxies
+for how the resolver picks proxy vs. original today. Three pieces of the
+wider architecture remain deliberately deferred:
 
 - **Export-side decode consumes the overlay.** `ExportDecoderPool` still
   decodes WebCodecs-on-proxy. The plan is to route export decode through the
@@ -129,19 +133,6 @@ pieces of that architecture are deliberately deferred:
   [`export-ipc-transport.md`](export-ipc-transport.md) (the 10-bit raw-frame
   transport this generalizes) and `poc/export-frame-transport` (~1 GB/s
   classic-IPC ceiling, spike-cleared; no cross-process CPU zero-copy).
-- **Proxy source activation + policy flip.** The resolver already models a
-  `source: original | proxy` axis, but nothing activates `proxy`: there is no
-  on-demand "Generate proxy" command, so PixiPreview always resolves
-  `original` and the [Unsupported](preview.md#unsupported) card's second
-  action is unbuilt. The work is a backend proxy-build command, a media-panel
-  trigger, and the `useProxySource` `Set<mediaId>` (+ persistence) that flips
-  the axis — built alongside the thing that writes it (YAGNI). With it, the
-  quick-proxy job stops auto-enqueuing once preview resolves to originals; the
-  export master (full proxy) stops only once export decodes originals too
-  (depends on the item above — stopping it earlier would strand blind-spot
-  exports). The residual session-bridge probe memo retires with the flip, and
-  derivative jobs (filmstrip / waveform / thumbnails) that read the quick
-  proxy move to reading originals via the sidecar CLI.
 - **Preview/export session-interface split.** `FfmpegSource` implements the
   shared `DecoderHandle` today; the next structural bite splits a
   `PreviewDecodeSession` from an `ExportDecodeSession` so the two paths stop
