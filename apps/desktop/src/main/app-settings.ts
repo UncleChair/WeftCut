@@ -54,7 +54,15 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       tail_snap_strength_px: typeof parsed.tail_snap_strength_px === 'number' ? parsed.tail_snap_strength_px : d.tail_snap_strength_px,
       prebake_motifs: typeof parsed.prebake_motifs === 'boolean' ? parsed.prebake_motifs : d.prebake_motifs,
       preview_effects_enabled: typeof parsed.preview_effects_enabled === 'boolean' ? parsed.preview_effects_enabled : d.preview_effects_enabled,
-      decode_engine: parsed.decode_engine === 'native' || parsed.decode_engine === 'webcodecs' || parsed.decode_engine === 'auto' ? parsed.decode_engine : d.decode_engine,
+      // 'native' was the persisted value's old name (pre-rename); migrate it
+      // to 'ffmpeg' on load so pre-existing app_settings.json files keep
+      // resolving to the same engine instead of silently falling back to
+      // the default.
+      decode_engine:
+        parsed.decode_engine === 'native' ? 'ffmpeg'
+        : parsed.decode_engine === 'ffmpeg' || parsed.decode_engine === 'webcodecs' || parsed.decode_engine === 'auto'
+          ? parsed.decode_engine
+          : d.decode_engine,
     }
   }
 

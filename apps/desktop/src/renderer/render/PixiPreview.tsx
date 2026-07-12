@@ -150,10 +150,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       const resolveSource = (mediaId: string): ResolvedRendererSource | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
         if (!m) return null;
-        const persisted = useAppSettingsStore.getState().settings.decode_engine;
-        // T10 renames the persisted value from "native" to "ffmpeg"; bridge
-        // until then so this resolver already speaks the collapsed vocabulary.
-        const setting = persisted === "native" ? "ffmpeg" : persisted;
+        const setting = useAppSettingsStore.getState().settings.decode_engine;
         const componentAvailable = useDecodeComponentStore.getState().available;
         const previewPath = resolveDecode(m).previewPath;
         const r = resolveDecodeEngine({

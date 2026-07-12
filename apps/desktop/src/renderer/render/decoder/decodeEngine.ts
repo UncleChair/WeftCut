@@ -4,10 +4,7 @@
 // state (spec Risk 4: any state added here re-grows the preset maze). Callers
 // gather inputs (PixiPreview) and act on the output (Compositor ensureClip).
 
-// `"native"` is a legacy persisted-setting value kept alongside `"ffmpeg"` so
-// old persisted settings still typecheck; narrowed to `"auto" | "ffmpeg" |
-// "webcodecs"` in a later task alongside the persisted-value rename.
-export type DecodeEngineSetting = "auto" | "native" | "ffmpeg" | "webcodecs";
+export type DecodeEngineSetting = "auto" | "ffmpeg" | "webcodecs";
 
 // --- Collapsed decode model (2026-07-12). ---
 export type DecodeEngine = "ffmpeg" | "webcodecs";

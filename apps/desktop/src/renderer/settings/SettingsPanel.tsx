@@ -473,7 +473,7 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
         value={engine}
         onValueChange={async (next) => {
           onError("");
-          if (next === "native" && !componentAvailable) {
+          if (next === "ffmpeg" && !componentAvailable) {
             onError(
               t("settings.decode_engine_unavailable", {
                 reason: componentReason ?? "",
@@ -483,7 +483,7 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
           }
           try {
             await setAppSettings({
-              decode_engine: next as "auto" | "native" | "webcodecs",
+              decode_engine: next as "auto" | "ffmpeg" | "webcodecs",
             });
           } catch (err) {
             onError(String(err));
@@ -492,7 +492,7 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
         options={[
           { value: "auto", label: t("settings.decode_engine_auto") },
           {
-            value: "native",
+            value: "ffmpeg",
             label: componentAvailable
               ? t("settings.decode_engine_native")
               : `${t("settings.decode_engine_native")} — ${t("settings.decode_engine_unavailable_suffix")}`,

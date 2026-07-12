@@ -25,9 +25,9 @@ export interface AppSettings {
   preview_effects_enabled: boolean;
   /// Preview decode engine (dual-engine spec): `auto` resolves the fastest
   /// available tier per source (native HW → WebCodecs-original → native SW →
-  /// proxy); `native`/`webcodecs` pin an engine. Replaces the deleted
+  /// proxy); `ffmpeg`/`webcodecs` pin an engine. Replaces the deleted
   /// single-boolean experimental toggle (its semantics live inside `auto`).
-  decode_engine: "auto" | "native" | "webcodecs";
+  decode_engine: "auto" | "ffmpeg" | "webcodecs";
 }
 
 /// Patch shape — every field optional. The store merges into the current
@@ -42,7 +42,7 @@ export interface AppSettingsPatch {
   tail_snap_strength_px?: number;
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
-  decode_engine?: "auto" | "native" | "webcodecs";
+  decode_engine?: "auto" | "ffmpeg" | "webcodecs";
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {

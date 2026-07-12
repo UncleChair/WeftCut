@@ -68,12 +68,23 @@ describe('app-settings store', () => {
 
   it('decode_engine defaults to auto, round-trips, and ignores unrecognized on-disk values', () => {
     expect(store().get().decode_engine).toBe('auto')
-    expect(store().apply({ decode_engine: 'native' }).decode_engine).toBe('native')
+    expect(store().apply({ decode_engine: 'ffmpeg' }).decode_engine).toBe('ffmpeg')
     expect(store().apply({ decode_engine: 'webcodecs' }).decode_engine).toBe('webcodecs')
     // A pre-existing app_settings.json holding the field's old shape (a
-    // boolean, or any other unrecognized value) falls back to the default —
-    // no migration of a truthy old value into 'native'.
+    // boolean, or any other unrecognized value) falls back to the default.
     const s = store({ [PATH]: '{ "decode_engine": true }' })
     expect(s.get().decode_engine).toBe('auto')
+  })
+
+  it("migrates a persisted decode_engine 'native' to 'ffmpeg'", () => {
+    const s = store({ [PATH]: '{ "decode_engine": "native" }' })
+    expect(s.get().decode_engine).toBe('ffmpeg')
+  })
+
+  it("accepts 'ffmpeg' | 'webcodecs' | 'auto' and defaults other on-disk values to auto", () => {
+    expect(store({ [PATH]: '{ "decode_engine": "ffmpeg" }' }).get().decode_engine).toBe('ffmpeg')
+    expect(store({ [PATH]: '{ "decode_engine": "webcodecs" }' }).get().decode_engine).toBe('webcodecs')
+    expect(store({ [PATH]: '{ "decode_engine": "auto" }' }).get().decode_engine).toBe('auto')
+    expect(store({ [PATH]: '{ "decode_engine": "bogus" }' }).get().decode_engine).toBe('auto')
   })
 })
