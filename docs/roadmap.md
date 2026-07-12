@@ -133,10 +133,11 @@ wider architecture remain deliberately deferred:
   [`export-ipc-transport.md`](export-ipc-transport.md) (the 10-bit raw-frame
   transport this generalizes) and `poc/export-frame-transport` (~1 GB/s
   classic-IPC ceiling, spike-cleared; no cross-process CPU zero-copy).
-- **Preview/export session-interface split.** `FfmpegSource` implements the
-  shared `DecoderHandle` today; the next structural bite splits a
-  `PreviewDecodeSession` from an `ExportDecodeSession` so the two paths stop
-  sharing one handle contract.
+- **Preview/export session-interface split — done.** The shared interface was
+  split into a minimal `DecodeSession` core plus named `PreviewDecodeSession`
+  and `ExportDecodeSession` roles, extracted to `decoder/session.ts`. Preview and
+  export no longer share one bloated contract; `ExportDecodeSession` gives the
+  export Worker a compiler-checked driving surface.
 - **Unified `DecodedFrame` metadata/ownership.** The frame union already
   exists across the decode paths; standardizing its metadata and ownership is
   a safe later cleanup, not a blocker.

@@ -1,7 +1,7 @@
 # Decode-Strategy Benchmark (decode-bench)
 
 decode-bench is a permanent, local-only benchmark that measures the preview
-decode path at the `DecoderHandle` seam — the same seam
+decode path at the `DecodeSession` seam — the same seam
 [`SourceDecoderPool`](preview.md#decode) uses in the live app. It compares two
 strategies decoding the identical original file: the shipping WebCodecs
 pipeline and the Windows-only native-ffmpeg GPU/shared-texture path (see
@@ -139,7 +139,7 @@ WebCodecs seek path, independent of any throughput work.
 ## Software-decode strategy
 
 `--strategy sw` benches the native **software**-decode preview path at the
-same `DecoderHandle` seam. Since the engine collapse this path is the Standard
+same `DecodeSession` seam. Since the engine collapse this path is the Standard
 engine's software transport — `FfmpegSource` opened with
 `forceLane: "software"` — decoding the WebCodecs-blind families documented in
 [`preview.md`](preview.md#decode-engine) and
@@ -176,7 +176,7 @@ routing test and the codec-agnostic decoder instead of a bench row.
   layer block, not a decode limit), so that fixture has no native cell — it's
   measured on WebCodecs alone. See [Native strategy](#native-strategy) for the
   8-bit-only scope.
-- **No decode-core microbenchmark layer.** Measuring at the `DecoderHandle`
+- **No decode-core microbenchmark layer.** Measuring at the `DecodeSession`
   seam already captures each strategy's true end-to-end cost, including its
   I/O path (see the asymmetry note below); a lower-level breakdown can be
   added later if attribution questions actually come up.
