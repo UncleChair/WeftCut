@@ -152,12 +152,15 @@ splitting them is separate scope).
   rename the type references. The `?.()` diagnostic calls and the no-op
   `requestFrameAt`/`onFirstFrame` calls stay exactly as they are — they are
   honest. No behavior change, no mode-branching added.
-- **Export Worker** (`worker/exportWorker.ts`): annotate the handles it pulls
-  from `ExportDecoderPool.handles` as `ExportDecodeSession`. This is the
-  concrete tangible win of #1 — the Worker gains a named contract for
-  `decodeRange`/`evictBefore`/`ring.waitForPts` instead of depending on the
-  concrete class shape. `ExportDecoderPool.handles` may keep its concrete
-  `ExportSourceHandle` value type (it satisfies `ExportDecodeSession`).
+- **Export Worker** (`worker/exportWorker.ts`): **unchanged.** It keeps
+  consuming the concrete `ExportSourceHandle` (via `ExportDecoderPool.handles`)
+  because it also reads concrete-only E2E perf-diag fields — `h.dispatchedTotal`
+  and `h.firstFrameDiag` (`exportWorker.ts:575–576`) — that deliberately do not
+  belong in the contract. The Worker owns the export pool; consuming the
+  concrete type is legitimate. The `#1` win is realized by the handle *class*
+  declaring `implements ExportDecodeSession`, which enforces the driving surface
+  (`decodeRange` / `evictBefore` / `ring: ExportFrameStore`) as a named, checked
+  contract instead of a shape described only in a file-header comment.
 
 ### Implementer impact
 
@@ -170,6 +173,12 @@ splitting them is separate scope).
 
 ## Files touched
 
+The `DecoderHandle` identifier appears in exactly these five source files
+(verified by grep): `SourceDecoderPool.ts`, `FfmpegSource.ts`,
+`ExportDecoderPool.ts`, `Compositor.ts`, `decodeBench.ts`. Notably
+`exportWorker.ts` and `protocol.ts` do **not** reference it, and no `*.test.ts`
+names the type.
+
 - **new** `decoder/session.ts` — the contracts above.
 - `decoder/SourceDecoderPool.ts` — remove moved contracts, import from
   `session.ts`; `SourceHandle implements PreviewDecodeSession`.
@@ -177,16 +186,15 @@ splitting them is separate scope).
 - `decoder/ExportDecoderPool.ts` — `ExportSourceHandle implements
   ExportDecodeSession`.
 - `render/Compositor.ts` — import path + type-name updates only.
-- `render/worker/exportWorker.ts` — type handles as `ExportDecodeSession`.
-- `render/worker/protocol.ts` — follow the `DecoderHandle` rename if referenced.
-- Tests referencing the type: `FfmpegSource.test.ts`,
-  `SourceDecoderPool.test.ts`, `ExportSourceHandle.test.ts`,
-  `ExportFrameStore.test.ts`, `decodeBench.test.ts`, `decodeBench.ts`,
-  `probeSourceDecodable.ts` — rename follows; simplify any now-unneeded
-  `as DecoderHandle` casts.
-- Docs: `docs/roadmap.md` (mark the session-split bullet done),
-  `docs/render.md`, `docs/architecture.md`, `docs/decode-bench.md` — update
-  `DecoderHandle` references to `DecodeSession`.
+- `decoder/decodeBench.ts` — follows the `DecoderHandle → DecodeSession` rename
+  (permanent bench harness).
+- Tests: **no rename needed** (none name the type); they are expected to pass
+  unchanged — a green run is the proof, not an edit.
+- Docs: `docs/roadmap.md` (mark the session-split bullet done) and
+  `docs/decode-bench.md` — update `DecoderHandle` references to `DecodeSession`.
+  Historical process specs under `docs/superpowers/` that mention
+  `DecoderHandle` (the 2026-07-03 decode-bench and 2026-07-05 blindspot docs)
+  are frozen artifacts and are left as-is.
 
 ## Verification (bar: zero behavior drift)
 
@@ -199,8 +207,8 @@ This is a pure refactor; the compiler enforces most of the correctness.
 4. A manual `verify` pass: drive preview playback and one short export, confirm
    output is frame-identical to pre-refactor.
 
-No new tests are required (no new behavior). Some tests may shed `as
-DecoderHandle` casts as a side benefit.
+No new tests are required (no new behavior); no test references the renamed
+type, so a green run of the existing suite is the correctness proof.
 
 ## Out of scope (YAGNI — deferred to separate bites)
 
