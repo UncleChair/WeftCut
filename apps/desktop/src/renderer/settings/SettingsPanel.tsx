@@ -493,12 +493,33 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
           { value: "auto", label: t("settings.decode_engine_auto") },
           {
             value: "ffmpeg",
-            label: componentAvailable
-              ? t("settings.decode_engine_native")
-              : `${t("settings.decode_engine_native")} — ${t("settings.decode_engine_unavailable_suffix")}`,
+            label: (
+              <>
+                {t("settings.decode_engine_ffmpeg")}
+                <span
+                  style={{ marginLeft: 6, fontSize: 11, color: "var(--muted-foreground)" }}
+                >
+                  {t("settings.decode_engine_ffmpeg_tag")}
+                </span>
+                {!componentAvailable &&
+                  ` — ${t("settings.decode_engine_unavailable_suffix")}`}
+              </>
+            ),
             disabled: !componentAvailable,
           },
-          { value: "webcodecs", label: t("settings.decode_engine_webcodecs") },
+          {
+            value: "webcodecs",
+            label: (
+              <>
+                {t("settings.decode_engine_webcodecs")}
+                <span
+                  style={{ marginLeft: 6, fontSize: 11, color: "var(--muted-foreground)" }}
+                >
+                  {t("settings.decode_engine_webcodecs_tag")}
+                </span>
+              </>
+            ),
+          },
         ]}
       />
       <span>

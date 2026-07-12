@@ -532,12 +532,20 @@ const enUS = {
       "Render motif animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
     decode_engine: "Preview decode engine",
     decode_engine_hint:
-      "Auto picks the fastest engine per clip (native hardware → WebCodecs on the original → native software → proxy). Pin an engine to override.",
-    decode_engine_auto: "Auto (recommended)",
-    decode_engine_native: "Native (FFmpeg)",
-    decode_engine_webcodecs: "WebCodecs",
-    decode_engine_unavailable: "Native engine unavailable: {{reason}}",
+      "Automatic picks the best engine per clip. Standard (FFmpeg) plays every format; Lite (WebCodecs) is lightweight but supports fewer formats.",
+    decode_engine_auto: "Automatic (recommended)",
+    decode_engine_ffmpeg: "Standard",
+    decode_engine_ffmpeg_tag: "ffmpeg",
+    decode_engine_webcodecs: "Lite",
+    decode_engine_webcodecs_tag: "webcodecs",
+    decode_engine_unavailable: "Standard engine unavailable: {{reason}}",
     decode_engine_unavailable_suffix: "unavailable",
+    decode_unsupported_title: "Unsupported format",
+    decode_unsupported_body:
+      "The Lite engine can't decode this clip. Switch to the Standard engine to play it.",
+    decode_unsupported_switch: "Switch to Standard",
+    decode_unsupported_body_no_component:
+      "This clip's format isn't supported by the Lite engine, and the Standard engine isn't installed.",
   },
   keybindings: {
     add: "+ Add",

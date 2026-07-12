@@ -519,12 +519,19 @@ const zhCN: Resources = {
       "在后台将 Motif 动画帧渲染到磁盘，使播放更流畅、重新打开项目时即时加载。会在项目的 Cache 文件夹下占用磁盘空间。",
     decode_engine: "预览解码引擎",
     decode_engine_hint:
-      "自动模式按素材选择最快的引擎（原生硬件 → WebCodecs 直解原片 → 原生软件 → 代理）。也可固定某个引擎。",
+      "自动模式按素材选择最合适的引擎。标准（FFmpeg）可解码所有格式；轻量（WebCodecs）更省资源但支持的格式较少。",
     decode_engine_auto: "自动（推荐）",
-    decode_engine_native: "原生（FFmpeg）",
-    decode_engine_webcodecs: "WebCodecs",
-    decode_engine_unavailable: "原生引擎不可用：{{reason}}",
+    decode_engine_ffmpeg: "标准",
+    decode_engine_ffmpeg_tag: "ffmpeg",
+    decode_engine_webcodecs: "轻量",
+    decode_engine_webcodecs_tag: "webcodecs",
+    decode_engine_unavailable: "标准引擎不可用：{{reason}}",
     decode_engine_unavailable_suffix: "不可用",
+    decode_unsupported_title: "不支持的格式",
+    decode_unsupported_body: "轻量引擎无法解码该片段。切换到标准引擎即可播放。",
+    decode_unsupported_switch: "切换到标准",
+    decode_unsupported_body_no_component:
+      "轻量引擎不支持该片段的格式，且未安装标准引擎。",
   },
   keybindings: {
     add: "+ 添加",
