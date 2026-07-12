@@ -1,4 +1,8 @@
-# WeftCut
+<p align="center">
+  <img src="apps/desktop/src/renderer/public/icons/icon.svg" alt="WeftCut" width="128" height="128" />
+</p>
+
+<h1 align="center">WeftCut</h1>
 
 WeftCut is a cross-platform, web-based desktop video editor where **external AI agents are first-class citizens**. Connect Claude Desktop, Cursor, or any MCP-capable client to a localhost MCP server and let an agent edit your timeline through a structured tool surface — while you watch the changes land in the UI in real time and collaborate on editing.
 

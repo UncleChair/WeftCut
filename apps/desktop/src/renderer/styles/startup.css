@@ -131,6 +131,24 @@
   gap: 24px;
 }
 
+.startup-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.startup-heading-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.startup-logo {
+  display: block;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+
 .startup-header h1 {
   margin: 0 0 4px;
   font-size: 28px;

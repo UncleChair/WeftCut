@@ -158,8 +158,21 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
       </div>
       <div className="startup-panel">
         <header className="startup-header">
-          <h1>{t("app.title")}</h1>
-          <p className="startup-subtitle">{t("startup.subtitle")}</p>
+          {/* Decorative: the <h1> already announces the product name, so the
+              mark is aria-hidden to avoid a duplicate read-out. Served from
+              renderer/public — the same SVG the window favicon uses. */}
+          <img
+            className="startup-logo"
+            src="/icons/icon.svg"
+            alt=""
+            aria-hidden
+            width={44}
+            height={44}
+          />
+          <div className="startup-heading-text">
+            <h1>{t("app.title")}</h1>
+            <p className="startup-subtitle">{t("startup.subtitle")}</p>
+          </div>
         </header>
 
         <div className="startup-actions">

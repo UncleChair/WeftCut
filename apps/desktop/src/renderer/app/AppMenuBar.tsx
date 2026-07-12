@@ -84,7 +84,22 @@ export function AppMenuBar({
        non-interactive children — menus and buttons stay clickable. */
     <header className="app-header" data-drag-region>
       <div className="header-left" data-drag-region>
-        <h1 data-drag-region>{t("app.title")}</h1>
+        {/* Logo + wordmark hug each other as one brand group; .header-left's
+            16px gap then separates the group from the menus. Decorative image
+            (aria-hidden) — the <h1> carries the accessible name. The
+            data-drag-region keeps the mark part of the window drag handle. */}
+        <span className="app-brand" data-drag-region>
+          <img
+            className="app-header-logo"
+            src="/icons/icon.svg"
+            alt=""
+            aria-hidden
+            width={18}
+            height={18}
+            data-drag-region
+          />
+          <h1 data-drag-region>{t("app.title")}</h1>
+        </span>
         <MenuBar>
           <Menu label={t("menu.file")}>
             <MenuItem

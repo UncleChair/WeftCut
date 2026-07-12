@@ -33,6 +33,19 @@
   letter-spacing: 0.04em;
 }
 
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.app-header-logo {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
 /* MediaPool lives in a left collapsible drawer (see `docs/data-model.md`).
    The drawer column is a CSS variable so the M shortcut / View-menu toggle
    animates open/closed with a single value flip. */

@@ -25,14 +25,14 @@ extraResources:
   - from: src/shared/motifs/builtin
     to: motifs/builtin
     filter: ["**/*"]
-# App icon. build/icon-256.png is a 256x256 source (electron-builder generates
-# the .ico for NSIS and uses the png directly on Linux). A deliberately
-# non-magic filename so it is NOT auto-fed to the mac .icns generator, which
-# requires >=512x512. RELEASE FOLLOW-UP: produce a >=512 (ideally 1024) master
-# + a mac icon, then add `mac.icon`.
+# App icon. build/icon.png is the 1024x1024 raster master, generated from the
+# canonical brand SVG (src/renderer/public/icons/icon.svg) by `npm run
+# gen:icons`. electron-builder derives the multi-resolution Windows .ico, the
+# macOS .icns, and the Linux png set from this one master — re-run gen:icons
+# after any palette tweak to the SVG.
 win:
   target: [nsis]
-  icon: build/icon-256.png
+  icon: build/icon.png
   artifactName: ${productName}-${version}-${arch}.${ext}
   extraResources:
     # LGPL ffmpeg runtime for @weftcut/native-decode (dynamic linking + separate
@@ -50,10 +50,11 @@ nsis:
   allowToChangeInstallationDirectory: true
 linux:
   target: [AppImage, deb]
-  icon: build/icon-256.png
+  icon: build/icon.png
   category: AudioVideo
   artifactName: ${productName}-${version}-${arch}.${ext}
 mac:
   target: [dmg]
   category: public.app-category.video
-  identity: null   # unsigned in S6; ad-hoc (default icon until a >=512 master exists)
+  icon: build/icon.png
+  identity: null   # unsigned in S6; ad-hoc signature, but the icon is now a real master

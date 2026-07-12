@@ -16,6 +16,7 @@
     "build": "electron-vite build",
     "prebuild": "npm run build:wasm",
     "build:wasm": "node scripts/build-eval-wasm.mjs",
+    "gen:icons": "electron scripts/gen-icons.mjs",
     "preview": "electron-vite preview",
     "typecheck": "tsc -b",
     "pretypecheck": "npm run build:wasm",

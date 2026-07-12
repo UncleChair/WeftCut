@@ -74,6 +74,12 @@ async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
+    // Dev only: electron-vite runs the bare electron.exe, whose taskbar/Alt-Tab
+    // icon is Electron's default. The PACKAGED app gets its icon from
+    // electron-builder (embedded in the exe + installer — see
+    // electron-builder.yml), and build/ is not bundled into the app, so we point
+    // at the raster master only in dev, where the repo tree is on disk.
+    ...(isDev ? { icon: path.join(__dirname, '../../build/icon.png') } : {}),
     // Show immediately. A frameless (`frame:false`) window combined with
     // `show:false` + a deferred `ready-to-show` show does NOT reliably surface
     // on Windows (ready-to-show may not fire) — the window stays hidden. With a
@@ -161,6 +167,11 @@ async function warnIfElevatedWindows(win: BrowserWindow): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // Windows taskbar identity: without an explicit AppUserModelID a run groups
+  // under generic "electron.exe" and won't adopt our window icon. Match the
+  // packaged appId (electron-builder.yml) so dev and prod share one identity.
+  app.setAppUserModelId('dev.weftcut.desktop')
+
   // Bundled ffmpeg: ffmpeg-sidecar resolves "ffmpeg" via PATH when no binary sits
   // adjacent to the exe (ffmpeg_sidecar::paths::ffmpeg_path). Prepend the packaged dir so the
   // in-process addon spawns OUR static build, not a system one. Dev (unpackaged)

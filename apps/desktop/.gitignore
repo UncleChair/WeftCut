@@ -26,7 +26,7 @@ release/
 # but committed icon source assets live here. Re-include just those.
 !build/
 build/*
-!build/icon-256.png
+!build/icon.png
 
 # determinism-artifacts/ — per-OS PNG captures; compared in CI (Task 8), never committed
 determinism-artifacts/

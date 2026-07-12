@@ -96,10 +96,10 @@ webview runtime to provision.
 
 ## First-run flow
 
-After cloning, `npm install` is the only bootstrap step. There are no
-placeholder icons to generate: the app icon is committed at
-`apps/desktop/build/icon-256.png` and electron-builder consumes it
-directly when packaging (see below).
+After cloning, `npm install` is the only bootstrap step. The app icon is
+committed at `apps/desktop/build/icon.png` (generated from the canonical
+SVG — see below) and electron-builder consumes it directly when
+packaging.
 
 ## Icons & bundling for distribution
 
@@ -113,14 +113,21 @@ This runs `napi build` (release addon), `electron-vite build`, then
 `electron-builder` to produce installers (NSIS on Windows, AppImage +
 deb on Linux, dmg on macOS) under `apps/desktop/release/`.
 
-The app icon lives at `apps/desktop/build/icon-256.png` — a 256×256
-source. electron-builder generates the Windows `.ico` for NSIS from it
-and uses the PNG directly on Linux; the filename is deliberately
-non-magic so it is **not** fed to the macOS `.icns` generator (which
-requires ≥512×512). To ship a full icon set, replace it with a ≥512
-(ideally 1024×1024) master, add a `mac.icon` entry in
-`apps/desktop/electron-builder.yml`, and let electron-builder regenerate
-the per-platform variants.
+The canonical brand icon is the vector at
+`apps/desktop/src/renderer/public/icons/icon.svg` — it also serves as the
+in-app favicon and the startup-screen mark. electron-builder can't ingest
+an SVG, so a 1024×1024 raster master is committed at
+`apps/desktop/build/icon.png`, produced by:
+
+```sh
+npm run gen:icons --workspace apps/desktop
+```
+
+That script rasterizes the SVG through Electron's Chromium 2D canvas (no
+ImageMagick/rsvg/sharp on the toolchain). electron-builder then derives the
+multi-resolution Windows `.ico`, the macOS `.icns`, and the Linux png set
+from the single master. After any palette tweak to the SVG, re-run
+`gen:icons` and commit the regenerated `icon.png`.
 
 The build carries no native side-dependencies beyond ffmpeg (auto-
 downloaded by `ffmpeg-sidecar` on first run of the bundled binary, or
