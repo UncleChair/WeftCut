@@ -1,3 +1,7 @@
 *.node
 index.js
 index.d.ts
+# Linux: LGPL ffmpeg shared libs co-located next to the .node by
+# napi-build-decode.mjs so $ORIGIN resolves them (build artifact, refetched).
+*.so
+*.so.*
