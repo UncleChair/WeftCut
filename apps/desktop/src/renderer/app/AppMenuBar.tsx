@@ -91,7 +91,7 @@ export function AppMenuBar({
         <span className="app-brand" data-drag-region>
           <img
             className="app-header-logo"
-            src="/icons/icon.svg"
+            src="./icons/icon.svg"
             alt=""
             aria-hidden
             width={18}
