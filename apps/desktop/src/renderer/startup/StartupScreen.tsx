@@ -161,14 +161,39 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           {/* Decorative: the <h1> already announces the product name, so the
               mark is aria-hidden to avoid a duplicate read-out. Served from
               renderer/public — the same SVG the window favicon uses. */}
-          <img
-            className="startup-logo"
-            src="./icons/icon.svg"
-            alt=""
-            aria-hidden
-            width={44}
-            height={44}
-          />
+          <span className="startup-logo-mark" aria-hidden="true">
+            <img
+              className="startup-logo"
+              src="./icons/icon.svg"
+              alt=""
+              width={44}
+              height={44}
+            />
+            <svg
+              className="startup-logo-pulse-trace"
+              viewBox="0 0 440 440"
+              fill="none"
+              focusable="false"
+            >
+              <defs>
+                <clipPath id="startup-logo-w-clip">
+                  <path d="M200.117 167.417L151.477 239.378C149.409 242.438 144.851 242.276 143.004 239.078L95.331 156.5C92.6515 151.859 87.6995 149 82.3404 149H10.0005C4.47764 149 0.000488281 153.477 0.000488281 159V183C0.000488281 188.523 4.47764 193 10.0005 193H57.3059C62.6835 193 67.6496 195.879 70.3222 200.545L124.679 295.455C127.352 300.121 132.318 303 137.696 303H154.024C159.011 303 163.672 300.522 166.461 296.387L220.001 217L273.541 296.387C276.329 300.522 280.99 303 285.977 303H302.306C307.683 303 312.649 300.121 315.322 295.455L369.679 200.545C372.352 195.879 377.318 193 382.696 193H430C435.523 193 440 188.523 440 183V159C440 153.477 435.523 149 430 149L357.661 149C352.302 149 347.35 151.859 344.671 156.5L296.997 239.078C295.151 242.276 290.593 242.438 288.525 239.378L239.885 167.417C230.368 153.337 209.634 153.337 200.117 167.417Z" />
+                </clipPath>
+              </defs>
+              <g clipPath="url(#startup-logo-w-clip)">
+                <path
+                  className="startup-logo-pulse-glow"
+                  pathLength="100"
+                  d="M8 171H76L148 271L220 192L292 271L364 171H432"
+                />
+                <path
+                  className="startup-logo-pulse-core"
+                  pathLength="100"
+                  d="M8 171H76L148 271L220 192L292 271L364 171H432"
+                />
+              </g>
+            </svg>
+          </span>
           <div className="startup-heading-text">
             <h1>{t("app.title")}</h1>
             <p className="startup-subtitle">{t("startup.subtitle")}</p>
