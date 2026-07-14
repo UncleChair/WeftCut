@@ -1,35 +1,85 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { LogoPulsePaths } from "./LogoPulsePaths";
+import type { StartupProgress } from "./initializeRenderer";
 
 interface Props {
+  /** Whether every launch dependency has settled and the destination is ready. */
+  ready: boolean;
+  /** Disable automatic exit when development preview is manually held open. */
+  autoComplete?: boolean;
+  startupProgress: StartupProgress | null;
+  routePending: boolean;
   onComplete: () => void;
 }
 
-const SPLASH_DURATION_MS = 2700;
-const REDUCED_MOTION_DURATION_MS = 240;
+const SPLASH_INTRO_DURATION_MS = 2500;
+const SPLASH_EXIT_DURATION_MS = 200;
+const REDUCED_MOTION_INTRO_DURATION_MS = 120;
+const REDUCED_MOTION_EXIT_DURATION_MS = 120;
 
 /**
  * The launch mark uses both the painted W and its distinct mask cutout from
  * public/icons/icon.svg. Keeping them inline lets the film and cut animate
  * independently while the final frame remains pixel-identical to the icon.
  */
-export function SplashScreen({ onComplete }: Props) {
+export function SplashScreen({
+  ready,
+  autoComplete = true,
+  startupProgress,
+  routePending,
+  onComplete,
+}: Props) {
+  const { t } = useTranslation();
+  const [reduceMotion] = useState(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const [introComplete, setIntroComplete] = useState(false);
+
   useEffect(() => {
-    const reduceMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
     const timeout = window.setTimeout(
-      onComplete,
-      reduceMotion ? REDUCED_MOTION_DURATION_MS : SPLASH_DURATION_MS,
+      () => setIntroComplete(true),
+      reduceMotion
+        ? REDUCED_MOTION_INTRO_DURATION_MS
+        : SPLASH_INTRO_DURATION_MS,
     );
     return () => window.clearTimeout(timeout);
-  }, [onComplete]);
+  }, [reduceMotion]);
+
+  const exiting = introComplete && ready && autoComplete;
+
+  useEffect(() => {
+    if (!exiting) return;
+    const timeout = window.setTimeout(
+      onComplete,
+      reduceMotion
+        ? REDUCED_MOTION_EXIT_DURATION_MS
+        : SPLASH_EXIT_DURATION_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [exiting, onComplete, reduceMotion]);
+
+  const phase = exiting ? "exiting" : introComplete ? "waiting" : "intro";
+  const pendingChecks = startupProgress?.pending ?? [];
+  const statusText = !startupProgress
+    ? t("splash.starting")
+    : pendingChecks.length > 0
+      ? t("splash.checking", {
+          items: pendingChecks
+            .map((check) => t(`splash.check.${check}`))
+            .join(t("splash.check_separator")),
+        })
+      : routePending
+        ? t("splash.resolving_project")
+        : t("splash.ready");
 
   return (
     <div
-      className="splash-screen"
+      className={`splash-screen splash-screen-${phase}${introComplete ? " splash-screen-pulsing" : ""}`}
       data-drag-region
       role="status"
-      aria-label="WeftCut"
+      aria-busy={!ready}
+      aria-atomic="true"
     >
       <div className="splash-mark" aria-hidden="true">
         <svg viewBox="0 0 640 440" fill="none">
@@ -60,6 +110,9 @@ export function SplashScreen({ onComplete }: Props) {
                 height="142"
                 shapeRendering="crispEdges"
               />
+            </clipPath>
+            <clipPath id="splash-pulse-w-clip">
+              <use href="#splash-w-shape" />
             </clipPath>
             <mask
               id="splash-icon-cutout"
@@ -108,9 +161,26 @@ export function SplashScreen({ onComplete }: Props) {
             href="#splash-w-shape"
             fill="#6696E6"
           />
+          <g
+            className="splash-logo-pulse-trace"
+            clipPath="url(#splash-pulse-w-clip)"
+          >
+            <LogoPulsePaths offsetX={100} />
+          </g>
         </svg>
       </div>
-      <div className="splash-wordmark">WeftCut</div>
+      <div className="splash-copy">
+        <div className="splash-wordmark">WeftCut</div>
+        <div className="splash-progress">
+          <span className="splash-progress-dot" aria-hidden="true" />
+          <span className="splash-progress-message">{statusText}</span>
+          {startupProgress && pendingChecks.length > 0 && (
+            <span className="splash-progress-count" aria-hidden="true">
+              {startupProgress.completed}/{startupProgress.total}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

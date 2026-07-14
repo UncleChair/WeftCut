@@ -6,6 +6,19 @@ const enUS = {
     core_status: "core: {{status}}",
     window_title: "WeftCut — {{name}}",
   },
+  splash: {
+    starting: "Starting system checks…",
+    checking: "Checking: {{items}}",
+    check_separator: " · ",
+    resolving_project: "Checking the launch project…",
+    ready: "Ready",
+    check: {
+      evaluation_runtime: "evaluation engine",
+      motif_capture_runtime: "Motif capture runtime",
+      motif_catalog: "Motif catalog",
+      motif_catalog_listener: "Motif change listener",
+    },
+  },
   keyframe: {
     stopwatch_enable: "Animate this property (add a keyframe at the playhead)",
     stopwatch_disable: "Stop animating — removes all keyframes (keeps the value at the playhead; undoable)",

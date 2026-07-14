@@ -77,13 +77,27 @@
   overflow: hidden;
   background: var(--surface-sunken);
   user-select: none;
-  animation: splash-screen-out 2700ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.splash-screen-exiting {
+  animation: splash-screen-out 200ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 .splash-mark {
   width: min(46vw, 290px);
   filter: drop-shadow(0 18px 44px rgba(0, 0, 0, 0.38));
-  animation: splash-mark-settle 2700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: splash-mark-settle 2500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.splash-logo-pulse-trace .logo-pulse-glow,
+.splash-logo-pulse-trace .logo-pulse-core {
+  animation: none;
+  opacity: 0;
+}
+
+.splash-screen-pulsing .splash-logo-pulse-trace .logo-pulse-glow,
+.splash-screen-pulsing .splash-logo-pulse-trace .logo-pulse-core {
+  animation: logo-pulse-sweep 2.6s cubic-bezier(0.32, 0, 0.5, 1) infinite;
 }
 
 .splash-mark svg {
@@ -95,19 +109,19 @@
 .splash-icon-film {
   opacity: 0;
   transform-origin: 320px 220px;
-  animation: splash-film-arrive 2700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: splash-film-arrive 2500ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .splash-w-reveal {
   transform-box: fill-box;
   transform-origin: left center;
-  animation: splash-w-cut 2700ms cubic-bezier(0.42, 0, 0.58, 1) both;
+  animation: splash-w-cut 2500ms cubic-bezier(0.42, 0, 0.58, 1) both;
 }
 
 .splash-middle-open {
   transform-box: fill-box;
   transform-origin: center top;
-  animation: splash-middle-separate 2700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: splash-middle-separate 2500ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .splash-wordmark {
@@ -117,7 +131,47 @@
   letter-spacing: 0.22em;
   text-indent: 0.22em;
   opacity: 0;
-  animation: splash-wordmark-in 2700ms ease both;
+  animation: splash-wordmark-in 2500ms ease both;
+}
+
+.splash-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+
+.splash-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 17px;
+  max-width: min(76vw, 620px);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  animation: splash-progress-in 2500ms ease both;
+}
+
+.splash-progress-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #6696e6;
+  box-shadow: 0 0 8px rgba(102, 150, 230, 0.72);
+}
+
+.splash-progress-message {
+  min-width: 0;
+}
+
+.splash-progress-count {
+  flex: 0 0 auto;
+  color: var(--color-gray-500);
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes splash-w-cut {
@@ -132,24 +186,26 @@
 
 @keyframes splash-film-arrive {
   0% { opacity: 0; transform: scale(0.96); }
-  10%, 93% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(0.985); }
+  10%, 100% { opacity: 1; transform: scale(1); }
 }
 
 @keyframes splash-mark-settle {
   0% { opacity: 0; transform: scale(0.9); }
-  10%, 93% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(0.985); }
+  10%, 100% { opacity: 1; transform: scale(1); }
 }
 
 @keyframes splash-wordmark-in {
   0%, 51.2963% { opacity: 0; transform: translateY(6px); }
-  60.2963%, 93% { opacity: 0.78; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(-2px); }
+  60.2963%, 100% { opacity: 0.78; transform: translateY(0); }
+}
+
+@keyframes splash-progress-in {
+  0%, 48% { opacity: 0; transform: translateY(4px); }
+  62%, 100% { opacity: 0.78; transform: translateY(0); }
 }
 
 @keyframes splash-screen-out {
-  0%, 93% { opacity: 1; }
+  0% { opacity: 1; }
   100% { opacity: 0; }
 }
 
@@ -157,8 +213,13 @@
   .splash-screen,
   .splash-mark,
   .splash-icon-film,
-  .splash-wordmark {
-    animation-duration: 240ms;
+  .splash-wordmark,
+  .splash-progress {
+    animation-duration: 120ms;
+  }
+
+  .splash-screen-exiting {
+    animation-duration: 120ms;
   }
 
   .splash-w-reveal,
@@ -177,16 +238,23 @@
   .splash-icon-film {
     opacity: 1;
   }
+
+  .splash-screen-pulsing .splash-logo-pulse-trace .logo-pulse-glow,
+  .splash-screen-pulsing .splash-logo-pulse-trace .logo-pulse-core {
+    animation: none;
+    opacity: 0;
+  }
 }
 
-/* Development-only affordance rendered by Root. It intentionally lives
+/* Development-only splash toggle rendered by Root. It intentionally lives
  * above both the startup screen and editor so the launch motion can be
- * reviewed without restarting Electron. */
-.dev-splash-replay {
+ * started and exited explicitly without restarting Electron. */
+.dev-splash-toggle {
   position: fixed;
   left: 14px;
   bottom: 14px;
   z-index: 1100;
+  -webkit-app-region: no-drag;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -201,7 +269,7 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
 }
 
-.dev-splash-replay:hover {
+.dev-splash-toggle:hover {
   border-color: var(--border);
   color: var(--foreground);
   background: var(--surface-raised);
@@ -311,8 +379,8 @@
   pointer-events: none;
 }
 
-.startup-logo-pulse-glow,
-.startup-logo-pulse-core {
+.logo-pulse-glow,
+.logo-pulse-core {
   stroke-linecap: round;
   stroke-linejoin: round;
   /* The gap deliberately exceeds the full normalized path length. If the
@@ -320,21 +388,21 @@
    * ends of the W as it crosses the boundary. */
   stroke-dasharray: 11 200;
   stroke-dashoffset: 11;
-  animation: startup-logo-pulse-sweep 2.6s cubic-bezier(0.32, 0, 0.5, 1) infinite;
+  animation: logo-pulse-sweep 2.6s cubic-bezier(0.32, 0, 0.5, 1) infinite;
 }
 
-.startup-logo-pulse-glow {
+.logo-pulse-glow {
   stroke: rgba(96, 165, 250, 0.72);
   stroke-width: 34;
   filter: blur(11px);
 }
 
-.startup-logo-pulse-core {
+.logo-pulse-core {
   stroke: #d5e6ff;
   stroke-width: 12;
 }
 
-@keyframes startup-logo-pulse-sweep {
+@keyframes logo-pulse-sweep {
   0% {
     opacity: 0;
     stroke-dashoffset: 11;
@@ -353,8 +421,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .startup-logo-pulse-glow,
-  .startup-logo-pulse-core {
+  .logo-pulse-glow,
+  .logo-pulse-core {
     animation: none;
     opacity: 0;
   }

@@ -8,6 +8,19 @@ const zhCN: Resources = {
     core_status: "核心：{{status}}",
     window_title: "WeftCut — {{name}}",
   },
+  splash: {
+    starting: "正在启动系统检查…",
+    checking: "正在检查：{{items}}",
+    check_separator: " · ",
+    resolving_project: "正在检查启动项目…",
+    ready: "准备就绪",
+    check: {
+      evaluation_runtime: "预览计算引擎",
+      motif_capture_runtime: "动效捕获运行时",
+      motif_catalog: "动效目录",
+      motif_catalog_listener: "动效变更监听",
+    },
+  },
   keyframe: {
     stopwatch_enable: "为该属性添加动画（在播放头处打关键帧）",
     stopwatch_disable: "停止动画并删除所有关键帧（保留播放头处的值，可撤销）",

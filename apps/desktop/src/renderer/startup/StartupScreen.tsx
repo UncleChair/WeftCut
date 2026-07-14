@@ -31,6 +31,7 @@ import {
   type CanvasPreset,
   type RecentEntry,
 } from "../ipc";
+import { LogoPulsePaths } from "./LogoPulsePaths";
 import { describeOpenError, isDeadRecentError } from "./openError";
 
 interface Props {
@@ -182,16 +183,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
                 </clipPath>
               </defs>
               <g clipPath="url(#startup-logo-w-clip)">
-                <path
-                  className="startup-logo-pulse-glow"
-                  pathLength="100"
-                  d="M8 171H76L148 271L220 192L292 271L364 171H432"
-                />
-                <path
-                  className="startup-logo-pulse-core"
-                  pathLength="100"
-                  d="M8 171H76L148 271L220 192L292 271L364 171H432"
-                />
+                <LogoPulsePaths />
               </g>
             </svg>
           </span>
