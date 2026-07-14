@@ -9,6 +9,7 @@ import { invoke } from "@/bridge/ipc";
 import { getCurrentWindow } from "@/bridge/window";
 import { App } from "./App";
 import { StartupScreen } from "./startup/StartupScreen";
+import { SplashScreen } from "./startup/SplashScreen";
 import { PerfHUDWindow } from "./render/PerfHUD";
 import {
   projectOpen,
@@ -77,6 +78,7 @@ function Root() {
   // a beat so we don't flash StartupScreen for users who *did* opt into
   // auto-open. `startup`: user must pick. `editor`: workspace is mounted.
   const [stage, setStage] = useState<"boot" | "startup" | "editor">("boot");
+  const [splashVisible, setSplashVisible] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,16 +153,33 @@ function Root() {
 
   const onWorkspaceReady = useCallback(() => setStage("editor"), []);
   const onCloseProject = useCallback(() => setStage("startup"), []);
+  const onSplashComplete = useCallback(() => setSplashVisible(false), []);
 
-  if (stage === "boot") {
-    // Brief — usually one tick — while we're checking the reopen-on-launch
-    // pref. Render nothing to avoid flashing the wrong surface.
-    return null;
-  }
-  if (stage === "startup") {
-    return <StartupScreen onWorkspaceReady={onWorkspaceReady} />;
-  }
-  return <App onCloseProject={onCloseProject} />;
+  // Boot resolution runs behind the launch animation. In the usual case the
+  // destination is ready before the mark finishes, so the transition is
+  // immediate and the splash does not add IPC time to startup.
+  return (
+    <>
+      {stage === "startup" && (
+        <StartupScreen onWorkspaceReady={onWorkspaceReady} />
+      )}
+      {stage === "editor" && <App onCloseProject={onCloseProject} />}
+      {(splashVisible || stage === "boot") && (
+        <SplashScreen onComplete={onSplashComplete} />
+      )}
+      {import.meta.env.DEV && !splashVisible && stage !== "boot" && (
+        <button
+          type="button"
+          className="dev-splash-replay"
+          onClick={() => setSplashVisible(true)}
+          title="Replay splash animation"
+        >
+          <span aria-hidden="true">↻</span>
+          Replay splash
+        </button>
+      )}
+    </>
+  );
 }
 
 function mount() {

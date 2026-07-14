@@ -65,6 +65,148 @@
  * Startup screen. See docs/data-model.md.
  * -------------------------------------------------------------------------- */
 
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  overflow: hidden;
+  background: #0a0a0a;
+  user-select: none;
+  animation: splash-screen-out 2700ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.splash-mark {
+  width: min(46vw, 290px);
+  filter: drop-shadow(0 18px 44px rgba(0, 0, 0, 0.38));
+  animation: splash-mark-settle 2700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.splash-mark svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.splash-icon-film {
+  opacity: 0;
+  transform-origin: 320px 220px;
+  animation: splash-film-arrive 2700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.splash-w-reveal {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: splash-w-cut 2700ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+.splash-middle-open {
+  transform-box: fill-box;
+  transform-origin: center top;
+  animation: splash-middle-separate 2700ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+.splash-wordmark {
+  color: #dce8fb;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  opacity: 0;
+  animation: splash-wordmark-in 2700ms ease both;
+}
+
+@keyframes splash-w-cut {
+  0%, 18% { transform: scaleX(0); }
+  47%, 100% { transform: scaleX(1); }
+}
+
+@keyframes splash-middle-separate {
+  0%, 49% { transform: scaleY(0); }
+  65%, 100% { transform: scaleY(1); }
+}
+
+@keyframes splash-film-arrive {
+  0% { opacity: 0; transform: scale(0.96); }
+  10%, 93% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.985); }
+}
+
+@keyframes splash-mark-settle {
+  0% { opacity: 0; transform: scale(0.9); }
+  10%, 93% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.985); }
+}
+
+@keyframes splash-wordmark-in {
+  0%, 55% { opacity: 0; transform: translateY(6px); }
+  64%, 93% { opacity: 0.78; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-2px); }
+}
+
+@keyframes splash-screen-out {
+  0%, 93% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-screen,
+  .splash-mark,
+  .splash-icon-film,
+  .splash-wordmark {
+    animation-duration: 240ms;
+  }
+
+  .splash-w-reveal,
+  .splash-middle-open {
+    animation: none;
+  }
+
+  .splash-w-reveal {
+    transform: scaleX(1);
+  }
+
+  .splash-middle-open {
+    transform: scaleY(1);
+  }
+
+  .splash-icon-film {
+    opacity: 1;
+  }
+}
+
+/* Development-only affordance rendered by Root. It intentionally lives
+ * above both the startup screen and editor so the launch motion can be
+ * reviewed without restarting Electron. */
+.dev-splash-replay {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 1100;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(14, 19, 28, 0.92);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+}
+
+.dev-splash-replay:hover {
+  border-color: var(--border);
+  color: var(--foreground);
+  background: #131923;
+}
+
 .startup-screen {
   position: relative;
   display: flex;
