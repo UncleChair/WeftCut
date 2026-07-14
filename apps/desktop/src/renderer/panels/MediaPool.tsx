@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 
 import { MediaThumbnail } from "./MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
-import { MEDIA_DRAG_TYPE } from "../timeline/TrackLane";
+import {
+  MEDIA_DRAG_TYPE,
+  mediaDragPayload,
+  useMediaDragStore,
+} from "../timeline/mediaDrag";
 import { AppInput } from "../components/AppInput";
 import { formatTimecode } from "../frames";
 import { type MediaSummary, generateQuickProxy } from "../ipc";
@@ -91,6 +95,8 @@ export function MediaPool({
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const beginMediaDrag = useMediaDragStore((s) => s.begin);
+  const endMediaDrag = useMediaDragStore((s) => s.end);
 
   // Palette "reveal in media pool": clear any filter (the target must be
   // in the filtered list), then flash + scroll the row into view.
@@ -188,12 +194,15 @@ export function MediaPool({
                 .join(" ")}
               draggable={interactive}
               onDragStart={(e) => {
+                const payload = mediaDragPayload(m);
+                beginMediaDrag(payload);
                 e.dataTransfer.setData(
                   MEDIA_DRAG_TYPE,
-                  JSON.stringify({ mediaId: m.id, kind: m.kind }),
+                  JSON.stringify(payload),
                 );
                 e.dataTransfer.effectAllowed = "copy";
               }}
+              onDragEnd={endMediaDrag}
               title={
                 interactive
                   ? t("media_pool.drag_hint", {

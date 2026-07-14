@@ -226,6 +226,8 @@ const enUS = {
     track_mute_hint: "Mute this track's audio (affects export)",
     track_solo_hint: "Solo this track's audio (affects export)",
     track_lock_hint: "Lock this track against edits",
+    drop_collision: "Overlaps existing media",
+    drop_locked: "Track is locked",
     toggle_keyframe_lanes: "Expand keyframe lanes",
     mode_ab: "A/B",
     mode_all: "All",

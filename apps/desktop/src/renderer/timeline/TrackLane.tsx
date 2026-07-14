@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   LayerBlock,
@@ -8,24 +8,18 @@ import {
   type PendingLayerPlacement,
 } from "./LayerBlock";
 import { computeLayerSlices } from "./geometry";
+import { formatTimecode } from "../frames";
 import type { AnimTrack, LayerSummary, TrackSummary } from "../ipc";
-
-export const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
-
-export interface MediaDragPayload {
-  mediaId: string;
-  kind: string;
-}
-
-export function parseMediaDrag(e: React.DragEvent): MediaDragPayload | null {
-  try {
-    const raw = e.dataTransfer.getData(MEDIA_DRAG_TYPE);
-    if (!raw) return null;
-    return JSON.parse(raw) as MediaDragPayload;
-  } catch {
-    return null;
-  }
-}
+import { playheadTimeUs } from "../state/playheadStore";
+import {
+  MEDIA_DRAG_TYPE,
+  parseMediaDrag,
+  planMediaDrop,
+  useMediaDragStore,
+  type MediaDragPayload,
+  type MediaDropPlan,
+  type MediaDropSnapOptions,
+} from "./mediaDrag";
 
 export function TrackLane({
   track,
@@ -54,6 +48,7 @@ export function TrackLane({
   onHeightDragStart,
   fpsNum,
   fpsDen,
+  mediaDropSnap,
 }: {
   track: TrackSummary;
   pxPerSec: number;
@@ -79,7 +74,7 @@ export function TrackLane({
   onMediaDrop: (
     track: TrackSummary,
     payload: MediaDragPayload,
-    e: React.DragEvent<HTMLDivElement>,
+    plan: MediaDropPlan,
   ) => void;
   /// Context-menu hook. LayerBlock fires this on right-click; the
   /// Timeline shows a small floating menu and routes the chosen
@@ -103,9 +98,19 @@ export function TrackLane({
   onHeightDragStart: (e: React.PointerEvent) => void;
   fpsNum: number;
   fpsDen: number;
+  mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
 }) {
   const { t } = useTranslation();
-  const [dragOverX, setDragOverX] = useState<number | null>(null);
+  const activeMediaDrag = useMediaDragStore((s) => s.active);
+  const endMediaDrag = useMediaDragStore((s) => s.end);
+  const [dropPreview, setDropPreview] = useState<{
+    media: MediaDragPayload;
+    plan: MediaDropPlan;
+  } | null>(null);
+
+  useEffect(() => {
+    if (activeMediaDrag === null) setDropPreview(null);
+  }, [activeMediaDrag]);
 
   const dragPreviewTrackId = useCallback(
     (subject: DragSubject): string => {
@@ -173,26 +178,73 @@ export function TrackLane({
     (e: React.DragEvent<HTMLDivElement>) => {
       if (!e.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
+      if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      setDragOverX(e.clientX - rect.left);
+      const plan = planMediaDrop({
+        track,
+        media: activeMediaDrag,
+        pointerXPx: e.clientX - rect.left,
+        pxPerSec,
+        fpsNum,
+        fpsDen,
+        snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
+      });
+      e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
+      setDropPreview({ media: activeMediaDrag, plan });
     },
-    [],
+    [activeMediaDrag, fpsDen, fpsNum, mediaDropSnap, pxPerSec, track],
   );
 
-  const onDragLeave = useCallback(() => {
-    setDragOverX(null);
+  const onDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // Crossing a child LayerBlock is not leaving the lane. Without this guard
+    // the ghost flickers whenever it passes over existing clip content.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pointerStillInside =
+      e.clientX >= rect.left &&
+      e.clientX <= rect.right &&
+      e.clientY >= rect.top &&
+      e.clientY <= rect.bottom;
+    if (
+      pointerStillInside ||
+      e.relatedTarget instanceof Node &&
+      e.currentTarget.contains(e.relatedTarget)
+    ) {
+      return;
+    }
+    setDropPreview(null);
   }, []);
 
   const onDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       const payload = parseMediaDrag(e);
-      setDragOverX(null);
+      const rect = e.currentTarget.getBoundingClientRect();
+      const plan = payload
+        ? planMediaDrop({
+            track,
+            media: payload,
+            pointerXPx: e.clientX - rect.left,
+            pxPerSec,
+            fpsNum,
+            fpsDen,
+            snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
+          })
+        : null;
+      setDropPreview(null);
       if (!payload) return;
       e.preventDefault();
-      onMediaDrop(track, payload, e);
+      endMediaDrag();
+      if (plan?.validity !== "valid") return;
+      onMediaDrop(track, payload, plan);
     },
-    [onMediaDrop, track],
+    [
+      endMediaDrag,
+      fpsDen,
+      fpsNum,
+      mediaDropSnap,
+      onMediaDrop,
+      pxPerSec,
+      track,
+    ],
   );
 
   // Highlight the lane the user is currently dragging an existing layer over.
@@ -200,6 +252,29 @@ export function TrackLane({
     dragState?.kind === "move" &&
     dragState.overTrackId === track.id &&
     dragState.trackId !== track.id;
+
+  const dropTargetClass =
+    dropPreview?.plan.validity === "collision"
+      ? "bg-red-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-red-400/80"
+      : dropPreview?.plan.validity === "locked"
+        ? "bg-amber-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-amber-400/80"
+        : dropPreview !== null
+          ? "bg-blue-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-blue-300/80"
+          : "";
+
+  let ghostTop = 4;
+  let ghostHeight = Math.max(8, height - 8);
+  if (dropPreview?.plan.sharesLane) {
+    const interiorHeight = Math.max(8, height - 8);
+    const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
+    ghostHeight =
+      dropPreview.plan.overlapClass === "visual"
+        ? halfHeight
+        : interiorHeight - halfHeight - 1;
+    if (dropPreview.plan.overlapClass === "audio") {
+      ghostTop = 4 + halfHeight + 1;
+    }
+  }
 
   return (
     <div
@@ -210,7 +285,9 @@ export function TrackLane({
         // chrome wins (drop-target vs revealed); the base bg-track-lane
         // vs branch-bg conflict still resolves by emit order, currently
         // favouring the branches.
-        isCrossTrackTarget
+        dropPreview !== null
+          ? dropTargetClass
+          : isCrossTrackTarget
           ? "bg-secondary outline outline-1 outline-dashed -outline-offset-1 outline-primary"
           : isRevealed
             ? "outline outline-1 outline-dashed -outline-offset-1 outline-blue-400/55 bg-blue-400/5"
@@ -222,11 +299,44 @@ export function TrackLane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {dragOverX !== null && (
+      {dropPreview !== null && (
         <div
-          className="pointer-events-none absolute bottom-1 top-1 w-0.5 bg-foreground shadow-[0_0_6px_rgba(255,255,255,0.4)]"
-          style={{ left: dragOverX }}
-        />
+          data-testid="media-drop-ghost"
+          data-validity={dropPreview.plan.validity}
+          data-start-us={dropPreview.plan.tStartUs}
+          data-end-us={dropPreview.plan.tEndUs}
+          className={`pointer-events-none absolute z-[5] flex min-w-1 items-center gap-1 overflow-hidden rounded border px-2 text-[10px] font-semibold text-white shadow-[0_3px_10px_rgba(0,0,0,0.4)] ${
+            dropPreview.plan.validity === "collision"
+              ? "border-red-300 bg-red-500/55"
+              : dropPreview.plan.validity === "locked"
+                ? "border-amber-300 bg-amber-500/55"
+                : "border-blue-200 bg-blue-500/45"
+          }`}
+          style={{
+            left: (dropPreview.plan.tStartUs / 1_000_000) * pxPerSec,
+            top: ghostTop,
+            width: Math.max(
+              4,
+              ((dropPreview.plan.tEndUs - dropPreview.plan.tStartUs) /
+                1_000_000) *
+                pxPerSec,
+            ),
+            height: ghostHeight,
+          }}
+          title={`${dropPreview.media.label}: ${formatTimecode(dropPreview.plan.tStartUs, fpsNum, fpsDen)} → ${formatTimecode(dropPreview.plan.tEndUs, fpsNum, fpsDen)}`}
+        >
+          <span className="min-w-0 truncate">{dropPreview.media.label}</span>
+          <span className="shrink-0 opacity-80">
+            {formatTimecode(dropPreview.media.durationUs, fpsNum, fpsDen)}
+          </span>
+          {dropPreview.plan.validity !== "valid" && (
+            <span className="ml-auto shrink-0 rounded bg-black/35 px-1 py-0.5">
+              {dropPreview.plan.validity === "collision"
+                ? t("timeline.drop_collision", { defaultValue: "Overlap" })
+                : t("timeline.drop_locked", { defaultValue: "Locked" })}
+            </span>
+          )}
+        </div>
       )}
       {/* Eye-off feedback: dim + freeze the whole layer area. When the
           track is enabled the wrapper is `display: contents` (no box, no

@@ -231,6 +231,8 @@ const zhCN: Resources = {
     track_mute_hint: "静音此轨道的音频（影响导出）",
     track_solo_hint: "独奏此轨道的音频（影响导出）",
     track_lock_hint: "锁定此轨道禁止编辑",
+    drop_collision: "与现有素材重叠",
+    drop_locked: "轨道已锁定",
     toggle_keyframe_lanes: "展开关键帧轨",
     prebake_now: "立即预烘焙",
     rename: "重命名",

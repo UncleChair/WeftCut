@@ -1,12 +1,30 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import "../i18n"; // initialize i18next so t(key) resolves in chrome
-import type { GroupSummary, LayerSummary, TrackSummary } from "../ipc";
+import type {
+  GroupSummary,
+  LayerSummary,
+  MediaSummary,
+  TrackSummary,
+} from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { Timeline } from "./Timeline";
+import {
+  MEDIA_DRAG_CURSOR_OFFSET_PX,
+  MEDIA_DRAG_TYPE,
+  mediaDragPayload,
+  useMediaDragStore,
+} from "./mediaDrag";
 
 const ipcMocks = vi.hoisted(() => ({
+  addMediaLayer: vi.fn().mockResolvedValue(undefined),
   moveLayer: vi.fn().mockResolvedValue(undefined),
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
@@ -30,6 +48,7 @@ vi.mock("../ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc")>();
   return {
     ...actual,
+    addMediaLayer: ipcMocks.addMediaLayer,
     moveLayer: ipcMocks.moveLayer,
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
@@ -120,6 +139,21 @@ const group: GroupSummary = {
   layer_ids: [layer.id, groupedLayer.id],
 };
 
+const sourceMedia: MediaSummary = {
+  id: "media-source",
+  label: "Source clip",
+  path: "C:/media/source.mp4",
+  kind: "Video",
+  duration_us: 3_000_000,
+  width: 1920,
+  height: 1080,
+  size_bytes: 1024,
+  available: true,
+  decode_route: { route: "bypass" },
+  codec: "h264",
+  pix_fmt: "yuv420p",
+};
+
 function renderTimeline(overrides: {
   selectedLayerId?: string | null;
   onSeek?: () => void;
@@ -127,6 +161,7 @@ function renderTimeline(overrides: {
   bladeMode?: boolean;
   tracks?: TrackSummary[];
   groups?: GroupSummary[];
+  media?: MediaSummary[];
   onMutated?: () => Promise<void>;
 }) {
   const onSeek = overrides.onSeek ?? vi.fn();
@@ -141,7 +176,7 @@ function renderTimeline(overrides: {
       fpsNum={30}
       fpsDen={1}
       bladeMode={overrides.bladeMode ?? false}
-      media={[]}
+      media={overrides.media ?? []}
       importing={new Set()}
       proxyState={new Map()}
       previewDecodable={new Set()}
@@ -155,6 +190,7 @@ function renderTimeline(overrides: {
 
 describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
+    ipcMocks.addMediaLayer.mockClear();
     ipcMocks.moveLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
@@ -164,7 +200,10 @@ describe("Timeline seek/selection coupling", () => {
       settings: { ...s.settings, display_mode: "ShowAll" },
     }));
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    useMediaDragStore.getState().end();
+    cleanup();
+  });
 
   it("clicking the ruler seeks AND keeps the selected clip selected", () => {
     const onSeek = vi.fn();
@@ -344,5 +383,92 @@ describe("Timeline seek/selection coupling", () => {
       expect(first.style.left).toBe("80px");
       expect(second.style.left).toBe("240px");
     });
+  });
+
+  it.each(["AbRoll", "ShowAll"] as const)(
+    "renders the same duration-sized media ghost in %s mode",
+    (displayMode) => {
+      useAppSettingsStore.setState((s) => ({
+        settings: { ...s.settings, display_mode: displayMode },
+      }));
+      const payload = mediaDragPayload(sourceMedia);
+      useMediaDragStore.getState().begin(payload);
+      const { container } = renderTimeline({ media: [sourceMedia] });
+      const lane = container.querySelector('[data-testid="track-lane"]') as HTMLElement;
+      vi.spyOn(lane, "getBoundingClientRect").mockReturnValue({
+        left: 0,
+        right: 1040,
+        top: 0,
+        bottom: 64,
+        width: 1040,
+        height: 64,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      });
+      const dataTransfer = {
+        types: [MEDIA_DRAG_TYPE],
+        dropEffect: "copy",
+        getData: () => JSON.stringify(payload),
+      };
+
+      // At 80 px/s this pointer maps to 3s only after subtracting the
+      // 32px cursor-in-ghost offset. The 3s source therefore spans 3s→6s.
+      const dragOver = createEvent.dragOver(lane, { dataTransfer });
+      Object.defineProperty(dragOver, "clientX", {
+        value: MEDIA_DRAG_CURSOR_OFFSET_PX + 240,
+      });
+      fireEvent(lane, dragOver);
+
+      const ghost = container.querySelector(
+        '[data-testid="media-drop-ghost"]',
+      ) as HTMLElement;
+      expect(ghost.dataset.validity).toBe("valid");
+      expect(ghost.dataset.startUs).toBe("3000000");
+      expect(ghost.dataset.endUs).toBe("6000000");
+      expect(ghost.style.left).toBe("240px");
+      expect(ghost.style.width).toBe("240px");
+    },
+  );
+
+  it("marks a collision and blocks the drop before IPC", () => {
+    const payload = mediaDragPayload(sourceMedia);
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({ media: [sourceMedia] });
+    const lane = container.querySelector('[data-testid="track-lane"]') as HTMLElement;
+    vi.spyOn(lane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 1040,
+      top: 0,
+      bottom: 64,
+      width: 1040,
+      height: 64,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const dataTransfer = {
+      types: [MEDIA_DRAG_TYPE],
+      dropEffect: "copy",
+      getData: () => JSON.stringify(payload),
+    };
+
+    const dragOver = createEvent.dragOver(lane, { dataTransfer });
+    // start=1s, end=4s; overlaps the existing visual clip at [0s,2s).
+    Object.defineProperty(dragOver, "clientX", {
+      value: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
+    });
+    fireEvent(lane, dragOver);
+    expect(
+      container.querySelector('[data-testid="media-drop-ghost"]')
+        ?.getAttribute("data-validity"),
+    ).toBe("collision");
+
+    const drop = createEvent.drop(lane, { dataTransfer });
+    Object.defineProperty(drop, "clientX", {
+      value: MEDIA_DRAG_CURSOR_OFFSET_PX + 80,
+    });
+    fireEvent(lane, drop);
+    expect(ipcMocks.addMediaLayer).not.toHaveBeenCalled();
   });
 });

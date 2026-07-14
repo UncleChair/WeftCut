@@ -46,7 +46,8 @@ import {
 } from "./geometry";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
-import { TrackLane, type MediaDragPayload } from "./TrackLane";
+import { TrackLane } from "./TrackLane";
+import type { MediaDragPayload, MediaDropPlan } from "./mediaDrag";
 import { KeyframeLane, KeyframeLaneHeaders } from "./KeyframeLane";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { beginRename } from "./renameStore";
@@ -226,6 +227,22 @@ export function Timeline({
     () => orderedTracks.map(({ track }) => track),
     [orderedTracks],
   );
+  const mediaDropSnap = useMemo(
+    () => ({
+      visibleTracks: visibleSnapTracks,
+      groups,
+      groupByLayerId,
+      enabled: tailSnapEnabled,
+      strengthPx: tailSnapStrengthPx,
+    }),
+    [
+      groupByLayerId,
+      groups,
+      tailSnapEnabled,
+      tailSnapStrengthPx,
+      visibleSnapTracks,
+    ],
+  );
 
   /// Map a click event on a layer chip to the resulting selection set.
   /// `docs/groups.md`: plain click on a grouped layer selects the
@@ -386,7 +403,7 @@ export function Timeline({
     async (
       track: TrackSummary,
       payload: MediaDragPayload,
-      e: React.DragEvent<HTMLDivElement>,
+      plan: MediaDropPlan,
     ) => {
       if (
         !trackAcceptsMedia(track.kind, payload.kind) &&
@@ -413,17 +430,14 @@ export function Timeline({
         );
         return;
       }
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const tStartUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
       try {
-        await addMediaLayer(track.id, payload.mediaId, tStartUs);
+        await addMediaLayer(track.id, payload.mediaId, plan.rawStartUs);
         await onMutated();
       } catch (err) {
         console.error("media drop failed:", err);
       }
     },
-    [importing, media, onMutated, previewDecodable, proxyState, pxPerSec],
+    [importing, media, onMutated, previewDecodable, proxyState],
   );
 
   // Context-menu open handler. Captures cursor position + target layer;
@@ -734,6 +748,7 @@ export function Timeline({
                 onHeightDragStart={beginHeightDrag(track.id)}
                 fpsNum={fpsNum}
                 fpsDen={fpsDen}
+                mediaDropSnap={mediaDropSnap}
               />
               {expandedTracks.has(track.id) && (
                 <KeyframeLane
