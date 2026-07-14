@@ -8,9 +8,9 @@ const SPLASH_DURATION_MS = 2700;
 const REDUCED_MOTION_DURATION_MS = 240;
 
 /**
- * The launch mark is drawn from the same geometry as public/icons/icon.svg.
- * Keeping it inline lets the film and W-shaped cut animate independently,
- * while the final frame remains the real app icon rather than an imitation.
+ * The launch mark uses both the painted W and its distinct mask cutout from
+ * public/icons/icon.svg. Keeping them inline lets the film and cut animate
+ * independently while the final frame remains pixel-identical to the icon.
  */
 export function SplashScreen({ onComplete }: Props) {
   useEffect(() => {
@@ -38,13 +38,17 @@ export function SplashScreen({ onComplete }: Props) {
               id="splash-w-shape"
               d="M300.117 167.417L251.477 239.378C249.409 242.438 244.851 242.276 243.004 239.078L195.331 156.5C192.652 151.859 187.7 149 182.34 149H110C104.478 149 100 153.477 100 159V183C100 188.523 104.478 193 110 193H157.306C162.684 193 167.65 195.879 170.322 200.545L224.679 295.455C227.352 300.121 232.318 303 237.696 303H254.024C259.011 303 263.672 300.522 266.461 296.387L320.001 217L373.541 296.387C376.329 300.522 380.99 303 385.977 303H402.306C407.683 303 412.649 300.121 415.322 295.455L469.679 200.545C472.352 195.879 477.318 193 482.696 193H530C535.523 193 540 188.523 540 183V159C540 153.477 535.523 149 530 149H457.661C452.302 149 447.35 151.859 444.671 156.5L396.997 239.078C395.151 242.276 390.593 242.438 388.525 239.378L339.885 167.417C330.368 153.337 309.634 153.337 300.117 167.417Z"
             />
+            <path
+              id="splash-w-cutout-shape"
+              d="M85.2271 137C93.0869 137 100.35 141.193 104.28 148L147.801 223.386L193.489 155.794C206.178 137.021 233.823 137.021 246.512 155.794L292.199 223.386L335.721 148C339.651 141.193 346.914 137 354.774 137H452V205H380.957L324.294 303.934C320.375 310.778 313.091 315 305.204 315H283.318C276.004 315 269.168 311.365 265.079 305.301L220 238.462L174.922 305.301C170.833 311.365 163.997 315 156.683 315H134.797C126.91 315 119.626 310.778 115.707 303.934L59.0444 205H-11.9995V137H85.2271Z"
+            />
             <clipPath id="splash-w-reveal">
               <rect
                 className="splash-w-reveal"
                 x="88"
                 y="120"
                 width="464"
-                height="200"
+                height="207"
               />
             </clipPath>
             <clipPath id="splash-middle-open">
@@ -79,13 +83,15 @@ export function SplashScreen({ onComplete }: Props) {
                   fill="black"
                 />
               </g>
-              <use
-                href="#splash-w-shape"
-                fill="black"
-                stroke="black"
-                strokeWidth="24"
-                clipPath="url(#splash-w-reveal)"
-              />
+              <g clipPath="url(#splash-w-reveal)">
+                <use
+                  href="#splash-w-cutout-shape"
+                  transform="translate(100 0)"
+                  fill="black"
+                  stroke="black"
+                  strokeWidth="24"
+                />
+              </g>
             </mask>
           </defs>
 
