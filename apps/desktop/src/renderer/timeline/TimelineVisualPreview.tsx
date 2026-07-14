@@ -8,6 +8,7 @@ import { TimelineFilmstrip } from "./TimelineFilmstrip";
 import { TimelineWaveform } from "./TimelineWaveform";
 import { trackStatic, type LayerSummary, type Rgba } from "../ipc";
 import { useMediaById } from "../state/projectStore";
+import { timelineLayerTheme } from "./layerTheme";
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -24,14 +25,17 @@ function compactText(content: string): string {
   return clean.length > 64 ? `${clean.slice(0, 61)}...` : clean;
 }
 
-function fallbackFill(colorHint: string) {
+function fallbackFill(surface: string, pattern?: "motif") {
   return (
     <div
       className="h-full w-full"
       style={{
-        backgroundColor: colorHint,
+        backgroundColor: surface,
         backgroundImage:
-          "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.18))",
+          pattern === "motif"
+            ? "radial-gradient(circle at 1px 1px, rgba(177,123,193,0.22) 1px, transparent 1.25px)"
+            : "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.10))",
+        backgroundSize: pattern === "motif" ? "10px 10px" : undefined,
       }}
     />
   );
@@ -128,6 +132,7 @@ export function TimelineVisualPreview({
     layer.params.kind === "VideoClip" ? layer.params.media_id : null,
   );
   if (!canRenderPreview) return null;
+  const layerTheme = timelineLayerTheme(layer.params.kind, layer.color_hint);
 
   const preview = (() => {
     switch (layer.params.kind) {
@@ -140,7 +145,7 @@ export function TimelineVisualPreview({
             layerWidthPx={layerWidthPx}
             layerHeightPx={layerHeightPx}
             pxPerSec={pxPerSec}
-            colorHint={layer.color_hint}
+            colorHint={layerTheme.surface}
             enabled={resourceEnabled}
             mediaWidth={videoMedia?.width ?? undefined}
             mediaHeight={videoMedia?.height ?? undefined}
@@ -155,7 +160,8 @@ export function TimelineVisualPreview({
             srcOutUs={layer.params.src_out_us}
             layerWidthPx={layerWidthPx}
             layerHeightPx={layerHeightPx}
-            colorHint={layer.color_hint}
+            colorHint={layerTheme.surface}
+            waveformColor={layerTheme.accent}
             enabled={resourceEnabled}
             pxPerSec={pxPerSec}
             mediaChannels={audioMedia?.audio_channels ?? undefined}
@@ -170,7 +176,7 @@ export function TimelineVisualPreview({
             draggable={false}
           />
         ) : (
-          fallbackFill(layer.color_hint)
+          fallbackFill(layerTheme.surface)
         );
       case "Color":
         return colorFill(
@@ -181,7 +187,7 @@ export function TimelineVisualPreview({
         return (
           <div
             className="flex h-full w-full items-center overflow-hidden px-2"
-            style={{ backgroundColor: layer.color_hint }}
+            style={{ backgroundColor: layerTheme.surface }}
           >
             {layerWidthPx >= LAYER_LABEL_MIN_PX && (
               <span className="truncate text-[10px] font-semibold leading-none text-white/70">
@@ -191,7 +197,7 @@ export function TimelineVisualPreview({
           </div>
         );
       case "Motif":
-        return fallbackFill(layer.color_hint);
+        return fallbackFill(layerTheme.surface, "motif");
     }
   })();
 
@@ -200,11 +206,13 @@ export function TimelineVisualPreview({
       ref={rootRef}
       data-testid="timeline-visual-preview"
       className="pointer-events-none absolute inset-0 overflow-hidden"
-      style={{ borderRadius: "inherit", backgroundColor: layer.color_hint }}
+      style={{ borderRadius: "inherit", backgroundColor: layerTheme.surface }}
       aria-hidden="true"
     >
       {preview}
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.16))]" />
+      {layer.params.kind !== "Color" && (
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(0,0,0,0.10))]" />
+      )}
     </div>
   );
 }

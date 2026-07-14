@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  AudioWaveform,
+  Film,
+  Image as ImageIcon,
+  Palette,
+  Sparkles,
+  Type,
+} from "lucide-react";
 import { formatTimecode } from "../frames";
 import { AppInput } from "../components/AppInput";
 import {
@@ -26,6 +34,7 @@ import {
   clearKeyframeSelection,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
+import { timelineLayerTheme } from "./layerTheme";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -66,6 +75,12 @@ export interface PendingLayerPlacement {
   tEndUs: number;
 }
 
+const LAYER_ICON_PROPS = {
+  size: 10,
+  strokeWidth: 2,
+  "aria-hidden": true,
+} as const;
+
 /// Small status dot on a Motif layer block. Phase-only (no count) so it
 /// re-renders only on phase change. Hidden when idle (selector returns null).
 function MotifBakeDot({ layerId }: { layerId: string }) {
@@ -87,6 +102,23 @@ function shortLayerLabel(label: string): string {
   const clean = label.trim();
   if (clean.length <= 12) return clean;
   return `${clean.slice(0, 12)}...`;
+}
+
+function LayerKindIcon({ kind }: { kind: LayerSummary["params"]["kind"] }) {
+  switch (kind) {
+    case "VideoClip":
+      return <Film {...LAYER_ICON_PROPS} />;
+    case "Audio":
+      return <AudioWaveform {...LAYER_ICON_PROPS} />;
+    case "ImageOverlay":
+      return <ImageIcon {...LAYER_ICON_PROPS} />;
+    case "Text":
+      return <Type {...LAYER_ICON_PROPS} />;
+    case "Motif":
+      return <Sparkles {...LAYER_ICON_PROPS} />;
+    case "Color":
+      return <Palette {...LAYER_ICON_PROPS} />;
+  }
 }
 
 export function LayerBlock({
@@ -373,6 +405,7 @@ export function LayerBlock({
   const showLabel = layerWidthPx >= LAYER_LABEL_MIN_PX;
   const showFullAffordances = layerWidthPx > LAYER_FULL_LABEL_MIN_PX;
   const visibleLabel = showFullAffordances ? label : shortLayerLabel(label);
+  const layerTheme = timelineLayerTheme(layer.params.kind, layer.color_hint);
 
   // Vertical slot. Each row has a 4px outer breathing room so the
   // chip doesn't touch the row edges. Within that interior:
@@ -436,13 +469,15 @@ export function LayerBlock({
     <div
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
-        "absolute flex items-center rounded border border-white/15 px-2",
-        "text-[11px] font-semibold text-background select-none cursor-grab",
-        "shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-[outline,filter] duration-75",
-        "hover:brightness-110",
+        "absolute flex items-center rounded border border-white/10 px-2",
+        "text-[11px] font-semibold text-white select-none cursor-grab",
+        "shadow-[0_1px_2px_rgba(0,0,0,0.28)] transition-[outline,box-shadow,border-color] duration-75",
+        "hover:border-white/20 hover:shadow-[0_2px_5px_rgba(0,0,0,0.36)]",
         sliceClasses,
         isSelected ? "z-[2]" : "",
-        isDragging ? "z-[3] cursor-grabbing brightness-[1.15]" : "",
+        isDragging
+          ? "z-[3] cursor-grabbing border-white/25 shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
+          : "",
         // Outline conditionals are mutually exclusive so Tailwind's emit
         // order never decides the conflict: the locked chrome trumps the
         // selected chrome (matching the legacy cascade, where
@@ -459,9 +494,7 @@ export function LayerBlock({
         top: sliceTop,
         width: layerWidthPx,
         height: sliceHeight,
-        backgroundColor: layer.color_hint,
-        backgroundImage:
-          "linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.14))",
+        backgroundColor: layerTheme.surface,
         opacity: movedAcrossTracks ? 0.3 : layer.enabled ? 1 : 0.45,
         cursor:
           !layer.locked && !trackLocked && !bladeMode && !isDragging && edgeHover !== null
@@ -501,6 +534,13 @@ export function LayerBlock({
         layerHeightPx={sliceHeight}
         pxPerSec={pxPerSec}
       />
+      {layer.params.kind !== "Color" && (
+        <span
+          className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-0.5 opacity-90"
+          style={{ backgroundColor: layerTheme.accent }}
+          aria-hidden="true"
+        />
+      )}
       {isEditing && showLabel ? (
         <AppInput
           ref={inputRef}
@@ -533,7 +573,7 @@ export function LayerBlock({
           // it pins just past the sticky track-header column and slides along
           // within the clip until the clip's tail scrolls past it. Content-
           // width (capped) so it can actually slide; clips itself with ellipsis.
-          className="sticky z-[1] overflow-hidden text-ellipsis whitespace-nowrap rounded-sm bg-black/45 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
+          className="sticky z-[2] flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm bg-gradient-to-r from-black/65 via-black/40 to-transparent py-1 pl-1.5 pr-3 text-[10px] leading-none text-white"
           style={{
             left: HEADER_COL_PX + 4,
             maxWidth: showFullAffordances
@@ -541,7 +581,20 @@ export function LayerBlock({
               : "min(calc(100% - 8px), 120px)",
           }}
         >
-          {visibleLabel}
+          <span
+            className="shrink-0"
+            style={{
+              color:
+                layer.params.kind === "Color"
+                  ? "currentColor"
+                  : layerTheme.accent,
+            }}
+          >
+            <LayerKindIcon kind={layer.params.kind} />
+          </span>
+          <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+            {visibleLabel}
+          </span>
         </span>
       ) : null}
       {layer.kind === "Motif" && showFullAffordances && (

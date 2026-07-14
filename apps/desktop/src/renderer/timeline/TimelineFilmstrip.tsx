@@ -400,7 +400,7 @@ export function TimelineFilmstrip({
         backgroundColor: colorHint,
         backgroundImage:
           layerWidthPx >= 32
-            ? "repeating-linear-gradient(90deg, rgba(255,255,255,0.10) 0 1px, transparent 1px 12px)"
+            ? "repeating-linear-gradient(90deg, rgba(255,255,255,0.07) 0 1px, transparent 1px 12px)"
             : undefined,
       }}
     >

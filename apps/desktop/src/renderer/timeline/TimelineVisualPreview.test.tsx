@@ -233,6 +233,21 @@ describe("TimelineVisualPreview", () => {
     expect(mocks.getFilmstripTile).not.toHaveBeenCalled();
   });
 
+  it("uses the semantic video surface instead of the UUID color hint", () => {
+    const { getByTestId } = render(
+      <TimelineVisualPreview
+        layer={videoLayer}
+        layerWidthPx={160}
+        layerHeightPx={32}
+        pxPerSec={80}
+      />,
+    );
+
+    expect(getByTestId("timeline-visual-preview").getAttribute("style")).toContain(
+      "background-color: rgb(26, 34, 45)",
+    );
+  });
+
   it("treats color alpha as the same 0-255 channel used by the compositor", () => {
     const { getByTestId } = render(
       <TimelineVisualPreview

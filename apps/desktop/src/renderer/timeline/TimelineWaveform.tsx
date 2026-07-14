@@ -259,6 +259,7 @@ function drawLane(
   tileStartPx: number,
   winLoPx: number,
   winWidthPx: number,
+  waveformColor: string,
 ) {
   const peaks = win.min.length;
   if (peaks === 0 || winWidthPx <= 0) return;
@@ -295,14 +296,14 @@ function drawLane(
     rmses[px] = rms;
   }
 
-  ctx.fillStyle = "rgba(255,255,255,0.42)";
+  ctx.fillStyle = colorWithAlpha(waveformColor, 0.42);
   for (let px = 0; px < cssWidth; px++) {
     const yTop = midY - his[px]! * ampPx;
     const yBot = midY - los[px]! * ampPx;
     ctx.fillRect(px, yTop, 1, Math.max(1, yBot - yTop));
   }
 
-  ctx.fillStyle = "rgba(255,255,255,0.88)";
+  ctx.fillStyle = colorWithAlpha(waveformColor, 0.92);
   for (let px = 0; px < cssWidth; px++) {
     const rms = rmses[px]!;
     if (rms <= 0) continue;
@@ -310,6 +311,12 @@ function drawLane(
     const yBot = midY + rms * ampPx;
     ctx.fillRect(px, yTop, 1, Math.max(1, yBot - yTop));
   }
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+  if (!match) return color;
+  return `rgba(${parseInt(match[1]!, 16)}, ${parseInt(match[2]!, 16)}, ${parseInt(match[3]!, 16)}, ${alpha})`;
 }
 
 function drawTile(
@@ -322,6 +329,7 @@ function drawTile(
   tileStartPx: number,
   winLoPx: number,
   winWidthPx: number,
+  waveformColor: string,
 ) {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.round(cssWidth * dpr));
@@ -333,7 +341,7 @@ function drawTile(
 
   if (!win0 || win0.min.length === 0) {
     const mid = cssHeight / 2;
-    ctx.strokeStyle = "rgba(255,255,255,0.34)";
+    ctx.strokeStyle = colorWithAlpha(waveformColor, 0.34);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, mid);
@@ -353,12 +361,30 @@ function drawTile(
       win = win1;
     }
     if (!win || win.min.length === 0) continue;
-    drawLane(ctx, cssWidth, lane, win, tileStartPx, winLoPx, winWidthPx);
+    drawLane(
+      ctx,
+      cssWidth,
+      lane,
+      win,
+      tileStartPx,
+      winLoPx,
+      winWidthPx,
+      waveformColor,
+    );
   }
 }
 
 export function TimelineWaveform({
-  mediaId, srcInUs, srcOutUs, layerWidthPx, layerHeightPx, colorHint, enabled, pxPerSec, mediaChannels,
+  mediaId,
+  srcInUs,
+  srcOutUs,
+  layerWidthPx,
+  layerHeightPx,
+  colorHint,
+  waveformColor = "#ffffff",
+  enabled,
+  pxPerSec,
+  mediaChannels,
 }: {
   mediaId: string;
   srcInUs: number;
@@ -366,6 +392,7 @@ export function TimelineWaveform({
   layerWidthPx: number;
   layerHeightPx: number;
   colorHint: string;
+  waveformColor?: string;
   enabled: boolean;
   pxPerSec: number;
   /// Source audio channel count from probe metadata, when known. Caps the
@@ -434,6 +461,7 @@ export function TimelineWaveform({
           dprVersion={dprVersion}
           visible={isSegmentVisible(tile.startPx)}
           observe={observeSegment}
+          waveformColor={waveformColor}
         />
       ))}
     </div>
@@ -441,8 +469,21 @@ export function TimelineWaveform({
 }
 
 function WaveformTileCanvas({
-  widthPx, height, channels, win0, win1, tileStartPx, totalWidthPx,
-  srcInUs, srcOutUs, winLoUs, winHiUs, dprVersion, visible, observe,
+  widthPx,
+  height,
+  channels,
+  win0,
+  win1,
+  tileStartPx,
+  totalWidthPx,
+  srcInUs,
+  srcOutUs,
+  winLoUs,
+  winHiUs,
+  dprVersion,
+  visible,
+  observe,
+  waveformColor,
 }: {
   widthPx: number;
   height: number;
@@ -458,6 +499,7 @@ function WaveformTileCanvas({
   dprVersion: number;
   visible: boolean;
   observe: (el: HTMLCanvasElement, startPx: number) => () => void;
+  waveformColor: string;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
@@ -486,7 +528,18 @@ function WaveformTileCanvas({
     const span = srcOutUs - srcInUs;
     const winLoPx = span > 0 ? ((winLoUs - srcInUs) / span) * totalWidthPx : 0;
     const winHiPx = span > 0 ? ((winHiUs - srcInUs) / span) * totalWidthPx : totalWidthPx;
-    drawTile(c, widthPx, height, channels, win0, win1, tileStartPx, winLoPx, winHiPx - winLoPx);
+    drawTile(
+      c,
+      widthPx,
+      height,
+      channels,
+      win0,
+      win1,
+      tileStartPx,
+      winLoPx,
+      winHiPx - winLoPx,
+      waveformColor,
+    );
     // dprVersion is intentionally unused in the body: drawTile re-reads
     // window.devicePixelRatio fresh on every call, so bumping the version
     // is enough to force this effect (and thus the redraw) to re-run.
@@ -504,6 +557,7 @@ function WaveformTileCanvas({
     winHiUs,
     dprVersion,
     visible,
+    waveformColor,
   ]);
   return (
     <canvas
