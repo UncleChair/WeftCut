@@ -19,8 +19,8 @@ widget chrome; the rest is editor-specific layout no library replaces.
 ## Decision
 
 - **Copy-source component model.** Components are vendored into the repo via
-  the shadcn registry (`components.json`, `src/components/ui/`,
-  `src/lib/utils.ts`) rather than imported from a styled npm package. We own
+  the shadcn registry (`components.json`, `src/renderer/components/ui/`,
+  `src/renderer/lib/utils.ts`) rather than imported from a styled npm package. We own
   the code; the registry is a source of skeletons, not a runtime dependency
   on someone else's design language. [Base UI](https://base-ui.com) supplies
   the headless primitives (`@base-ui/react`).
@@ -33,7 +33,7 @@ widget chrome; the rest is editor-specific layout no library replaces.
   behavior upgrades with near-zero visual churn, and dropdown chrome is
   shared (`.menu-list` / `.menu-item` skin the menubar, `AppSelect` popups,
   and the context menu alike).
-- **Tailwind v4 is the token carrier.** `src/app.css` is the Tailwind entry:
+- **Tailwind v4 is the token carrier.** `src/renderer/app.css` is the Tailwind entry:
   the shadcn token convention (`--background`, `--primary`, `--radius`, …)
   holds the app palette in the `.dark` block, hex-verbatim from the legacy
   stylesheet so later `var(--*)` sweeps stay greppable. The app is dark-only:
@@ -75,9 +75,13 @@ widget chrome; the rest is editor-specific layout no library replaces.
 
 - The widget layer is uniform and accessible; popups escape their containers
   (portals), and dismissal semantics are consistent app-wide.
-- The legacy palette still lives as hardcoded hex inside `styles.css`; the
-  open follow-up is sweeping it onto the `var(--*)` tokens, after which the
-  shared dropdown chrome classes deserve token-era names.
+- The `var(--*)` token sweep is done: the legacy hex in `styles.css` (since
+  split into the `styles/*.css` feature sheets) was migrated onto the shadcn
+  `var(--*)` tokens. The palette has since grown a **dark-NLE semantic layer**
+  on top of the shadcn roles (depth-ladder / selection / motion / radius roles
+  in `src/renderer/app.css`); documenting those roles in full is a follow-up
+  while the polish settles. The shared dropdown chrome classes still deserve
+  token-era names.
 - Remote/automated UI driving must account for Base UI listening to real
   pointer streams: synthesized clicks without `pointerdown` (and synthetic
   hover without human-scale timing) don't move sliders or trigger
