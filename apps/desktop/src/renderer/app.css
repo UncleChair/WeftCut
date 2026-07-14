@@ -105,6 +105,18 @@
 }
 
 :root {
+    /* Compact desktop-editor type scale. Feature styles should consume these
+       roles instead of introducing another one-off pixel size. The 10px
+       micro role is reserved for rulers and similarly dense instrumentation,
+       not ordinary labels or help text. */
+    --font-size-micro: 10px;
+    --font-size-caption: 11px;
+    --font-size-body: 12px;
+    --font-size-label: 13px;
+    --font-size-title: 14px;
+    --line-height-tight: 1.2;
+    --line-height-body: 1.4;
+
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);

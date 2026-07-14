@@ -32,7 +32,12 @@ import { AppDialog } from "./components/AppDialog";
 import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
-import { AppNotices } from "./components/AppNotices";
+import { useAppNotices } from "./components/useAppNotices";
+import { SystemStatusPanel } from "./components/SystemStatusPanel";
+import {
+  systemNoticeLogMessage,
+  type SystemSettingsTarget,
+} from "./components/systemStatus";
 import { PickOverlayHost } from "./colorpick/PickOverlayHost";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import { type PreviewSurfaceHandle } from "./preview/PreviewSurface";
@@ -100,10 +105,16 @@ export function App({ onCloseProject }: AppProps) {
   const [paused, setPaused] = useState<boolean>(true);
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] =
+    useState<SystemSettingsTarget>("general");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
+  const [systemStatusOpen, setSystemStatusOpen] = useState(false);
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [motifPickerOpen, setMotifPickerOpen] = useState(false);
+  const systemNotices = useAppNotices();
+  const logReady = useLogStore((state) => state.ready);
+  const loggedSystemNoticeCodes = useRef(new Set<string>());
   // The project preview is a DOM `<video>` driven by `<PreviewSurface>`
   // (docs/data-model.md Q10). The transport buttons here delegate to its
   // imperative handle (play / pause / seek); playhead state flows back up via callbacks.
@@ -195,6 +206,31 @@ export function App({ onCloseProject }: AppProps) {
       handle.pause();
     }
   }, []);
+
+  const openSettings = useCallback((category: SystemSettingsTarget = "general") => {
+    setSettingsCategory(category);
+    setSettingsOpen(true);
+  }, []);
+
+  // Capability notices are current state first, but they also belong in the
+  // workspace's System log as an auditable session event. The backend log bus
+  // does not exist before a workspace opens, so mirror them once it is ready.
+  useEffect(() => {
+    if (!logReady) return;
+    for (const notice of systemNotices) {
+      if (loggedSystemNoticeCodes.current.has(notice.code)) continue;
+      loggedSystemNoticeCodes.current.add(notice.code);
+      void logEmit({
+        level: notice.level,
+        category: { kind: "System" },
+        source: { kind: "System" },
+        message: systemNoticeLogMessage(notice),
+        details: { notice_code: notice.code },
+      }).catch(() => {
+        loggedSystemNoticeCodes.current.delete(notice.code);
+      });
+    }
+  }, [logReady, systemNotices]);
 
   const refresh = useCallback(async () => {
     try {
@@ -345,22 +381,33 @@ export function App({ onCloseProject }: AppProps) {
   // changed. The listener only reattaches when the resolved binding
   // entries change (i.e. when user overrides land later).
   const toggleLogConsole = useCallback(() => {
-    setLogConsoleOpen((v) => {
-      const next = !v;
-      // Acknowledge any 10-s-sticky error in the bar — toggle = "I've
-      // seen it". Idempotent on already-acknowledged state.
-      useLogStore.getState().acknowledgeErrorSticky();
-      return next;
-    });
+    setSystemStatusOpen(false);
+    setLogConsoleOpen((open) => !open);
+    useLogStore.getState().acknowledgeErrorSticky();
   }, []);
 
   const focusLogSearch = useCallback(() => {
+    setSystemStatusOpen(false);
     setLogConsoleOpen(true);
     // Defer focus to after the console mounts.
     setTimeout(() => {
       logConsoleRef.current?.focusSearch();
     }, 0);
   }, []);
+
+  const toggleSystemStatus = useCallback(() => {
+    setLogConsoleOpen(false);
+    setSystemStatusOpen((open) => !open);
+  }, []);
+
+  const openSystemSettings = useCallback(
+    (category: SystemSettingsTarget) => {
+      setLogConsoleOpen(false);
+      setSystemStatusOpen(false);
+      openSettings(category);
+    },
+    [openSettings],
+  );
 
   const shortcutHandlers: HandlerMap = {
     save: saveProjectNow,
@@ -515,10 +562,9 @@ export function App({ onCloseProject }: AppProps) {
           onOpenMotifPicker={() => setMotifPickerOpen(true)}
           onOpenExport={() => setExportDialogOpen(true)}
           onOpenConnect={() => setConnectOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => openSettings("general")}
           onOpenSearch={() => setPaletteOpen(true)}
         />
-        <AppNotices />
       </div>
 
       <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
@@ -658,6 +704,7 @@ export function App({ onCloseProject }: AppProps) {
       {settingsOpen && (
         <SettingsPanel
           onClose={() => setSettingsOpen(false)}
+          initialCategory={settingsCategory}
           keybindings={keybindings}
           onKeybindingsChanged={setKeybindings}
           composition={
@@ -699,8 +746,19 @@ export function App({ onCloseProject }: AppProps) {
           onClose={() => setLogConsoleOpen(false)}
         />
       )}
+      {systemStatusOpen && (
+        <SystemStatusPanel
+          notices={systemNotices}
+          onClose={() => setSystemStatusOpen(false)}
+          onOpenSettings={openSystemSettings}
+        />
+      )}
       {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
-      <StatusBar onToggleLogs={toggleLogConsole} />
+      <StatusBar
+        notices={systemNotices}
+        onOpenSystemStatus={toggleSystemStatus}
+        onToggleLogs={toggleLogConsole}
+      />
     </div>
     </ShortcutBindingsProvider>
   );

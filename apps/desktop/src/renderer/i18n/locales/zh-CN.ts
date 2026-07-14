@@ -399,10 +399,12 @@ const zhCN: Resources = {
     keyring_unavailable: {
       title: "云 API 密钥未加密",
       body: "系统没有可用的密钥环，云 API 密钥将以未加密方式写入磁盘（cloud_keys.json）。请安装密钥环（如 GNOME Keyring / KWallet），或妥善保护你的用户数据目录。",
+      action: "打开 API 密钥设置",
     },
     native_decode_unavailable: {
       title: "原生解码引擎不可用",
       body: "原生解码组件（@weftcut/native-decode）加载失败，预览将仅使用 WebCodecs 引擎。重新安装应用可恢复。",
+      action: "打开解码设置",
     },
   },
   import_proxy: {
@@ -703,6 +705,12 @@ const zhCN: Resources = {
     error_badge_hint: "{{count}} 个错误 — 点击查看",
     running_badge_hint: "{{count}} 个进行中的操作 — 点击查看",
     announce_error_prefix: "错误",
+  },
+  system_status: {
+    trigger: "系统 {{count}}",
+    trigger_hint: "{{count}} 项系统状态需要关注",
+    title: "系统状态",
+    summary: "{{count}} 项需要关注",
   },
   log: {
     level_filter: "严重程度筛选",

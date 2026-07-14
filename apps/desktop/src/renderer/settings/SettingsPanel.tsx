@@ -82,6 +82,9 @@ interface CompositionState {
 
 interface Props {
   onClose: () => void;
+  /// Category selected when the modal mounts. System-status actions use this
+  /// to deep-link directly to the relevant recovery controls.
+  initialCategory?: SettingsCategory;
   /// Shortcut overrides owned by App.tsx. Threaded through so the
   /// Keyboard section can render the current bindings and the
   /// dispatcher re-resolves the moment the user edits.
@@ -97,6 +100,7 @@ interface Props {
 
 export function SettingsPanel({
   onClose,
+  initialCategory = "general",
   keybindings,
   onKeybindingsChanged,
   composition,
@@ -106,7 +110,7 @@ export function SettingsPanel({
   const [statuses, setStatuses] = useState<ApiKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
-  const [category, setCategory] = useState<SettingsCategory>("general");
+  const [category, setCategory] = useState<SettingsCategory>(initialCategory);
   const tabRefs = useRef<
     Partial<Record<SettingsCategory, HTMLButtonElement | null>>
   >({});

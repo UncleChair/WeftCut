@@ -408,10 +408,12 @@ const enUS = {
     keyring_unavailable: {
       title: "Cloud API keys aren't encrypted",
       body: "No OS keyring is available, so cloud API keys are saved to disk without encryption (cloud_keys.json). Install a keyring (e.g. GNOME Keyring / KWallet), or protect your user-data folder.",
+      action: "Open API key settings",
     },
     native_decode_unavailable: {
       title: "Native decode engine unavailable",
       body: "The native decode component (@weftcut/native-decode) failed to load, so previews use the WebCodecs engine only. Reinstall the app to restore it.",
+      action: "Open decode settings",
     },
   },
   import_proxy: {
@@ -718,6 +720,12 @@ const enUS = {
     error_badge_hint: "{{count}} error(s) — click to view",
     running_badge_hint: "{{count}} running operation(s) — click to view",
     announce_error_prefix: "Error",
+  },
+  system_status: {
+    trigger: "System {{count}}",
+    trigger_hint: "{{count}} system status item(s) need attention",
+    title: "System status",
+    summary: "{{count}} item(s) need attention",
   },
   log: {
     level_filter: "Severity filter",

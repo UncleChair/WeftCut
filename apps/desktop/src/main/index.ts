@@ -258,7 +258,7 @@ app.whenReady().then(async () => {
   const { encryptionAvailable } = await import('./keys.js')
   if (!encryptionAvailable()) {
     console.warn('[main] OS keyring unavailable — cloud API keys persist in PLAINTEXT (cloud_keys.json). Secure your userData dir or install a keyring (libsecret/kwallet).')
-    // Surfaced to the user by the renderer's <AppNotices> (pulled via app:notices).
+    // Surfaced through the renderer's system-status entry (pulled via app:notices).
     startupNotices.push({ level: 'warn', code: 'keyring_unavailable' })
   }
 

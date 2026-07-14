@@ -34,7 +34,7 @@
   background: var(--card);
   border-top: 1px solid var(--border-soft);
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   font-family: var(--font-ui);
   user-select: none;
   flex-shrink: 0;
@@ -75,7 +75,7 @@
 }
 
 .status-bar-source {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   padding: 1px 6px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.12);
@@ -129,7 +129,7 @@
   gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   border: 1px solid transparent;
   background: transparent;
   cursor: pointer;
@@ -179,7 +179,7 @@
   background: transparent;
   color: var(--foreground);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .status-bar-logs-toggle:hover:not(:disabled) {
@@ -189,4 +189,165 @@
 .status-bar-logs-toggle:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Non-blocking environment/capability notices open their own status panel. */
+.system-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.system-status-trigger:hover {
+  background: var(--hover-neutral);
+  color: var(--foreground);
+}
+
+.system-status-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.system-status-trigger.system-status-warn {
+  color: var(--color-amber-300);
+}
+
+.system-status-trigger.system-status-error {
+  color: var(--destructive);
+}
+
+.current-system-status {
+  flex: 0 0 auto;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.system-status-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 36px;
+  width: min(680px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 72px));
+  overflow: auto;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48);
+  z-index: 81;
+}
+
+.system-status-panel .current-system-status {
+  background: transparent;
+  border-bottom: 0;
+}
+
+.system-status-panel .system-status-header {
+  padding-right: 42px;
+}
+
+.system-status-close {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  z-index: 1;
+}
+
+.system-status-close:hover {
+  background: var(--hover-neutral);
+  color: var(--foreground);
+}
+
+.system-status-close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.system-status-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.system-status-title {
+  margin: 0;
+  font-size: var(--font-size-label);
+  font-weight: 600;
+}
+
+.system-status-count {
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+.system-status-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.system-status-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  padding: 9px 12px;
+}
+
+.system-status-item + .system-status-item {
+  border-left: 1px solid var(--border-soft);
+}
+
+.system-status-item-icon {
+  display: inline-flex;
+  padding-top: 1px;
+  color: var(--color-blue-300);
+}
+
+.system-status-item-warn .system-status-item-icon {
+  color: var(--color-amber-300);
+}
+
+.system-status-item-error .system-status-item-icon {
+  color: var(--destructive);
+}
+
+.system-status-item-content {
+  min-width: 0;
+}
+
+.system-status-item-content strong {
+  display: block;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.system-status-item-content p {
+  margin: 3px 0 6px;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-body);
+}
+
+.system-status-item-content button {
+  margin-left: -8px;
+  color: var(--color-blue-300);
 }

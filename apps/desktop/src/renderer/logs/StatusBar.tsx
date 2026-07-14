@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AlertTriangleIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { useLogStore } from "./store";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
+import type { AppNotice } from "../../shared/ipc";
 
 /// Persistent ~28px status bar pinned to the bottom of the editor view.
 /// Shows a severity dot + time + truncated message + source pill on the
@@ -15,7 +17,19 @@ import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 ///
 /// Accessibility (Q14): errors are announced via a visually-hidden
 /// polite live region; info/warn entries do not announce.
-export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
+interface StatusBarProps {
+  notices?: AppNotice[];
+  onOpenSystemStatus?: () => void;
+  onToggleLogs?: () => void;
+}
+
+const EMPTY_NOTICES: AppNotice[] = [];
+
+export function StatusBar({
+  notices = EMPTY_NOTICES,
+  onOpenSystemStatus,
+  onToggleLogs,
+}: StatusBarProps) {
   const { t } = useTranslation();
   // Atomic selectors — returning a composite object literal from one
   // selector triggers an infinite useSyncExternalStore loop because each
@@ -153,6 +167,18 @@ export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
             {runningCount}
           </button>
         )}
+        {notices.length > 0 && onOpenSystemStatus && (
+          <button
+            type="button"
+            className={`system-status-trigger system-status-${highestNoticeLevel(notices)}`}
+            onClick={onOpenSystemStatus}
+            title={t("system_status.trigger_hint", { count: notices.length })}
+            aria-label={t("system_status.trigger_hint", { count: notices.length })}
+          >
+            <SystemNoticeIcon level={highestNoticeLevel(notices)} />
+            {t("system_status.trigger", { count: notices.length })}
+          </button>
+        )}
         <button
           type="button"
           className="status-bar-logs-toggle"
@@ -174,6 +200,18 @@ export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
       </div>
     </footer>
   );
+}
+
+function highestNoticeLevel(notices: AppNotice[]): AppNotice["level"] {
+  if (notices.some((notice) => notice.level === "error")) return "error";
+  if (notices.some((notice) => notice.level === "warn")) return "warn";
+  return "info";
+}
+
+function SystemNoticeIcon({ level }: { level: AppNotice["level"] }) {
+  if (level === "error") return <OctagonAlertIcon size={13} aria-hidden />;
+  if (level === "warn") return <AlertTriangleIcon size={13} aria-hidden />;
+  return <InfoIcon size={13} aria-hidden />;
 }
 
 function LevelDot({ level }: { level: LogLevel }) {

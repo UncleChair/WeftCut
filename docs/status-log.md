@@ -147,6 +147,19 @@ Entries:
   counter; clicking expands the inline state-change timeline.
 - Progress ops show an inline mini progress bar.
 
+Current system status:
+- Startup capability notices (for example, an unavailable optional decode
+  component or OS keyring) are mirrored into the `System` log once the
+  workspace log bus is ready.
+- Log history renders those events as ordinary, non-interactive rows, including
+  when the user filters the console to the `System` category.
+- The notice list remains the source of truth for unresolved state. The
+  status-bar `System N` entry opens a dedicated status panel containing the
+  interactive recovery cards and links to the relevant settings category.
+- `Clear` removes historical rows only. It does not change the dedicated
+  status panel; recovery removes the current state and may emit a recovery
+  event.
+
 Footer:
 - `showing N / M` (filtered / total).
 - JSONL session file path with copy button.

@@ -144,7 +144,6 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
 
   const minLevel = LEVEL_THRESHOLDS[levelFilter];
   const minLevelOrd = LEVEL_ORDER[minLevel];
-
   // Op grouping: walk the ring; the FIRST entry seen per op_id is the
   // "head" row. Subsequent entries with the same op_id become
   // children of that head. Entries without op_id are their own rows.
