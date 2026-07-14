@@ -35,6 +35,7 @@ import {
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { timelineLayerTheme } from "./layerTheme";
+import type { PlacementValidity } from "./placement";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -66,6 +67,8 @@ export interface DragSeed {
 
 export interface DragState extends DragSeed {
   subjects: DragSubject[];
+  validity: PlacementValidity;
+  conflictingLayerIds: string[];
 }
 
 export interface PendingLayerPlacement {
@@ -203,6 +206,15 @@ export function LayerBlock({
   const isDragging = dragSubject !== null;
   const isDragAnchor = dragState?.layerId === layer.id;
   const isPendingPlacement = pendingPlacement?.layerId === layer.id;
+  const dragValidity =
+    isDragging && dragState?.kind === "move" ? dragState.validity : "valid";
+  const dragIsInvalid = dragValidity !== "valid";
+  const dragInvalidLabel =
+    dragValidity === "collision"
+      ? t("timeline.drop_collision", { defaultValue: "Overlap" })
+      : dragValidity === "locked"
+        ? t("timeline.drop_locked", { defaultValue: "Locked" })
+        : null;
 
   const editingLayerId = useEditingLayerId();
   const isEditing = editingLayerId === layer.id;
@@ -467,6 +479,10 @@ export function LayerBlock({
 
   return (
     <div
+      data-drag-validity={
+        isDragging && dragState?.kind === "move" ? dragValidity : undefined
+      }
+      aria-invalid={dragIsInvalid || undefined}
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
         "absolute flex items-center rounded border border-white/10 px-2",
@@ -484,7 +500,9 @@ export function LayerBlock({
         // `.is-locked` was declared after `.is-selected`).
         (layer.locked || trackLocked)
           ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50"
-          : isSelected
+          : dragIsInvalid
+            ? "cursor-not-allowed"
+            : isSelected
             ? "outline outline-2 -outline-offset-2 outline-ring"
             : "",
         movedAcrossTracks ? "pointer-events-none" : "",
@@ -495,9 +513,29 @@ export function LayerBlock({
         width: layerWidthPx,
         height: sliceHeight,
         backgroundColor: layerTheme.surface,
+        borderColor:
+          dragValidity === "collision"
+            ? "rgb(252 165 165)"
+            : dragValidity === "locked"
+              ? "rgb(252 211 77)"
+              : undefined,
+        outline:
+          dragValidity === "collision"
+            ? "2px solid rgb(248 113 113)"
+            : dragValidity === "locked"
+              ? "2px solid rgb(251 191 36)"
+              : undefined,
+        outlineOffset: dragIsInvalid ? -2 : undefined,
+        boxShadow: dragIsInvalid
+          ? dragValidity === "collision"
+            ? "0 4px 12px rgb(248 113 113 / 0.45)"
+            : "0 4px 12px rgb(251 191 36 / 0.38)"
+          : undefined,
         opacity: movedAcrossTracks ? 0.3 : layer.enabled ? 1 : 0.45,
         cursor:
-          !layer.locked && !trackLocked && !bladeMode && !isDragging && edgeHover !== null
+          dragIsInvalid
+            ? "not-allowed"
+            : !layer.locked && !trackLocked && !bladeMode && !isDragging && edgeHover !== null
             ? "ew-resize"
             : undefined,
         ...groupStyle,
@@ -534,6 +572,24 @@ export function LayerBlock({
         layerHeightPx={sliceHeight}
         pxPerSec={pxPerSec}
       />
+      {dragIsInvalid && (
+        <span
+          className={`pointer-events-none absolute inset-0 z-[1] rounded ${
+            dragValidity === "collision" ? "bg-red-500/30" : "bg-amber-500/25"
+          }`}
+          aria-hidden="true"
+        />
+      )}
+      {isDragAnchor && dragInvalidLabel && (
+        <span
+          data-testid="layer-drag-invalid-badge"
+          className={`pointer-events-none absolute right-1 top-1 z-[4] rounded px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm ${
+            dragValidity === "collision" ? "bg-red-600/90" : "bg-amber-600/90"
+          }`}
+        >
+          {dragInvalidLabel}
+        </span>
+      )}
       {layer.params.kind !== "Color" && (
         <span
           className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-0.5 opacity-90"

@@ -385,6 +385,143 @@ describe("Timeline seek/selection coupling", () => {
     });
   });
 
+  it("shows a collision state and blocks an existing visual clip move before IPC", () => {
+    const { getByText } = renderTimeline({
+      tracks: [groupedTrack],
+      groups: [],
+      selectedLayerId: groupedLayer.id,
+    });
+    const moving = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+    // Move Clip B from [2s, 4s) to [1s, 3s), overlapping Clip A [0s, 2s).
+    fireEvent.pointerDown(moving, { button: 0, clientX: 160, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 30 });
+
+    expect(moving.dataset.dragValidity).toBe("collision");
+    expect(
+      moving.querySelector('[data-testid="layer-drag-invalid-badge"]'),
+    ).not.toBeNull();
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 30 });
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+  });
+
+  it("allows an existing visual clip to move over audio on the same track", () => {
+    const audio: LayerSummary = {
+      ...layer,
+      id: "audio-1",
+      label: "Audio bed",
+      kind: "Audio",
+      t_start_us: 1_900_000,
+      t_end_us: 2_000_000,
+      params: {
+        kind: "Audio",
+        media_id: "media-audio",
+        media_label: "audio.wav",
+        src_in_us: 0,
+        src_out_us: 100_000,
+        gain_db: staticNum(0),
+        pan: staticNum(0),
+        fade_in_us: 0,
+        fade_out_us: 0,
+        mute: false,
+        role: "music",
+      },
+    };
+    const movingVisual: LayerSummary = {
+      ...groupedLayer,
+      id: "moving-visual",
+      label: "Moving visual",
+    };
+    const mixedTrack: TrackSummary = {
+      ...track,
+      layers: [audio, movingVisual],
+    };
+    const { getByText } = renderTimeline({
+      tracks: [mixedTrack],
+      selectedLayerId: movingVisual.id,
+    });
+    const moving = getByText("Moving visual").closest(
+      ".timeline-layer",
+    ) as HTMLElement;
+
+    fireEvent.pointerDown(moving, { button: 0, clientX: 160, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 30 });
+
+    expect(moving.dataset.dragValidity).toBe("valid");
+    expect(
+      moving.querySelector('[data-testid="layer-drag-invalid-badge"]'),
+    ).toBeNull();
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 30 });
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      movingVisual.id,
+      track.id,
+      1_000_000,
+      false,
+    );
+  });
+
+  it("marks every group ghost invalid when a sibling would collide", () => {
+    const anchor: LayerSummary = {
+      ...layer,
+      id: "group-anchor",
+      label: "Group anchor",
+      t_start_us: 0,
+      t_end_us: 1_000_000,
+    };
+    const sibling: LayerSummary = {
+      ...groupedLayer,
+      id: "group-sibling",
+      label: "Group sibling",
+      t_start_us: 2_000_000,
+      t_end_us: 3_000_000,
+    };
+    const blocker: LayerSummary = {
+      ...layer,
+      id: "group-blocker",
+      label: "Blocker",
+      t_start_us: 4_000_000,
+      t_end_us: 5_000_000,
+    };
+    const collisionTrack: TrackSummary = {
+      ...track,
+      layers: [anchor, sibling, blocker],
+    };
+    const collisionGroup: GroupSummary = {
+      id: "collision-group",
+      label: null,
+      layer_ids: [anchor.id, sibling.id],
+    };
+    const { getByText } = renderTimeline({
+      tracks: [collisionTrack],
+      groups: [collisionGroup],
+      selectedLayerId: anchor.id,
+    });
+    const anchorBlock = getByText("Group anchor").closest(
+      ".timeline-layer",
+    ) as HTMLElement;
+    const siblingBlock = getByText(/Group siblin/).closest(
+      ".timeline-layer",
+    ) as HTMLElement;
+
+    // +2s keeps the two group members adjacent, but moves the sibling onto Blocker.
+    fireEvent.pointerDown(anchorBlock, { button: 0, clientX: 0, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 30 });
+
+    expect(anchorBlock.dataset.dragValidity).toBe("collision");
+    expect(siblingBlock.dataset.dragValidity).toBe("collision");
+    expect(
+      anchorBlock.querySelector('[data-testid="layer-drag-invalid-badge"]'),
+    ).not.toBeNull();
+    expect(
+      siblingBlock.querySelector('[data-testid="layer-drag-invalid-badge"]'),
+    ).toBeNull();
+
+    fireEvent.pointerUp(window, { clientX: 160, clientY: 30 });
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+  });
+
   it.each(["AbRoll", "ShowAll"] as const)(
     "renders the same duration-sized media ghost in %s mode",
     (displayMode) => {

@@ -294,6 +294,17 @@ export function TrackLane({
     dragState?.kind === "move" &&
     dragState.overTrackId === track.id &&
     dragState.trackId !== track.id;
+  const existingDragTargetValidity =
+    dragState?.kind === "move" &&
+    (dragState.overTrackId ?? dragState.trackId) === track.id
+      ? dragState.validity
+      : null;
+  const existingDragTargetClass =
+    existingDragTargetValidity === "collision"
+      ? "bg-red-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-red-400/80"
+      : existingDragTargetValidity === "locked"
+        ? "bg-amber-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-amber-400/80"
+        : "";
 
   const dropTargetClass =
     visibleDropPreview?.plan.validity === "collision"
@@ -319,11 +330,13 @@ export function TrackLane({
         // favouring the branches.
         visibleDropPreview !== null
           ? dropTargetClass
-          : isCrossTrackTarget
-          ? "bg-secondary outline outline-1 outline-dashed -outline-offset-1 outline-primary"
-          : isRevealed
-            ? "outline outline-1 outline-dashed -outline-offset-1 outline-blue-400/55 bg-blue-400/5"
-            : "",
+          : existingDragTargetClass !== ""
+            ? existingDragTargetClass
+            : isCrossTrackTarget
+              ? "bg-secondary outline outline-1 outline-dashed -outline-offset-1 outline-primary"
+              : isRevealed
+                ? "outline outline-1 outline-dashed -outline-offset-1 outline-blue-400/55 bg-blue-400/5"
+                : "",
         isGroupStart ? "border-t border-t-border" : "",
       ].join(" ")}
       style={{ height }}

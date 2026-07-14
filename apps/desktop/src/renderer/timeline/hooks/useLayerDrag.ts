@@ -7,7 +7,11 @@ import {
   type TrackSummary,
 } from "../../ipc";
 import { snapFrameRound } from "../../frames";
-import { MIN_LAYER_DURATION_US, type VisualTrack } from "../geometry";
+import {
+  MIN_LAYER_DURATION_US,
+  layerOverlapClass,
+  type VisualTrack,
+} from "../geometry";
 import {
   type DragSeed,
   type DragState,
@@ -16,12 +20,25 @@ import {
 } from "../LayerBlock";
 import { snapDragDeltaToTimelineBoundary } from "../snapping";
 import { playheadTimeUs } from "../../state/playheadStore";
+import {
+  evaluateTimelinePlacements,
+  type PlacementValidity,
+  type TimelinePlacement,
+} from "../placement";
 
 /// Tracks are kind-agnostic: any layer can land on any track. This
 /// reject hook always accepts; routing is by LayerParams, not track
 /// kind. See docs/data-model.md (kind-agnostic tracks) / ADR 0023.
 function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean {
   return true;
+}
+
+interface LayerMoveProjection {
+  placements: PendingLayerPlacement[];
+  destinationTrackId: string;
+  anchorStartUs: number;
+  validity: PlacementValidity;
+  conflictingLayerIds: string[];
 }
 
 /// Layer drag state machine (move / trim-start / trim-end): ghost
@@ -160,7 +177,16 @@ export function useLayerDrag(opts: {
 
   const setDrag = useCallback(
     (seed: DragSeed | null) => {
-      setDragState(seed ? { ...seed, subjects: buildDragSubjects(seed) } : null);
+      setDragState(
+        seed
+          ? {
+              ...seed,
+              subjects: buildDragSubjects(seed),
+              validity: "valid",
+              conflictingLayerIds: [],
+            }
+          : null,
+      );
     },
     [buildDragSubjects],
   );
@@ -227,6 +253,60 @@ export function useLayerDrag(opts: {
     ],
   );
 
+  const buildMoveProjection = useCallback(
+    (
+      state: DragState,
+      deltaUs: number,
+      overTrack: TrackSummary | null,
+    ): LayerMoveProjection => {
+      const anchorStartUs = Math.max(0, state.originalTStart + deltaUs);
+      const actualDeltaUs = anchorStartUs - state.originalTStart;
+      const destinationTrackId =
+        overTrack && trackAcceptsForLayer(overTrack, state)
+          ? overTrack.id
+          : state.trackId;
+      const projected: TimelinePlacement[] = [];
+
+      for (const subject of state.subjects) {
+        const entry = layerEntryById.get(subject.layerId);
+        if (!entry) continue;
+        const durationUs = subject.originalTEnd - subject.originalTStart;
+        const isAnchor = subject.layerId === state.layerId;
+        const tStartUs = isAnchor
+          ? anchorStartUs
+          : Math.max(0, subject.originalTStart + actualDeltaUs);
+        projected.push({
+          layerId: subject.layerId,
+          trackId: isAnchor ? destinationTrackId : subject.trackId,
+          tStartUs,
+          tEndUs: tStartUs + durationUs,
+          overlapClass: layerOverlapClass(entry.layer),
+          locked: entry.layer.locked,
+        });
+      }
+
+      const evaluation = evaluateTimelinePlacements({
+        tracks,
+        placements: projected,
+        replacedLayerIds: new Set(state.subjects.map((subject) => subject.layerId)),
+      });
+
+      return {
+        placements: projected.map((placement) => ({
+          layerId: placement.layerId,
+          trackId: placement.trackId,
+          tStartUs: placement.tStartUs,
+          tEndUs: placement.tEndUs,
+        })),
+        destinationTrackId,
+        anchorStartUs,
+        validity: evaluation.validity,
+        conflictingLayerIds: evaluation.conflictingLayerIds,
+      };
+    },
+    [layerEntryById, tracks],
+  );
+
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       if (!drag) return;
@@ -241,13 +321,26 @@ export function useLayerDrag(opts: {
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
+      const projection =
+        drag.kind === "move"
+          ? buildMoveProjection(drag, deltaUs, overTrack)
+          : null;
       setDragState({
         ...drag,
         deltaUs,
         overTrackId: overTrack?.id ?? null,
+        validity: projection?.validity ?? "valid",
+        conflictingLayerIds: projection?.conflictingLayerIds ?? [],
       });
     },
-    [drag, pxPerSec, snapDragDelta, snapDeltaToTimelineBoundary, trackUnderPointer],
+    [
+      buildMoveProjection,
+      drag,
+      pxPerSec,
+      snapDragDelta,
+      snapDeltaToTimelineBoundary,
+      trackUnderPointer,
+    ],
   );
 
   const handlePointerUp = useCallback(
@@ -265,6 +358,10 @@ export function useLayerDrag(opts: {
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
       const committed = drag;
+      const moveProjection =
+        committed.kind === "move"
+          ? buildMoveProjection(committed, deltaUs, overTrack)
+          : null;
       setDragState(null);
 
       // Treat tiny deltas + same track as a no-op so a click doesn't accidentally
@@ -279,39 +376,17 @@ export function useLayerDrag(opts: {
         const escape = committed.escapeGroup;
         switch (committed.kind) {
           case "move": {
-            const newStart = Math.max(0, committed.originalTStart + deltaUs);
-            const newEnd =
-              newStart + (committed.originalTEnd - committed.originalTStart);
-            const actualDeltaUs = newStart - committed.originalTStart;
-            const destTrackId =
-              overTrack && trackAcceptsForLayer(overTrack, committed)
-                ? overTrack.id
-                : committed.trackId;
-            setPendingPlacements(
-              committed.subjects.map((subject) => {
-                if (subject.layerId === committed.layerId) {
-                  return {
-                    layerId: subject.layerId,
-                    trackId: destTrackId,
-                    tStartUs: newStart,
-                    tEndUs: newEnd,
-                  };
-                }
-                const durationUs =
-                  subject.originalTEnd - subject.originalTStart;
-                const tStartUs = Math.max(
-                  0,
-                  subject.originalTStart + actualDeltaUs,
-                );
-                return {
-                  layerId: subject.layerId,
-                  trackId: subject.trackId,
-                  tStartUs,
-                  tEndUs: tStartUs + durationUs,
-                };
-              }),
+            if (!moveProjection || moveProjection.validity !== "valid") {
+              setPendingPlacements(null);
+              return;
+            }
+            setPendingPlacements(moveProjection.placements);
+            await moveLayer(
+              committed.layerId,
+              moveProjection.destinationTrackId,
+              moveProjection.anchorStartUs,
+              escape,
             );
-            await moveLayer(committed.layerId, destTrackId, newStart, escape);
             break;
           }
           case "trim-start": {
@@ -340,7 +415,15 @@ export function useLayerDrag(opts: {
         console.error("timeline commit failed:", err);
       }
     },
-    [drag, onMutated, pxPerSec, snapDragDelta, snapDeltaToTimelineBoundary, trackUnderPointer],
+    [
+      buildMoveProjection,
+      drag,
+      onMutated,
+      pxPerSec,
+      snapDragDelta,
+      snapDeltaToTimelineBoundary,
+      trackUnderPointer,
+    ],
   );
 
   useEffect(() => {

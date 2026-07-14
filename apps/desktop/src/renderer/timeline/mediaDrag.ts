@@ -3,11 +3,14 @@ import { create } from "zustand";
 import { snapFrameRound } from "../frames";
 import type {
   GroupSummary,
-  LayerSummary,
   MediaSummary,
   TrackSummary,
 } from "../ipc";
-import { layerOverlapClass, type LayerOverlapClass } from "./geometry";
+import type { LayerOverlapClass } from "./geometry";
+import {
+  evaluateTimelinePlacements,
+  type PlacementValidity,
+} from "./placement";
 import { snapDragDeltaToTimelineBoundary } from "./snapping";
 
 export const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
@@ -43,7 +46,7 @@ export interface MediaDragAbsorptionTarget {
   height: number;
 }
 
-export type MediaDropValidity = "valid" | "collision" | "locked";
+export type MediaDropValidity = PlacementValidity;
 
 export interface MediaDropPlan {
   /// Unsnapped value sent to add_media_layer. The actor snaps both edges from
@@ -170,14 +173,6 @@ function mediaOverlapClass(kind: string): LayerOverlapClass {
   return kind === "Audio" ? "audio" : "visual";
 }
 
-function overlaps(
-  startUs: number,
-  endUs: number,
-  layer: LayerSummary,
-): boolean {
-  return endUs > layer.t_start_us && layer.t_end_us > startUs;
-}
-
 export function planMediaDrop({
   track,
   media,
@@ -243,28 +238,28 @@ export function planMediaDrop({
     fpsDen,
   );
   const overlapClass = mediaOverlapClass(media.kind);
-  const overlappingLayers = track.layers.filter((layer) =>
-    overlaps(tStartUs, tEndUs, layer),
-  );
-  const conflictingLayerIds = overlappingLayers
-    .filter((layer) => layerOverlapClass(layer) === overlapClass)
-    .map((layer) => layer.id);
-  const sharesLane = overlappingLayers.some(
-    (layer) => layerOverlapClass(layer) !== overlapClass,
-  );
-  const validity: MediaDropValidity = track.locked
-    ? "locked"
-    : conflictingLayerIds.length > 0
-      ? "collision"
-      : "valid";
+  const evaluation = evaluateTimelinePlacements({
+    tracks: [track],
+    placements: [
+      {
+        layerId: "__media-drop-ghost__",
+        trackId: track.id,
+        tStartUs,
+        tEndUs,
+        overlapClass,
+        locked: false,
+      },
+    ],
+    replacedLayerIds: new Set(),
+  });
 
   return {
     rawStartUs,
     tStartUs,
     tEndUs,
-    validity,
-    conflictingLayerIds,
+    validity: evaluation.validity,
+    conflictingLayerIds: evaluation.conflictingLayerIds,
     overlapClass,
-    sharesLane,
+    sharesLane: evaluation.sharesLane,
   };
 }
