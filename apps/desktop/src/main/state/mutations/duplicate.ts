@@ -1,6 +1,6 @@
-import type { Project, Uuid, Layer } from '../model'
+import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { applyDurationAutofit, locateLayer } from './helpers'
+import { applyDurationAutofit, cloneLayer, locateLayer } from './helpers'
 import { CommandFailure } from '../errors'
 
 /** actor.rs:2885-2927 — shallow-clone the layer with one fresh id (nested
@@ -10,12 +10,7 @@ export function applyDuplicateLayer(p: Project, idGen: IdGen, id: Uuid, tOffsetU
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
-  // JSON round-trip instead of structuredClone for Immer draft safety:
-  // inside an Immer produce() recipe, p.tracks[ti].layers[li] is a draft Proxy.
-  // structuredClone() throws DataCloneError on a Proxy; JSON.parse(JSON.stringify())
-  // reads through the proxy and is safe. Our model is JSON-native (no undefined/Map/Set),
-  // so the round-trip is lossless.
-  const copy = JSON.parse(JSON.stringify(p.tracks[ti].layers[li])) as Layer
+  const copy = cloneLayer(p.tracks[ti].layers[li])
   const dupId = idGen()
   copy.id = dupId
   copy.t_start_us += tOffsetUs

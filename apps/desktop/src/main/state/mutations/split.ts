@@ -1,9 +1,9 @@
 // apps/desktop/src/main/state/mutations/split.ts
-import type { Animated, Keyframe, Layer, Project, Uuid } from '../model'
+import type { Animated, Keyframe, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
 import { CommandFailure } from '../errors'
-import { locateLayer } from './helpers'
+import { cloneLayer, locateLayer } from './helpers'
 import { groupSiblingsExcluding, checkGroupLock, indexGroups } from './groups'
 import { forEachAnimatedF64, forEachAnimatedRgba, retainKeyframes, shiftKeyframes, firstKeyframeValue, lastKeyframeValue, collapseToStatic } from './animated'
 
@@ -30,7 +30,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   const splitOffset = atTUs - original.t_start_us
 
   // RIGHT half — fresh id, [atTUs, original.t_end].
-  const right = JSON.parse(JSON.stringify(original)) as Layer // Immer-draft-safe deep clone (see duplicate.ts)
+  const right = cloneLayer(original)
   right.id = idGen()
   right.t_start_us = atTUs
   right.t_end_us = original.t_end_us
@@ -42,7 +42,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   forEachAnimatedRgba(right.params, (a) => splitTrackHalf(a, splitOffset, true))
 
   // LEFT half — reuses original id, [original.t_start, atTUs].
-  const left = JSON.parse(JSON.stringify(original)) as Layer
+  const left = cloneLayer(original)
   left.t_end_us = atTUs
   if (left.params.kind === 'VideoClip' || left.params.kind === 'Audio') left.params.src_out_us = left.params.src_in_us + splitOffset
   forEachAnimatedF64(left.params, (a) => splitTrackHalf(a, splitOffset, false))

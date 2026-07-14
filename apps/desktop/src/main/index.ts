@@ -280,12 +280,14 @@ app.whenReady().then(async () => {
   // injects the slice each Rust compute call needs) is ready before any MCP read can
   // run. mcpNotify uses mcpHostRef?.notifyChange (optional), so the host wires up
   // cleanly before the MCP host exists.
-  const { createTsActorHost } = await import('./state/ts-actor-host.js')
+  const [{ createTsActorHost }, { initEval }] = await Promise.all([
+    import('./state/ts-actor-host.js'),
+    import('./state/snap.js'),
+  ])
 
   // The TS actor snaps frame edges via the wasm eval leaf (snap.ts → renderer/eval).
   // Main MUST initialize it once at boot before the actor handles any command
   // (snap.ts contract).
-  const { initEval } = await import('./state/snap.js')
   await initEval()
 
   // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs.

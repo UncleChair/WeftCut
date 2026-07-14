@@ -5,7 +5,7 @@ import { SCHEMA_VERSION, blankProject } from '../model'
 import { seededGen } from '../ids'
 
 describe('parseProject structural conformance', () => {
-  const good = JSON.parse(JSON.stringify({ ...blankProject(seededGen(), 'p') })) // round-trippable plain object
+  const good = structuredClone({ ...blankProject(seededGen(), 'p') })
 
   it('accepts a well-formed project', () => {
     expect(() => parseProject(good)).not.toThrow()

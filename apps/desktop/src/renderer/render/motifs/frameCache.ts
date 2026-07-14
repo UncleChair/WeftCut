@@ -208,8 +208,10 @@ export class MotifFrameCache {
   async readPng(cacheKey: string, frameIndex: number): Promise<Blob | null> {
     const dir = await rasterDirFor(cacheKey);
     if (dir === null) return null;
-    const { join } = await import("@/bridge/path");
-    const { readFile, exists } = await import("@/bridge/fs");
+    const [{ join }, { readFile, exists }] = await Promise.all([
+      import("@/bridge/path"),
+      import("@/bridge/fs"),
+    ]);
     const path = await join(dir, `${frameIndex}.png`);
     if (!(await exists(path))) return null;
     const bytes = await readFile(path);
@@ -222,8 +224,10 @@ export class MotifFrameCache {
   async hasPng(cacheKey: string, frameIndex: number): Promise<boolean> {
     const dir = await rasterDirFor(cacheKey);
     if (dir === null) return false;
-    const { join } = await import("@/bridge/path");
-    const { exists } = await import("@/bridge/fs");
+    const [{ join }, { exists }] = await Promise.all([
+      import("@/bridge/path"),
+      import("@/bridge/fs"),
+    ]);
     const path = await join(dir, `${frameIndex}.png`);
     return exists(path);
   }
@@ -233,8 +237,10 @@ export class MotifFrameCache {
   async writePng(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
     const dir = await rasterDirFor(cacheKey);
     if (dir === null) return;
-    const { join } = await import("@/bridge/path");
-    const { mkdir, writeFile } = await import("@/bridge/fs");
+    const [{ join }, { mkdir, writeFile }] = await Promise.all([
+      import("@/bridge/path"),
+      import("@/bridge/fs"),
+    ]);
     await mkdir(dir, { recursive: true });
     const path = await join(dir, `${frameIndex}.png`);
     const bytes = new Uint8Array(await png.arrayBuffer());
@@ -249,8 +255,10 @@ export class MotifFrameCache {
   async gcUnreferenced(activeCacheKeys: string[]): Promise<void> {
     const root = await rasterRootDir();
     if (root === null) return;
-    const { readDir, remove, exists } = await import("@/bridge/fs");
-    const { join } = await import("@/bridge/path");
+    const [{ readDir, remove, exists }, { join }] = await Promise.all([
+      import("@/bridge/fs"),
+      import("@/bridge/path"),
+    ]);
     if (!(await exists(root))) return;
     const live = new Set(activeCacheKeys.map(hashCacheKey));
     const entries = await readDir(root);

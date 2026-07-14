@@ -125,9 +125,8 @@ export function useImportReadiness(deps: {
           next.set(id, s);
           return next;
         });
-      const onStarted = await listen<MediaJobEvent>(
-        MEDIA_JOB_EVENTS.started,
-        (e) => {
+      const [onStarted, onComplete, onError] = await Promise.all([
+        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.started, (e) => {
           if (
             e.payload.kind === "proxy" ||
             e.payload.kind === "quick_proxy" ||
@@ -135,11 +134,8 @@ export function useImportReadiness(deps: {
           ) {
             set(e.payload.media_id, "pending");
           }
-        },
-      );
-      const onComplete = await listen<MediaJobEvent>(
-        MEDIA_JOB_EVENTS.complete,
-        (e) => {
+        }),
+        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.complete, (e) => {
           if (
             e.payload.kind === "proxy" ||
             e.payload.kind === "quick_proxy" ||
@@ -147,11 +143,8 @@ export function useImportReadiness(deps: {
           ) {
             set(e.payload.media_id, "ready");
           }
-        },
-      );
-      const onError = await listen<MediaJobEvent>(
-        MEDIA_JOB_EVENTS.error,
-        (e) => {
+        }),
+        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
           if (
             e.payload.kind === "proxy" ||
             e.payload.kind === "quick_proxy" ||
@@ -159,8 +152,8 @@ export function useImportReadiness(deps: {
           ) {
             set(e.payload.media_id, "failed");
           }
-        },
-      );
+        }),
+      ]);
       if (cancelled) {
         onStarted();
         onComplete();

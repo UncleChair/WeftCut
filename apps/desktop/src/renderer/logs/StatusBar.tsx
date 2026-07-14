@@ -59,15 +59,17 @@ export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
     const unlisteners: UnlistenFn[] = [];
     let cancelled = false;
     (async () => {
-      const onStarted = await listen(MEDIA_JOB_EVENTS.started, () => {
-        setPendingDerivatives((n) => n + 1);
-      });
-      const onComplete = await listen(MEDIA_JOB_EVENTS.complete, () => {
-        setPendingDerivatives((n) => Math.max(0, n - 1));
-      });
-      const onError = await listen(MEDIA_JOB_EVENTS.error, () => {
-        setPendingDerivatives((n) => Math.max(0, n - 1));
-      });
+      const [onStarted, onComplete, onError] = await Promise.all([
+        listen(MEDIA_JOB_EVENTS.started, () => {
+          setPendingDerivatives((n) => n + 1);
+        }),
+        listen(MEDIA_JOB_EVENTS.complete, () => {
+          setPendingDerivatives((n) => Math.max(0, n - 1));
+        }),
+        listen(MEDIA_JOB_EVENTS.error, () => {
+          setPendingDerivatives((n) => Math.max(0, n - 1));
+        }),
+      ]);
       if (cancelled) {
         onStarted();
         onComplete();

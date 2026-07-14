@@ -119,7 +119,7 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
   const tools = (await mcp.listTools()).tools.map((t) => t.name)
   expect(tools).toContain('add_effect')
   const addRes = await mcp.callTool({ name: 'add_effect', arguments: { layer_id: layerId, kind: 'blur' } })
-  const effectId = JSON.parse(JSON.stringify(addRes.content))[0].text as string
+  const effectId = structuredClone(addRes.content)[0].text as string
   expect(effectId.length).toBeGreaterThan(0)
 
   // The effect persisted into the project view the renderer reads.
@@ -236,7 +236,7 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
   const tools = (await mcp.listTools()).tools.map((t) => t.name)
   expect(tools).toContain('add_effect')
   const addRes = await mcp.callTool({ name: 'add_effect', arguments: { layer_id: layerId, kind: 'blur' } })
-  const effectId = JSON.parse(JSON.stringify(addRes.content))[0].text as string
+  const effectId = structuredClone(addRes.content)[0].text as string
   expect(effectId.length).toBeGreaterThan(0)
 
   // The effect persisted into the project view the renderer reads.
@@ -441,7 +441,7 @@ test('effects: chromakey keys out a green color layer; viewMatte previews the ma
   const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as McpInfo
   const mcp = await connectMcp(info)
   const addRes = await mcp.callTool({ name: 'add_effect', arguments: { layer_id: bgId, kind: 'chromakey' } })
-  const effectId = JSON.parse(JSON.stringify(addRes.content))[0].text as string
+  const effectId = structuredClone(addRes.content)[0].text as string
   expect(effectId.length).toBeGreaterThan(0)
 
   // Poll a few rounds so the project:changed → setProject event has applied

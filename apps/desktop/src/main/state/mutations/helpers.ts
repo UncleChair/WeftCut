@@ -1,6 +1,12 @@
-import type { LayerParams, Project, Uuid } from '../model'
+import { current, isDraft } from 'immer'
+import type { Layer, LayerParams, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
+
+/** Deep-clone a layer whether it came from an Immer recipe or plain test data. */
+export function cloneLayer(layer: Layer): Layer {
+  return structuredClone(isDraft(layer) ? current(layer) : layer)
+}
 
 export function locateLayer(p: Project, id: Uuid): [number, number] | null {
   for (let ti = 0; ti < p.tracks.length; ti++) {

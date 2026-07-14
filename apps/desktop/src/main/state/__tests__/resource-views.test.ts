@@ -29,7 +29,7 @@ describe('serveProjectResource', () => {
   it('serves composition / tracks from the snapshot', () => {
     const actor = mkActor()
     const snap = actor.snapshot()
-    expect(JSON.parse(text(serveProjectResource('project://composition', actor)))).toEqual(JSON.parse(JSON.stringify(snap.composition)))
+    expect(JSON.parse(text(serveProjectResource('project://composition', actor)))).toEqual(structuredClone(snap.composition))
     expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(snap.tracks.length)
   })
   it('serves a single layer for project://layers/{id}', () => {
