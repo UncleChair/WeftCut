@@ -18,7 +18,7 @@
     "titlebar titlebar"
     "preview  record"
     "mini     record";
-  background: #08090b;
+  background: var(--background);
   color: var(--foreground);
 }
 
@@ -63,7 +63,7 @@
 
 .agent-record {
   grid-area: record;
-  background: #0c0f14;
+  background: var(--card);
   display: flex;
   flex-direction: column;
   min-height: 0;

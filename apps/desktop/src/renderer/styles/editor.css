@@ -196,7 +196,7 @@
 
 .properties {
   border-left: 1px solid var(--border-soft);
-  background: var(--surface-sunken);
+  background: var(--card);
   overflow: auto;
   padding: 0;
 }

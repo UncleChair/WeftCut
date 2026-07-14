@@ -548,7 +548,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         // The canvas itself stays pure black (`background={0x000000}`
         // below) so true-black composition pixels stand apart from the
         // surround when the aspect ratio doesn't fill the wrapper.
-        background: "#11151c",
+        background: "var(--background)",
       }}
     >
       <PixiApplication

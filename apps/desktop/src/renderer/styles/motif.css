@@ -126,7 +126,7 @@
 
 .motif-preview-fps input[type='number'] {
   width: 64px;
-  background: #0b1220;
+  background: var(--surface-sunken);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   color: var(--foreground);

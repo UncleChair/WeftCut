@@ -40,7 +40,7 @@ export class PixiErrorBoundary extends Component<Props, State> {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "#1f2937",
+            background: "var(--secondary)",
             color: "#ffb4b4",
             font: "13px ui-monospace, monospace",
             padding: "16px",

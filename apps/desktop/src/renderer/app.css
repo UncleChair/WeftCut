@@ -142,62 +142,60 @@
     --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* WeftCut's actual palette, lifted from styles.css usage (the app runs
-   dark-only — html.dark is hardwired in index.html). Legacy hex values are
-   kept verbatim so later "replace #1f2937 with var(--secondary)" sweeps are
-   greppable. Structural hairline dividers in legacy CSS use #1f2937; the
-   component-border token below is the stronger #374151 control border. */
+/* WeftCut's dark-only application palette (html.dark is hardwired in
+   index.html). Surface and stroke steps are intentionally centralized here;
+   feature styles consume roles instead of maintaining local near-black ramps. */
 .dark {
-    --background: #0b0d11;
+    --background: #0c0e12;
     --foreground: #e5e7eb;
-    --card: #0e1218;
+    --card: #111419;
     --card-foreground: #e5e7eb;
-    --popover: #11151c;
+    --popover: #1c2028;
     --popover-foreground: #e5e7eb;
     --primary: #2563eb;
     --primary-foreground: #ffffff;
-    --secondary: #1f2937;
+    --secondary: #222731;
     --secondary-foreground: #e5e7eb;
-    --muted: #1f2937;
+    --muted: #222731;
     --muted-foreground: #9ca3af;
-    --accent: #374151;
+    --accent: #2e3541;
     --accent-foreground: #f3f4f6;
     --destructive: #f87171;
-    --border: #374151;
+    --border: #363e4b;
     /* Structural hairline dividers (panel header rules, track seams) —
        deliberately softer than the control border above. */
-    --border-soft: #1f2937;
-    --input: #374151;
+    --border-soft: #252a34;
+    --input: #363e4b;
     --ring: #3b82f6;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: #0e1218;
+    --sidebar: #111419;
     --sidebar-foreground: #e5e7eb;
     --sidebar-primary: #2563eb;
     --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #1f2937;
+    --sidebar-accent: #222731;
     --sidebar-accent-foreground: #f3f4f6;
-    --sidebar-border: #1f2937;
+    --sidebar-border: #252a34;
     --sidebar-ring: #3b82f6;
 
     /* ── Polish layer (dark NLE) ───────────────────────────────────────────
        Semantic tokens added on top of the shadcn base above. Legacy CSS
        scattered ~10 near-black hexes, 4 blues, and hand-written alpha values;
-       these collapse those into one greppable ladder. Values are chosen to be
-       rendering-equivalent to the dominant legacy value they replace. */
+       these collapse those into one greppable ladder. */
 
-    /* Depth ladder — recessed well → base → raised card → floating overlay.
-       (base = --background #0b0d11, card = --card #0e1218, overlay = --popover
-       #11151c are already defined above.) */
-    --surface-sunken: #0a0c10;   /* media-pool wells, thumbnails, sunken insets */
-    --surface-raised: #131722;   /* rows/cards lifted above a panel, hover rests */
+    /* Depth ladder — recessed well → workspace → panel/card → raised content
+       → floating overlay. Adjacent steps are deliberately visible on large
+       regions without turning the editor slate-blue. Pure #000 stays reserved
+       for the preview canvas where color judgment matters. */
+    --surface-sunken: #08090b;   /* thumbnail slots, code wells, inset editors */
+    --surface-raised: #181c23;   /* rows/cards lifted above a panel, hover rests */
 
     /* Timeline track lane — one step above --background so row seams and the
        scroll gutter read as distinct surfaces instead of one flat black. */
-    --track-lane: #10141b;
+    --track-lane: #14171d;
 
     /* Single selection / active / focus accent. --ring (#3b82f6) is the one
        true accent; these are its standard translucent derivations so selected

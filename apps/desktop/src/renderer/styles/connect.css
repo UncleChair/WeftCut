@@ -127,7 +127,7 @@
 
 .connect-snippet pre {
   margin: 0;
-  background: #07090c;
+  background: var(--surface-sunken);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   padding: 8px 10px;
