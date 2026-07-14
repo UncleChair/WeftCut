@@ -52,7 +52,7 @@
 
 .agent-mini-timeline {
   grid-area: mini;
-  background: #0a0c10;
+  background: var(--surface-sunken);
   border-right: 1px solid var(--border-soft);
   padding: 8px 12px;
   display: flex;
@@ -227,14 +227,14 @@
 .realtime-preview-hint code {
   background: rgba(0, 0, 0, 0.3);
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   font-family: ui-monospace, Menlo, monospace;
 }
 
 .realtime-preview-capability,
 .realtime-preview-stats {
   background: rgba(0, 0, 0, 0.25);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   padding: 8px 10px;
 }
 
@@ -263,7 +263,7 @@
 .realtime-preview-stats code {
   background: rgba(0, 0, 0, 0.3);
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   font-family: ui-monospace, Menlo, monospace;
 }
 
@@ -274,7 +274,7 @@
 
 .realtime-preview-controls button {
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(63, 63, 70, 0.5);
   color: var(--color-zinc-200);
@@ -292,7 +292,7 @@
 
 .realtime-preview-canvas-wrap {
   background: #000;
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -317,7 +317,7 @@
 
 .realtime-preview-overlay-ctrls {
   background: rgba(0, 0, 0, 0.25);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   padding: 8px 10px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -350,13 +350,13 @@
   color: var(--color-zinc-200);
   border: 1px solid rgba(255, 255, 255, 0.15);
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
 
 /* Recipe playback section in the smoke harness. */
 .realtime-preview-playback {
   background: rgba(0, 0, 0, 0.25);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   padding: 8px 10px;
   display: flex;
   flex-direction: column;

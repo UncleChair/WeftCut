@@ -56,7 +56,7 @@
   grid-area: mediapool;
   overflow-y: auto;
   border-right: 1px solid var(--border-soft);
-  background: #0a0c10;
+  background: var(--surface-sunken);
   min-height: 0;
   /* Anchor for the file-drop overlay. */
   position: relative;
@@ -89,7 +89,7 @@
 
 .media-pool::-webkit-scrollbar-thumb {
   background-color: var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background-clip: content-box;
 }
 
@@ -134,8 +134,8 @@
   display: flex;
   flex-direction: column;
   position: relative;
-  background: #131822;
-  border-radius: 4px;
+  background: var(--surface-raised);
+  border-radius: var(--radius-control);
   overflow: hidden;
   cursor: pointer;
   font-size: 11px;
@@ -148,7 +148,7 @@
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #0a0c10;
+  background: var(--surface-sunken);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -165,7 +165,7 @@
 
 .media-thumbnail.is-placeholder {
   /* keep the slot reserved when no thumbnail is available */
-  background: #0e131c;
+  background: var(--card);
 }
 
 .media-item-name {
@@ -203,8 +203,8 @@
 }
 
 .media-item:hover {
-  outline-color: rgba(96, 165, 250, 0.45);
-  background: #161c28;
+  outline-color: var(--selection-border);
+  background: var(--surface-raised);
 }
 
 .media-item[draggable="true"]:active {
@@ -218,7 +218,7 @@
   color: var(--color-slate-300);
   background: var(--secondary);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   text-align: center;
 }
 
@@ -260,7 +260,7 @@
   background: rgba(96, 165, 250, 0.85);
   border: 1px solid rgba(96, 165, 250, 0.9);
   color: #0a0c10;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 600;
@@ -281,7 +281,7 @@
   background: rgba(248, 113, 113, 0.85);
   border: 1px solid rgba(248, 113, 113, 0.9);
   color: #0a0c10;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 600;
@@ -297,7 +297,7 @@
   background: rgba(250, 204, 21, 0.85);
   border: 1px solid rgba(250, 204, 21, 0.9);
   color: #0a0c10;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 600;
@@ -313,7 +313,7 @@
   background: rgba(248, 113, 113, 0.9);
   border: 1px solid rgba(248, 113, 113, 1);
   color: #0a0c10;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 700;
@@ -367,8 +367,8 @@
 
 .media-proxy-pill.is-proxy {
   color: var(--color-blue-200);
-  background: rgba(96, 165, 250, 0.16);
-  border-color: rgba(96, 165, 250, 0.4);
+  background: var(--selection-bg);
+  border-color: var(--selection-border);
 }
 
 .media-proxy-pill.is-original {
@@ -403,7 +403,7 @@
 
 /* Search-palette "reveal in media pool" flash (cleared after ~1.6 s). */
 .media-item.is-search-flash {
-  outline: 2px solid #6ea8ff;
+  outline: 2px solid var(--ring);
   outline-offset: -2px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }

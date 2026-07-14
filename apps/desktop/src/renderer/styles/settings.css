@@ -10,7 +10,7 @@
   max-height: calc(100vh - 64px);
   background: var(--background);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
@@ -67,7 +67,7 @@
   color: var(--destructive);
   background: rgba(248, 113, 113, 0.1);
   border: 1px solid rgba(248, 113, 113, 0.3);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 6px 10px;
 }
 
@@ -79,7 +79,7 @@
   color: var(--foreground);
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.35);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 8px 10px;
   line-height: 1.45;
 }
@@ -88,7 +88,7 @@
   margin: 8px 0 16px;
   padding: 10px;
   border: 1px solid var(--border-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--popover);
 }
 
@@ -259,7 +259,7 @@
 }
 
 .settings-card {
-  background: #0e1116;
+  background: var(--card);
   padding: 16px;
 }
 
@@ -302,7 +302,7 @@
   appearance: none;
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   padding: 7px 10px;
   font-size: 13px;
   font-weight: 500;
@@ -336,7 +336,7 @@
   min-height: 0;
   overflow-y: auto;
   padding: 16px;
-  background: #0e1116;
+  background: var(--card);
 }
 
 .settings-pane > :first-child {
@@ -400,7 +400,7 @@
 .keybindings {
   margin: 0 0 16px;
   border: 1px solid var(--border-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 8px;
   background: var(--popover);
 }
@@ -451,7 +451,7 @@
   gap: 4px;
   background: var(--secondary);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 2px 4px 2px 8px;
   font-variant-numeric: tabular-nums;
 }
@@ -479,7 +479,7 @@
   background: transparent;
   border: 1px dashed var(--border);
   color: var(--muted-foreground);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 2px 8px;
   font-size: 11px;
   cursor: pointer;
@@ -512,7 +512,7 @@
 .kbd-capture {
   display: inline-flex;
   align-items: center;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 2px 8px;
   font-size: 11px;
   outline: none;
@@ -564,7 +564,7 @@
 .settings-preview-status {
   background: rgba(0, 0, 0, 0.2);
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -574,7 +574,7 @@
 .settings-preview-status code {
   background: rgba(0, 0, 0, 0.3);
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   font-family: ui-monospace, Menlo, monospace;
 }
 .field-editor {
@@ -582,9 +582,9 @@
   flex-direction: column;
   gap: 4px;
   padding: 6px 8px;
-  background: #0a0d12;
+  background: var(--surface-sunken);
   border: 1px solid var(--border-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
 .field-header {
   display: flex;
@@ -601,7 +601,7 @@
   color: var(--foreground);
   padding: 2px 6px;
   font-size: 12px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   font-family: inherit;
   font-variant-numeric: tabular-nums;
 }

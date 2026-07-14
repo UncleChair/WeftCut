@@ -205,9 +205,9 @@ export function TrackLane({
     <div
       data-testid="track-lane"
       className={[
-        "relative border-b border-border-soft bg-background",
+        "relative border-b border-border-soft bg-track-lane",
         // Mutually exclusive so emit order never decides which state's
-        // chrome wins (drop-target vs revealed); the base bg-background
+        // chrome wins (drop-target vs revealed); the base bg-track-lane
         // vs branch-bg conflict still resolves by emit order, currently
         // favouring the branches.
         isCrossTrackTarget

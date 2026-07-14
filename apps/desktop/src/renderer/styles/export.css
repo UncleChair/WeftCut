@@ -30,7 +30,7 @@
   width: min(520px, calc(100vw - 32px));
   background: var(--background);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
@@ -51,7 +51,7 @@
   color: var(--foreground);
   padding: 3px 8px;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   font-family: inherit;
 }
 
@@ -182,11 +182,11 @@
 
 .export-progress-panel .progress-track {
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   margin-top: 14px;
   overflow: hidden;
 }
 
 .export-progress-panel .progress-fill {
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }

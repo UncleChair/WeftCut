@@ -22,7 +22,7 @@
 }
 
 .window-control:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover-neutral);
   color: var(--foreground);
 }
 
@@ -40,7 +40,7 @@
   color: var(--color-gray-300);
   padding: 3px 10px;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   cursor: pointer;
 }
 
@@ -192,7 +192,7 @@
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   background: rgba(14, 19, 28, 0.92);
   color: var(--muted-foreground);
   font-size: 11px;
@@ -204,7 +204,7 @@
 .dev-splash-replay:hover {
   border-color: var(--border);
   color: var(--foreground);
-  background: #131923;
+  background: var(--surface-raised);
 }
 
 .startup-screen {
@@ -250,7 +250,7 @@
   background: transparent;
   border: 1px solid var(--border-soft);
   color: var(--muted-foreground);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   font-size: 12px;
   cursor: pointer;
   transition: border-color 120ms, color 120ms;
@@ -316,9 +316,9 @@
   justify-content: center;
   gap: 8px;
   padding: 24px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   border: 1px solid var(--border-soft);
-  background: #0e131c;
+  background: var(--card);
   color: var(--foreground);
   cursor: pointer;
   transition: border-color 120ms, background 120ms;
@@ -326,7 +326,7 @@
 
 .startup-action:hover:not(:disabled) {
   border-color: var(--border);
-  background: #131923;
+  background: var(--surface-raised);
 }
 
 .startup-action:disabled {
@@ -351,7 +351,7 @@
 .startup-error {
   margin: 0;
   padding: 10px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   background: rgba(248, 113, 113, 0.12);
   border: 1px solid rgba(248, 113, 113, 0.35);
   color: var(--color-red-200);
@@ -426,7 +426,7 @@
 
 .startup-recent-list::-webkit-scrollbar-thumb {
   background-color: var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   transition: background-color 180ms ease;
 }
 
@@ -438,13 +438,13 @@
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: stretch;
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   border: 1px solid transparent;
 }
 
 .startup-recent-list li:hover {
   border-color: var(--border-soft);
-  background: #0e131c;
+  background: var(--card);
 }
 
 .startup-recent-item {
@@ -506,7 +506,7 @@
   align-items: center;
   cursor: pointer;
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   opacity: 0;
   transition: opacity 120ms ease, color 120ms, background 120ms;
 }
@@ -551,9 +551,9 @@
 .new-project-panel {
   width: min(440px, 100%);
   padding: 20px;
-  background: #0e131c;
+  background: var(--card);
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -582,7 +582,7 @@
 .new-project-row .app-select {
   background: var(--background);
   border: 1px solid var(--border-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: var(--foreground);
   padding: 6px 8px;
   font-size: 13px;
@@ -591,7 +591,7 @@
 
 .new-project-row .app-select:focus-visible,
 .new-project-row .app-select[data-popup-open] {
-  border-color: var(--color-blue-400);
+  border-color: var(--selection);
 }
 
 .new-project-folder {
@@ -605,7 +605,7 @@
   padding: 6px 8px;
   background: var(--background);
   border: 1px solid var(--border-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   font-size: 12px;
   color: var(--color-gray-300);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -619,7 +619,7 @@
 .new-project-error {
   margin: 0;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: rgba(248, 113, 113, 0.12);
   border: 1px solid rgba(248, 113, 113, 0.35);
   color: var(--color-red-200);
@@ -642,7 +642,7 @@
   margin: -6px 0 4px;
   padding: 4px 8px;
   background: rgba(255, 255, 255, 0.03);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   color: var(--muted-foreground);
   font-size: 11px;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;

@@ -31,9 +31,9 @@
   gap: 12px;
   height: 28px;
   padding: 0 12px;
-  background: var(--color-slate-900);
-  border-top: 1px solid var(--color-slate-800);
-  color: var(--color-slate-300);
+  background: var(--card);
+  border-top: 1px solid var(--border-soft);
+  color: var(--foreground);
   font-size: 12px;
   font-family: var(--font-ui);
   user-select: none;
@@ -56,12 +56,12 @@
 }
 
 .status-bar-empty {
-  color: var(--color-slate-500);
+  color: var(--muted-foreground);
   font-style: italic;
 }
 
 .status-bar-time {
-  color: var(--color-slate-500);
+  color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -77,9 +77,9 @@
 .status-bar-source {
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: 999px;
   background: rgba(148, 163, 184, 0.12);
-  color: var(--color-slate-400);
+  color: var(--muted-foreground);
   flex-shrink: 0;
 }
 
@@ -95,7 +95,7 @@
 
 .status-bar-source.source-system {
   background: rgba(148, 163, 184, 0.12);
-  color: var(--color-slate-300);
+  color: var(--foreground);
 }
 
 .status-bar-level-dot {
@@ -119,8 +119,8 @@
 }
 
 .status-bar-level-dot.level-error {
-  background: var(--color-red-500);
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+  background: var(--destructive);
+  box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
 }
 
 .status-bar-badge {
@@ -128,7 +128,7 @@
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 999px;
   font-size: 11px;
   border: 1px solid transparent;
   background: transparent;
@@ -141,8 +141,8 @@
 }
 
 .status-bar-badge-error {
-  background: rgba(239, 68, 68, 0.16);
-  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(248, 113, 113, 0.16);
+  border-color: rgba(248, 113, 113, 0.4);
   color: var(--color-red-300);
   animation: status-bar-error-pulse 1.5s ease-in-out 1;
 }
@@ -154,8 +154,8 @@
 }
 
 @keyframes status-bar-error-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-  50% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.35); }
 }
 
 .status-bar-spinner {
@@ -174,10 +174,10 @@
 
 .status-bar-logs-toggle {
   padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--color-slate-700);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
   background: transparent;
-  color: var(--color-slate-300);
+  color: var(--foreground);
   cursor: pointer;
   font-size: 11px;
 }

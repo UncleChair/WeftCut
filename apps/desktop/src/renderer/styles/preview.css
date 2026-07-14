@@ -89,7 +89,7 @@
   padding: 12px 16px;
   border: 1px solid rgba(248, 113, 113, 0.4);
   background: rgba(127, 29, 29, 0.18);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   color: var(--color-red-200);
   text-align: center;
 }
@@ -113,7 +113,7 @@
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: var(--foreground);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   padding: 4px 12px;
   font-size: 12px;
   cursor: pointer;
@@ -175,7 +175,7 @@
 }
 
 .preview-transport button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover-neutral-strong);
   color: var(--foreground);
 }
 
@@ -205,11 +205,11 @@
 }
 
 .peek-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hover-neutral);
 }
 
 .peek-item.is-selected {
-  background: rgba(96, 165, 250, 0.18);
+  background: var(--selection-bg);
 }
 
 .peek-item.is-live {
@@ -227,7 +227,7 @@
   align-items: center;
   justify-content: center;
   background: var(--color-gray-900);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   overflow: hidden;
 }
 
@@ -300,7 +300,7 @@
 }
 
 .peek-filter-chip.is-active {
-  background: rgba(96, 165, 250, 0.18);
+  background: var(--selection-bg);
   color: var(--muted-foreground);
   border-color: transparent;
 }
@@ -346,7 +346,7 @@
 
 .preview-failed-retry {
   padding: 6px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   border: 1px solid rgba(248, 113, 113, 0.6);
   background: rgba(127, 29, 29, 0.6);
   color: var(--color-red-200);
