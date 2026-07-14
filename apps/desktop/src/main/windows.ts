@@ -2,6 +2,7 @@ import path from 'node:path'
 import { BrowserWindow, shell } from 'electron'
 import { secondaryWindowConfig, type SecondaryWinOpts } from './windowConfig.js'
 import { broadcastEvent } from './broadcast.js'
+import { isPageZoomShortcut } from './pageZoom.js'
 
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
@@ -25,6 +26,16 @@ export const WIN_CLOSED_EVENT = 'weftcut://win-closed'
 // pop the user's browser to an arbitrary https URL via `window.open`.
 export function hardenWindow(win: BrowserWindow, opts?: { allowExternalOpen?: boolean }): void {
   const allowExternalOpen = opts?.allowExternalOpen ?? true
+  // WeftCut has no interface-scale setting. Chromium nevertheless enables its
+  // built-in Ctrl/Cmd +/-/0 page zoom, which can accidentally shrink the whole
+  // application. Consume only those keyboard accelerators; renderer-owned
+  // gestures such as the timeline's Ctrl+wheel zoom continue to work.
+  const resetPageZoom = (): void => win.webContents.setZoomFactor(1)
+  resetPageZoom()
+  win.webContents.on('did-finish-load', resetPageZoom)
+  win.webContents.on('before-input-event', (event, input) => {
+    if (isPageZoomShortcut(input)) event.preventDefault()
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (allowExternalOpen && /^https:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
