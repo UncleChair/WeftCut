@@ -644,7 +644,7 @@ export function Timeline({
     </div>
     <div
       ref={rootRef}
-      className={`relative min-h-0 w-full flex-1 overflow-auto bg-background [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+      className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-background ${
         drag ? "cursor-grabbing select-none" : ""
       } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
       onClick={() => onSelect(null)}

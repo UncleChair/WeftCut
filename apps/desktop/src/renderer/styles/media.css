@@ -79,24 +79,6 @@
   z-index: 5;
 }
 
-.media-pool::-webkit-scrollbar {
-  width: 8px;
-}
-
-.media-pool::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.media-pool::-webkit-scrollbar-thumb {
-  background-color: var(--accent);
-  border-radius: var(--radius-control);
-  background-clip: content-box;
-}
-
-.media-pool::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-gray-600);
-}
-
 .media-pool-inner {
   padding: 8px 16px;
 }

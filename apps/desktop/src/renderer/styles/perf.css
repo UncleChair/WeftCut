@@ -480,13 +480,3 @@
 .perf-muted {
   color: var(--muted-foreground);
 }
-
-/* Scrollbar for the popup body. */
-.perf-hud-body::-webkit-scrollbar {
-  width: 8px;
-}
-
-.perf-hud-body::-webkit-scrollbar-thumb {
-  background: rgba(75, 85, 99, 0.6);
-  border-radius: var(--radius-control);
-}

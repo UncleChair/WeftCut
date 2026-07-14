@@ -483,9 +483,6 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  /* Firefox: thin slim scrollbar. Webkit equivalents below. */
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
   /* Fixed height (not max-height) so the list region reserves the same
    * footprint whether the user has collapsed it to 3 items or expanded it
    * to MAX_RECENTS (10). Without this, the panel total height shifts when
@@ -499,24 +496,6 @@
    * a scrollbar. */
   height: 144px;
   overflow-y: auto;
-}
-
-.startup-recent-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.startup-recent-list::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.startup-recent-list::-webkit-scrollbar-thumb {
-  background-color: var(--accent);
-  border-radius: var(--radius-control);
-  transition: background-color 180ms ease;
-}
-
-.startup-recent-list::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-gray-600);
 }
 
 .startup-recent-list li {

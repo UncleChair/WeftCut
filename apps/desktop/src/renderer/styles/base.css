@@ -12,7 +12,40 @@
   color: var(--foreground);
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  /* Keep every visible scrollbar aligned with the startup recents list. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--accent);
+  border-radius: var(--radius-control);
+  transition: background-color 180ms ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-gray-600);
+}
+
+/* Some canvas-like surfaces scroll without exposing browser chrome. */
+.scrollbar-hidden {
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
 
 html, body, #root { height: 100%; margin: 0; }
 
