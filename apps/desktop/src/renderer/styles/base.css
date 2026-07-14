@@ -16,6 +16,27 @@
 
 html, body, #root { height: 100%; margin: 0; }
 
+/* Frameless main-window edge. An inset overlay preserves every existing layout
+ * dimension while separating WeftCut's near-black surface from a dark desktop.
+ * Keep the edge neutral: blue remains reserved for focus and selection. */
+html.app-window-framed::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+}
+
+html.app-window-framed.app-window-inactive::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+html.app-window-framed.app-window-maximized::after,
+html.app-window-framed:fullscreen::after {
+  display: none;
+}
+
 /* Desktop-app selection model: nothing is selectable by default —
  * pointer drags belong to the timeline, sliders, and the window drag
  * region, not to text selection. Content the user legitimately edits

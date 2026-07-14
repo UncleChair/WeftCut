@@ -80,6 +80,45 @@ function Root() {
   const [stage, setStage] = useState<"boot" | "startup" | "editor">("boot");
   const [splashVisible, setSplashVisible] = useState(true);
 
+  // The main BrowserWindow is frameless, so draw a subtle inner edge in the
+  // renderer to keep the dark surface legible against dark desktops and
+  // overlapping windows. Window state lives on <html> so the frame spans the
+  // startup, editor, agent, and splash surfaces without affecting layout.
+  useEffect(() => {
+    const rootElement = document.documentElement;
+    const currentWindow = getCurrentWindow();
+    let cancelled = false;
+
+    const setFocused = () => rootElement.classList.remove("app-window-inactive");
+    const setInactive = () => rootElement.classList.add("app-window-inactive");
+    const setMaximized = (maximized: boolean) => {
+      rootElement.classList.toggle("app-window-maximized", maximized);
+    };
+
+    rootElement.classList.add("app-window-framed");
+    rootElement.classList.toggle("app-window-inactive", !document.hasFocus());
+    void currentWindow.isMaximized().then((maximized) => {
+      if (!cancelled) setMaximized(maximized);
+    });
+    const unlisten = currentWindow.onMaximizeChange((maximized) => {
+      if (!cancelled) setMaximized(maximized);
+    });
+    window.addEventListener("focus", setFocused);
+    window.addEventListener("blur", setInactive);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", setFocused);
+      window.removeEventListener("blur", setInactive);
+      void unlisten.then((dispose) => dispose());
+      rootElement.classList.remove(
+        "app-window-framed",
+        "app-window-inactive",
+        "app-window-maximized",
+      );
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
