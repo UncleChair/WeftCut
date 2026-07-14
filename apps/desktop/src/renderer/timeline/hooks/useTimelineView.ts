@@ -5,6 +5,7 @@ import {
   HEADER_COL_PX,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC_FLOOR,
+  MIN_TIMELINE_SECONDS,
   VIEW_SAVE_DEBOUNCE_MS,
   clamp,
 } from "../geometry";
@@ -23,12 +24,14 @@ export function useTimelineView(opts: {
   trackHeightsRef: React.MutableRefObject<Record<string, number>>;
   expandedTracks: Set<string>;
   toggleExpanded: (id: string) => void;
+  viewportWidthPx: number;
 } {
   const { rootRef, tracks, durationUs } = opts;
   const [pxPerSec, setPxPerSec] = useState<number>(DEFAULT_PX_PER_SEC);
   const [trackHeights, setTrackHeights] = useState<Record<string, number>>({});
   // Track ids whose keyframe sub-lanes are expanded. Persisted to view.json.
   const [expandedTracks, setExpandedTracks] = useState<Set<string>>(new Set());
+  const [viewportWidthPx, setViewportWidthPx] = useState(0);
   // Suppress the initial post-load save: we don't want the first
   // load-then-set-state pair to immediately echo the same values back to
   // disk. Flipped to true only after the in-flight load completes.
@@ -73,6 +76,23 @@ export function useTimelineView(opts: {
   // the "fit-to-viewport" min zoom each tick, so a project getting
   // longer (new clips added) immediately widens the wheel-out range.
   const durationUsRef = useRef(durationUs);
+
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const measure = () => {
+      setViewportWidthPx(Math.max(0, root.clientWidth - HEADER_COL_PX));
+    };
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(root);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [rootRef]);
   useEffect(() => {
     pxPerSecRef.current = pxPerSec;
   }, [pxPerSec]);
@@ -152,15 +172,17 @@ export function useTimelineView(opts: {
       const factor = Math.exp(-px * 0.001);
       const oldPxPerSec = pxPerSecRef.current;
       // Lower bound = "fit-to-viewport" zoom — the level at which the
-      // whole timeline exactly fills the visible width. Beyond this
-      // there's only empty space to the right of the content, so this
-      // is the natural Ctrl+wheel stop for max zoom-out. Recomputed
-      // every tick so it tracks viewport resize + project growth.
+      // project extent (before the deliberate post-roll edit padding)
+      // fills the visible width. Recomputed every tick so it tracks
+      // viewport resize + project growth.
       // The sticky header column occupies the first HEADER_COL_PX of
       // the viewport; only the remaining lane area should fit the
       // whole timeline at min zoom.
       const viewportWidth = root.clientWidth - HEADER_COL_PX;
-      const totalSec = Math.max(durationUsRef.current / 1_000_000, 5);
+      const totalSec = Math.max(
+        durationUsRef.current / 1_000_000,
+        MIN_TIMELINE_SECONDS,
+      );
       const fitMin = Math.max(
         MIN_PX_PER_SEC_FLOOR,
         viewportWidth / totalSec,
@@ -211,5 +233,6 @@ export function useTimelineView(opts: {
     trackHeightsRef,
     expandedTracks,
     toggleExpanded,
+    viewportWidthPx,
   };
 }

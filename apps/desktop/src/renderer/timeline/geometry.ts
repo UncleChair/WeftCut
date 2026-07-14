@@ -18,6 +18,14 @@ export const MIN_PX_PER_SEC_FLOOR = 0.05;
 // ~1333 px/s the envelope stretches instead of gaining detail — accepted;
 // the filmstrip (the ceiling's driver) keeps densifying to lod 0.
 export const MAX_PX_PER_SEC = 2000;
+// Empty/short projects still need enough temporal context to feel like an
+// editing surface instead of a five-second strip.
+export const MIN_TIMELINE_SECONDS = 10;
+// Keep the composition tail away from the viewport edge. The proportional
+// part makes the post-roll useful on wide workspaces; the floor keeps it
+// usable in narrow panes and before the first viewport measurement lands.
+export const TIMELINE_END_PADDING_VIEWPORT_RATIO = 0.35;
+export const MIN_TIMELINE_END_PADDING_PX = 240;
 // Taller default row so combined V+A rows fit a thumbnail strip (top half)
 // + waveform strip (bottom half); single-class tracks still fit comfortably.
 export const DEFAULT_TRACK_HEIGHT = 56;
@@ -36,6 +44,26 @@ export const LAYER_FULL_LABEL_MIN_PX = 120;
 
 /// Width of the sticky track-header column. See the timeline-redesign spec (§1).
 export const HEADER_COL_PX = 160;
+
+export function computeTimelineExtent({
+  durationUs,
+  pxPerSec,
+  viewportWidthPx,
+}: {
+  durationUs: number;
+  pxPerSec: number;
+  viewportWidthPx: number;
+}): { widthPx: number; totalSec: number } {
+  const contentSec = Math.max(durationUs / 1_000_000, MIN_TIMELINE_SECONDS);
+  const contentWidthPx = contentSec * pxPerSec;
+  const safeViewportWidthPx = Math.max(0, viewportWidthPx);
+  const endPaddingPx = Math.max(
+    MIN_TIMELINE_END_PADDING_PX,
+    safeViewportWidthPx * TIMELINE_END_PADDING_VIEWPORT_RATIO,
+  );
+  const widthPx = Math.max(contentWidthPx, safeViewportWidthPx) + endPaddingPx;
+  return { widthPx, totalSec: widthPx / pxPerSec };
+}
 
 export interface VisualTrack {
   track: TrackSummary;

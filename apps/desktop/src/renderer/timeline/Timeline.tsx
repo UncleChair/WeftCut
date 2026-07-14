@@ -39,6 +39,7 @@ import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
   HEADER_COL_PX,
+  computeTimelineExtent,
   indexGroups,
   trackKeyframeProperties,
   visualOrderedTracks,
@@ -166,6 +167,7 @@ export function Timeline({
     trackHeightsRef,
     expandedTracks,
     toggleExpanded,
+    viewportWidthPx,
   } = useTimelineView({ rootRef, tracks, durationUs });
 
   // Net-new capability: horizontal scroll-to-time for palette jumps.
@@ -189,8 +191,11 @@ export function Timeline({
     [],
   );
 
-  const totalSec = Math.max(durationUs / 1_000_000, 5);
-  const widthPx = totalSec * pxPerSec;
+  const { totalSec, widthPx } = computeTimelineExtent({
+    durationUs,
+    pxPerSec,
+    viewportWidthPx,
+  });
 
   const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
 
@@ -648,7 +653,8 @@ export function Timeline({
         {/* sticky header column */}
         <div className="sticky left-0 z-10 flex-none border-r border-border bg-card" style={{ width: HEADER_COL_PX }}>
           <div
-            className="h-5 border-b border-border-soft"
+            data-testid="timeline-ruler-corner"
+            className="sticky top-0 z-[1] h-5 border-b border-border-soft bg-card"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           /> {/* ruler corner */}
@@ -680,15 +686,16 @@ export function Timeline({
           <TimelineRuler
             pxPerSec={pxPerSec}
             totalSec={totalSec}
-            widthPx={Math.max(widthPx, 200)}
+            widthPx={widthPx}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
             onScrub={beginRulerScrub}
           />
           <div
             ref={canvasRef}
+            data-testid="timeline-canvas"
             className="relative min-w-full"
-            style={{ width: Math.max(widthPx, 200) }}
+            style={{ width: widthPx }}
           >
             {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
             {/*
@@ -741,7 +748,7 @@ export function Timeline({
               <BladeCutPreview
                 x={(bladePreview.atUs / 1_000_000) * pxPerSec}
                 label={formatTimecode(bladePreview.atUs, fpsNum, fpsDen)}
-                width={Math.max(widthPx, 200)}
+                width={widthPx}
               />
             )}
           </div>
@@ -786,10 +793,22 @@ function TimelinePlayhead({ pxPerSec }: { pxPerSec: number }) {
     <div
       ref={ref}
       data-testid="timeline-playhead"
-      className="pointer-events-none absolute bottom-0 top-0.5 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
+      className="pointer-events-none absolute bottom-0 top-0 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
       style={{ left: (playheadTimeUs() / 1_000_000) * pxPerSec }}
     >
-      <div className="absolute -left-1.5 top-0 h-3.5 w-3.5 bg-gradient-to-b from-[#fb7185] via-red-500 to-red-700 [clip-path:polygon(0_0,100%_0,100%_45%,50%_100%,0_45%)] [filter:drop-shadow(0_1px_1.5px_rgba(0,0,0,0.6))]" />
+      <div
+        data-testid="timeline-playhead-head"
+        className="sticky top-0 h-4 w-0"
+      >
+        <div
+          data-testid="timeline-playhead-line-cap"
+          className="absolute -left-1.5 top-0 h-0.5 w-3.5 bg-card"
+        />
+        <div
+          data-testid="timeline-playhead-head-shape"
+          className="absolute -left-1.5 top-0.5 h-3.5 w-3.5 bg-gradient-to-b from-[#fb7185] via-red-500 to-red-700 [clip-path:polygon(0_0,100%_0,100%_45%,50%_100%,0_45%)] [filter:drop-shadow(0_1px_1.5px_rgba(0,0,0,0.6))]"
+        />
+      </div>
     </div>
   );
 }

@@ -260,6 +260,62 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("pins the ruler and playhead head during vertical timeline scrolling", () => {
+    const { container } = renderTimeline({});
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]') as HTMLElement;
+    const rulerCorner = container.querySelector(
+      '[data-testid="timeline-ruler-corner"]',
+    ) as HTMLElement;
+    const playheadHead = container.querySelector(
+      '[data-testid="timeline-playhead-head"]',
+    ) as HTMLElement;
+    const playheadHeadShape = container.querySelector(
+      '[data-testid="timeline-playhead-head-shape"]',
+    ) as HTMLElement;
+
+    expect(ruler.className).toContain("sticky");
+    expect(ruler.className).toContain("top-0");
+    expect(rulerCorner.className).toContain("sticky");
+    expect(rulerCorner.className).toContain("top-0");
+    expect(playheadHead.className).toContain("sticky");
+    expect(playheadHead.classList.contains("top-0")).toBe(true);
+    expect(playheadHeadShape.classList.contains("top-0.5")).toBe(true);
+  });
+
+  it("masks the playhead line above the sticky head", () => {
+    const { container } = renderTimeline({});
+    const playhead = container.querySelector(
+      '[data-testid="timeline-playhead"]',
+    ) as HTMLElement;
+    const playheadHead = container.querySelector(
+      '[data-testid="timeline-playhead-head"]',
+    ) as HTMLElement;
+    const lineCap = container.querySelector(
+      '[data-testid="timeline-playhead-line-cap"]',
+    ) as HTMLElement | null;
+    const headShape = container.querySelector(
+      '[data-testid="timeline-playhead-head-shape"]',
+    ) as HTMLElement | null;
+
+    expect(playhead.classList.contains("top-0")).toBe(true);
+    expect(playheadHead.classList.contains("top-0")).toBe(true);
+    expect(lineCap?.classList.contains("h-0.5")).toBe(true);
+    expect(headShape?.classList.contains("top-0.5")).toBe(true);
+  });
+
+  it("starts with a longer ruler and matching trailing edit workspace", () => {
+    const { container } = renderTimeline({});
+    const ruler = container.querySelector(
+      '[data-testid="timeline-ruler"]',
+    ) as HTMLElement;
+    const canvas = container.querySelector(
+      '[data-testid="timeline-canvas"]',
+    ) as HTMLElement;
+
+    expect(ruler.style.width).toBe("1040px");
+    expect(canvas.style.width).toBe(ruler.style.width);
+  });
+
   it("previews every grouped layer during and immediately after a move drag", async () => {
     const onMutated = vi.fn().mockResolvedValue(undefined);
     const { getByText } = renderTimeline({

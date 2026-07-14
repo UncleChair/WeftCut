@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clamp,
+  computeTimelineExtent,
   computeLayerSlices,
   formatRulerLabel,
   groupHue,
@@ -52,6 +53,38 @@ describe("clamp", () => {
     expect(clamp(5, 0, 10)).toBe(5);
     expect(clamp(-1, 0, 10)).toBe(0);
     expect(clamp(11, 0, 10)).toBe(10);
+  });
+});
+
+describe("computeTimelineExtent", () => {
+  it("gives a new project a longer ruler plus minimum edit padding", () => {
+    expect(
+      computeTimelineExtent({
+        durationUs: 0,
+        pxPerSec: 80,
+        viewportWidthPx: 0,
+      }),
+    ).toEqual({ widthPx: 1040, totalSec: 13 });
+  });
+
+  it("fills a wide viewport and keeps 35% trailing NLE workspace", () => {
+    expect(
+      computeTimelineExtent({
+        durationUs: 0,
+        pxPerSec: 80,
+        viewportWidthPx: 1000,
+      }),
+    ).toEqual({ widthPx: 1350, totalSec: 16.875 });
+  });
+
+  it("adds pixel-stable trailing workspace after a long composition", () => {
+    expect(
+      computeTimelineExtent({
+        durationUs: 30_000_000,
+        pxPerSec: 80,
+        viewportWidthPx: 1000,
+      }),
+    ).toEqual({ widthPx: 2750, totalSec: 34.375 });
   });
 });
 

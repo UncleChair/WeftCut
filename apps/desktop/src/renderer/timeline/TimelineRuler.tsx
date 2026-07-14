@@ -120,7 +120,7 @@ export function TimelineRuler({
          clips it). */
     <div
       data-testid="timeline-ruler"
-      className="relative h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
+      className="sticky top-0 z-[3] h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
       style={{ width: widthPx }}
       onPointerDown={(e) => {
         if (e.button === 0) onScrub(e.clientX);
