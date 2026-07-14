@@ -143,6 +143,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           buttons (and the locale toggle, which used to float here). */}
       <div className="startup-titlebar" data-drag-region>
         <button
+          type="button"
           className="startup-locale-toggle"
           onClick={cycleLocale}
           title={t("language.switch_label")}
@@ -202,6 +203,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 
         <div className="startup-actions">
           <button
+            type="button"
             className="startup-action primary"
             onClick={() => setNewProjectOpen(true)}
             disabled={busy}
@@ -210,6 +212,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             <span className="startup-action-label">{t("startup.new_project")}</span>
           </button>
           <button
+            type="button"
             className="startup-action"
             onClick={openWorkspaceFolder}
             disabled={busy}
@@ -259,6 +262,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
               ).map((entry) => (
                 <li key={entry.path}>
                   <button
+                    type="button"
                     className="startup-recent-item"
                     onClick={() => openRecent(entry)}
                     disabled={busy}
@@ -271,6 +275,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
                     <span className="startup-recent-path">{entry.path}</span>
                   </button>
                   <button
+                    type="button"
                     className="startup-recent-remove"
                     onClick={async (e) => {
                       e.stopPropagation();

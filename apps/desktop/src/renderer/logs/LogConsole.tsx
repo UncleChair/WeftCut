@@ -75,6 +75,15 @@ interface Props {
   onClose: () => void;
 }
 
+async function clearLogs(): Promise<void> {
+  try {
+    await logClear();
+    useLogStore.getState().clear();
+  } catch (e) {
+    console.warn("logClear failed:", e);
+  }
+}
+
 export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsole(
   { onClose },
   ref,
@@ -223,20 +232,13 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
     });
   };
 
-  const onClear = async () => {
-    try {
-      await logClear();
-      useLogStore.getState().clear();
-    } catch (e) {
-      console.warn("logClear failed:", e);
-    }
-  };
-
   const onCopy = async () => {
-    const text = filteredRows
-      .flatMap((r) => [r.head, ...r.children])
-      .map(renderEntryAsLine)
-      .join("\n");
+    const lines: string[] = [];
+    for (const row of filteredRows) {
+      lines.push(renderEntryAsLine(row.head));
+      for (const child of row.children) lines.push(renderEntryAsLine(child));
+    }
+    const text = lines.join("\n");
     try {
       await navigator.clipboard.writeText(text);
     } catch (e) {
@@ -350,7 +352,7 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
           <button type="button" className="log-action" onClick={onCopy}>
             {t("log.copy")}
           </button>
-          <button type="button" className="log-action" onClick={onClear}>
+          <button type="button" className="log-action" onClick={clearLogs}>
             {t("log.clear")}
           </button>
           <button

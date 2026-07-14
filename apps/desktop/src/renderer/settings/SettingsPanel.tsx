@@ -39,6 +39,10 @@ import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceSto
 const TAIL_SNAP_MIN_PX = 2;
 const TAIL_SNAP_MAX_PX = 80;
 
+function clampTailSnapStrength(value: number): number {
+  return Math.round(Math.min(TAIL_SNAP_MAX_PX, Math.max(TAIL_SNAP_MIN_PX, value)));
+}
+
 type SettingsCategory = "general" | "editing" | "keyboard" | "apikeys";
 
 /// Sidebar order. Every pane stays mounted (toggled via `hidden`) so
@@ -329,11 +333,8 @@ function TimelineSnapSection({
     setDraftStrengthPx(strengthPx);
   }, [strengthPx]);
 
-  const clampStrength = (value: number): number =>
-    Math.round(Math.min(TAIL_SNAP_MAX_PX, Math.max(TAIL_SNAP_MIN_PX, value)));
-
   const commitStrength = async (value: number) => {
-    const next = clampStrength(value);
+    const next = clampTailSnapStrength(value);
     setDraftStrengthPx(next);
     onError("");
     try {
@@ -409,7 +410,7 @@ function AutoDeleteEmptyTracksSection({
     getProjectSettings()
       .then((s) => setEnabled(s.auto_delete_empty_tracks))
       .catch((e) => onError(String(e)));
-  }, []);
+  }, [onError]);
 
   return (
     <label className="settings-toggle-row">
@@ -539,7 +540,7 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
               <>
                 {t("settings.decode_engine_ffmpeg")}
                 <span
-                  style={{ marginLeft: 6, fontSize: 11, color: "var(--muted-foreground)" }}
+                  style={{ marginLeft: 6, fontSize: 12, color: "var(--muted-foreground)" }}
                 >
                   {t("settings.decode_engine_ffmpeg_tag")}
                 </span>
@@ -555,7 +556,7 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
               <>
                 {t("settings.decode_engine_webcodecs")}
                 <span
-                  style={{ marginLeft: 6, fontSize: 11, color: "var(--muted-foreground)" }}
+                  style={{ marginLeft: 6, fontSize: 12, color: "var(--muted-foreground)" }}
                 >
                   {t("settings.decode_engine_webcodecs_tag")}
                 </span>

@@ -29,8 +29,7 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
 
   // Flatten all caption-role tracks' Text layers in start-time order.
   const cues: LayerSummary[] = captionTracks
-    .flatMap((tr) => tr.layers)
-    .filter((l) => l.params.kind === "Text")
+    .flatMap((tr) => tr.layers.filter((l) => l.params.kind === "Text"))
     .sort((a, b) => a.t_start_us - b.t_start_us);
 
   // Seed style controls from the first Text layer on the first caption track.
@@ -93,6 +92,7 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
                 <input
                   className="app-input caption-text"
                   defaultValue={c.params.kind === "Text" ? c.params.content : ""}
+                  aria-label={`${t("captions.title")} ${fmtTc(c.t_start_us)}`}
                   onBlur={(e) => commitText(c.id, e.target.value)}
                 />
               </li>

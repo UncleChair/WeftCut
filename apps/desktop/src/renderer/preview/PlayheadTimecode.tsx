@@ -18,7 +18,7 @@ export function PlayheadTimecode({
   editHint: string;
   onActivate: () => void;
 }) {
-  const ref = useRef<HTMLSpanElement | null>(null);
+  const ref = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     const apply = (tUs: number) => {
       if (ref.current) ref.current.textContent = formatTimecode(tUs, fpsNum, fpsDen);
@@ -27,22 +27,15 @@ export function PlayheadTimecode({
     return usePlayheadStore.subscribe((s) => apply(s.timeUs));
   }, [fpsNum, fpsDen]);
   return (
-    <span
+    <button
+      type="button"
       ref={ref}
       className="preview-timecode"
       aria-live="polite"
-      role="button"
-      tabIndex={0}
       title={editHint}
       onClick={onActivate}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onActivate();
-        }
-      }}
     >
       {formatTimecode(playheadTimeUs(), fpsNum, fpsDen)}
-    </span>
+    </button>
   );
 }

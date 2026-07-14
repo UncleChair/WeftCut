@@ -56,6 +56,10 @@ interface Props {
 
 const COMMIT_DEBOUNCE_MS = 250;
 
+function toRgb(value: string): string {
+  return value.length >= 7 ? value.slice(0, 7) : value;
+}
+
 export function PropertyPanel({
   tracks,
   groups,
@@ -193,7 +197,7 @@ function TextFields({
   const [content, setContent] = useState(v.content);
   const [family, setFamily] = useState(v.font_family);
   const [size, setSize] = useState(v.font_size_px);
-  const [color, setColor] = useState(trackStatic(v.color, WHITE));
+  const [color, setColor] = useState(() => trackStatic(v.color, WHITE));
   // While the size field is being edited, suppress the prop→local resync so a
   // mid-typing debounced commit's round-trip can't clobber the in-progress edit.
   const editingSize = useRef(false);
@@ -281,8 +285,8 @@ function VideoClipFields({
 }) {
   const { t } = useTranslation();
   const [speed, setSpeed] = useState(v.speed);
-  const [fadeInTc, setFadeInTc] = useState(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
-  const [fadeOutTc, setFadeOutTc] = useState(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+  const [fadeInTc, setFadeInTc] = useState(() => formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+  const [fadeOutTc, setFadeOutTc] = useState(() => formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   // While the speed field is being edited, suppress the prop→local resync so a
   // mid-typing debounced commit's round-trip can't clobber the in-progress edit.
   const editingSpeed = useRef(false);
@@ -384,8 +388,8 @@ function ImageOverlayFields({
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const [fadeInTc, setFadeInTc] = useState(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
-  const [fadeOutTc, setFadeOutTc] = useState(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+  const [fadeInTc, setFadeInTc] = useState(() => formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+  const [fadeOutTc, setFadeOutTc] = useState(() => formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   useEffect(() => {
     setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
     setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
@@ -639,14 +643,17 @@ function MotifLifecycleRow({
   // the target id PLUS those swapped onto this working draft (they rebind to the
   // target on Update). Counting both fixes the common single-edit case (the one
   // edited layer is on the draft, so a target-only count would read "0 layers").
-  const updateBlastRadius = (targetId: string) =>
-    (useProjectStore.getState().summary?.tracks ?? [])
-      .flatMap((tr) => tr.layers)
-      .filter((l) => {
-        if (l.kind !== "Motif") return false;
+  const updateBlastRadius = (targetId: string) => {
+    let count = 0;
+    for (const track of useProjectStore.getState().summary?.tracks ?? []) {
+      for (const l of track.layers) {
+        if (l.kind !== "Motif") continue;
         const mid = (l.params as { motif_id?: string }).motif_id;
-        return mid === targetId || mid === motifId;
-      }).length;
+        if (mid === targetId || mid === motifId) count++;
+      }
+    }
+    return count;
+  };
 
   return (
     <div className="prop-motif-lifecycle">
@@ -774,6 +781,7 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
       <p className="meta">{t("property_panel.motif_source_hint")}</p>
       <textarea
         className="prop-motif-source-text"
+        aria-label={t("property_panel.motif_source")}
         spellCheck={false}
         value={source ?? ""}
         disabled={source == null || busy}
@@ -888,9 +896,8 @@ function ColorPropField({
   // type="color">` only edits the 6-char RGB triplet — show the leading 7 chars
   // but commit the raw value it returns. (Trailing alpha in a default like
   // `#000000cc` is dropped on first pick — same tradeoff as the picker.)
-  const toRgb = (s: string) => (s.length >= 7 ? s.slice(0, 7) : s);
   const [color, setColor] = useState(
-    toRgb(typeof value === "string" ? value : spec.default),
+    () => toRgb(typeof value === "string" ? value : spec.default),
   );
   useEffect(() => {
     setColor(toRgb(typeof value === "string" ? value : spec.default));

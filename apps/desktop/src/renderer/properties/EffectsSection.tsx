@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pipette } from "lucide-react";
 import { AppSelect } from "../components/AppSelect";
@@ -50,7 +50,9 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
   // exist, so the commit path's existence check survives the row's unmount
   // (spec error table: effect deleted mid-session → treat as cancel).
   const liveRef = useRef({ layer, tInLayerUs });
-  liveRef.current = { layer, tInLayerUs };
+  useLayoutEffect(() => {
+    liveRef.current = { layer, tInLayerUs };
+  }, [layer, tInLayerUs]);
 
   const add = () => {
     setErr(null);

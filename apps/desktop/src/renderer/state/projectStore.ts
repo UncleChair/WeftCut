@@ -7,7 +7,6 @@ import {
   type MediaSummary,
   type ProjectSummary,
   type RoleMixView,
-  type TrackSummary,
 } from "../ipc";
 
 /// Frontend mirror of the Rust `Project` actor's state, kept in sync via
@@ -135,20 +134,8 @@ export async function wireProjectStore(): Promise<UnlistenFn> {
 export const useProjectSummary = (): ProjectSummary | null =>
   useProjectStore((s) => s.summary);
 
-export const useProjectReady = (): boolean =>
-  useProjectStore((s) => s.ready);
-
-export const useProjectMedia = (): MediaSummary[] =>
-  useProjectStore((s) => s.summary?.media ?? EMPTY_MEDIA);
-
-export const useProjectTracks = (): TrackSummary[] =>
-  useProjectStore((s) => s.summary?.tracks ?? EMPTY_TRACKS);
-
 export const useAudioRoles = (): RoleMixView[] =>
   useProjectStore((s) => s.summary?.audio_roles ?? EMPTY_ROLES);
-
-export const useProjectDurationUs = (): number =>
-  useProjectStore((s) => s.summary?.duration_us ?? 0);
 
 /// Resolve a media item by id without forcing the caller to subscribe
 /// to the whole media array. The selector reads from `mediaById`, which
@@ -156,14 +143,7 @@ export const useProjectDurationUs = (): number =>
 export const useMediaById = (id: string | null | undefined): MediaSummary | undefined =>
   useProjectStore((s) => (id ? s.mediaById.get(id) : undefined));
 
-/// Resolve a layer by id. Used by the DOM preview's `<Layer>` component
-/// to look up its own params each render without re-walking tracks.
-export const useLayerById = (id: string | null | undefined): LayerSummary | undefined =>
-  useProjectStore((s) => (id ? s.layerById.get(id) : undefined));
-
 // Reused empty sentinels so `?? []` doesn't allocate a fresh array on
 // every render (which would defeat referential-equality short-circuits
 // in any caller doing `useShallow` over derived combinations).
-const EMPTY_MEDIA: MediaSummary[] = [];
-const EMPTY_TRACKS: TrackSummary[] = [];
 const EMPTY_ROLES: RoleMixView[] = [];

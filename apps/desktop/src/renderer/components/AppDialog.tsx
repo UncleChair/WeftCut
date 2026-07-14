@@ -62,6 +62,7 @@ export function AppDialog({
             {headerExtra}
             {onClose !== undefined && closeLabel !== undefined && (
               <button
+                type="button"
                 className="settings-close"
                 onClick={onClose}
                 aria-label={closeLabel}

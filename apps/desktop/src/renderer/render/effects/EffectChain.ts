@@ -49,7 +49,7 @@ export class EffectChain {
     }
     // Color-pick freeze: an override-disabled effect is excluded from THIS
     // frame's filter list but keeps its instance (no destroy/recompile churn).
-    return this.instances.filter((i) => !isEffectDisabled(i.id)).map((i) => i.filter);
+    return this.instances.flatMap((i) => isEffectDisabled(i.id) ? [] : [i.filter]);
   }
 
   dispose(): void {

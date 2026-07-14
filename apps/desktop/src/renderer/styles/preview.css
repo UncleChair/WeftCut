@@ -188,6 +188,18 @@
   cursor: not-allowed;
 }
 
+.preview-transport button.preview-timecode {
+  width: auto;
+  height: auto;
+  border-radius: var(--radius-control);
+  padding: 0 0 0 4px;
+}
+
+.preview-transport button.preview-timecode:hover:not(:disabled),
+.preview-transport button.preview-timecode:active:not(:disabled) {
+  background: transparent;
+}
+
 .peek-item {
   display: grid;
   grid-template-columns: 32px 1fr auto;

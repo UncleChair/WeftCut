@@ -11,6 +11,10 @@ import { registerRevealMedia } from "../state/navigation";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { quickProxyPath } from "../render/decodeRoute";
 
+function isFileDrag(e: React.DragEvent): boolean {
+  return Array.from(e.dataTransfer.types).includes("Files");
+}
+
 /// The media-pool column doubles as the drop target for Explorer file
 /// drags. HTML5 drag events fire because the OS-level drop interception is
 /// off (the legacy `dragDropEnabled: false` rationale, load-bearing for the
@@ -24,8 +28,6 @@ export function MediaDropZone({ children }: { children: React.ReactNode }) {
   // dragenter/leave fire per descendant; track depth so the highlight
   // doesn't flicker while moving across children.
   const depth = useRef(0);
-  const isFileDrag = (e: React.DragEvent) =>
-    Array.from(e.dataTransfer.types).includes("Files");
   return (
     <section
       className="media-pool"
@@ -185,7 +187,6 @@ export function MediaPool({
                 .filter(Boolean)
                 .join(" ")}
               draggable={interactive}
-              aria-disabled={!interactive}
               onDragStart={(e) => {
                 e.dataTransfer.setData(
                   MEDIA_DRAG_TYPE,
@@ -252,6 +253,7 @@ export function MediaPool({
                 <ProxyPill media={m} />
                 {reason === "importing" && (
                   <button
+                    type="button"
                     className="media-import-cancel"
                     onClick={async (e) => {
                       e.stopPropagation();

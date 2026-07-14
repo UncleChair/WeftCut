@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { ActionId } from "../shortcuts/defs";
 
 /// The unified user-invocable command surface. Today's actions live in two
@@ -70,6 +70,8 @@ export function getCommand(id: string): CommandDef | undefined {
 /// render without re-registering (same pattern as useShortcuts).
 export function useCommandProvider(getDefs: () => CommandDef[]): void {
   const ref = useRef(getDefs);
-  ref.current = getDefs;
+  useLayoutEffect(() => {
+    ref.current = getDefs;
+  }, [getDefs]);
   useEffect(() => registerCommandProvider(() => ref.current()), []);
 }

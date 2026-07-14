@@ -780,7 +780,7 @@ export function useExportFlow(deps: {
       payload: { outputPath: path, durationUs },
     });
     },
-    [t],
+    [t, previewRef, proxyStateRef, decodeProbeMemo],
   );
 
   // E2E-only: mirror the export phase onto window so a WebDriver diagnostic can

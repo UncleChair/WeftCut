@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { ACTION_DEFS, type ActionId } from "./defs";
 import {
   isChord,
@@ -113,10 +113,12 @@ export function useShortcuts({
   disabled,
 }: UseShortcutsOptions): void {
   const handlersRef = useRef<HandlerMap>(handlers);
-  handlersRef.current = handlers;
-
   const disabledRef = useRef<boolean>(!!disabled);
-  disabledRef.current = !!disabled;
+
+  useLayoutEffect(() => {
+    handlersRef.current = handlers;
+    disabledRef.current = !!disabled;
+  }, [handlers, disabled]);
 
   const entries = useMemo(() => resolveEntries(overrides), [overrides]);
 

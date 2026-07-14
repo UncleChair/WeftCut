@@ -103,8 +103,10 @@ export function applyGroupsRemoveMembers(p: Project, id: Uuid, layerIds: Uuid[])
   const i = p.groups.findIndex((g) => g.id === id)
   if (i < 0) throw new CommandFailure({ error: 'GroupNotFound', group: id })
   const g = p.groups[i]
-  for (const m of layerIds) if (!g.members.includes(m)) throw new CommandFailure({ error: 'LayerNotInGroup', group: id, layer: m })
-  g.members = g.members.filter((m) => !layerIds.includes(m))
+  const members = new Set(g.members)
+  for (const m of layerIds) if (!members.has(m)) throw new CommandFailure({ error: 'LayerNotInGroup', group: id, layer: m })
+  const removals = new Set(layerIds)
+  g.members = g.members.filter((m) => !removals.has(m))
   if (g.members.length < 2) p.groups.splice(i, 1)
 }
 

@@ -9,12 +9,8 @@ import {
   keybindingsSet,
   type KeybindingsMap,
 } from "../ipc";
-import {
-  ACTION_DEFS,
-  ACTION_IDS,
-  type ActionId,
-  bindingsEqual,
-} from "../shortcuts";
+import { ACTION_DEFS, ACTION_IDS, type ActionId } from "../shortcuts/defs";
+import { bindingsEqual } from "../shortcuts/match";
 import {
   KeybindingCapture,
   bindingLabel,

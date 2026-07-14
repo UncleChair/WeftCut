@@ -174,7 +174,7 @@ function ConnectField({
 }: FieldProps) {
   return (
     <div className="connect-field">
-      <label>{label}</label>
+      <span className="connect-field-label">{label}</span>
       <div className="connect-field-row">
         <code className="connect-value">{value}</code>
         <Button size="sm" onClick={onCopy}>

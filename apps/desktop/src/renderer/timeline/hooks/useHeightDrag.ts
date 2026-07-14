@@ -42,7 +42,7 @@ export function useHeightDrag(opts: {
         startHeight: current,
       });
     },
-    [trackHeightsRef, setTrackHeights],
+    [trackHeightsRef],
   );
 
   useEffect(() => {

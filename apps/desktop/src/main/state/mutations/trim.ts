@@ -89,21 +89,23 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   for (const mid of aligned) {
     const ml = locateLayer(p, mid)!
     const m = p.tracks[ml[0]].layers[ml[1]]
+    const params = m.params
     if (edge === 'In') {
       m.t_start_us += clamped
-      if (m.params.kind === 'VideoClip' || m.params.kind === 'Audio') m.params.src_in_us += clamped
-      shiftLayerKeyframes(m.params, -clamped) // keyframes glued to content
+      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_in_us += clamped
+      shiftLayerKeyframes(params, -clamped) // keyframes glued to content
     } else {
       m.t_end_us += clamped
-      if (m.params.kind === 'VideoClip' || m.params.kind === 'Audio') m.params.src_out_us += clamped
+      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_out_us += clamped
     }
   }
 
   // Re-sort touched tracks on IN trims (t_start changed → order may shift).
   if (edge === 'In') {
     const touched = new Set<Uuid>(aligned.map((m) => p.tracks[locateLayer(p, m)![0]].id))
+    const tracksById = new Map(p.tracks.map((t) => [t.id, t]))
     for (const tid of touched) {
-      const t = p.tracks.find((x) => x.id === tid)!
+      const t = tracksById.get(tid)!
       t.layers.sort((x, y) => x.t_start_us - y.t_start_us)
     }
   }

@@ -21,6 +21,10 @@ export interface AppTimecodeFieldProps {
 const SEG_LABELS = ["hours", "minutes", "seconds", "frames"];
 const LAST = 3;
 
+function pad2(n: number): string {
+  return n.toString().padStart(2, "0");
+}
+
 /// The one timecode editor for every WeftCut form. Renders SMPTE
 /// `HH:MM:SS:FF` as four numeric-only segments with static `:` separators
 /// (the segmented pattern from pro NLEs), inside a single `.app-input`-skinned
@@ -56,7 +60,6 @@ export function AppTimecodeField({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valueUs, fpsNum, fpsDen]);
 
-  const pad2 = (n: number) => n.toString().padStart(2, "0");
   const clamp = (i: number, raw: string) =>
     pad2(Math.min(maxes[i]!, Math.max(0, parseInt(raw || "0", 10) || 0)));
 
@@ -133,7 +136,7 @@ export function AppTimecodeField({
       }}
     >
       {segs.map((seg, i) => (
-        <span key={i} className="app-timecode-seg-wrap">
+        <span key={SEG_LABELS[i]} className="app-timecode-seg-wrap">
           <input
             ref={(el) => {
               inputs.current[i] = el;

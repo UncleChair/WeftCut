@@ -263,16 +263,19 @@ export function useImportReadiness(deps: {
     return () => {
       cancelled = true;
     };
-  }, [summary]);
+  }, [summary, previewRef]);
 
   // Open/extend the import-proxy dialog batch when an import batch completes.
   // Add ALL completed ids (audio/direct included); the classifier filters them
   // out, so non-attention imports never render the dialog.
   useEffect(() => {
-    const completed = importQueue.filter((e) => e.status.kind === "Completed");
-    const fresh = completed
-      .map((e) => e.media_id)
-      .filter((id) => !notifiedImportIds.current.has(id));
+    const fresh = importQueue.flatMap((entry) => {
+      const id = entry.media_id;
+      return entry.status.kind === "Completed" &&
+        !notifiedImportIds.current.has(id)
+        ? [id]
+        : [];
+    });
     if (fresh.length === 0) return;
     for (const id of fresh) notifiedImportIds.current.add(id);
     setDialogBatch((prev) => [...new Set([...prev, ...fresh])]);

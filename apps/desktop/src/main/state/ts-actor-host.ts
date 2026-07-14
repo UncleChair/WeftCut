@@ -198,10 +198,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       store: deps.motifStore,
       builtins: deps.motifBuiltins ?? [],
       motifLayers: () =>
-        actor.snapshot().tracks
-          .flatMap((t) => t.layers)
-          .filter((l) => l.params.kind === 'Motif')
-          .map((l) => { const p = l.params as MotifParams; return { layerId: l.id, motifId: p.motif_id, version: p.motif_version, props: p.props } satisfies MotifLayerRef }),
+        actor.snapshot().tracks.flatMap((t) => t.layers.flatMap((l) => {
+          if (l.params.kind !== 'Motif') return []
+          const p = l.params as MotifParams
+          return [{ layerId: l.id, motifId: p.motif_id, version: p.motif_version, props: p.props } satisfies MotifLayerRef]
+        })),
       dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
       emitChanged: () => deps.send('motifs:changed', {}),
       refreshCatalog: () => refreshMotifCatalog(),

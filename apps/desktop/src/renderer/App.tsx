@@ -45,12 +45,12 @@ import { useExportFlow } from "./app/useExportFlow";
 import { useImportReadiness } from "./app/useImportReadiness";
 import { ExportPanel } from "./panels/ExportPanel";
 import { MediaDropZone, MediaPool } from "./panels/MediaPool";
+import { ShortcutBindingsProvider } from "./shortcuts/bindings-context";
 import {
-  ShortcutBindingsProvider,
   useShortcuts,
   type HandlerMap,
   type OverrideMap,
-} from "./shortcuts";
+} from "./shortcuts/useShortcuts";
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";

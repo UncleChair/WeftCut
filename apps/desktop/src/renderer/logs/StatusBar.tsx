@@ -31,9 +31,15 @@ export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
   // pill so the user has a signal that an MCP client is still working
   // after exiting agent mode (Q4: ops finish in the background).
   const agentRunningCount = useLogStore((s) => {
+    const entryByOp = new Map<string, LogEntry>();
+    for (const entry of s.entries) {
+      if (entry.op_id && !entryByOp.has(entry.op_id)) {
+        entryByOp.set(entry.op_id, entry);
+      }
+    }
     let n = 0;
     for (const opId of Object.keys(s.runningOps)) {
-      const e = s.entries.find((x) => x.op_id === opId);
+      const e = entryByOp.get(opId);
       if (e?.source.kind === "Agent") n += 1;
     }
     return n;

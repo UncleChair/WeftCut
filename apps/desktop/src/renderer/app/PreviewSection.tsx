@@ -96,6 +96,7 @@ export function PreviewSection({
         )}
         <div className="transport-buttons">
           <button
+            type="button"
             onClick={() => onSeek(0)}
             title={t("transport.to_start_hint")}
             aria-label={t("transport.to_start_hint")}
@@ -103,6 +104,7 @@ export function PreviewSection({
             <SkipBackIcon size={16} aria-hidden />
           </button>
           <button
+            type="button"
             onClick={onTogglePlay}
             title={t("transport.play_pause_hint")}
             aria-label={t("transport.play_pause_hint")}
@@ -115,6 +117,7 @@ export function PreviewSection({
             )}
           </button>
           <button
+            type="button"
             onClick={() => onSeek(summary?.duration_us ?? 0)}
             title={t("transport.to_end_hint")}
             aria-label={t("transport.to_end_hint")}

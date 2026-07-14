@@ -403,14 +403,14 @@ function wireFileDrop(): void {
     if (!(e.target instanceof Element && e.target.closest('.media-pool'))) return
     e.preventDefault()
     const paths = Array.from(e.dataTransfer.files)
-      .map((f) => {
+      .flatMap((f) => {
         try {
-          return webUtils.getPathForFile(f)
+          const path = webUtils.getPathForFile(f)
+          return path.length > 0 ? [path] : []
         } catch {
-          return ''
+          return []
         }
       })
-      .filter((p) => p.length > 0)
     if (paths.length > 0) void ipcRenderer.invoke('media:dropped', paths)
   })
 }

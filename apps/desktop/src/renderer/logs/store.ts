@@ -96,8 +96,9 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
       const runningOps: Record<string, "Started" | "Progress"> = {};
       for (const e of reversed) {
         if (!e.op_id || !e.op_state) continue;
-        if (e.op_state.state === "Started" || e.op_state.state === "Progress") {
-          runningOps[e.op_id] = e.op_state.state;
+        const opState = e.op_state.state;
+        if (opState === "Started" || opState === "Progress") {
+          runningOps[e.op_id] = opState;
         } else {
           delete runningOps[e.op_id];
         }
@@ -147,4 +148,3 @@ export async function wireLogStream(): Promise<UnlistenFn> {
     useLogStore.getState().append(event.payload);
   });
 }
-

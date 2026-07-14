@@ -208,6 +208,7 @@ export function AppMenuBar({
           </span>
         )}
         <button
+          type="button"
           className="locale-toggle"
           onClick={cycleLocale}
           title={t("language.switch_label")}

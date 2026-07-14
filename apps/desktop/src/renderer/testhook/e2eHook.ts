@@ -631,7 +631,7 @@ export function installMotifTestHooks(): void {
     const root = await pathJoin(ws, "Cache", "raster");
     if (!(await exists(root))) return [];
     const entries = await readDir(root);
-    return entries.filter((e) => e.isDirectory).map((e) => e.name ?? "");
+    return entries.flatMap((e) => e.isDirectory ? [e.name ?? ""] : []);
   };
 
   hookSlot().gcRasterDirs = async (activeCacheKeys) => {

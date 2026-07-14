@@ -8,7 +8,6 @@
 // when a track is absent (x/y -> 0, scale -> 1, opacity -> 1, gain/pan -> 0,
 // text WHITE, color BLACK).
 import type {
-  AudioView,
   ColorView,
   ImageOverlayView,
   MotifView,
@@ -42,10 +41,6 @@ export interface ResolvedTextView extends Omit<TextView, "color" | "x" | "y" | "
 }
 export interface ResolvedColorView extends Omit<ColorView, "color"> {
   color: Rgba;
-}
-export interface ResolvedAudioView extends Omit<AudioView, "gain_db" | "pan"> {
-  gain_db: number;
-  pan: number;
 }
 export interface ResolvedMotifView
   extends Omit<MotifView, "x" | "y" | "scale_x" | "scale_y" | "opacity"> {
@@ -96,14 +91,6 @@ export function resolveTextView(v: TextView, tInLayerUs: number): ResolvedTextVi
 
 export function resolveColorView(v: ColorView, tInLayerUs: number): ResolvedColorView {
   return { ...v, color: resolveAnimatedColor(v.color, tInLayerUs, BLACK) };
-}
-
-export function resolveAudioView(v: AudioView, tInLayerUs: number): ResolvedAudioView {
-  return {
-    ...v,
-    gain_db: resolveAnimated(v.gain_db, tInLayerUs, 0),
-    pan: resolveAnimated(v.pan, tInLayerUs, 0),
-  };
 }
 
 export function resolveMotifView(v: MotifView, tInLayerUs: number): ResolvedMotifView {

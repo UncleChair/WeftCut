@@ -200,12 +200,12 @@ export function MotifPicker({
               </button>
             </form>
           ) : (
-            <button className="motif-picker-new" onClick={() => setNewOpen(true)}>
+            <button type="button" className="motif-picker-new" onClick={() => setNewOpen(true)}>
               {t("motif_picker.new_button")}
             </button>
           )}
           {!newOpen && (
-            <button className="motif-picker-new" onClick={importFile}>
+            <button type="button" className="motif-picker-new" onClick={importFile}>
               {t("motif_picker.import_button")}
             </button>
           )}
@@ -397,7 +397,7 @@ function MotifForm({
       )}
 
       <h3>{t("motif_picker.timing_heading")}</h3>
-      <label className="motif-picker-field">
+      <div className="motif-picker-field">
         <span>{t("motif_picker.insert_at")}</span>
         <AppTimecodeField
           valueUs={insertAtUs}
@@ -406,8 +406,8 @@ function MotifForm({
           ariaLabel={t("motif_picker.insert_at")}
           onCommit={setInsertAtUs}
         />
-      </label>
-      <label className="motif-picker-field">
+      </div>
+      <div className="motif-picker-field">
         <span>{t("motif_picker.track_label")}</span>
         <AppSelect
           value={trackChoice}
@@ -424,7 +424,7 @@ function MotifForm({
             })),
           ]}
         />
-      </label>
+      </div>
       <p className="motif-picker-hint">
         {t("motif_picker.duration_hint", {
           value: formatTimecode(Math.round(motif.default_duration_s * 1_000_000), fpsNum, fpsDen),
@@ -585,7 +585,7 @@ function MotifPreview({
 /// component the form's large preview uses, so card and form stay visually
 /// consistent.
 function MotifCardThumbnail({ motif }: { motif: MotifSummary }) {
-  const defaults = useMemo(() => defaultPropsFor(motif), [motif.id]);
+  const defaults = useMemo(() => defaultPropsFor(motif), [motif]);
   return <MotifPreview motif={motif} props={defaults} maxWidth={240} />;
 }
 
@@ -628,17 +628,18 @@ function PropField({
       );
     case "color":
       return (
-        <label className="motif-picker-field">
+        <div className="motif-picker-field">
           <span>{propKey}</span>
           <ColorInput
             value={typeof value === "string" ? value : spec.default}
+            ariaLabel={propKey}
             onChange={onChange}
           />
-        </label>
+        </div>
       );
     case "number":
       return (
-        <label className="motif-picker-field">
+        <div className="motif-picker-field">
           <span>{propKey}</span>
           <AppNumberField
             value={typeof value === "number" ? value : spec.default}
@@ -653,7 +654,7 @@ function PropField({
             {...(spec.min !== undefined ? { min: spec.min } : {})}
             {...(spec.max !== undefined ? { max: spec.max } : {})}
           />
-        </label>
+        </div>
       );
     case "enum":
       return (
@@ -683,9 +684,11 @@ function PropField({
 /// `captions_strip/style.css` for the long version.
 function ColorInput({
   value,
+  ariaLabel,
   onChange,
 }: {
   value: string;
+  ariaLabel: string;
   onChange: (v: string) => void;
 }) {
   // `<input type="color">` returns 6-char hex. Show 6 chars to the picker;
@@ -693,7 +696,7 @@ function ColorInput({
   const rgb = value.length >= 7 ? value.slice(0, 7) : value;
   return (
     <span className="motif-picker-color">
-      <AppColorField value={rgb} onValueChange={onChange} />
+      <AppColorField value={rgb} ariaLabel={ariaLabel} onValueChange={onChange} />
       <code>{value}</code>
     </span>
   );

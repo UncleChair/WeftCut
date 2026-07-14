@@ -23,6 +23,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -630,7 +631,8 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   // rAF interval tracking. We keep the ring + last-tick time on refs
   // so the rAF callback doesn't re-render on every frame; the HUD only
   // re-renders when the 500 ms polling tick recomputes P50/P99.
-  const intervalsRef = useRef<IntervalRing>(newIntervalRing());
+  const intervalsRef = useRef<IntervalRing | null>(null);
+  if (intervalsRef.current === null) intervalsRef.current = newIntervalRing();
   const lastRafMsRef = useRef<number | null>(null);
   const hudRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -644,7 +646,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     const tick = (nowMs: number): void => {
       const prev = lastRafMsRef.current;
       if (prev !== null) {
-        pushInterval(intervalsRef.current, nowMs - prev);
+        pushInterval(intervalsRef.current!, nowMs - prev);
       }
       lastRafMsRef.current = nowMs;
       rafHandle = requestAnimationFrame(tick);
@@ -693,7 +695,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         setSnap(s);
         setAud(c.getAudioGraph()?.meterSnapshot() ?? null);
       }
-      const { p50, p99 } = p50p99FromRing(intervalsRef.current);
+      const { p50, p99 } = p50p99FromRing(intervalsRef.current!);
       setRafP50(p50);
       setRafP99(p99);
       setMemory(readMemory());
@@ -865,21 +867,24 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     }
   }, []);
 
-  const sample: PerfHudSample = {
-    snap,
-    rafP50,
-    rafP99,
-    memory,
-    playheadUs,
-    warmup,
-    fpsByLayer: Array.from(fpsByLayer.entries()),
-    sys,
-    aud: aud ? { rmsDb: jsonSafeDb(aud.rmsDb), peakDb: jsonSafeDb(aud.peakDb) } : null,
-  };
+  const sample = useMemo<PerfHudSample>(
+    () => ({
+      snap,
+      rafP50,
+      rafP99,
+      memory,
+      playheadUs,
+      warmup,
+      fpsByLayer: Array.from(fpsByLayer.entries()),
+      sys,
+      aud: aud ? { rmsDb: jsonSafeDb(aud.rmsDb), peakDb: jsonSafeDb(aud.peakDb) } : null,
+    }),
+    [snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud],
+  );
 
   useEffect(() => {
     void emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
-  }, [snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud]);
+  }, [sample]);
 
   const openPerfHudWindow = useCallback(async (): Promise<void> => {
     try {

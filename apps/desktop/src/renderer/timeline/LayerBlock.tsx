@@ -68,7 +68,7 @@ export interface PendingLayerPlacement {
 
 /// Small status dot on a Motif layer block. Phase-only (no count) so it
 /// re-renders only on phase change. Hidden when idle (selector returns null).
-export function MotifBakeDot({ layerId }: { layerId: string }) {
+function MotifBakeDot({ layerId }: { layerId: string }) {
   const { t } = useTranslation();
   const phase = useLayerBakePhase(layerId);
   if (!phase) return null;
@@ -424,10 +424,12 @@ export function LayerBlock({
     if (!focusedParam) return [] as { id: string; x: number }[];
     const track = readParamTrack(layer.params, focusedParam);
     if (!track || track.mode !== "Keyframed") return [];
-    return track.value
+    return track.value.flatMap((k) =>
       // collapsed mode hides out-of-range keys (kept in data)
-      .filter((k) => k.t_us >= 0 && k.t_us <= clipDurationUs)
-      .map((k) => ({ id: k.id, x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx) }));
+      k.t_us >= 0 && k.t_us <= clipDurationUs
+        ? [{ id: k.id, x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx) }]
+        : [],
+    );
   })();
 
   return (

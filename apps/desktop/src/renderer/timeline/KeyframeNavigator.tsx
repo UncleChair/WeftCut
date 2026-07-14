@@ -11,6 +11,10 @@ import { transportSeek } from "../state/playbackStore";
 import { selectKeyframe } from "../keyframe/selectionStore";
 import { setKeyframeFocus, useKeyframeFocusStore } from "../keyframe/focusStore";
 
+function stopPropagation(e: SyntheticEvent): void {
+  e.stopPropagation();
+}
+
 /// AE-style per-property keyframe navigator (prev / set / next) for one
 /// sub-lane row. Acts on a single resolved clip (focused clip → sole keyframed
 /// clip → disabled, per `resolveNavLayer`): the prev/next buttons seek the
@@ -74,10 +78,8 @@ export function KeyframeNavigator({
 
   // The buttons live inside the timeline root, whose onClick deselects the
   // current layer. Stop the bubble so navigating keys doesn't clear selection.
-  const stop = (e: SyntheticEvent) => e.stopPropagation();
-
   return (
-    <div className="flex flex-none items-center gap-0.5" onClick={stop} onPointerDown={stop}>
+    <div className="flex flex-none items-center gap-0.5" onClick={stopPropagation} onPointerDown={stopPropagation}>
       <button
         type="button"
         data-testid="kf-nav-prev"

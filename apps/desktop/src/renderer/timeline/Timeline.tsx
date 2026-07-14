@@ -2,6 +2,8 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,7 +32,7 @@ import {
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "../settings/appSettingsStore";
-import { useShortcuts, type OverrideMap } from "../shortcuts";
+import { useShortcuts, type OverrideMap } from "../shortcuts/useShortcuts";
 import { ACTION_DEFS } from "../shortcuts/defs";
 import { useCommandProvider } from "../commands/registry";
 import { requestPrebake } from "../render/motifs/prebakeBus";
@@ -170,7 +172,9 @@ export function Timeline({
   // pxPerSec is React state; the registered closure reads it through a ref
   // so registration happens once per mount.
   const pxPerSecForScrollRef = useRef(pxPerSec);
-  pxPerSecForScrollRef.current = pxPerSec;
+  useLayoutEffect(() => {
+    pxPerSecForScrollRef.current = pxPerSec;
+  }, [pxPerSec]);
   useEffect(
     () =>
       registerScrollToTime((tUs) => {
@@ -269,11 +273,13 @@ export function Timeline({
   /// Handlers read state via refs to avoid the
   /// stale-closure trap of multi-key chord dispatch.
   const selectedLayerIdsRef = useRef(selectedLayerIds);
-  selectedLayerIdsRef.current = selectedLayerIds;
   const groupByLayerIdRef = useRef(groupByLayerId);
-  groupByLayerIdRef.current = groupByLayerId;
   const onMutatedRef = useRef(onMutated);
-  onMutatedRef.current = onMutated;
+  useLayoutEffect(() => {
+    selectedLayerIdsRef.current = selectedLayerIds;
+    groupByLayerIdRef.current = groupByLayerId;
+    onMutatedRef.current = onMutated;
+  }, [selectedLayerIds, groupByLayerId, onMutated]);
 
   const shortcutOverrides = useMemo<OverrideMap>(
     () => keybindings as OverrideMap,
@@ -596,17 +602,18 @@ export function Timeline({
 
   // Esc exits blade mode. Bound at the window level so it fires regardless
   // of focus, and attached only while blade mode is on.
+  const onExitBladeEvent = useEffectEvent(onExitBlade);
   useEffect(() => {
     if (!bladeMode) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onExitBlade();
+        onExitBladeEvent();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [bladeMode, onExitBlade]);
+  }, [bladeMode]);
 
   // Ruler-only seek: the time ruler is the SOLE surface that moves the
   // playhead. Begins a drag-scrub from the ruler's pointerdown. Decoupled

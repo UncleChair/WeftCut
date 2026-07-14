@@ -3,7 +3,7 @@
 // discipline); the only React state is the store's session presence.
 // Spec: docs/superpowers/specs/2026-07-11-color-picker-design.md
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { sampleHex, samplePatch, type FrameBuffer } from "./pixel";
 import { getPreviewSampler } from "./previewSamplerRegistry";
@@ -12,6 +12,31 @@ import { eyeDropperAvailable, screenPick } from "./screenPick";
 
 const MAG_RADIUS = 5; // 11×11 source patch
 const MAG_SCALE = 10; // → 110×110 magnifier canvas
+
+const MAGNIFIER_STYLE: CSSProperties = {
+  position: "fixed",
+  left: 0,
+  top: 0,
+  visibility: "hidden",
+  pointerEvents: "none",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 4,
+};
+
+const HINT_STYLE: CSSProperties = {
+  position: "fixed",
+  bottom: 24,
+  left: "50%",
+  transform: "translateX(-50%)",
+  font: "12px system-ui",
+  color: "#e5e7eb",
+  background: "rgba(0,0,0,0.7)",
+  padding: "4px 10px",
+  borderRadius: 4,
+  pointerEvents: "none",
+};
 
 export function PickOverlayHost() {
   const session = usePickSessionStore((s) => s.session);
@@ -150,17 +175,7 @@ function PickOverlay({ session }: { session: PickSession }) {
     >
       <div
         ref={magRef}
-        style={{
-          position: "fixed",
-          left: 0,
-          top: 0,
-          visibility: "hidden",
-          pointerEvents: "none",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 4,
-        }}
+        style={MAGNIFIER_STYLE}
       >
         <canvas
           ref={magCanvasRef}
@@ -180,18 +195,7 @@ function PickOverlay({ session }: { session: PickSession }) {
         />
       </div>
       <div
-        style={{
-          position: "fixed",
-          bottom: 24,
-          left: "50%",
-          transform: "translateX(-50%)",
-          font: "12px system-ui",
-          color: "#e5e7eb",
-          background: "rgba(0,0,0,0.7)",
-          padding: "4px 10px",
-          borderRadius: 4,
-          pointerEvents: "none",
-        }}
+        style={HINT_STYLE}
       >
         {t("colorpick.hint_cancel")}
         {eyeDropperAvailable() ? ` · ${t("colorpick.hint_screen")}` : ""}

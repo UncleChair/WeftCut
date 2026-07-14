@@ -3,8 +3,6 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { tileEngine, type TileEngine, type TileKey } from "./TileEngine";
 
 export const FILMSTRIP_KIND = "filmstrip";
-/// Canonical decode height — lane height / zoom never changes a cache key.
-export const FILMSTRIP_TILE_HEIGHT_PX = 256;
 /// Time-grid base spacing. Twin: native jobs/filmstrip.rs
 /// FILMSTRIP_BASE_SPACING_US / spacing_us — both sides pin the same endpoints.
 export const FILMSTRIP_BASE_SPACING_US = 250_000;

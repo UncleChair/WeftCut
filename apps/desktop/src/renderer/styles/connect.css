@@ -75,7 +75,7 @@
   margin: 8px 0;
 }
 
-.connect-field label {
+.connect-field-label {
   display: block;
   font-size: 11px;
   color: var(--muted-foreground);

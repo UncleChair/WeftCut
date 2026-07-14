@@ -443,7 +443,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       compositor.compositeFrame(0);
       setStatus("");
     },
-    [onTimeUpdate, onPausedChange],
+    [onTimeUpdate, onPausedChange, previewDecodableOf],
   );
 
   // A Standard switch (from the card's own button or the settings panel) or

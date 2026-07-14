@@ -534,12 +534,12 @@ export function mcpDef(name: string): McpToolDef { const d = DEF_BY_NAME.get(nam
  *  Explicit-param tools (add_color_layer/add_video_layer/add_marker/split_layer
  *  etc.) are NOT here — they have dedicated arms in actor.mcpCall. */
 export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> =
-  Object.fromEntries(MCP_TOOL_DEFS.filter((d) => d.parseArgs).map((d) => [d.name, d.parseArgs!]))
+  Object.fromEntries(MCP_TOOL_DEFS.flatMap((d) => d.parseArgs ? [[d.name, d.parseArgs] as const] : []))
 
 /** MCP tool → ToolResult from the dispatch value. Projection of MCP_TOOL_DEFS.
  *  Tools absent here → toolEmpty. */
 export const MCP_RESULT_SHAPERS: Record<string, (value: unknown) => ToolResultJson> =
-  Object.fromEntries(MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => [d.name, d.shapeResult!]))
+  Object.fromEntries(MCP_TOOL_DEFS.flatMap((d) => d.shapeResult ? [[d.name, d.shapeResult] as const] : []))
 
 /** All MCP tools this adapter handles (parsers + the dedicated arms). Projection of MCP_TOOL_DEFS. */
 export const MCP_TOOLS: ReadonlySet<string> = new Set(MCP_TOOL_DEFS.map((d) => d.name))

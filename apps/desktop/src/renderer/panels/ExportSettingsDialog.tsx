@@ -435,6 +435,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                           onCommit={setRangeStartUs}
                         />
                         <button
+                          type="button"
                           onClick={() =>
                             setRangeStartUs(Math.min(currentTimeUs, rangeEndUs))
                           }
@@ -456,6 +457,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                           onCommit={setRangeEndUs}
                         />
                         <button
+                          type="button"
                           onClick={() =>
                             setRangeEndUs(Math.max(currentTimeUs, rangeStartUs))
                           }

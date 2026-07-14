@@ -45,6 +45,11 @@ export function AnimatableField({
   const { t } = useTranslation();
   const lit = track.mode === "Keyframed";
   const disabled = !lit && !playheadInSpan; // can't START animating off-clip
+  const toggleLabel = disabled
+    ? t("keyframe.stopwatch_offscreen")
+    : lit
+      ? t("keyframe.stopwatch_disable")
+      : t("keyframe.stopwatch_enable");
 
   const toggle = async () => {
     try {
@@ -66,14 +71,9 @@ export function AnimatableField({
         type="button"
         className={`anim-stopwatch ${lit ? "is-lit" : ""}`}
         aria-pressed={lit}
+        aria-label={toggleLabel}
         disabled={disabled}
-        title={
-          disabled
-            ? t("keyframe.stopwatch_offscreen")
-            : lit
-              ? t("keyframe.stopwatch_disable")
-              : t("keyframe.stopwatch_enable")
-        }
+        title={toggleLabel}
         onClick={toggle}
       >
         <Clock size={12} aria-hidden />

@@ -7,6 +7,10 @@ import { snapFrameRound } from "../frames";
 import { useKeyframeFocusStore } from "../keyframe/focusStore";
 import { KeyframeField } from "../components/KeyframeField";
 
+function stopPropagation(e: SyntheticEvent): void {
+  e.stopPropagation();
+}
+
 /// The editable value for one expanded sub-lane row: the property's value at
 /// the frame-snapped playhead, as a compact number field with no stopwatch.
 /// Acts on the same resolved clip as the row's navigator (resolveNavLayer →
@@ -38,8 +42,6 @@ export function KeyframeValueField({
 
   // The timeline root's onClick clears the layer selection; stop the bubble so
   // editing the value doesn't deselect (same guard as KeyframeNavigator).
-  const stop = (e: SyntheticEvent) => e.stopPropagation();
-
   // exactOptionalPropertyTypes rejects passing `undefined` for `?: number`
   // props, so spread step/min/max only when set (mirrors InspectorAnimField).
   const bounds = {
@@ -49,7 +51,7 @@ export function KeyframeValueField({
   };
 
   return (
-    <div className="kf-value-row mx-auto w-20" onClick={stop} onPointerDown={stop}>
+    <div className="kf-value-row mx-auto w-20" onClick={stopPropagation} onPointerDown={stopPropagation}>
       <KeyframeField
         layerId={layer.id}
         paramKey={desc.paramKey}

@@ -299,6 +299,7 @@ export function RecordPanel({ sessionStartedAt, lockReason }: RecordPanelProps) 
                     {row.label}
                   </span>
                   <button
+                    type="button"
                     className="row-restore"
                     onClick={() => onRestore(row.id)}
                     disabled={disabled}

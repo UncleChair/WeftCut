@@ -167,14 +167,17 @@ export type InstallArgs = { draft_id: string; mode: { kind: 'new' } | { kind: 'u
  *  with props lenient-migrated to the new schema (drop unknown, fill new defaults,
  *  fall back invalid values). Pure. Mirrors `build_rebind_updates`. */
 export function buildRebindUpdates(layers: MotifLayerRef[], workingId: string, target: Manifest): MotifRebindEntry[] {
-  return layers
-    .filter((l) => l.motifId === workingId || l.motifId === target.id)
-    .map((l) => ({
+  const updates: MotifRebindEntry[] = []
+  for (const l of layers) {
+    if (l.motifId !== workingId && l.motifId !== target.id) continue
+    updates.push({
       layer_id: l.layerId,
       motif_id: target.id,
       motif_version: target.version,
       props: canonicalizePropsLenient(target, l.props),
-    }))
+    })
+  }
+  return updates
 }
 
 /** Publish the draft (store side) + (Update) build rebind updates from the

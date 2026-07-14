@@ -4,9 +4,9 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import {
   resolveAccelerator,
-  useEffectiveBindings,
-  type ActionId,
-} from "../shortcuts";
+} from "../shortcuts/match";
+import { useEffectiveBindings } from "../shortcuts/bindings-context";
+import type { ActionId } from "../shortcuts/defs";
 
 /// The menu bar container. Base UI's Menubar makes the triggers one
 /// composite roving-focus stop and coordinates the Menus inside it:

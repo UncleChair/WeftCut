@@ -7,7 +7,8 @@ import { AppInput } from "../components/AppInput";
 import { getCommand } from "../commands/registry";
 import { formatTimecode } from "../frames";
 import { logEmit } from "../ipc";
-import { resolveAccelerator, useEffectiveBindings } from "../shortcuts";
+import { resolveAccelerator } from "../shortcuts/match";
+import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
 import { useProjectStore } from "../state/projectStore";
 import { GROUP_ORDER, rankEntries, type RankedResult } from "./matcher";
@@ -21,6 +22,15 @@ interface MediaSubList {
   label: string;
   mediaId: string;
   usages: MediaUsage[];
+}
+
+function logStaleTarget(): void {
+  void logEmit({
+    level: "info",
+    category: { kind: "System" },
+    source: { kind: "User" },
+    message: "search: target no longer exists",
+  });
 }
 
 /// The global search palette (Mod+K): fuzzy-ranked commands/media/tracks/
@@ -74,14 +84,6 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
 
   const count = sub ? subActions.length : flat.length;
   const clampedActive = Math.min(active, Math.max(0, count - 1));
-
-  const logStaleTarget = () =>
-    void logEmit({
-      level: "info",
-      category: { kind: "System" },
-      source: { kind: "User" },
-      message: "search: target no longer exists",
-    });
 
   const activate = (idx: number) => {
     if (sub) {
@@ -200,7 +202,7 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
             ) : flat.length === 0 ? (
               <div className="search-empty">{t("search.no_results", { query })}</div>
             ) : (
-              GROUP_ORDER.filter((g) => grouped.has(g)).map((g) => (
+              GROUP_ORDER.map((g) => grouped.has(g) ? (
                 <div key={g}>
                   <div className="search-group-header">{t(`search.group_${g}`)}</div>
                   {(expanded.has(g)
@@ -219,7 +221,8 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
                     );
                   })}
                   {truncatedCounts.has(g) && (
-                    <div
+                    <button
+                      type="button"
                       className="search-show-more"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
@@ -242,10 +245,10 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
                       }}
                     >
                       {t("search.show_more", { count: truncatedCounts.get(g) })}
-                    </div>
+                    </button>
                   )}
                 </div>
-              ))
+              ) : null)
             )}
           </div>
         </DialogPrimitive.Popup>
@@ -290,6 +293,7 @@ function ResultRow({
   return (
     <div
       role="option"
+      tabIndex={-1}
       aria-selected={active}
       aria-disabled={disabled || undefined}
       className={cn("search-row", active && "is-active", disabled && "is-disabled")}
@@ -338,6 +342,7 @@ function SubActionRow({
   return (
     <div
       role="option"
+      tabIndex={-1}
       aria-selected={active}
       className={cn("search-row", active && "is-active")}
       onMouseDown={(e) => e.preventDefault()}

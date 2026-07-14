@@ -177,7 +177,7 @@ export function useLayerDrag(opts: {
       }
       return null;
     },
-    [trackRows],
+    [canvasRef, trackRows],
   );
 
   /// Snap a raw drag delta so the dragged edge / clip-start lands on

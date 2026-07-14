@@ -75,21 +75,23 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
 
   // Split target FIRST (id-allocation order: target right-half id comes first).
   const targetHalves = splitSingleLayer(p, idGen, id, atTUs)
+  const groupByMember = indexGroups(p.groups)
+  const groupById = new Map(p.groups.map((g) => [g.id, g]))
 
   // Split each spanning sibling in sorted order; add its right-half to the sibling's group.
   for (const sid of spanning) {
     const { right: rightId } = splitSingleLayer(p, idGen, sid, atTUs)
-    const gid = indexGroups(p.groups).get(sid)
+    const gid = groupByMember.get(sid)
     if (gid !== undefined) {
-      const g = p.groups.find((x) => x.id === gid)
+      const g = groupById.get(gid)
       if (g) { g.members = [...g.members, rightId].sort() }
     }
   }
   // Add the target's right-half to its group, if any. UNCONDITIONAL:
   // even with escape_group, the target's left half keeps the original id and stays grouped,
   // so its right half joins too (verified against the group-split-escape oracle: 3 members).
-  const tgid = indexGroups(p.groups).get(targetHalves.left)
-  if (tgid !== undefined) { const g = p.groups.find((x) => x.id === tgid); if (g) { g.members = [...g.members, targetHalves.right].sort() } }
+  const tgid = groupByMember.get(targetHalves.left)
+  if (tgid !== undefined) { const g = groupById.get(tgid); if (g) { g.members = [...g.members, targetHalves.right].sort() } }
 
   return targetHalves
 }

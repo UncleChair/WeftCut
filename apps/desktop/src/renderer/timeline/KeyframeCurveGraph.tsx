@@ -2,7 +2,7 @@
 // keyframed property of one layer. Curve + handles live in an SVG overlay
 // (absolute, ruler-px coordinates); keyframe dots are HTML spans on top so
 // they keep the `.kf-sublane-diamond` contract the e2e suite asserts.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AnimTrack, Interpolation } from "../ipc";
 import { interpToCoeffs } from "../keyframe/curve";
 import {
@@ -80,7 +80,9 @@ export function KeyframeCurveGraph({
   // Keep the latest geom reachable from drag closures created at pointerdown
   // (the timeline can zoom/rescale mid-drag → captured geom would go stale).
   const geomRef = useRef(geom);
-  geomRef.current = geom;
+  useLayoutEffect(() => {
+    geomRef.current = geom;
+  }, [geom]);
 
   // Segments: each owns renderKeys[i].interp (p1 near keys[i], p2 near keys[i+1]).
   const segments = useMemo(() => {

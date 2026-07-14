@@ -53,6 +53,7 @@ export function EasingMenu({
             {PRESETS.map((p) => (
               <button
                 key={p.id}
+                type="button"
                 style={CHIP_STYLE}
                 onClick={() => { onCommit(setKeyframeInterp(track, kfId, p.interp)); onClose(); }}
               >
@@ -60,6 +61,7 @@ export function EasingMenu({
               </button>
             ))}
             <button
+              type="button"
               style={{ ...CHIP_STYLE, cursor: isHold ? "not-allowed" : "pointer", opacity: isHold ? 0.4 : 1 }}
               disabled={isHold}
               data-testid="easing-smooth"

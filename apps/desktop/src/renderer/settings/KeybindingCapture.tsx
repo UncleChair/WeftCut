@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
 import {
-  ACTION_DEFS,
-  type ActionId,
   bindingsEqual,
   eventToBinding,
   resolveAccelerator,
-} from "../shortcuts";
+} from "../shortcuts/match";
 
 interface ConflictInfo {
   /// The action that already owns the chord the user just pressed.
@@ -49,6 +48,8 @@ export function KeybindingCapture({
   const { t } = useTranslation();
   const [conflict, setConflict] = useState<ConflictInfo | null>(null);
   const containerRef = useRef<HTMLSpanElement | null>(null);
+  const onCommitEvent = useEffectEvent(onCommit);
+  const onCancelEvent = useEffectEvent(onCancel);
 
   useEffect(() => {
     onActiveChange(true);
@@ -71,7 +72,7 @@ export function KeybindingCapture({
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        onCancel();
+        onCancelEvent();
         return;
       }
       const binding = eventToBinding(e);
@@ -96,7 +97,7 @@ export function KeybindingCapture({
         setConflict({ ownerId: ownerOfConflict });
         return;
       }
-      onCommit(binding);
+      onCommitEvent(binding);
     }
     // `capture: true` so we beat any local input that might also
     // listen — but the global dispatcher is already suspended so
@@ -104,7 +105,7 @@ export function KeybindingCapture({
     window.addEventListener("keydown", onKey, { capture: true });
     return () =>
       window.removeEventListener("keydown", onKey, { capture: true } as any);
-  }, [effective, ownerId, onCommit, onCancel]);
+  }, [effective, ownerId]);
 
   // Click outside dismisses the chip when a conflict is showing. While
   // we're still waiting for a keypress, clicks pass through — the
@@ -112,11 +113,11 @@ export function KeybindingCapture({
   useEffect(() => {
     if (!conflict) return;
     function onClick(e: MouseEvent) {
-      if (!containerRef.current?.contains(e.target as Node)) onCancel();
+      if (!containerRef.current?.contains(e.target as Node)) onCancelEvent();
     }
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
-  }, [conflict, onCancel]);
+  }, [conflict]);
 
   if (conflict) {
     const ownerLabelKey = ACTION_DEFS[conflict.ownerId].labelKey;

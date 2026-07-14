@@ -178,7 +178,7 @@ export function useTimelineView(opts: {
     return () => {
       root.removeEventListener("wheel", onWheel);
     };
-  }, []);
+  }, [rootRef]);
 
   // Re-anchor scroll position so the time under the cursor stays put.
   // Runs synchronously after the layout flip so there's no flash.
@@ -192,7 +192,7 @@ export function useTimelineView(opts: {
     root.scrollLeft =
       (pending.scrollLeft + pending.cursorXInViewport) * ratio -
       pending.cursorXInViewport;
-  }, [pxPerSec]);
+  }, [pxPerSec, rootRef]);
 
   const toggleExpanded = useCallback(
     (id: string) =>
