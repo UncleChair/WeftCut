@@ -10,7 +10,6 @@ import {
   useMediaDragStore,
 } from "../timeline/mediaDrag";
 import { AppInput } from "../components/AppInput";
-import { formatTimecode } from "../frames";
 import { type MediaSummary, generateQuickProxy } from "../ipc";
 import { registerRevealMedia } from "../state/navigation";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
@@ -167,8 +166,6 @@ export function MediaPool({
   importing,
   proxyState,
   previewDecodable,
-  fpsNum,
-  fpsDen,
   onCancelImport,
 }: {
   media: MediaSummary[];
@@ -315,42 +312,26 @@ export function MediaPool({
             >
               <div className="media-item-thumb">
                 <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
-                {/* Hover-revealed details overlay. Shows kind, duration,
-                    dimensions, size. Hidden by default; opacity-faded
-                    in on hover so the card stays calm in the resting
-                    state. Importing / missing states swap in a pinned
-                    status badge instead. */}
-                <div className="media-item-details" aria-hidden="true">
-                  <span
-                    className={`media-kind kind-${m.kind.toLowerCase()}`}
-                  >
-                    {t(`kinds.${m.kind.toLowerCase()}`, {
-                      defaultValue: m.kind,
-                    })}
+                <span
+                  className={`media-kind kind-${m.kind.toLowerCase()}`}
+                >
+                  {t(`kinds.${m.kind.toLowerCase()}`, {
+                    defaultValue: m.kind,
+                  })}
+                </span>
+                <ProxyPill media={m} />
+                <div className="media-item-metadata">
+                  <span className="media-resolution-badge">
+                    {m.width !== null && m.height !== null
+                      ? `${m.width}×${m.height}`
+                      : "—"}
                   </span>
-                  <span className="media-meta">
+                  <span className="media-duration-badge">
                     {m.duration_us !== null
-                      ? t("media_pool.duration", {
-                          value: formatTimecode(m.duration_us, fpsNum, fpsDen),
-                        })
+                      ? formatMediaDuration(m.duration_us)
                       : t("media_pool.no_duration")}
                   </span>
-                  {m.width !== null && m.height !== null && (
-                    <span className="media-meta">
-                      {m.width}×{m.height}
-                    </span>
-                  )}
-                  <span className="media-meta">
-                    {formatBytes(m.size_bytes, t)}
-                  </span>
                 </div>
-                {/* Sibling of the aria-hidden .media-item-details above, NOT
-                    nested inside it: that panel is pointer-events:none at
-                    rest, which would trap this button from keyboard/AT
-                    reach (axe aria-hidden-focus). Absolutely positioned in
-                    its own corner; CSS reveals it on hover OR
-                    focus-within so Tab can reach it. */}
-                <ProxyPill media={m} />
                 {reason === "importing" && (
                   <button
                     type="button"
@@ -398,10 +379,7 @@ export function MediaPool({
                   </span>
                 )}
               </div>
-              <span
-                className="media-item-name"
-                title={m.label}
-              >
+              <span className="media-item-name" title={m.label}>
                 {m.label}
               </span>
             </li>
@@ -439,21 +417,13 @@ function ProxyPill({ media }: { media: MediaSummary }) {
   );
 }
 
-function formatBytes(
-  bytes: number,
-  t: (k: string, v: Record<string, unknown>) => string,
-): string {
-  const KIB = 1024;
-  const MIB = KIB * 1024;
-  const GIB = MIB * 1024;
-  if (bytes >= GIB) {
-    return t("media_pool.size_gib", { value: (bytes / GIB).toFixed(2) });
-  }
-  if (bytes >= MIB) {
-    return t("media_pool.size_mib", { value: (bytes / MIB).toFixed(2) });
-  }
-  if (bytes >= KIB) {
-    return t("media_pool.size_kib", { value: (bytes / KIB).toFixed(0) });
-  }
-  return t("media_pool.size_bytes", { bytes });
+/// Compact duration used by media-pool cards. Minutes deliberately represent
+/// the complete duration instead of wrapping at an hour: 1:01:05 is 61:05.
+export function formatMediaDuration(durationUs: number): string {
+  const totalSeconds = Math.max(0, Math.round(durationUs / 1_000_000));
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${totalMinutes.toString().padStart(2, "0")}:${seconds
+    .toString()
+    .padStart(2, "0")}`;
 }

@@ -16,7 +16,7 @@ vi.mock("../state/proxyPreferenceStore", async (importActual) => {
 
 import { generateQuickProxy, type MediaSummary } from "../ipc";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
-import { MediaPool } from "./MediaPool";
+import { formatMediaDuration, MediaPool } from "./MediaPool";
 import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
 
 afterEach(() => {
@@ -70,6 +70,9 @@ describe("MediaPool proxy pill", () => {
     renderPool([makeMedia("m1", { route: "direct-export", quick_proxy: null })]);
     const pill = document.querySelector(".media-proxy-pill.is-auto");
     expect(pill).not.toBeNull();
+    expect(pill?.closest(".media-item-thumb")).not.toBeNull();
+    expect(pill?.closest(".media-item-info")).toBeNull();
+    expect(pill?.textContent).toBe("Proxy: Auto");
     await userEvent.click(pill as HTMLElement);
 
     expect(generateQuickProxy).toHaveBeenCalledWith("m1");
@@ -99,6 +102,35 @@ describe("MediaPool proxy pill", () => {
     // path (that's only auto(undefined)->true); guard against a regression
     // that fires a build on every click.
     expect(generateQuickProxy).not.toHaveBeenCalled();
+  });
+});
+
+describe("MediaPool card metadata", () => {
+  it("always shows type, resolution, and total-minute duration badges", () => {
+    const media = makeMedia("long-media", { route: "bypass" });
+    media.kind = "Image";
+    media.width = 3840;
+    media.height = 2160;
+    media.duration_us = (61 * 60 + 5) * 1_000_000;
+
+    const { container } = renderPool([media]);
+    const thumbnail = container.querySelector(".media-item-thumb");
+
+    expect(container.querySelector(".media-kind")?.textContent).toBe("Image");
+    expect(thumbnail?.querySelector(".media-resolution-badge")?.textContent).toBe(
+      "3840×2160",
+    );
+    expect(thumbnail?.querySelector(".media-duration-badge")?.textContent).toBe(
+      "61:05",
+    );
+    expect(container.querySelector(".media-item-info")).toBeNull();
+    expect(container.querySelector(".media-item-name")?.textContent).toBe(
+      "long-media",
+    );
+  });
+
+  it("does not wrap total minutes at 60", () => {
+    expect(formatMediaDuration((125 * 60 + 9) * 1_000_000)).toBe("125:09");
   });
 });
 

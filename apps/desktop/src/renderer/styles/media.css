@@ -100,9 +100,8 @@
 /* Search field + its ✕ now come from AppInput (.app-input / .app-input-clear);
  * .media-pool-search just provides the bottom margin around the wrap. */
 
-/* MediaPool card grid: thumbnail on top, name strip at the bottom by
-   default; details overlay fades in on hover. Click to preview; HTML5
-   drag handles drag-to-track. */
+/* MediaPool card grid: thumbnail on top, name strip at the bottom. Click to
+   preview; HTML5 drag handles drag-to-track. */
 .media-list {
   list-style: none;
   margin: 0;
@@ -151,36 +150,38 @@
 }
 
 .media-item-name {
+  display: block;
+  width: 100%;
   padding: 5px 8px 6px;
   color: var(--foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
   border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-/* Hover-revealed detail overlay sits on top of the thumbnail and fades
-   in on card hover. Pointer-events:none so it doesn't intercept the
-   click → preview gesture. */
-.media-item-details {
+.media-item-metadata {
   position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to top,
-    rgba(11, 13, 17, 0.92) 70%,
-    rgba(11, 13, 17, 0.5)
-  );
+  inset: auto 0 0;
+  z-index: 1;
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 3px;
-  padding: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 18px 7px 6px;
+  background: linear-gradient(
+    to bottom,
+    rgba(11, 13, 17, 0),
+    rgba(11, 13, 17, 0.78)
+  );
   opacity: 0;
-  transition: opacity 80ms ease-out;
   pointer-events: none;
+  transition: opacity 80ms ease-out;
 }
 
-.media-item:hover .media-item-details {
+.media-item:hover .media-item-metadata {
   opacity: 1;
 }
 
@@ -281,21 +282,36 @@
 }
 
 .media-kind {
-  align-self: flex-start;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
   font-size: var(--font-size-caption);
   font-weight: 600;
   color: var(--color-slate-300);
-  background: var(--secondary);
-  padding: 1px 6px;
+  background: rgba(11, 13, 17, 0.68);
+  padding: 2px 7px;
   border-radius: var(--radius-control);
   text-align: center;
+  line-height: var(--line-height-tight);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
-.media-meta {
-  color: var(--color-slate-300);
+.media-resolution-badge,
+.media-duration-badge {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+  padding: 1px 6px;
+  border-radius: var(--radius-control);
+  color: var(--color-slate-200);
+  background: rgba(11, 13, 17, 0.68);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   font-size: var(--font-size-caption);
+  line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
 }
 
 /* --------------------------------------------------------------------------
@@ -324,8 +340,10 @@
    uncluttered. */
 .media-import-cancel {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
   background: rgba(96, 165, 250, 0.85);
   border: 1px solid rgba(96, 165, 250, 0.9);
   color: #0a0c10;
@@ -345,8 +363,10 @@
 
 .media-missing-badge {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
   background: rgba(248, 113, 113, 0.85);
   border: 1px solid rgba(248, 113, 113, 0.9);
   color: #0a0c10;
@@ -361,8 +381,10 @@
 
 .media-proxy-pending-badge {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
   background: rgba(250, 204, 21, 0.85);
   border: 1px solid rgba(250, 204, 21, 0.9);
   color: #0a0c10;
@@ -377,8 +399,10 @@
 
 .media-proxy-failed-badge {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
   background: rgba(248, 113, 113, 0.9);
   border: 1px solid rgba(248, 113, 113, 1);
   color: #0a0c10;
@@ -393,15 +417,9 @@
 
 /* Per-clip proxy override pill (tri-state: Auto / Force proxy / Force
    original) — the only UI path to set the override, so it must stay
-   reachable by keyboard/AT. Rendered as a SIBLING of .media-item-details
-   (not nested inside it): that overlay is aria-hidden + pointer-events:
-   none at rest, which would trap an interactive control from keyboard/
-   screen-reader reach. Instead this is its own absolutely positioned
-   corner badge (top-left; top-right is the import-cancel/status-badge
-   corner above), hidden at rest and revealed on hover OR focus-within —
-   the focus-within is what lets Tab reach it even though the mouse
-   never entered the card. Hidden entirely for Bypass sources (component
-   returns null; no class ever applied). */
+   reachable by keyboard/AT. It occupies the thumbnail's top-left corner;
+   top-right is reserved for the media kind. Hidden at rest and revealed on
+   hover or focus-within. Hidden entirely for Bypass sources. */
 .media-proxy-pill {
   position: absolute;
   top: 6px;
@@ -413,8 +431,8 @@
   font-size: var(--font-size-caption);
   font-weight: 600;
   color: var(--color-slate-300);
-  background: var(--secondary);
-  border: 1px solid transparent;
+  background: rgba(11, 13, 17, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   padding: 1px 8px;
   cursor: pointer;
@@ -431,19 +449,19 @@
 }
 
 .media-proxy-pill:hover {
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .media-proxy-pill.is-proxy {
   color: var(--color-blue-200);
-  background: var(--selection-bg);
-  border-color: var(--selection-border);
+  background: rgba(20, 48, 96, 0.9);
+  border-color: rgba(96, 165, 250, 0.65);
 }
 
 .media-proxy-pill.is-original {
   color: #fde68a;
-  background: rgba(250, 204, 21, 0.14);
-  border-color: rgba(250, 204, 21, 0.4);
+  background: rgba(74, 55, 12, 0.9);
+  border-color: rgba(250, 204, 21, 0.58);
 }
 
 /* Status-bar pill: "Generating N derivatives…". */
