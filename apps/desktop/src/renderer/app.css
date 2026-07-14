@@ -53,7 +53,14 @@
 
 @theme inline {
     --font-heading: var(--font-sans);
+    /* Legacy status-bar/log stylesheets reference var(--font-ui); alias it to
+       the app font stack so the property resolves instead of silently
+       falling back through the cascade. */
+    --font-ui: var(--font-sans);
     --color-border-soft: var(--border-soft);
+    --color-surface-sunken: var(--surface-sunken);
+    --color-surface-raised: var(--surface-raised);
+    --color-track-lane: var(--track-lane);
     /* Match the legacy stack in styles.css :root — WeftCut deliberately uses
        the system font; swapping fonts is a separate design decision. */
     --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -175,6 +182,49 @@
     --sidebar-accent-foreground: #f3f4f6;
     --sidebar-border: #1f2937;
     --sidebar-ring: #3b82f6;
+
+    /* ── Polish layer (dark NLE) ───────────────────────────────────────────
+       Semantic tokens added on top of the shadcn base above. Legacy CSS
+       scattered ~10 near-black hexes, 4 blues, and hand-written alpha values;
+       these collapse those into one greppable ladder. Values are chosen to be
+       rendering-equivalent to the dominant legacy value they replace. */
+
+    /* Depth ladder — recessed well → base → raised card → floating overlay.
+       (base = --background #0b0d11, card = --card #0e1218, overlay = --popover
+       #11151c are already defined above.) */
+    --surface-sunken: #0a0c10;   /* media-pool wells, thumbnails, sunken insets */
+    --surface-raised: #131722;   /* rows/cards lifted above a panel, hover rests */
+
+    /* Timeline track lane — one step above --background so row seams and the
+       scroll gutter read as distinct surfaces instead of one flat black. */
+    --track-lane: #10141b;
+
+    /* Single selection / active / focus accent. --ring (#3b82f6) is the one
+       true accent; these are its standard translucent derivations so selected
+       backgrounds and outlines stop drifting between three blues. */
+    --selection: var(--ring);
+    --selection-bg: rgba(59, 130, 246, 0.16);
+    --selection-border: rgba(59, 130, 246, 0.5);
+    --focus-ring: 0 0 0 2px color-mix(in srgb, var(--ring) 50%, transparent);
+
+    /* Neutral state layer — translucent white overlays for hover/press on
+       otherwise-transparent controls, replacing scattered rgba(255,255,255,α). */
+    --hover-neutral: rgba(255, 255, 255, 0.06);
+    --hover-neutral-strong: rgba(255, 255, 255, 0.10);
+
+    /* Motion — two speeds, shared easing, so hover/focus transitions stop
+       ranging across 80/100/120/160/180ms with mixed easings. */
+    --transition-fast: 90ms ease-out;
+    --transition-base: 150ms ease-out;
+
+    /* Radius roles — zero-drift against the dominant legacy values (control
+       inputs/buttons/badges were 4px, cards/thumbs 6px, panels 8px). Only the
+       stray 3px controls shift (+1px) to end the 3px/4px wobble. Pills stay a
+       literal 999px. Kept separate from shadcn's sm/md/lg ramp so consuming a
+       token never silently rescales a control. */
+    --radius-control: 4px;
+    --radius-card: 6px;
+    --radius-panel: 8px;
 }
 
 @layer base {

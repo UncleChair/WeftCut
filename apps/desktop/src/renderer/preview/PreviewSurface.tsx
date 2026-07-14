@@ -121,7 +121,8 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           width: "100%",
           height: "100%",
           overflow: "hidden",
-          background: "#1f2937",
+          // Letterbox bars stay pure black (broadcast convention) — the
+          // `.preview-video { background: #000 }` rule owns this surface.
         }}
       >
         <PixiErrorBoundary>
