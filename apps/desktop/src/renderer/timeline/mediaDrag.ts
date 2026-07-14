@@ -54,14 +54,30 @@ export interface MediaDropSnapOptions {
 
 interface MediaDragState {
   active: MediaDragPayload | null;
+  dropTargetTrackId: string | null;
   begin: (payload: MediaDragPayload) => void;
+  claimDropTarget: (trackId: string) => void;
+  releaseDropTarget: (trackId: string) => void;
   end: () => void;
 }
 
 export const useMediaDragStore = create<MediaDragState>((set) => ({
   active: null,
-  begin: (active) => set({ active }),
-  end: () => set({ active: null }),
+  dropTargetTrackId: null,
+  begin: (active) => set({ active, dropTargetTrackId: null }),
+  claimDropTarget: (trackId) =>
+    set((state) =>
+      state.dropTargetTrackId === trackId
+        ? state
+        : { dropTargetTrackId: trackId },
+    ),
+  releaseDropTarget: (trackId) =>
+    set((state) =>
+      state.dropTargetTrackId === trackId
+        ? { dropTargetTrackId: null }
+        : state,
+    ),
+  end: () => set({ active: null, dropTargetTrackId: null }),
 }));
 
 export function mediaPlacementDurationUs(media: MediaSummary): number {

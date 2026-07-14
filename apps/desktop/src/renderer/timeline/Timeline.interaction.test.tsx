@@ -431,6 +431,96 @@ describe("Timeline seek/selection coupling", () => {
     },
   );
 
+  it("transfers media ghost and lane focus exclusively between A-roll and B-roll", () => {
+    const bRollTrack: TrackSummary = {
+      ...track,
+      id: "track-2",
+      label: "S2",
+      role: "b-roll",
+      layers: [],
+    };
+    const payload = mediaDragPayload(sourceMedia);
+    useMediaDragStore.getState().begin(payload);
+    const { container } = renderTimeline({
+      tracks: [track, bRollTrack],
+      media: [sourceMedia],
+    });
+    const lanes = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-testid="track-lane"]'),
+    );
+    expect(lanes).toHaveLength(2);
+    const [aRollLane, bRollLane] = lanes as [HTMLElement, HTMLElement];
+    vi.spyOn(aRollLane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 1040,
+      top: 0,
+      bottom: 64,
+      width: 1040,
+      height: 64,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(bRollLane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 1040,
+      top: 64,
+      bottom: 128,
+      width: 1040,
+      height: 64,
+      x: 0,
+      y: 64,
+      toJSON: () => ({}),
+    });
+    const dataTransfer = {
+      types: [MEDIA_DRAG_TYPE],
+      dropEffect: "copy",
+      getData: () => JSON.stringify(payload),
+    };
+    const dragOver = (lane: HTMLElement, clientY: number) => {
+      const event = createEvent.dragOver(lane, { dataTransfer });
+      Object.defineProperties(event, {
+        clientX: { value: MEDIA_DRAG_CURSOR_OFFSET_PX + 240 },
+        clientY: { value: clientY },
+      });
+      fireEvent(lane, event);
+    };
+    const laneStates = () =>
+      lanes.map((lane) => ({
+        focused:
+          lane.classList.contains("outline-blue-300/80") ||
+          lane.classList.contains("bg-blue-500/10"),
+        ghostCount: lane.querySelectorAll('[data-testid="media-drop-ghost"]')
+          .length,
+      }));
+
+    dragOver(aRollLane, 32);
+    const onARoll = laneStates();
+
+    // The incoming lane must claim the one active focus without depending on
+    // the outgoing lane first receiving a trustworthy dragleave event.
+    dragOver(bRollLane, 96);
+    const onBRoll = laneStates();
+
+    dragOver(aRollLane, 32);
+    const backOnARoll = laneStates();
+
+    expect([onARoll, onBRoll, backOnARoll]).toEqual([
+      [
+        { focused: true, ghostCount: 1 },
+        { focused: false, ghostCount: 0 },
+      ],
+      [
+        { focused: false, ghostCount: 0 },
+        { focused: true, ghostCount: 1 },
+      ],
+      [
+        { focused: true, ghostCount: 1 },
+        { focused: false, ghostCount: 0 },
+      ],
+    ]);
+  });
+
   it("marks a collision and blocks the drop before IPC", () => {
     const payload = mediaDragPayload(sourceMedia);
     useMediaDragStore.getState().begin(payload);

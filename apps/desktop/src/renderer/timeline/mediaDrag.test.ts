@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { LayerSummary, MediaSummary, TrackSummary } from "../ipc";
 import {
@@ -6,9 +6,12 @@ import {
   mediaDragPayload,
   mediaPlacementDurationUs,
   planMediaDrop,
+  useMediaDragStore,
 } from "./mediaDrag";
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
+
+afterEach(() => useMediaDragStore.getState().end());
 
 function media(overrides: Partial<MediaSummary> = {}): MediaSummary {
   return {
@@ -264,5 +267,20 @@ describe("media drag placement", () => {
 
     expect(adjacent.validity).toBe("valid");
     expect(locked.validity).toBe("locked");
+  });
+});
+
+describe("media drag target ownership", () => {
+  it("ignores a stale leave after another track has claimed focus", () => {
+    const drag = useMediaDragStore.getState();
+    drag.begin(mediaDragPayload(media()));
+    drag.claimDropTarget("a-roll");
+    drag.claimDropTarget("b-roll");
+
+    drag.releaseDropTarget("a-roll");
+    expect(useMediaDragStore.getState().dropTargetTrackId).toBe("b-roll");
+
+    drag.releaseDropTarget("b-roll");
+    expect(useMediaDragStore.getState().dropTargetTrackId).toBeNull();
   });
 });

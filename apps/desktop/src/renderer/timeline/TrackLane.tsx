@@ -102,6 +102,9 @@ export function TrackLane({
 }) {
   const { t } = useTranslation();
   const activeMediaDrag = useMediaDragStore((s) => s.active);
+  const dropTargetTrackId = useMediaDragStore((s) => s.dropTargetTrackId);
+  const claimDropTarget = useMediaDragStore((s) => s.claimDropTarget);
+  const releaseDropTarget = useMediaDragStore((s) => s.releaseDropTarget);
   const endMediaDrag = useMediaDragStore((s) => s.end);
   const [dropPreview, setDropPreview] = useState<{
     media: MediaDragPayload;
@@ -109,8 +112,13 @@ export function TrackLane({
   } | null>(null);
 
   useEffect(() => {
-    if (activeMediaDrag === null) setDropPreview(null);
-  }, [activeMediaDrag]);
+    if (activeMediaDrag === null || dropTargetTrackId !== track.id) {
+      setDropPreview(null);
+    }
+  }, [activeMediaDrag, dropTargetTrackId, track.id]);
+
+  const visibleDropPreview =
+    dropTargetTrackId === track.id ? dropPreview : null;
 
   const dragPreviewTrackId = useCallback(
     (subject: DragSubject): string => {
@@ -190,29 +198,44 @@ export function TrackLane({
         snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
       });
       e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
+      claimDropTarget(track.id);
       setDropPreview({ media: activeMediaDrag, plan });
     },
-    [activeMediaDrag, fpsDen, fpsNum, mediaDropSnap, pxPerSec, track],
+    [
+      activeMediaDrag,
+      claimDropTarget,
+      fpsDen,
+      fpsNum,
+      mediaDropSnap,
+      pxPerSec,
+      track,
+    ],
   );
 
   const onDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     // Crossing a child LayerBlock is not leaving the lane. Without this guard
     // the ghost flickers whenever it passes over existing clip content.
     const rect = e.currentTarget.getBoundingClientRect();
+    // Chromium may report (0, 0) as an unavailable-coordinate sentinel for
+    // dragleave. Treating it as a real point wedges the first lane's ghost,
+    // because that lane commonly begins at the viewport origin.
+    const hasPointerCoordinates = e.clientX !== 0 || e.clientY !== 0;
     const pointerStillInside =
+      hasPointerCoordinates &&
       e.clientX >= rect.left &&
       e.clientX <= rect.right &&
       e.clientY >= rect.top &&
       e.clientY <= rect.bottom;
     if (
       pointerStillInside ||
-      e.relatedTarget instanceof Node &&
-      e.currentTarget.contains(e.relatedTarget)
+      (e.relatedTarget instanceof Node &&
+        e.currentTarget.contains(e.relatedTarget))
     ) {
       return;
     }
+    releaseDropTarget(track.id);
     setDropPreview(null);
-  }, []);
+  }, [releaseDropTarget, track.id]);
 
   const onDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -254,24 +277,24 @@ export function TrackLane({
     dragState.trackId !== track.id;
 
   const dropTargetClass =
-    dropPreview?.plan.validity === "collision"
+    visibleDropPreview?.plan.validity === "collision"
       ? "bg-red-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-red-400/80"
-      : dropPreview?.plan.validity === "locked"
+      : visibleDropPreview?.plan.validity === "locked"
         ? "bg-amber-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-amber-400/80"
-        : dropPreview !== null
+        : visibleDropPreview !== null
           ? "bg-blue-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-blue-300/80"
           : "";
 
   let ghostTop = 4;
   let ghostHeight = Math.max(8, height - 8);
-  if (dropPreview?.plan.sharesLane) {
+  if (visibleDropPreview?.plan.sharesLane) {
     const interiorHeight = Math.max(8, height - 8);
     const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
     ghostHeight =
-      dropPreview.plan.overlapClass === "visual"
+      visibleDropPreview.plan.overlapClass === "visual"
         ? halfHeight
         : interiorHeight - halfHeight - 1;
-    if (dropPreview.plan.overlapClass === "audio") {
+    if (visibleDropPreview.plan.overlapClass === "audio") {
       ghostTop = 4 + halfHeight + 1;
     }
   }
@@ -285,7 +308,7 @@ export function TrackLane({
         // chrome wins (drop-target vs revealed); the base bg-track-lane
         // vs branch-bg conflict still resolves by emit order, currently
         // favouring the branches.
-        dropPreview !== null
+        visibleDropPreview !== null
           ? dropTargetClass
           : isCrossTrackTarget
           ? "bg-secondary outline outline-1 outline-dashed -outline-offset-1 outline-primary"
@@ -299,39 +322,39 @@ export function TrackLane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {dropPreview !== null && (
+      {visibleDropPreview !== null && (
         <div
           data-testid="media-drop-ghost"
-          data-validity={dropPreview.plan.validity}
-          data-start-us={dropPreview.plan.tStartUs}
-          data-end-us={dropPreview.plan.tEndUs}
+          data-validity={visibleDropPreview.plan.validity}
+          data-start-us={visibleDropPreview.plan.tStartUs}
+          data-end-us={visibleDropPreview.plan.tEndUs}
           className={`pointer-events-none absolute z-[5] flex min-w-1 items-center gap-1 overflow-hidden rounded border px-2 text-[10px] font-semibold text-white shadow-[0_3px_10px_rgba(0,0,0,0.4)] ${
-            dropPreview.plan.validity === "collision"
+            visibleDropPreview.plan.validity === "collision"
               ? "border-red-300 bg-red-500/55"
-              : dropPreview.plan.validity === "locked"
+              : visibleDropPreview.plan.validity === "locked"
                 ? "border-amber-300 bg-amber-500/55"
                 : "border-blue-200 bg-blue-500/45"
           }`}
           style={{
-            left: (dropPreview.plan.tStartUs / 1_000_000) * pxPerSec,
+            left: (visibleDropPreview.plan.tStartUs / 1_000_000) * pxPerSec,
             top: ghostTop,
             width: Math.max(
               4,
-              ((dropPreview.plan.tEndUs - dropPreview.plan.tStartUs) /
+              ((visibleDropPreview.plan.tEndUs - visibleDropPreview.plan.tStartUs) /
                 1_000_000) *
                 pxPerSec,
             ),
             height: ghostHeight,
           }}
-          title={`${dropPreview.media.label}: ${formatTimecode(dropPreview.plan.tStartUs, fpsNum, fpsDen)} → ${formatTimecode(dropPreview.plan.tEndUs, fpsNum, fpsDen)}`}
+          title={`${visibleDropPreview.media.label}: ${formatTimecode(visibleDropPreview.plan.tStartUs, fpsNum, fpsDen)} → ${formatTimecode(visibleDropPreview.plan.tEndUs, fpsNum, fpsDen)}`}
         >
-          <span className="min-w-0 truncate">{dropPreview.media.label}</span>
+          <span className="min-w-0 truncate">{visibleDropPreview.media.label}</span>
           <span className="shrink-0 opacity-80">
-            {formatTimecode(dropPreview.media.durationUs, fpsNum, fpsDen)}
+            {formatTimecode(visibleDropPreview.media.durationUs, fpsNum, fpsDen)}
           </span>
-          {dropPreview.plan.validity !== "valid" && (
+          {visibleDropPreview.plan.validity !== "valid" && (
             <span className="ml-auto shrink-0 rounded bg-black/35 px-1 py-0.5">
-              {dropPreview.plan.validity === "collision"
+              {visibleDropPreview.plan.validity === "collision"
                 ? t("timeline.drop_collision", { defaultValue: "Overlap" })
                 : t("timeline.drop_locked", { defaultValue: "Locked" })}
             </span>
