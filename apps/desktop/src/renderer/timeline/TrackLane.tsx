@@ -12,6 +12,7 @@ import { formatTimecode } from "../frames";
 import type { AnimTrack, LayerSummary, TrackSummary } from "../ipc";
 import { playheadTimeUs } from "../state/playheadStore";
 import {
+  MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
   parseMediaDrag,
   planMediaDrop,
@@ -198,7 +199,24 @@ export function TrackLane({
         snap: { ...mediaDropSnap, currentTimeUs: playheadTimeUs() },
       });
       e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
-      claimDropTarget(track.id);
+      const slot = mediaDropGhostSlot(height, plan);
+      const ghostLeft =
+        rect.left + (plan.tStartUs / 1_000_000) * pxPerSec;
+      const ghostWidth = Math.max(
+        4,
+        ((plan.tEndUs - plan.tStartUs) / 1_000_000) * pxPerSec,
+      );
+      // The floating media card collapses into a compact point inside the
+      // ghost while the ghost itself expands from that same point.
+      const targetWidth = Math.min(36, Math.max(14, ghostWidth));
+      const targetHeight = Math.min(20, Math.max(10, slot.height * 0.45));
+      const anchorX = ghostLeft + Math.min(MEDIA_DRAG_CURSOR_OFFSET_PX, ghostWidth / 2);
+      claimDropTarget(track.id, {
+        left: anchorX - targetWidth / 2,
+        top: rect.top + slot.top + (slot.height - targetHeight) / 2,
+        width: targetWidth,
+        height: targetHeight,
+      });
       setDropPreview({ media: activeMediaDrag, plan });
     },
     [
@@ -206,6 +224,7 @@ export function TrackLane({
       claimDropTarget,
       fpsDen,
       fpsNum,
+      height,
       mediaDropSnap,
       pxPerSec,
       track,
@@ -285,19 +304,9 @@ export function TrackLane({
           ? "bg-blue-500/10 outline outline-1 outline-dashed -outline-offset-1 outline-blue-300/80"
           : "";
 
-  let ghostTop = 4;
-  let ghostHeight = Math.max(8, height - 8);
-  if (visibleDropPreview?.plan.sharesLane) {
-    const interiorHeight = Math.max(8, height - 8);
-    const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
-    ghostHeight =
-      visibleDropPreview.plan.overlapClass === "visual"
-        ? halfHeight
-        : interiorHeight - halfHeight - 1;
-    if (visibleDropPreview.plan.overlapClass === "audio") {
-      ghostTop = 4 + halfHeight + 1;
-    }
-  }
+  const ghostSlot = visibleDropPreview
+    ? mediaDropGhostSlot(height, visibleDropPreview.plan)
+    : { top: 4, height: Math.max(8, height - 8) };
 
   return (
     <div
@@ -328,7 +337,7 @@ export function TrackLane({
           data-validity={visibleDropPreview.plan.validity}
           data-start-us={visibleDropPreview.plan.tStartUs}
           data-end-us={visibleDropPreview.plan.tEndUs}
-          className={`pointer-events-none absolute z-[5] flex min-w-1 items-center gap-1 overflow-hidden rounded border px-2 text-[10px] font-semibold text-white shadow-[0_3px_10px_rgba(0,0,0,0.4)] ${
+          className={`media-drop-ghost pointer-events-none absolute z-[5] flex min-w-1 items-center gap-1 overflow-hidden rounded border px-2 text-[10px] font-semibold text-white shadow-[0_3px_10px_rgba(0,0,0,0.4)] ${
             visibleDropPreview.plan.validity === "collision"
               ? "border-red-300 bg-red-500/55"
               : visibleDropPreview.plan.validity === "locked"
@@ -337,15 +346,26 @@ export function TrackLane({
           }`}
           style={{
             left: (visibleDropPreview.plan.tStartUs / 1_000_000) * pxPerSec,
-            top: ghostTop,
+            top: ghostSlot.top,
             width: Math.max(
               4,
               ((visibleDropPreview.plan.tEndUs - visibleDropPreview.plan.tStartUs) /
                 1_000_000) *
                 pxPerSec,
             ),
-            height: ghostHeight,
-          }}
+            height: ghostSlot.height,
+            "--media-drop-ghost-origin-x": `${Math.min(
+              MEDIA_DRAG_CURSOR_OFFSET_PX,
+              Math.max(
+                2,
+                (((visibleDropPreview.plan.tEndUs -
+                  visibleDropPreview.plan.tStartUs) /
+                  1_000_000) *
+                  pxPerSec) /
+                  2,
+              ),
+            )}px`,
+          } as React.CSSProperties}
           title={`${visibleDropPreview.media.label}: ${formatTimecode(visibleDropPreview.plan.tStartUs, fpsNum, fpsDen)} → ${formatTimecode(visibleDropPreview.plan.tEndUs, fpsNum, fpsDen)}`}
         >
           <span className="min-w-0 truncate">{visibleDropPreview.media.label}</span>
@@ -414,4 +434,19 @@ export function TrackLane({
       />
     </div>
   );
+}
+
+function mediaDropGhostSlot(height: number, plan: MediaDropPlan) {
+  let top = 4;
+  let slotHeight = Math.max(8, height - 8);
+  if (!plan.sharesLane) return { top, height: slotHeight };
+
+  const interiorHeight = Math.max(8, height - 8);
+  const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
+  slotHeight =
+    plan.overlapClass === "visual"
+      ? halfHeight
+      : interiorHeight - halfHeight - 1;
+  if (plan.overlapClass === "audio") top = 4 + halfHeight + 1;
+  return { top, height: slotHeight };
 }

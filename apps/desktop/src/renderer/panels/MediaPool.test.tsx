@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n"; // initialize i18next so useTranslation() resolves (keys land in Task 10)
 
@@ -17,11 +17,13 @@ vi.mock("../state/proxyPreferenceStore", async (importActual) => {
 import { generateQuickProxy, type MediaSummary } from "../ipc";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { MediaPool } from "./MediaPool";
+import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   useProxyPrefStore.setState({ preferProxies: false, overrides: {} });
+  useMediaDragStore.getState().end();
 });
 
 // kind: "Audio" sidesteps mediaReadiness's Video-only proxy-pending branch
@@ -97,5 +99,51 @@ describe("MediaPool proxy pill", () => {
     // path (that's only auto(undefined)->true); guard against a regression
     // that fires a build on every click.
     expect(generateQuickProxy).not.toHaveBeenCalled();
+  });
+});
+
+describe("MediaPool drag preview", () => {
+  it("suppresses Chromium's snapshot and renders the app-owned preview", () => {
+    const { container } = renderPool([
+      makeMedia("m-drag", { route: "bypass" }),
+    ]);
+    const card = container.querySelector(".media-item") as HTMLElement;
+    vi.spyOn(card, "getBoundingClientRect").mockReturnValue({
+      left: 10,
+      top: 20,
+      right: 190,
+      bottom: 140,
+      width: 180,
+      height: 120,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    });
+    const dataTransfer = {
+      types: [],
+      effectAllowed: "none",
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+    } as unknown as DataTransfer;
+    const dragStart = createEvent.dragStart(card, { dataTransfer });
+    Object.defineProperties(dragStart, {
+      clientX: { value: 40 },
+      clientY: { value: 50 },
+    });
+
+    fireEvent(card, dragStart);
+
+    expect(dataTransfer.setData).toHaveBeenCalledWith(
+      MEDIA_DRAG_TYPE,
+      expect.any(String),
+    );
+    expect(dataTransfer.setDragImage).toHaveBeenCalledOnce();
+    const preview = document.querySelector(
+      '[data-testid="media-drag-preview"]',
+    ) as HTMLElement;
+    expect(preview).not.toBeNull();
+    expect(preview.style.width).toBe("180px");
+    expect(preview.style.height).toBe("120px");
+    expect(preview.style.transform).toBe("translate3d(10px, 20px, 0)");
   });
 });

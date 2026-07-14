@@ -27,6 +27,22 @@ export interface MediaDragPayload {
   durationUs: number;
 }
 
+export interface MediaDragVisual {
+  clientX: number;
+  clientY: number;
+  width: number;
+  height: number;
+  pointerOffsetX: number;
+  pointerOffsetY: number;
+}
+
+export interface MediaDragAbsorptionTarget {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export type MediaDropValidity = "valid" | "collision" | "locked";
 
 export interface MediaDropPlan {
@@ -55,8 +71,14 @@ export interface MediaDropSnapOptions {
 interface MediaDragState {
   active: MediaDragPayload | null;
   dropTargetTrackId: string | null;
-  begin: (payload: MediaDragPayload) => void;
-  claimDropTarget: (trackId: string) => void;
+  visual: MediaDragVisual | null;
+  absorptionTarget: MediaDragAbsorptionTarget | null;
+  begin: (payload: MediaDragPayload, visual?: MediaDragVisual) => void;
+  moveVisual: (clientX: number, clientY: number) => void;
+  claimDropTarget: (
+    trackId: string,
+    absorptionTarget?: MediaDragAbsorptionTarget,
+  ) => void;
   releaseDropTarget: (trackId: string) => void;
   end: () => void;
 }
@@ -64,20 +86,44 @@ interface MediaDragState {
 export const useMediaDragStore = create<MediaDragState>((set) => ({
   active: null,
   dropTargetTrackId: null,
-  begin: (active) => set({ active, dropTargetTrackId: null }),
-  claimDropTarget: (trackId) =>
+  visual: null,
+  absorptionTarget: null,
+  begin: (active, visual) =>
+    set({
+      active,
+      dropTargetTrackId: null,
+      visual: visual ?? null,
+      absorptionTarget: null,
+    }),
+  moveVisual: (clientX, clientY) =>
     set((state) =>
-      state.dropTargetTrackId === trackId
+      state.active === null || state.visual === null
         ? state
-        : { dropTargetTrackId: trackId },
+        : { visual: { ...state.visual, clientX, clientY } },
+    ),
+  claimDropTarget: (trackId, absorptionTarget) =>
+    set((state) =>
+      state.dropTargetTrackId === trackId &&
+      state.absorptionTarget === absorptionTarget
+        ? state
+        : {
+            dropTargetTrackId: trackId,
+            absorptionTarget: absorptionTarget ?? null,
+          },
     ),
   releaseDropTarget: (trackId) =>
     set((state) =>
       state.dropTargetTrackId === trackId
-        ? { dropTargetTrackId: null }
+        ? { dropTargetTrackId: null, absorptionTarget: null }
         : state,
     ),
-  end: () => set({ active: null, dropTargetTrackId: null }),
+  end: () =>
+    set({
+      active: null,
+      dropTargetTrackId: null,
+      visual: null,
+      absorptionTarget: null,
+    }),
 }));
 
 export function mediaPlacementDurationUs(media: MediaSummary): number {

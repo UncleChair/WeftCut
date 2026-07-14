@@ -283,4 +283,38 @@ describe("media drag target ownership", () => {
     drag.releaseDropTarget("b-roll");
     expect(useMediaDragStore.getState().dropTargetTrackId).toBeNull();
   });
+
+  it("moves the custom preview and clears its absorption target on leave", () => {
+    const drag = useMediaDragStore.getState();
+    drag.begin(mediaDragPayload(media()), {
+      clientX: 100,
+      clientY: 80,
+      width: 180,
+      height: 120,
+      pointerOffsetX: 20,
+      pointerOffsetY: 30,
+    });
+
+    drag.moveVisual(140, 110);
+    drag.claimDropTarget("a-roll", {
+      left: 120,
+      top: 200,
+      width: 36,
+      height: 20,
+    });
+
+    expect(useMediaDragStore.getState()).toMatchObject({
+      visual: { clientX: 140, clientY: 110 },
+      dropTargetTrackId: "a-roll",
+      absorptionTarget: {
+        left: 120,
+        top: 200,
+        width: 36,
+        height: 20,
+      },
+    });
+
+    drag.releaseDropTarget("a-roll");
+    expect(useMediaDragStore.getState().absorptionTarget).toBeNull();
+  });
 });

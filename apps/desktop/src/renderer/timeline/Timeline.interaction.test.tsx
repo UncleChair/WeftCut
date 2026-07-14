@@ -428,6 +428,13 @@ describe("Timeline seek/selection coupling", () => {
       expect(ghost.dataset.endUs).toBe("6000000");
       expect(ghost.style.left).toBe("240px");
       expect(ghost.style.width).toBe("240px");
+      expect(ghost.classList.contains("media-drop-ghost")).toBe(true);
+      expect(useMediaDragStore.getState().absorptionTarget).toMatchObject({
+        left: 254,
+        top: 18,
+        width: 36,
+        height: 20,
+      });
     },
   );
 

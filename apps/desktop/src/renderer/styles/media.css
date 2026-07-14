@@ -193,6 +193,93 @@
   cursor: grabbing;
 }
 
+/* App-owned replacement for Chromium's frozen, translucent drag snapshot.
+ * Its free state follows the pointer without positional easing; on entering a
+ * timeline lane, all geometry eases into the ghost's cursor anchor and fades
+ * away while .media-drop-ghost expands underneath it. */
+.media-drag-preview {
+  position: fixed;
+  inset: 0 auto auto 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(147, 197, 253, 0.72);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.48);
+  opacity: 0.78;
+  pointer-events: none;
+  will-change: transform, width, height, opacity;
+  transition:
+    width 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 120ms ease-out,
+    border-radius 150ms ease-out;
+}
+
+.media-drag-preview.is-absorbing {
+  border-radius: 3px;
+  opacity: 0;
+  transform-origin: center;
+  transition:
+    transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 150ms ease-in,
+    border-radius 150ms ease-out;
+}
+
+.media-drag-preview-thumb {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.media-drag-preview-name {
+  flex: none;
+  overflow: hidden;
+  padding: 4px 7px 5px;
+  color: var(--foreground);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 70ms ease-out;
+}
+
+.media-drag-preview.is-absorbing .media-drag-preview-name {
+  opacity: 0;
+}
+
+.media-drop-ghost {
+  transform-origin: var(--media-drop-ghost-origin-x, 32px) center;
+  animation: media-drop-ghost-absorb 150ms cubic-bezier(0.2, 0.8, 0.2, 1)
+    both;
+}
+
+@keyframes media-drop-ghost-absorb {
+  from {
+    opacity: 0.18;
+    transform: scale(0.16, 0.42);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-drag-preview,
+  .media-drag-preview.is-absorbing {
+    transition: none;
+  }
+
+  .media-drop-ghost {
+    animation: none;
+  }
+}
+
 .media-kind {
   align-self: flex-start;
   font-size: var(--font-size-caption);

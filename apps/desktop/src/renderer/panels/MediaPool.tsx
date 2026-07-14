@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import { MediaThumbnail } from "./MediaThumbnail";
@@ -17,6 +18,91 @@ import { quickProxyPath } from "../render/decodeRoute";
 
 function isFileDrag(e: React.DragEvent): boolean {
   return Array.from(e.dataTransfer.types).includes("Files");
+}
+
+const MAX_DRAG_PREVIEW_WIDTH_PX = 220;
+
+function mediaDragVisual(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number,
+) {
+  const rect = element.getBoundingClientRect();
+  const scale = Math.min(1, MAX_DRAG_PREVIEW_WIDTH_PX / rect.width);
+  return {
+    clientX,
+    clientY,
+    width: rect.width * scale,
+    height: rect.height * scale,
+    pointerOffsetX: (clientX - rect.left) * scale,
+    pointerOffsetY: (clientY - rect.top) * scale,
+  };
+}
+
+/// Chromium's native drag image is a frozen translucent snapshot and cannot
+/// animate into the timeline ghost. Replace it with a transparent pixel; the
+/// app-owned MediaDragPreview below provides the visible, animatable surface.
+function hideNativeDragPreview(dataTransfer: DataTransfer) {
+  if (typeof dataTransfer.setDragImage !== "function") return;
+  const pixel = document.createElement("div");
+  pixel.style.cssText =
+    "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+  document.body.appendChild(pixel);
+  dataTransfer.setDragImage(pixel, 0, 0);
+  window.setTimeout(() => pixel.remove(), 0);
+}
+
+function MediaDragPreview() {
+  const active = useMediaDragStore((s) => s.active);
+  const visual = useMediaDragStore((s) => s.visual);
+  const absorptionTarget = useMediaDragStore((s) => s.absorptionTarget);
+  const moveVisual = useMediaDragStore((s) => s.moveVisual);
+
+  useEffect(() => {
+    const followPointer = (e: DragEvent) => {
+      // Chromium uses (0, 0) as an unavailable-coordinate sentinel for some
+      // drag events. Keeping the last real point avoids a jump to the corner.
+      if (e.clientX === 0 && e.clientY === 0) return;
+      moveVisual(e.clientX, e.clientY);
+    };
+    window.addEventListener("drag", followPointer, true);
+    window.addEventListener("dragover", followPointer, true);
+    return () => {
+      window.removeEventListener("drag", followPointer, true);
+      window.removeEventListener("dragover", followPointer, true);
+    };
+  }, [moveVisual]);
+
+  if (active === null || visual === null) return null;
+
+  const absorbing = absorptionTarget !== null;
+  const left = absorbing
+    ? absorptionTarget.left
+    : visual.clientX - visual.pointerOffsetX;
+  const top = absorbing
+    ? absorptionTarget.top
+    : visual.clientY - visual.pointerOffsetY;
+  const width = absorbing ? absorptionTarget.width : visual.width;
+  const height = absorbing ? absorptionTarget.height : visual.height;
+
+  return createPortal(
+    <div
+      data-testid="media-drag-preview"
+      className={`media-drag-preview${absorbing ? " is-absorbing" : ""}`}
+      style={{
+        width,
+        height,
+        transform: `translate3d(${left}px, ${top}px, 0)`,
+      }}
+      aria-hidden="true"
+    >
+      <div className="media-drag-preview-thumb">
+        <MediaThumbnail mediaId={active.mediaId} mediaKind={active.kind} />
+      </div>
+      <span className="media-drag-preview-name">{active.label}</span>
+    </div>,
+    document.body,
+  );
 }
 
 /// The media-pool column doubles as the drop target for Explorer file
@@ -145,6 +231,7 @@ export function MediaPool({
 
   return (
     <div className="media-pool-inner">
+      <MediaDragPreview />
       <h2>
         {t("media_pool.heading")} (
         {trimmed ? `${filtered.length}/${media.length}` : media.length})
@@ -195,12 +282,16 @@ export function MediaPool({
               draggable={interactive}
               onDragStart={(e) => {
                 const payload = mediaDragPayload(m);
-                beginMediaDrag(payload);
+                beginMediaDrag(
+                  payload,
+                  mediaDragVisual(e.currentTarget, e.clientX, e.clientY),
+                );
                 e.dataTransfer.setData(
                   MEDIA_DRAG_TYPE,
                   JSON.stringify(payload),
                 );
                 e.dataTransfer.effectAllowed = "copy";
+                hideNativeDragPreview(e.dataTransfer);
               }}
               onDragEnd={endMediaDrag}
               title={
