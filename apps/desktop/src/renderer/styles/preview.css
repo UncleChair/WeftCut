@@ -213,7 +213,7 @@
   padding: 6px 12px;
   cursor: pointer;
   font: inherit;
-  transition: background 80ms;
+  transition: background var(--transition-fast);
 }
 
 .peek-item:hover {
@@ -225,11 +225,11 @@
 }
 
 .peek-item.is-live {
-  background: rgba(248, 113, 113, 0.08);
+  background: color-mix(in srgb, var(--destructive) 8%, transparent);
 }
 
 .peek-item.is-live.is-selected {
-  background: rgba(248, 113, 113, 0.22);
+  background: color-mix(in srgb, var(--destructive) 22%, transparent);
 }
 
 .peek-thumb {
@@ -238,7 +238,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-gray-900);
+  background: var(--surface-sunken);
   border-radius: var(--radius-control);
   overflow: hidden;
 }
@@ -246,7 +246,7 @@
 .peek-thumb-fallback {
   display: inline-flex;
   align-items: center;
-  color: var(--color-gray-500);
+  color: var(--muted-foreground);
 }
 
 .peek-meta {
@@ -265,7 +265,7 @@
 
 .peek-sublabel {
   font-size: var(--font-size-caption);
-  color: var(--color-gray-500);
+  color: var(--muted-foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -280,13 +280,13 @@
 }
 
 .peek-offset.is-live {
-  color: var(--color-red-300);
+  color: var(--destructive);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
 
 .peek-duration {
-  color: var(--color-gray-500);
+  color: var(--muted-foreground);
 }
 
 .peek-filter {
@@ -303,7 +303,7 @@
   border-radius: 999px;
   border: 1px solid var(--border-soft);
   background: transparent;
-  color: var(--color-gray-500);
+  color: var(--muted-foreground);
   cursor: pointer;
 }
 
@@ -323,14 +323,14 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--color-gray-500);
+  color: var(--muted-foreground);
 }
 
 .peek-filter-empty {
   margin: 0;
   padding: 10px 12px;
   font-size: var(--font-size-caption);
-  color: var(--color-gray-500);
+  color: var(--muted-foreground);
 }
 
 .preview-failed-overlay {

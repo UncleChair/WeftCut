@@ -203,8 +203,8 @@
 
 /* ============================================================
    Right panel (see `docs/data-model.md`)
-   Peek list (top) + Inspector (bottom). Peek hides in Show-All mode and
-   collapses to zero-height when no hidden-track layers fall in the ±Δ window.
+   A/B-roll context occupies a bounded region above three persistent tool
+   workspaces. Inactive tab panels stay mounted so draft fields retain state.
    ============================================================ */
 .right-panel {
   display: flex;
@@ -214,14 +214,100 @@
   overflow: hidden;
 }
 
+.right-panel-tabs {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.right-panel-tab-list {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.right-panel-tab {
+  position: relative;
+  min-width: 0;
+  min-height: 45px;
+  padding: 6px 3px 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  border-right: 1px solid var(--border-soft);
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.right-panel-tab:last-child {
+  border-right: 0;
+}
+
+.right-panel-tab:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.right-panel-tab.is-active {
+  border-bottom-color: var(--selection);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.right-panel-tab:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.right-panel-tab-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 17px;
+}
+
+.right-panel-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-tight);
+}
+
+.right-panel-tab-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Prevent portaled-control anchors and hint bubbles from creating a second
+     horizontal scroll axis in the narrow inspector column. */
+  overflow-x: hidden;
+}
+
+.right-panel-tab-panel[hidden] {
+  display: none;
+}
+
 .right-panel-peek {
   flex: 0 0 auto;
+  min-height: 0;
   max-height: 40%;
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--border-soft);
-  background: rgba(0, 0, 0, 0.15);
   overflow: hidden;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--card);
 }
 
 .right-panel-peek-header {
@@ -236,30 +322,25 @@
 }
 
 .right-panel-peek-window {
-  color: var(--color-gray-500);
+  color: var(--muted-foreground);
   font-weight: 500;
+}
+
+.right-panel-peek-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .right-panel-peek-list {
   list-style: none;
   margin: 0;
   padding: 4px 0;
-  overflow-y: auto;
-  flex: 1 1 auto;
 }
 
 .right-panel-peek-list li {
   margin: 0;
   padding: 0;
-}
-
-/* Project-level role mixer (MixerPanel). Sits between the peek list and
-   the inspector; the bottom border separates it from the inspector below.
-   Padding mirrors .property-panel so the two stacked panels read as one
-   column. */
-.right-panel-mixer {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--border-soft);
 }
 
 .mixer-panel {
@@ -288,18 +369,6 @@
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.right-panel-inspector {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  /* `overflow-y: auto` alone leaves the X axis at `visible`, so any
-     positioned descendant that extends past the inspector's right edge
-     (e.g. a property-panel hint bubble) would otherwise pull the column
-     wider and produce a horizontal scrollbar. Explicit `overflow-x:
-     hidden` clips X without disturbing the working vertical scroll. */
-  overflow-x: hidden;
 }
 
 .property-panel {

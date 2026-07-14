@@ -242,6 +242,12 @@ const enUS = {
     cat_text: "Text",
     filter_empty: "Nothing of that kind near the playhead",
   },
+  right_panel: {
+    tablist_label: "Right panel",
+    properties: "Properties",
+    captions: "Captions",
+    audio: "Audio",
+  },
   agent_mode: {
     client_label: "Agent: {{client}}",
     exit: "Exit to editor",

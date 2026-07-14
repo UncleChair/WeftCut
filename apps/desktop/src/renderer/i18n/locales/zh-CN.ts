@@ -240,6 +240,12 @@ const zhCN: Resources = {
     cat_text: "文本",
     filter_empty: "播放头附近没有该类别的内容",
   },
+  right_panel: {
+    tablist_label: "右侧面板",
+    properties: "属性",
+    captions: "字幕",
+    audio: "音频",
+  },
   agent_mode: {
     client_label: "代理：{{client}}",
     exit: "退出代理模式",
