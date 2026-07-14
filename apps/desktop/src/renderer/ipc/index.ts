@@ -964,8 +964,14 @@ export async function duplicateLayer(
 export async function pasteLayer(
   layerId: string,
   tStartUs: number,
+  targetTrackId?: string,
 ): Promise<string> {
-  return invoke<string>("paste_layer", { layerId, tStartUs });
+  return invoke<string>(
+    "paste_layer",
+    targetTrackId === undefined
+      ? { layerId, tStartUs }
+      : { layerId, tStartUs, targetTrackId },
+  );
 }
 
 export async function deleteLayer(layerId: string): Promise<void> {

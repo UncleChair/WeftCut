@@ -138,6 +138,7 @@ export function TrackLane({
       if (!pendingLayer) continue;
       const pendingRenderLayer: LayerSummary = {
         ...pendingLayer,
+        id: pendingPlacement.layerId,
         t_start_us: pendingPlacement.tStartUs,
         t_end_us: pendingPlacement.tEndUs,
       };
@@ -157,7 +158,7 @@ export function TrackLane({
       }
     }
 
-    if (dragState?.kind === "move") {
+    if (dragState?.kind === "move" && !dragState.duplicate) {
       for (const subject of dragState.subjects) {
         const layer = dragLayerById.get(subject.layerId);
         if (!layer) continue;
@@ -182,6 +183,28 @@ export function TrackLane({
     track.id,
     track.layers,
   ]);
+
+  const duplicatePreview = useMemo(() => {
+    if (dragState?.kind !== "move" || !dragState.duplicate) return null;
+    const subject = dragState.subjects.find(
+      (candidate) => candidate.layerId === dragState.layerId,
+    );
+    const layer = subject ? dragLayerById.get(subject.layerId) : null;
+    if (!subject || !layer) return null;
+    const previewTrackId = dragState.overTrackId ?? subject.trackId;
+    if (previewTrackId !== track.id) return null;
+
+    const tStartUs = Math.max(0, subject.originalTStart + dragState.deltaUs);
+    return {
+      layer,
+      sliceLayer: {
+        ...layer,
+        id: `${layer.id}::duplicate-preview`,
+        t_start_us: tStartUs,
+        t_end_us: tStartUs + subject.originalTEnd - subject.originalTStart,
+      } satisfies LayerSummary,
+    };
+  }, [dragLayerById, dragState, track.id]);
 
   const onDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -405,8 +428,11 @@ export function TrackLane({
         // with a co-located opposite-class layer render half-height
         // (top for visual, bottom for audio) so the user sees both in
         // one row. Single-class layers fill the row at full height.
-        const slices = computeLayerSlices(renderedLayers);
-        return renderedLayers.map((layer) => (
+        const sliceLayers = duplicatePreview
+          ? [...renderedLayers, duplicatePreview.sliceLayer]
+          : renderedLayers;
+        const slices = computeLayerSlices(sliceLayers);
+        const blocks = renderedLayers.map((layer) => (
           <LayerBlock
             key={layer.id}
             layer={layer}
@@ -420,7 +446,12 @@ export function TrackLane({
             isPrimary={selectedLayerId === layer.id}
             isSelected={selectedLayerIds.has(layer.id)}
             groupId={groupByLayerId.get(layer.id) ?? null}
-            dragState={dragState}
+            dragState={
+              dragState?.duplicate &&
+              dragState.subjects.some((subject) => subject.layerId === layer.id)
+                ? null
+                : dragState
+            }
             pendingPlacement={
               pendingPlacements?.find((placement) => placement.layerId === layer.id) ?? null
             }
@@ -436,6 +467,38 @@ export function TrackLane({
             fpsDen={fpsDen}
           />
         ));
+        if (duplicatePreview && dragState) {
+          blocks.push(
+            <LayerBlock
+              key={duplicatePreview.sliceLayer.id}
+              layer={duplicatePreview.layer}
+              trackId={track.id}
+              trackKind={track.kind}
+              trackLocked={track.locked}
+              isTrackExpanded={isExpanded}
+              pxPerSec={pxPerSec}
+              laneHeight={height}
+              slice={slices.get(duplicatePreview.sliceLayer.id) ?? "full"}
+              isPrimary={false}
+              isSelected={false}
+              groupId={null}
+              dragState={dragState}
+              pendingPlacement={null}
+              previewOnly
+              bladeMode={bladeMode}
+              onBladeSplit={onBladeSplit}
+              onBladePreview={onBladePreview}
+              onSelectFromClick={onSelectFromClick}
+              onDragStart={onDragStart}
+              onContextMenu={onContextMenu}
+              onCommitLabel={onCommitLabel}
+              onCommitParamTrack={onCommitParamTrack}
+              fpsNum={fpsNum}
+              fpsDen={fpsDen}
+            />,
+          );
+        }
+        return blocks;
       })()}
       </div>
       <div

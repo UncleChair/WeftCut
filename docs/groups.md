@@ -42,8 +42,9 @@ an independent sprite.
    resulting pieces remain in the same group.
 7. **Move propagates time only** — track changes stay local. There is
    no kind-relative-index arithmetic.
-8. **Per-op `escape_group` flag, default `false`** — `Alt+drag` /
-   `Alt+click` in the UI sets it; MCP exposes it as a tool parameter.
+8. **Per-op `escape_group` flag, default `false`** — `Alt+click` and
+   `Alt+trim` in the UI set it; MCP exposes it as a tool parameter. A body
+   `Alt+drag` is reserved for duplicating a single layer at the drop position.
 9. **Locked member rejects the whole op** — if a fan-out would touch a
    `Layer.locked == true` member, the op fails with a structured
    error. Caller can unlock or escape.
@@ -196,7 +197,10 @@ what produces audible output.
   whole group, if grouped) to the existing set.
 - `Alt+click`: select **only** the clicked layer; subsequent ops
   treat this as the `escape_group=true` path.
-- `Alt+drag`: same — escape-group on the resulting move.
+- `Alt+drag` on the clip body: duplicate only that layer at the drop position;
+  the source and any grouped siblings stay in place. This is a fixed timeline
+  gesture and is not exposed in Keyboard Shortcuts.
+- `Alt+drag` on a trim edge: escape-group on that trim operation.
 
 ### Indicator
 

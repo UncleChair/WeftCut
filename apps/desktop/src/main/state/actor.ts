@@ -562,6 +562,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // create a new Overlay track before adding the cloned layer.
           const sourceId = parseUuid(wireArgs.layerId, 'layerId')
           const requestedStart = parseNum(wireArgs.tStartUs, 'tStartUs')
+          // Timeline Alt+drag resolves an exact destination lane in the UI.
+          // Keep that copy as one atomic commit instead of duplicating on the
+          // source track and following it with a second move commit.
+          if (wireArgs.targetTrackId !== undefined && wireArgs.targetTrackId !== null) {
+            const targetTrackId = parseUuid(wireArgs.targetTrackId, 'targetTrackId')
+            const id = commit('Duplicated layer', [], { kind: 'Coarse' }, (d) =>
+              applyPasteLayer(d, idGen, sourceId, targetTrackId, requestedStart))
+            return { ok: true, value: id }
+          }
           const interval = pasteLayerInterval(current(), sourceId, requestedStart)
           const trackId = pickFreeOverlayTrack(current(), interval.tStartUs, interval.tEndUs)
           if (trackId !== null) {

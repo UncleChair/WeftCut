@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   moveLayer,
+  pasteLayer,
   trimLayer,
   type GroupSummary,
   type LayerSummary,
@@ -44,7 +45,7 @@ interface LayerMoveProjection {
 /// Layer drag state machine (move / trim-start / trim-end): ghost
 /// tracking via window pointermove, frame + timeline-boundary snapping,
 /// and the commit-on-pointerup switch that lowers to
-/// `moveLayer`/`trimLayer`.
+/// `moveLayer`/`pasteLayer`/`trimLayer`.
 export function useLayerDrag(opts: {
   tracks: TrackSummary[];
   groups: GroupSummary[];
@@ -96,7 +97,9 @@ export function useLayerDrag(opts: {
   const pendingLayerById = useMemo(() => {
     const layersById = new Map<string, LayerSummary>();
     for (const placement of pendingPlacements ?? []) {
-      const entry = layerEntryById.get(placement.layerId);
+      const entry = layerEntryById.get(
+        placement.sourceLayerId ?? placement.layerId,
+      );
       if (entry) layersById.set(placement.layerId, entry.layer);
     }
     return layersById;
@@ -135,7 +138,13 @@ export function useLayerDrag(opts: {
 
   const buildDragSubjects = useCallback(
     (seed: DragSeed): DragSubject[] => {
-      const groupId = seed.escapeGroup ? undefined : groupByLayerId.get(seed.layerId);
+      // Alt+drag copies only the layer under the pointer. In particular, an
+      // auto-paired/grouped sibling stays untouched and the duplicate remains
+      // detached, matching duplicate/paste semantics elsewhere in the app.
+      const groupId =
+        seed.duplicate || seed.escapeGroup
+          ? undefined
+          : groupByLayerId.get(seed.layerId);
       const group = groupId ? groups.find((candidate) => candidate.id === groupId) : null;
       const candidateIds = group?.layer_ids ?? [seed.layerId];
       const targetEdgeUs =
@@ -226,7 +235,10 @@ export function useLayerDrag(opts: {
       frameDeltaUs: number,
     ): number => {
       return snapDragDeltaToTimelineBoundary({
-        state,
+        // A duplicate leaves grouped siblings in place, so their boundaries
+        // remain eligible snap targets. escapeGroup=true makes the snapping
+        // helper ignore only the copied source layer.
+        state: state.duplicate ? { ...state, escapeGroup: true } : state,
         frameDeltaUs,
         visibleTracks: visibleSnapTracks,
         groups,
@@ -288,7 +300,11 @@ export function useLayerDrag(opts: {
       const evaluation = evaluateTimelinePlacements({
         tracks,
         placements: projected,
-        replacedLayerIds: new Set(state.subjects.map((subject) => subject.layerId)),
+        // A move replaces the source intervals; a duplicate leaves them in
+        // place, so the destination must also be checked against its source.
+        replacedLayerIds: state.duplicate
+          ? new Set()
+          : new Set(state.subjects.map((subject) => subject.layerId)),
       });
 
       return {
@@ -379,6 +395,33 @@ export function useLayerDrag(opts: {
             if (!moveProjection || moveProjection.validity !== "valid") {
               setPendingPlacements(null);
               return;
+            }
+            if (committed.duplicate) {
+              const pendingDuplicate = moveProjection.placements.find(
+                (placement) => placement.layerId === committed.layerId,
+              );
+              if (!pendingDuplicate) return;
+              const pendingId = `${committed.layerId}::pending-duplicate`;
+              setPendingPlacements([
+                {
+                  ...pendingDuplicate,
+                  layerId: pendingId,
+                  sourceLayerId: committed.layerId,
+                },
+              ]);
+              const duplicatedLayerId = await pasteLayer(
+                committed.layerId,
+                moveProjection.anchorStartUs,
+                moveProjection.destinationTrackId,
+              );
+              setPendingPlacements([
+                {
+                  ...pendingDuplicate,
+                  layerId: duplicatedLayerId,
+                  sourceLayerId: committed.layerId,
+                },
+              ]);
+              break;
             }
             setPendingPlacements(moveProjection.placements);
             await moveLayer(

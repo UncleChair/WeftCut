@@ -59,9 +59,11 @@ export interface DragSeed {
   deltaUs: number;
   /// During cross-track drag, which track is the pointer currently over.
   overTrackId: string | null;
-  /// `docs/groups.md` — when true (Alt-held at drag start), this op
-  /// stays local even if the dragged layer is in a group. Passed straight
-  /// to `moveLayer` / `trimLayer` as `escape_group`.
+  /// Alt+body-drag duplicates the layer at the drop position. This is a fixed
+  /// timeline gesture rather than a configurable keyboard shortcut.
+  duplicate: boolean;
+  /// Group escape remains available to trim gestures. Body-drag reserves Alt
+  /// for duplicate, so ordinary moves continue to fan out across the group.
   escapeGroup: boolean;
 }
 
@@ -73,6 +75,9 @@ export interface DragState extends DragSeed {
 
 export interface PendingLayerPlacement {
   layerId: string;
+  /// For a duplicate that has not landed in refreshed project state yet, use
+  /// this source layer's content to render the pending clone.
+  sourceLayerId?: string;
   trackId: string;
   tStartUs: number;
   tEndUs: number;
@@ -138,6 +143,7 @@ export function LayerBlock({
   groupId,
   dragState,
   pendingPlacement,
+  previewOnly = false,
   bladeMode,
   onBladeSplit,
   onBladePreview,
@@ -172,6 +178,8 @@ export function LayerBlock({
   groupId: string | null;
   dragState: DragState | null;
   pendingPlacement: PendingLayerPlacement | null;
+  /// Non-interactive in-flight clone rendered for an Alt+drag duplicate.
+  previewOnly?: boolean;
   /// Blade-tool mode: pointerdown splits at the click point instead
   /// of selecting/dragging. Cursor is set by the `timeline-root-blade`
   /// class (styles.css) via the `timeline-layer` hook class below.
@@ -409,7 +417,8 @@ export function LayerBlock({
       originalTEnd: layer.t_end_us,
       deltaUs: 0,
       overTrackId: trackId,
-      escapeGroup: e.altKey,
+      duplicate: e.altKey && kind === "move",
+      escapeGroup: e.altKey && kind !== "move",
     });
   };
 
@@ -482,6 +491,7 @@ export function LayerBlock({
       data-drag-validity={
         isDragging && dragState?.kind === "move" ? dragValidity : undefined
       }
+      data-duplicate-preview={previewOnly || undefined}
       aria-invalid={dragIsInvalid || undefined}
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
@@ -505,7 +515,7 @@ export function LayerBlock({
             : isSelected
             ? "outline outline-2 -outline-offset-2 outline-ring"
             : "",
-        movedAcrossTracks ? "pointer-events-none" : "",
+        movedAcrossTracks || previewOnly ? "pointer-events-none" : "",
       ].join(" ")}
       style={{
         left,

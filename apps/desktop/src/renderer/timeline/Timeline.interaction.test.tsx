@@ -26,6 +26,7 @@ import {
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
   moveLayer: vi.fn().mockResolvedValue(undefined),
+  pasteLayer: vi.fn().mockResolvedValue("duplicated-layer"),
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   viewStateGet: vi
@@ -50,6 +51,7 @@ vi.mock("../ipc", async (importOriginal) => {
     ...actual,
     addMediaLayer: ipcMocks.addMediaLayer,
     moveLayer: ipcMocks.moveLayer,
+    pasteLayer: ipcMocks.pasteLayer,
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     viewStateGet: ipcMocks.viewStateGet,
@@ -192,6 +194,7 @@ describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
     ipcMocks.addMediaLayer.mockClear();
     ipcMocks.moveLayer.mockClear();
+    ipcMocks.pasteLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
     // Show-All so the role-stamped track always renders regardless of the
@@ -383,6 +386,72 @@ describe("Timeline seek/selection coupling", () => {
       expect(first.style.left).toBe("80px");
       expect(second.style.left).toBe("240px");
     });
+  });
+
+  it("Alt+drag keeps a grouped source in place and duplicates only the dragged layer", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    const { getByText, container } = renderTimeline({
+      tracks: [groupedTrack],
+      groups: [group],
+      selectedLayerId: layer.id,
+      onMutated,
+    });
+
+    const source = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const sibling = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(source, {
+      button: 0,
+      clientX: 0,
+      clientY: 30,
+      altKey: true,
+    });
+    fireEvent.pointerMove(window, { clientX: 320, clientY: 30, altKey: true });
+
+    const preview = container.querySelector(
+      '[data-duplicate-preview="true"]',
+    ) as HTMLElement;
+    expect(source.style.left).toBe("0px");
+    expect(sibling.style.left).toBe("160px");
+    expect(preview).not.toBeNull();
+    expect(preview.style.left).toBe("320px");
+
+    fireEvent.pointerUp(window, { clientX: 320, clientY: 30, altKey: true });
+
+    await waitFor(() => {
+      expect(ipcMocks.pasteLayer).toHaveBeenCalledWith(
+        layer.id,
+        4_000_000,
+        track.id,
+      );
+    });
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+  });
+
+  it("blocks an Alt+drag duplicate that would overlap its source", () => {
+    const { getByText, container } = renderTimeline({
+      tracks: [track],
+      selectedLayerId: layer.id,
+    });
+    const source = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(source, {
+      button: 0,
+      clientX: 0,
+      clientY: 30,
+      altKey: true,
+    });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 30, altKey: true });
+
+    const preview = container.querySelector(
+      '[data-duplicate-preview="true"]',
+    ) as HTMLElement;
+    expect(source.style.left).toBe("0px");
+    expect(preview.dataset.dragValidity).toBe("collision");
+
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 30, altKey: true });
+    expect(ipcMocks.pasteLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
   });
 
   it("shows a collision state and blocks an existing visual clip move before IPC", () => {

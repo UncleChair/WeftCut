@@ -99,6 +99,31 @@ describe('production adapter routing — add_text_layer (rich)', () => {
 // ── Rich channel: paste_layer ─────────────────────────────────────────────────
 
 describe('production adapter routing — paste_layer (rich)', () => {
+  it('uses an explicit target track for an Alt-drag duplicate', () => {
+    const a = freshActor()
+    const sourceId = addColorLayerCmd(a, aRollId(a), 0, 2_000_000)
+    const targetTrackId = bRollId(a)
+    const historyLenBefore = a.historyView(10).len
+
+    const r = a.command('paste_layer', {
+      layerId: sourceId,
+      tStartUs: 3_000_000,
+      targetTrackId,
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const pastedId = r.value as string
+    const sourceTrack = a.snapshot().tracks.find((track) => track.id === aRollId(a))!
+    const targetTrack = a.snapshot().tracks.find((track) => track.id === targetTrackId)!
+    expect(sourceTrack.layers.map((layer) => layer.id)).toEqual([sourceId])
+    expect(targetTrack.layers.find((layer) => layer.id === pastedId)).toMatchObject({
+      t_start_us: 3_000_000,
+      t_end_us: 5_000_000,
+    })
+    expect(a.historyView(10).len).toBe(historyLenBefore + 1)
+  })
+
   it('clones the whole layer at the requested time and auto-creates an Overlay track', () => {
     const a = freshActor()
     const sourceId = addColorLayerCmd(a, aRollId(a), 0, 2_000_000)
