@@ -11,7 +11,7 @@ import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDe
 import { applyMoveLayer } from './mutations/move'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
-import { applyDuplicateLayer } from './mutations/duplicate'
+import { applyDuplicateLayer, applyPasteLayer, pasteLayerInterval } from './mutations/duplicate'
 import { applySplitLayer } from './mutations/split'
 import { applyGroupsCreate, applyGroupsDissolve, applyGroupsAddMembers, applyGroupsRemoveMembers, applyGroupsRename } from './mutations/groups'
 import { applyUpdateLayer, type LayerPatch } from './mutations/update'
@@ -554,6 +554,25 @@ export function createActor(opts: ActorOptions): ActorHandle {
             applyAddTrack(d, idGen, 'Overlay'))
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, newTrackId, params, t0, t1))
+          return { ok: true, value: id }
+        }
+        case 'paste_layer': {
+          // Paste uses the same automatic placement policy as add_text_layer:
+          // reverse-scan non-reserved tracks for a free interval, otherwise
+          // create a new Overlay track before adding the cloned layer.
+          const sourceId = parseUuid(wireArgs.layerId, 'layerId')
+          const requestedStart = parseNum(wireArgs.tStartUs, 'tStartUs')
+          const interval = pasteLayerInterval(current(), sourceId, requestedStart)
+          const trackId = pickFreeOverlayTrack(current(), interval.tStartUs, interval.tEndUs)
+          if (trackId !== null) {
+            const id = commit('Pasted layer', [], { kind: 'Coarse' }, (d) =>
+              applyPasteLayer(d, idGen, sourceId, trackId, requestedStart))
+            return { ok: true, value: id }
+          }
+          const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
+            applyAddTrack(d, idGen, 'Overlay'))
+          const id = commit('Pasted layer', [], { kind: 'Coarse' }, (d) =>
+            applyPasteLayer(d, idGen, sourceId, newTrackId, requestedStart))
           return { ok: true, value: id }
         }
         case 'add_media_layer': {

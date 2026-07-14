@@ -142,6 +142,8 @@ const zhCN: Resources = {
     motifs_hint: "选择 Motif 叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
     toggle_play: "播放 / 暂停",
     delete_selected: "删除选中的图层",
+    copy_selected: "复制选中的片段",
+    paste_at_playhead: "在播放头粘贴片段",
     toggle_log: "切换活动日志",
     focus_log_search: "聚焦活动日志搜索",
     toggle_display_mode: "切换 A/B 轨 / 显示全部",

@@ -961,6 +961,13 @@ export async function duplicateLayer(
   return invoke<string>("duplicate_layer", { layerId, tOffsetUs });
 }
 
+export async function pasteLayer(
+  layerId: string,
+  tStartUs: number,
+): Promise<string> {
+  return invoke<string>("paste_layer", { layerId, tStartUs });
+}
+
 export async function deleteLayer(layerId: string): Promise<void> {
   return invoke<void>("delete_layer", { layerId });
 }

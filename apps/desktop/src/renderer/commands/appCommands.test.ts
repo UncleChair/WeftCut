@@ -10,7 +10,8 @@ const noop = () => {};
 // ops), including the palette action itself.
 const handlers: HandlerMap = {
   save: noop, saveAs: noop, closeProject: noop, undo: noop, redo: noop,
-  togglePlay: noop, deleteSelected: noop, importMedia: noop, export: noop,
+  togglePlay: noop, deleteSelected: noop, copySelected: noop, pasteAtPlayhead: noop,
+  importMedia: noop, export: noop,
   toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
   toggleDisplayMode: noop, toggleMediaPool: noop,
   seekFrameBack: noop, seekFrameForward: noop, seekSecondBack: noop,

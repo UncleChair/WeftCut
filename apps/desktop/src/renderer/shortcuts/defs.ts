@@ -30,6 +30,8 @@ export type ActionId =
   | "redo"
   | "togglePlay"
   | "deleteSelected"
+  | "copySelected"
+  | "pasteAtPlayhead"
   | "importMedia"
   | "export"
   | "toggleBladeMode"
@@ -67,6 +69,10 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // open menus/dialogs — see `captureGlobal` notes above.
   togglePlay:      { defaultKeys: ["Space"],               labelKey: "actions.toggle_play", captureGlobal: true },
   deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected" },
+  // Clipboard actions belong to the timeline, not an active text editor. The
+  // explicit false preserves native copy/paste inside inputs and text fields.
+  copySelected:    { defaultKeys: ["Mod+C"],               labelKey: "actions.copy_selected", fireWhenEditing: false },
+  pasteAtPlayhead: { defaultKeys: ["Mod+V"],               labelKey: "actions.paste_at_playhead", fireWhenEditing: false },
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },
   // Bare-letter `C` toggles blade-tool mode in the timeline. While

@@ -96,6 +96,74 @@ describe('production adapter routing — add_text_layer (rich)', () => {
   })
 })
 
+// ── Rich channel: paste_layer ─────────────────────────────────────────────────
+
+describe('production adapter routing — paste_layer (rich)', () => {
+  it('clones the whole layer at the requested time and auto-creates an Overlay track', () => {
+    const a = freshActor()
+    const sourceId = addColorLayerCmd(a, aRollId(a), 0, 2_000_000)
+    a.command('update_layer', { layerId: sourceId, patch: { label: 'Copied clip' } })
+    a.command('add_effect', { layerId: sourceId, kind: 'blur' })
+    const source = a.snapshot().tracks[0].layers[0]
+
+    const r = a.command('paste_layer', { layerId: sourceId, tStartUs: 3_000_000 })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const pastedId = r.value as string
+    const snap = a.snapshot()
+    const target = snap.tracks.find((track) => track.layers.some((layer) => layer.id === pastedId))!
+    const pasted = target.layers.find((layer) => layer.id === pastedId)!
+    expect(target.role).toBeNull()
+    expect(target.label).toBe('Overlay')
+    expect(pasted.id).not.toBe(sourceId)
+    expect(pasted.label).toBe('Copied clip')
+    expect(pasted.params).toEqual(source.params)
+    expect(pasted.effects).toEqual(source.effects)
+    expect(pasted.t_start_us).toBe(3_000_000)
+    expect(pasted.t_end_us).toBe(5_000_000)
+  })
+
+  it('reuses a free automatic track, then creates another when the interval conflicts', () => {
+    const a = freshActor()
+    const sourceId = addColorLayerCmd(a, aRollId(a), 0, 2_000_000)
+
+    const first = a.command('paste_layer', { layerId: sourceId, tStartUs: 3_000_000 })
+    expect(first.ok).toBe(true)
+    const firstTarget = a.snapshot().tracks.find((track) =>
+      track.layers.some((layer) => layer.id === (first.ok ? first.value : null)),
+    )!.id
+
+    const second = a.command('paste_layer', { layerId: sourceId, tStartUs: 6_000_000 })
+    expect(second.ok).toBe(true)
+    const secondTarget = a.snapshot().tracks.find((track) =>
+      track.layers.some((layer) => layer.id === (second.ok ? second.value : null)),
+    )!.id
+    expect(secondTarget).toBe(firstTarget)
+    expect(a.snapshot().tracks).toHaveLength(3)
+
+    const conflicting = a.command('paste_layer', { layerId: sourceId, tStartUs: 6_000_000 })
+    expect(conflicting.ok).toBe(true)
+    const conflictingTarget = a.snapshot().tracks.find((track) =>
+      track.layers.some((layer) => layer.id === (conflicting.ok ? conflicting.value : null)),
+    )!.id
+    expect(conflictingTarget).not.toBe(firstTarget)
+    expect(a.snapshot().tracks).toHaveLength(4)
+  })
+
+  it('rejects a missing copied layer before creating a track', () => {
+    const a = freshActor()
+    const r = a.command('paste_layer', {
+      layerId: '00000000-0000-0000-0000-000000000099',
+      tStartUs: 0,
+    })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.error).toBe('LayerNotFound')
+    expect(a.snapshot().tracks).toHaveLength(2)
+  })
+})
+
 // ── Rich channel: add_demo_color_layer ────────────────────────────────────────
 
 describe('production adapter routing — add_demo_color_layer (rich)', () => {

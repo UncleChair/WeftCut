@@ -143,6 +143,8 @@ const enUS = {
     // timeline edits).
     toggle_play: "Play / pause",
     delete_selected: "Delete selected layer",
+    copy_selected: "Copy selected layer",
+    paste_at_playhead: "Paste layer at playhead",
     toggle_log: "Toggle activity log",
     focus_log_search: "Focus activity-log search",
     toggle_display_mode: "Toggle A/B Roll / Show All",

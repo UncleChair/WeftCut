@@ -206,7 +206,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
 /** All production channels this adapter handles (mechanical + rich + meta). */
 export const PRODUCTION_OPS = new Set<string>([
   'add_track', 'update_layer',
-  'add_color_layer', 'add_text_layer', 'add_media_layer',
+  'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
   // Task 4: remaining mechanical + meta channels
   'move_layer', 'trim_layer', 'delete_layer', 'duplicate_layer', 'split_layer_grouped',

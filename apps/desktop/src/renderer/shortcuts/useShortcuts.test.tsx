@@ -3,6 +3,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { useShortcuts, type HandlerMap } from "./useShortcuts";
 import { usePickSessionStore } from "../colorpick/pickColor";
+import { parseBinding } from "./match";
 
 // useShortcuts only reaches `logEmit` for activity-log breadcrumbs; stub the
 // whole ipc surface so the dispatcher runs without a backend host (and keeps the
@@ -18,6 +19,21 @@ function Harness({ handlers }: { handlers: HandlerMap }) {
 
 function dispatchKey(target: Element, key: string): KeyboardEvent {
   const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  target.dispatchEvent(ev);
+  return ev;
+}
+
+function dispatchBinding(target: Element, binding: string): KeyboardEvent {
+  const parsed = parseBinding(binding);
+  const ev = new KeyboardEvent("keydown", {
+    key: parsed.key,
+    ctrlKey: parsed.ctrl,
+    metaKey: parsed.meta,
+    shiftKey: parsed.shift,
+    altKey: parsed.alt,
+    bubbles: true,
+    cancelable: true,
+  });
   target.dispatchEvent(ev);
   return ev;
 }
@@ -103,6 +119,26 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     expect(deleteSelected).not.toHaveBeenCalled();
 
     window.removeEventListener("keydown", preempt, true);
+  });
+
+  it("dispatches timeline copy/paste chords but preserves native editing shortcuts", () => {
+    const copySelected = vi.fn();
+    const pasteAtPlayhead = vi.fn();
+    render(<Harness handlers={{ copySelected, pasteAtPlayhead }} />);
+
+    expect(dispatchBinding(document.body, "Mod+C").defaultPrevented).toBe(true);
+    expect(dispatchBinding(document.body, "Mod+V").defaultPrevented).toBe(true);
+    expect(copySelected).toHaveBeenCalledTimes(1);
+    expect(pasteAtPlayhead).toHaveBeenCalledTimes(1);
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    expect(dispatchBinding(input, "Mod+C").defaultPrevented).toBe(false);
+    expect(dispatchBinding(input, "Mod+V").defaultPrevented).toBe(false);
+    expect(copySelected).toHaveBeenCalledTimes(1);
+    expect(pasteAtPlayhead).toHaveBeenCalledTimes(1);
+    input.remove();
   });
 
   it("shortcuts are inert while a color-pick session is active", () => {

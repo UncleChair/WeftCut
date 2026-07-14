@@ -7,6 +7,7 @@ import {
   addTextLayer,
   deleteLayer,
   importCancel,
+  pasteLayer,
   projectRedo,
   projectSave,
   projectSaveAs,
@@ -119,6 +120,9 @@ export function App({ onCloseProject }: AppProps) {
   // (docs/data-model.md Q10). The transport buttons here delegate to its
   // imperative handle (play / pause / seek); playhead state flows back up via callbacks.
   const previewRef = useRef<PreviewSurfaceHandle | null>(null);
+  // Timeline-local clipboard. It intentionally remembers the copied layer,
+  // independent of later selection changes; App remounts for each project.
+  const copiedLayerIdRef = useRef<string | null>(null);
 
   // Fresh project session → playhead 0. The store is module-global and would
   // otherwise carry the previous project's position across a close/open
@@ -375,6 +379,22 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [selectedLayerId, refresh]);
 
+  const copySelected = useCallback(() => {
+    if (selectedLayerId) copiedLayerIdRef.current = selectedLayerId;
+  }, [selectedLayerId]);
+
+  const pasteAtPlayhead = useCallback(async () => {
+    const sourceLayerId = copiedLayerIdRef.current;
+    if (!sourceLayerId) return;
+    try {
+      const pastedLayerId = await pasteLayer(sourceLayerId, playheadTimeUs());
+      setPendingRevealLayerId(pastedLayerId);
+      await refresh();
+    } catch (err) {
+      console.error("paste failed:", err);
+    }
+  }, [refresh]);
+
   // Wire all v1 shortcut bindings. The handler map is rebuilt each
   // render — fine, because `useShortcuts` reads through a ref so the
   // window listener never reattaches just because handler identities
@@ -417,6 +437,8 @@ export function App({ onCloseProject }: AppProps) {
     redo: () => run(projectRedo),
     togglePlay,
     deleteSelected,
+    copySelected,
+    pasteAtPlayhead,
     importMedia: importMediaFiles,
     export: () => setExportDialogOpen(true),
     toggleBladeMode: () => setBladeMode((v) => !v),
