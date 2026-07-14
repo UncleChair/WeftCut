@@ -21,9 +21,10 @@ describe("AppNotices", () => {
     mockNotices([{ level: "warn", code: "keyring_unavailable" }]);
     render(<AppNotices />);
     const notice = await screen.findByRole("status");
-    // The code is reflected in the panel class so the right notice is keyed,
+    // The code is reflected in the banner class so the right notice is keyed,
     // independent of the (i18n-translated) text.
     expect(notice.className).toContain("app-notice-keyring_unavailable");
+    expect(notice.className).toContain("app-notice-banner");
     // Text is i18n-resolved (not the raw key).
     expect(notice.textContent).not.toContain("app_notice.");
   });

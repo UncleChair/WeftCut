@@ -491,32 +491,35 @@ export function App({ onCloseProject }: AppProps) {
   return (
     <ShortcutBindingsProvider overrides={shortcutOverrides}>
     <div className="app">
-      <AppMenuBar
-        busy={busy}
-        pong={pong}
-        canUndo={!!summary?.history.can_undo}
-        canRedo={!!summary?.history.can_redo}
-        canBlade={!!summary && summary.layer_count > 0}
-        exportLocked={
-          busy ||
-          exportState?.kind === "starting" ||
-          exportState?.kind === "progress"
-        }
-        onImportMedia={importMediaFiles}
-        onSave={saveProjectNow}
-        onSaveAs={saveProject}
-        onSaveAndClose={saveAndClose}
-        onUndo={() => run(projectUndo)}
-        onRedo={() => run(projectRedo)}
-        onToggleBladeMode={() => setBladeMode((v) => !v)}
-        onAddColorLayer={handleAddColorLayer}
-        onAddTextLayer={handleAddTextLayer}
-        onOpenMotifPicker={() => setMotifPickerOpen(true)}
-        onOpenExport={() => setExportDialogOpen(true)}
-        onOpenConnect={() => setConnectOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenSearch={() => setPaletteOpen(true)}
-      />
+      <div className="app-top-chrome">
+        <AppMenuBar
+          busy={busy}
+          pong={pong}
+          canUndo={!!summary?.history.can_undo}
+          canRedo={!!summary?.history.can_redo}
+          canBlade={!!summary && summary.layer_count > 0}
+          exportLocked={
+            busy ||
+            exportState?.kind === "starting" ||
+            exportState?.kind === "progress"
+          }
+          onImportMedia={importMediaFiles}
+          onSave={saveProjectNow}
+          onSaveAs={saveProject}
+          onSaveAndClose={saveAndClose}
+          onUndo={() => run(projectUndo)}
+          onRedo={() => run(projectRedo)}
+          onToggleBladeMode={() => setBladeMode((v) => !v)}
+          onAddColorLayer={handleAddColorLayer}
+          onAddTextLayer={handleAddTextLayer}
+          onOpenMotifPicker={() => setMotifPickerOpen(true)}
+          onOpenExport={() => setExportDialogOpen(true)}
+          onOpenConnect={() => setConnectOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSearch={() => setPaletteOpen(true)}
+        />
+        <AppNotices />
+      </div>
 
       <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
         <PreviewSection
@@ -648,7 +651,6 @@ export function App({ onCloseProject }: AppProps) {
           onDone={() => setStaleMotifs([])}
         />
       )}
-      <AppNotices />
       <PickOverlayHost />
       {connectOpen && (
         <ConnectAgentPanel onClose={() => setConnectOpen(false)} />

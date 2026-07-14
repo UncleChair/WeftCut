@@ -163,7 +163,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
               renderer/public — the same SVG the window favicon uses. */}
           <img
             className="startup-logo"
-            src="/icons/icon.svg"
+            src="./icons/icon.svg"
             alt=""
             aria-hidden
             width={44}

@@ -17,6 +17,10 @@
   color: var(--muted-foreground);
 }
 
+.app-top-chrome {
+  min-width: 0;
+}
+
 .app-header {
   display: flex;
   align-items: center;
@@ -44,6 +48,67 @@
   width: 18px;
   height: 18px;
   flex-shrink: 0;
+}
+
+/* Persistent app-level warnings belong to the window chrome, not to a
+ * floating corner: they push the workspace down instead of covering the
+ * inspector or preview controls. Details stay on one truncating line and are
+ * also available through the native title tooltip. */
+.app-notices {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-notices:empty {
+  display: none;
+}
+
+.app-notice-banner {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 12px;
+  background: rgba(245, 158, 11, 0.10);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.app-notice-icon {
+  color: var(--color-amber-400);
+  flex-shrink: 0;
+}
+
+.app-notice-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.app-notice-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+
+.app-notice-dismiss {
+  color: var(--color-amber-200);
+}
+
+@media (max-width: 720px) {
+  .app-notice-banner {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .app-notice-body {
+    display: none;
+  }
 }
 
 /* MediaPool lives in a left collapsible drawer (see `docs/data-model.md`).
