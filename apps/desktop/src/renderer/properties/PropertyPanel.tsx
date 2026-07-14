@@ -77,8 +77,7 @@ export function PropertyPanel({
 
   if (!layer) {
     return (
-      <aside className="property-panel">
-        <h2>{t("property_panel.heading")}</h2>
+      <aside className="property-panel" aria-label={t("property_panel.heading")}>
         <p className="placeholder">{t("property_panel.empty")}</p>
       </aside>
     );
@@ -90,11 +89,7 @@ export function PropertyPanel({
   void groups;
 
   return (
-    <aside className="property-panel">
-      <h2>
-        {t("property_panel.heading")} —{" "}
-        {t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind })}
-      </h2>
+    <aside className="property-panel" aria-label={t("property_panel.heading")}>
       <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} currentTimeUs={currentTimeUs} />
     </aside>
   );

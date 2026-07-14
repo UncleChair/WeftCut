@@ -51,7 +51,6 @@ export function MixerPanel({ onMutated }: { onMutated: () => Promise<void> }) {
 
   return (
     <section className="mixer-panel" aria-label={t("mixer.title")}>
-      <h3>{t("mixer.title")}</h3>
       {AUDIO_ROLES.map((role: AudioRole) => {
         const r = byRole.get(role) ?? { role, gain_db: 0, muted: false, solo: false };
         const roleLabel = t(`audio_roles.${role}`);

@@ -351,14 +351,6 @@
   gap: 8px;
 }
 
-.mixer-panel h3 {
-  margin: 0 0 4px 0;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  color: var(--color-gray-300);
-  letter-spacing: 0.02em;
-}
-
 .mixer-role-name {
   min-width: 0;
   overflow: hidden;
@@ -377,15 +369,6 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.property-panel h2 {
-  margin: 0 0 4px 0;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  color: var(--muted-foreground);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .property-panel h3 {

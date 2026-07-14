@@ -73,7 +73,6 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
 
   return (
     <section className="captions-panel" aria-label={t("captions.title")}>
-      <h3>{t("captions.title")}</h3>
       {cues.length === 0 ? (
         <p className="placeholder">{t("captions.empty")}</p>
       ) : (
