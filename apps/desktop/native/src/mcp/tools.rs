@@ -170,7 +170,7 @@ pub(super) async fn detect_silences(
         ));
     }
 
-    let peaks = jobs::read_peaks_file(&waveform_path)
+    let peaks_file = jobs::read_peaks_file(&waveform_path)
         .map_err(|e| McpToolError::internal_error(format!("read peaks: {e:#}"), None))?;
 
     // Map source-relative silence regions to timeline-absolute coords:
@@ -182,12 +182,14 @@ pub(super) async fn detect_silences(
         _ => unreachable!("kind already checked above"),
     };
     let regions = detect_silences_in_peaks(
-        &peaks,
+        &peaks_file.peaks,
         threshold_amp,
         min_silence_us,
         src_in_us,
         src_out_us,
         layer.t_start_us,
+        peaks_file.sample_rate,
+        peaks_file.frames_per_peak,
     );
 
     ToolResult::json(&regions)
@@ -247,8 +249,9 @@ fn detect_silences_in_peaks(
     src_in_us: i64,
     src_out_us: i64,
     layer_t_start_us: i64,
+    sample_rate: u32,
+    frames_per_peak: u32,
 ) -> Vec<SilenceRegion> {
-    let us_per_peak: i64 = 1_000_000 / crate::jobs::waveform::PEAKS_PER_SECOND as i64;
     let mut regions = Vec::new();
     let mut run_start: Option<usize> = None;
     for (i, &p) in peaks.iter().enumerate() {
@@ -260,7 +263,8 @@ fn detect_silences_in_peaks(
                     &mut regions,
                     start,
                     i,
-                    us_per_peak,
+                    sample_rate,
+                    frames_per_peak,
                     min_silence_us,
                     src_in_us,
                     src_out_us,
@@ -276,7 +280,8 @@ fn detect_silences_in_peaks(
             &mut regions,
             start,
             peaks.len(),
-            us_per_peak,
+            sample_rate,
+            frames_per_peak,
             min_silence_us,
             src_in_us,
             src_out_us,
@@ -292,14 +297,18 @@ fn push_if_long_enough(
     out: &mut Vec<SilenceRegion>,
     start_idx: usize,
     end_idx: usize, // exclusive
-    us_per_peak: i64,
+    sample_rate: u32,
+    frames_per_peak: u32,
     min_silence_us: i64,
     src_in_us: i64,
     src_out_us: i64,
     layer_t_start_us: i64,
 ) {
-    let src_silence_start = start_idx as i64 * us_per_peak;
-    let src_silence_end = end_idx as i64 * us_per_peak;
+    let peak_time_us = |idx: usize| -> i64 {
+        ((idx as i128 * frames_per_peak as i128 * 1_000_000) / sample_rate as i128) as i64
+    };
+    let src_silence_start = peak_time_us(start_idx);
+    let src_silence_end = peak_time_us(end_idx);
     // Intersect with the layer's source window — peaks beyond src_out_us
     // belong to media the layer doesn't reference.
     let src_start = src_silence_start.max(src_in_us);
@@ -342,7 +351,7 @@ mod tests {
     fn detect_silences_returns_empty_for_loud_track() {
         let peaks = flat_peaks(500, 0.5);
         let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 5_000_000, 0);
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 5_000_000, 0, 100, 1);
         assert!(regions.is_empty());
     }
 
@@ -356,7 +365,7 @@ mod tests {
             peaks[i] = 0.001;
         }
         let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0);
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 50 * US_PER_PEAK);
         assert_eq!(regions[0].t_end_us, 150 * US_PER_PEAK);
@@ -378,12 +387,12 @@ mod tests {
             peaks[i] = 0.0;
         }
         let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0);
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert!(regions.is_empty(), "expected no regions, got {regions:?}");
 
         // With min_silence_us=200_000 (200ms) all three should be returned.
         let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 200_000, 0, 2_000_000, 0);
+            detect_silences_in_peaks(&peaks, 0.02, 200_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 3);
     }
 
@@ -397,7 +406,7 @@ mod tests {
             peaks[i] = 0.0;
         }
         let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0);
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 100 * US_PER_PEAK);
         assert_eq!(regions[0].t_end_us, 200 * US_PER_PEAK);
@@ -419,6 +428,8 @@ mod tests {
             0,
             2_000_000,
             5_000_000,
+            100,
+            1,
         );
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 5_500_000);
@@ -440,6 +451,8 @@ mod tests {
             300_000,   // src_in_us
             1_700_000, // src_out_us
             0,         // layer_t_start_us
+            100,
+            1,
         );
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 0);
@@ -452,14 +465,42 @@ mod tests {
         // Peaks exactly at threshold should NOT count as silence.
         let peaks = flat_peaks(200, 0.02);
         let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0);
+            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0, 100, 1);
         assert!(regions.is_empty());
 
         // Just below threshold → silence.
         let peaks = flat_peaks(200, 0.019);
         let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0);
+            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
+    }
+
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn detect_silences_uses_rational_peak_timebase_without_long_drift() {
+        let mut peaks = flat_peaks(800, 0.5);
+        for peak in &mut peaks[783..790] {
+            *peak = 0.0;
+        }
+        let regions = detect_silences_in_peaks(
+            &peaks,
+            0.02,
+            1,
+            0,
+            200_000_000,
+            0,
+            22_050,
+            2_816,
+        );
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            regions[0].t_start_us,
+            (783_i128 * 2_816 * 1_000_000 / 22_050) as i64
+        );
+        assert_eq!(
+            regions[0].t_end_us,
+            (790_i128 * 2_816 * 1_000_000 / 22_050) as i64
+        );
     }
 
     // Tests for audio-role tools, add_track, and the apply_subtitles caption-track

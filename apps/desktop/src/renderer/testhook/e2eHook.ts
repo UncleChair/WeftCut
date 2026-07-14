@@ -58,6 +58,10 @@ import {
   type HwFallbackProbeResult,
 } from "../render/decoder/decodeBench";
 import type { ActiveClipProbe } from "../render/Compositor";
+import {
+  ensureWaveformWindow,
+  registerWaveformProducer,
+} from "../timeline/tileEngine/WaveformTileProducer";
 
 type RunExport = (
   settings: ExportSettings,
@@ -133,6 +137,17 @@ export interface E2EHook {
   /// the conform job lands). Cache-surgery specs (conform invalidation) read
   /// the real absolute path here instead of reconstructing the cache layout.
   mediaConformPath(args: { mediaId: string }): string | null;
+  /// Sample the renderer's real waveform tile path at source times. This goes
+  /// through WaveformTileProducer + TileEngine (including not_ready/pending
+  /// retries), exactly like TimelineWaveform, instead of reading the backend
+  /// peaks file directly.
+  sampleWaveformRms(args: {
+    mediaId: string;
+    timesUs: number[];
+    pxPerSec?: number;
+    windowMs?: number;
+    timeoutMs?: number;
+  }): Promise<{ peaksPerSecond: number; rms: number[] }>;
   /// Add a built-in Motif layer at t=0 (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
   /// motif-only timeline, driving the FULL real export path: main-thread
@@ -883,6 +898,40 @@ export function installExportHook(
 
   hookSlot().mediaConformPath = ({ mediaId }) =>
     mediaFromStore(mediaId)?.conform_path ?? null;
+
+  hookSlot().sampleWaveformRms = async ({
+    mediaId,
+    timesUs,
+    pxPerSec = 100,
+    windowMs = 80,
+    timeoutMs = 60_000,
+  }) => {
+    registerWaveformProducer();
+    const maxUs = Math.max(1, ...timesUs) + 100_000;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const win = await ensureWaveformWindow(mediaId, 0, 0, maxUs, pxPerSec);
+      if (win !== "pending" && win !== "not_ready") {
+        const rms = timesUs.map((timeUs) => {
+          const globalPeak = Math.round((timeUs / 1_000_000) * win.peaksPerSecond);
+          const center = globalPeak - win.startPeak;
+          if (windowMs === 0) return win.rms[center] ?? 0;
+          const radius = Math.max(
+            1,
+            Math.round((windowMs / 2_000) * win.peaksPerSecond),
+          );
+          const lo = Math.max(0, center - radius);
+          const hi = Math.min(win.rms.length, center + radius);
+          let sum = 0;
+          for (let i = lo; i < hi; i++) sum += win.rms[i]!;
+          return sum / Math.max(1, hi - lo);
+        });
+        return { peaksPerSecond: win.peaksPerSecond, rms };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`waveform ${mediaId} not ready within ${timeoutMs}ms`);
+  };
 
   hookSlot().exportClip = async ({
     mediaAbsPath,

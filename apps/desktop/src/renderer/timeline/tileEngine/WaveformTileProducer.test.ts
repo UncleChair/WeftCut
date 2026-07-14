@@ -3,6 +3,7 @@ import {
   chooseLevel,
   tileRangeForWindow,
   TILE_PEAKS,
+  PX_PER_PEAK_TARGET,
   WAVEFORM_KIND,
   registerWaveformProducer,
   ensureWaveformWindow,
@@ -42,6 +43,21 @@ describe("chooseLevel", () => {
   it("clamps to finest when desired exceeds all levels", () => {
     expect(chooseLevel(levels, 100000)).toBe(0);
   });
+
+  it("uses the fractional effective density at an LOD boundary", () => {
+    const exactLevels = [
+      { level: 0, peaksPerSecond: 22_050 / 22, peakCount: 125_285 },
+      { level: 1, peaksPerSecond: 22_050 / 44, peakCount: 62_643 },
+      { level: 2, peaksPerSecond: 22_050 / 88, peakCount: 31_322 },
+      { level: 3, peaksPerSecond: 22_050 / 176, peakCount: 15_661 },
+      { level: 4, peaksPerSecond: 22_050 / 352, peakCount: 7_831 },
+    ];
+
+    // desired = 62.5 peaks/s. The exact level-4 density is 62.642045... and
+    // is sufficient. Treating it as the old rounded value 62 would select
+    // the unnecessarily fine level 3 instead.
+    expect(chooseLevel(exactLevels, 62.5 * PX_PER_PEAK_TARGET)).toBe(4);
+  });
 });
 
 describe("tileRangeForWindow", () => {
@@ -52,6 +68,23 @@ describe("tileRangeForWindow", () => {
     expect(r.endPeak).toBe(3000);
     expect(r.firstTile).toBe(Math.floor(1000 / TILE_PEAKS)); // 0
     expect(r.lastTile).toBe(Math.floor((3000 - 1) / TILE_PEAKS)); // 1
+  });
+
+  it("preserves the exact 22050/352 timebase across a long source window", () => {
+    const exactPps = 22_050 / (22 * 16);
+    const durationUs = 124_928_000; // voice.mp4-equivalent source duration
+    const r = tileRangeForWindow(exactPps, 100_000_000, durationUs);
+
+    expect(exactPps).toBeCloseTo(62.6420454545, 10);
+    expect(r.startPeak).toBe(6264);
+    expect(r.endPeak).toBe(7826);
+    expect(r.firstTile).toBe(3);
+    expect(r.lastTile).toBe(3);
+
+    // The legacy integer density would be 80 peaks behind by the end of this
+    // file (about 1.29 seconds at the real density).
+    const rounded = tileRangeForWindow(62, 100_000_000, durationUs);
+    expect(r.endPeak - rounded.endPeak).toBe(80);
   });
 });
 
@@ -116,6 +149,42 @@ describe("waveform tile producer (shared engine)", () => {
     }
     expect(second.startPeak).toBe(1500);
     expect(Array.from(second.rms)).toEqual([0.5, 0.25]);
+  });
+
+  it("assembles a long-time window using fractional LOD density", async () => {
+    const peaksPerSecond = 22_050 / (22 * 16);
+    vi.mocked(getWaveformLevels).mockResolvedValue({
+      channels: 1,
+      levels: [{ level: 4, peaksPerSecond, peakCount: 8_000 }],
+    });
+    vi.mocked(getWaveformTile).mockImplementation(async (_mediaId, _level, _channel, startPeak, count) => ({
+      peaksPerSecond,
+      min: new Array(count).fill(-0.25),
+      max: new Array(count).fill(0.25),
+      rms: Array.from({ length: count }, (_, i) => startPeak + i),
+    }));
+
+    const mediaId = "m-fractional-timebase";
+    const first = await ensureWaveformWindow(
+      mediaId, 0, 100_000_000, 124_928_000, 80, engine,
+    );
+    expect(first).toBe("pending");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const second = await ensureWaveformWindow(
+      mediaId, 0, 100_000_000, 124_928_000, 80, engine,
+    );
+    if (second === "pending" || second === "not_ready") {
+      throw new Error(`expected a ready window, got ${second}`);
+    }
+    expect(second.peaksPerSecond).toBe(peaksPerSecond);
+    expect(second.startPeak).toBe(6264);
+    expect(second.rms).toHaveLength(1562);
+    expect(second.rms[0]).toBe(6264);
+    expect(second.rms.at(-1)).toBe(7825);
+    expect(vi.mocked(getWaveformTile)).toHaveBeenCalledWith(
+      mediaId, 0, 0, 3 * TILE_PEAKS, TILE_PEAKS,
+    );
   });
 });
 

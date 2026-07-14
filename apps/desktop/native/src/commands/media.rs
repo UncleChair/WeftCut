@@ -68,7 +68,7 @@ use base64::Engine;
 #[derive(serde::Serialize)]
 pub struct WaveformPeaks {
     pub peaks: Vec<f32>,
-    pub peaks_per_second: u32,
+    pub peaks_per_second: f64,
 }
 
 /// Master-bus meter reading pushed by the renderer (~2 Hz while playing).
@@ -97,11 +97,14 @@ pub async fn get_media_thumbnail(item: MediaItem) -> Result<String, String> {
 pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String> {
     let path = item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
     crate::cache::touch_if_stale(&path);
-    let peaks = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
+    let peaks_file = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
         .await
         .map_err(|e| format!("join error: {e}"))?
         .map_err(|e| format!("read peaks: {e:#}"))?;
-    Ok(WaveformPeaks { peaks, peaks_per_second: crate::jobs::waveform::PEAKS_PER_SECOND })
+    Ok(WaveformPeaks {
+        peaks: peaks_file.peaks,
+        peaks_per_second: peaks_file.sample_rate as f64 / peaks_file.frames_per_peak as f64,
+    })
 }
 
 /// One LOD level's coarseness (`peaks_per_second`) + how many peak windows it holds.
@@ -109,7 +112,7 @@ pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String
 #[serde(rename_all = "camelCase")]
 pub struct WaveformLevelInfo {
     pub level: u32,
-    pub peaks_per_second: u32,
+    pub peaks_per_second: f64,
     pub peak_count: u32,
 }
 
@@ -127,7 +130,7 @@ pub struct WaveformLevels {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WaveformTile {
-    pub peaks_per_second: u32,
+    pub peaks_per_second: f64,
     pub min: Vec<f32>,
     pub max: Vec<f32>,
     pub rms: Vec<f32>,
@@ -158,7 +161,7 @@ pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, Stri
             .enumerate()
             .map(|(i, l)| WaveformLevelInfo {
                 level: i as u32,
-                peaks_per_second: l.peaks_per_second,
+                peaks_per_second: l.peaks_per_second(header.sample_rate),
                 peak_count: l.peak_count,
             })
             .collect(),
@@ -376,9 +379,9 @@ mod mirror_tests {
         use super::{get_waveform_tile, WaveformTileArgs};
 
         let tmp = tempfile::TempDir::new().unwrap();
-        let peaks_path = tmp.path().join("test.v3.peaks");
+        let peaks_path = tmp.path().join("test.v4.peaks");
 
-        // Create a simple v3 peaks file with known values for 1 channel, 1 level.
+        // Create a simple v4 peaks file with known values for 1 channel, 1 level.
         let level_data = LevelData {
             channels: 1,
             peak_count: 3,
@@ -386,7 +389,7 @@ mod mirror_tests {
             maxs: vec![vec![100, 200, 300]],
             rmss: vec![vec![1000, 2000, 3000]],
         };
-        write_peaks(&peaks_path, 1, &[(100, level_data)])
+        write_peaks(&peaks_path, 1, &[(220, level_data)])
             .await
             .expect("write_peaks");
 
@@ -403,6 +406,7 @@ mod mirror_tests {
         .await
         .expect("get_waveform_tile");
 
+        assert_eq!(tile.peaks_per_second, 100.22727272727273);
         // Verify min/max are dequantized correctly (existing behavior).
         assert_eq!(tile.min[0], -100.0_f32 / 32767.0);
         assert_eq!(tile.max[0], 100.0_f32 / 32767.0);

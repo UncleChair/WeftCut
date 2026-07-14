@@ -214,7 +214,7 @@ impl CacheLayout {
     /// from an older layout is regenerated rather than misread (mirrors
     /// `quick_proxy`'s recipe tag).
     pub fn waveform(&self, hash: &str) -> PathBuf {
-        self.waveforms_dir().join(format!("{hash}.v3.peaks"))
+        self.waveforms_dir().join(format!("{hash}.v4.peaks"))
     }
 
     /// Canonical conformed PCM for a hashed media file — 48 kHz, f32le,
@@ -386,7 +386,7 @@ mod tests {
         );
         assert_eq!(
             layout.waveform("abc"),
-            tmp.path().join("waveforms").join("abc.v3.peaks"),
+            tmp.path().join("waveforms").join("abc.v4.peaks"),
         );
         assert_eq!(
             layout.audio_conform("abc"),

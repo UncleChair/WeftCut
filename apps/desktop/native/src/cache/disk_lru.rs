@@ -108,7 +108,7 @@ fn read_dir_entries(dir: &Path) -> impl Iterator<Item = fs::DirEntry> {
     fs::read_dir(dir).into_iter().flatten().flatten()
 }
 
-/// `waveforms/`: `{hash}.v3.peaks` files are LRU units. Any other `.peaks`
+/// `waveforms/`: `{hash}.v4.peaks` files are LRU units. Any other `.peaks`
 /// version is an orphan from a format bump — the single-version reader
 /// cannot open it — and is deleted unconditionally.
 fn collect_waveforms(dir: &Path, now: SystemTime, report: &mut SweepReport, units: &mut Vec<Unit>) {
@@ -121,7 +121,7 @@ fn collect_waveforms(dir: &Path, now: SystemTime, report: &mut SweepReport, unit
         let path = entry.path();
         if name.ends_with(".tmp") {
             delete_if_aged_tmp(&path, &meta, now, report);
-        } else if name.ends_with(".v3.peaks") {
+        } else if name.ends_with(".v4.peaks") {
             units.push(file_unit(path, &meta));
         } else if name.ends_with(".peaks") && fs::remove_file(&path).is_ok() {
             report.units_deleted += 1;
@@ -361,13 +361,13 @@ mod tests {
     fn orphaned_peaks_versions_deleted_even_under_budget() {
         let (_tmp, l) = layout();
         let now = SystemTime::now();
-        let v2 = l.waveforms_dir().join("aaa.v2.peaks");
-        let v3 = l.waveform("aaa");
-        fs::write(&v2, b"old").unwrap();
-        fs::write(&v3, b"new").unwrap();
+        let v3 = l.waveforms_dir().join("aaa.v3.peaks");
+        let v4 = l.waveform("aaa");
+        fs::write(&v3, b"old").unwrap();
+        fs::write(&v4, b"new").unwrap();
         let report = sweep(&l, u64::MAX, now);
-        assert!(!v2.exists(), "unreadable old-version peaks are orphans");
-        assert!(v3.exists());
+        assert!(!v3.exists(), "unreadable old-version peaks are orphans");
+        assert!(v4.exists());
         assert_eq!(report.units_deleted, 1);
     }
 
@@ -375,7 +375,7 @@ mod tests {
     fn aged_tmp_deleted_fresh_tmp_kept() {
         let (_tmp, l) = layout();
         let now = SystemTime::now();
-        let aged = l.waveforms_dir().join("a.v3.peaks.tmp");
+        let aged = l.waveforms_dir().join("a.v4.peaks.tmp");
         fs::write(&aged, b"zzz").unwrap();
         set_mtime(&aged, hours_ago(now, 2));
         let fresh = put_tile(&l, "h", 0, 0, 10, now); // reuse tile helper dirs

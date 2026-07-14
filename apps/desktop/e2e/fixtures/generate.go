@@ -199,6 +199,114 @@ func writeAudioTones(aformat string) error {
 	return cmd.Run()
 }
 
+// Six-second A/V timing fixture with three short, unambiguous sound islands:
+// [1.00,1.25), [3.00,3.25), and [5.00,5.25). PCM audio avoids codec priming,
+// so a waveform/conform disagreement cannot be blamed on AAC/MP3 padding.
+// The optional output timestamp offset moves BOTH streams together without
+// changing those source-relative marker times; the paired zero/non-zero files
+// isolate first-PTS normalization from waveform loading and playback clocks.
+func writeAudioTimingFixture(ptsOffsetMs int) error {
+	if ptsOffsetMs < 0 {
+		return fmt.Errorf("--pts-offset-ms must be non-negative")
+	}
+	suffix := "zero_pts"
+	if ptsOffsetMs != 0 {
+		suffix = fmt.Sprintf("offset_%dms", ptsOffsetMs)
+	}
+	out := fmt.Sprintf("test_audio_timing_%s.mkv", suffix)
+
+	segments := []struct {
+		tone       bool
+		durationMs int
+	}{
+		{false, 1000}, {true, 250}, {false, 1750}, {true, 250},
+		{false, 1750}, {true, 250}, {false, 750},
+	}
+	args := []string{
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "color=c=0x203040:size=320x180:rate=30:duration=6",
+	}
+	for _, seg := range segments {
+		d := fmt.Sprintf("%.3f", float64(seg.durationMs)/1000)
+		if seg.tone {
+			args = append(args, "-f", "lavfi", "-i",
+				fmt.Sprintf("sine=frequency=1000:sample_rate=48000:duration=%s", d))
+		} else {
+			args = append(args, "-f", "lavfi", "-i",
+				fmt.Sprintf("anullsrc=r=48000:cl=mono:d=%s", d))
+		}
+	}
+	var concatIn strings.Builder
+	for i := range segments {
+		concatIn.WriteString(fmt.Sprintf("[%d:a]", i+1))
+	}
+	filter := fmt.Sprintf("%sconcat=n=%d:v=0:a=1[a]", concatIn.String(), len(segments))
+	args = append(args,
+		"-filter_complex", filter,
+		"-map", "0:v", "-map", "[a]",
+		"-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p",
+		"-c:a", "pcm_s16le",
+	)
+	if ptsOffsetMs != 0 {
+		args = append(args, "-output_ts_offset", fmt.Sprintf("%.3f", float64(ptsOffsetMs)/1000))
+	}
+	args = append(args, "-shortest", out)
+
+	fmt.Printf("Generating %s (sound at 1s, 3s, 5s; PTS offset %dms)\n", out, ptsOffsetMs)
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// Long A/V timing fixture for accumulated waveform-timebase regressions. The
+// sparse 500 ms islands stay unambiguous even at the coarsest waveform LOD,
+// while their positions near 5 s, 60 s, and 120 s make density drift grow from
+// barely visible to obvious. PCM avoids codec delay as a competing cause.
+func writeLongAudioTimingFixture() error {
+	const durationS = 125
+	const out = "test_audio_timing_long_125s.mkv"
+	segments := []struct {
+		tone       bool
+		durationMs int
+	}{
+		{false, 5000}, {true, 500},
+		{false, 54500}, {true, 500},
+		{false, 59500}, {true, 500},
+		{false, 4500},
+	}
+	args := []string{
+		"-y", "-hide_banner", "-loglevel", "error",
+		// One frame per second keeps this long regression fixture quick and small;
+		// waveform generation still decodes the full 48 kHz audio stream.
+		"-f", "lavfi", "-i", fmt.Sprintf("color=c=0x203040:size=320x180:rate=1:duration=%d", durationS),
+	}
+	for _, seg := range segments {
+		d := fmt.Sprintf("%.3f", float64(seg.durationMs)/1000)
+		if seg.tone {
+			args = append(args, "-f", "lavfi", "-i",
+				fmt.Sprintf("sine=frequency=1000:sample_rate=48000:duration=%s", d))
+		} else {
+			args = append(args, "-f", "lavfi", "-i",
+				fmt.Sprintf("anullsrc=r=48000:cl=mono:d=%s", d))
+		}
+	}
+	var concatIn strings.Builder
+	for i := range segments {
+		concatIn.WriteString(fmt.Sprintf("[%d:a]", i+1))
+	}
+	args = append(args,
+		"-filter_complex", fmt.Sprintf("%sconcat=n=%d:v=0:a=1[a]", concatIn.String(), len(segments)),
+		"-map", "0:v", "-map", "[a]",
+		"-c:v", "libx264", "-preset", "ultrafast", "-crf", "32", "-pix_fmt", "yuv420p",
+		"-c:a", "pcm_s16le", "-shortest", out,
+	)
+
+	fmt.Printf("Generating %s (500ms sound islands at 5s, 60s, 120s)\n", out)
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
 func main() {
 	fps := flag.Int("fps", 0, "frame rate (required, positive integer)")
 	format := flag.String("format", "mp4", "output format: mp4, mkv, mov, webm, gif, prores")
@@ -206,6 +314,9 @@ func main() {
 	imageset := flag.Bool("imageset", false, "emit the still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest)")
 	audioTones := flag.Bool("audiotones", false, "emit a 10s audio-ONLY tone-step file (use with --aformat)")
 	aformat := flag.String("aformat", "wav", "audio-only format for --audiotones: wav|mp3|flac|m4a|ogg")
+	audioTiming := flag.Bool("audio-timing", false, "emit a sparse A/V sound-marker fixture for waveform/playback alignment tests")
+	audioTimingLong := flag.Bool("audio-timing-long", false, "emit a 125s sparse A/V fixture for multi-LOD waveform alignment tests")
+	ptsOffsetMs := flag.Int("pts-offset-ms", 0, "shared first-PTS offset for --audio-timing")
 	eosTail := flag.Bool("eostail", false, "EOS-tail geometry: keyframes every 5s only (final GOP spans multiple 60-frame export chunks) + tone track 1s LONGER than the video; names output *_eostail.mp4")
 	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
 	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
@@ -226,6 +337,20 @@ func main() {
 	if *audioTones {
 		if err := writeAudioTones(*aformat); err != nil {
 			log.Fatalf("audiotones: %v", err)
+		}
+		return
+	}
+
+	if *audioTiming {
+		if err := writeAudioTimingFixture(*ptsOffsetMs); err != nil {
+			log.Fatalf("audio timing: %v", err)
+		}
+		return
+	}
+
+	if *audioTimingLong {
+		if err := writeLongAudioTimingFixture(); err != nil {
+			log.Fatalf("long audio timing: %v", err)
 		}
 		return
 	}

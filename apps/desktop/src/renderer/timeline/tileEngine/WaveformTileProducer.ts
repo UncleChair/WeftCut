@@ -29,6 +29,8 @@ export function chooseLevel(
 }
 
 export function tileRangeForWindow(
+  // Must be the exact effective LOD density (sampleRate / framesPerPeak).
+  // Rounding this value causes an error that grows with source time.
   peaksPerSecond: number,
   srcInUs: number,
   srcOutUs: number,
@@ -119,6 +121,9 @@ export async function ensureWaveformWindow(
   if (levels.levels.length === 0) return "not_ready";
 
   const level = chooseLevel(levels.levels, pxPerSec);
+  // Keep the backend's fractional density all the way through range selection
+  // and rendering. In particular, 22050 Hz / 352 frames is
+  // 62.642045... peaks/s, not 62 peaks/s.
   const pps = levels.levels[level]!.peaksPerSecond;
   const { firstTile, lastTile, startPeak, endPeak } = tileRangeForWindow(pps, srcInUs, srcOutUs);
 

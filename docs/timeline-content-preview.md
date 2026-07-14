@@ -103,6 +103,11 @@ Audio clips render a waveform:
   `getWaveformTile(mediaId, level, channel, startPeak, count)` serves
   fixed-size tiles cached under a byte budget; tiles arrive as dequantized
   floats (`min`/`max` in −1..1, `rms` in 0..1).
+- VPEAKS V4 stores each LOD's exact PCM `frames_per_peak` together with the
+  file sample rate. IPC exposes their ratio as a floating-point
+  `peaksPerSecond`; source-time indexing must preserve that fractional value.
+  In particular, the 22,050 Hz / 352-frame level is 62.642045… peaks/s, not
+  62. Rounding it produces zoom-dependent drift that grows with source time.
 - Rendering uses a two-tone style: a soft min/max envelope fill with a
   brighter RMS core symmetric around the lane midline. A 1px visibility floor
   ensures quiet-but-present audio never vanishes; silence renders only the

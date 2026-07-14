@@ -57,15 +57,27 @@ export const MATRIX = [
   { audiotones: true, aformat: "flac" },
   { audiotones: true, aformat: "m4a" },
   { audiotones: true, aformat: "ogg" },
+  // Sparse sound islands at known source times. The pair differs only by a
+  // shared A/V first-PTS offset, isolating PTS normalization from waveform
+  // generation/loading and the preview clock.
+  { audioTiming: true, ptsOffsetMs: 0 },
+  { audioTiming: true, ptsOffsetMs: 375 },
+  // Long sparse marker fixture: catches accumulated timebase drift at the
+  // 62/15/7-ish peaks/s LODs selected by 80/15/8 px/s timelines.
+  { audioTimingLong: true },
   // animated gif — multi-frame, so probe::detect_kind classifies it IMAGE (an
   // animated image the renderer loops; no proxy); media-gif-animated.spec.ts
   // asserts that routing plus the animate/loop/export behavior.
   { fps: 10, format: "gif" },
 ];
 
-export function outputName({ fps, format, audio, color, gradient, gradientH264, gradientH264Bf, gradientAv1, gradientH2644k, eostail, imageset, audiotones, aformat }) {
+export function outputName({ fps, format, audio, color, gradient, gradientH264, gradientH264Bf, gradientAv1, gradientH2644k, eostail, imageset, audiotones, aformat, audioTiming, audioTimingLong, ptsOffsetMs }) {
   if (imageset) return "test_chart_320x240.png";
   if (audiotones) return `test_tones_10s.${aformat}`;
+  if (audioTiming) return ptsOffsetMs === 0
+    ? "test_audio_timing_zero_pts.mkv"
+    : `test_audio_timing_offset_${ptsOffsetMs}ms.mkv`;
+  if (audioTimingLong) return "test_audio_timing_long_125s.mkv";
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
   if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
   if (gradientH264) return `test_${WIDTH_HEIGHT}p_gradient10_h264.mp4`;
@@ -92,6 +104,10 @@ export async function ensureFixtures(mediaDir) {
       ? ["run", GENERATOR, "--imageset"]
       : entry.audiotones
         ? ["run", GENERATOR, "--audiotones", "--aformat", entry.aformat]
+        : entry.audioTiming
+          ? ["run", GENERATOR, "--audio-timing", "--pts-offset-ms", String(entry.ptsOffsetMs)]
+        : entry.audioTimingLong
+          ? ["run", GENERATOR, "--audio-timing-long"]
         : entry.color
           ? ["run", GENERATOR, "--color", entry.color]
           : entry.gradient

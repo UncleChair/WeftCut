@@ -75,6 +75,16 @@ cover pure logic — put fast, logic-only checks there, not here.
 `fixtures/media/` (needs `ffmpeg` on PATH). Point at an external set with
 `WEFTCUT_TEST_MEDIA`. See `docs/conformance.md`.
 
+The waveform/alignment pair (`test_audio_timing_zero_pts.mkv` and
+`test_audio_timing_offset_375ms.mkv`) contains 250 ms sound islands at source
+times 1 s, 3 s, and 5 s. The files differ only by a shared A/V first-PTS offset;
+`audio-waveform-alignment.spec.ts` compares the generated waveform with the
+conform PCM consumed by preview playback, after both background jobs settle.
+The 125 s companion (`test_audio_timing_long_125s.mkv`) has 500 ms sound
+islands at 5 s, 60 s, and 120 s. The same spec samples it through the real tile
+producer at 80, 15, and 8 px/s, covering the roughly 62.64, 15.66, and 7.83
+peaks/s LODs where an integer peaks/s timebase used to accumulate severe drift.
+
 ## The dev control surface
 
 The specs drive `apps/desktop/src/testhook/e2eHook.ts` (`window.__weftcutTest`),

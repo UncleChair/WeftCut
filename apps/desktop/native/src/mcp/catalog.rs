@@ -51,7 +51,7 @@ tool_table! {
                           Returns the new caption track id.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
     #[cfg(feature = "jobs")]
     "detect_silences" => ("Find silent regions in a VideoClip or Audio layer using the pre-computed \
-                          waveform. Walks the layer's peaks file (binary VPEAKS at 100 peaks/sec) and \
+                          waveform. Walks the layer's VPEAKS file using its exact PCM timebase and \
                           returns timeline-absolute ranges where every peak stays below `threshold_amp` \
                           for at least `min_silence_us` microseconds. Defaults: `threshold_amp=0.02` \
                           (-34 dBFS), `min_silence_us=500000` (0.5s). Use the returned ranges to feed \

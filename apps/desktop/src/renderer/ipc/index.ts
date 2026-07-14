@@ -1091,6 +1091,9 @@ export async function getWaveformPeaks(mediaId: string): Promise<WaveformPeaks> 
 
 export interface WaveformLevels {
   channels: number;
+  /// Exact effective density of each LOD. This is intentionally a floating
+  /// point value (`sampleRate / framesPerPeak`), not a rounded display value:
+  /// source-time-to-peak indexing depends on preserving the fractional part.
   levels: Array<{ level: number; peaksPerSecond: number; peakCount: number }>;
 }
 
@@ -1101,6 +1104,7 @@ export async function getWaveformLevels(mediaId: string): Promise<WaveformLevels
 }
 
 export interface WaveformTile {
+  /// Exact effective density for this LOD; see `WaveformLevels`.
   peaksPerSecond: number;
   /// Parallel arrays; min/max are normalized samples in [-1, 1], rms in [0, 1].
   min: number[];
