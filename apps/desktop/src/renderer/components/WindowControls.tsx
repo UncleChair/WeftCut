@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@/bridge/window";
+import { isMac } from "@/platform";
 import { useTranslation } from "react-i18next";
 
 /// Caption buttons for the frameless window (`frame: false`):
@@ -10,6 +11,11 @@ import { useTranslation } from "react-i18next";
 /// drag-region double-click and Win+arrow paths change it outside our
 /// buttons.
 ///
+/// macOS renders NOTHING here: the window uses `titleBarStyle: 'hidden'`, so the
+/// OS draws its own traffic lights (red/amber/green) in the top-left — and the
+/// green one already gives native fullscreen. Drawing our own Windows-style
+/// buttons on top would double up the controls. See src/main/index.ts.
+///
 /// Deliberate exception to the lucide-react icon convention (ADR 0020):
 /// caption buttons must read as native Windows chrome — 10px hairline
 /// glyphs matching Segoe-style caption icons, which lucide's 24px-grid
@@ -19,6 +25,7 @@ export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
+    if (isMac) return;
     const win = getCurrentWindow();
     let cancelled = false;
     // Initial state: one query on mount (no event has fired yet).
@@ -35,6 +42,10 @@ export function WindowControls() {
       void unlisten.then((f) => f());
     };
   }, []);
+
+  // macOS: native traffic lights own the caption — draw nothing (hooks above
+  // still run so hook order stays stable; the effect early-returns too).
+  if (isMac) return null;
 
   const win = getCurrentWindow();
   return (

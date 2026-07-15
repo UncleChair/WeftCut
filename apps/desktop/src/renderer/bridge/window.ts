@@ -27,6 +27,15 @@ export function getCurrentWindow() {
           cb(!!(p as { isMaximized?: boolean } | undefined)?.isMaximized),
         ),
       ),
+    // macOS native fullscreen (green button) enter/leave, emitted by main
+    // (src/main/index.ts). Used to drop the traffic-light inset while the
+    // buttons are hidden in fullscreen. Returns the subscription's unlisten.
+    onFullscreenChange: (cb: (isFullscreen: boolean) => void) =>
+      Promise.resolve(
+        window.api.on('window:fullscreen-changed', (p) =>
+          cb(!!(p as { isFullscreen?: boolean } | undefined)?.isFullscreen),
+        ),
+      ),
     setTitle: (title: string) => window.api.window.setTitle(title),
     // No backend handler; safe default (used in a drag-drop guard).
     isFocused: () => Promise.resolve(true),

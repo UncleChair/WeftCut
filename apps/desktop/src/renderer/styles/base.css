@@ -66,7 +66,14 @@ html.app-window-framed.app-window-inactive::after {
 }
 
 html.app-window-framed.app-window-maximized::after,
+html.app-window-framed.app-window-fullscreen::after,
 html.app-window-framed:fullscreen::after {
+  display: none;
+}
+
+/* macOS keeps the native window frame (titleBarStyle: 'hidden' — rounded
+   corners, shadow, border), so the self-drawn inset edge would double up. */
+html.platform-mac.app-window-framed::after {
   display: none;
 }
 

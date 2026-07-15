@@ -32,10 +32,20 @@ export interface SecondaryWindowConfig {
   resizable: boolean
   show: boolean
   frame: boolean
+  // macOS only: when a frameless popup keeps the native traffic lights (so it
+  // stays closable/movable while the renderer suppresses its own caption
+  // buttons — see WindowControls). Undefined on Win/Linux (truly frameless).
+  titleBarStyle?: 'hidden'
+  trafficLightPosition?: { x: number; y: number }
   backgroundColor: string
 }
 
-export function secondaryWindowConfig(opts?: SecondaryWinOpts): SecondaryWindowConfig {
+export function secondaryWindowConfig(
+  opts?: SecondaryWinOpts,
+  platform: NodeJS.Platform = process.platform,
+): SecondaryWindowConfig {
+  const frameless = opts?.decorations === false
+  const isMac = platform === 'darwin'
   return {
     width: opts?.width ?? 480,
     height: opts?.height ?? 320,
@@ -46,7 +56,14 @@ export function secondaryWindowConfig(opts?: SecondaryWinOpts): SecondaryWindowC
     // Show on create: a framed window surfaces reliably, and backgroundColor
     // avoids a white flash.
     show: true,
-    frame: opts?.decorations !== false,
+    // A popup that draws its own caption (decorations:false) is frameless on
+    // Win/Linux. On macOS we instead keep the frame + hide only the titlebar so
+    // the NATIVE traffic lights remain — otherwise, with the renderer's own
+    // caption buttons suppressed on macOS, the popup would be un-closable.
+    frame: frameless && !isMac ? false : true,
+    ...(frameless && isMac
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 10, y: 10 } }
+      : {}),
     backgroundColor: '#0a0a0a',
   }
 }

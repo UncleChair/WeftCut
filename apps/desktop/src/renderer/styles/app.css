@@ -30,6 +30,17 @@
   user-select: none;
 }
 
+/* macOS: the native traffic lights sit top-left (titleBarStyle: 'hidden'), so
+   inset the header's left edge to clear them. Native fullscreen hides the
+   buttons, so the inset drops back to the normal padding then. */
+html.platform-mac .app-header {
+  padding-left: 80px;
+}
+
+html.platform-mac.app-window-fullscreen .app-header {
+  padding-left: 16px;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: var(--font-size-title);

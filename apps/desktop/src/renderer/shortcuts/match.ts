@@ -12,6 +12,8 @@
 // is that punctuation bindings move with the layout, which is the
 // right default for the v1 binding set.
 
+import { isMac } from "@/platform";
+
 export interface ParsedBinding {
   ctrl: boolean;
   meta: boolean;
@@ -21,17 +23,6 @@ export interface ParsedBinding {
   /// kept verbatim (Delete, Backspace, Enter, Escape, Tab, ArrowLeft, F1).
   key: string;
 }
-
-// Best-effort macOS detection. `navigator.platform` is deprecated but
-// still populated in Electron's Chromium engine; the userAgent
-// fallback catches the rest. The result is cached at module load —
-// users don't migrate OS mid-session.
-const isMac: boolean = (() => {
-  if (typeof navigator === "undefined") return false;
-  const p = (navigator as Navigator).platform || "";
-  const ua = (navigator as Navigator).userAgent || "";
-  return /Mac|iPhone|iPad|iPod/.test(p) || /Macintosh/.test(ua);
-})();
 
 export function parseBinding(spec: string): ParsedBinding {
   const parts = spec.split("+").map((p) => p.trim()).filter(Boolean);

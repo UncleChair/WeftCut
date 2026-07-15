@@ -139,6 +139,12 @@
   user-select: none;
 }
 
+/* macOS: this popup keeps the native traffic lights (see windowConfig.ts), so
+   inset the title's left edge to clear them. */
+html.platform-mac .perf-titlebar {
+  padding-left: 72px;
+}
+
 .perf-titlebar-title {
   font-size: 12px;
   font-weight: 600;

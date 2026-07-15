@@ -86,11 +86,23 @@ async function createWindow(): Promise<BrowserWindow> {
     // on Windows (ready-to-show may not fire) — the window stays hidden. With a
     // set backgroundColor there's no white flash, so show on create.
     show: true,
-    // Frameless window — the renderer draws its
-    // own titlebar (app-header / startup-titlebar / agent-titlebar) with custom
-    // window controls. (macOS traffic-light styling is a future cross-platform
-    // refinement.)
-    frame: false,
+    // Titlebar strategy is platform-split so the green stoplight behaves like a
+    // native app on macOS:
+    //   • macOS — `titleBarStyle: 'hidden'` hides the bar but KEEPS the native
+    //     traffic lights (red/amber/green) in the top-left. With `fullscreenable`
+    //     left at its default (true), the green button enters the native
+    //     fullscreen Space ("its own screen") with the system animation, exactly
+    //     like a native app — no custom wiring needed. The renderer suppresses
+    //     its own caption glyphs on macOS (see WindowControls / platform.ts) and
+    //     insets its titlebars to clear the traffic lights.
+    //   • Windows / Linux — a fully frameless window; the renderer draws its own
+    //     titlebar (app-header / startup-titlebar / agent-titlebar) + caption
+    //     buttons, since those platforms have no traffic-light equivalent.
+    // trafficLightPosition nudges the buttons to sit vertically centred in our
+    // slim (~30–37px) titlebars rather than the taller macOS default.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 13, y: 11 } }
+      : { frame: false }),
     backgroundColor: '#0a0a0a',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -113,6 +125,14 @@ async function createWindow(): Promise<BrowserWindow> {
     win.webContents.send('evt:window:maximize-changed', { isMaximized: win.isMaximized() })
   win.on('maximize', sendMaximizeState)
   win.on('unmaximize', sendMaximizeState)
+
+  // macOS: the native green button enters/leaves fullscreen. Forward the state
+  // so the renderer can drop the traffic-light inset while fullscreen hides the
+  // buttons (see platform-mac CSS). Harmless on Win/Linux (F11 dev fullscreen).
+  const sendFullscreenState = () =>
+    win.webContents.send('evt:window:fullscreen-changed', { isFullscreen: win.isFullScreen() })
+  win.on('enter-full-screen', sendFullscreenState)
+  win.on('leave-full-screen', sendFullscreenState)
 
   // Capture renderer console messages to stdout for diagnostics
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {

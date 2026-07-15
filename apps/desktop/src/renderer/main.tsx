@@ -20,6 +20,7 @@ import {
   recentsMostRecent,
 } from "./ipc";
 import { initEval } from "./eval";
+import { isMac } from "./platform";
 import "./i18n";
 // Tailwind entry first; styles.css stays unlayered so its legacy rules win
 // over Tailwind's layered output wherever both match (see app.css header).
@@ -32,6 +33,11 @@ const showSplashDebugControl =
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
+
+// macOS uses `titleBarStyle: 'hidden'` (native traffic lights). Tag <html> so
+// the CSS insets each self-drawn titlebar's left edge to clear those buttons.
+// Applies to every renderer surface (main + PerfHUD popup) that shares this bundle.
+if (isMac) document.documentElement.classList.add("platform-mac");
 
 // Production: suppress the Chromium/Electron default context menu (reload / print /
 // inspect) except over editable or copyable content, where the native
@@ -100,6 +106,9 @@ function Root() {
     const setMaximized = (maximized: boolean) => {
       rootElement.classList.toggle("app-window-maximized", maximized);
     };
+    const setFullscreen = (fullscreen: boolean) => {
+      rootElement.classList.toggle("app-window-fullscreen", fullscreen);
+    };
 
     rootElement.classList.add("app-window-framed");
     rootElement.classList.toggle("app-window-inactive", !document.hasFocus());
@@ -109,6 +118,11 @@ function Root() {
     const unlisten = currentWindow.onMaximizeChange((maximized) => {
       if (!cancelled) setMaximized(maximized);
     });
+    // Freshly created windows are never fullscreen, so no initial query is
+    // needed — only track subsequent enter/leave transitions.
+    const unlistenFullscreen = currentWindow.onFullscreenChange((fullscreen) => {
+      if (!cancelled) setFullscreen(fullscreen);
+    });
     window.addEventListener("focus", setFocused);
     window.addEventListener("blur", setInactive);
 
@@ -117,10 +131,12 @@ function Root() {
       window.removeEventListener("focus", setFocused);
       window.removeEventListener("blur", setInactive);
       void unlisten.then((dispose) => dispose());
+      void unlistenFullscreen.then((dispose) => dispose());
       rootElement.classList.remove(
         "app-window-framed",
         "app-window-inactive",
         "app-window-maximized",
+        "app-window-fullscreen",
       );
     };
   }, []);
