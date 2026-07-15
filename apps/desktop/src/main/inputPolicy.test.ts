@@ -91,6 +91,9 @@ describe('shouldClearApplicationMenu', () => {
     ['win32', true],
     ['linux', true],
     ['darwin', false],
+    // Any other platform is excluded too — the match is literal win32/linux, not
+    // "not darwin", so an unsupported OS keeps its default menu.
+    ['freebsd', false],
   ] as const)('returns %s → %s', (platform, expected) => {
     expect(shouldClearApplicationMenu(platform)).toBe(expected)
   })

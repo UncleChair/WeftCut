@@ -64,13 +64,14 @@ export function matchDevKeyAction(input: KeyInput, isDev: boolean): DevKeyAction
 }
 
 // Whether to remove Electron's default application menu at startup, per platform.
-// Windows/Linux: true — the window is frameless (the renderer draws its own menu
+// win32/linux: true — the window is frameless (the renderer draws its own menu
 // bar), so a native menu never renders yet its accelerators still preempt the
 // renderer's useShortcuts for chords like Mod+W / Mod+C / Mod+Z. Clearing it makes
 // the renderer the single, uncontested owner of every shortcut.
-// macOS: false — clearing the menu would also destroy the Edit menu whose native
-// accelerators make Cmd+C/V work inside text inputs; macOS keeps its default menu
-// until the deferred Stage 2. See ADR 0031.
+// Everything else (incl. macOS): false. The macOS branch is load-bearing —
+// clearing the menu would destroy the Edit menu whose native accelerators make
+// Cmd+C/V work inside text inputs; macOS keeps its default menu until the deferred
+// Stage 2. See ADR 0031.
 export function shouldClearApplicationMenu(platform: NodeJS.Platform): boolean {
-  return platform !== 'darwin'
+  return platform === 'win32' || platform === 'linux'
 }
