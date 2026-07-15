@@ -2,7 +2,7 @@ import path from 'node:path'
 import { BrowserWindow, shell } from 'electron'
 import { secondaryWindowConfig, type SecondaryWinOpts } from './windowConfig.js'
 import { broadcastEvent } from './broadcast.js'
-import { isPageZoomShortcut } from './pageZoom.js'
+import { isPageZoomShortcut, matchDevKeyAction } from './inputPolicy.js'
 
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
@@ -34,7 +34,18 @@ export function hardenWindow(win: BrowserWindow, opts?: { allowExternalOpen?: bo
   resetPageZoom()
   win.webContents.on('did-finish-load', resetPageZoom)
   win.webContents.on('before-input-event', (event, input) => {
-    if (isPageZoomShortcut(input)) event.preventDefault()
+    if (isPageZoomShortcut(input)) { event.preventDefault(); return }
+    // Dev reload/DevTools/fullscreen ride this shared handler, so they cover the
+    // main and secondary (PerfHUD) windows alike. See ADR 0031; matchDevKeyAction
+    // owns the isDev gate.
+    const devAction = matchDevKeyAction(input, isDev)
+    if (!devAction) return
+    event.preventDefault()
+    const wc = win.webContents
+    if (devAction === 'reload') wc.reload()
+    else if (devAction === 'forceReload') wc.reloadIgnoringCache()
+    else if (devAction === 'toggleDevTools') wc.toggleDevTools()
+    else if (devAction === 'toggleFullscreen') win.setFullScreen(!win.isFullScreen())
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (allowExternalOpen && /^https:\/\//i.test(url)) void shell.openExternal(url)
