@@ -4,7 +4,7 @@ import os from 'node:os'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, Notification, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64, setMotifStore } from './motif/capture.js'
@@ -13,6 +13,7 @@ import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
+import { shouldClearApplicationMenu } from './inputPolicy.js'
 import { broadcastEvent } from './broadcast.js'
 import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
@@ -171,6 +172,12 @@ app.whenReady().then(async () => {
   // under generic "electron.exe" and won't adopt our window icon. Match the
   // packaged appId (electron-builder.yml) so dev and prod share one identity.
   app.setAppUserModelId('dev.weftcut.desktop')
+
+  // App-global (not per-window): drop the native default menu so its accelerators
+  // stop preempting the renderer's useShortcuts dispatcher. shouldClearApplicationMenu
+  // owns the per-platform decision; dev reload/DevTools/fullscreen are reprovided
+  // through hardenWindow's before-input-event seam. See ADR 0031.
+  if (shouldClearApplicationMenu(process.platform)) Menu.setApplicationMenu(null)
 
   // Bundled ffmpeg: ffmpeg-sidecar resolves "ffmpeg" via PATH when no binary sits
   // adjacent to the exe (ffmpeg_sidecar::paths::ffmpeg_path). Prepend the packaged dir so the

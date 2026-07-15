@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPageZoomShortcut, matchDevKeyAction, type KeyInput } from './inputPolicy'
+import { isPageZoomShortcut, matchDevKeyAction, shouldClearApplicationMenu, type KeyInput } from './inputPolicy'
 
 function input(overrides: Partial<KeyInput> = {}): KeyInput {
   return {
@@ -83,5 +83,15 @@ describe('matchDevKeyAction', () => {
     expect(matchDevKeyAction(input({ control: true, code: 'KeyI', key: 'i' }), true)).toBeNull()
     // Ctrl+Alt+R is not a reload chord (Alt disqualifies it).
     expect(matchDevKeyAction(input({ control: true, alt: true, code: 'KeyR', key: 'r' }), true)).toBeNull()
+  })
+})
+
+describe('shouldClearApplicationMenu', () => {
+  it.each([
+    ['win32', true],
+    ['linux', true],
+    ['darwin', false],
+  ] as const)('returns %s → %s', (platform, expected) => {
+    expect(shouldClearApplicationMenu(platform)).toBe(expected)
   })
 })

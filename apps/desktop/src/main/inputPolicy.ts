@@ -1,7 +1,8 @@
-// Keyboard policy for the `before-input-event` seam, kept Electron-free so the
-// rules are verifiable without launching a BrowserWindow. Owns two predicates:
-// which keys are Chromium page-zoom accelerators, and which developer affordance
-// a key maps to. See ADR 0031.
+// Electron-free keyboard/menu policy, kept pure so the rules are verifiable
+// without launching a BrowserWindow. Owns the `before-input-event` predicates
+// (which keys are Chromium page-zoom accelerators, which developer affordance a
+// key maps to) and the platform decision for clearing the native application
+// menu. See ADR 0031.
 export interface KeyInput {
   type: string
   key: string
@@ -60,4 +61,16 @@ export function matchDevKeyAction(input: KeyInput, isDev: boolean): DevKeyAction
   }
 
   return null
+}
+
+// Whether to remove Electron's default application menu at startup, per platform.
+// Windows/Linux: true — the window is frameless (the renderer draws its own menu
+// bar), so a native menu never renders yet its accelerators still preempt the
+// renderer's useShortcuts for chords like Mod+W / Mod+C / Mod+Z. Clearing it makes
+// the renderer the single, uncontested owner of every shortcut.
+// macOS: false — clearing the menu would also destroy the Edit menu whose native
+// accelerators make Cmd+C/V work inside text inputs; macOS keeps its default menu
+// until the deferred Stage 2. See ADR 0031.
+export function shouldClearApplicationMenu(platform: NodeJS.Platform): boolean {
+  return platform !== 'darwin'
 }
