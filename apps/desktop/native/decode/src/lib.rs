@@ -5,6 +5,7 @@
 
 mod backend;
 mod events;
+mod export_sw;
 #[cfg(windows)]
 mod preview_gpu;
 mod preview_sw;
