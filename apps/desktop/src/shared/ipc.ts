@@ -161,7 +161,9 @@ export type ExportSwFrameMsg = {
   durUs: number
   width: number
   height: number
-  format: 'NV12'
+  /// NV12 = 8-bit; I420P10 = tightly-packed u16LE planes (Y then U then V,
+  /// the `copyToTenBit` layout — see renderer/render/decoder/tenBitFrame.ts).
+  format: 'NV12' | 'I420P10'
   colorMatrix?: string
   colorRange?: string
   colorPrimaries?: string
@@ -321,9 +323,8 @@ export interface WeftcutApi {
     open(args: {
       sessionId: string
       path: string
-      /// CPU transport format. 'I420P10' is the 10-bit lane's tag; the native
-      /// session rejects it at open until that lane lands (Rust
-      /// `ExportOutFormat::parse`), so passing it fails cleanly, not silently.
+      /// CPU transport format for the session's frames: NV12 (8-bit) or
+      /// I420P10 (the 10-bit lane; layout documented on `ExportSwFrameMsg`).
       outFormat: 'NV12' | 'I420P10'
       creditWindow: number
     }): Promise<ExportSwOpenReply>

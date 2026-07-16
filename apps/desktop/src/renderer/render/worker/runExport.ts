@@ -313,6 +313,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
                 durUs: f.durUs,
                 width: f.width,
                 height: f.height,
+                format: f.format,
                 ...(f.colorMatrix !== undefined ? { colorMatrix: f.colorMatrix } : {}),
                 ...(f.colorRange !== undefined ? { colorRange: f.colorRange } : {}),
                 ...(f.colorPrimaries !== undefined ? { colorPrimaries: f.colorPrimaries } : {}),

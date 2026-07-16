@@ -138,8 +138,14 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
 
   it('open fails loudly for a format the session cannot emit', () => {
     expect(() => open('bad', PRORES, 'RGBA64')).toThrow(/RGBA64/)
-    // 10-bit is recognized but not emittable on the SW lane yet.
-    expect(() => open('bad10', PRORES, 'I420P10')).toThrow(/I420P10/)
+  })
+
+  it('I420P10 opens successfully (the 10-bit lane)', () => {
+    const { info } = open('open10', PRORES, 'I420P10')
+    expect(info.width).toBe(320)
+    expect(info.height).toBe(240)
+    expect(info.startPtsUs).toBe(0)
+    close('open10')
   })
 
   it('decodeRange delivers exactly the intersecting intra frames, once, in order', async () => {
@@ -165,6 +171,30 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     // Tightly-packed NV12: Y (w*h) + interleaved UV (w*h/2) = w*h*3/2.
     expect(f.data.length).toBe((320 * 240 * 3) / 2)
     close('bytes')
+  })
+
+  it('I420P10 frames carry the u16LE plane layout with real 10-bit sample range', async () => {
+    const { msgs } = open('bytes10', PRORES, 'I420P10')
+    await drainRange(ctx, 'bytes10', 0, 125_000)
+    const first = msgs[0]!
+    expect(first.kind).toBe('frame')
+    const f = first.frame!
+    expect(f.format).toBe('I420P10')
+    expect(f.width).toBe(320)
+    expect(f.height).toBe(240)
+    // Tightly-packed u16LE I420P10: Y (w*h*2) + U + V ((w/2)*(h/2)*2 each) = w*h*3.
+    expect(f.data.length).toBe(320 * 240 * 3)
+    // Real 10-bit range, not 8-bit-quantized: scanning the Y plane as u16LE,
+    // at least one sample exceeds the 8-bit ceiling and none exceeds 1023.
+    const dv = new DataView(f.data.buffer, f.data.byteOffset, f.data.byteLength)
+    let max = 0
+    for (let i = 0; i < 320 * 240; i++) {
+      const v = dv.getUint16(i * 2, true)
+      if (v > max) max = v
+    }
+    expect(max).toBeGreaterThan(255)
+    expect(max).toBeLessThanOrEqual(1023)
+    close('bytes10')
   })
 
   it('forward ranges continue from the cursor with no duplicates or gaps', async () => {
@@ -297,6 +327,24 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     // rangeEnd (and one ended, asserted elsewhere) marks completion.
     expect(countKind(msgs, 'rangeEnd')).toBe(1)
     close('credit')
+  })
+
+  it('the credit window bounds the 10-bit lane identically (no unbounded copy backlog)', async () => {
+    // Same shape as the NV12 window test: 10-bit frames are 2× the bytes, so a
+    // producer that ignored the window here would balloon memory twice as fast.
+    const { msgs } = open('credit10', PRORES, 'I420P10', 3)
+    ctx.backend.exportSwDecodeRange('credit10', 0, 875_000)
+    await sleep(200)
+    expect(framesOf(msgs).length).toBe(3)
+    expect(markersFor(msgs)).toBe(0) // range not done while parked
+    ctx.backend.exportSwReturnCredit('credit10', 2)
+    await sleep(200)
+    expect(framesOf(msgs).length).toBe(5)
+    ctx.backend.exportSwReturnCredit('credit10', 64)
+    await sleep(200)
+    expect(framesOf(msgs).length).toBe(8)
+    expect(countKind(msgs, 'rangeEnd')).toBe(1)
+    close('credit10')
   })
 
   it('closing a session parked on an exhausted window tears down without deadlock', async () => {

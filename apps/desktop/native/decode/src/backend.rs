@@ -113,7 +113,7 @@ pub struct PreviewGpuProbeResult {
     pub reason: Option<String>,
 }
 
-/// Move a decoded `SwFrame` into its napi wire form. `Buffer::from(f.nv12)` takes
+/// Move a decoded `SwFrame` into its napi wire form. `Buffer::from(f.data)` takes
 /// the `Vec` by value (zero-copy Rust-side); the single budgeted copy happens
 /// when napi marshals the `Buffer` across the JS boundary.
 fn sw_frame_to_napi(stream_id: &str, f: crate::preview_sw::decoder::SwFrame) -> PreviewSwFrame {
@@ -123,12 +123,12 @@ fn sw_frame_to_napi(stream_id: &str, f: crate::preview_sw::decoder::SwFrame) -> 
         dur_us: f.dur_us as f64,
         width: f.width,
         height: f.height,
-        format: "NV12".into(),
+        format: f.format.wire_name().into(),
         color_matrix: f.color.matrix,
         color_range: f.color.range,
         color_primaries: f.color.primaries,
         color_transfer: f.color.transfer,
-        data: Buffer::from(f.nv12),
+        data: Buffer::from(f.data),
     }
 }
 
@@ -151,9 +151,10 @@ pub struct ExportSwOpenInfoJs {
 }
 
 /// One export-decoded frame delivered to JS. Same wire shape as `PreviewSwFrame`
-/// (tightly-packed 8-bit NV12, `format` always `"NV12"` in v1), but delivered
-/// under the exactly-once range contract + credit window rather than best-effort
-/// preview. Crosses the boundary wrapped in an [`ExportSwMsg`] with
+/// but `format` follows the session's requested output — `"NV12"` (8-bit) or
+/// `"I420P10"` (tightly-packed u16LE planes, `copyToTenBit` layout) — and
+/// delivery is the exactly-once range contract + credit window rather than
+/// best-effort preview. Crosses the boundary wrapped in an [`ExportSwMsg`] with
 /// `kind == "frame"`; `session_id` is kept here too so the frame stays
 /// self-identifying downstream of the wrapper.
 #[napi(object)]
@@ -172,7 +173,7 @@ pub struct ExportSwFrame {
 }
 
 /// Move a decoded export `SwFrame` into its napi wire form. Like
-/// `sw_frame_to_napi`: `Buffer::from(f.nv12)` takes the `Vec` by value
+/// `sw_frame_to_napi`: `Buffer::from(f.data)` takes the `Vec` by value
 /// (zero-copy Rust-side); the single budgeted copy is napi's boundary marshal.
 fn export_frame_to_napi(session_id: &str, f: crate::preview_sw::decoder::SwFrame) -> ExportSwFrame {
     ExportSwFrame {
@@ -181,12 +182,12 @@ fn export_frame_to_napi(session_id: &str, f: crate::preview_sw::decoder::SwFrame
         dur_us: f.dur_us as f64,
         width: f.width,
         height: f.height,
-        format: "NV12".into(),
+        format: f.format.wire_name().into(),
         color_matrix: f.color.matrix,
         color_range: f.color.range,
         color_primaries: f.color.primaries,
         color_transfer: f.color.transfer,
-        data: Buffer::from(f.nv12),
+        data: Buffer::from(f.data),
     }
 }
 
@@ -624,14 +625,15 @@ impl NativeDecode {
 
 /// Native export software-decode command surface (cross-platform, ADR 0030
 /// export-decode overlay). Backed by `NativeDecode::export_sw`; everything —
-/// decoded NV12 frames and the control signals — reaches JS in-band as
+/// decoded frames and the control signals — reaches JS in-band as
 /// [`ExportSwMsg`] on the per-session `ThreadsafeFunction` registered in
 /// `export_sw_open`. The driving contract (open → decodeRange → returnCredit →
 /// close) is what the export Worker's `ExportDecodeSession` handle sits behind.
 #[napi]
 impl NativeDecode {
-    /// Open `path` for export decode into `out_format` (v1: `"NV12"`), throttled
-    /// through a `credit_window`-frame flow-control window. Registers the
+    /// Open `path` for export decode into `out_format` (`"NV12"` or
+    /// `"I420P10"`), throttled through a `credit_window`-frame flow-control
+    /// window. Registers the
     /// per-session message callback BEFORE opening so no early message is
     /// dropped; fails loudly (removing the callback) if the format can't be
     /// emitted or the decoder can't open. Returns dimensions, source color tags,

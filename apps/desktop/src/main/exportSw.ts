@@ -26,7 +26,7 @@ export function openExportSw(
   win: BrowserWindow,
   sessionId: string,
   path: string,
-  outFormat: 'NV12',
+  outFormat: 'NV12' | 'I420P10',
   creditWindow: number,
 ): ExportSwOpenReply {
   const info = backend.exportSwOpen(sessionId, path, outFormat, creditWindow, (err, msg) => {

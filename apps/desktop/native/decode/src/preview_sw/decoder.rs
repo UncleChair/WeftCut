@@ -1,9 +1,10 @@
-//! Pure-software streaming decode → tightly-packed 8-bit NV12 bytes. A strict
-//! simplification of `preview_gpu/decoder.rs`'s `VideoStream`: same open/pump/
-//! seek shape, but with the entire D3D11VA hardware path deleted (no
-//! `av_hwdevice_ctx_create`, no `get_format` override, no COM-pointer plumbing).
-//! libavcodec decodes to a CPU frame in its native pixel format (e.g. ProRes'
-//! `yuv422p10le`) and swscale packs it to NV12 for the shared renderer path.
+//! Pure-software streaming decode → tightly-packed CPU frame bytes (8-bit NV12,
+//! or u16LE I420P10 for the export 10-bit lane). A strict simplification of
+//! `preview_gpu/decoder.rs`'s `VideoStream`: same open/pump/seek shape, but with
+//! the entire D3D11VA hardware path deleted (no `av_hwdevice_ctx_create`, no
+//! `get_format` override, no COM-pointer plumbing). libavcodec decodes to a CPU
+//! frame in its native pixel format (e.g. ProRes' `yuv422p10le`) and swscale
+//! packs it to the stream's target format in one pass.
 //!
 //! Task 3's `session` consumes `seek`, the color tags, and the per-frame
 //! timestamps; they are defined here (ahead of that consumer) so the streaming
@@ -59,13 +60,38 @@ pub struct SwColorTags {
     pub transfer: Option<String>,
 }
 
-/// One software-decoded frame, packed as tightly-packed NV12 (`Y` plane `w*h`
-/// followed by interleaved `UV` `w*h/2`) plus its source-normalized timing and
-/// color tags. Fully owned (unlike the GPU path's borrowed texture handle), so
-/// it can outlive the stream and cross threads freely.
+/// Target pixel format a stream packs decoded frames into. The preview lane is
+/// NV12-only ([`SwVideoStream::open`]); the export lane picks per session
+/// (`export_sw::ExportOutFormat`). `wire_name` is the tag JS sees on the frame
+/// wire structs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwOutFormat {
+    /// 8-bit: `Y` plane `w*h` bytes, then interleaved `UV` `w*h/2` bytes.
+    Nv12,
+    /// 10-bit (yuv420p10le semantics, samples 0–1023): tightly-packed u16LE
+    /// planes `Y` (`w*h` samples, stride `w*2` bytes) then `U` then `V` at
+    /// `(w>>1) × (h>>1)`. Byte-matches the renderer's `copyToTenBit` layout
+    /// (`render/decoder/tenBitFrame.ts`) including its floor chroma rounding.
+    I420p10,
+}
+
+impl SwOutFormat {
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            SwOutFormat::Nv12 => "NV12",
+            SwOutFormat::I420p10 => "I420P10",
+        }
+    }
+}
+
+/// One software-decoded frame, tightly packed per `format` (layouts on
+/// [`SwOutFormat`]) plus its source-normalized timing and color tags. Fully
+/// owned (unlike the GPU path's borrowed texture handle), so it can outlive
+/// the stream and cross threads freely.
 #[derive(Debug)]
 pub struct SwFrame {
-    pub nv12: Vec<u8>,
+    pub data: Vec<u8>,
+    pub format: SwOutFormat,
     pub width: u32,
     pub height: u32,
     /// Presentation time, source-normalized microseconds (`pts_to_source_us`).
@@ -101,6 +127,8 @@ pub struct SwVideoStream {
     pub color: SwColorTags,
     /// Threads libavcodec settled on after open (1 if the codec can't thread).
     pub thread_count: i32,
+    /// Target format every decoded frame is packed into, fixed at open.
+    out_format: SwOutFormat,
 }
 
 // The ffmpeg-next `Input`/`Video` wrappers hold raw pointers and are `!Send`.
@@ -119,9 +147,15 @@ pub fn pts_to_source_us(pts: i64, time_base: (i32, i32), start_pts_us: i64) -> i
 }
 
 impl SwVideoStream {
-    /// Open `path` for pure-software decode and prepare for streaming. No
-    /// hardware device is attached — libavcodec always decodes to CPU frames.
+    /// Open `path` for pure-software decode into NV12 (all preview callers).
     pub fn open(path: &str) -> Result<SwVideoStream, String> {
+        Self::open_with_format(path, SwOutFormat::Nv12)
+    }
+
+    /// Open `path` for pure-software decode and prepare for streaming, packing
+    /// every decoded frame into `out_format`. No hardware device is attached —
+    /// libavcodec always decodes to CPU frames.
+    pub fn open_with_format(path: &str, out_format: SwOutFormat) -> Result<SwVideoStream, String> {
         ffmpeg_next::init().ok();
         let map = |e: ffmpeg_next::Error| e.to_string();
 
@@ -195,6 +229,7 @@ impl SwVideoStream {
             start_pts_us,
             color,
             thread_count,
+            out_format,
         })
     }
 
@@ -221,8 +256,8 @@ impl SwVideoStream {
         (codec, pix_fmt, self.width, self.height)
     }
 
-    /// Decode the next frame, packed as owned NV12 bytes. Returns `Ok(None)` at
-    /// end of stream.
+    /// Decode the next frame, packed as owned bytes in the stream's target
+    /// format. Returns `Ok(None)` at end of stream.
     pub fn next_frame(&mut self) -> Result<Option<SwFrame>, String> {
         let map = |e: ffmpeg_next::Error| e.to_string();
         loop {
@@ -243,9 +278,16 @@ impl SwVideoStream {
                         dur_us,
                     )
                 };
-                let nv12 = frame_to_nv12(&self.frame, self.width, self.height).map_err(map)?;
+                let data = match self.out_format {
+                    SwOutFormat::Nv12 => frame_to_nv12(&self.frame, self.width, self.height),
+                    SwOutFormat::I420p10 => {
+                        frame_to_i420p10(&self.frame, self.width, self.height)
+                    }
+                }
+                .map_err(map)?;
                 return Ok(Some(SwFrame {
-                    nv12,
+                    data,
+                    format: self.out_format,
                     width: self.width,
                     height: self.height,
                     pts_us,
@@ -353,9 +395,77 @@ fn extract_nv12_planes(frame: &VideoFrame) -> Vec<u8> {
     data
 }
 
+/// Convert a decoded `VideoFrame` to tightly-packed I420P10 (u16LE yuv420p10le)
+/// bytes. One swscale pass straight from the decoder's native pix_fmt — NEVER
+/// through an 8-bit intermediate, which would quantize the samples this lane
+/// exists to preserve. 4:2:2 sources lose half their chroma rows to 4:2:0 here
+/// by design — a documented v2 limitation (export-decode engine spec,
+/// decision 4).
+fn frame_to_i420p10(
+    frame: &VideoFrame,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ffmpeg_next::Error> {
+    if frame.format() == Pixel::YUV420P10LE {
+        Ok(extract_i420p10_planes(frame))
+    } else {
+        let mut sws = SwsContext::get(
+            frame.format(),
+            width,
+            height,
+            Pixel::YUV420P10LE,
+            width,
+            height,
+            Flags::BILINEAR,
+        )?;
+        let mut out = VideoFrame::empty();
+        sws.run(frame, &mut out)?;
+        Ok(extract_i420p10_planes(&out))
+    }
+}
+
+/// Pack a yuv420p10le `VideoFrame` into a contiguous `Y then U then V` u16LE
+/// buffer, dropping any row padding (linesize > packed stride). Chroma dims
+/// round down (`>> 1`), matching the renderer's `copyToTenBit`.
+fn extract_i420p10_planes(frame: &VideoFrame) -> Vec<u8> {
+    let w = frame.width() as usize;
+    let h = frame.height() as usize;
+    let (cw, ch) = (w >> 1, h >> 1);
+    let mut data = Vec::with_capacity((w * h + 2 * cw * ch) * 2);
+
+    let y = frame.data(0);
+    let y_stride = frame.stride(0);
+    for row in 0..h {
+        let start = row * y_stride;
+        data.extend_from_slice(&y[start..start + w * 2]);
+    }
+
+    for plane in 1..=2usize {
+        let p = frame.data(plane);
+        let stride = frame.stride(plane);
+        for row in 0..ch {
+            let start = row * stride;
+            data.extend_from_slice(&p[start..start + cw * 2]);
+        }
+    }
+
+    data
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SwVideoStream;
+    use super::{SwOutFormat, SwVideoStream};
+
+    #[test]
+    fn decodes_first_prores_frame_to_i420p10() {
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let mut s = SwVideoStream::open_with_format(p, SwOutFormat::I420p10).expect("open");
+        let f = s.next_frame().expect("decode").expect("some frame");
+        assert_eq!(f.format, SwOutFormat::I420p10);
+        // I420P10: u16LE Y (w*h) + U + V at (w/2)*(h/2) → 3 bytes/px, even dims.
+        assert_eq!(f.data.len(), 320 * 240 * 3);
+    }
+
     #[test]
     fn decodes_first_prores_frame_to_nv12() {
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
@@ -364,7 +474,7 @@ mod tests {
         assert_eq!(f.width, 320);
         assert_eq!(f.height, 240);
         // NV12: Y (w*h) + interleaved UV (w*h/2)
-        assert_eq!(f.nv12.len(), (320 * 240) + (320 * 240 / 2));
+        assert_eq!(f.data.len(), (320 * 240) + (320 * 240 / 2));
     }
 
     #[test]
@@ -399,7 +509,7 @@ mod tests {
         let f = s.next_frame().expect("decode").expect("some frame");
         assert_eq!(f.width, 320);
         assert_eq!(f.height, 240);
-        assert_eq!(f.nv12.len(), (320 * 240) + (320 * 240 / 2));
+        assert_eq!(f.data.len(), (320 * 240) + (320 * 240 / 2));
     }
 
     #[test]

@@ -213,7 +213,7 @@ const api: WeftcutApi = {
   // `decodeRange` / `returnCredit` / `close` are fire-and-forget renderer →
   // main commands.
   exportSw: {
-    open(args: { sessionId: string; path: string; outFormat: 'NV12'; creditWindow: number }): Promise<ExportSwOpenReply> {
+    open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }): Promise<ExportSwOpenReply> {
       return ipcRenderer.invoke('exportSw:open', args) as Promise<ExportSwOpenReply>
     },
     decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void {

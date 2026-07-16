@@ -29,6 +29,45 @@ export function isTenBitDecoderFormat(format: string | null): boolean {
   return format === "I420P10";
 }
 
+/// Wrap an already tightly-packed I420P10 buffer (the native export session's
+/// transport format) as a TenBitFrame — ZERO-COPY: `data` is adopted as-is
+/// (the transferred relay bytes), no plane copy. Offsets are computed exactly
+/// as `copyToTenBit` lays them out, so both producers feed one consumer path.
+///
+/// LANDMINE: a byteLength mismatch means the Rust emitter and this layout have
+/// drifted — throw, never truncate/pad, or the drift ships as silent corruption.
+export function tenBitFrameFromBytes(init: {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  timestamp: number;
+  duration: number | null;
+  colorSpace: VideoColorSpaceInit | null;
+}): TenBitFrame {
+  const { data, width, height, timestamp, duration, colorSpace } = init;
+  const ySize = width * height * 2;
+  const cSize = (width >> 1) * (height >> 1) * 2;
+  const expected = ySize + 2 * cSize;
+  if (data.byteLength !== expected) {
+    throw new Error(
+      `I420P10 layout drift: ${width}x${height} expects ${expected} bytes, got ${data.byteLength}`,
+    );
+  }
+  return {
+    kind: "p10",
+    width,
+    height,
+    data,
+    yOffset: 0,
+    uOffset: ySize,
+    vOffset: ySize + cSize,
+    colorSpace,
+    timestamp,
+    duration,
+    close() {},
+  };
+}
+
 export async function copyToTenBit(frame: VideoFrame): Promise<TenBitFrame> {
   const rect = frame.visibleRect ?? new DOMRectReadOnly(0, 0, frame.codedWidth, frame.codedHeight);
   const w = rect.width;

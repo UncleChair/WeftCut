@@ -2,8 +2,9 @@
 //!
 //! Owns: a dedicated OS thread per session that opens a
 //! [`SwVideoStream`](crate::preview_sw::decoder::SwVideoStream), services
-//! `decode_range` commands posted over an mpsc channel, and ships owned NV12
-//! [`SwFrame`] bytes out through a shared sink one credit at a time. The reorder,
+//! `decode_range` commands posted over an mpsc channel, and ships owned
+//! [`SwFrame`] bytes (NV12 or I420P10, per the session's [`ExportOutFormat`])
+//! out through a shared sink one credit at a time. The reorder,
 //! GOP walk, and EOS drain are the decoder's; the coverage/continuation contract
 //! is [`serve_range`]; the flow-control contract is [`CreditWindow`].
 //!
@@ -17,7 +18,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use crate::preview_sw::decoder::{SwColorTags, SwFrame, SwVideoStream};
+use crate::preview_sw::decoder::{SwColorTags, SwFrame, SwOutFormat, SwVideoStream};
 
 /// Default credits (frames in flight) when a caller does not specify one. The
 /// spec's ~4–8 window: bounds a 4K 10-bit export's main-process frame memory to
@@ -34,29 +35,33 @@ const MAX_SEEK_RETRIES: u32 = 6;
 /// Initial backward step when re-seeking after an overshoot; doubles each retry.
 const SEEK_RETRY_MARGIN_US: i64 = 1_000_000;
 
-/// The pixel format a session emits. The software lane emits NV12; `parse`
-/// rejects any other requested format at `open` so a caller never receives
-/// silently wrong-format output.
+/// The pixel format a session emits (8-bit NV12 or 10-bit I420P10 — layouts on
+/// [`SwOutFormat`]); `parse` rejects any other requested format at `open` so a
+/// caller never receives silently wrong-format output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportOutFormat {
     Nv12,
+    I420p10,
 }
 
 impl ExportOutFormat {
     /// Parse the caller's requested output-format tag (case-insensitive on the
     /// canonical name). Anything the software lane cannot emit is an error
     /// carrying the offending string, so `open` fails loudly and names the format
-    /// it could not produce. I420P10 is recognized but the software lane does not
-    /// emit 10-bit, so it is rejected here too.
+    /// it could not produce.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s.to_ascii_uppercase().as_str() {
             "NV12" => Ok(ExportOutFormat::Nv12),
-            "I420P10" => {
-                Err("export output format 'I420P10' is not emittable on the software \
-                     decode lane"
-                    .to_string())
-            }
+            "I420P10" => Ok(ExportOutFormat::I420p10),
             other => Err(format!("unsupported export output format '{other}'")),
+        }
+    }
+
+    /// The decoder-level target this session format packs into.
+    fn decoder_format(self) -> SwOutFormat {
+        match self {
+            ExportOutFormat::Nv12 => SwOutFormat::Nv12,
+            ExportOutFormat::I420p10 => SwOutFormat::I420p10,
         }
     }
 }
@@ -79,7 +84,8 @@ pub struct ExportSwOpenInfo {
 /// payload is the owned [`SwFrame`] + plain strings). Every variant carries
 /// `session_id` so a single sink routes to the right per-session callback.
 pub enum ExportPoke {
-    /// A decoded in-range frame, owned NV12 bytes + timing/color.
+    /// A decoded in-range frame: owned bytes + timing/color, layout tagged by
+    /// `frame.format`.
     Frame { session_id: String, frame: SwFrame },
     /// The current `decode_range` has emitted every frame intersecting its
     /// `[a, b]`; the range is satisfied. Fired once per completed range (also
@@ -340,19 +346,19 @@ fn serve_range(
     }
 }
 
-/// The session thread body: open the decoder, report metadata back to `open`,
-/// then run a blocking message loop until `Close` (or the sender drops). The
-/// output format is validated at `open` and not threaded here — the software
-/// lane produces NV12 unconditionally.
+/// The session thread body: open the decoder targeting the session's parsed
+/// output format, report metadata back to `open`, then run a blocking message
+/// loop until `Close` (or the sender drops).
 fn session_thread(
     session_id: String,
     path: String,
+    out_format: ExportOutFormat,
     credit: Arc<CreditWindow>,
     rx: Receiver<ExportMsg>,
     init_tx: Sender<Result<ExportSwOpenInfo, String>>,
     sink: ExportSink,
 ) {
-    let mut stream = match SwVideoStream::open(&path) {
+    let mut stream = match SwVideoStream::open_with_format(&path, out_format.decoder_format()) {
         Ok(s) => s,
         Err(e) => {
             let _ = init_tx.send(Err(e));
@@ -422,9 +428,8 @@ impl ExportSwRegistry {
         credit_window: u32,
     ) -> Result<ExportSwOpenInfo, String> {
         // Validate the requested format FIRST — a format the session can't emit
-        // must fail at open, before any thread or decoder work. The parsed value
-        // is discarded: the software lane always produces NV12.
-        ExportOutFormat::parse(out_format)?;
+        // must fail at open, before any thread or decoder work.
+        let fmt = ExportOutFormat::parse(out_format)?;
 
         let mut sessions = self.sessions.lock().unwrap();
         if sessions.contains_key(session_id) {
@@ -442,7 +447,7 @@ impl ExportSwRegistry {
         let join = thread::Builder::new()
             .name(format!("export-sw-{sid}"))
             .spawn(move || {
-                session_thread(sid, path_owned, credit_for_thread, cmd_rx, init_tx, sink)
+                session_thread(sid, path_owned, fmt, credit_for_thread, cmd_rx, init_tx, sink)
             })
             .map_err(|e| format!("spawn export-sw session thread failed: {e}"))?;
 
@@ -525,12 +530,14 @@ mod tests {
     const MPEG2: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
 
     /// Collects every poke a registry emits, tagged, so tests can assert the
-    /// frame PTS sequence and the control markers.
+    /// frame PTS sequence, per-frame format/bytes, and the control markers.
     #[derive(Default)]
     struct Collected {
         pts: Vec<i64>,
         durs: Vec<i64>,
         colors: Vec<SwColorTags>,
+        formats: Vec<SwOutFormat>,
+        datas: Vec<Vec<u8>>,
         range_ends: usize,
         ended: usize,
         errors: Vec<String>,
@@ -547,6 +554,8 @@ mod tests {
                     c.pts.push(frame.pts_us);
                     c.durs.push(frame.dur_us);
                     c.colors.push(frame.color.clone());
+                    c.formats.push(frame.format);
+                    c.datas.push(frame.data);
                 }
                 ExportPoke::RangeEnd { .. } => c.range_ends += 1,
                 ExportPoke::Ended { .. } => c.ended += 1,
@@ -590,13 +599,74 @@ mod tests {
     }
 
     #[test]
-    fn open_rejects_unsupported_format_loudly() {
+    fn open_accepts_i420p10_and_rejects_garbage_loudly() {
         let (reg, _got) = registry_with_collector();
         let err = reg.open("s", PRORES, "RGBA64", DEFAULT_CREDIT_WINDOW).unwrap_err();
         assert!(err.contains("RGBA64"), "error should name the format: {err}");
-        // 10-bit is recognized but not yet emittable on the SW lane.
-        let err10 = reg.open("s", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW).unwrap_err();
-        assert!(err10.contains("I420P10"), "error should name I420P10: {err10}");
+        // 10-bit is a first-class lane output.
+        reg.open("s", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW).expect("I420P10 opens");
+        reg.close("s").unwrap();
+    }
+
+    #[test]
+    fn i420p10_range_from_tenbit_source_preserves_tenbit_samples() {
+        // ProRes fixture decodes to yuv422p10le: real 10-bit samples in, so the
+        // packed output must show >8-bit code values — an 8-bit-quantized path
+        // caps every u16 sample at 255, while even 10-bit limited-range BLACK
+        // is 256 (and white ~940).
+        let (reg, got) = registry_with_collector();
+        let info = reg.open("p", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW).unwrap();
+        assert_eq!((info.width, info.height), (320, 240)); // even dims → w*h*3 bytes
+        run_range(&reg, "p", 0, 300_000, &got);
+        let c = got.lock().unwrap();
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+        assert!(!c.datas.is_empty(), "no frames delivered");
+        assert!(c.formats.iter().all(|&f| f == SwOutFormat::I420p10), "poke-level format tag");
+        assert_eq!(c.colors[0].range.as_deref(), Some("tv"), "color tags still carried");
+        let y_bytes = 320 * 240 * 2;
+        let mut luma_above_8bit = false;
+        for d in &c.datas {
+            assert_eq!(d.len(), 320 * 240 * 3, "tightly-packed I420P10 length");
+            for (i, s) in d.chunks_exact(2).enumerate() {
+                let v = u16::from_le_bytes([s[0], s[1]]);
+                assert!(v <= 1023, "sample {i} = {v} exceeds the 10-bit range");
+                if i * 2 < y_bytes && v > 255 {
+                    luma_above_8bit = true;
+                }
+            }
+        }
+        assert!(luma_above_8bit, "no luma sample above 255 — output looks 8-bit-quantized");
+        drop(c);
+        reg.close("p").unwrap();
+    }
+
+    #[test]
+    fn i420p10_upconverts_an_8bit_source() {
+        // MPEG-2 decodes to 8-bit yuv420p; the lane still emits I420P10
+        // (swscale 8→10 upconvert) so a mixed-depth timeline needs no
+        // per-source format branch downstream.
+        let (reg, got) = registry_with_collector();
+        let info = reg.open("m", MPEG2, "I420P10", DEFAULT_CREDIT_WINDOW).unwrap();
+        assert_eq!((info.width, info.height), (320, 240));
+        run_range(&reg, "m", 0, 200_000, &got);
+        let c = got.lock().unwrap();
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+        assert!(!c.datas.is_empty(), "no frames delivered");
+        assert!(c.formats.iter().all(|&f| f == SwOutFormat::I420p10), "poke-level format tag");
+        for d in &c.datas {
+            assert_eq!(d.len(), 320 * 240 * 3, "tightly-packed I420P10 length");
+            let mut max = 0u16;
+            for s in d.chunks_exact(2) {
+                let v = u16::from_le_bytes([s[0], s[1]]);
+                assert!(v <= 1023, "upconverted sample {v} exceeds the 10-bit range");
+                max = max.max(v);
+            }
+            // 8-bit values scale x4 into the 10-bit range — an all-zero (or
+            // still-8-bit) buffer must not pass.
+            assert!(max > 255, "upconvert produced no sample above the 8-bit ceiling (max {max})");
+        }
+        drop(c);
+        reg.close("m").unwrap();
     }
 
     #[test]

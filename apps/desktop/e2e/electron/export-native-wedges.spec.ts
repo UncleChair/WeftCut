@@ -1,9 +1,10 @@
 import { test, expect, type Page } from '@playwright/test'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { analyze } from '../lib/analyze.mjs'
+import { analyze, analyzeGradientRow } from '../lib/analyze.mjs'
 import {
   launchApp,
   newProject,
@@ -375,5 +376,202 @@ test.describe('native export decode wedge gates (Electron)', () => {
     } finally {
       await app.close()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ramp precision gates: the native 10-bit lane (I420P10 transport).
+// A true-10-bit gradient ramp (test_1080p_gradient10_h264.mp4 — H.264 Hi10P,
+// horizontal 0..1023 luma sweep, bt709/limited; generate.go --gradient-h264)
+// exports through the PINNED native decode route (`decodeEngine: "ffmpeg"`)
+// to a 10-bit target, and the analyzer's --gradient-row mode proves the
+// ramp's step count survived: an 8-bit-banded lane caps at <=256 distinct
+// levels, the clean 10-bit lane measures ~880 (raw fixture: 879 distinct /
+// max plateau 151).
+//
+// Plateau semantics (banding_stats unit tests, media_conformance.rs): a clean
+// ramp reads plateau ~1, an 8-bit-quantized one ~4x wider. On THESE fixtures
+// the whole-row max plateau is structurally ~151 either way: the ramp's
+// 0..1023 code sweep exceeds the limited-range window, so the analyzer's
+// forced bt709/tv decode clips both ends into long constant runs that swamp
+// the mid-ramp plateau signal. distinct_levels therefore carries the banding
+// verdict; the plateau ceiling only rejects a flat/garbage row (a clearer
+// failure readout than levels alone).
+//
+// Deliberately NOT asserted: the I420P10 transport is
+// 4:2:0, so a 4:2:2/4:4:4 source loses chroma resolution through the native
+// lane. That 422->420 chroma cost is a documented v2 limitation, not a v1
+// promise — these gates assert LUMA ramp precision only (the fixture's chroma
+// is constant 512, neutral gray).
+// ---------------------------------------------------------------------------
+
+// 1 s static 10-bit ramp — H.264 Hi10P, the primary 10-bit source shape.
+const GRADIENT10 = path.resolve(MEDIA_DIR, 'test_1080p_gradient10_h264.mp4')
+const OUT_RAMP_HEVC = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-ramp10-hevc.mp4')
+const OUT_RAMP_AV1 = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-ramp10-av1.mp4')
+
+// >600 of 1023 distinct levels: clean lane measures ~880, an 8-bit-banded
+// lane caps at <=256 — the gate separates by >2x in both directions.
+const RAMP_MIN_DISTINCT = 600
+// ~2x the structural end-clip plateau (151 on the raw fixture) — headroom for
+// encoder drift while still rejecting a flat/garbage row.
+const RAMP_MAX_PLATEAU = 300
+
+// `decodeEngine: "ffmpeg"` pins EVERY source onto the native session — an
+// explicit fidelity promise with no fallbacks (exportDecodeRouting.ts) — so a
+// routing regression fails the nativeHandles assertion instead of passing
+// silently via WebCodecs. bitDepth 10 selects the I420P10 transport, the f16
+// composite, and the native 10-bit encode (encoderEngine "auto" resolves
+// native; a webcodecs pin is invalid at depth 10 — mergeSettings).
+const RAMP10_HEVC_SETTINGS = {
+  codec: 'hevc',
+  bitDepth: 10,
+  container: 'mp4',
+  decodeEngine: 'ffmpeg',
+  audio: { include: false },
+} as const
+
+// Same lane, the second tenBitExportCapable target. A separate test so the
+// slower AV1 software encode can be sharded or skipped independently of HEVC.
+const RAMP10_AV1_SETTINGS = {
+  codec: 'av1',
+  bitDepth: 10,
+  container: 'mp4',
+  decodeEngine: 'ffmpeg',
+  audio: { include: false },
+} as const
+
+// Local clone of export_codecs.spec.ts's ffprobe helper — importing a spec
+// file would register its tests into this one, so the few lines are
+// duplicated. Throws when ffprobe is missing or fails: the codec-shape
+// assertions must not silently skip.
+function probeVideoStream(file: string, entries: string): Record<string, string> {
+  const r = spawnSync(
+    'ffprobe',
+    [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', `stream=${entries}`,
+      '-of', 'default=nw=1', file,
+    ],
+    { encoding: 'utf8' },
+  )
+  if (r.error) {
+    throw new Error('ffprobe not available on PATH (required for codec verification): ' + r.error.message)
+  }
+  if (r.status !== 0) {
+    throw new Error('ffprobe failed (status ' + r.status + ') on ' + file + ': ' + r.stderr)
+  }
+  const out: Record<string, string> = {}
+  for (const line of r.stdout.trim().split(/\r?\n/)) {
+    const i = line.indexOf('=')
+    if (i > 0) out[line.slice(0, i)] = line.slice(i + 1)
+  }
+  return out
+}
+
+interface RampBanding {
+  distinct_levels: number
+  max_plateau: number
+}
+
+// The ramp is neutral gray (cb=cr=512), so R/G/B all follow luma — assert all
+// three channels rather than electing one as "the" luma proxy.
+function assertRampPrecision(report: { banding: RampBanding[] }, label: string): void {
+  for (const [i, ch] of report.banding.entries()) {
+    expect(
+      ch.distinct_levels,
+      `${label} channel ${i}: distinct 10-bit levels (>${RAMP_MIN_DISTINCT} of 1023; 8-bit banding caps at 256)`,
+    ).toBeGreaterThan(RAMP_MIN_DISTINCT)
+    expect(
+      ch.max_plateau,
+      `${label} channel ${i}: max plateau (structural end-clip ~151; a flat/garbage row reads ~1920)`,
+    ).toBeLessThanOrEqual(RAMP_MAX_PLATEAU)
+  }
+}
+
+test.describe('native export 10-bit ramp precision gates (Electron)', () => {
+  test.skip(
+    process.env.WEFTCUT_DECODE_E2E !== '1',
+    'native export ramp gates are local-only (need the native-decode component + a VITE_WEFTCUT_E2E=1 build); set WEFTCUT_DECODE_E2E=1 to run',
+  )
+  test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native sessions`)
+  test.skip(!existsSync(GRADIENT10), `10-bit ramp fixture not found at ${GRADIENT10} (set WEFTCUT_TEST_MEDIA / npm run fixtures)`)
+
+  test.beforeAll(() => {
+    mkdirSync(PROJECT_PARENT, { recursive: true })
+  })
+
+  // Boot a fresh project and export the ramp clip via the REAL exportClip path
+  // with the pinned-native 10-bit `settings`; assert the native route actually
+  // engaged before returning. Codec-shape + ramp analysis run after the app
+  // closes (both shell out — no renderer needed).
+  async function exportRampNative(
+    prefix: string,
+    output: string,
+    settings: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<NativePerf> {
+    rmSync(output, { force: true })
+    const { app, page } = await launchApp()
+    // Export failures surface as renderer exportState/console errors, NOT in the
+    // workspace JSONL (which stops at decode resolution) — forward them or a
+    // failed gate reports only "no output file".
+    page.on('console', (m) => {
+      if (m.type() === 'error' || m.type() === 'warning')
+        console.log(`[app:${m.type()}]`, m.text())
+    })
+    try {
+      await bootProject(page, prefix)
+      const r = await driveExport(
+        page,
+        { mediaAbsPath: GRADIENT10, outputAbsPath: output, settings },
+        { hook: 'exportClip', timeout: timeoutMs },
+      )
+      if (!r.done.ok) throw new Error('exportClip failed: ' + r.done.error)
+      const perf = await readPerf(page)
+      expect(
+        perf.nativeHandles,
+        'native path must engage (ffmpeg pin degraded to auto? 10-bit routing guard still interim?)',
+      ).toBeGreaterThanOrEqual(1)
+      expect(perf.totalFrames, '1s @ 30fps ramp = 30 frames').toBe(30)
+      return perf
+    } finally {
+      await app.close()
+    }
+  }
+
+  // Gate (g): 10-bit ramp -> native I420P10 decode -> HEVC Main10. The step
+  // count surviving into the output proves the lane never dropped to 8 bits
+  // anywhere between the ffmpeg session and the encoder.
+  test('10-bit ramp through the native route to HEVC Main10 keeps its step count', async () => {
+    test.setTimeout(420_000)
+    await exportRampNative('e2e-nw-ramp10-hevc-', OUT_RAMP_HEVC, RAMP10_HEVC_SETTINGS, 400_000)
+    const st = probeVideoStream(OUT_RAMP_HEVC, 'codec_name,profile,pix_fmt')
+    console.log('[e2e] HEVC-10 ramp output stream:', JSON.stringify(st))
+    expect(st.codec_name).toBe('hevc')
+    expect(['yuv420p10le', 'p010le']).toContain(st.pix_fmt)
+    expect(st.profile).toContain('Main 10')
+    // The output decodes under the same forced bt709/tv the fixture was
+    // authored with (generate.go tags the source; the native sink writes the
+    // explicit bt709/limited 4-tuple) — pinning keeps the level count stable.
+    const ramp = analyzeGradientRow({ output: OUT_RAMP_HEVC, sample: 10, inMatrix: 'bt709', inRange: 'tv' })
+    console.log('[e2e] HEVC-10 ramp report:', JSON.stringify(ramp))
+    assertRampPrecision(ramp, 'hevc10')
+  })
+
+  // Gate (h): the same ramp to the second 10-bit target, AV1 (the software
+  // encoder is probe-picked — see hwencoder.rs software_encoder_candidates). No
+  // profile assertion — AV1's "Main" profile covers 10-bit, so pix_fmt is the
+  // depth signal.
+  test('10-bit ramp through the native route to AV1 10-bit keeps its step count', async () => {
+    test.setTimeout(420_000)
+    await exportRampNative('e2e-nw-ramp10-av1-', OUT_RAMP_AV1, RAMP10_AV1_SETTINGS, 400_000)
+    const st = probeVideoStream(OUT_RAMP_AV1, 'codec_name,pix_fmt')
+    console.log('[e2e] AV1-10 ramp output stream:', JSON.stringify(st))
+    expect(st.codec_name).toBe('av1')
+    expect(st.pix_fmt).toBe('yuv420p10le')
+    const ramp = analyzeGradientRow({ output: OUT_RAMP_AV1, sample: 10, inMatrix: 'bt709', inRange: 'tv' })
+    console.log('[e2e] AV1-10 ramp report:', JSON.stringify(ramp))
+    assertRampPrecision(ramp, 'av1-10')
   })
 })

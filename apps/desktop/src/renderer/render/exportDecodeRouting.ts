@@ -21,8 +21,7 @@ export type ExportMediaRoute =
 export interface ExportDecodeRouting {
   /// The setting after the capability defense: an `ffmpeg` pin degrades to
   /// `auto` (decision 3) when the native path is unusable on this export —
-  /// component not loaded, or (interim) a 10-bit composite the NV12-only
-  /// session can't transport. Merge-time validation can't do this — intent
+  /// the component isn't loaded. Merge-time validation can't do this — intent
   /// persists, capability re-resolves per machine (ADR 0030).
   effectiveSetting: ExportDecodeEngine;
   /// Transport format implied by the composite bit depth, table-wide.
@@ -51,12 +50,7 @@ export function resolveExportDecodeRouting(
 ): ExportDecodeRouting {
   const outFormat: ExportTransportFormat =
     i.bitDepth === 10 ? "I420P10" : "NV12";
-  // INTERIM until the I420P10 lane lands: the native session only opens NV12
-  // (Rust `ExportOutFormat::parse` rejects everything else), so 10-bit
-  // exports keep today's routing (blind-spot via proxy) instead of failing at
-  // session open. Delete the format clause — and flip the matrix tests marked
-  // "interim" — when the ten-bit transport ships.
-  const nativeUsable = i.componentAvailable && outFormat === "NV12";
+  const nativeUsable = i.componentAvailable;
   const effectiveSetting: ExportDecodeEngine =
     i.setting === "ffmpeg" && !nativeUsable ? "auto" : i.setting;
   const routes: Record<string, ExportMediaRoute> = {};

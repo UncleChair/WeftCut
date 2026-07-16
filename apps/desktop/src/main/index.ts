@@ -621,7 +621,7 @@ app.whenReady().then(async () => {
   // flows on the one dedicated `exportSw:msg` channel (see ./exportSw and
   // `ExportSwMsg` in shared/ipc — never split it); nothing exportSw rides the
   // generic `evt:*` relay.
-  ipcMain.handle('exportSw:open', (e, a: { sessionId: string; path: string; outFormat: 'NV12'; creditWindow: number }) => {
+  ipcMain.handle('exportSw:open', (e, a: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; creditWindow: number }) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) throw new Error('exportSw:open — no window for sender')
     return openExportSw(ndBackend(), win, a.sessionId, a.path, a.outFormat, a.creditWindow)

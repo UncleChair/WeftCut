@@ -12,6 +12,7 @@ import { NativeExportSourceHandle } from "./nativeExportSource";
 import type { NativeDecodeRelayClient, NativeDecodeSink } from "./nativeDecodeRelay";
 import type { NativeDecodeFrameMsg } from "./protocol";
 import type { SourceHandleInit } from "../decoder/session";
+import { isTenBitFrame, tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 
 // The handle wraps each NV12 buffer in a `VideoFrame`; node/vitest has none, so
 // a plain stub stands in. The ring only reads timestamp/duration/close; the
@@ -80,7 +81,10 @@ const W = 4;
 const H = 2;
 const DUR = 33_333;
 
-function makeHandle(sourceColor?: VideoColorSpaceInit): {
+function makeHandle(
+  sourceColor?: VideoColorSpaceInit,
+  outFormat: "NV12" | "I420P10" = "NV12",
+): {
   handle: NativeExportSourceHandle;
   relay: FakeRelay;
 } {
@@ -90,7 +94,7 @@ function makeHandle(sourceColor?: VideoColorSpaceInit): {
     mediaId: "m0",
     handleKey: "m0#0",
     proxyAssetUrl: "weftcut-media://ignored",
-    nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat: "NV12", creditWindow: 6 },
+    nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat, creditWindow: 6 },
     ...(sourceColor ? { sourceColor } : {}),
   };
   const handle = new NativeExportSourceHandle(init, relay as unknown as NativeDecodeRelayClient);
@@ -104,8 +108,16 @@ function frameMsg(ptsUs: number): NativeDecodeFrameMsg {
     durUs: DUR,
     width: W,
     height: H,
+    format: "NV12",
     data: new ArrayBuffer((W * H * 3) / 2),
   };
+}
+
+// Tightly-packed I420P10 (u16LE): Y (w*h*2) + U + V ((w>>1)*(h>>1)*2 each).
+const P10_BYTES = W * H * 2 + 2 * ((W >> 1) * (H >> 1) * 2);
+
+function p10Msg(ptsUs: number, data = new ArrayBuffer(P10_BYTES)): NativeDecodeFrameMsg {
+  return { ...frameMsg(ptsUs), format: "I420P10", data };
 }
 
 describe("NativeExportSourceHandle", () => {
@@ -251,5 +263,100 @@ describe("NativeExportSourceHandle", () => {
     expect(relay.totalCredits()).toBe(before);
     handle.dispose(); // idempotent
     expect(relay.closed).toHaveLength(1);
+  });
+});
+
+describe("tenBitFrameFromBytes", () => {
+  it("wraps the SAME bytes with copyToTenBit's plane offsets (zero-copy)", () => {
+    const data = new Uint8Array(P10_BYTES);
+    const f = tenBitFrameFromBytes({
+      data,
+      width: W,
+      height: H,
+      timestamp: 5,
+      duration: 10,
+      colorSpace: { matrix: "bt709" },
+    });
+    expect(f.kind).toBe("p10");
+    expect(isTenBitFrame(f)).toBe(true);
+    expect(f.width).toBe(W);
+    expect(f.height).toBe(H);
+    expect(f.yOffset).toBe(0);
+    expect(f.uOffset).toBe(W * H * 2);
+    expect(f.vOffset).toBe(W * H * 2 + (W >> 1) * (H >> 1) * 2);
+    // Zero-copy: the frame views the caller's bytes, not a duplicate.
+    expect(f.data).toBe(data);
+    expect(f.timestamp).toBe(5);
+    expect(f.duration).toBe(10);
+    expect(f.colorSpace).toEqual({ matrix: "bt709" });
+    expect(() => f.close()).not.toThrow(); // uniform-shape no-op, like copyToTenBit
+  });
+
+  it("throws loudly on a byteLength that doesn't match the layout (Rust/TS drift)", () => {
+    expect(() =>
+      tenBitFrameFromBytes({
+        data: new Uint8Array(P10_BYTES - 2),
+        width: W,
+        height: H,
+        timestamp: 0,
+        duration: null,
+        colorSpace: null,
+      }),
+    ).toThrow(/I420P10/);
+  });
+});
+
+describe("NativeExportSourceHandle — I420P10 lane", () => {
+  it("pushes a zero-copy TenBitFrame (no VideoFrame round-trip) with the stamped color", async () => {
+    const { handle, relay } = makeHandle({ matrix: "bt470bg", fullRange: true }, "I420P10");
+    await handle.ensureReady();
+    const bytes = new ArrayBuffer(P10_BYTES);
+    relay.sink!.onFrame(p10Msg(0, bytes));
+    expect(handle.ring.size()).toBe(1);
+    const f = handle.ring.frameAt(0);
+    expect(isTenBitFrame(f)).toBe(true);
+    const tb = f as TenBitFrame;
+    expect(tb.width).toBe(W);
+    expect(tb.height).toBe(H);
+    expect(tb.yOffset).toBe(0);
+    expect(tb.uOffset).toBe(W * H * 2);
+    expect(tb.vOffset).toBe(W * H * 2 + (W >> 1) * (H >> 1) * 2);
+    // Zero-copy: the ring's frame views the TRANSFERRED buffer itself.
+    expect(tb.data.buffer).toBe(bytes);
+    expect(tb.timestamp).toBe(0);
+    expect(tb.duration).toBe(DUR);
+    // Same mapped-sourceColor stamp as the NV12 branch (bt709/limited fallback).
+    expect(tb.colorSpace).toEqual({
+      matrix: "bt470bg",
+      primaries: "bt709",
+      transfer: "bt709",
+      fullRange: true,
+    });
+    expect(handle.firstFrameDiag?.frameFormat).toBe("I420P10");
+  });
+
+  it("returns credits for 10-bit frames on evict exactly like NV12", async () => {
+    const { handle, relay } = makeHandle(undefined, "I420P10");
+    await handle.ensureReady();
+    const sink = relay.sink!;
+    for (let i = 0; i < 4; i++) sink.onFrame(p10Msg(i * DUR));
+    expect(relay.totalCredits()).toBe(0);
+    handle.evictBefore(2 * DUR);
+    expect(handle.ring.size()).toBe(2);
+    expect(relay.totalCredits()).toBe(2);
+  });
+
+  it("fails the ring loudly on a byteLength that doesn't match the layout", async () => {
+    const { handle, relay } = makeHandle(undefined, "I420P10");
+    await handle.ensureReady();
+    relay.sink!.onFrame(p10Msg(0, new ArrayBuffer(P10_BYTES - 2)));
+    await expect(handle.ring.waitForPts(0)).rejects.toThrow(/I420P10/);
+  });
+
+  it("fails the ring when a frame's format contradicts the session's outFormat", async () => {
+    const { handle, relay } = makeHandle(undefined, "NV12");
+    await handle.ensureReady();
+    relay.sink!.onFrame(p10Msg(0)); // I420P10 frame into an NV12 session
+    await expect(handle.ring.waitForPts(0)).rejects.toThrow(/I420P10/);
   });
 });

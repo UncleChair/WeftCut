@@ -63,13 +63,15 @@ export interface ExportProjectSnapshot {
 /// Worker's `NativeExportSourceHandle`. Same fields as the IPC `ExportSwFrameMsg`
 /// but `data` is an `ArrayBuffer` TRANSFERRED (zero-copy) rather than a
 /// structured-cloned `Uint8Array` — the worker wraps it in a `VideoFrame`
-/// (`format:"NV12"`) and pushes it into the ring.
+/// (NV12) or a `TenBitFrame` (I420P10) per `format` and pushes it into the
+/// ring. The handle cross-checks `format` against its session's `outFormat`.
 export interface NativeDecodeFrameMsg {
   sessionId: string;
   ptsUs: number;
   durUs: number;
   width: number;
   height: number;
+  format: ExportTransportFormat;
   colorMatrix?: string;
   colorRange?: string;
   colorPrimaries?: string;
@@ -166,8 +168,8 @@ export type ExportRequest =
   /// napi open failure (unsupported format / undecodable source).
   | { type: "nd:openResult"; reqId: number; ok: true; info: NativeDecodeOpenInfo }
   | { type: "nd:openResult"; reqId: number; ok: false; error: string }
-  /// One decoded NV12 frame; `frame.data` is transferred (see the transfer list
-  /// on the renderer-main `postMessage`).
+  /// One decoded frame (NV12 or I420P10 per `frame.format`); `frame.data` is
+  /// transferred (see the transfer list on the renderer-main `postMessage`).
   | { type: "nd:frame"; frame: NativeDecodeFrameMsg }
   /// The in-flight `decodeRange` delivered every frame in its range.
   | { type: "nd:rangeEnd"; sessionId: string }

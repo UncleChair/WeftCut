@@ -1,9 +1,10 @@
 // The export Worker's native-decode source handle. Implements the same
 // `ExportDecodeSession` contract the WebCodecs `ExportSourceHandle` does, so the
 // export driving loop (dispatch → consume → evict) drives it identically — but
-// instead of decoding a proxy with WebCodecs it consumes NV12 frames a
-// main-process `NativeDecode` session produces from the ORIGINAL (a
-// WebCodecs-blind codec, e.g. ProRes), shuttled in over the frame relay.
+// instead of decoding a proxy with WebCodecs it consumes NV12 (8-bit) or
+// I420P10 (10-bit) frames a main-process `NativeDecode` session produces from
+// the ORIGINAL (a WebCodecs-blind codec, e.g. ProRes), shuttled in over the
+// frame relay.
 //
 // Backpressure is a CREDIT WINDOW: the producer parks after `creditWindow`
 // frames are in flight; the handle returns exactly one credit per frame that
@@ -13,6 +14,7 @@
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
 import type { ExportDecodeSession, SourceHandleInit } from "../decoder/session";
+import { tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 import type { ExportTransportFormat } from "../exportDecodeRouting";
 import { getNativeDecodeRelay, type NativeDecodeRelayClient } from "./nativeDecodeRelay";
 import type { NativeDecodeFrameMsg } from "./protocol";
@@ -146,6 +148,19 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
 
   private onFrame(frame: NativeDecodeFrameMsg): void {
     if (this._disposed) return;
+    // A frame whose format contradicts the session's outFormat means the Rust
+    // session and this handle disagree about the transport — fail the ring
+    // (the export aborts) rather than misinterpret the plane bytes.
+    if (frame.format !== this.outFormat) {
+      this.ring.fail(
+        `native frame format ${frame.format} contradicts session outFormat ${this.outFormat}`,
+      );
+      return;
+    }
+    if (frame.format === "I420P10") {
+      this.onTenBitFrame(frame);
+      return;
+    }
     const colorSpace = this.frameColorSpace;
     const vf = new VideoFrame(new Uint8Array(frame.data), {
       format: "NV12",
@@ -175,6 +190,41 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     }
     // Frames arrive source-normalized; push with the frame's own ptsUs.
     this.ring.push(vf, frame.ptsUs);
+    this.framesPushed++;
+    this.dispatchedTotal++;
+    this.reconcileCredits();
+  }
+
+  /// The I420P10 lane: wrap the transferred bytes as a `TenBitFrame` — ZERO-COPY,
+  /// no VideoFrame round-trip — and push it; the Compositor consumes it via the
+  /// same `TenBitIngest` path as `copyToTenBit` output. The factory throws on a
+  /// byteLength/layout mismatch (Rust/TS drift); route that to `ring.fail` so it
+  /// aborts the export through the standard waiter-rejection path.
+  private onTenBitFrame(frame: NativeDecodeFrameMsg): void {
+    const colorSpace = this.frameColorSpace;
+    let tenBit: TenBitFrame;
+    try {
+      tenBit = tenBitFrameFromBytes({
+        data: new Uint8Array(frame.data),
+        width: frame.width,
+        height: frame.height,
+        timestamp: frame.ptsUs,
+        duration: frame.durUs,
+        colorSpace,
+      });
+    } catch (e) {
+      this.ring.fail(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (!this.firstFrameDiag) {
+      this.firstFrameDiag = {
+        mediaId: this.mediaId,
+        configColor: colorSpace,
+        frameColor: colorSpace,
+        frameFormat: "I420P10",
+      };
+    }
+    this.ring.push(tenBit, frame.ptsUs);
     this.framesPushed++;
     this.dispatchedTotal++;
     this.reconcileCredits();

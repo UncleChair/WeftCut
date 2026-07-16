@@ -132,18 +132,19 @@ describe("resolveExportDecodeRouting", () => {
     expect(resolveExportDecodeRouting(base({ bitDepth: 10 })).outFormat).toBe("I420P10");
   });
 
-  // INTERIM until the I420P10 lane lands (10-bit ticket): the native session
-  // only opens NV12, so 10-bit exports keep today's routing rather than
-  // failing at session open. These rows flip to `engine: "native"` with the
-  // lane.
-  it("interim: 10-bit exports withhold native routing (auto AND ffmpeg pin)", () => {
+  it("10-bit exports route native over the I420P10 transport (auto AND ffmpeg pin)", () => {
     const auto = resolveExportDecodeRouting(base({ bitDepth: 10 }));
-    expect(auto.routes["m1"]).toEqual({ engine: "webcodecs" });
+    expect(auto.outFormat).toBe("I420P10");
+    expect(auto.routes["m1"]).toEqual({
+      engine: "native",
+      sourcePath: "C:\\media\\m1.mov",
+    });
     const pinned = resolveExportDecodeRouting(base({ bitDepth: 10, setting: "ffmpeg" }));
-    expect(pinned.routes["m1"]).toEqual({ engine: "webcodecs" });
-    // The pin degrades honestly: a table that routes nothing native must not
-    // report itself as a satisfied ffmpeg pin.
-    expect(pinned.effectiveSetting).toBe("auto");
+    expect(pinned.routes["m1"]).toEqual({
+      engine: "native",
+      sourcePath: "C:\\media\\m1.mov",
+    });
+    expect(pinned.effectiveSetting).toBe("ffmpeg");
   });
 
   it("non-video media get no table entry", () => {

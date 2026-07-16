@@ -276,10 +276,10 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // Source: test_1080p_gradient10_h264.mp4 (10-bit H.264 Hi10P gradient ramp).
   // Asserts: export completes, output is HEVC Main10 / 10-bit pix_fmt, file exists.
   // Note: SSIM comparison against a 10-bit source via the 8-bit media_conformance
-  // analyzer is indicative only — the gradient-row distinct-level check (proving
-  // >600 of 1023 luma levels survived) requires --gradient-row which is not
-  // exposed in analyze.mjs. The smoke here proves pipeline completion +
-  // codec-shape (hevc / yuv420p10le or p010le / Main 10 profile).
+  // analyzer is indicative only — the strict gradient-row distinct-level check
+  // (>600 of 1023 luma levels) lives in export-native-wedges.spec.ts's ramp
+  // precision gates via analyzeGradientRow. The smoke here proves pipeline
+  // completion + codec-shape (hevc / yuv420p10le or p010le / Main 10 profile).
   // -------------------------------------------------------------------------
   test('10-bit HEVC export completes with correct codec shape (Electron)', async () => {
     test.skip(
@@ -319,9 +319,9 @@ test.describe('multi-codec export smoke (Electron)', () => {
       expect(st.color_primaries).toBe('bt709')
       expect(st.color_range).toBe('tv')
 
-      // A strict gradient-row check (media_conformance --gradient-row, distinct
-      // luma levels > 600) is not exposed in analyze.mjs. Instead we run a
-      // wide-window analyze() as a
+      // The strict gradient-row check (analyzeGradientRow, distinct luma
+      // levels > 600) is export-native-wedges.spec.ts's ramp precision gate;
+      // here we run a wide-window analyze() as a
       // loose smoke: the 1s gradient ramp is 30 frames, so we use the window
       // parameter to tolerate minor frame-grid differences (the 10-bit path's
       // Hi10P SW decode + the chunked video-sink path can shift PTS by a frame or two).

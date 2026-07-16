@@ -73,6 +73,7 @@ function frameMsg(sessionId: string, ptsUs: number): NativeDecodeFrameMsg {
     durUs: 33_333,
     width: 4,
     height: 2,
+    format: "NV12",
     data: new ArrayBuffer(12),
   };
 }
