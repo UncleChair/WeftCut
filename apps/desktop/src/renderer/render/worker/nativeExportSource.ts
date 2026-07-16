@@ -21,18 +21,23 @@ import type { NativeDecodeFrameMsg } from "./protocol";
 /// sufficient (one handle = one session for its lifetime).
 let seq = 0;
 
-/// Assemble a `VideoColorSpaceInit` from the frame's ffprobe-style color tags,
-/// omitting any absent field; returns undefined when no tag is present (so the
-/// VideoFrame ctor gets no `colorSpace` and Chromium infers a default). Indexed
-/// access casts avoid depending on the named WebCodecs enum types.
-function colorSpaceFromFrame(frame: NativeDecodeFrameMsg): VideoColorSpaceInit | undefined {
-  const cs: VideoColorSpaceInit = {};
-  if (frame.colorPrimaries !== undefined) cs.primaries = frame.colorPrimaries as VideoColorPrimaries;
-  if (frame.colorTransfer !== undefined) cs.transfer = frame.colorTransfer as VideoTransferCharacteristics;
-  if (frame.colorMatrix !== undefined) cs.matrix = frame.colorMatrix as VideoMatrixCoefficients;
-  // `pc` = full range; `tv` / anything else = limited. Omit when unknown.
-  if (frame.colorRange !== undefined) cs.fullRange = frame.colorRange === "pc";
-  return Object.keys(cs).length > 0 ? cs : undefined;
+/// Build the `VideoColorSpaceInit` stamped on every frame from the source's
+/// already-mapped `sourceColor` (WebCodecs enums, derived at export start via
+/// `ffprobeColorToWebCodecs`), falling back to bt709/limited — the same posture
+/// as the preview native path (`SwTransport.colorSpaceFor`).
+///
+/// LANDMINE: must NOT read the per-frame `colorMatrix`/`colorTransfer`/… tags.
+/// Those are raw FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`,
+/// `arib-std-b67`), not valid WebCodecs enum members (`bt2020-ncl`, `pq`,
+/// `hlg`) — casting them into a `VideoColorSpaceInit` makes `new VideoFrame`
+/// throw for wide-gamut/HDR sources, aborting the export.
+function colorSpaceFromSource(sourceColor: VideoColorSpaceInit | undefined): VideoColorSpaceInit {
+  return {
+    primaries: sourceColor?.primaries ?? "bt709",
+    transfer: sourceColor?.transfer ?? "bt709",
+    matrix: sourceColor?.matrix ?? "bt709",
+    fullRange: sourceColor?.fullRange ?? false,
+  };
 }
 
 export class NativeExportSourceHandle implements ExportDecodeSession {
@@ -43,6 +48,9 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   private readonly sourcePath: string;
   private readonly outFormat: "NV12";
   private readonly creditWindow: number;
+  /// ColorSpace stamped on every constructed `VideoFrame` — fixed per handle
+  /// (one handle = one source), see `colorSpaceFromSource`.
+  private readonly frameColorSpace: VideoColorSpaceInit;
 
   private readyP: Promise<void> | null = null;
 
@@ -64,6 +72,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.sourcePath = ne.sourcePath;
     this.outFormat = ne.outFormat;
     this.creditWindow = ne.creditWindow;
+    this.frameColorSpace = colorSpaceFromSource(init.sourceColor);
     // Unique, realm-safe, stable for this handle's lifetime.
     this.sessionId = `nd-${seq++}-${init.mediaId}-${init.handleKey ?? init.mediaId}`;
     this.ring = new ExportFrameStore();
@@ -126,14 +135,14 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
 
   private onFrame(frame: NativeDecodeFrameMsg): void {
     if (this._disposed) return;
-    const colorSpace = colorSpaceFromFrame(frame);
+    const colorSpace = this.frameColorSpace;
     const vf = new VideoFrame(new Uint8Array(frame.data), {
       format: "NV12",
       codedWidth: frame.width,
       codedHeight: frame.height,
       timestamp: frame.ptsUs,
       duration: frame.durUs,
-      ...(colorSpace ? { colorSpace } : {}),
+      colorSpace,
     });
     // Capture the color diagnostic off the FIRST frame BEFORE push (the ring
     // may close a frame during push's `freeBehindWaiters`).
@@ -141,7 +150,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
       const cs = vf.colorSpace;
       this.firstFrameDiag = {
         mediaId: this.mediaId,
-        configColor: colorSpace ?? null,
+        configColor: colorSpace,
         frameColor: cs
           ? {
               matrix: cs.matrix ?? null,

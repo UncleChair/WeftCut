@@ -80,7 +80,10 @@ const W = 4;
 const H = 2;
 const DUR = 33_333;
 
-function makeHandle(): { handle: NativeExportSourceHandle; relay: FakeRelay } {
+function makeHandle(sourceColor?: VideoColorSpaceInit): {
+  handle: NativeExportSourceHandle;
+  relay: FakeRelay;
+} {
   const relay = new FakeRelay();
   const init: SourceHandleInit = {
     layerId: "L0",
@@ -88,6 +91,7 @@ function makeHandle(): { handle: NativeExportSourceHandle; relay: FakeRelay } {
     handleKey: "m0#0",
     proxyAssetUrl: "weftcut-media://ignored",
     nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat: "NV12", creditWindow: 6 },
+    ...(sourceColor ? { sourceColor } : {}),
   };
   const handle = new NativeExportSourceHandle(init, relay as unknown as NativeDecodeRelayClient);
   return { handle, relay };
@@ -153,6 +157,41 @@ describe("NativeExportSourceHandle", () => {
     // In-flight (pushed − credited) equals what is still resident.
     const inFlight = handle["framesPushed"] - relay.totalCredits();
     expect(inFlight).toBe(handle.ring.size());
+  });
+
+  it("stamps frames with the mapped sourceColor, never the raw ffmpeg tag names", async () => {
+    // Per-frame tags are raw FFmpeg `.name()` strings (bt2020nc/smpte2084/…),
+    // NOT WebCodecs enum members — reaching the VideoFrame ctor they'd throw
+    // for real (the stub doesn't validate enums). The handle must stamp the
+    // already-mapped `init.sourceColor` with the bt709/limited fallback,
+    // mirroring the preview native path (SwTransport.colorSpaceFor).
+    const { handle, relay } = makeHandle({ matrix: "bt470bg", fullRange: true });
+    await handle.ensureReady();
+    relay.sink!.onFrame({
+      ...frameMsg(0),
+      colorMatrix: "bt2020nc",
+      colorPrimaries: "bt2020",
+      colorTransfer: "smpte2084",
+      colorRange: "tv",
+    });
+    expect(handle.firstFrameDiag?.configColor).toEqual({
+      matrix: "bt470bg",
+      primaries: "bt709",
+      transfer: "bt709",
+      fullRange: true,
+    });
+  });
+
+  it("falls back to bt709/limited when the source has no mapped color", async () => {
+    const { handle, relay } = makeHandle();
+    await handle.ensureReady();
+    relay.sink!.onFrame(frameMsg(0));
+    expect(handle.firstFrameDiag?.configColor).toEqual({
+      matrix: "bt709",
+      primaries: "bt709",
+      transfer: "bt709",
+      fullRange: false,
+    });
   });
 
   it("clamps grid-overrun waiters to the last held frame on EOS", async () => {
