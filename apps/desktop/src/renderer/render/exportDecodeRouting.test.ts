@@ -3,6 +3,7 @@ import type { MediaSummary } from "../ipc";
 import {
   proxyWaitScope,
   resolveExportDecodeRouting,
+  routingSourceCounts,
   type ExportRoutingInputs,
 } from "./exportDecodeRouting";
 
@@ -170,5 +171,47 @@ describe("proxyWaitScope", () => {
     const media = [vid("n", "native-sw"), vid("p", "proxied")];
     const routing = resolveExportDecodeRouting(base({ setting: "webcodecs", media }));
     expect(proxyWaitScope(media, routing).map((m) => m.id)).toEqual(["n", "p"]);
+  });
+});
+
+// The dialog's routing-summary counts — semantics live on routingSourceCounts.
+describe("routingSourceCounts", () => {
+  const ALL = [
+    vid("b", "bypass"),
+    vid("d", "direct-export"),
+    vid("p", "proxied"),
+    vid("n", "native-sw"),
+  ];
+
+  it("auto + component: only 'proxied' feeds from the lossy proxy", () => {
+    const routing = resolveExportDecodeRouting(base({ media: ALL }));
+    // b/d decode originals in-worker, n decodes the original natively; only
+    // p (neither engine opens it) exports off its full proxy.
+    expect(routingSourceCounts(ALL, routing)).toEqual({ originals: 3, proxy: 1 });
+  });
+
+  it("webcodecs pin: blind spots join 'proxied' on the lossy-proxy side", () => {
+    const routing = resolveExportDecodeRouting(base({ setting: "webcodecs", media: ALL }));
+    expect(routingSourceCounts(ALL, routing)).toEqual({ originals: 2, proxy: 2 });
+  });
+
+  it("auto without the component: blind spots count as proxy-fed", () => {
+    const media = [vid("n", "native-sw")];
+    const routing = resolveExportDecodeRouting(
+      base({ componentAvailable: false, media }),
+    );
+    expect(routingSourceCounts(media, routing)).toEqual({ originals: 0, proxy: 1 });
+  });
+
+  it("ffmpeg pin: every source counts as originals", () => {
+    const routing = resolveExportDecodeRouting(base({ setting: "ffmpeg", media: ALL }));
+    expect(routingSourceCounts(ALL, routing)).toEqual({ originals: 4, proxy: 0 });
+  });
+
+  it("non-video media are not counted", () => {
+    const audio = vid("a", "bypass", { kind: "Audio", codec: null, pix_fmt: null });
+    const media = [audio, vid("v", "bypass")];
+    const routing = resolveExportDecodeRouting(base({ media }));
+    expect(routingSourceCounts(media, routing)).toEqual({ originals: 1, proxy: 0 });
   });
 });

@@ -360,6 +360,11 @@ const enUS = {
     engine_webcodecs: "WebCodecs",
     path_native: "Encoder: native FFmpeg (full control, explicit color tags)",
     path_webcodecs: "Encoder: WebCodecs (hardware if available)",
+    // Engine option labels + unavailable reason reuse settings.decode_engine_*
+    // so preview and export read identically.
+    decode_engine: "Decode engine",
+    decode_summary:
+      "Decode: {{originals}} source(s) from originals, {{proxy}} from lossy proxy",
     checking_codec: "Checking codec support…",
     codec_unsupported:
       "{{codec}} can't be encoded on this machine — pick another codec.",

@@ -353,6 +353,9 @@ const zhCN: Resources = {
     engine_webcodecs: "WebCodecs",
     path_native: "编码器：原生 FFmpeg（完整参数控制，显式色彩标记）",
     path_webcodecs: "编码器：WebCodecs(有硬件则用硬件)",
+    // 引擎选项与不可用原因复用 settings.decode_engine_*，确保预览/导出措辞一致。
+    decode_engine: "解码引擎",
+    decode_summary: "解码：{{originals}} 个素材从原片导出，{{proxy}} 个从有损代理导出",
     checking_codec: "正在检测编码支持…",
     codec_unsupported: "本机无法编码 {{codec}}——请换一种编码。",
     prores_profile: "ProRes 档位",

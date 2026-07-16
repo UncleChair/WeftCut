@@ -23,6 +23,7 @@ import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
+import { decodeEngineOptions } from "./decodeEngineOptions";
 import {
   useDecodeComponentAvailable,
   useDecodeComponentReason,
@@ -536,38 +537,7 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
             onError(String(err));
           }
         }}
-        options={[
-          { value: "auto", label: t("settings.decode_engine_auto") },
-          {
-            value: "ffmpeg",
-            label: (
-              <>
-                {t("settings.decode_engine_ffmpeg")}
-                <span
-                  style={{ marginLeft: 6, fontSize: 12, color: "var(--muted-foreground)" }}
-                >
-                  {t("settings.decode_engine_ffmpeg_tag")}
-                </span>
-                {!componentAvailable &&
-                  ` — ${t("settings.decode_engine_unavailable_suffix")}`}
-              </>
-            ),
-            disabled: !componentAvailable,
-          },
-          {
-            value: "webcodecs",
-            label: (
-              <>
-                {t("settings.decode_engine_webcodecs")}
-                <span
-                  style={{ marginLeft: 6, fontSize: 12, color: "var(--muted-foreground)" }}
-                >
-                  {t("settings.decode_engine_webcodecs_tag")}
-                </span>
-              </>
-            ),
-          },
-        ]}
+        options={decodeEngineOptions(t, componentAvailable)}
       />
       <span>
         <span className="settings-toggle-label">{t("settings.decode_engine")}</span>

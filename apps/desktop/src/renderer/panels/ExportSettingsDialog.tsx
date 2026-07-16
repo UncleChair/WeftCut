@@ -1,9 +1,9 @@
 import { open as openDialog } from "@/bridge/dialog";
 import { documentDir, join } from "@/bridge/path";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
+import { exportSettingsGet, exportSettingsSet, workspaceDir, type MediaSummary } from "../ipc";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -13,16 +13,29 @@ import { AppTimecodeField } from "../components/AppTimecodeField";
 import { Button } from "@/components/ui/button";
 import { smokeEncode } from "../render/exportCodecProbe";
 import {
+  resolveExportDecodeRouting,
+  routingSourceCounts,
+} from "../render/exportDecodeRouting";
+import { referencedVideoMediaIds } from "../render/activeVideoLayers";
+import { useProjectStore } from "../state/projectStore";
+import {
+  useDecodeComponentAvailable,
+  useDecodeComponentReason,
+} from "../settings/decodeComponentStore";
+import { decodeEngineOptions } from "../settings/decodeEngineOptions";
+import {
   type BitDepth,
   type CodecId,
   type Container,
   type DnxhrProfile,
   type EncoderEngine,
+  type ExportDecodeEngine,
   type ExportSettings,
   type ProresProfile,
   type QualityPreset,
   type RateMode,
   type SpeedPreset,
+  compositeBitDepth,
   containersForCodec,
   defaultCrf,
   exportIncludesVideo,
@@ -222,6 +235,37 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   const patch = (p: Partial<ExportSettings>) =>
     setSettings((s) => (s ? { ...s, ...p } : s));
 
+  const decodeComponentAvailable = useDecodeComponentAvailable();
+  const decodeComponentReason = useDecodeComponentReason();
+  const projSummary = useProjectStore((s) => s.summary);
+  const mediaById = useProjectStore((s) => s.mediaById);
+  /// The one range the export runs over — shared by doExport and the decode
+  /// summary so the honesty line can't drift from the run.
+  const chosenRange = useCallback(
+    () =>
+      rangeMode === "full"
+        ? { startUs: 0, endUs: durationUs }
+        : clampExportRange(rangeStartUs, rangeEndUs, durationUs),
+    [rangeMode, rangeStartUs, rangeEndUs, durationUs],
+  );
+  /// Spec decision 10's honesty line: same resolver, same inputs as the run
+  /// (see routingSourceCounts). Recomputed on range/engine/depth edits, not
+  /// just at dialog open, so it stays truthful while the user works.
+  const decodeCounts = useMemo(() => {
+    if (!settings || !projSummary || !exportIncludesVideo(settings)) return null;
+    const { startUs, endUs } = chosenRange();
+    const media = [...referencedVideoMediaIds(projSummary, startUs, endUs)]
+      .map((id) => mediaById.get(id))
+      .filter((m): m is MediaSummary => !!m);
+    const routing = resolveExportDecodeRouting({
+      setting: settings.decodeEngine,
+      componentAvailable: decodeComponentAvailable,
+      bitDepth: compositeBitDepth(settings),
+      media,
+    });
+    return routingSourceCounts(media, routing);
+  }, [settings, projSummary, mediaById, chosenRange, decodeComponentAvailable]);
+
   async function onBrowse() {
     const chosen = await openDialog({
       title: t("export_dialog.choose_location"),
@@ -240,11 +284,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
       const ext = exportOutputExtension(settings);
       const out = await join(location, `${filename.trim()}.${ext}`);
       await exportSettingsSet(settings).catch(() => {});
-      const range =
-        rangeMode === "full"
-          ? { startUs: 0, endUs: durationUs }
-          : clampExportRange(rangeStartUs, rangeEndUs, durationUs);
-      onConfirm(settings, out, range);
+      onConfirm(settings, out, chosenRange());
     } catch {
       // Launch never reached onConfirm (e.g. path join failed) — unlatch so
       // the user can retry rather than being stuck on a dead dialog.
@@ -597,6 +637,39 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     ]}
                   />
                 </div>
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.decode_engine")}
+                  </span>
+                  <AppSelect
+                    className="export-select"
+                    value={settings.decodeEngine}
+                    onValueChange={(v) => {
+                      // Mirrors the disabled option defensively — a Standard
+                      // pin without the component would only degrade back to
+                      // auto at resolve time anyway.
+                      if (v === "ffmpeg" && !decodeComponentAvailable) return;
+                      patch({ decodeEngine: v as ExportDecodeEngine });
+                    }}
+                    options={decodeEngineOptions(t, decodeComponentAvailable)}
+                  />
+                </div>
+                {!decodeComponentAvailable && (
+                  <p className="settings-blurb">
+                    {t("settings.decode_engine_unavailable", {
+                      reason: decodeComponentReason ?? "",
+                    })}
+                  </p>
+                )}
+                {decodeCounts && (
+                  <p className={decodeCounts.proxy > 0 ? "settings-warn" : "settings-blurb"}>
+                    {t("export_dialog.decode_summary", {
+                      originals: decodeCounts.originals,
+                      proxy: decodeCounts.proxy,
+                    })}
+                  </p>
+                )}
 
                 <div className="export-row">
                   <span className="settings-toggle-label">

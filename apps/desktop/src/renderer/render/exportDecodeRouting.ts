@@ -7,6 +7,7 @@
 // the probe / full-proxy machinery. The table then rides the init protocol
 // into the export Worker and nothing re-resolves mid-run.
 import type { MediaSummary } from "../ipc";
+import { resolveDecode } from "./decodeRoute";
 import type { ExportDecodeEngine } from "./exportSettings";
 
 /// CPU transport format for native-decoded frames crossing the relay. Follows
@@ -91,6 +92,34 @@ function routeFor(
   return m.decode_route.route === "native-sw"
     ? { engine: "native", sourcePath: m.path }
     : { engine: "webcodecs" };
+}
+
+export interface RoutingSourceCounts {
+  originals: number;
+  proxy: number;
+}
+
+/// The export dialog's honesty line (spec decision 10): how many video sources
+/// this table sends off their originals vs their lossy full proxy. Derived
+/// from the resolved table the run freezes, so dialog and export can't
+/// disagree. Proxy-fed = not native-routed AND the persisted export path is
+/// not the original (`resolveDecode` — the one route→path authority). The
+/// readiness gate's runtime probe can still route-correct a direct-export
+/// source to proxied AFTER resolution; the resolver shares that blind spot by
+/// design (persisted verdicts only), so the counts stay honest to the table.
+export function routingSourceCounts(
+  media: readonly ExportRoutingMedia[],
+  routing: ExportDecodeRouting,
+): RoutingSourceCounts {
+  const counts: RoutingSourceCounts = { originals: 0, proxy: 0 };
+  for (const m of media) {
+    if (m.kind !== "Video") continue;
+    const proxyFed =
+      routing.routes[m.id]?.engine !== "native" &&
+      resolveDecode(m).exportPath !== m.path;
+    counts[proxyFed ? "proxy" : "originals"] += 1;
+  }
+  return counts;
 }
 
 /// The readiness gate's scope: media the WEBCODECS path will decode — the
