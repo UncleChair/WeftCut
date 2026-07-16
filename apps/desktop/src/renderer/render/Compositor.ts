@@ -52,7 +52,9 @@ import {
 } from "../timeline/motifBakeStatusStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { swapKeys } from "./swapKeys";
+import { isNativeNv12Frame } from "./decoder/nv12Frame";
 import { isTenBitFrame } from "./decoder/tenBitFrame";
+import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
 import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
@@ -439,6 +441,10 @@ export class Compositor {
   /// export forces the WebGL backend, so reaching this non-null on WebGPU
   /// is a wiring bug caught by ensureTenBitIngest).
   private tenBitIngest: TenBitIngest | null = null;
+  /// Lazily created on the first NativeNv12Frame (8-bit native export lane).
+  /// Same posture as tenBitIngest: null in preview and WebGPU contexts
+  /// (native-decode exports force the WebGL backend — see exportWorker).
+  private nv12Ingest: Nv12Ingest | null = null;
   /// Most recent composition time we composited at. Used by
   /// `scheduleRepaint()` for async-arrived frames when the playhead
   /// is paused (no rAF tick incoming).
@@ -658,6 +664,8 @@ export class Compositor {
       this.clips.clear();
       this.tenBitIngest?.dispose();
       this.tenBitIngest = null;
+      this.nv12Ingest?.dispose();
+      this.nv12Ingest = null;
       for (const a of this.audios.values()) a.mixer.dispose();
       this.audios.clear();
       this.stage.removeChildren();
@@ -682,6 +690,8 @@ export class Compositor {
       // it from scratch and fires on any resulting membership change.
       this.tenBitIngest?.dispose();
       this.tenBitIngest = null;
+      this.nv12Ingest?.dispose();
+      this.nv12Ingest = null;
       this.baker?.setTargets([]);
       this.manualPrebakeLayers.clear();
       sharedBakedKeyIndex.clear();
@@ -714,6 +724,7 @@ export class Compositor {
       if (!livingLayerIds.has(layerId)) {
         this.abandonSwap(layerId);
         this.tenBitIngest?.release(layerId);
+        this.nv12Ingest?.release(layerId);
         c.sprite.dispose();
         c.effects.dispose();
         this.clips.delete(layerId);
@@ -1276,6 +1287,8 @@ export class Compositor {
     this.cancelAllSwaps();
     this.tenBitIngest?.dispose();
     this.tenBitIngest = null;
+    this.nv12Ingest?.dispose();
+    this.nv12Ingest = null;
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);
@@ -1309,6 +1322,23 @@ export class Compositor {
       this.tenBitIngest = new TenBitIngest(renderer as WebGLRenderer);
     }
     return this.tenBitIngest;
+  }
+
+  /// Lazily construct the NV12 ingest. NativeNv12Frames only flow when the
+  /// export worker runs the WebGL backend (any native-decode routing forces
+  /// preference "webgl"), so reaching this on a WebGPU renderer is a wiring
+  /// bug — fail loudly rather than mis-render.
+  private ensureNv12Ingest(): Nv12Ingest {
+    if (!this.nv12Ingest) {
+      const renderer = this.app.renderer;
+      if (!("gl" in renderer)) {
+        throw new Error(
+          "NativeNv12Frame reached a non-WebGL renderer — native-decode export requires the WebGL backend",
+        );
+      }
+      this.nv12Ingest = new Nv12Ingest(renderer as WebGLRenderer);
+    }
+    return this.nv12Ingest;
   }
 
   /// Warm the next VideoClip boundary inside the ring-sized lookahead
@@ -1863,6 +1893,13 @@ export class Compositor {
       if (isTenBitFrame(frame)) {
         clip.sprite.bindExternalTexture(
           this.ensureTenBitIngest().textureFor(clip.layerId, frame),
+        );
+      } else if (isNativeNv12Frame(frame)) {
+        // Native 8-bit relay frames convert in OUR shader — Chromium's
+        // software conversion of buffer-defined NV12 VideoFrames applies
+        // BT.601 regardless of the stamped colorSpace (see nv12Frame.ts).
+        clip.sprite.bindExternalTexture(
+          this.ensureNv12Ingest().textureFor(clip.layerId, frame),
         );
       } else {
         clip.sprite.updateFrame(frame);

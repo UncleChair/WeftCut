@@ -125,9 +125,12 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // 1. PixiJS Application against the transferred OffscreenCanvas.
   // Any native-sink export (8-bit or 10-bit) forces WebGL2 — the pack shaders
   // (PackYuv420p10 / PackYuvPlanar) need a GL renderer, and 10-bit additionally
-  // needs EXT_color_buffer_float for rgba16float targets. The WebCodecs path
-  // prefers WebGPU to match the preview surface; PixiJS auto-falls back to
-  // WebGL when the worker context doesn't expose `navigator.gpu`.
+  // needs EXT_color_buffer_float for rgba16float targets. Native-DECODE
+  // routing forces WebGL2 too: relay frames convert through the GL ingest
+  // passes (Nv12Ingest / TenBitIngest). The WebCodecs path prefers WebGPU to
+  // match the preview surface; PixiJS auto-falls back to WebGL when the
+  // worker context doesn't expose `navigator.gpu`.
+  const nativeDecodeRouted = (req.nativeDecode?.mediaIds.length ?? 0) > 0;
   const app = new Application();
   await app.init({
     canvas: req.canvas as unknown as HTMLCanvasElement,
@@ -135,7 +138,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     height: req.project.height,
     background: 0x000000,
     autoStart: false,
-    preference: nativeSink || tenBit ? "webgl" : "webgpu",
+    preference: nativeSink || tenBit || nativeDecodeRouted ? "webgl" : "webgpu",
   });
 
   if (tenBit) {

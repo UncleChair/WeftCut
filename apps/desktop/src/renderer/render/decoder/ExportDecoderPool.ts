@@ -27,6 +27,7 @@ import { NativeExportSourceHandle } from "../worker/nativeExportSource";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
+import type { NativeNv12Frame } from "./nv12Frame";
 import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
 import { frameToSourceUs, packetToSourceUs, sourceToContainerUs } from "./ptsOffset";
 
@@ -56,7 +57,7 @@ export function tenBitHighWaterFor(frameBytes: number): number {
 interface RingEntry {
   ptsUs: number;
   durationUs: number;
-  frame: VideoFrame | TenBitFrame;
+  frame: VideoFrame | TenBitFrame | NativeNv12Frame;
 }
 
 /// E2E color diagnostic captured off the FIRST decoded frame of a handle.
@@ -107,7 +108,7 @@ export class ExportFrameStore implements FrameStore {
     return this.derivedTenBitHighWater ?? TENBIT_RING_MAX_ENTRIES;
   }
 
-  push(frame: VideoFrame | TenBitFrame, ptsUs = frame.timestamp): void {
+  push(frame: VideoFrame | TenBitFrame | NativeNv12Frame, ptsUs = frame.timestamp): void {
     if (this.derivedTenBitHighWater === null && isTenBitFrame(frame)) {
       this.derivedTenBitHighWater = tenBitHighWaterFor(frame.data.byteLength);
     }
@@ -242,7 +243,7 @@ export class ExportFrameStore implements FrameStore {
     return this.ended && this.entries.length > 0;
   }
 
-  frameAt(tUs: number): VideoFrame | TenBitFrame | null { // satisfies DecodedFrame | null
+  frameAt(tUs: number): VideoFrame | TenBitFrame | NativeNv12Frame | null { // satisfies DecodedFrame | null
     if (this.entries.length === 0) return null;
     const first = this.entries[0]!;
     if (tUs < first.ptsUs) return first.frame;

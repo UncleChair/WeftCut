@@ -13,6 +13,7 @@
 
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
+import { nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
 import type { ExportDecodeSession, SourceHandleInit } from "../decoder/session";
 import { tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 import type { ExportTransportFormat } from "../exportDecodeRouting";
@@ -32,8 +33,8 @@ let seq = 0;
 /// LANDMINE: must NOT read the per-frame `colorMatrix`/`colorTransfer`/… tags.
 /// Those are raw FFmpeg `.name()` strings (e.g. `bt2020nc`, `smpte2084`,
 /// `arib-std-b67`), not valid WebCodecs enum members (`bt2020-ncl`, `pq`,
-/// `hlg`) — casting them into a `VideoColorSpaceInit` makes `new VideoFrame`
-/// throw for wide-gamut/HDR sources, aborting the export.
+/// `hlg`) — they would fork the app's single color model, and the ingest
+/// shaders' `coefForMatrix` matches WebCodecs enum members only.
 function colorSpaceFromSource(sourceColor: VideoColorSpaceInit | undefined): VideoColorSpaceInit {
   return {
     primaries: sourceColor?.primaries ?? "bt709",
@@ -51,7 +52,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   private readonly sourcePath: string;
   private readonly outFormat: ExportTransportFormat;
   private readonly creditWindow: number;
-  /// ColorSpace stamped on every constructed `VideoFrame` — fixed per handle
+  /// ColorSpace stamped on every pushed frame — fixed per handle
   /// (one handle = one source), see `colorSpaceFromSource`.
   private readonly frameColorSpace: VideoColorSpaceInit;
   /// `aUs` of the previous `decodeRange`; `aUs < lastRangeAUs` is a backward
@@ -161,35 +162,38 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
       this.onTenBitFrame(frame);
       return;
     }
+    // The NV12 lane: wrap the transferred bytes as a `NativeNv12Frame` —
+    // ZERO-COPY, NO VideoFrame — and push it; the Compositor converts it via
+    // `Nv12Ingest`. LANDMINE: never route these through `new VideoFrame` +
+    // drawImage — Chromium converts buffer-defined NV12 as BT.601 (see
+    // nv12Frame.ts).
     const colorSpace = this.frameColorSpace;
-    const vf = new VideoFrame(new Uint8Array(frame.data), {
-      format: "NV12",
-      codedWidth: frame.width,
-      codedHeight: frame.height,
-      timestamp: frame.ptsUs,
-      duration: frame.durUs,
-      colorSpace,
-    });
+    let nv12: NativeNv12Frame;
+    try {
+      nv12 = nv12FrameFromBytes({
+        data: new Uint8Array(frame.data),
+        width: frame.width,
+        height: frame.height,
+        timestamp: frame.ptsUs,
+        duration: frame.durUs,
+        colorSpace,
+      });
+    } catch (e) {
+      this.ring.fail(e instanceof Error ? e.message : String(e));
+      return;
+    }
     // Capture the color diagnostic off the FIRST frame BEFORE push (the ring
     // may close a frame during push's `freeBehindWaiters`).
     if (!this.firstFrameDiag) {
-      const cs = vf.colorSpace;
       this.firstFrameDiag = {
         mediaId: this.mediaId,
         configColor: colorSpace,
-        frameColor: cs
-          ? {
-              matrix: cs.matrix ?? null,
-              primaries: cs.primaries ?? null,
-              transfer: cs.transfer ?? null,
-              fullRange: cs.fullRange ?? null,
-            }
-          : null,
-        frameFormat: vf.format ?? null,
+        frameColor: colorSpace,
+        frameFormat: "NV12",
       };
     }
     // Frames arrive source-normalized; push with the frame's own ptsUs.
-    this.ring.push(vf, frame.ptsUs);
+    this.ring.push(nv12, frame.ptsUs);
     this.framesPushed++;
     this.dispatchedTotal++;
     this.reconcileCredits();

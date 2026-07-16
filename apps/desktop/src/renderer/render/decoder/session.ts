@@ -4,6 +4,7 @@
 // composites through (DecodeSession) plus the two role interfaces. Both imports
 // below are `import type` (erased), so the session <-> ExportDecoderPool
 // reference (ExportDecodeSession.ring) is not a runtime cycle.
+import type { NativeNv12Frame } from "./nv12Frame";
 import type { TenBitFrame } from "./tenBitFrame";
 import type { ExportColorDiag, ExportFrameStore } from "./ExportDecoderPool";
 
@@ -88,10 +89,12 @@ export interface SourceHandleInit {
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
 /// Preview returns `ImageBitmap` (decoupled from the WebCodecs decoder's buffer
 /// pool); export returns `VideoFrame` (evicted after each composited output);
-/// 10-bit export returns `TenBitFrame` (CPU-plane copy). PixiJS v8 `ImageSource`
-/// accepts VideoFrame and ImageBitmap; TenBitFrame is routed to
+/// 10-bit export returns `TenBitFrame` (CPU-plane copy); the native 8-bit
+/// export lane returns `NativeNv12Frame` (relay CPU planes). PixiJS v8
+/// `ImageSource` accepts VideoFrame and ImageBitmap; TenBitFrame and
+/// NativeNv12Frame are routed through their ingest shaders to
 /// `bindExternalTexture` instead.
-export type DecodedFrame = VideoFrame | ImageBitmap | TenBitFrame;
+export type DecodedFrame = VideoFrame | ImageBitmap | TenBitFrame | NativeNv12Frame;
 
 /// Minimal frame-by-PTS surface the Compositor reads through. Implemented by
 /// `FrameRing` (preview) and `ExportFrameStore` (export).

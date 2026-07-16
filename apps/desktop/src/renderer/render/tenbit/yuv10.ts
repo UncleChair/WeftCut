@@ -10,6 +10,14 @@ export interface YuvCoef {
 export const BT709: YuvCoef = { kr: 0.2126, kb: 0.0722 };
 export const BT601: YuvCoef = { kr: 0.299, kb: 0.114 };
 
+/// Matrix tag → coefficients, shared by the 10-bit and NV12 ingest shaders so
+/// both lanes pick identically. bt470bg is PAL 601 — identical kr/kb to
+/// smpte170m (both are BT.601). Everything else (incl. undefined) is treated
+/// as BT.709, the app's working-space default.
+export function coefForMatrix(matrix: string | null | undefined): YuvCoef {
+  return matrix === "smpte170m" || matrix === "bt470bg" ? BT601 : BT709;
+}
+
 // GLSL twin: clamp(floor(x + 0.5), 0.0, 1023.0) — NOT round(), whose .5
 // behavior is implementation-defined in GLSL ES. Math.round ≡ floor(x+0.5).
 const clamp10 = (x: number) => Math.min(1023, Math.max(0, Math.round(x)));

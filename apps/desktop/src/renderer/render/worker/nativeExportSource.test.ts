@@ -7,36 +7,18 @@
 //      frame can leave the ring (evict + the ring's own freeBehindWaiters); and
 //   2. `decodeRange` is dispatch-then-return (awaiting frames would deadlock the
 //      window), plus EOS clamp + error propagation reach the ring.
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { NativeExportSourceHandle } from "./nativeExportSource";
 import type { NativeDecodeRelayClient, NativeDecodeSink } from "./nativeDecodeRelay";
 import type { NativeDecodeFrameMsg } from "./protocol";
 import type { SourceHandleInit } from "../decoder/session";
+import { isNativeNv12Frame, nv12FrameFromBytes, type NativeNv12Frame } from "../decoder/nv12Frame";
 import { isTenBitFrame, tenBitFrameFromBytes, type TenBitFrame } from "../decoder/tenBitFrame";
 
-// The handle wraps each NV12 buffer in a `VideoFrame`; node/vitest has none, so
-// a plain stub stands in. The ring only reads timestamp/duration/close; the
-// handle's firstFrameDiag reads colorSpace/format. No `kind` ⇒ 8-bit (not a
-// TenBitFrame). We push with an explicit ptsUs, so `timestamp` is unused by the
-// ring — kept only for shape fidelity.
-beforeAll(() => {
-  (globalThis as unknown as { VideoFrame: unknown }).VideoFrame = class {
-    timestamp: number;
-    duration: number;
-    format: string;
-    colorSpace: Record<string, unknown>;
-    closed = false;
-    constructor(_data: unknown, init: Record<string, unknown>) {
-      this.timestamp = init.timestamp as number;
-      this.duration = init.duration as number;
-      this.format = init.format as string;
-      this.colorSpace = (init.colorSpace as Record<string, unknown>) ?? {};
-    }
-    close() {
-      this.closed = true;
-    }
-  };
-});
+// No VideoFrame stub: the handle wraps BOTH lanes' bytes in CPU frame objects
+// (NativeNv12Frame / TenBitFrame) — deliberately, because Chromium converts a
+// buffer-defined NV12 `VideoFrame` as BT.601 regardless of its stamped
+// colorSpace. A test that reintroduces `new VideoFrame` here is a regression.
 
 /// A fake relay that captures the registered sink (so the test can inject
 /// frames / control signals) and records every credit returned.
@@ -173,10 +155,10 @@ describe("NativeExportSourceHandle", () => {
 
   it("stamps frames with the mapped sourceColor, never the raw ffmpeg tag names", async () => {
     // Per-frame tags are raw FFmpeg `.name()` strings (bt2020nc/smpte2084/…),
-    // NOT WebCodecs enum members — reaching the VideoFrame ctor they'd throw
-    // for real (the stub doesn't validate enums). The handle must stamp the
-    // already-mapped `init.sourceColor` with the bt709/limited fallback,
-    // mirroring the preview native path (SwTransport.colorSpaceFor).
+    // NOT WebCodecs enum members — the ingest shaders' coefForMatrix matches
+    // WebCodecs enums only. The handle must stamp the already-mapped
+    // `init.sourceColor` with the bt709/limited fallback, mirroring the
+    // preview native path (SwTransport.colorSpaceFor).
     const { handle, relay } = makeHandle({ matrix: "bt470bg", fullRange: true });
     await handle.ensureReady();
     relay.sink!.onFrame({
@@ -358,5 +340,98 @@ describe("NativeExportSourceHandle — I420P10 lane", () => {
     await handle.ensureReady();
     relay.sink!.onFrame(p10Msg(0)); // I420P10 frame into an NV12 session
     await expect(handle.ring.waitForPts(0)).rejects.toThrow(/I420P10/);
+  });
+});
+
+// Tightly-packed NV12: Y (w*h) + interleaved CbCr (w*(h>>1)).
+const NV12_BYTES = W * H + W * (H >> 1);
+
+describe("nv12FrameFromBytes", () => {
+  it("wraps the SAME bytes zero-copy with the interleaved-UV offset", () => {
+    const data = new Uint8Array(NV12_BYTES);
+    const f = nv12FrameFromBytes({
+      data,
+      width: W,
+      height: H,
+      timestamp: 5,
+      duration: 10,
+      colorSpace: { matrix: "bt709" },
+    });
+    expect(f.kind).toBe("nv12");
+    expect(isNativeNv12Frame(f)).toBe(true);
+    expect(f.width).toBe(W);
+    expect(f.height).toBe(H);
+    expect(f.uvOffset).toBe(W * H);
+    // Zero-copy: the frame views the caller's bytes, not a duplicate.
+    expect(f.data).toBe(data);
+    expect(f.timestamp).toBe(5);
+    expect(f.duration).toBe(10);
+    expect(f.colorSpace).toEqual({ matrix: "bt709" });
+    expect(() => f.close()).not.toThrow(); // uniform-shape no-op, like TenBitFrame
+  });
+
+  it("throws loudly on a byteLength that doesn't match the layout (Rust/TS drift)", () => {
+    expect(() =>
+      nv12FrameFromBytes({
+        data: new Uint8Array(NV12_BYTES - 1),
+        width: W,
+        height: H,
+        timestamp: 0,
+        duration: null,
+        colorSpace: null,
+      }),
+    ).toThrow(/NV12/);
+  });
+});
+
+describe("NativeExportSourceHandle — NV12 lane", () => {
+  it("pushes a zero-copy NativeNv12Frame (NO VideoFrame) stamped bt709/limited by default", async () => {
+    const { handle, relay } = makeHandle();
+    await handle.ensureReady();
+    const bytes = new ArrayBuffer(NV12_BYTES);
+    relay.sink!.onFrame({ ...frameMsg(0), data: bytes });
+    expect(handle.ring.size()).toBe(1);
+    const f = handle.ring.frameAt(0);
+    // The crux of the 601-tint fix: the ring holds OUR CPU frame kind, which
+    // the Compositor routes to Nv12Ingest — never a buffer-defined VideoFrame
+    // (whose Chromium software conversion runs BT.601 regardless of the tag).
+    expect(isNativeNv12Frame(f)).toBe(true);
+    const nv = f as NativeNv12Frame;
+    expect(nv.width).toBe(W);
+    expect(nv.height).toBe(H);
+    expect(nv.uvOffset).toBe(W * H);
+    // Zero-copy: the ring's frame views the TRANSFERRED buffer itself.
+    expect(nv.data.buffer).toBe(bytes);
+    expect(nv.timestamp).toBe(0);
+    expect(nv.duration).toBe(DUR);
+    expect(nv.colorSpace).toEqual({
+      matrix: "bt709",
+      primaries: "bt709",
+      transfer: "bt709",
+      fullRange: false,
+    });
+    expect(handle.firstFrameDiag?.frameFormat).toBe("NV12");
+    expect(handle.firstFrameDiag?.frameColor).toEqual(nv.colorSpace);
+  });
+
+  it("carries a 601-tagged source's matrix so the ingest selects BT.601", async () => {
+    const { handle, relay } = makeHandle({
+      matrix: "smpte170m",
+      primaries: "smpte170m",
+      transfer: "smpte170m",
+      fullRange: false,
+    });
+    await handle.ensureReady();
+    relay.sink!.onFrame(frameMsg(0));
+    const nv = handle.ring.frameAt(0) as NativeNv12Frame;
+    expect(nv.colorSpace?.matrix).toBe("smpte170m");
+    expect(nv.colorSpace?.fullRange).toBe(false);
+  });
+
+  it("fails the ring loudly on a byteLength that doesn't match the layout", async () => {
+    const { handle, relay } = makeHandle();
+    await handle.ensureReady();
+    relay.sink!.onFrame({ ...frameMsg(0), data: new ArrayBuffer(NV12_BYTES - 1) });
+    await expect(handle.ring.waitForPts(0)).rejects.toThrow(/NV12/);
   });
 });

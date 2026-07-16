@@ -50,6 +50,11 @@
 //      the resulting RGBA canvas hands Pixi already-correct pixels.
 //      (Verified in Chromium/Electron: `drawImage` distinguishes 601 vs 709; the
 //      raw-VideoFrame upload does not.)
+//      LANDMINE: that guarantee holds for DECODER-produced frames only —
+//      buffer-defined NV12 VideoFrames still convert as BT.601 (see
+//      nv12Frame.ts). Such frames must never reach this snapshot path;
+//      they ride `NativeNv12Frame` → `Nv12Ingest` → bindExternalTexture
+//      instead (see the updateFrame tripwire).
 //
 // Cost: a per-frame 2D `drawImage` (a GPU blit) the old export path
 // avoided by binding the VideoFrame directly. Acceptable for offline
@@ -60,6 +65,7 @@
 import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
 import type { DecodedFrame } from "../decoder/session";
+import { isNativeNv12Frame } from "../decoder/nv12Frame";
 import { isTenBitFrame } from "../decoder/tenBitFrame";
 import type { StageableSprite } from "./StageableSprite";
 
@@ -125,6 +131,9 @@ export class VideoClipSprite implements StageableSprite {
   updateFrame(frame: DecodedFrame): void {
     if (isTenBitFrame(frame)) {
       throw new Error("VideoClipSprite.updateFrame got a TenBitFrame — use bindExternalTexture");
+    }
+    if (isNativeNv12Frame(frame)) {
+      throw new Error("VideoClipSprite.updateFrame got a NativeNv12Frame — use bindExternalTexture");
     }
     if (this.currentFrame === frame) return;
     this.currentFrame = frame;

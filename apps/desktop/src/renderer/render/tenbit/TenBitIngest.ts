@@ -11,7 +11,7 @@ import {
 } from "pixi.js";
 import type { WebGLRenderer } from "pixi.js";
 import type { TenBitFrame } from "../decoder/tenBitFrame";
-import { BT601, BT709, inverseCoef } from "./yuv10";
+import { BT709, coefForMatrix, inverseCoef } from "./yuv10";
 
 const VERT = `#version 300 es
 precision highp float;
@@ -93,9 +93,7 @@ export class TenBitIngest {
       s.v.resource = tb.data.subarray(tb.vOffset, tb.vOffset + cw * ch * 2);
       s.y.update(); s.u.update(); s.v.update();
       const full = tb.colorSpace?.fullRange === true;
-      const m = tb.colorSpace?.matrix;
-      // bt470bg is PAL 601 — identical kr/kb to smpte170m (both are BT.601).
-      const coef = inverseCoef(m === "smpte170m" || m === "bt470bg" ? BT601 : BT709);
+      const coef = inverseCoef(coefForMatrix(tb.colorSpace?.matrix));
       const u = s.mesh.shader!.resources.tenbit.uniforms;
       u.uCoef = new Float32Array(coef);
       u.uScale = new Float32Array(full ? [1023, 1023] : [876, 896]);

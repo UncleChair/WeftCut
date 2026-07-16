@@ -62,9 +62,11 @@ export interface ExportProjectSnapshot {
 /// One native-decoded frame handed from the renderer-main relay to the export
 /// Worker's `NativeExportSourceHandle`. Same fields as the IPC `ExportSwFrameMsg`
 /// but `data` is an `ArrayBuffer` TRANSFERRED (zero-copy) rather than a
-/// structured-cloned `Uint8Array` — the worker wraps it in a `VideoFrame`
+/// structured-cloned `Uint8Array` — the worker wraps it in a `NativeNv12Frame`
 /// (NV12) or a `TenBitFrame` (I420P10) per `format` and pushes it into the
-/// ring. The handle cross-checks `format` against its session's `outFormat`.
+/// ring; both convert in the Compositor's GL ingest shaders, never through
+/// `new VideoFrame` (why: see nv12Frame.ts).
+/// The handle cross-checks `format` against its session's `outFormat`.
 export interface NativeDecodeFrameMsg {
   sessionId: string;
   ptsUs: number;
