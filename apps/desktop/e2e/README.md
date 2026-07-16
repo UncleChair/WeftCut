@@ -29,11 +29,13 @@ VITE_WEFTCUT_E2E=1 npm run build            # MUST set the flag — see below
   invocation compiles it (slow), later runs reuse the binary. These gates
   (`conformance`, `color-conformance`, `audio`, `export-range-audio`) therefore
   run **locally only** and skip in CI, which generates no fixtures.
-- **`export-native-wedges.spec.ts` (native export decode wedge gates) needs extra
-  flags:** build with `VITE_WEFTCUT_E2E=1 VITE_WEFTCUT_EXPORT_NATIVE=1 npm run build`
+- **`export-native-wedges.spec.ts` (native export decode wedge gates) needs an
+  extra run flag:** build with the standard `VITE_WEFTCUT_E2E=1 npm run build`
   and run with `WEFTCUT_DECODE_E2E=1` — it replays the historical export wedge
   shapes (same-source overlap, backward clip reuse, EOS tail, credit stall) on
-  the native in-process ffmpeg export decode path.
+  the native in-process ffmpeg export decode path. No build flag: routing is
+  settings-driven — the default `decodeEngine: "auto"` routes WebCodecs-blind
+  sources native whenever the native-decode component is present.
 
 ### Run
 

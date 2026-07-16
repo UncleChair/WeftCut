@@ -424,3 +424,43 @@ describe("E3 schema", () => {
     expect(m.encoderEngine).toBe("webcodecs");
   });
 });
+
+describe("decode-engine merge defense", () => {
+  it("back-fills decodeEngine for old blobs", () => {
+    const merged = mergeSettings({ codec: "h264" } as Partial<ExportSettings>);
+    expect(merged.decodeEngine).toBe("auto");
+  });
+
+  it("snaps a hand-edited value outside the enum back to auto", () => {
+    const merged = mergeSettings({
+      decodeEngine: "gstreamer",
+    } as unknown as Partial<ExportSettings>);
+    expect(merged.decodeEngine).toBe("auto");
+  });
+
+  it("keeps valid pins — component presence is resolve-time, not merge-time", () => {
+    // An ffmpeg pin persists even on a machine without the native-decode
+    // component: the blob stores INTENT; resolveExportDecodeRouting degrades
+    // it per machine (ADR 0030).
+    expect(
+      mergeSettings({ decodeEngine: "ffmpeg" } as Partial<ExportSettings>)
+        .decodeEngine,
+    ).toBe("ffmpeg");
+    expect(
+      mergeSettings({ decodeEngine: "webcodecs" } as Partial<ExportSettings>)
+        .decodeEngine,
+    ).toBe("webcodecs");
+  });
+
+  it("survives alongside every encoder-engine combo (independent axes)", () => {
+    const m = mergeSettings({
+      decodeEngine: "ffmpeg",
+      encoderEngine: "webcodecs",
+      codec: "prores",
+    } as Partial<ExportSettings>);
+    // The encoder pin snaps (intermediate codec) but the decode pin is
+    // untouched — the axes swing independently.
+    expect(m.encoderEngine).toBe("auto");
+    expect(m.decodeEngine).toBe("ffmpeg");
+  });
+});

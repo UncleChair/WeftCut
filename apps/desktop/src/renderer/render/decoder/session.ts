@@ -75,9 +75,14 @@ export interface SourceHandleInit {
   /// the frame relay) instead of WebCodecs on the proxy. When present the export
   /// pool builds a `NativeExportSourceHandle`; the WebCodecs path never reads it.
   /// `sourcePath` is the absolute ORIGINAL file path (the napi opens a filesystem
-  /// path, not a `weftcut-media://` asset URL); `creditWindow` sizes the in-flight
-  /// flow-control window.
-  nativeExport?: { sourcePath: string; outFormat: "NV12"; creditWindow: number };
+  /// path, not a `weftcut-media://` asset URL); `outFormat` is the CPU transport
+  /// format from the routing table (exportDecodeRouting.ts); `creditWindow`
+  /// sizes the in-flight flow-control window.
+  nativeExport?: {
+    sourcePath: string;
+    outFormat: import("../exportDecodeRouting").ExportTransportFormat;
+    creditWindow: number;
+  };
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.

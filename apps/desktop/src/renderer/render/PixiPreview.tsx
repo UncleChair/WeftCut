@@ -47,6 +47,7 @@ import {
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
+import type { ExportDecodeRouting } from "./exportDecodeRouting";
 import { PerfHUD } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
@@ -612,6 +613,9 @@ async function handlePixiExport(
     /// Present ⇒ the worker packs frames to this format and streams them to
     /// the native ffmpeg sink instead of WebCodecs-encoding.
     nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
+    /// Per-media decode routing table (see exportDecodeRouting.ts). Threaded
+    /// straight into `runExport`.
+    decodeRouting?: ExportDecodeRouting;
   },
   compositor: Compositor | null,
   engine: PlaybackEngine | null,
@@ -650,6 +654,7 @@ async function handlePixiExport(
       ...(opts.nativeSinkPixFmt != null
         ? { nativeSinkPixFmt: opts.nativeSinkPixFmt }
         : {}),
+      ...(opts.decodeRouting ? { decodeRouting: opts.decodeRouting } : {}),
     });
     const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
     const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;

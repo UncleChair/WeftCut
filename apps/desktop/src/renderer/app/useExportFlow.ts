@@ -42,6 +42,12 @@ import {
 } from "../ipc";
 import { smokeEncode } from "../render/exportCodecProbe";
 import { needsEncoderProbe, resolveEncodeTarget } from "../render/encodeTarget";
+import {
+  type ExportDecodeRouting,
+  proxyWaitScope,
+  resolveExportDecodeRouting,
+} from "../render/exportDecodeRouting";
+import { useDecodeComponentStore } from "../settings/decodeComponentStore";
 import { exportBakeMotifs } from "../render/exportBake";
 import { getMotif } from "../render/motifs/catalog";
 import {
@@ -315,6 +321,7 @@ export function useExportFlow(deps: {
     // Confirm every video source the export will decode is ready. Undecodable
     // DirectExport sources are route-corrected here; sources whose proxy is
     // still encoding put the panel into "preparing" and auto-start when ready.
+    let decodeRouting: ExportDecodeRouting | null = null;
     {
       const store = useProjectStore.getState();
       const proj = store.summary; // block-scoped; avoids shadowing the later `summary` local
@@ -329,8 +336,20 @@ export function useExportFlow(deps: {
         .map((id) => store.mediaById.get(id))
         .filter((m): m is MediaSummary => !!m);
 
+      // ---- Decode-engine resolution (ONCE, frozen for this export) --------
+      // Runs BEFORE the readiness gate so native-routed blind-spot media
+      // never enter the probe / full-proxy machinery below — they export
+      // immediately off their originals. Rationale + rules live in
+      // exportDecodeRouting.ts.
+      decodeRouting = resolveExportDecodeRouting({
+        setting: settings.decodeEngine,
+        componentAvailable: useDecodeComponentStore.getState().available,
+        bitDepth: compositeBitDepth(settings),
+        media: referencedMedia,
+      });
+
       setExportState({ kind: "starting" });
-      const prep = await prepareExportMedia(referencedMedia, {
+      const prep = await prepareExportMedia(proxyWaitScope(referencedMedia, decodeRouting), {
         probe: (url) => probeSourceDecodable(url),
         ensureFullProxy: (id) => ensureFullProxy(id),
         proxyStateOf: (id) => proxyStateRef.current.get(id),
@@ -703,6 +722,7 @@ export function useExportFlow(deps: {
         motifFrames,
         bitDepth: compositeBitDepth(settings),
         ...(nativeSink && sinkTarget ? { nativeSinkPixFmt: sinkTarget.pixFmt } : {}),
+        ...(decodeRouting ? { decodeRouting } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

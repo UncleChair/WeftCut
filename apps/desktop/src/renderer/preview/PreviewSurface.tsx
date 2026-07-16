@@ -59,6 +59,8 @@ export interface PreviewSurfaceHandle {
     /// Present ⇒ the worker packs frames to this format and streams them to
     /// the native ffmpeg sink instead of WebCodecs-encoding.
     nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
+    /// Per-media decode routing table (see render/exportDecodeRouting.ts).
+    decodeRouting?: import("../render/exportDecodeRouting").ExportDecodeRouting;
   }): Promise<PixiExportResult>;
 }
 

@@ -361,27 +361,30 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         const url = tenBitSource
           ? req.project.originalAssetUrls[g.mediaId]
           : req.project.proxyAssetUrls[g.mediaId];
-        if (!url) return;
         // Native export-decode routing: when this media is in the
         // `nativeDecode` table AND its original path resolved, mark the acquire
         // so the pool builds a `NativeExportSourceHandle` (decode the ORIGINAL
-        // via the napi session over the frame relay). proxyAssetUrl is still
-        // passed unchanged; the native handle ignores it.
+        // via the napi session over the frame relay). Membership only — the
+        // resolver on the main thread owns the policy.
         const routeNative = req.nativeDecode?.mediaIds.includes(g.mediaId) === true;
         const nativeOriginalPath = routeNative ? req.project.originalFilePaths[g.mediaId] : undefined;
         // Truthy narrows `nativeOriginalPath` to a non-empty string here.
-        const nativeExport = nativeOriginalPath
+        const nativeExport = nativeOriginalPath && req.nativeDecode
           ? {
               sourcePath: nativeOriginalPath,
-              outFormat: "NV12" as const,
-              creditWindow: req.nativeDecode?.creditWindow ?? 6,
+              outFormat: req.nativeDecode.outFormat,
+              creditWindow: req.nativeDecode.creditWindow ?? 6,
             }
           : undefined;
+        // Only the WebCodecs path needs an asset URL. A native-routed
+        // blind-spot source may have NO proxy at all (it skips the pre-export
+        // full-proxy wait); the native handle never reads proxyAssetUrl.
+        if (!url && !nativeExport) return;
         const handle = exportPool.acquire({
           layerId: g.clips[0]!.layerId,
           mediaId: g.mediaId,
           handleKey: g.key,
-          proxyAssetUrl: url,
+          proxyAssetUrl: url ?? "",
           // The source's real color tags, for original AND proxy decodes (a
           // proxy preserves the source colorimetry; its own colr tag outranks
           // this per-field in withDefaultColorSpace).

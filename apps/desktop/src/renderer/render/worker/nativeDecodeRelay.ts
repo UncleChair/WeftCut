@@ -16,6 +16,7 @@
 // which transitively imports this module. Every realm-bound access lives inside
 // `getNativeDecodeRelay()` / the class it constructs.
 
+import type { ExportTransportFormat } from "../exportDecodeRouting";
 import type {
   ExportEvent,
   ExportRequest,
@@ -81,7 +82,7 @@ class NativeDecodeRelay {
   open(
     sessionId: string,
     path: string,
-    outFormat: "NV12",
+    outFormat: ExportTransportFormat,
     creditWindow: number,
   ): Promise<NativeDecodeOpenInfo> {
     const reqId = this.nextReqId++;

@@ -16,6 +16,7 @@ import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { resolveDecode } from "../decodeRoute";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
+import type { ExportDecodeRouting } from "../exportDecodeRouting";
 import { tenBitExportCapable } from "../exportSettings";
 import type {
   ExportEvent,
@@ -63,6 +64,10 @@ export interface RunExportInit {
   /// Present ⇒ the worker packs frames to this format and streams them to the
   /// native ffmpeg sink instead of WebCodecs-encoding.
   nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
+  /// Per-media decode routing table (see exportDecodeRouting.ts). Native
+  /// entries decode their ORIGINAL via the napi session; everything else
+  /// (and every media when absent) takes the in-worker WebCodecs path.
+  decodeRouting?: ExportDecodeRouting;
 }
 
 export interface RunExportResult {
@@ -118,9 +123,14 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // older colr-less one falls back to these source tags instead of the
   // bt709/limited resolution default that misread full-range/601 proxies.
   const mediaColor: Record<string, VideoColorSpaceInit | undefined> = {};
+  const routes = init.decodeRouting?.routes ?? {};
   for (const m of init.mediaById.values()) {
     const exportPath = resolveDecode(m).exportPath;
-    if (m.kind === "Video" && referenced.has(m.id) && !exportPath) {
+    // Native-routed media decode their ORIGINAL via the napi session: they
+    // need no export proxy and deliberately skipped the readiness gate's
+    // full-proxy wait (spec decision 8), so the assertion exempts them.
+    const nativeRouted = routes[m.id]?.engine === "native";
+    if (m.kind === "Video" && referenced.has(m.id) && !exportPath && !nativeRouted) {
       throw new Error(
         `Internal: "${m.label}" has no export-ready source (the readiness gate should have prevented this).`,
       );
@@ -132,24 +142,19 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     mediaColor[m.id] = ffprobeColorToWebCodecs(m);
   }
 
-  // ── Native export-decode routing (hardcoded population rule) ──────────────
-  // Gate: VITE_WEFTCUT_EXPORT_NATIVE=1. Route every referenced WebCodecs-BLIND
-  // video ORIGINAL — persisted `decode_route.route === "native-sw"` (ProRes/
-  // DNxHD/…), the cheaply-available blind-spot verdict at this layer — through
-  // the native `NativeExportSourceHandle` (decode the original via the napi
-  // session over the frame relay) instead of the in-worker WebCodecs proxy
-  // path. `m.path` is the absolute original file the napi opens. The
-  // decode-engine resolver will own this population rule. Flag unset ⇒ empty
-  // map + `nativeDecode` undefined ⇒ behavior unchanged.
+  // ── Native export-decode routing ───────────────────────────────────────────
+  // Consume the frozen routing table: native entries carry the absolute
+  // ORIGINAL file path the napi session opens (the resolver owns the
+  // population rule — setting × component × route; see exportDecodeRouting.ts).
+  // No table / no native entries ⇒ `nativeDecode` undefined ⇒ the in-worker
+  // WebCodecs path, unchanged.
   const originalFilePaths: Record<string, string> = {};
   const nativeDecodeMediaIds: string[] = [];
-  if (import.meta.env.VITE_WEFTCUT_EXPORT_NATIVE === "1") {
-    for (const m of init.mediaById.values()) {
-      if (m.kind !== "Video" || !referenced.has(m.id)) continue;
-      if (m.decode_route.route !== "native-sw" || !m.path) continue;
-      originalFilePaths[m.id] = m.path;
-      nativeDecodeMediaIds.push(m.id);
-    }
+  for (const id of referenced) {
+    const r = routes[id];
+    if (r?.engine !== "native") continue;
+    originalFilePaths[id] = r.sourcePath;
+    nativeDecodeMediaIds.push(id);
   }
 
   const snapshot: ExportProjectSnapshot = {
@@ -244,10 +249,17 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     bitDepth: init.bitDepth ?? 8,
     ...(init.nativeSinkPixFmt ? { nativeSink: { pixFmt: init.nativeSinkPixFmt } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
-    // Hardcoded native export-decode routing (see above); absent when the env
-    // flag is unset so the WebCodecs proxy path is unchanged.
-    ...(nativeDecodeMediaIds.length > 0
-      ? { nativeDecode: { mediaIds: nativeDecodeMediaIds, creditWindow: 6 } }
+    // The routing table's native slice (see above); absent when nothing
+    // routes native so the WebCodecs path is unchanged. `outFormat` follows
+    // the export's composite bit depth (table-wide).
+    ...(init.decodeRouting && nativeDecodeMediaIds.length > 0
+      ? {
+          nativeDecode: {
+            mediaIds: nativeDecodeMediaIds,
+            outFormat: init.decodeRouting.outFormat,
+            creditWindow: 6,
+          },
+        }
       : {}),
     fonts: fontBytes,
   };

@@ -13,6 +13,7 @@
 import type { ExportColorDiag } from "../decoder/ExportDecoderPool";
 import { ExportFrameStore } from "../decoder/ExportDecoderPool";
 import type { ExportDecodeSession, SourceHandleInit } from "../decoder/session";
+import type { ExportTransportFormat } from "../exportDecodeRouting";
 import { getNativeDecodeRelay, type NativeDecodeRelayClient } from "./nativeDecodeRelay";
 import type { NativeDecodeFrameMsg } from "./protocol";
 
@@ -46,7 +47,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   private readonly relay: NativeDecodeRelayClient;
   private readonly sessionId: string;
   private readonly sourcePath: string;
-  private readonly outFormat: "NV12";
+  private readonly outFormat: ExportTransportFormat;
   private readonly creditWindow: number;
   /// ColorSpace stamped on every constructed `VideoFrame` — fixed per handle
   /// (one handle = one source), see `colorSpaceFromSource`.

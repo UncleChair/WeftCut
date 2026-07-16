@@ -321,7 +321,10 @@ export interface WeftcutApi {
     open(args: {
       sessionId: string
       path: string
-      outFormat: 'NV12'
+      /// CPU transport format. 'I420P10' is the 10-bit lane's tag; the native
+      /// session rejects it at open until that lane lands (Rust
+      /// `ExportOutFormat::parse`), so passing it fails cleanly, not silently.
+      outFormat: 'NV12' | 'I420P10'
       creditWindow: number
     }): Promise<ExportSwOpenReply>
     decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void

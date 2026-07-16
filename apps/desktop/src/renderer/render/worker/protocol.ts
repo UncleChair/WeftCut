@@ -7,6 +7,8 @@
 // or `error`, then terminates. The main-thread shell `terminate()`s the
 // worker after `done` to release its heap.
 
+import type { ExportTransportFormat } from "../exportDecodeRouting";
+
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,
 /// so live edits to the project after `start` do NOT affect the
@@ -132,14 +134,19 @@ export type ExportRequest =
       /// mediaIds whose ORIGINAL decodes 10-bit in the renderer; these acquire
       /// originalAssetUrls + tenBitLane + preferSoftware.
       tenBitMedia?: Record<string, boolean>;
-      /// Export-decode routing table, resolved on the main thread. `mediaIds`
-      /// route through the native `NativeExportSourceHandle` (decode the ORIGINAL
-      /// via the napi session over the frame relay) instead of the in-worker
-      /// WebCodecs proxy path. The population rule is hardcoded today; the
-      /// decode-engine resolver will own it. The Worker stays policy-free: it
-      /// just tests membership at acquire time. `creditWindow` sizes the native
-      /// flow-control window (frames in flight); absent ⇒ engine default.
-      nativeDecode?: { mediaIds: string[]; creditWindow?: number };
+      /// The routing table's native slice (population rule + rationale in
+      /// exportDecodeRouting.ts). `mediaIds` route through the native
+      /// `NativeExportSourceHandle` (decode the ORIGINAL via the napi session
+      /// over the frame relay) instead of the in-worker WebCodecs path;
+      /// `outFormat` is those frames' CPU transport format. The Worker stays
+      /// policy-free: it just tests membership at acquire time. `creditWindow`
+      /// sizes the native flow-control window (frames in flight); absent ⇒
+      /// engine default.
+      nativeDecode?: {
+        mediaIds: string[];
+        outFormat: ExportTransportFormat;
+        creditWindow?: number;
+      };
       /// Bundled font bytes (family → ArrayBuffer), FontFace-loaded into the
       /// Worker's `self.fonts` before renderer init so burned-in Text/captions
       /// don't tofu. Transferred, not copied.
@@ -213,7 +220,7 @@ export type ExportEvent =
   // to `window.api.exportSw.*`). `nd:open` expects a matching `nd:openResult`
   // (`ExportRequest`) correlated by `reqId`; the rest are fire-and-forget.
   //
-  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: "NV12"; creditWindow: number }
+  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: ExportTransportFormat; creditWindow: number }
   | { type: "nd:decodeRange"; sessionId: string; aUs: number; bUs: number }
   | { type: "nd:returnCredit"; sessionId: string; credits: number }
   | { type: "nd:close"; sessionId: string };

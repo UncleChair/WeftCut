@@ -23,17 +23,19 @@ import {
 // GOP/EOS/credit logic can never silently regress into the same failures.
 //
 // Requirements beyond the standard e2e build:
-//   - build with VITE_WEFTCUT_E2E=1 VITE_WEFTCUT_EXPORT_NATIVE=1 (the second
-//     flag turns on native-sw → NativeExportSourceHandle routing in runExport)
+//   - build with VITE_WEFTCUT_E2E=1
 //   - run with WEFTCUT_DECODE_E2E=1 + the native-decode component built
+// Routing is settings-driven (no build flag): the default `decodeEngine:
+// "auto"` routes WebCodecs-blind (native-sw) sources through the native
+// session whenever the component is present (resolveExportDecodeRouting).
 // Every test asserts `perf.nativeHandles` (rationale on
 // `ExportPerf.nativeHandles` in worker/protocol.ts).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 // 10 s @ 30 fps ProRes — WebCodecs-blind, persists decode_route "native-sw",
-// which is exactly what VITE_WEFTCUT_EXPORT_NATIVE=1 routes through the native
-// session.
+// which is exactly what the decode-engine resolver routes through the native
+// session under `auto` (component present).
 const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
 // 10 s audio-only tones — placed at t=1s it outlasts the 10 s video by 1 s,
 // extending the composition grid past the video track's end (EOS-tail shape).
@@ -96,31 +98,19 @@ async function readPerf(page: Page): Promise<NativePerf> {
 }
 
 // Import PRORES once at t=0, then place `extras` more copies of the SAME
-// mediaId (one fresh track each), and wait for export readiness. Mirrors
-// export_overlap_same_source.spec.ts — re-importing would mint a new mediaId
-// and dodge the shared-source decode pipeline under test.
+// mediaId (one fresh track each). Mirrors export_overlap_same_source.spec.ts —
+// re-importing would mint a new mediaId and dodge the shared-source decode
+// pipeline under test. Deliberately NO wait for the full proxy: native-routed
+// blind-spot sources skip the pre-export proxy wait (spec decision 8), so
+// exporting straight after placement is itself part of the gate — a routing
+// regression that re-enters the proxy wait shows up as an export stuck in
+// "preparing" until the ProRes proxy lands (or a driveExport timeout).
 async function placeSameSourceClips(page: Page, extras: number[]): Promise<{ mediaId: string }> {
   const first = await importAndPlaceMedia(page, { mediaAbsPath: PRORES, tStartUs: 0 })
   for (const tStartUs of extras) {
     await placeMediaLayer(page, { mediaId: first.mediaId, tStartUs })
   }
-  await waitExportReady(page, first.mediaId)
   return { mediaId: first.mediaId }
-}
-
-// Export readiness through the real gate condition (resolveDecode().exportPath
-// non-null) — the native routing still requires it: runExport's defensive
-// no-export-ready-source throw runs before the nativeDecode table is consulted.
-async function waitExportReady(page: Page, mediaId: string): Promise<void> {
-  const r = (await page.evaluate(
-    (id) =>
-      (window as any).__weftcutTest
-        .waitMediaExportReady({ mediaId: id })
-        .then(() => ({ ok: true }))
-        .catch((e: unknown) => ({ ok: false, error: String(e) })),
-    mediaId,
-  )) as { ok: boolean; error?: string }
-  if (!r.ok) throw new Error('waitMediaExportReady failed: ' + r.error)
 }
 
 // Precondition, not the gate: ProRes must have persisted the WebCodecs-blind
@@ -180,7 +170,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
 
   test.skip(
     process.env.WEFTCUT_DECODE_E2E !== '1',
-    'native export wedge gates are local-only (need the native-decode component + a VITE_WEFTCUT_E2E=1 VITE_WEFTCUT_EXPORT_NATIVE=1 build); set WEFTCUT_DECODE_E2E=1 to run',
+    'native export wedge gates are local-only (need the native-decode component + a VITE_WEFTCUT_E2E=1 build); set WEFTCUT_DECODE_E2E=1 to run',
   )
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native sessions`)
   test.skip(!existsSync(PRORES), `ProRes fixture not found at ${PRORES} (set WEFTCUT_TEST_MEDIA / npm run fixtures)`)
@@ -204,7 +194,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
       )
       if (!r.done.ok) throw new Error('exportClip failed: ' + r.done.error)
       const perf = await readPerf(page)
-      expect(perf.nativeHandles, 'native path must engage (VITE_WEFTCUT_EXPORT_NATIVE build?)').toBeGreaterThanOrEqual(1)
+      expect(perf.nativeHandles, 'native path must engage (decode-engine resolver routing?)').toBeGreaterThanOrEqual(1)
       expect(perf.totalFrames, '10s @ 30fps ProRes = 300 frames').toBe(300)
       baselineDispatched = perf.totalDispatched
       const report = analyze({ output: OUT_BASELINE, source: PRORES, samples: [30, 150, 290], ssimMin: SSIM_FLOOR })
@@ -297,7 +287,6 @@ test.describe('native export decode wedge gates (Electron)', () => {
         4_000_000, 8_000_000, 0, 4_000_000,
       ])
 
-      await waitExportReady(page, mediaId)
       await expectNativeRoute(page, mediaId)
       const perf = await runTimelineExport(page, OUT_BACKWARD, 400_000)
       expect(perf.nativeHandles, 'two phases = two native sessions').toBeGreaterThanOrEqual(2)
@@ -332,7 +321,6 @@ test.describe('native export decode wedge gates (Electron)', () => {
       // 10 s tones at t=1s ⇒ audio spans [1..11s], outlasting the 10 s video;
       // composition duration autofits to 11 s.
       await importAndPlaceMedia(page, { mediaAbsPath: TONES, tStartUs: 1_000_000 })
-      await waitExportReady(page, mediaId)
       await expectNativeRoute(page, mediaId)
       const perf = await runTimelineExport(page, OUT_EOS, 400_000)
       expect(perf.nativeHandles, 'native path must engage').toBeGreaterThanOrEqual(1)

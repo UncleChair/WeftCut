@@ -4,10 +4,6 @@
 // `window.__weftcutTest` hook so it's dead-code-eliminated from prod bundles.
 interface ImportMetaEnv {
   readonly VITE_WEFTCUT_E2E?: string;
-  // Set to "1" to route WebCodecs-blind video ORIGINALS through the native
-  // export-decode session (ticket 2 hardcoded routing in runExport.ts). Unset
-  // ⇒ the existing WebCodecs proxy export path.
-  readonly VITE_WEFTCUT_EXPORT_NATIVE?: string;
 }
 
 // Vite's `?url` import suffix yields a string URL for any asset. The
