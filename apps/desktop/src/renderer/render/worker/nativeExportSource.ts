@@ -51,6 +51,9 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   /// ColorSpace stamped on every constructed `VideoFrame` — fixed per handle
   /// (one handle = one source), see `colorSpaceFromSource`.
   private readonly frameColorSpace: VideoColorSpaceInit;
+  /// `aUs` of the previous `decodeRange`; `aUs < lastRangeAUs` is a backward
+  /// clip-reuse jump — the only case that must reset the ring's EOS clamp.
+  private lastRangeAUs = Number.NEGATIVE_INFINITY;
 
   private readyP: Promise<void> | null = null;
 
@@ -110,6 +113,13 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   async decodeRange(aUs: number, bUs: number): Promise<void> {
     await this.ensureReady();
     if (this._disposed) return;
+    // Backward clip-reuse jump: the Rust session re-seeks and produces frames
+    // again, so the ring's finalized EOS clamp must deactivate — else waiters
+    // resolve against a stale held frame while the real re-decoded frame is
+    // still in flight. Mirrors the WebCodecs handle's rebuild path calling
+    // `clearEosDrain()`.
+    if (aUs < this.lastRangeAUs) this.ring.clearEosDrain();
+    this.lastRangeAUs = aUs;
     this.relay.decodeRange(this.sessionId, Math.round(aUs), Math.round(bUs));
   }
 

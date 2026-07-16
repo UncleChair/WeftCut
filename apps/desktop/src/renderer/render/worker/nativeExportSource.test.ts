@@ -194,6 +194,31 @@ describe("NativeExportSourceHandle", () => {
     });
   });
 
+  it("a backward decodeRange deactivates the ring's EOS clamp", async () => {
+    // After EOS the ring clamps any wait target to the last held frame. A
+    // backward clip-reuse jump re-arms the Rust session (frames WILL arrive
+    // again), so the clamp must deactivate — else waitForPts hands a stale
+    // frame to the consumer while the re-decoded one is still in flight.
+    const { handle, relay } = makeHandle();
+    await handle.decodeRange(1_000_000, 2_000_000);
+    const sink = relay.sink!;
+    sink.onFrame(frameMsg(1_000_000));
+    sink.onEnded();
+    // Clamp active: an overrun target resolves against the held frame.
+    await expect(handle.ring.waitForPts(5_000_000)).resolves.toBeUndefined();
+    // Backward jump: the clamp must deactivate…
+    await handle.decodeRange(0, 500_000);
+    let resolved = false;
+    const wait = handle.ring.waitForPts(5_000_000).then(() => {
+      resolved = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resolved).toBe(false); // …so the wait parks instead of clamping…
+    sink.onFrame(frameMsg(6_000_000)); // …until a real frame satisfies it.
+    await wait;
+    expect(resolved).toBe(true);
+  });
+
   it("clamps grid-overrun waiters to the last held frame on EOS", async () => {
     const { handle, relay } = makeHandle();
     await handle.ensureReady();
