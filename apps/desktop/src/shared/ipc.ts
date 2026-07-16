@@ -146,14 +146,15 @@ export type PreviewSwFrameMsg = {
   data: Uint8Array
 }
 
-/// One export-decoded frame relayed to the renderer over the dedicated
-/// `exportSw:frame` channel — the EXPORT-side mirror of `PreviewSwFrameMsg`.
-/// Delivered under the exactly-once range contract + credit window (not
-/// best-effort preview), and carries `sessionId` (not `streamId`) because one
-/// export runs several native sessions concurrently (one per phase group).
-/// `data` is the Rust `Buffer` structured-cloned to the renderer as a
-/// `Uint8Array` — the one main→renderer copy; the renderer then transfers its
-/// ArrayBuffer on to the export Worker (zero-copy) via postMessage.
+/// One export-decoded frame — the EXPORT-side mirror of `PreviewSwFrameMsg`,
+/// carried as the `frame` body of an `ExportSwMsg` (kind `'frame'`) on the
+/// dedicated `exportSw:msg` channel. Delivered under the exactly-once range
+/// contract + credit window (not best-effort preview), and carries `sessionId`
+/// (not `streamId`) because one export runs several native sessions
+/// concurrently (one per phase group). `data` is the Rust `Buffer`
+/// structured-cloned to the renderer as a `Uint8Array` — the one main→renderer
+/// copy; the renderer then transfers its ArrayBuffer on to the export Worker
+/// (zero-copy) via postMessage.
 export type ExportSwFrameMsg = {
   sessionId: string
   ptsUs: number
@@ -167,6 +168,20 @@ export type ExportSwFrameMsg = {
   colorTransfer?: string
   data: Uint8Array
 }
+
+/// One in-band message on the per-session export-decode channel. Frames AND
+/// control signals (rangeEnd/ended/error) ride this single tagged union down
+/// ONE ordered path — napi TSFN queue → one `exportSw:msg` IPC channel per
+/// webContents → one renderer listener — so a control signal can NEVER
+/// overtake a frame emitted before it. That ordering IS the contract (an
+/// `ended` arriving before its tail frames would corrupt the export tail);
+/// never split control from frames onto a second channel. Mirrors the napi
+/// `ExportSwMsg`, narrowed to a discriminated union on `kind`.
+export type ExportSwMsg =
+  | { sessionId: string; kind: 'frame'; frame: ExportSwFrameMsg }
+  | { sessionId: string; kind: 'rangeEnd' }
+  | { sessionId: string; kind: 'ended' }
+  | { sessionId: string; kind: 'error'; message: string }
 
 /// Reply of `exportSw.open`: the native session's decoded dimensions, source
 /// color tags, and source-normalized start PTS (the offset already subtracted
@@ -294,14 +309,14 @@ export interface WeftcutApi {
   }
   /// Native SOFTWARE export-decode relay (blind-spot originals: ProRes/DNxHD/
   /// MPEG-2/VC-1). The EXPORT-side mirror of `previewSw` and the reverse of the
-  /// encode chunk channel: frames flow main → renderer here (dedicated
-  /// `exportSw:frame` channel, surfaced via `onFrame`), while `decodeRange` /
+  /// encode chunk channel: frames AND control signals (rangeEnd/ended/error)
+  /// flow main → renderer here as tagged `ExportSwMsg`s on the ONE dedicated
+  /// `exportSw:msg` channel (surfaced via `onMsg`), while `decodeRange` /
   /// `returnCredit` / `close` are fire-and-forget renderer → main commands. The
   /// renderer main thread is a pure relay between the export Worker's
   /// `NativeExportSourceHandle` and the main-process `NativeDecode` session; the
-  /// Worker itself has no bridge. Range-completion signals (`exportSw:rangeEnd`
-  /// / `exportSw:ended` / `exportSw:error`, each `{ sessionId }`) ride the
-  /// generic `evt:*` relay (subscribe via `on(...)`), not this block.
+  /// Worker itself has no bridge. The single ordered channel is the contract
+  /// (see `ExportSwMsg`); nothing exportSw rides the generic `evt:*` relay.
   exportSw: {
     open(args: {
       sessionId: string
@@ -317,7 +332,7 @@ export interface WeftcutApi {
     /// may never send its per-session `close`, so main must be able to close
     /// them independently or the native decode threads leak. Idempotent.
     closeAll(): void
-    onFrame(cb: (f: ExportSwFrameMsg) => void): () => void
+    onMsg(cb: (m: ExportSwMsg) => void): () => void
   }
   /// Availability of the optional @weftcut/native-decode component (level-0
   /// gate). The renderer pulls this once on mount (availability is fixed for a

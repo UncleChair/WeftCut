@@ -617,10 +617,10 @@ app.whenReady().then(async () => {
   })
 
   // Native SOFTWARE export-decode (blind-spot originals) — the EXPORT-side
-  // mirror of previewSw + the reverse of the encode chunk channel. Frames flow
-  // out of band on the dedicated `exportSw:frame` channel (see ./exportSw);
-  // RangeEnd/Ended/Error signals ride the generic `evt:*` relay (see the
-  // native-decode onEvent closure above), not this handler set.
+  // mirror of previewSw + the reverse of the encode chunk channel. Everything
+  // flows on the one dedicated `exportSw:msg` channel (see ./exportSw and
+  // `ExportSwMsg` in shared/ipc — never split it); nothing exportSw rides the
+  // generic `evt:*` relay.
   ipcMain.handle('exportSw:open', (e, a: { sessionId: string; path: string; outFormat: 'NV12'; creditWindow: number }) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) throw new Error('exportSw:open — no window for sender')

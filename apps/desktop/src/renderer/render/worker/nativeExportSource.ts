@@ -185,8 +185,10 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   }
 
   /// End of stream: let the ring clamp any grid-overrun waiters to the last held
-  /// frame. The frame-vs-ended cross-channel ordering race under grid-overrun is
-  /// left to the EOS-tail conformance gate; not handled here.
+  /// frame. Safe by construction: control signals ride the same ordered
+  /// per-session channel as frames end-to-end (see `ExportSwMsg` in shared/ipc),
+  /// so every frame emitted before the `ended` has already been delivered when
+  /// this runs — the clamp can never swallow an in-flight tail frame.
   private onEnded(): void {
     this.ring.beginEosDrain();
     this.ring.finishEosDrain();

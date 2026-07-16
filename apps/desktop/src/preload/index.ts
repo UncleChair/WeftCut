@@ -15,7 +15,7 @@ import type {
   PreviewGpuOpenReply,
   PreviewGpuTimingReport,
   PreviewSwFrameMsg,
-  ExportSwFrameMsg,
+  ExportSwMsg,
   ExportSwOpenReply,
   SystemStats,
   WinCreateOpts,
@@ -205,12 +205,13 @@ const api: WeftcutApi = {
   },
 
   // Native SOFTWARE export-decode relay — the EXPORT-side mirror of previewSw.
-  // Decoded NV12 frames cross the contextBridge directly on the dedicated
-  // `exportSw:frame` channel (surfaced via `onFrame`); the renderer main thread
-  // is a pure relay to the export Worker. `decodeRange` / `returnCredit` /
-  // `close` are fire-and-forget renderer → main commands. Range-completion
-  // signals (`exportSw:rangeEnd`/`ended`/`error`) ride the generic `evt:*`
-  // relay (subscribe via `on(...)`), NOT this block.
+  // Frames AND control signals (rangeEnd/ended/error) cross the contextBridge
+  // as tagged ExportSwMsgs on the ONE dedicated `exportSw:msg` channel
+  // (surfaced via `onMsg`); the renderer main thread is a pure relay to the
+  // export Worker. The single ordered channel is load-bearing: control can
+  // never overtake frames (see ExportSwMsg in shared/ipc.ts) — never split it.
+  // `decodeRange` / `returnCredit` / `close` are fire-and-forget renderer →
+  // main commands.
   exportSw: {
     open(args: { sessionId: string; path: string; outFormat: 'NV12'; creditWindow: number }): Promise<ExportSwOpenReply> {
       return ipcRenderer.invoke('exportSw:open', args) as Promise<ExportSwOpenReply>
@@ -227,10 +228,10 @@ const api: WeftcutApi = {
     closeAll(): void {
       ipcRenderer.send('exportSw:closeAll')
     },
-    onFrame(cb: (f: ExportSwFrameMsg) => void): () => void {
-      const h = (_e: unknown, f: ExportSwFrameMsg) => cb(f)
-      ipcRenderer.on('exportSw:frame', h)
-      return () => { ipcRenderer.removeListener('exportSw:frame', h) }
+    onMsg(cb: (m: ExportSwMsg) => void): () => void {
+      const h = (_e: unknown, m: ExportSwMsg) => cb(m)
+      ipcRenderer.on('exportSw:msg', h)
+      return () => { ipcRenderer.removeListener('exportSw:msg', h) }
     },
   },
 

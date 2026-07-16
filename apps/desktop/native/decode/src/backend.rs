@@ -153,8 +153,9 @@ pub struct ExportSwOpenInfoJs {
 /// One export-decoded frame delivered to JS. Same wire shape as `PreviewSwFrame`
 /// (tightly-packed 8-bit NV12, `format` always `"NV12"` in v1), but delivered
 /// under the exactly-once range contract + credit window rather than best-effort
-/// preview. `RangeEnd` / `Ended` / `Error` signals ride the `exportSw:*` event
-/// envelope, not this callback (the delivery contract here is frame bytes only).
+/// preview. Crosses the boundary wrapped in an [`ExportSwMsg`] with
+/// `kind == "frame"`; `session_id` is kept here too so the frame stays
+/// self-identifying downstream of the wrapper.
 #[napi(object)]
 pub struct ExportSwFrame {
     pub session_id: String,
@@ -189,6 +190,20 @@ fn export_frame_to_napi(session_id: &str, f: crate::preview_sw::decoder::SwFrame
     }
 }
 
+/// One in-band message on the per-session export channel — frames AND control
+/// signals ride this single tagged shape. Rationale on the sink closure in
+/// `NativeDecode::new`; TS mirror = `ExportSwMsg` in `shared/ipc.ts`.
+#[napi(object)]
+pub struct ExportSwMsg {
+    pub session_id: String,
+    /// "frame" | "rangeEnd" | "ended" | "error"
+    pub kind: String,
+    /// Present iff kind == "frame".
+    pub frame: Option<ExportSwFrame>,
+    /// Present iff kind == "error".
+    pub message: Option<String>,
+}
+
 /// The component's ffmpeg linkage identity — the SW capability-cache envKey
 /// (D3). Changes when the bundled/loaded avcodec changes.
 #[napi]
@@ -207,7 +222,7 @@ pub struct NativeDecode {
     preview_sw: crate::preview_sw::PreviewSwRegistry,
     preview_sw_sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<PreviewSwFrame>>>>,
     export_sw: crate::export_sw::ExportSwRegistry,
-    export_sw_sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwFrame>>>>,
+    export_sw_sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwMsg>>>>,
 }
 
 #[napi]
@@ -282,45 +297,51 @@ impl NativeDecode {
             (registry, sinks)
         };
 
-        // Export software decode: same single-global-sink pattern as preview.
-        // Frame pokes route to the matching session's per-session
-        // `ThreadsafeFunction`; the RangeEnd/Ended/Error control signals ride the
-        // shared `events` envelope as `exportSw:*` (mirroring `previewGpu:*`), so
-        // the frame callback stays a pure frame channel. `events` is used on ALL
-        // platforms here (the SW export lane is cross-platform, unlike GPU).
+        // Export software decode: same single-global-sink pattern as preview,
+        // but EVERY poke — frames AND the RangeEnd/Ended/Error control signals —
+        // crosses as an `ExportSwMsg` on the matching session's per-session
+        // `ThreadsafeFunction`. One napi queue per session means JS observes
+        // pokes in exact producer order; a second channel (e.g. the shared
+        // `events` envelope) would let an `Ended` overtake the tail frames
+        // emitted before it. NonBlocking on the default UNBOUNDED tsfn queue is
+        // load-bearing: a bounded queue would silently drop pokes — including
+        // control signals — under backpressure. Pokes for an unregistered
+        // session drop silently (mirrors the preview-sw routing).
         let (export_sw, export_sw_sinks) = {
             let registry = crate::export_sw::ExportSwRegistry::new();
-            let sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwFrame>>>> =
+            let sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<ExportSwMsg>>>> =
                 Default::default();
             let sinks_for_cb = sinks.clone();
-            let sink_events = events.clone();
             registry.set_sink(Box::new(move |poke| {
                 use crate::export_sw::ExportPoke;
-                match poke {
-                    ExportPoke::Frame { session_id, frame } => {
-                        if let Some(tsfn) = sinks_for_cb.lock().unwrap().get(&session_id) {
-                            let _ = tsfn.call(
-                                Ok(export_frame_to_napi(&session_id, frame)),
-                                ThreadsafeFunctionCallMode::NonBlocking,
-                            );
-                        }
-                    }
-                    ExportPoke::RangeEnd { session_id } => {
-                        sink_events.emit(
-                            "exportSw:rangeEnd",
-                            serde_json::json!({ "sessionId": session_id }),
-                        );
-                    }
-                    ExportPoke::Ended { session_id } => {
-                        sink_events
-                            .emit("exportSw:ended", serde_json::json!({ "sessionId": session_id }));
-                    }
-                    ExportPoke::Error { session_id, message } => {
-                        sink_events.emit(
-                            "exportSw:error",
-                            serde_json::json!({ "sessionId": session_id, "message": message }),
-                        );
-                    }
+                let msg = match poke {
+                    ExportPoke::Frame { session_id, frame } => ExportSwMsg {
+                        frame: Some(export_frame_to_napi(&session_id, frame)),
+                        session_id,
+                        kind: "frame".into(),
+                        message: None,
+                    },
+                    ExportPoke::RangeEnd { session_id } => ExportSwMsg {
+                        session_id,
+                        kind: "rangeEnd".into(),
+                        frame: None,
+                        message: None,
+                    },
+                    ExportPoke::Ended { session_id } => ExportSwMsg {
+                        session_id,
+                        kind: "ended".into(),
+                        frame: None,
+                        message: None,
+                    },
+                    ExportPoke::Error { session_id, message } => ExportSwMsg {
+                        session_id,
+                        kind: "error".into(),
+                        frame: None,
+                        message: Some(message),
+                    },
+                };
+                if let Some(tsfn) = sinks_for_cb.lock().unwrap().get(&msg.session_id) {
+                    let _ = tsfn.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
                 }
             }));
             (registry, sinks)
@@ -602,18 +623,19 @@ impl NativeDecode {
 // ── export-decode methods (all platforms) ────────────────────────────────────
 
 /// Native export software-decode command surface (cross-platform, ADR 0030
-/// export-decode overlay). Backed by `NativeDecode::export_sw`; decoded NV12
-/// frames reach JS through the per-session `ThreadsafeFunction` registered in
-/// `export_sw_open`, and `RangeEnd`/`Ended`/`Error` reach JS as `exportSw:*`
-/// events. The driving contract (open → decodeRange → returnCredit → close) is
-/// what the export Worker's `ExportDecodeSession` handle sits behind.
+/// export-decode overlay). Backed by `NativeDecode::export_sw`; everything —
+/// decoded NV12 frames and the control signals — reaches JS in-band as
+/// [`ExportSwMsg`] on the per-session `ThreadsafeFunction` registered in
+/// `export_sw_open`. The driving contract (open → decodeRange → returnCredit →
+/// close) is what the export Worker's `ExportDecodeSession` handle sits behind.
 #[napi]
 impl NativeDecode {
     /// Open `path` for export decode into `out_format` (v1: `"NV12"`), throttled
     /// through a `credit_window`-frame flow-control window. Registers the
-    /// per-session frame callback BEFORE opening so no early frame is dropped;
-    /// fails loudly (removing the callback) if the format can't be emitted or the
-    /// decoder can't open. Returns dimensions, source color tags, and start PTS.
+    /// per-session message callback BEFORE opening so no early message is
+    /// dropped; fails loudly (removing the callback) if the format can't be
+    /// emitted or the decoder can't open. Returns dimensions, source color tags,
+    /// and start PTS.
     #[napi]
     pub fn export_sw_open(
         &self,
@@ -621,12 +643,12 @@ impl NativeDecode {
         path: String,
         out_format: String,
         credit_window: u32,
-        on_frame: ThreadsafeFunction<ExportSwFrame>,
+        on_msg: ThreadsafeFunction<ExportSwMsg>,
     ) -> napi::Result<ExportSwOpenInfoJs> {
         self.export_sw_sinks
             .lock()
             .unwrap()
-            .insert(session_id.clone(), on_frame);
+            .insert(session_id.clone(), on_msg);
         match self.export_sw.open(&session_id, &path, &out_format, credit_window) {
             Ok(info) => Ok(ExportSwOpenInfoJs {
                 width: info.width,
@@ -647,9 +669,10 @@ impl NativeDecode {
     }
 
     /// Decode the presentation range `[a_us, b_us]` (source-normalized µs, b
-    /// inclusive). Fire-and-forget: frames arrive on the registered callback, and
-    /// an `exportSw:rangeEnd` (or `exportSw:ended` at stream end) fires when the
-    /// range is satisfied. `a_us`/`b_us` cross as `f64` (no ergonomic napi `i64`).
+    /// inclusive). Fire-and-forget: frame messages arrive on the registered
+    /// callback, followed in-band by a `rangeEnd` (or `ended` then `rangeEnd` at
+    /// stream end) once the range is satisfied. `a_us`/`b_us` cross as `f64` (no
+    /// ergonomic napi `i64`).
     #[napi]
     pub fn export_sw_decode_range(
         &self,

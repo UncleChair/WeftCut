@@ -271,64 +271,71 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     // ── Native export-decode relay ───────────────────────────────────────────
     // The renderer main thread is a PURE relay between the export Worker's
     // `NativeExportSourceHandle` and the main-process `NativeDecode` session:
-    // frames + control flow main→Worker here; the reverse commands (nd:open /
-    // nd:decodeRange / nd:returnCredit / nd:close) arrive in `worker.onmessage`
-    // below. Unsubscribed in `cleanup()` so listeners don't leak across exports.
-    const offFrame = window.api.exportSw.onFrame((f) => {
-      // The one main→renderer copy already happened (structured-clone to a
-      // Uint8Array); hand its ArrayBuffer to the Worker zero-copy via transfer.
-      // A view spanning its whole buffer transfers directly; a partial view is
-      // sliced to a fresh, exactly-sized buffer first.
-      const u8 = f.data;
-      const ab = (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength
-        ? u8.buffer
-        : u8.slice().buffer) as ArrayBuffer;
-      // Optional color tags via conditional spread — `exactOptionalPropertyTypes`
-      // forbids writing `undefined` into an exact-optional `string` field.
-      worker.postMessage(
-        {
-          type: "nd:frame",
-          frame: {
-            sessionId: f.sessionId,
-            ptsUs: f.ptsUs,
-            durUs: f.durUs,
-            width: f.width,
-            height: f.height,
-            ...(f.colorMatrix !== undefined ? { colorMatrix: f.colorMatrix } : {}),
-            ...(f.colorRange !== undefined ? { colorRange: f.colorRange } : {}),
-            ...(f.colorPrimaries !== undefined ? { colorPrimaries: f.colorPrimaries } : {}),
-            ...(f.colorTransfer !== undefined ? { colorTransfer: f.colorTransfer } : {}),
-            data: ab,
-          },
-        } satisfies ExportRequest,
-        [ab],
-      );
+    // tagged `ExportSwMsg`s (frames AND rangeEnd/ended/error) arrive on the ONE
+    // ordered `exportSw:msg` channel and are posted to the Worker synchronously
+    // in arrival order — never split control onto a second subscription;
+    // ordering is the contract (see `ExportSwMsg` in shared/ipc). The reverse
+    // commands (nd:open / nd:decodeRange / nd:returnCredit / nd:close) arrive
+    // in `worker.onmessage` below. Unsubscribed in `cleanup()` so the listener
+    // doesn't leak across exports.
+    const offMsg = window.api.exportSw.onMsg((m) => {
+      switch (m.kind) {
+        case "frame": {
+          const f = m.frame;
+          // The one main→renderer copy already happened (structured-clone to a
+          // Uint8Array); hand its ArrayBuffer to the Worker zero-copy via
+          // transfer. A view spanning its whole buffer transfers directly; a
+          // partial view is sliced to a fresh, exactly-sized buffer first.
+          const u8 = f.data;
+          const ab = (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength
+            ? u8.buffer
+            : u8.slice().buffer) as ArrayBuffer;
+          // Optional color tags via conditional spread — `exactOptionalPropertyTypes`
+          // forbids writing `undefined` into an exact-optional `string` field.
+          worker.postMessage(
+            {
+              type: "nd:frame",
+              frame: {
+                sessionId: f.sessionId,
+                ptsUs: f.ptsUs,
+                durUs: f.durUs,
+                width: f.width,
+                height: f.height,
+                ...(f.colorMatrix !== undefined ? { colorMatrix: f.colorMatrix } : {}),
+                ...(f.colorRange !== undefined ? { colorRange: f.colorRange } : {}),
+                ...(f.colorPrimaries !== undefined ? { colorPrimaries: f.colorPrimaries } : {}),
+                ...(f.colorTransfer !== undefined ? { colorTransfer: f.colorTransfer } : {}),
+                data: ab,
+              },
+            } satisfies ExportRequest,
+            [ab],
+          );
+          return;
+        }
+        case "rangeEnd":
+          worker.postMessage({
+            type: "nd:rangeEnd",
+            sessionId: m.sessionId,
+          } satisfies ExportRequest);
+          return;
+        case "ended":
+          worker.postMessage({
+            type: "nd:ended",
+            sessionId: m.sessionId,
+          } satisfies ExportRequest);
+          return;
+        case "error":
+          worker.postMessage({
+            type: "nd:error",
+            sessionId: m.sessionId,
+            message: m.message,
+          } satisfies ExportRequest);
+          return;
+      }
     });
-    const offRangeEnd = window.api.on("exportSw:rangeEnd", (p) =>
-      worker.postMessage({
-        type: "nd:rangeEnd",
-        sessionId: (p as { sessionId: string }).sessionId,
-      } satisfies ExportRequest),
-    );
-    const offEnded = window.api.on("exportSw:ended", (p) =>
-      worker.postMessage({
-        type: "nd:ended",
-        sessionId: (p as { sessionId: string }).sessionId,
-      } satisfies ExportRequest),
-    );
-    const offError = window.api.on("exportSw:error", (p) =>
-      worker.postMessage({
-        type: "nd:error",
-        sessionId: (p as { sessionId: string; message: string }).sessionId,
-        message: (p as { sessionId: string; message: string }).message,
-      } satisfies ExportRequest),
-    );
 
     const cleanup = () => {
-      offFrame();
-      offRangeEnd();
-      offEnded();
-      offError();
+      offMsg();
       // A terminated Worker may never flush its per-session `nd:close` (on cancel
       // it is torn down before draining; on success it posts `done` before its
       // pool disposes), so reap any still-open native sessions on the main side

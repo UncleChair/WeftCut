@@ -6,8 +6,8 @@
 //! Owns: a per-source worker thread (`session`) that reuses
 //! `preview_sw::decoder::SwVideoStream` (open / robust seek / presentation-
 //! ordered `next_frame` / internal EOS drain / color tags) and fans frames plus
-//! control signals out through a registry sink; `backend.rs` routes that sink to
-//! the napi per-session callback + event envelope.
+//! control signals out through a registry sink; `backend.rs` routes every poke
+//! in-band to the napi per-session callback, preserving producer order.
 //!
 //! Does NOT own: the decode surface (that is `preview_sw::decoder`), nor any of
 //! the WebCodecs no-mid-flush / stop-key / pool-slot machinery — none of it
