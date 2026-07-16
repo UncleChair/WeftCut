@@ -319,6 +319,7 @@ func main() {
 	ptsOffsetMs := flag.Int("pts-offset-ms", 0, "shared first-PTS offset for --audio-timing")
 	eosTail := flag.Bool("eostail", false, "EOS-tail geometry: keyframes every 5s only (final GOP spans multiple 60-frame export chunks) + tone track 1s LONGER than the video; names output *_eostail.mp4")
 	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
+	colorProres := flag.Bool("color-prores", false, "emit the 709ltd color chart as color-tagged 10-bit ProRes 422 HQ (.mov) — the export decode-engine fidelity gate's color fixture")
 	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
 	gradientH264 := flag.Bool("gradient-h264", false, "emit the 10-bit gradient ramp as H.264 High10 (the one 10-bit shape Chromium software-decodes) — the 10-bit export gate's static fixture")
 	gradientH264BF := flag.Bool("gradient-h264-bf", false, "emit a 10s ANIMATED 10-bit ramp, H.264 High10 with keyint=120+bframes=3 — the 10-bit export reorder-tail regression fixture")
@@ -383,6 +384,33 @@ func main() {
 			"-an", out,
 		}
 		fmt.Printf("Generating %s (%s)\n", out, *colorEnc)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("ffmpeg failed: %v", err)
+		}
+		fmt.Printf("Done: %s\n", out)
+		return
+	}
+
+	if *colorProres {
+		const width, height, duration = 1920, 1080, 1
+		chart, err := writeColorChart(width, height)
+		if err != nil {
+			log.Fatalf("chart: %v", err)
+		}
+		out := fmt.Sprintf("test_%dp_color_709ltd_prores.mov", height)
+		// The --color 709ltd conversion with a 10-bit 4:2:2 tail (the shared
+		// 8-bit 4:2:0 target would be wrong for ProRes) — same chart + manifest,
+		// so the fidelity gate reuses color_manifest.json unchanged.
+		vf := "format=rgb24,scale=out_color_matrix=bt709:out_range=tv,format=yuv422p10le"
+		args := []string{
+			"-y", "-loop", "1", "-i", chart, "-t", fmt.Sprintf("%d", duration), "-r", "30",
+			"-vf", vf, "-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
+			"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+			"-an", out,
+		}
+		fmt.Printf("Generating %s (709ltd chart, ProRes 422 HQ 10-bit)\n", out)
 		cmd := exec.Command("ffmpeg", args...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
