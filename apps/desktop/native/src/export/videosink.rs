@@ -204,6 +204,19 @@ pub(crate) fn sink_cmd_args(
                     let p = match preset { "fast" => "10", "slow" => "6", _ => "8" };
                     a.extend::<Vec<OsString>>(vec!["-preset".into(), p.into()]);
                 }
+                "libaom-av1" => {
+                    // -crf alone is constrained-quality against libaom's default
+                    // bitrate; -b:v 0 makes it true CQ. libaom takes -cpu-used
+                    // (0–8, higher = faster), not -preset; its default 1 is far
+                    // too slow for delivery encodes.
+                    if args.crf.is_some() {
+                        a.extend::<Vec<OsString>>(vec!["-b:v".into(), "0".into()]);
+                    }
+                    let p = match preset { "fast" => "8", "slow" => "4", _ => "6" };
+                    a.extend::<Vec<OsString>>(vec![
+                        "-cpu-used".into(), p.into(), "-row-mt".into(), "1".into(),
+                    ]);
+                }
                 "libx265" | "libx264" => {
                     a.extend::<Vec<OsString>>(vec![
                         "-preset".into(), preset.into(),
@@ -277,7 +290,7 @@ pub async fn export_video_sink_start(
                         return Err(format!("10-bit export supports hevc/av1, got {other}"));
                     }
                     let e = if args.software {
-                        c.software_encoder().to_string()
+                        hw.software_for(c, ten_bit).await.as_ref().clone()
                     } else if ten_bit {
                         hw.encoder_for_10bit(c).await.as_ref().clone()
                     } else {
@@ -521,6 +534,26 @@ mod tests {
         let s: Vec<String> = argv.iter().map(|x| x.to_string_lossy().into_owned()).collect();
         assert!(s.windows(2).any(|w| w[0] == "-crf" && w[1] == "30"));
         assert!(s.windows(2).any(|w| w[0] == "-preset" && w[1] == "10")); // fast→10, medium→8, slow→6
+    }
+
+    // libaom fallback shape (sidecar has no libsvtav1): true CQ needs `-b:v 0`
+    // alongside -crf, the speed preset maps to -cpu-used (libaom rejects
+    // -preset), and 10-bit rides the default planar pix_fmt arm.
+    #[test]
+    fn sink_args_libaom_av1_quality_10bit_shape() {
+        let mut a = args_8bit("av1");
+        a.pix_fmt = "yuv420p10le".into();
+        a.crf = Some(30);
+        a.preset = Some("medium".into());
+        let argv = sink_cmd_args(&a, Some(super::super::TargetCodec::Av1), "libaom-av1");
+        let s: Vec<String> = argv.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        assert!(s.windows(2).any(|w| w[0] == "-crf" && w[1] == "30"));
+        assert!(s.windows(2).any(|w| w[0] == "-b:v" && w[1] == "0"));
+        assert!(s.windows(2).any(|w| w[0] == "-cpu-used" && w[1] == "6"));
+        assert!(s.windows(2).any(|w| w[0] == "-row-mt" && w[1] == "1"));
+        let pf: Vec<usize> = (0..s.len()).filter(|&i| s[i] == "-pix_fmt").collect();
+        assert_eq!(s[pf[1] + 1], "yuv420p10le");
+        assert!(!s.iter().any(|x| x == "-preset"));
     }
 
     #[test]

@@ -43,14 +43,24 @@ impl TargetCodec {
         }
     }
 
-    /// Software encoder ffmpeg always has (Gyan full build).
-    pub fn software_encoder(self) -> &'static str {
+    /// Software encoder candidates in preference order. LANDMINE: the pinned
+    /// sidecar is Gyan's ESSENTIALS build (fetch-ffmpeg.mjs), which ships
+    /// libaom-av1 but NOT libsvtav1 — candidates must be probed at pick time
+    /// (`pick_software_encoder`), never assumed present.
+    pub fn software_encoder_candidates(self) -> &'static [&'static str] {
         match self {
-            Self::H264 => "libx264",
-            Self::Hevc => "libx265",
-            Self::Av1 => "libsvtav1",
-            Self::Vp9 => "libvpx-vp9",
+            Self::H264 => &["libx264"],
+            Self::Hevc => &["libx265"],
+            Self::Av1 => &["libsvtav1", "libaom-av1"],
+            Self::Vp9 => &["libvpx-vp9"],
         }
+    }
+
+    /// Preferred software encoder name — unprobed. Use only where a probe is
+    /// impossible (arg-shape tests, error messages); real picks go through
+    /// `HwEncoderCache`, which probes the candidate list.
+    pub fn software_encoder(self) -> &'static str {
+        self.software_encoder_candidates()[0]
     }
 }
 
@@ -122,6 +132,8 @@ pub fn eightbit_encode_args(_encoder: &str) -> Vec<std::ffi::OsString> {
 pub struct HwEncoderCache {
     inner: Mutex<HashMap<TargetCodec, Arc<String>>>,
     inner10: Mutex<HashMap<TargetCodec, Arc<String>>>,
+    sw: Mutex<HashMap<TargetCodec, Arc<String>>>,
+    sw10: Mutex<HashMap<TargetCodec, Arc<String>>>,
 }
 
 impl Default for HwEncoderCache {
@@ -135,6 +147,8 @@ impl HwEncoderCache {
         Self {
             inner: Mutex::new(HashMap::new()),
             inner10: Mutex::new(HashMap::new()),
+            sw: Mutex::new(HashMap::new()),
+            sw10: Mutex::new(HashMap::new()),
         }
     }
 
@@ -161,6 +175,18 @@ impl HwEncoderCache {
         self.inner10.lock().await.insert(codec, arc.clone());
         arc
     }
+
+    /// Software `-c:v` name for `codec` (an explicit software pin skips the HW
+    /// families but must still probe candidates — see `software_encoder_candidates`).
+    pub async fn software_for(&self, codec: TargetCodec, ten_bit: bool) -> Arc<String> {
+        let cache = if ten_bit { &self.sw10 } else { &self.sw };
+        if let Some(cached) = cache.lock().await.get(&codec) {
+            return cached.clone();
+        }
+        let arc = Arc::new(pick_software_encoder(codec, ten_bit).await);
+        cache.lock().await.insert(codec, arc.clone());
+        arc
+    }
 }
 
 async fn pick_encoder(codec: TargetCodec) -> String {
@@ -172,9 +198,9 @@ async fn pick_encoder(codec: TargetCodec) -> String {
             }
         }
     }
-    let sw = codec.software_encoder();
+    let sw = pick_software_encoder(codec, false).await;
     info!("no usable hw encoder for {:?}, using software {}", codec, sw);
-    sw.to_string()
+    sw
 }
 
 async fn pick_encoder_10bit(codec: TargetCodec) -> String {
@@ -186,9 +212,24 @@ async fn pick_encoder_10bit(codec: TargetCodec) -> String {
             }
         }
     }
-    let sw = codec.software_encoder();
+    let sw = pick_software_encoder(codec, true).await;
     info!("no usable hw 10-bit encoder for {:?}, using software {}", codec, sw);
-    sw.to_string()
+    sw
+}
+
+/// First software candidate the sidecar actually has (probed like the HW
+/// families are). If nothing probes OK, return the preferred name anyway so
+/// the sink-start error names the encoder users would expect to exist.
+async fn pick_software_encoder(codec: TargetCodec, ten_bit: bool) -> String {
+    let candidates = codec.software_encoder_candidates();
+    for &sw in candidates {
+        let ok = if ten_bit { probe_encoder_10bit(sw).await } else { probe_encoder(sw).await };
+        if ok {
+            return sw.to_string();
+        }
+        info!("software encoder {} not usable (10bit={}), trying next candidate", sw, ten_bit);
+    }
+    candidates[0].to_string()
 }
 
 /// Shared spawn/stderr/wait/timeout tail for both probe variants.
@@ -279,6 +320,13 @@ mod tests {
     fn software_encoders() {
         assert_eq!(TargetCodec::Hevc.software_encoder(), "libx265");
         assert_eq!(TargetCodec::Av1.software_encoder(), "libsvtav1");
+        // AV1 carries a probed fallback — see the LANDMINE on
+        // `software_encoder_candidates`.
+        assert_eq!(
+            TargetCodec::Av1.software_encoder_candidates(),
+            &["libsvtav1", "libaom-av1"]
+        );
+        assert_eq!(TargetCodec::Hevc.software_encoder_candidates(), &["libx265"]);
     }
 
     #[test]
