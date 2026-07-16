@@ -133,8 +133,14 @@ unchanged:
   and the `experimental_native_sw_decode` toggle are gone: this path is the
   Standard engine's **software transport** (`SwTransport`), selected privately
   by the engine (probe-arbitrated, `auto`-reachable) and used as the in-place
-  fallback when its hardware transport fails. The ship-bytes transport and the
-  single-color-model chokepoint decided here carry over verbatim.
+  fallback when its hardware transport fails. The ship-bytes transport carries
+  over verbatim.
+- **The color chokepoint moved (ADR 0032).** The reconstruct-a-`VideoFrame` →
+  `createImageBitmap`/`drawImage` conversion decided here turned out to rest
+  on a false premise: Chromium converts buffer-defined frames as BT.601
+  regardless of the stamped `colorSpace`. CPU-plane frames now convert in
+  owned shader passes (`Nv12Ingest`/`TenBitIngest`); the export lane has
+  migrated, the preview `SwTransport` migration is pending.
 
 ## References
 

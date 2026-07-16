@@ -37,8 +37,10 @@ A chokepoint is legitimate in exactly two forms:
 - **Verified delegation.** The conversion math belongs to a platform
   component, but the routing is ours and the tag-honoring is proven.
   The browser 2D-canvas paths (`drawImage`, `createImageBitmap`) are
-  the verified converters for YUV matrix/range (the snapshot rule in
-  [`render.md`](../render.md); evidence in ADR 0014).
+  the verified converters for YUV matrix/range **of decoder-produced
+  frames only** (the snapshot rule in [`render.md`](../render.md);
+  evidence in ADR 0014). Buffer-defined frames fall outside the
+  verification — see the third offender below and ADR 0032.
 - **Owned parameters.** The conversion runs in territory we pin and
   version, with every knob explicit: the ffmpeg proxy recipes
   (`source_color_args`, `+write_colr`), and any future ingest tone map
@@ -49,11 +51,16 @@ is trusted only while a gate asserts its output. "Controlled" means
 deterministic and assertable, not necessarily code we wrote.
 
 What is *never* a chokepoint: a convenient default that does silent
-color math. Two known offenders are fenced off:
+color math. Three known offenders are fenced off:
 
 - Pixi's raw-`VideoFrame` upload (`copyExternalImageToTexture`)
   converts everything as BT.709/limited regardless of tags —
   a destructive pixel mis-convert for 601/full-range sources.
+- Chromium's software rasterization of a BUFFER-defined
+  (ArrayBuffer-constructed) `VideoFrame` — both `drawImage` and
+  `createImageBitmap` — converts everything as BT.601 regardless of
+  the stamped `colorSpace`. CPU-plane frames therefore convert in
+  owned shader passes instead (`Nv12Ingest`/`TenBitIngest`; ADR 0032).
 - Chromium's implicit HDR→SDR tone map (an HLG/PQ frame drawn into an
   sRGB canvas). This is currently the only path HDR sources take — a
   tolerated gap, not an endorsement: it is unconfigurable, its look is

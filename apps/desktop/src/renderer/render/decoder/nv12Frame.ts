@@ -4,7 +4,7 @@
 // NV12 frame) applies BT.601 coefficients regardless of the stamped
 // `colorSpace` — so these frames must convert in our own shader (`Nv12Ingest`),
 // which selects the matrix from `colorSpace`. WebCodecs-DECODED frames are
-// unaffected and never take this type.
+// unaffected and never take this type. Policy: ADR 0032.
 
 export interface NativeNv12Frame {
   readonly kind: "nv12";
