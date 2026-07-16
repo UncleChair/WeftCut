@@ -5,7 +5,7 @@
 // below are `import type` (erased), so the session <-> ExportDecoderPool
 // reference (ExportDecodeSession.ring) is not a runtime cycle.
 import type { TenBitFrame } from "./tenBitFrame";
-import type { ExportFrameStore } from "./ExportDecoderPool";
+import type { ExportColorDiag, ExportFrameStore } from "./ExportDecoderPool";
 
 export interface SourceHandleInit {
   /// Per-clip identity. The preview pool keys decoder + ring instances
@@ -70,6 +70,14 @@ export interface SourceHandleInit {
   componentAvailable?: boolean;
   /// Bench-only lane pin, forwarded to `FfmpegSource` (decode-bench Stage 3).
   forceLane?: import("./decodeEngine").FfmpegLane;
+  /// Export-only: route this handle through the native `NativeExportSourceHandle`
+  /// (decode the ORIGINAL via the main-process napi `NativeDecode` session over
+  /// the frame relay) instead of WebCodecs on the proxy. When present the export
+  /// pool builds a `NativeExportSourceHandle`; the WebCodecs path never reads it.
+  /// `sourcePath` is the absolute ORIGINAL file path (the napi opens a filesystem
+  /// path, not a `weftcut-media://` asset URL); `creditWindow` sizes the in-flight
+  /// flow-control window.
+  nativeExport?: { sourcePath: string; outFormat: "NV12"; creditWindow: number };
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
@@ -133,6 +141,13 @@ export interface ExportDecodeSession extends DecodeSession {
   readonly ring: ExportFrameStore;
   decodeRange(aUs: number, bUs: number): Promise<void>;
   evictBefore(cutoffUs: number): void;
+  /// Cumulative decode-work counter — packets fed (WebCodecs) or frames
+  /// received (native). Aggregated into the export `done` perf payload as the
+  /// re-seek-redundancy signal. Both concrete handles expose it as a field.
+  dispatchedTotal: number;
+  /// Color diagnostic captured off the FIRST decoded frame (config vs stamped
+  /// colorSpace + format), forwarded in the perf payload for the E2E harness.
+  firstFrameDiag: ExportColorDiag | null;
 }
 
 /// Pool surface used by the Compositor. Concrete pools may expose extra surface

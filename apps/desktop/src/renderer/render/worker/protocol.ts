@@ -48,6 +48,43 @@ export interface ExportProjectSnapshot {
   /// safe). The Worker passes it into each `SourceHandle` so the original
   /// decodes with its real matrix/range — see `withDefaultColorSpace`.
   mediaColor: Record<string, VideoColorSpaceInit | undefined>;
+  /// `media_id → absolute ORIGINAL file path`, resolved on the main thread for
+  /// media the export routes through the native decode session. The napi
+  /// `exportSwOpen` opens a filesystem path (not a `weftcut-media://` asset
+  /// URL), and the Worker can't resolve one itself — so the main thread
+  /// pre-resolves it here, exactly as it pre-resolves the asset URLs above.
+  /// Present only for native-routed media (see `ExportRequest.nativeDecode`).
+  originalFilePaths: Record<string, string>;
+}
+
+/// One native-decoded frame handed from the renderer-main relay to the export
+/// Worker's `NativeExportSourceHandle`. Same fields as the IPC `ExportSwFrameMsg`
+/// but `data` is an `ArrayBuffer` TRANSFERRED (zero-copy) rather than a
+/// structured-cloned `Uint8Array` — the worker wraps it in a `VideoFrame`
+/// (`format:"NV12"`) and pushes it into the ring.
+export interface NativeDecodeFrameMsg {
+  sessionId: string;
+  ptsUs: number;
+  durUs: number;
+  width: number;
+  height: number;
+  colorMatrix?: string;
+  colorRange?: string;
+  colorPrimaries?: string;
+  colorTransfer?: string;
+  data: ArrayBuffer;
+}
+
+/// Reply to a `nd:open` command (renderer-main → worker). Mirrors the napi
+/// `ExportSwOpenInfoJs`. Inlined here to keep `protocol.ts` dependency-free.
+export interface NativeDecodeOpenInfo {
+  width: number;
+  height: number;
+  colorMatrix?: string;
+  colorRange?: string;
+  colorPrimaries?: string;
+  colorTransfer?: string;
+  startPtsUs: number;
 }
 
 export type ExportRequest =
@@ -95,6 +132,14 @@ export type ExportRequest =
       /// mediaIds whose ORIGINAL decodes 10-bit in the renderer; these acquire
       /// originalAssetUrls + tenBitLane + preferSoftware.
       tenBitMedia?: Record<string, boolean>;
+      /// Export-decode routing table, resolved on the main thread. `mediaIds`
+      /// route through the native `NativeExportSourceHandle` (decode the ORIGINAL
+      /// via the napi session over the frame relay) instead of the in-worker
+      /// WebCodecs proxy path. The population rule is hardcoded today; the
+      /// decode-engine resolver will own it. The Worker stays policy-free: it
+      /// just tests membership at acquire time. `creditWindow` sizes the native
+      /// flow-control window (frames in flight); absent ⇒ engine default.
+      nativeDecode?: { mediaIds: string[]; creditWindow?: number };
       /// Bundled font bytes (family → ArrayBuffer), FontFace-loaded into the
       /// Worker's `self.fonts` before renderer init so burned-in Text/captions
       /// don't tofu. Transferred, not copied.
@@ -103,7 +148,26 @@ export type ExportRequest =
   | { type: "cancel" }
   /// Backpressure ack: the main thread finished writing the most recent
   /// `chunk` to disk; the worker's WritableStream may release the next write.
-  | { type: "chunk-ack" };
+  | { type: "chunk-ack" }
+  //
+  // ── Native-decode relay: renderer-main → Worker ──────────────────────────
+  // The reverse of the encode chunk channel. The renderer main thread relays
+  // frames + control signals from the main-process `NativeDecode` session into
+  // the Worker's `NativeExportSourceHandle`, keyed by `sessionId`.
+  //
+  /// Reply to a prior `nd:open` (correlated by `reqId`). `ok:false` carries the
+  /// napi open failure (unsupported format / undecodable source).
+  | { type: "nd:openResult"; reqId: number; ok: true; info: NativeDecodeOpenInfo }
+  | { type: "nd:openResult"; reqId: number; ok: false; error: string }
+  /// One decoded NV12 frame; `frame.data` is transferred (see the transfer list
+  /// on the renderer-main `postMessage`).
+  | { type: "nd:frame"; frame: NativeDecodeFrameMsg }
+  /// The in-flight `decodeRange` delivered every frame in its range.
+  | { type: "nd:rangeEnd"; sessionId: string }
+  /// End of stream: the session flushed its final GOP; no more frames ever.
+  | { type: "nd:ended"; sessionId: string }
+  /// A native session error (mid-decode failure); the handle fails its ring.
+  | { type: "nd:error"; sessionId: string; message: string };
 
 /// Aggregate export-perf counters, posted with `done`. Used by the E2E
 /// harness to measure decode efficiency (e.g. the long-GOP re-seek redundancy:
@@ -136,4 +200,15 @@ export type ExportEvent =
   /// Encode + mux complete; the temp file is fully written on the main side.
   /// `perf` carries aggregate decode/timing counters for the E2E harness.
   | { type: "done"; perf?: ExportPerf }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  //
+  // ── Native-decode relay: Worker → renderer-main ──────────────────────────
+  // Commands from the Worker's `NativeExportSourceHandle` down to the
+  // main-process `NativeDecode` session (the renderer main thread forwards each
+  // to `window.api.exportSw.*`). `nd:open` expects a matching `nd:openResult`
+  // (`ExportRequest`) correlated by `reqId`; the rest are fire-and-forget.
+  //
+  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: "NV12"; creditWindow: number }
+  | { type: "nd:decodeRange"; sessionId: string; aUs: number; bUs: number }
+  | { type: "nd:returnCredit"; sessionId: string; credits: number }
+  | { type: "nd:close"; sessionId: string };

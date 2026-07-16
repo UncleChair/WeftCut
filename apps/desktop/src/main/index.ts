@@ -24,6 +24,7 @@ import { EXPORT_PROJECT_CHANNELS, injectProjectArgs } from './state/export-proje
 import { openPreviewGpu, requestFrameAtPreviewGpu, consumeAckPreviewGpu, closePreviewGpu, takeTimingsPreviewGpu } from './previewGpu.js'
 import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
+import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
 
 protocol.registerSchemesAsPrivileged([
@@ -613,6 +614,40 @@ app.whenReady().then(async () => {
   ipcMain.on('previewSw:close', (_e, a: { streamId: string }) => {
     try { closePreviewSw(ndBackend(), a.streamId) }
     catch (e) { console.warn('[main] previewSw:close failed', e) }
+  })
+
+  // Native SOFTWARE export-decode (blind-spot originals) — the EXPORT-side
+  // mirror of previewSw + the reverse of the encode chunk channel. Frames flow
+  // out of band on the dedicated `exportSw:frame` channel (see ./exportSw);
+  // RangeEnd/Ended/Error signals ride the generic `evt:*` relay (see the
+  // native-decode onEvent closure above), not this handler set.
+  ipcMain.handle('exportSw:open', (e, a: { sessionId: string; path: string; outFormat: 'NV12'; creditWindow: number }) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) throw new Error('exportSw:open — no window for sender')
+    return openExportSw(ndBackend(), win, a.sessionId, a.path, a.outFormat, a.creditWindow)
+  })
+  ipcMain.on('exportSw:decodeRange', (_e, a: { sessionId: string; aUs: number; bUs: number }) => {
+    // Fire-and-forget .on: napi can throw Err (unknown/already-closed sessionId
+    // from a renderer race), which as a .on listener would be an uncaught main
+    // exception. Swallow (matches previewSw:requestFrameAt).
+    try { decodeRangeExportSw(ndBackend(), a.sessionId, a.aUs, a.bUs) }
+    catch (e) { console.warn('[main] exportSw:decodeRange failed', e) }
+  })
+  ipcMain.on('exportSw:returnCredit', (_e, a: { sessionId: string; credits: number }) => {
+    try { returnCreditExportSw(ndBackend(), a.sessionId, a.credits) }
+    catch (e) { console.warn('[main] exportSw:returnCredit failed', e) }
+  })
+  ipcMain.on('exportSw:close', (_e, a: { sessionId: string }) => {
+    try { closeExportSw(ndBackend(), a.sessionId) }
+    catch (e) { console.warn('[main] exportSw:close failed', e) }
+  })
+  // Reap every still-open export session at export end (done / error / cancel).
+  // A Worker terminated mid-teardown may never send its per-session close, so
+  // the renderer signals main to close them directly — else the native decode
+  // threads leak. Idempotent; no-ops when nothing is open.
+  ipcMain.on('exportSw:closeAll', () => {
+    try { closeAllExportSw(ndBackend()) }
+    catch (e) { console.warn('[main] exportSw:closeAll failed', e) }
   })
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.

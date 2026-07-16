@@ -132,6 +132,26 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     mediaColor[m.id] = ffprobeColorToWebCodecs(m);
   }
 
+  // ── Native export-decode routing (hardcoded population rule) ──────────────
+  // Gate: VITE_WEFTCUT_EXPORT_NATIVE=1. Route every referenced WebCodecs-BLIND
+  // video ORIGINAL — persisted `decode_route.route === "native-sw"` (ProRes/
+  // DNxHD/…), the cheaply-available blind-spot verdict at this layer — through
+  // the native `NativeExportSourceHandle` (decode the original via the napi
+  // session over the frame relay) instead of the in-worker WebCodecs proxy
+  // path. `m.path` is the absolute original file the napi opens. The
+  // decode-engine resolver will own this population rule. Flag unset ⇒ empty
+  // map + `nativeDecode` undefined ⇒ behavior unchanged.
+  const originalFilePaths: Record<string, string> = {};
+  const nativeDecodeMediaIds: string[] = [];
+  if (import.meta.env.VITE_WEFTCUT_EXPORT_NATIVE === "1") {
+    for (const m of init.mediaById.values()) {
+      if (m.kind !== "Video" || !referenced.has(m.id)) continue;
+      if (m.decode_route.route !== "native-sw" || !m.path) continue;
+      originalFilePaths[m.id] = m.path;
+      nativeDecodeMediaIds.push(m.id);
+    }
+  }
+
   const snapshot: ExportProjectSnapshot = {
     width: comp.width,
     height: comp.height,
@@ -144,6 +164,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     mediaDims,
     mediaStartPtsUs,
     mediaColor,
+    originalFilePaths,
   };
 
   // 2. OffscreenCanvas to transfer to the Worker.
@@ -223,6 +244,11 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     bitDepth: init.bitDepth ?? 8,
     ...(init.nativeSinkPixFmt ? { nativeSink: { pixFmt: init.nativeSinkPixFmt } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
+    // Hardcoded native export-decode routing (see above); absent when the env
+    // flag is unset so the WebCodecs proxy path is unchanged.
+    ...(nativeDecodeMediaIds.length > 0
+      ? { nativeDecode: { mediaIds: nativeDecodeMediaIds, creditWindow: 6 } }
+      : {}),
     fonts: fontBytes,
   };
 
@@ -242,7 +268,72 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   let totalFrames = 0;
 
   return new Promise<RunExportResult>((resolve, reject) => {
+    // ── Native export-decode relay ───────────────────────────────────────────
+    // The renderer main thread is a PURE relay between the export Worker's
+    // `NativeExportSourceHandle` and the main-process `NativeDecode` session:
+    // frames + control flow main→Worker here; the reverse commands (nd:open /
+    // nd:decodeRange / nd:returnCredit / nd:close) arrive in `worker.onmessage`
+    // below. Unsubscribed in `cleanup()` so listeners don't leak across exports.
+    const offFrame = window.api.exportSw.onFrame((f) => {
+      // The one main→renderer copy already happened (structured-clone to a
+      // Uint8Array); hand its ArrayBuffer to the Worker zero-copy via transfer.
+      // A view spanning its whole buffer transfers directly; a partial view is
+      // sliced to a fresh, exactly-sized buffer first.
+      const u8 = f.data;
+      const ab = (u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength
+        ? u8.buffer
+        : u8.slice().buffer) as ArrayBuffer;
+      // Optional color tags via conditional spread — `exactOptionalPropertyTypes`
+      // forbids writing `undefined` into an exact-optional `string` field.
+      worker.postMessage(
+        {
+          type: "nd:frame",
+          frame: {
+            sessionId: f.sessionId,
+            ptsUs: f.ptsUs,
+            durUs: f.durUs,
+            width: f.width,
+            height: f.height,
+            ...(f.colorMatrix !== undefined ? { colorMatrix: f.colorMatrix } : {}),
+            ...(f.colorRange !== undefined ? { colorRange: f.colorRange } : {}),
+            ...(f.colorPrimaries !== undefined ? { colorPrimaries: f.colorPrimaries } : {}),
+            ...(f.colorTransfer !== undefined ? { colorTransfer: f.colorTransfer } : {}),
+            data: ab,
+          },
+        } satisfies ExportRequest,
+        [ab],
+      );
+    });
+    const offRangeEnd = window.api.on("exportSw:rangeEnd", (p) =>
+      worker.postMessage({
+        type: "nd:rangeEnd",
+        sessionId: (p as { sessionId: string }).sessionId,
+      } satisfies ExportRequest),
+    );
+    const offEnded = window.api.on("exportSw:ended", (p) =>
+      worker.postMessage({
+        type: "nd:ended",
+        sessionId: (p as { sessionId: string }).sessionId,
+      } satisfies ExportRequest),
+    );
+    const offError = window.api.on("exportSw:error", (p) =>
+      worker.postMessage({
+        type: "nd:error",
+        sessionId: (p as { sessionId: string; message: string }).sessionId,
+        message: (p as { sessionId: string; message: string }).message,
+      } satisfies ExportRequest),
+    );
+
     const cleanup = () => {
+      offFrame();
+      offRangeEnd();
+      offEnded();
+      offError();
+      // A terminated Worker may never flush its per-session `nd:close` (on cancel
+      // it is torn down before draining; on success it posts `done` before its
+      // pool disposes), so reap any still-open native sessions on the main side
+      // here — on every terminal path — or the native decode threads leak.
+      if (nativeDecodeMediaIds.length > 0) window.api.exportSw.closeAll();
       worker.terminate();
     };
 
@@ -300,6 +391,39 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       } else if (ev.type === "error") {
         cleanup();
         reject(new Error(ev.message));
+      } else if (ev.type === "nd:open") {
+        // Native export-decode: open the main-process session and reply with
+        // the correlated result. Any open failure surfaces to the Worker's
+        // handle (`ensureReady` rejects → the export aborts).
+        window.api.exportSw
+          .open({
+            sessionId: ev.sessionId,
+            path: ev.path,
+            outFormat: ev.outFormat,
+            creditWindow: ev.creditWindow,
+          })
+          .then((info) => {
+            worker.postMessage({
+              type: "nd:openResult",
+              reqId: ev.reqId,
+              ok: true,
+              info,
+            } satisfies ExportRequest);
+          })
+          .catch((err: unknown) => {
+            worker.postMessage({
+              type: "nd:openResult",
+              reqId: ev.reqId,
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            } satisfies ExportRequest);
+          });
+      } else if (ev.type === "nd:decodeRange") {
+        window.api.exportSw.decodeRange({ sessionId: ev.sessionId, aUs: ev.aUs, bUs: ev.bUs });
+      } else if (ev.type === "nd:returnCredit") {
+        window.api.exportSw.returnCredit({ sessionId: ev.sessionId, credits: ev.credits });
+      } else if (ev.type === "nd:close") {
+        window.api.exportSw.close({ sessionId: ev.sessionId });
       }
     };
   });

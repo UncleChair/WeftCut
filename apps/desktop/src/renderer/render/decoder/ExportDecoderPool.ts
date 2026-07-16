@@ -23,6 +23,7 @@
 
 import type { EncodedPacket } from "mediabunny";
 import type { DecoderPool, ExportDecodeSession, FrameStore, SourceHandleInit } from "./session";
+import { NativeExportSourceHandle } from "../worker/nativeExportSource";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
@@ -880,7 +881,10 @@ export function exportHandleKey(
 }
 
 export class ExportDecoderPool implements DecoderPool {
-  readonly handles = new Map<string, ExportSourceHandle>();
+  /// Values are the `ExportDecodeSession` contract — a runtime mix of the
+  /// WebCodecs `ExportSourceHandle` and the native `NativeExportSourceHandle`,
+  /// chosen per-acquire by `init.nativeExport`.
+  readonly handles = new Map<string, ExportDecodeSession>();
 
   /// Handles are keyed by `init.handleKey` — the export Worker and the
   /// export-mode Compositor both pass `exportHandleKey(...)`, giving one
@@ -890,11 +894,13 @@ export class ExportDecoderPool implements DecoderPool {
   /// `decodeRange` calls corrupted the packet cursor and each clip's
   /// per-frame evict dropped frames the other still needed — the export's
   /// frame counter froze mid-run.
-  acquire(init: SourceHandleInit): ExportSourceHandle {
+  acquire(init: SourceHandleInit): ExportDecodeSession {
     const key = init.handleKey ?? init.mediaId;
     let h = this.handles.get(key);
     if (!h) {
-      h = new ExportSourceHandle(init);
+      // `nativeExport` (export-only, set by the routed 6a acquire) selects the
+      // native session over the frame relay; otherwise the WebCodecs proxy path.
+      h = init.nativeExport ? new NativeExportSourceHandle(init) : new ExportSourceHandle(init);
       this.handles.set(key, h);
     }
     return h;

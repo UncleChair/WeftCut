@@ -15,6 +15,8 @@ import type {
   PreviewGpuOpenReply,
   PreviewGpuTimingReport,
   PreviewSwFrameMsg,
+  ExportSwFrameMsg,
+  ExportSwOpenReply,
   SystemStats,
   WinCreateOpts,
   WinAction,
@@ -199,6 +201,36 @@ const api: WeftcutApi = {
       const h = (_e: unknown, f: PreviewSwFrameMsg) => cb(f)
       ipcRenderer.on('previewSw:frame', h)
       return () => { ipcRenderer.removeListener('previewSw:frame', h) }
+    },
+  },
+
+  // Native SOFTWARE export-decode relay — the EXPORT-side mirror of previewSw.
+  // Decoded NV12 frames cross the contextBridge directly on the dedicated
+  // `exportSw:frame` channel (surfaced via `onFrame`); the renderer main thread
+  // is a pure relay to the export Worker. `decodeRange` / `returnCredit` /
+  // `close` are fire-and-forget renderer → main commands. Range-completion
+  // signals (`exportSw:rangeEnd`/`ended`/`error`) ride the generic `evt:*`
+  // relay (subscribe via `on(...)`), NOT this block.
+  exportSw: {
+    open(args: { sessionId: string; path: string; outFormat: 'NV12'; creditWindow: number }): Promise<ExportSwOpenReply> {
+      return ipcRenderer.invoke('exportSw:open', args) as Promise<ExportSwOpenReply>
+    },
+    decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void {
+      ipcRenderer.send('exportSw:decodeRange', args)
+    },
+    returnCredit(args: { sessionId: string; credits: number }): void {
+      ipcRenderer.send('exportSw:returnCredit', args)
+    },
+    close(args: { sessionId: string }): void {
+      ipcRenderer.send('exportSw:close', args)
+    },
+    closeAll(): void {
+      ipcRenderer.send('exportSw:closeAll')
+    },
+    onFrame(cb: (f: ExportSwFrameMsg) => void): () => void {
+      const h = (_e: unknown, f: ExportSwFrameMsg) => cb(f)
+      ipcRenderer.on('exportSw:frame', h)
+      return () => { ipcRenderer.removeListener('exportSw:frame', h) }
     },
   },
 

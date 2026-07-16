@@ -361,6 +361,21 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           ? req.project.originalAssetUrls[g.mediaId]
           : req.project.proxyAssetUrls[g.mediaId];
         if (!url) return;
+        // Native export-decode routing: when this media is in the
+        // `nativeDecode` table AND its original path resolved, mark the acquire
+        // so the pool builds a `NativeExportSourceHandle` (decode the ORIGINAL
+        // via the napi session over the frame relay). proxyAssetUrl is still
+        // passed unchanged; the native handle ignores it.
+        const routeNative = req.nativeDecode?.mediaIds.includes(g.mediaId) === true;
+        const nativeOriginalPath = routeNative ? req.project.originalFilePaths[g.mediaId] : undefined;
+        // Truthy narrows `nativeOriginalPath` to a non-empty string here.
+        const nativeExport = nativeOriginalPath
+          ? {
+              sourcePath: nativeOriginalPath,
+              outFormat: "NV12" as const,
+              creditWindow: req.nativeDecode?.creditWindow ?? 6,
+            }
+          : undefined;
         const handle = exportPool.acquire({
           layerId: g.clips[0]!.layerId,
           mediaId: g.mediaId,
@@ -372,6 +387,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           sourceColor: req.project.mediaColor[g.mediaId],
           sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
           ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
+          ...(nativeExport ? { nativeExport } : {}),
         });
         await handle.decodeRange(g.srcAUs, g.srcBUs);
       }),

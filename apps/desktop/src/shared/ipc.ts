@@ -146,6 +146,41 @@ export type PreviewSwFrameMsg = {
   data: Uint8Array
 }
 
+/// One export-decoded frame relayed to the renderer over the dedicated
+/// `exportSw:frame` channel — the EXPORT-side mirror of `PreviewSwFrameMsg`.
+/// Delivered under the exactly-once range contract + credit window (not
+/// best-effort preview), and carries `sessionId` (not `streamId`) because one
+/// export runs several native sessions concurrently (one per phase group).
+/// `data` is the Rust `Buffer` structured-cloned to the renderer as a
+/// `Uint8Array` — the one main→renderer copy; the renderer then transfers its
+/// ArrayBuffer on to the export Worker (zero-copy) via postMessage.
+export type ExportSwFrameMsg = {
+  sessionId: string
+  ptsUs: number
+  durUs: number
+  width: number
+  height: number
+  format: 'NV12'
+  colorMatrix?: string
+  colorRange?: string
+  colorPrimaries?: string
+  colorTransfer?: string
+  data: Uint8Array
+}
+
+/// Reply of `exportSw.open`: the native session's decoded dimensions, source
+/// color tags, and source-normalized start PTS (the offset already subtracted
+/// from every frame's `ptsUs`). Mirrors the napi `ExportSwOpenInfoJs` 1:1.
+export interface ExportSwOpenReply {
+  width: number
+  height: number
+  colorMatrix?: string
+  colorRange?: string
+  colorPrimaries?: string
+  colorTransfer?: string
+  startPtsUs: number
+}
+
 /// Availability of the optional @weftcut/native-decode component (level-0
 /// gate, ADR 0030). `reason` is the require error when unavailable.
 export interface DecodeComponentStatus {
@@ -256,6 +291,33 @@ export interface WeftcutApi {
     requestFrameAt(args: { streamId: string; targetUs: number }): void
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void
+  }
+  /// Native SOFTWARE export-decode relay (blind-spot originals: ProRes/DNxHD/
+  /// MPEG-2/VC-1). The EXPORT-side mirror of `previewSw` and the reverse of the
+  /// encode chunk channel: frames flow main → renderer here (dedicated
+  /// `exportSw:frame` channel, surfaced via `onFrame`), while `decodeRange` /
+  /// `returnCredit` / `close` are fire-and-forget renderer → main commands. The
+  /// renderer main thread is a pure relay between the export Worker's
+  /// `NativeExportSourceHandle` and the main-process `NativeDecode` session; the
+  /// Worker itself has no bridge. Range-completion signals (`exportSw:rangeEnd`
+  /// / `exportSw:ended` / `exportSw:error`, each `{ sessionId }`) ride the
+  /// generic `evt:*` relay (subscribe via `on(...)`), not this block.
+  exportSw: {
+    open(args: {
+      sessionId: string
+      path: string
+      outFormat: 'NV12'
+      creditWindow: number
+    }): Promise<ExportSwOpenReply>
+    decodeRange(args: { sessionId: string; aUs: number; bUs: number }): void
+    returnCredit(args: { sessionId: string; credits: number }): void
+    close(args: { sessionId: string }): void
+    /// Reap EVERY still-open export session. The renderer calls this when an
+    /// export ends (done / error / cancel): a Worker terminated mid-teardown
+    /// may never send its per-session `close`, so main must be able to close
+    /// them independently or the native decode threads leak. Idempotent.
+    closeAll(): void
+    onFrame(cb: (f: ExportSwFrameMsg) => void): () => void
   }
   /// Availability of the optional @weftcut/native-decode component (level-0
   /// gate). The renderer pulls this once on mount (availability is fixed for a
