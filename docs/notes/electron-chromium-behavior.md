@@ -57,6 +57,14 @@ pick. Full fix = replace `screenPick.ts` with a desktopCapturer-based
 full-screen overlay (per-display always-on-top windows + own magnifier),
 which also gains hover events for screen picks.
 
+## Buffer-defined `VideoFrame` conversion ignores the stamped `colorSpace` (always BT.601)
+
+Observed 2026-07-16 in the real app (the export ProRes fidelity gate), Electron 42 / Chromium 148. When a `VideoFrame` is constructed **from an ArrayBuffer** (`new VideoFrame(data, { format: "NV12", colorSpace: … })`), Chromium's software RGB conversion (`drawImage`, `createImageBitmap`) applies BT.601 coefficients regardless of the stamped BT.709 `colorSpace`. **Decoder-produced** frames are unaffected — their conversion honors the tagged space.
+
+Caught by the saturated-chart SSIM gate: the native-decode lane's HD frames converted visibly wrong (chart SSIM 0.616 vs the proxy path's 0.892) while natural-content SSIM barely moved — chroma-coefficient error hides in low-saturation material, so gates on natural clips are blind to it.
+
+Rule: never hand a buffer-defined YUV frame to the browser for color conversion. Frames from the native decode relay carry their own kinds (`NativeNv12Frame` / `TenBitFrame`) and convert in owned shaders (`Nv12Ingest` / `TenBitIngest`, matrix selected from the stamped `colorSpace` via `coefForMatrix`). Policy: ADR 0032. Third member of the platform color-gap family, alongside `VideoEncoder` ignoring `colorSpace` (below) and WebGPU `copyExternalImageToTexture` converting as BT.709/limited regardless of tags (ADR 0021's offender list).
+
 ## Not re-probed (kept as known Blink behavior)
 
 These WebCodecs behaviors live in the same Blink core WebView2 used, so they were carried forward without re-probing: Hi10P software-decodes but needs `flush()`; a lone IDR frame parks in the decoder's reorder buffer until `flush()`; held `VideoFrame`s pin the ~13-slot hardware decoder pool (ADR 0004); `VideoEncoder` ignores `VideoFrame.colorSpace` and tags color by resolution.

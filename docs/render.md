@@ -28,7 +28,7 @@ final mux see [`rendering.md`](rendering.md).
 ## Directory layout
 
 ```
-apps/desktop/src/render/
+apps/desktop/src/renderer/render/
   Compositor.ts              — PixiJS Application owner; per-frame composite
   clock.ts                   — audio-master clock (anchor-derived; wall fallback)
   PlaybackEngine.ts          — transport (play/pause/seek/scrub)
@@ -407,11 +407,24 @@ chosen output; see [`rendering.md`](rendering.md).
 ### Export decode pipelines (one per media × phase)
 
 The Worker drives an `ExportDecoderPool` in ~2 s chunks: per chunk it
-dispatches every needed packet per pipeline in one `decodeRange(aUs, bUs)`
-call (no mid-export `decoder.flush()` — see the EOS-tail notes in
-`ExportDecoderPool.ts`), then the encode loop awaits each output frame via
-`ring.waitForPts` and evicts consumed frames to keep the WebCodecs
-buffer pool drained.
+dispatches every needed range per pipeline in one `decodeRange(aUs, bUs)`
+call, then the encode loop awaits each output frame via `ring.waitForPts`
+and evicts consumed frames. A pipeline is one of two handles behind the same
+`ExportDecodeSession` contract, chosen per-acquire by the routing table
+(see §Export source resolution):
+
+- the WebCodecs `ExportSourceHandle` — an in-worker `VideoDecoder` over the
+  clip's export source (no mid-export `decoder.flush()` — see the EOS-tail
+  notes in `ExportDecoderPool.ts`); eviction keeps the ~13-slot WebCodecs
+  buffer pool drained;
+- the native `NativeExportSourceHandle` — a relay client: `decodeRange`
+  becomes an IPC command to a credit-windowed `export_sw` session in the
+  native component, which decodes the **original** and streams NV12/I420P10
+  planes back main → renderer → Worker in-band and in order; the handle
+  returns one credit per frame that leaves the ring, and the frames convert
+  to RGB in owned shaders, never by the browser (ADR 0032). Transport:
+  [`export-ipc-transport.md`](export-ipc-transport.md); decision record:
+  ADR 0033.
 
 Pipelines are keyed by `exportHandleKey` = `mediaId` + the clip's
 timeline→source offset (`src_in_us − t_start_us`, the *phase*), and the
@@ -450,21 +463,40 @@ properties of the content, not the scheduler.
 
 ### Export source resolution
 
-Before launching the Worker, `runExport.ts` resolves each clip's
-**export** source (`exportPlaybackPathFor`): the original for a
-DirectExport or bypassed source, otherwise the source-resolution export
-master (`proxy_path`). Export never reads the quick preview proxy. For
-any clip whose export source is a non-H.264 **original**, a main-thread
-**pre-flight** (`probeSourceDecodable`) configures a decoder and decodes
-one key packet — racing success against the decoder's error callback and
-a timeout (WebCodecs can fail silently). If a source can't be decoded on
-this machine, the Worker is never launched: the export aborts with a
-retry message and `ensure_full_proxy` enqueues a proxy, so the retry
-succeeds from the master. When the import sweep is already probing the
-same source, the gate **defers to that in-flight probe** rather than
-opening a second decoder — concurrent probes contend for the WebCodecs
-buffer pool and false-negative a decodable source (ADR 0013). See ADRs
-0010–0011, 0013.
+Which engine and which file feed each pipeline is fixed before the Worker
+launches, in two steps.
+
+**Engine routing.** `resolveExportDecodeRouting`
+(`render/exportDecodeRouting.ts`) runs once at export start in
+`useExportFlow` — a pure function of the per-project `decodeEngine` intent
+(`auto` / `ffmpeg` / `webcodecs`), native-component presence, the export's
+composite bit depth, and each medium's persisted Decode Route. It emits a
+per-media routing table that rides the init protocol into the Worker;
+nothing re-resolves mid-run, and cross-engine or cross-source fallback
+mid-export is forbidden — a native session error aborts the export loudly
+(ADR 0033). Under `auto`, decodable sources stay on the in-worker WebCodecs
+path and persisted blind spots route native, exporting the **original** with
+no proxy involved; an `ffmpeg` pin routes every source native; a missing
+component degrades the pin to `auto` (`effectiveSetting`). Native-routed
+media skip the readiness machinery below entirely (`proxyWaitScope`), and
+the export dialog's summary line ("N from originals, M from lossy proxy")
+derives from this same table, so the dialog cannot disagree with the run.
+
+**WebCodecs-lane readiness.** For the media the table leaves on WebCodecs,
+`runExport.ts` resolves each clip's **export** source
+(`exportPlaybackPathFor`): the original for a DirectExport or bypassed
+source, otherwise the source-resolution export master (`proxy_path`).
+Export never reads the quick preview proxy. For any clip whose export
+source is a non-H.264 **original**, a main-thread **pre-flight**
+(`probeSourceDecodable`) configures a decoder and decodes one key packet —
+racing success against the decoder's error callback and a timeout
+(WebCodecs can fail silently). If a source can't be decoded on this
+machine, the Worker is never launched: the export aborts with a retry
+message and `ensure_full_proxy` enqueues a proxy, so the retry succeeds
+from the master. When the import sweep is already probing the same source,
+the gate **defers to that in-flight probe** rather than opening a second
+decoder — concurrent probes contend for the WebCodecs buffer pool and
+false-negative a decodable source (ADR 0013). See ADRs 0010–0011, 0013.
 
 ### Encode exits
 

@@ -158,6 +158,15 @@ default; the quick proxy is a source the user opts into, never one the app
 swaps to on its own, and `auto` never auto-proxies. This matches how
 mainstream NLEs behave (`feedback_native_nle_conventions`).
 
+**Export mirrors this overlay.** The same Automatic/Standard/Lite vocabulary
+routes export decode: a per-project `decodeEngine` setting feeds
+`resolveExportDecodeRouting`, which freezes a per-media routing table at
+export start — no mid-run re-resolution, and native-routed sources skip the
+proxy wait. The export dialog renders this section's picker options verbatim
+(`settings/decodeEngineOptions.tsx` is shared by both surfaces). See
+[`render.md`](render.md) §Export source resolution and
+[ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md).
+
 ### The Standard engine (`FfmpegSource`)
 
 `FfmpegSource` is the deep module: one class over two interchangeable

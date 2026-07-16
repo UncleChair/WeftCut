@@ -1,6 +1,6 @@
 # Export-side decode engine — spec
 
-**Status:** agreed design, pre-implementation (interview record, 2026-07-16)
+**Status:** implemented + merged to local main (tickets 01–08, unpushed; durable record = ADR 0033 + the evergreen rewrites in render.md / export-ipc-transport.md / preview.md / roadmap.md)
 **Scope:** route export decode through the decode-engine overlay (ADR 0030) so
 blind-spot and user-pinned sources export from ORIGINALS via the native
 component instead of the lossy full-proxy.

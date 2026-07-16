@@ -1,10 +1,14 @@
-# Export frame transport (native encode engine)
+# Export frame transport (native engines)
 
-The native encode engine composites in a Web Worker, packs each frame to the
-target's rawvideo format (yuv420p, yuv422p, yuv420p10le, or yuv422p10le), and
-streams it to a native `ffmpeg` encode over Electron main↔renderer IPC. The
-WebCodecs engine is separate (VideoEncoder → mediabunny → fragmented-MP4 to
-disk) and does not use this transport.
+Raw frames cross the Electron process boundary in both export directions,
+over classic main↔renderer IPC. **Encode-out:** the native encode engine
+composites in a Web Worker, packs each frame to the target's rawvideo format
+(yuv420p, yuv422p, yuv420p10le, or yuv422p10le), and streams it to a native
+`ffmpeg` encode. **Decode-in:** the native export-decode lane streams
+NV12/I420P10 frames from the native component's `export_sw` session into the
+Worker's export ring (see §The decode direction). The WebCodecs engine is
+separate on both axes (VideoDecoder in-worker; VideoEncoder → mediabunny →
+fragmented-MP4 to disk) and uses neither transport.
 
 ## How a frame reaches ffmpeg
 
@@ -40,6 +44,38 @@ Native renderer→main IPC was chosen over two alternatives:
   10-bit lane's 16-bit-float composite or the intermediate codecs' 10-bit planes. It
   would cover only part of the native engine's format range and would add a separate
   native dependency without letting this transport go away.
+
+The same reasoning fixed the decode direction below: classic IPC measured
+~1 GB/s, there is no cross-process CPU zero-copy on this platform, so the
+budget is one copy per frame per hop.
+
+## The decode direction (native export decode)
+
+The mirror route, main → renderer → Worker, feeds natively decoded frames to
+the export compositor (routing and session semantics:
+[ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md);
+consumption: [`render.md`](render.md) §Export decode pipelines):
+
+1. The Worker's `NativeExportSourceHandle` sends `nd:*` commands
+   (open / decodeRange / returnCredit / close) up its own `postMessage`
+   channel; the renderer forwards them to the main process
+   (`window.api.exportSw`), which drives the native component's `export_sw`
+   session.
+2. The session decodes GOP-aligned exact coverage of each requested range and
+   emits **everything in-band** on its per-session callback as a tagged
+   `ExportSwMsg` — `frame`, `rangeEnd`, `ended`, `error`. The main process
+   relays each message verbatim to the renderer over the one dedicated
+   `exportSw:msg` channel, and the renderer re-posts frames into the Worker
+   as transferred `ArrayBuffer`s (zero-copy at that hop).
+3. Delivery order IS the contract: an `ended` or `rangeEnd` arriving before
+   its tail frames would corrupt the export tail. Never split control
+   signals and frames onto separate channels.
+4. Backpressure is a **credit window**, not an ack loop: the Rust producer
+   parks once `creditWindow` frames are in flight, and the handle returns
+   exactly one credit per frame that has *left* the export ring — consumed,
+   evicted, or freed — bounding main-process frame memory regardless of how
+   far decode runs ahead of encode. Credit returns bypass the session's
+   command channel so they land even mid-range.
 
 ## Deferred optimization: eliminate the per-frame copy
 

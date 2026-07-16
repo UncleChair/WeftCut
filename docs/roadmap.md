@@ -122,18 +122,20 @@ with hardware-vs-software private to the Standard engine's `FfmpegSource` (see
 source activation — the per-clip override, the project-wide Prefer Proxies
 toggle, and the on-demand generate-proxy command that back the `source:
 original | proxy` axis — is built; see [`preview.md`](preview.md) §Proxies
-for how the resolver picks proxy vs. original today. Two pieces of the
-wider architecture remain deliberately deferred; a third — the preview/export
-session-interface split — has shipped:
+for how the resolver picks proxy vs. original today. Export-side decode and
+the preview/export session-interface split have shipped; one piece remains
+deliberately deferred:
 
-- **Export-side decode consumes the overlay.** `ExportDecoderPool` still
-  decodes WebCodecs-on-proxy. The plan is to route export decode through the
-  same engine overlay so blind-spot and forced-Standard sources export from
-  originals instead of the lossy full-proxy. It needs the
-  main→renderer→worker raw-frame transport — design of record in
-  [`export-ipc-transport.md`](export-ipc-transport.md) (the 10-bit raw-frame
-  transport this generalizes) and `poc/export-frame-transport` (~1 GB/s
-  classic-IPC ceiling, spike-cleared; no cross-process CPU zero-copy).
+- **Export-side decode consumes the overlay — done.** Export decode routes
+  through the same engine overlay: `resolveExportDecodeRouting` freezes a
+  per-media routing table at export start from the per-project `decodeEngine`
+  intent (an `ffmpeg` pin degrades to `auto` when the component is absent), so
+  blind-spot and pinned-Standard sources export from their originals over a
+  credit-windowed native session instead of the lossy full-proxy, and skip the
+  pre-export proxy wait. See [`render.md`](render.md) §Export source
+  resolution, [`export-ipc-transport.md`](export-ipc-transport.md) (both
+  directions of the raw-frame transport), and
+  [ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md).
 - **Preview/export session-interface split — done.** The shared interface was
   split into a minimal `DecodeSession` core plus named `PreviewDecodeSession`
   and `ExportDecodeSession` roles, extracted to `decoder/session.ts`. Preview and
@@ -143,6 +145,32 @@ session-interface split — has shipped:
 - **Unified `DecodedFrame` metadata/ownership.** The frame union already
   exists across the decode paths; standardizing its metadata and ownership is
   a safe later cleanup, not a blocker.
+
+The export-decode lane's deliberate scope cuts, in rough leverage order — the
+v2 debt list:
+
+- **4:2:2 chroma transport + compositing.** v1 swscales ProRes 422 to
+  I420P10, halving vertical chroma before RGB conversion (the same cost
+  preview eats); the faithful 422 ceiling needs a 4:2:2 transport format plus
+  composite-chokepoint support.
+- **Native session rebuild-once + abort UX.** The design admits exactly one
+  same-engine session rebuild before an export aborts, with the failing source
+  named and a Lite re-run suggested; today the native lane fails loud on the
+  first surfaced session error with the generic export-failure message.
+  Cross-engine/cross-source mid-export fallback stays forbidden either way
+  (ADR 0033).
+- **Hardware-lane readback** for export decode — not designed;
+  profiling-gated.
+- **Concurrent native-session caps** and any decode memory budget beyond the
+  per-session credit window.
+- **Per-clip decode-engine overrides** in the export dialog — the routing
+  table's per-media shape leaves room for them.
+- **Cross-machine bit-reproducibility gate** (the `ffmpeg` pin + software
+  encode promise) — needs two-machine baseline management; build it as a
+  permanent harness once the path has settled.
+- **Routing decodable sources through native for performance** (the re-seek
+  redundancy motive) — `auto` deliberately keeps them in-worker; revisit with
+  profiling.
 
 The native-decode component ships on **Windows only** in v1; the macOS/Linux
 LGPL-ffmpeg DLL supply chain is unsettled, so on those platforms the Standard

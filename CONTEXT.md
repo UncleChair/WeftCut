@@ -52,8 +52,11 @@ The runtime overlay that resolves, per source and per session, an **engine**
 (Standard or Lite) and a **source** (original or proxy) — from the
 decode-engine setting, the [Capability cache](#decode-routing), and the
 source's read-only Decode Route. Hardware-vs-software is private to the
-Standard engine, never part of the resolution. Re-resolved every session;
-never itself persisted into the project.
+Standard engine, never part of the resolution. Preview re-resolves every
+session; export resolves once at export start into a frozen per-media
+routing table (`resolveExportDecodeRouting`, ADR 0033) and never mid-run.
+What persists is only the user's *intent* (the app-level preview setting;
+the per-project export `decodeEngine`), never a resolution.
 _Avoid_: decode route (that's the persisted disk truth), tier, preset
 
 **Standard engine**:
