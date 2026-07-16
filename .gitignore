@@ -69,3 +69,6 @@ apps/desktop/e2e/bench-results/
 # Playwright MCP page-snapshot artifacts
 .playwright-mcp/
 .superpowers/
+
+# Local ticket scratchpad (to-tickets skill)
+.scratch/
