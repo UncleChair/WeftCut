@@ -272,6 +272,12 @@ fn serve_range(
             Ok(landing) => {
                 state.pending = landing;
                 state.ended = false;
+                // The high-water mark no longer means "everything below was
+                // delivered" once the cursor jumps back: keeping it would let a
+                // later forward range whose [a, b] was never covered short-circuit
+                // as trivially satisfied and deliver nothing. Mirrors the WebCodecs
+                // handle's rebuild resetting `coveredThroughUs`.
+                state.covered_through_us = i64::MIN;
             }
             Err(e) => {
                 emit(sink, ExportPoke::Error { session_id: session_id.to_string(), message: e });
@@ -654,6 +660,26 @@ mod tests {
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert_eq!(&c.pts[after_fwd.len()..], &[0, 125_000]);
+        drop(c);
+        reg.close("p").unwrap();
+    }
+
+    #[test]
+    fn forward_range_after_backward_jump_is_not_falsely_covered() {
+        // Regression: `covered_through_us` must reset on a backward re-seek.
+        // Without the reset, the third range below sits under the FIRST range's
+        // high-water mark (875k), short-circuits as "already covered", and
+        // delivers nothing — though [300k, 400k] was never covered by any range.
+        let (reg, got) = registry_with_collector();
+        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        run_range(&reg, "p", 500_000, 875_000, &got); // high-water → 875k
+        run_range(&reg, "p", 0, 200_000, &got); // backward jump: coverage resets
+        let before = got.lock().unwrap().pts.len();
+        run_range(&reg, "p", 300_000, 400_000, &got); // forward, never covered
+        let c = got.lock().unwrap();
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+        // 250k ([250k,375k) intersects) and 375k ([375k,500k) intersects b=400k).
+        assert_eq!(&c.pts[before..], &[250_000, 375_000]);
         drop(c);
         reg.close("p").unwrap();
     }

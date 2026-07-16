@@ -174,6 +174,21 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     close('back')
   })
 
+  it('a forward range after a backward jump is not falsely treated as covered', async () => {
+    // Regression: the session's coverage high-water mark must reset on a
+    // backward re-seek. Without the reset, the third range below sits under the
+    // FIRST range's high-water mark (875k), short-circuits as "already
+    // covered", and delivers nothing — though [300k, 400k] was never covered.
+    const { frames } = open('backfwd', PRORES)
+    await drainRange(ctx, 'backfwd', 500_000, 875_000) // high-water → 875k
+    await drainRange(ctx, 'backfwd', 0, 200_000) // backward jump: coverage resets
+    const before = frames.length
+    await drainRange(ctx, 'backfwd', 300_000, 400_000) // forward, never covered
+    // 250k ([250k,375k) intersects) and 375k ([375k,500k) intersects b=400k).
+    expect(frames.slice(before).map((f) => f.ptsUs)).toEqual([250_000, 375_000])
+    close('backfwd')
+  })
+
   it('long-GOP (MPEG-2) sub-range covers densely, monotonically, within bounds', async () => {
     const { info, frames } = open('gop', MPEG2)
     expect(info.width).toBe(320)
