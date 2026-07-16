@@ -177,6 +177,11 @@ export interface ExportPerf {
   /// Sum of packets fed to the source decoder(s) across all chunks. With a
   /// 1:1 export this should be ~`totalFrames`; a large excess is re-decode waste.
   totalDispatched: number;
+  /// Count of export-pool handles that were `NativeExportSourceHandle` (media
+  /// routed through the in-process native decode session). Always present, 0
+  /// when none routed — the native wedge gates assert ≥ 1 so a silent fallback
+  /// to the WebCodecs proxy path cannot pass them vacuously.
+  nativeHandles: number;
   /// Wall-clock spent in `decodeRange` dispatch, awaiting decoder output, and
   /// the whole export, in ms.
   decodeMs: number;

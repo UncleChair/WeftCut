@@ -37,6 +37,7 @@ import { selectActiveVideoLayers } from "../activeVideoLayers";
 import { gopFrames } from "../exportSettings";
 import { Compositor } from "../Compositor";
 import { ExportDecoderPool, exportHandleKey } from "../decoder/ExportDecoderPool";
+import { NativeExportSourceHandle } from "./nativeExportSource";
 import { EncoderSink } from "./encoder";
 import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
@@ -584,11 +585,14 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   }
   post({ type: "progress", framesEncoded: totalFrames, totalFrames });
 
-  // Perf counters for the E2E harness (decode efficiency / re-seek redundancy).
+  // Perf counters for the E2E harness (decode efficiency / re-seek redundancy;
+  // `nativeHandles` rationale on `ExportPerf.nativeHandles`).
   let totalDispatched = 0;
+  let nativeHandles = 0;
   let colorDiag: unknown = null;
   for (const h of exportPool.handles.values()) {
     totalDispatched += h.dispatchedTotal;
+    if (h instanceof NativeExportSourceHandle) nativeHandles++;
     if (!colorDiag && h.firstFrameDiag) colorDiag = h.firstFrameDiag;
   }
   post({
@@ -596,6 +600,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     perf: {
       totalFrames,
       totalDispatched,
+      nativeHandles,
       decodeMs: Math.round(totals.decodeMs),
       waitMs: Math.round(totals.waitMs),
       totalMs: Math.round(totalMs),
