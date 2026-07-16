@@ -113,14 +113,24 @@ async function placeSameSourceClips(page: Page, extras: number[]): Promise<{ med
   return { mediaId: first.mediaId }
 }
 
-// Precondition, not the gate: ProRes must have persisted the WebCodecs-blind
-// route — a misclassification here would otherwise surface as the harder-to-
-// read nativeHandles assertion downstream.
-async function expectNativeRoute(page: Page, mediaId: string): Promise<void> {
-  const route = (await page.evaluate(
-    (id) => (window as any).__weftcutTest.mediaDecodeRouteKind(id),
-    mediaId,
-  )) as string | null
+// Precondition, not the gate: ProRes must persist the WebCodecs-blind route —
+// a misclassification here would otherwise surface as the harder-to-read
+// nativeHandles assertion downstream. The verdict lands ASYNCHRONOUSLY
+// shortly after import (the native SW-decode capability probe classifies the
+// format class, then the route upgrades proxied → native-sw), so poll rather
+// than assert a snapshot. This waits for CLASSIFICATION only — the full-proxy
+// build stays unawaited (the wait-skip is part of what these gates exercise).
+async function expectNativeRoute(page: Page, mediaId: string, timeoutMs = 30_000): Promise<void> {
+  const started = Date.now()
+  let route: string | null = null
+  for (;;) {
+    route = (await page.evaluate(
+      (id) => (window as any).__weftcutTest.mediaDecodeRouteKind(id),
+      mediaId,
+    )) as string | null
+    if (route === 'native-sw' || Date.now() - started >= timeoutMs) break
+    await new Promise((r) => setTimeout(r, 250))
+  }
   expect(route, 'ProRes must persist decode_route "native-sw"').toBe('native-sw')
 }
 

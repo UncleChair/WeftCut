@@ -185,7 +185,18 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     mode: "export",
     pool: exportPool,
     proxyAssetUrl: (mediaId: string) =>
-      req.project.proxyAssetUrls[mediaId] ?? null,
+      req.project.proxyAssetUrls[mediaId] ??
+      // Native-routed media may have NO export proxy at all (they skip the
+      // pre-export full-proxy wait), but ensureClip needs a non-null source
+      // or it silently skips the clip's sprite — BLACK frames with healthy
+      // decode counters. The original's URL here is identity/acquire fodder
+      // only: the dispatch loop (6a) creates the NATIVE handle under the same
+      // exportHandleKey before any composite (6b), so ensureClip's acquire
+      // returns that handle and never opens a WebCodecs decoder on this
+      // (WebCodecs-blind) original URL.
+      (req.nativeDecode?.mediaIds.includes(mediaId)
+        ? req.project.originalAssetUrls[mediaId] ?? null
+        : null),
     originalAssetUrl: (mediaId: string) =>
       req.project.originalAssetUrls[mediaId] ?? null,
     // Export drives `exportPool.acquire` directly (threading `mediaColor`
