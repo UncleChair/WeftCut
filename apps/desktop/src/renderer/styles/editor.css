@@ -737,3 +737,20 @@
    24px sub-lane (vs the in-clip diamonds, which are bottom-pinned in
    .kf-diamond-row). The base .kf-diamond transform keeps the 45° rotation. */
 .kf-sublane-diamond { top: 50%; margin-top: -3.5px; pointer-events: auto; cursor: pointer; }
+
+/* Read-only envelope context (kind/track/group) inside a prop Field row. */
+.prop-readonly {
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Multi-selection notice at the top of the Attribute envelope: names the
+   primary Layer being edited so a multi-selection can't be mistaken for a
+   batch edit. */
+.prop-primary-note {
+  margin: 0 0 4px;
+  font-size: var(--font-size-body);
+  color: var(--muted-foreground);
+}

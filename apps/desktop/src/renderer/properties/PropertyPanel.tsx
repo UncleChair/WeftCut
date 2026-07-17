@@ -9,8 +9,11 @@ import { AppSelect } from "../components/AppSelect";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import {
+  updateLayer,
   updateLayerParams,
   updateLayerParamTrack,
+  moveLayer,
+  trimLayer,
   installMotif,
   deleteMotif,
   getMotifSource,
@@ -39,7 +42,8 @@ import { readParamTrack, type ParamDescriptor, X, Y, SCALE_X, SCALE_Y, OPACITY, 
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
-import { useProjectStore } from "../state/projectStore";
+import { useProjectStore, useProjectSummary } from "../state/projectStore";
+import { useSelectedLayerIds } from "../state/selectionStore";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 import { findPanelLayer } from "../panels/panelLayer";
 
@@ -73,6 +77,10 @@ export function AttributePanel({
     () => findPanelLayer(tracks, selectedLayerId),
     [tracks, selectedLayerId],
   );
+  const track = useMemo(
+    () => (layer ? tracks.find((tr) => tr.layers.some((l) => l.id === layer.id)) : undefined),
+    [tracks, layer],
+  );
 
   if (!layer) {
     return (
@@ -90,6 +98,7 @@ export function AttributePanel({
       className="property-panel attribute-panel"
       aria-label={t("property_panel.heading")}
     >
+      <EnvelopeFields layer={layer} track={track} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
       <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} currentTimeUs={currentTimeUs} />
     </aside>
   );
@@ -97,6 +106,211 @@ export function AttributePanel({
 
 // Temporary source-compatible name while the fixed RightPanel is retired.
 export { AttributePanel as PropertyPanel };
+
+/// The common Layer envelope: identity (label/kind/Track/group), flags
+/// (enabled/locked), and timing (Start/End/duration). Timing edits route
+/// through the SAME group-aware commands as Timeline gestures — Start
+/// through `move_layer`, End and duration through `trim_layer` — so
+/// snapping, group fan-out, lock checks, and composition autofit behave
+/// identically no matter where the edit comes from (spec: the inspector
+/// must not create a different editing model; raw `update_layer` envelope
+/// patching is deliberately NOT used for time edits because it neither
+/// snaps nor autofits).
+function EnvelopeFields({
+  layer,
+  track,
+  onMutated,
+  fpsNum,
+  fpsDen,
+}: {
+  layer: LayerSummary;
+  track: TrackSummary | undefined;
+  onMutated: () => Promise<void>;
+  fpsNum: number;
+  fpsDen: number;
+}) {
+  const { t } = useTranslation();
+  const summary = useProjectSummary();
+  const selectionCount = useSelectedLayerIds().size;
+  const group = summary?.groups.find((g) => g.layer_ids.includes(layer.id)) ?? null;
+
+  const [label, setLabel] = useState(layer.label ?? "");
+  const [startTc, setStartTc] = useState(() => formatTimecode(layer.t_start_us, fpsNum, fpsDen));
+  const [endTc, setEndTc] = useState(() => formatTimecode(layer.t_end_us, fpsNum, fpsDen));
+  const [durTc, setDurTc] = useState(() => formatTimecode(layer.t_end_us - layer.t_start_us, fpsNum, fpsDen));
+  // Resync from the authoritative snapshot whenever the committed envelope
+  // changes (own commit round-trip, group fan-out, undo). Primitive deps —
+  // not the layer object — so unrelated project refreshes can't clobber a
+  // field mid-typing.
+  useEffect(() => {
+    setLabel(layer.label ?? "");
+    setStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
+    setEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
+    setDurTc(formatTimecode(layer.t_end_us - layer.t_start_us, fpsNum, fpsDen));
+  }, [layer.id, layer.label, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen]);
+
+  // Timeline gesture suppression parity: a locked Layer (or a Layer on a
+  // locked Track) can't be moved/trimmed from the Timeline, so the
+  // inspector's timing fields read but don't edit.
+  const timingDisabled = layer.locked || (track?.locked ?? false);
+
+  // Every edit below records exactly one undo entry per committed gesture.
+  // Guards skip the command entirely when the field still holds the current
+  // (grid-aligned) value, so re-committing an unchanged value can't record
+  // a no-op undo.
+  const commitLabel = async (): Promise<void> => {
+    const next = label.trim();
+    if (next === (layer.label ?? "")) return;
+    if (next === "") {
+      // `LayerPatch.label` can't express null — an empty field reverts
+      // rather than clearing the label.
+      setLabel(layer.label ?? "");
+      return;
+    }
+    try {
+      await updateLayer(layer.id, { label: next });
+      await onMutated();
+    } catch (e) {
+      console.warn("update_layer failed:", e);
+    }
+  };
+
+  const commitFlag = async (patch: { enabled: boolean } | { locked: boolean }): Promise<void> => {
+    try {
+      await updateLayer(layer.id, patch);
+      await onMutated();
+    } catch (e) {
+      console.warn("update_layer failed:", e);
+    }
+  };
+
+  // Start edits move the whole Layer (group-aware); the command snaps to
+  // the comp frame grid and autofits the composition.
+  const commitStart = async (): Promise<void> => {
+    const us = parseTimecode(startTc, fpsNum, fpsDen);
+    if (us === null) {
+      setStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
+      return;
+    }
+    if (us === layer.t_start_us || !track) return;
+    try {
+      await moveLayer(layer.id, track.id, us);
+      await onMutated();
+    } catch (e) {
+      console.warn("move_layer failed:", e);
+    }
+  };
+
+  // End edits trim the out-edge (group-aware, aligned-edge coupling).
+  const commitEnd = async (): Promise<void> => {
+    const us = parseTimecode(endTc, fpsNum, fpsDen);
+    if (us === null) {
+      setEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
+      return;
+    }
+    if (us === layer.t_end_us) return;
+    try {
+      await trimLayer(layer.id, "out", us);
+      await onMutated();
+    } catch (e) {
+      console.warn("trim_layer failed:", e);
+    }
+  };
+
+  // Duration edits are an out-edge trim to t_start + duration; the command
+  // clamps against the minimum Layer duration and media bounds.
+  const commitDuration = async (): Promise<void> => {
+    const us = parseTimecode(durTc, fpsNum, fpsDen);
+    if (us === null || us <= 0) {
+      setDurTc(formatTimecode(layer.t_end_us - layer.t_start_us, fpsNum, fpsDen));
+      return;
+    }
+    const newEnd = layer.t_start_us + us;
+    if (newEnd === layer.t_end_us) return;
+    try {
+      await trimLayer(layer.id, "out", newEnd);
+      await onMutated();
+    } catch (e) {
+      console.warn("trim_layer failed:", e);
+    }
+  };
+
+  const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind });
+  const trackLabel = track
+    ? (track.label ?? t(`kinds.${track.kind.toLowerCase()}`, { defaultValue: track.kind }))
+    : "—";
+
+  return (
+    <section className="prop-section" aria-label={t("property_panel.envelope")}>
+      {selectionCount > 1 ? (
+        <p className="prop-primary-note">
+          {t("property_panel.multi_primary", { label: layer.label ?? layer.id, count: selectionCount })}
+        </p>
+      ) : null}
+      <Field label={t("property_panel.label")}>
+        <AppInput
+          value={label}
+          ariaLabel={t("property_panel.label")}
+          onValueChange={setLabel}
+          onBlur={commitLabel}
+        />
+      </Field>
+      <Field label={t("property_panel.kind")}>
+        <span className="prop-readonly">{kindLabel}</span>
+      </Field>
+      <Field label={t("property_panel.track")}>
+        <span className="prop-readonly">{trackLabel}</span>
+      </Field>
+      <Field label={t("property_panel.group")}>
+        <span className="prop-readonly">{group ? (group.label ?? group.id) : t("property_panel.group_none")}</span>
+      </Field>
+      <Field label={t("property_panel.enabled")}>
+        <AppSwitch
+          checked={layer.enabled}
+          ariaLabel={t("property_panel.enabled")}
+          onCheckedChange={(next) => commitFlag({ enabled: next })}
+        />
+      </Field>
+      <Field label={t("property_panel.locked")}>
+        <AppSwitch
+          checked={layer.locked}
+          ariaLabel={t("property_panel.locked")}
+          onCheckedChange={(next) => commitFlag({ locked: next })}
+        />
+      </Field>
+      <Field label={t("property_panel.t_start")} hint={t("property_panel.t_start_hint")}>
+        <AppInput
+          value={startTc}
+          mono
+          disabled={timingDisabled}
+          ariaLabel={t("property_panel.t_start")}
+          onValueChange={setStartTc}
+          onBlur={commitStart}
+        />
+      </Field>
+      <Field label={t("property_panel.t_end")} hint={t("property_panel.t_end_hint")}>
+        <AppInput
+          value={endTc}
+          mono
+          disabled={timingDisabled}
+          ariaLabel={t("property_panel.t_end")}
+          onValueChange={setEndTc}
+          onBlur={commitEnd}
+        />
+      </Field>
+      <Field label={t("property_panel.duration")}>
+        <AppInput
+          value={durTc}
+          mono
+          disabled={timingDisabled}
+          ariaLabel={t("property_panel.duration")}
+          onValueChange={setDurTc}
+          onBlur={commitDuration}
+        />
+      </Field>
+    </section>
+  );
+}
 
 function KindFields({
   layer,
@@ -133,7 +347,7 @@ function KindFields({
       case "Color":
         return <ColorFields v={layer.params} commit={commit} />;
       case "Audio":
-        return <AudioFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+        return <AudioFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
       case "Motif":
         return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />;
     }
@@ -1033,6 +1247,8 @@ function AudioFields({
   layer,
   v,
   commit,
+  fpsNum,
+  fpsDen,
   tInLayerUs,
   playheadInSpan,
   onMutated,
@@ -1040,11 +1256,21 @@ function AudioFields({
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "Audio" }>;
   commit: Commit;
+  fpsNum: number;
+  fpsDen: number;
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const [fadeInTc, setFadeInTc] = useState(() => formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+  const [fadeOutTc, setFadeOutTc] = useState(() => formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+  // Primitive deps — a whole-params dep (`v`) would resync on EVERY project
+  // refresh (fresh identity per summary) and clobber a fade field mid-typing.
+  useEffect(() => {
+    setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+    setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+  }, [layer.id, v.fade_in_us, v.fade_out_us, fpsNum, fpsDen]);
 
   return (
     <section className="prop-section">
@@ -1053,6 +1279,36 @@ function AudioFields({
       </h3>
       <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={PAN} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <Field label={t("property_panel.fade_in")}>
+        <AppInput
+          value={fadeInTc}
+          ariaLabel={t("property_panel.fade_in")}
+          onValueChange={setFadeInTc}
+          onBlur={() => {
+            const us = parseTimecode(fadeInTc, fpsNum, fpsDen);
+            if (us !== null && us !== v.fade_in_us) {
+              commit({ kind: "Audio", fade_in_us: us });
+            } else if (us === null) {
+              setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+            }
+          }}
+        />
+      </Field>
+      <Field label={t("property_panel.fade_out")}>
+        <AppInput
+          value={fadeOutTc}
+          ariaLabel={t("property_panel.fade_out")}
+          onValueChange={setFadeOutTc}
+          onBlur={() => {
+            const us = parseTimecode(fadeOutTc, fpsNum, fpsDen);
+            if (us !== null && us !== v.fade_out_us) {
+              commit({ kind: "Audio", fade_out_us: us });
+            } else if (us === null) {
+              setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+            }
+          }}
+        />
+      </Field>
       <Field label={t("property_panel.role")}>
         <AppSelect
           value={v.role}

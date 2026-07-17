@@ -624,3 +624,62 @@ describe('media-pool mutations dispatch (Phase 3c-i)', () => {
     expect(a.snapshot().media_pool[MID], 'undo restores media').toBeDefined()
   })
 })
+
+describe('dispatch: attribute-panel timing/envelope ops', () => {
+  // The Attribute panel routes Start edits to move_layer, End/duration edits
+  // to trim_layer, and label/enabled/locked edits to update_layer. Each edit
+  // must record exactly ONE history entry; snapping and group fan-out happen
+  // inside the command, not in the panel.
+  function setup() {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'attr')
+    const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const mk = (t0: number, t1: number) =>
+      (actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: t0, t_end_us: t1 }) as { ok: true; value: string }).value
+    return { actor, a, mk }
+  }
+
+  it('move_layer snaps an off-grid Start to the comp frame grid, one undo entry', () => {
+    const { actor, a, mk } = setup()
+    const l = mk(0, 1_000_000)
+    const before = actor.historyStatus().len
+    // 500_001 µs sits between frames 15 and 16 at 30 fps; the command snaps.
+    const r = actor.dispatch('move_layer', { layer: l, to_track: a, t_start_us: 500_001, escape_group: false })
+    expect(r.ok).toBe(true)
+    expect(actor.snapshot().tracks[0].layers[0].t_start_us).toBe(500_000)
+    expect(actor.snapshot().tracks[0].layers[0].t_end_us).toBe(1_500_000) // duration preserved
+    expect(actor.historyStatus().len).toBe(before + 1)
+  })
+
+  it('trim_layer Out fans out to an aligned group sibling within the same single undo entry', () => {
+    const { actor, mk } = setup()
+    const b = actor.snapshot().tracks[1].id
+    // Siblings on different tracks sharing the SAME out-edge: the coupled
+    // trim fans out (mirrors mutations/trim.test.ts's aligned-set cases).
+    const l1 = mk(0, 1_000_000)
+    const l2 = (actor.dispatch('add_layer', { track: b, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    actor.dispatch('groups_create', { layers: [l1, l2], reassign: false })
+    const beforeTrim = actor.historyStatus().len
+    const r = actor.dispatch('trim_layer', { layer: l1, edge: 'out', new_t_us: 2_000_000, escape_group: false })
+    expect(r.ok).toBe(true)
+    const tracks = actor.snapshot().tracks
+    expect(tracks[0].layers.find((x) => x.id === l1)?.t_end_us).toBe(2_000_000)
+    expect(tracks[1].layers.find((x) => x.id === l2)?.t_end_us).toBe(2_000_000)
+    expect(actor.historyStatus().len).toBe(beforeTrim + 1)
+  })
+
+  it('update_layer (label/enabled/locked) records one undo entry per edit', () => {
+    const { actor, mk } = setup()
+    const l = mk(0, 1_000_000)
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('update_layer', { layer: l, patch: { label: 'Card' } }).ok).toBe(true)
+    expect(actor.dispatch('update_layer', { layer: l, patch: { enabled: false } }).ok).toBe(true)
+    expect(actor.dispatch('update_layer', { layer: l, patch: { locked: true } }).ok).toBe(true)
+    const layer = actor.snapshot().tracks[0].layers[0]
+    expect(layer.label).toBe('Card')
+    expect(layer.enabled).toBe(false)
+    expect(layer.locked).toBe(true)
+    expect(actor.historyStatus().len).toBe(before + 3)
+  })
+})
