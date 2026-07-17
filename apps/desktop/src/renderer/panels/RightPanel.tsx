@@ -15,11 +15,12 @@ import {
 } from "lucide-react";
 
 import { type GroupSummary, type TrackSummary } from "../ipc";
-import { PropertyPanel } from "../properties/PropertyPanel";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
-import { CaptionsPanel } from "./CaptionsPanel";
-import { MixerPanel } from "./MixerPanel";
+import { AttributePanel } from "./AttributePanel";
+import { CaptionPanel } from "./CaptionPanel";
+import { EffectPanel } from "./EffectPanel";
 import { NearbyPanel } from "./NearbyPanel";
+import { RoleMixerPanel } from "./RoleMixerPanel";
 
 type RightPanelTab = "properties" | "captions" | "audio";
 
@@ -52,6 +53,10 @@ export function RightPanel({
   // value readouts follow playback at ~10 Hz instead of re-rendering per frame.
   const currentTimeUs = usePlayheadTimeUsThrottled();
   const [activeTab, setActiveTab] = useState<RightPanelTab>("properties");
+
+  // Group editing left the legacy inspector before this extraction. Keep the
+  // prop until Dock Workspace replaces this compatibility composition.
+  void groups;
 
   return (
     <aside className="right-panel">
@@ -101,15 +106,22 @@ export function RightPanel({
           value="properties"
           keepMounted
         >
-          <PropertyPanel
-            tracks={tracks}
-            groups={groups}
-            selectedLayerId={selectedLayerId}
-            onMutated={onMutated}
-            fpsNum={fpsNum}
-            fpsDen={fpsDen}
-            currentTimeUs={currentTimeUs}
-          />
+          <div className="right-panel-property-stack">
+            <AttributePanel
+              tracks={tracks}
+              selectedLayerId={selectedLayerId}
+              onMutated={onMutated}
+              fpsNum={fpsNum}
+              fpsDen={fpsDen}
+              currentTimeUs={currentTimeUs}
+            />
+            <EffectPanel
+              tracks={tracks}
+              selectedLayerId={selectedLayerId}
+              currentTimeUs={currentTimeUs}
+              onMutated={onMutated}
+            />
+          </div>
         </Tabs.Panel>
 
         <Tabs.Panel
@@ -117,7 +129,7 @@ export function RightPanel({
           value="captions"
           keepMounted
         >
-          <CaptionsPanel onMutated={onMutated} />
+          <CaptionPanel onMutated={onMutated} />
         </Tabs.Panel>
 
         <Tabs.Panel
@@ -125,7 +137,7 @@ export function RightPanel({
           value="audio"
           keepMounted
         >
-          <MixerPanel onMutated={onMutated} />
+          <RoleMixerPanel onMutated={onMutated} />
         </Tabs.Panel>
       </Tabs.Root>
     </aside>

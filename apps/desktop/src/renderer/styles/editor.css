@@ -371,6 +371,20 @@
   gap: 8px;
 }
 
+/* The fixed RightPanel temporarily composes the now-independent Attribute and
+   Effect surfaces in the exact place the old monolithic PropertyPanel used.
+   The stack owns the former outer padding so the extraction adds no spacing. */
+.right-panel-property-stack {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.right-panel-property-stack > .property-panel {
+  padding: 0;
+}
+
 .property-panel h3 {
   margin: 8px 0 4px 0;
   font-size: var(--font-size-body);

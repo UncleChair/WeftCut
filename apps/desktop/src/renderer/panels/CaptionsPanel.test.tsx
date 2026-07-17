@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import "../i18n";
-import { CaptionsPanel } from "./CaptionsPanel";
+import { CaptionPanel } from "./CaptionPanel";
 import { useProjectStore } from "../state/projectStore";
 
 vi.mock("../state/playbackStore", () => ({ transportSeek: vi.fn() }));
@@ -86,7 +86,7 @@ function seed() {
 describe("CaptionsPanel", () => {
   it("shows empty placeholder when no caption tracks", () => {
     useProjectStore.getState().apply(null);
-    render(<CaptionsPanel onMutated={async () => {}} />);
+    render(<CaptionPanel onMutated={async () => {}} />);
     expect(
       screen.getByText("Import a subtitle file or auto-caption to create captions."),
     ).toBeTruthy();
@@ -94,14 +94,14 @@ describe("CaptionsPanel", () => {
 
   it("lists caption cues as editable inputs", () => {
     seed();
-    render(<CaptionsPanel onMutated={async () => {}} />);
+    render(<CaptionPanel onMutated={async () => {}} />);
     // The cue's content appears as an input value (getByDisplayValue for inputs)
     expect(screen.getByDisplayValue("Hello")).toBeTruthy();
   });
 
   it("seeks to cue start when the seek button is clicked", () => {
     seed();
-    render(<CaptionsPanel onMutated={async () => {}} />);
+    render(<CaptionPanel onMutated={async () => {}} />);
     const seekBtn = screen.getByRole("button", { name: "seek 00:01" });
     fireEvent.click(seekBtn);
     expect(transportSeek).toHaveBeenCalledWith(1_000_000);
@@ -110,7 +110,7 @@ describe("CaptionsPanel", () => {
   it("calls updateLayerParams on blur with changed value", async () => {
     seed();
     const onMutated = vi.fn().mockResolvedValue(undefined);
-    render(<CaptionsPanel onMutated={onMutated} />);
+    render(<CaptionPanel onMutated={onMutated} />);
     const input = screen.getByDisplayValue("Hello");
     fireEvent.change(input, { target: { value: "World" } });
     fireEvent.blur(input);
@@ -121,7 +121,7 @@ describe("CaptionsPanel", () => {
 
   it("renders a style section with font-size and color controls", () => {
     seed();
-    render(<CaptionsPanel onMutated={async () => {}} />);
+    render(<CaptionPanel onMutated={async () => {}} />);
     // Style heading visible
     expect(screen.getByText("Caption style")).toBeTruthy();
   });
@@ -129,7 +129,7 @@ describe("CaptionsPanel", () => {
   it("calls restyleCaptionTrack with font_size_px on commit", async () => {
     seed();
     const onMutated = vi.fn().mockResolvedValue(undefined);
-    render(<CaptionsPanel onMutated={onMutated} />);
+    render(<CaptionPanel onMutated={onMutated} />);
     // AppNumberField renders <input type="number"> with aria-label from property_panel.font_size_px
     const sizeInput = screen.getByLabelText("Font size (px)");
     fireEvent.change(sizeInput, { target: { value: "80" } });
@@ -142,7 +142,7 @@ describe("CaptionsPanel", () => {
     vi.useFakeTimers();
     seed();
     const onMutated = vi.fn().mockResolvedValue(undefined);
-    render(<CaptionsPanel onMutated={onMutated} />);
+    render(<CaptionPanel onMutated={onMutated} />);
     // AppColorField renders <input type="color">; query by its aria-label
     const colorInput = screen.getByLabelText("Color");
     fireEvent.change(colorInput, { target: { value: "#ff0000" } });

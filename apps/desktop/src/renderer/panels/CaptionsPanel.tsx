@@ -21,7 +21,11 @@ import {
 
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 
-export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> }) {
+export interface CaptionPanelProps {
+  onMutated: () => Promise<void>;
+}
+
+export function CaptionPanel({ onMutated }: CaptionPanelProps) {
   const { t } = useTranslation();
   const summary = useProjectSummary();
 
@@ -134,6 +138,9 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
     </section>
   );
 }
+
+// Temporary source-compatible name while the fixed RightPanel is retired.
+export { CaptionPanel as CaptionsPanel };
 
 /// Format microseconds as MM:SS for the cue timecode label.
 function fmtTc(us: number): string {

@@ -35,7 +35,11 @@ function MixerFlagButton({ active, activeClass, label, onToggle, children }: {
   );
 }
 
-export function MixerPanel({ onMutated }: { onMutated: () => Promise<void> }) {
+export interface RoleMixerPanelProps {
+  onMutated: () => Promise<void>;
+}
+
+export function RoleMixerPanel({ onMutated }: RoleMixerPanelProps) {
   const { t } = useTranslation();
   const roles = useAudioRoles();
   const byRole = new Map(roles.map((r) => [r.role, r]));
@@ -94,3 +98,6 @@ export function MixerPanel({ onMutated }: { onMutated: () => Promise<void> }) {
     </section>
   );
 }
+
+// Temporary source-compatible name while the fixed RightPanel is retired.
+export { RoleMixerPanel as MixerPanel };

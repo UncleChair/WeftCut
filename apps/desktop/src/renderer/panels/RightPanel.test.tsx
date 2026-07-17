@@ -7,16 +7,20 @@ vi.mock("../state/playheadStore", () => ({
   usePlayheadTimeUsThrottled: () => 0,
 }));
 
-vi.mock("../properties/PropertyPanel", () => ({
-  PropertyPanel: () => <div>Property content</div>,
+vi.mock("./AttributePanel", () => ({
+  AttributePanel: () => <div>Attribute content</div>,
 }));
 
-vi.mock("./CaptionsPanel", () => ({
-  CaptionsPanel: () => <input aria-label="Caption draft" defaultValue="" />,
+vi.mock("./EffectPanel", () => ({
+  EffectPanel: () => <div>Effect content</div>,
 }));
 
-vi.mock("./MixerPanel", () => ({
-  MixerPanel: () => <div>Audio content</div>,
+vi.mock("./CaptionPanel", () => ({
+  CaptionPanel: () => <input aria-label="Caption draft" defaultValue="" />,
+}));
+
+vi.mock("./RoleMixerPanel", () => ({
+  RoleMixerPanel: () => <div>Audio content</div>,
 }));
 
 vi.mock("./NearbyPanel", () => ({
@@ -67,7 +71,8 @@ describe("RightPanel tabs", () => {
     expect(screen.getByRole("tab", { name: "Captions" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Audio" })).toBeTruthy();
     expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
-    expect(screen.getByText("Property content")).toBeTruthy();
+    expect(screen.getByText("Attribute content")).toBeTruthy();
+    expect(screen.getByText("Effect content")).toBeTruthy();
   });
 
   it("switches panels without unmounting an inactive panel's draft state", () => {

@@ -18,7 +18,6 @@ import {
   createEditDraft,
   AUDIO_ROLES,
   type AudioRole,
-  type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
   type Rgba,
@@ -42,11 +41,12 @@ const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
 import { useProjectStore } from "../state/projectStore";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
-import { EffectsSection } from "./EffectsSection";
+import { findPanelLayer } from "../panels/panelLayer";
 
-interface Props {
+export { isVisualKind } from "../panels/panelLayer";
+
+export interface AttributePanelProps {
   tracks: TrackSummary[];
-  groups: GroupSummary[];
   selectedLayerId: string | null;
   onMutated: () => Promise<void>;
   fpsNum: number;
@@ -60,65 +60,43 @@ function toRgb(value: string): string {
   return value.length >= 7 ? value.slice(0, 7) : value;
 }
 
-export function PropertyPanel({
+export function AttributePanel({
   tracks,
-  groups,
   selectedLayerId,
   onMutated,
   fpsNum,
   fpsDen,
   currentTimeUs,
-}: Props) {
+}: AttributePanelProps) {
   const { t } = useTranslation();
   const layer = useMemo(
-    () => findLayer(tracks, selectedLayerId),
+    () => findPanelLayer(tracks, selectedLayerId),
     [tracks, selectedLayerId],
   );
 
   if (!layer) {
     return (
-      <aside className="property-panel" aria-label={t("property_panel.heading")}>
+      <aside
+        className="property-panel attribute-panel"
+        aria-label={t("property_panel.heading")}
+      >
         <p className="placeholder">{t("property_panel.empty")}</p>
       </aside>
     );
   }
 
-  // `groups` is currently unused (the group-effects UI was removed); kept in
-  // the prop signature to avoid call-site churn. Revisit when the effects
-  // subsystem is rebuilt — it may regain a use, or be dropped.
-  void groups;
-
   return (
-    <aside className="property-panel" aria-label={t("property_panel.heading")}>
+    <aside
+      className="property-panel attribute-panel"
+      aria-label={t("property_panel.heading")}
+    >
       <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} currentTimeUs={currentTimeUs} />
     </aside>
   );
 }
 
-function findLayer(
-  tracks: TrackSummary[],
-  layerId: string | null,
-): LayerSummary | null {
-  if (!layerId) return null;
-  for (const t of tracks) {
-    const m = t.layers.find((l) => l.id === layerId);
-    if (m) return m;
-  }
-  return null;
-}
-
-/// Effects render on visual sprite kinds only (not Audio), so the EffectsSection
-/// shows for exactly these. An allowlist (not `!== "Audio"`) keeps a future
-/// non-visual kind from wrongly getting effects.
-export function isVisualKind(kind: string): boolean {
-  return (
-    kind === "Text" ||
-    kind === "VideoClip" ||
-    kind === "ImageOverlay" ||
-    kind === "Color" ||
-    kind === "Motif"
-  );
-}
+// Temporary source-compatible name while the fixed RightPanel is retired.
+export { AttributePanel as PropertyPanel };
 
 function KindFields({
   layer,
@@ -161,14 +139,7 @@ function KindFields({
     }
   })();
 
-  return (
-    <>
-      {body}
-      {isVisualKind(layer.params.kind) && (
-        <EffectsSection layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      )}
-    </>
-  );
+  return body;
 }
 
 type Commit = (patch: LayerParamsPatch) => Promise<void>;
