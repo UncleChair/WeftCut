@@ -4,12 +4,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-// Phase 3c-ii-d — THE FLIP. With WEFTCUT_TS_ACTOR=1 the TS state actor in main
-// is authoritative: the renderer's category-A commands (add_color_layer,
-// undo/redo, project_new_workspace/save/open, project_summary) are served by the
-// TS actor + TS persistence orchestrator, NOT the Rust actor. This drives that
-// path end-to-end through the production bridge (window.api.backend.invoke) and
-// asserts an edit → summary → undo/redo → save → reopen round-trip.
+// The TS state actor in main is authoritative: the renderer's category-A
+// commands (add_color_layer, undo/redo, project_new_workspace/save/open,
+// project_summary) are served by the TS actor + TS persistence orchestrator.
+// This drives that path end-to-end through the production bridge
+// (window.api.backend.invoke) and asserts an edit → summary → undo/redo →
+// save → reopen round-trip.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MAIN = path.resolve(__dirname, '../../out/main/index.js')
@@ -21,11 +21,11 @@ const invoke = <T = unknown>(page: Page, cmd: string, args: Record<string, unkno
   page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const) as Promise<T>
 const layerCount = (s: Summary) => s.tracks.reduce((n, t) => n + t.layers.length, 0)
 
-test('WEFTCUT_TS_ACTOR flip: edit → summary → undo/redo → save → reopen round-trip', async () => {
+test('TS actor: edit → summary → undo/redo → save → reopen round-trip', async () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-flip-'))
   const app = await electron.launch({
     args: [MAIN],
-    env: { ...process.env, WEFTCUT_TS_ACTOR: '1', WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   try {
     const page = await app.firstWindow({ timeout: 60_000 })

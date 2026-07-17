@@ -9,7 +9,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MAIN = path.resolve(__dirname, '../../out/main/index.js')
 
-// Parse the `[mcp] connect: {…}` line the host logs in unpackaged runs (mcp/index.ts:123).
+// Parse the `[mcp] connect: {…}` line the host logs in unpackaged runs (mcp/index.ts).
 function parseConnect(line: string): { url: string; token: string } | null {
   const m = line.match(/\[mcp\] connect: (\{.*\})/)
   if (!m) return null
@@ -18,12 +18,12 @@ function parseConnect(line: string): { url: string; token: string } | null {
   return { url: s.url, token: s.headers.Authorization.replace(/^Bearer /, '') }
 }
 
-test('WEFTCUT_TS_ACTOR flip: MCP mutate → resource read reflects it; blocked tool rejects', async () => {
+test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects', async () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-mcp-flip-'))
   let connect: { url: string; token: string } | null = null
   const app = await electron.launch({
     args: [MAIN],
-    env: { ...process.env, WEFTCUT_TS_ACTOR: '1', WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })
   try {
@@ -38,7 +38,7 @@ test('WEFTCUT_TS_ACTOR flip: MCP mutate → resource read reflects it; blocked t
     const client = new Client({ name: 'e2e', version: '0.0.0' })
     await client.connect(transport)
     try {
-      // A read resource served from the Rust read-mirror (TS state).
+      // A read resource — the `project://*` state views are served by the TS MCP host.
       const before = await client.readResource({ uri: 'project://tracks' })
       const tracks = JSON.parse((before.contents[0] as { text: string }).text) as Array<{ id: string }>
       expect(tracks.length).toBeGreaterThan(0)

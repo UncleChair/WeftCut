@@ -33,7 +33,7 @@ export interface TsActorHostDeps {
   /** Combined OrchestratorFs & AutosaveFs adapter — node:fs in production, in-memory in tests. */
   fs: OrchestratorFs & AutosaveFs
   /** Directory-scan/stat/rename shell for the open-time media relink self-heal
-   *  (relink.ts). Optional → openProject skips healing (tests, flag-off). */
+   *  (relink.ts). Optional → openProject skips healing when omitted (tests). */
   relinkFs?: RelinkFs
   /** node:path.join — injected for testability. */
   join: (...parts: string[]) => string

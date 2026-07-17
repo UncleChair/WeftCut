@@ -17,8 +17,8 @@ use super::transition::Transition;
 /// `.vproj` schema version. Bump on any breaking change to the on-disk
 /// `Project` shape. Pre-release: the TS loader (`persistence.ts`) rejects
 /// anything below `SCHEMA_VERSION` with a clear error rather than migrating —
-/// older `.vproj` folders must be re-created. The Rust read-mirror only
-/// deserializes already-gated JSON. Per-version history lives in git / the ADRs.
+/// older `.vproj` folders must be re-created. Rust only ever deserializes
+/// already-gated JSON. Per-version history lives in git / the ADRs.
 // v10: proxy fields replaced by a single `decode_route: DecodeRoute` enum on MediaItem.
 pub const SCHEMA_VERSION: u32 = 10;
 

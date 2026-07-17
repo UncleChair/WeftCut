@@ -6,11 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-// Phase 4a-ii exit — add_motif is now a PURE TS recorded mutation. Before this
-// slice it was the last channel/tool in BLOCKED_UNDER_FLAG / MCP_BLOCKED_UNDER_FLAG
-// (rejected under WEFTCUT_TS_ACTOR=1 because the motif catalog lived only in Rust).
-// Both blocked sets are now empty; this drives add_motif end-to-end under the flag
-// through BOTH surfaces (renderer command bridge + MCP actor.mcpCall) and asserts a
+// add_motif is a PURE TS recorded mutation. This drives it end-to-end through
+// BOTH surfaces (renderer command bridge + MCP actor.mcpCall) and asserts a
 // Motif layer lands. The shared TS motif catalog (src/shared/motifs/catalog.ts)
 // resolves the built-in `countdown` on the main side. (Motif rendering/export is
 // independently covered by motif-preview/motif-export/motif-capture specs.)
@@ -36,11 +33,11 @@ function parseConnect(line: string): { url: string; token: string } | null {
   return { url: s.url, token: s.headers.Authorization.replace(/^Bearer /, '') }
 }
 
-test('WEFTCUT_TS_ACTOR flip: renderer add_motif (no track) lands a Motif layer + undo/redo', async () => {
+test('TS actor: renderer add_motif (no track) lands a Motif layer + undo/redo', async () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-motif-flip-'))
   const app = await electron.launch({
     args: [MAIN],
-    env: { ...process.env, WEFTCUT_TS_ACTOR: '1', WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   try {
     const page = await app.firstWindow({ timeout: 60_000 })
@@ -51,7 +48,7 @@ test('WEFTCUT_TS_ACTOR flip: renderer add_motif (no track) lands a Motif layer +
     expect(layerCount(await invoke<Summary>(page, 'project_summary'))).toBe(0)
 
     // add_motif with no trackId → the TS mutation mints an Overlay track THEN a
-    // Motif layer (the two-commit). Was REJECTED under the flag before Phase 4a-ii.
+    // Motif layer (the two-commit).
     await invoke(page, 'add_motif', { motifId: 'countdown', tStartUs: 0 })
     const afterAdd = await invoke<Summary>(page, 'project_summary')
     expect(layerCount(afterAdd)).toBe(1)
@@ -71,12 +68,12 @@ test('WEFTCUT_TS_ACTOR flip: renderer add_motif (no track) lands a Motif layer +
   }
 })
 
-test('WEFTCUT_TS_ACTOR flip: MCP add_motif returns the layer id + the mirror reflects a Motif layer', async () => {
+test('TS actor: MCP add_motif returns the layer id + the summary reflects a Motif layer', async () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-motif-mcp-'))
   let connect: { url: string; token: string } | null = null
   const app = await electron.launch({
     args: [MAIN],
-    env: { ...process.env, WEFTCUT_TS_ACTOR: '1', WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })
   try {
@@ -91,13 +88,12 @@ test('WEFTCUT_TS_ACTOR flip: MCP add_motif returns the layer id + the mirror ref
     await client.connect(transport)
     try {
       // add_motif via the TS actor.mcpCall path (no track_id → Overlay + Motif layer).
-      // Was in MCP_BLOCKED_UNDER_FLAG (rejected) before Phase 4a-ii.
       const res = await client.callTool({ name: 'add_motif', arguments: { motif_id: 'countdown', t_start_us: 0 } })
       const content = res.content as Array<{ type: string; text?: string }>
       expect(content[0]!.type).toBe('text')
       expect(content[0]!.text && content[0]!.text.length).toBeTruthy() // the layer id
 
-      // The Rust read-mirror (fed from the TS actor) reflects a Motif layer.
+      // The `project://current` state view (served by the TS MCP host) reflects a Motif layer.
       const after = await client.readResource({ uri: 'project://current' })
       const proj = JSON.parse((after.contents[0] as { text: string }).text) as {
         tracks: Array<{ layers: Array<{ id: string; params: { kind: string; motif_id?: string } }> }>

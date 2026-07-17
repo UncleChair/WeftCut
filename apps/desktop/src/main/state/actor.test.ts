@@ -530,7 +530,7 @@ describe('dispatch: delete_track + move_track', () => {
   })
 })
 
-describe('replace_state (mirror do_replace_state actor.rs:3581 + History::reset)', () => {
+describe('replace_state (wholesale swap + history reset)', () => {
   it('resets history to a fresh single-entry stack and clears redo/checkpoints/lock', () => {
     const gen = seededGen()
     const actor = createActor({ initial: blankProject(gen, 'orig'), idGen: gen, clock: () => '<TS>' })

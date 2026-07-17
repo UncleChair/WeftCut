@@ -45,9 +45,9 @@ interface Summary {
   tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string; media_id?: string } }> }>
 }
 
-// Under WEFTCUT_TS_ACTOR the TS host returns PARSED values from handleInvoke
-// (ts-actor-host.ts): project_summary → a Summary object, add_media_layer → the
-// new layer-id string, import_media (hybrid) → the bare media-id string. Mirrors
+// The TS host returns PARSED values from handleInvoke (ts-actor-host.ts):
+// project_summary → a Summary object, add_media_layer → the new layer-id
+// string, import_media (hybrid) → the bare media-id string. Mirrors
 // ts-actor-flip.spec.ts, which consumes project_summary as a parsed Summary.
 const invoke = <T = unknown>(page: Page, cmd: string, args: Record<string, unknown> = {}) =>
   page.evaluate(
@@ -55,7 +55,7 @@ const invoke = <T = unknown>(page: Page, cmd: string, args: Record<string, unkno
     [cmd, args] as const,
   ) as Promise<T>
 
-test('WEFTCUT_TS_ACTOR native-compute: import_media hybrid + audio layer visible in TS-actor summary', async () => {
+test('TS actor native-compute: import_media hybrid + audio layer visible in TS-actor summary', async () => {
   // Skip gracefully when the audio fixture is absent (e.g. a stripped CI run
   // that prunes fixtures — the full conformance suite guards this more tightly).
   test.skip(!fs.existsSync(AUDIO_FIXTURE), `audio fixture not found at ${AUDIO_FIXTURE}`)
@@ -66,7 +66,6 @@ test('WEFTCUT_TS_ACTOR native-compute: import_media hybrid + audio layer visible
     args: [MAIN],
     env: {
       ...process.env,
-      WEFTCUT_TS_ACTOR: '1',
       WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1',
     } as Record<string, string>,
   })

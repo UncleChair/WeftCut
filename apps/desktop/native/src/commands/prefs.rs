@@ -1,6 +1,6 @@
 //! Prefs/settings/logs/agent commands. Owns: ping, workspace_dir, agent_session_get,
 //! log_list/clear/emit/dir_path. Config stores (keybindings, recents, app_settings,
-//! view_state, export_settings) are TS-owned; Rust compute and read-mirror paths live
+//! view_state, export_settings) are TS-owned; the Rust compute paths live
 //! in `commands/media.rs` and `commands/export.rs`.
 
 use crate::napi_backend::Backend;

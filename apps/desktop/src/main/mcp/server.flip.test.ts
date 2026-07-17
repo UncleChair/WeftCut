@@ -67,7 +67,7 @@ describe('handleCallTool flip routing', () => {
     await handleCallTool(fakeBackend(spy), () => ts, 'groups_list', {})
     expect(spy).toHaveBeenCalledWith('groups_list', JSON.stringify({}))
   })
-  it('flag-off (no tsHost) forwards everything to the backend', async () => {
+  it('no tsHost → forwards everything to the backend', async () => {
     const spy = vi.fn(async () => '{"ok":true,"result":{"content":[]}}')
     await handleCallTool(fakeBackend(spy), () => null, 'add_color_layer', {})
     expect(spy).toHaveBeenCalled()

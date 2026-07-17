@@ -131,9 +131,9 @@ describe('runHybrid: import_media', () => {
   it('branches on a subtitle extension WITHOUT probing media (routes to the subtitle path)', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
-    // Task 4 wires the subtitle hybrid: the orchestrator branches on .srt, reads
-    // the file, calls parseSubtitles, and dispatches add_caption_track — NOT probeMedia.
-    // Returns a BARE track-id string (flag-off import_media parity — media.rs).
+    // The subtitle hybrid: the orchestrator branches on .srt, reads the file,
+    // calls parseSubtitles, and dispatches add_caption_track — NOT probeMedia.
+    // Returns a BARE track-id string (the import_media channel contract).
     const result = await runHybrid('import_media', { path: 'C:/subs.srt' }, deps)
     expect(deps._probeMedia).not.toHaveBeenCalled()
     expect(typeof result).toBe('string')
@@ -226,7 +226,7 @@ describe('runHybrid: import_media .srt (renderer subtitle branch)', () => {
     expect((result as string).length).toBeGreaterThan(0)
   })
 
-  it('uses the full filename (with extension) as the caption label — flag-off parity', async () => {
+  it('uses the full filename (with extension) as the caption label', async () => {
     const actor = freshActor()
     const deps = makeDeps(actor, { fileContent: TWO_CUE_SRT })
     const id = await runHybrid('import_media', { path: 'C:\\My Subs\\captions.srt' }, deps) as string

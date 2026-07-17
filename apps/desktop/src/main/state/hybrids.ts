@@ -63,10 +63,10 @@ function ensureAudioTrack(deps: HybridDeps): string {
  *  `import_media` `.srt`/`.ass`/`.vtt` branch.
  *
  *  Returns `{ track_id, simplified }`. Both call sites UNWRAP it: the renderer
- *  import branch returns the bare `track_id` string (flag-off parity — see
- *  media.rs), and the MCP arm builds the `ToolResult::text` message (tools.rs).
- *  Do NOT return this object straight out of `runHybrid` — server.ts stringifies
- *  the hybrid result, so an object would surface as "[object Object]". */
+ *  import branch returns the bare `track_id` string, and the MCP arm builds the
+ *  `ToolResult::text` message. Do NOT return this object straight out of
+ *  `runHybrid` — server.ts stringifies the hybrid result, so an object would
+ *  surface as "[object Object]". */
 async function applySubtitleBody(
   body: string,
   format: string | null,
@@ -85,10 +85,9 @@ async function applySubtitleBody(
 
 /** Run a hybrid tool: Rust compute then TS-actor write. Returns the tool's
  *  result — a STRING in every arm: a media id (import_media), the bare caption
- *  track id (import_media `.srt` branch, flag-off parity), or the MCP
- *  ToolResult text (apply_subtitles). server.ts stringifies the result, so the
- *  arms must not return objects. Throws on a rejected actor write or an
- *  unhandled tool. */
+ *  track id (import_media `.srt` branch), or the MCP ToolResult text
+ *  (apply_subtitles). server.ts stringifies the result, so the arms must not
+ *  return objects. Throws on a rejected actor write or an unhandled tool. */
 export async function runHybrid(tool: string, args: Record<string, unknown>, deps: HybridDeps): Promise<unknown> {
   switch (tool) {
     case 'import_media': {
