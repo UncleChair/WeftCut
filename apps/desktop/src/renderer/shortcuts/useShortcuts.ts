@@ -20,6 +20,7 @@ interface ResolvedEntry {
   fireWhenEditing: boolean;
   repeatable: boolean;
   captureGlobal: boolean;
+  suppressInTransientWidget: boolean;
 }
 
 function resolveEntries(overrides: OverrideMap): ResolvedEntry[] {
@@ -39,6 +40,7 @@ function resolveEntries(overrides: OverrideMap): ResolvedEntry[] {
           fireWhenEditing: def.fireWhenEditing ?? chord,
           repeatable: def.repeatable ?? false,
           captureGlobal: def.captureGlobal ?? false,
+          suppressInTransientWidget: def.suppressInTransientWidget ?? false,
         });
       } catch (e) {
         console.warn(
@@ -136,7 +138,7 @@ export function useShortcuts({
         // into firing while editing) and open transient widgets that own the
         // key. Returning without `preventDefault` lets the widget handle it.
         if (editing && !entry.fireWhenEditing) return;
-        if (entry.captureGlobal && inWidget) return;
+        if ((entry.captureGlobal || entry.suppressInTransientWidget) && inWidget) return;
         const fn = handlersRef.current[entry.id];
         if (!fn) return;
         e.preventDefault();

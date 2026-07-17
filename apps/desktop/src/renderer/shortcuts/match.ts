@@ -10,7 +10,9 @@
 // reflects the typed character. A French AZERTY user still matches `S`
 // when they press the key labelled S on their keyboard; the trade-off
 // is that punctuation bindings move with the layout, which is the
-// right default for the v1 binding set.
+// right default for the v1 binding set. Named punctuation keys (Period,
+// Comma, Backquote) deliberately use `event.code`: Shift changes their
+// `event.key`, while those names explicitly describe a physical key.
 
 import { isMac } from "@/platform";
 
@@ -22,6 +24,9 @@ export interface ParsedBinding {
   /// Normalised — single letters lowercased, "Space" → " ", named keys
   /// kept verbatim (Delete, Backspace, Enter, Escape, Tab, ArrowLeft, F1).
   key: string;
+  /// Set for named physical punctuation keys whose `event.key` changes while
+  /// Shift is held (Period becomes `>`, Comma becomes `<`).
+  code?: "Period" | "Comma" | "Backquote";
 }
 
 export function parseBinding(spec: string): ParsedBinding {
@@ -50,11 +55,31 @@ export function parseBinding(spec: string): ParsedBinding {
       throw new Error(`shortcuts: unknown modifier "${raw}" in "${spec}"`);
     }
   }
-  return { ctrl, meta, shift, alt, key: normaliseKey(last) };
+  const code = physicalPunctuationCode(last);
+  return {
+    ctrl,
+    meta,
+    shift,
+    alt,
+    key: normaliseKey(last),
+    ...(code ? { code } : {}),
+  };
+}
+
+function physicalPunctuationCode(
+  key: string,
+): ParsedBinding["code"] | undefined {
+  if (key === "Period") return "Period";
+  if (key === "Comma") return "Comma";
+  if (key === "Backquote") return "Backquote";
+  return undefined;
 }
 
 function normaliseKey(k: string): string {
   if (k === "Space") return " ";
+  if (k === "Period") return ".";
+  if (k === "Comma") return ",";
+  if (k === "Backquote") return "`";
   if (k.length === 1) return k.toLowerCase();
   return k;
 }
@@ -65,7 +90,10 @@ export function matchEvent(spec: ParsedBinding, e: KeyboardEvent): boolean {
     e.metaKey === spec.meta &&
     e.shiftKey === spec.shift &&
     e.altKey === spec.alt &&
-    e.key.toLowerCase() === spec.key.toLowerCase()
+    (spec.code
+      ? e.code === spec.code ||
+        (e.code === "" && e.key.toLowerCase() === spec.key.toLowerCase())
+      : e.key.toLowerCase() === spec.key.toLowerCase())
   );
 }
 
@@ -112,7 +140,8 @@ export function bindingsEqual(a: string, b: string): boolean {
       pa.meta === pb.meta &&
       pa.shift === pb.shift &&
       pa.alt === pb.alt &&
-      pa.key === pb.key
+      pa.key === pb.key &&
+      pa.code === pb.code
     );
   } catch {
     return false;
@@ -146,11 +175,14 @@ export function eventToBinding(e: KeyboardEvent): string | null {
   }
   if (e.altKey) parts.push("Alt");
   if (e.shiftKey) parts.push("Shift");
-  parts.push(canonicaliseKey(e.key));
+  parts.push(canonicaliseKey(e.key, e.code));
   return parts.join("+");
 }
 
-function canonicaliseKey(k: string): string {
+function canonicaliseKey(k: string, code = ""): string {
+  if (code === "Period" || code === "Comma" || code === "Backquote") {
+    return code;
+  }
   if (k === " ") return "Space";
   if (k.length === 1) return k.toUpperCase();
   return k;

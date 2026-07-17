@@ -23,6 +23,10 @@ export type ActionId =
   | "focusLogSearch"
   | "toggleDisplayMode"
   | "toggleMediaPool"
+  | "focusNextPanel"
+  | "focusPreviousPanel"
+  | "toggleMaximizePanel"
+  | "restoreMaximizedPanel"
   | "groupSelected"
   | "dissolveSelectedGroup"
   | "seekFrameBack"
@@ -50,6 +54,10 @@ export interface ActionDef {
   /// and open transient widgets — see `useShortcuts`. Reserve for bare
   /// single keys that read as global app commands.
   captureGlobal?: boolean;
+  /// Yield when focus is owned by an open menu, dialog, listbox, or other
+  /// transient widget. Workspace navigation uses this even though its chord
+  /// does not need capture-phase priority.
+  suppressInTransientWidget?: boolean;
 }
 
 export const ACTION_DEFS: Record<ActionId, ActionDef> = {
@@ -84,6 +92,30 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // `docs/data-model.md` R.9: bare-letter `M` toggles the MediaPool
   // left drawer (closed/open). The app-pref store remembers state.
   toggleMediaPool:   { defaultKeys: ["M"],                 labelKey: "actions.toggle_media_pool" },
+  focusNextPanel: {
+    defaultKeys: ["Ctrl+Shift+Period"],
+    labelKey: "actions.focus_next_panel",
+    fireWhenEditing: false,
+    suppressInTransientWidget: true,
+  },
+  focusPreviousPanel: {
+    defaultKeys: ["Ctrl+Shift+Comma"],
+    labelKey: "actions.focus_previous_panel",
+    fireWhenEditing: false,
+    suppressInTransientWidget: true,
+  },
+  toggleMaximizePanel: {
+    defaultKeys: ["Backquote"],
+    labelKey: "actions.toggle_maximize_panel",
+    fireWhenEditing: false,
+    suppressInTransientWidget: true,
+  },
+  restoreMaximizedPanel: {
+    defaultKeys: ["Escape"],
+    labelKey: "actions.restore_maximized_panel",
+    fireWhenEditing: false,
+    suppressInTransientWidget: true,
+  },
   // `docs/groups.md` — Ctrl/Cmd+G groups the current multi-
   // selection; Ctrl/Cmd+Shift+G dissolves every group represented in
   // the selection. Handler lives in Timeline.tsx, while the complete

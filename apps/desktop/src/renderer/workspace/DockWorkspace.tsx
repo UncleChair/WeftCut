@@ -2,6 +2,8 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
+  useMemo,
   useRef,
   type ReactElement,
   type RefObject,
@@ -30,12 +32,15 @@ import {
 import { type ProxyState } from "../panels/mediaReadiness";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { Menu, MenuItem } from "../menu/Menu";
 import {
   DOCK_COMPONENT_ID,
   DOCK_TAB_COMPONENT_ID,
   DockWorkspaceAdapter,
+  type DockWorkspaceController,
 } from "./dockWorkspaceAdapter";
 import {
+  PANEL_KINDS,
   PANEL_REGISTRY,
   isPanelKind,
   type PanelKind,
@@ -68,10 +73,28 @@ interface DockPanelParams extends Record<string, unknown> {
 
 const ContractsContext = createContext<DockPanelContracts | null>(null);
 
+interface WorkspaceChromeCommands {
+  closePanel(kind: PanelKind): void;
+  setHoveredPanel(kind: PanelKind | null): void;
+  toggleMaximize(kind?: PanelKind): void;
+  openPanel(kind: PanelKind): void;
+  resetWorkspace(): void;
+}
+
+const WorkspaceChromeContext = createContext<WorkspaceChromeCommands | null>(
+  null,
+);
+
 function useContracts(): DockPanelContracts {
   const contracts = useContext(ContractsContext);
   if (!contracts) throw new Error("Dock Panel rendered outside DockWorkspace");
   return contracts;
+}
+
+function useWorkspaceChrome(): WorkspaceChromeCommands {
+  const chrome = useContext(WorkspaceChromeContext);
+  if (!chrome) throw new Error("Dock chrome rendered outside DockWorkspace");
+  return chrome;
 }
 
 function MediaDockPanel() {
@@ -221,8 +244,14 @@ export function WeftCutPanelRenderer({
 }: IDockviewPanelProps<DockPanelParams>) {
   if (!isPanelKind(params.kind)) return null;
   const Component = PANEL_COMPONENTS[params.kind];
+  const chrome = useWorkspaceChrome();
   return (
-    <div className="weft-dock-panel" data-panel-kind={params.kind}>
+    <div
+      className="weft-dock-panel"
+      data-panel-kind={params.kind}
+      onPointerEnter={() => chrome.setHoveredPanel(params.kind)}
+      onPointerLeave={() => chrome.setHoveredPanel(null)}
+    >
       <Component />
     </div>
   );
@@ -233,8 +262,21 @@ export function WeftCutDockTab({
 }: IDockviewPanelHeaderProps<DockPanelParams>) {
   const kind = isPanelKind(api.id) ? api.id : null;
   const title = kind ? PANEL_REGISTRY[kind].title : (api.title ?? api.id);
+  const chrome = useWorkspaceChrome();
+  const multiple = api.group.panels.length > 1;
   return (
-    <div className="weft-dock-tab" title={`Move ${title}`}>
+    <div
+      className="weft-dock-tab"
+      title={`Move ${title}`}
+      onPointerEnter={() => chrome.setHoveredPanel(kind)}
+      onPointerLeave={() => chrome.setHoveredPanel(null)}
+      onDoubleClick={(event) => {
+        if (!kind) return;
+        event.preventDefault();
+        event.stopPropagation();
+        chrome.toggleMaximize(kind);
+      }}
+    >
       <span className="weft-dock-six-dot" aria-hidden="true">
         <i />
         <i />
@@ -244,6 +286,48 @@ export function WeftCutDockTab({
         <i />
       </span>
       <span className="weft-dock-tab-label">{title}</span>
+      {kind && multiple ? (
+        <button
+          type="button"
+          className="weft-dock-tab-close"
+          aria-label={`Close ${title}`}
+          title={`Close ${title}`}
+          draggable={false}
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          onDragStart={(event) => event.preventDefault()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            chrome.closePanel(kind);
+          }}
+        >
+          ×
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export function EmptyWorkspaceRecovery() {
+  const chrome = useWorkspaceChrome();
+  return (
+    <div className="weft-dock-empty" role="region" aria-label="Empty workspace">
+      <p>All Panels are closed.</p>
+      <div className="weft-dock-empty-actions">
+        <Menu label="Open Panel">
+          {PANEL_KINDS.map((kind) => (
+            <MenuItem
+              key={kind}
+              label={PANEL_REGISTRY[kind].title}
+              onSelect={() => chrome.openPanel(kind)}
+            />
+          ))}
+        </Menu>
+        <button type="button" onClick={() => chrome.resetWorkspace()}>
+          Reset Workspace
+        </button>
+      </div>
     </div>
   );
 }
@@ -251,8 +335,27 @@ export function WeftCutDockTab({
 const DOCK_COMPONENTS = { [DOCK_COMPONENT_ID]: WeftCutPanelRenderer };
 const DOCK_TAB_COMPONENTS = { [DOCK_TAB_COMPONENT_ID]: WeftCutDockTab };
 
-export function DockWorkspace({ contracts }: { contracts: DockPanelContracts }) {
+interface DockWorkspaceProps {
+  contracts: DockPanelContracts;
+  onControllerReady?: (controller: DockWorkspaceController | null) => void;
+}
+
+export function DockWorkspace({
+  contracts,
+  onControllerReady,
+}: DockWorkspaceProps) {
   const adapterRef = useRef<DockWorkspaceAdapter | null>(null);
+
+  const chrome = useMemo<WorkspaceChromeCommands>(
+    () => ({
+      closePanel: (kind) => adapterRef.current?.closePanel(kind),
+      setHoveredPanel: (kind) => adapterRef.current?.setHoveredPanel(kind),
+      toggleMaximize: (kind) => adapterRef.current?.toggleMaximize(kind),
+      openPanel: (kind) => adapterRef.current?.openPanel(kind),
+      resetWorkspace: () => adapterRef.current?.resetWorkspace(),
+    }),
+    [],
+  );
 
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
     let adapter = adapterRef.current;
@@ -262,23 +365,36 @@ export function DockWorkspace({ contracts }: { contracts: DockPanelContracts }) 
       adapterRef.current = adapter;
     }
     adapter.initializeEditingLayout();
-  }, []);
+    onControllerReady?.(adapter);
+  }, [onControllerReady]);
+
+  useEffect(
+    () => () => {
+      adapterRef.current?.dispose();
+      adapterRef.current = null;
+      onControllerReady?.(null);
+    },
+    [onControllerReady],
+  );
 
   return (
     <ContractsContext.Provider value={contracts}>
-      <section className="dock-workspace" aria-label="Editing workspace">
-        <DockviewReact
-          className="weft-dockview"
-          components={DOCK_COMPONENTS}
-          tabComponents={DOCK_TAB_COMPONENTS}
-          onReady={onReady}
-          disableFloatingGroups
-          dndStrategy="html5"
-          keyboardNavigation={false}
-          noPanelsOverlay="watermark"
-          announcements={false}
-        />
-      </section>
+      <WorkspaceChromeContext.Provider value={chrome}>
+        <section className="dock-workspace" aria-label="Editing workspace">
+          <DockviewReact
+            className="weft-dockview"
+            components={DOCK_COMPONENTS}
+            tabComponents={DOCK_TAB_COMPONENTS}
+            watermarkComponent={EmptyWorkspaceRecovery}
+            onReady={onReady}
+            disableFloatingGroups
+            dndStrategy="html5"
+            keyboardNavigation={false}
+            noPanelsOverlay="watermark"
+            announcements={false}
+          />
+        </section>
+      </WorkspaceChromeContext.Provider>
     </ContractsContext.Provider>
   );
 }

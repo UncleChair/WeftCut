@@ -34,6 +34,15 @@
   min-height: 0;
 }
 
+.weft-dockview .dv-groupview.dv-active-group::after {
+  content: "";
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  border: 1px solid color-mix(in srgb, var(--ring) 72%, transparent);
+  pointer-events: none;
+}
+
 .weft-dock-panel {
   width: 100%;
   height: 100%;
@@ -96,10 +105,30 @@
 }
 
 .weft-dock-tab-label {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-size-caption);
+}
+
+.weft-dock-tab-close {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  flex: none;
+  color: var(--muted-foreground);
+  background: transparent;
+  font: inherit;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.weft-dock-tab-close:hover {
+  color: var(--foreground);
+  background: var(--muted);
 }
 
 /* The native Dockview tab remains the only dock drag source. A single-tab
@@ -146,4 +175,32 @@
 .weft-dockview .dv-tabs-and-actions-container:not(.dv-single-tab) .dv-tab {
   height: 28px;
   padding: 0 8px;
+}
+
+.weft-dock-empty {
+  min-width: 280px;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  color: var(--muted-foreground);
+}
+
+.weft-dock-empty p {
+  margin: 0;
+}
+
+.weft-dock-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.weft-dock-empty-actions > button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  background: var(--card);
+  cursor: pointer;
 }

@@ -27,6 +27,7 @@ function dispatchBinding(target: Element, binding: string): KeyboardEvent {
   const parsed = parseBinding(binding);
   const ev = new KeyboardEvent("keydown", {
     key: parsed.key,
+    ...(parsed.code ? { code: parsed.code } : {}),
     ctrlKey: parsed.ctrl,
     metaKey: parsed.meta,
     shiftKey: parsed.shift,
@@ -153,5 +154,84 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     } finally {
       usePickSessionStore.setState({ session: null });
     }
+  });
+
+  it("dispatches the exact Panel focus and maximize defaults", () => {
+    const focusNextPanel = vi.fn();
+    const focusPreviousPanel = vi.fn();
+    const toggleMaximizePanel = vi.fn();
+    render(
+      <Harness
+        handlers={{
+          focusNextPanel,
+          focusPreviousPanel,
+          toggleMaximizePanel,
+        }}
+      />,
+    );
+
+    expect(
+      dispatchBinding(document.body, "Ctrl+Shift+Period").defaultPrevented,
+    ).toBe(true);
+    expect(
+      dispatchBinding(document.body, "Ctrl+Shift+Comma").defaultPrevented,
+    ).toBe(true);
+    expect(dispatchBinding(document.body, "Backquote").defaultPrevented).toBe(
+      true,
+    );
+    expect(focusNextPanel).toHaveBeenCalledOnce();
+    expect(focusPreviousPanel).toHaveBeenCalledOnce();
+    expect(toggleMaximizePanel).toHaveBeenCalledOnce();
+
+    const shiftedPeriod = new KeyboardEvent("keydown", {
+      key: ">",
+      code: "Period",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(shiftedPeriod);
+    expect(shiftedPeriod.defaultPrevented).toBe(true);
+    expect(focusNextPanel).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps Panel commands out of editable and transient widget contexts", () => {
+    const focusNextPanel = vi.fn();
+    const toggleMaximizePanel = vi.fn();
+    const restoreMaximizedPanel = vi.fn();
+    render(
+      <Harness
+        handlers={{
+          focusNextPanel,
+          toggleMaximizePanel,
+          restoreMaximizedPanel,
+        }}
+      />,
+    );
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    expect(
+      dispatchBinding(input, "Ctrl+Shift+Period").defaultPrevented,
+    ).toBe(false);
+    expect(dispatchBinding(input, "Backquote").defaultPrevented).toBe(false);
+
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const button = document.createElement("button");
+    dialog.appendChild(button);
+    document.body.appendChild(dialog);
+    expect(
+      dispatchBinding(button, "Ctrl+Shift+Period").defaultPrevented,
+    ).toBe(false);
+    expect(dispatchBinding(button, "Backquote").defaultPrevented).toBe(false);
+    expect(dispatchBinding(button, "Escape").defaultPrevented).toBe(false);
+
+    expect(focusNextPanel).not.toHaveBeenCalled();
+    expect(toggleMaximizePanel).not.toHaveBeenCalled();
+    expect(restoreMaximizedPanel).not.toHaveBeenCalled();
+    input.remove();
+    dialog.remove();
   });
 });

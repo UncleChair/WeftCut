@@ -15,15 +15,45 @@ import {
 
 interface AddedPanel {
   id: string;
+  group: FakeGroup;
   api: {
     setActive: ReturnType<typeof vi.fn>;
     setSize: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+    maximize: ReturnType<typeof vi.fn>;
+    isMaximized: ReturnType<typeof vi.fn>;
+    exitMaximized: ReturnType<typeof vi.fn>;
+  };
+}
+
+interface FakeGroup {
+  id: string;
+  panels: AddedPanel[];
+  activePanel: AddedPanel | undefined;
+  api: { isMaximized: ReturnType<typeof vi.fn> };
+}
+
+function signal<T>() {
+  const listeners = new Set<(event: T) => void>();
+  return {
+    event(listener: (event: T) => void) {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
+    fire(event: T) {
+      for (const listener of listeners) listener(event);
+    },
   };
 }
 
 function fakeDockview(width = 1_000, height = 800) {
   const panels = new Map<string, AddedPanel>();
+  const groups: FakeGroup[] = [];
   const added: Record<string, unknown>[] = [];
+  let groupSequence = 0;
+  let activeGroup: FakeGroup | undefined;
+  let activePanel: AddedPanel | undefined;
+  let maximizedGroup: FakeGroup | undefined;
   let overlayListener:
     | ((event: {
         nativeEvent: { dataTransfer?: Pick<DataTransfer, "types"> };
@@ -31,6 +61,35 @@ function fakeDockview(width = 1_000, height = 800) {
       }) => void)
     | null = null;
   const disposeOverlay = vi.fn();
+  const layout = signal<void>();
+  const active = signal<{ panel: AddedPanel | undefined; origin: "api" }>();
+  const maximized = signal<{ group: FakeGroup; isMaximized: boolean }>();
+
+  function activate(panel: AddedPanel | undefined) {
+    activePanel = panel;
+    activeGroup = panel?.group;
+    if (panel) panel.group.activePanel = panel;
+    active.fire({ panel, origin: "api" });
+  }
+
+  function close(panel: AddedPanel) {
+    panels.delete(panel.id);
+    const index = panel.group.panels.indexOf(panel);
+    if (index >= 0) panel.group.panels.splice(index, 1);
+    if (panel.group.activePanel === panel) {
+      panel.group.activePanel = panel.group.panels[Math.min(index, panel.group.panels.length - 1)];
+    }
+    if (panel.group.panels.length === 0) {
+      const groupIndex = groups.indexOf(panel.group);
+      if (groupIndex >= 0) groups.splice(groupIndex, 1);
+      if (maximizedGroup === panel.group) maximizedGroup = undefined;
+    }
+    if (activePanel === panel) {
+      const next = panel.group.activePanel ?? groups.at(-1)?.activePanel;
+      activate(next);
+    }
+    layout.fire();
+  }
 
   const api = {
     width,
@@ -38,26 +97,121 @@ function fakeDockview(width = 1_000, height = 800) {
     get totalPanels() {
       return panels.size;
     },
+    get panels() {
+      return [...panels.values()];
+    },
+    get groups() {
+      return groups;
+    },
+    get activePanel() {
+      return activePanel;
+    },
+    get activeGroup() {
+      return activeGroup;
+    },
     getPanel: vi.fn((id: string) => panels.get(id)),
     addPanel: vi.fn((options: Record<string, unknown>) => {
+      const position = options.position as
+        | { referencePanel?: string; direction?: string; index?: number }
+        | undefined;
+      const reference = position?.referencePanel
+        ? panels.get(position.referencePanel)
+        : undefined;
+      let group = position?.direction === "within" && reference
+        ? reference.group
+        : undefined;
+      if (!group) {
+        group = {
+          id: `group-${++groupSequence}`,
+          panels: [],
+          activePanel: undefined,
+          api: {
+            isMaximized: vi.fn(() => maximizedGroup === group),
+          },
+        };
+        groups.push(group);
+      }
       const panel: AddedPanel = {
         id: String(options.id),
-        api: { setActive: vi.fn(), setSize: vi.fn() },
+        group,
+        api: {} as AddedPanel["api"],
       };
+      panel.api = {
+        setActive: vi.fn(() => activate(panel)),
+        setSize: vi.fn(),
+        close: vi.fn(() => close(panel)),
+        maximize: vi.fn(() => {
+          maximizedGroup = panel.group;
+          maximized.fire({ group: panel.group, isMaximized: true });
+        }),
+        isMaximized: vi.fn(() => maximizedGroup === panel.group),
+        exitMaximized: vi.fn(() => {
+          maximizedGroup = undefined;
+          maximized.fire({ group: panel.group, isMaximized: false });
+        }),
+      };
+      const index = position?.index ?? group.panels.length;
+      group.panels.splice(Math.min(index, group.panels.length), 0, panel);
+      if (!group.activePanel || options.inactive !== true) group.activePanel = panel;
       added.push(options);
       panels.set(panel.id, panel);
+      if (options.inactive !== true) activate(panel);
+      layout.fire();
       return panel;
     }),
     onWillShowOverlay: vi.fn((listener: typeof overlayListener) => {
       overlayListener = listener;
       return { dispose: disposeOverlay };
     }),
+    onDidLayoutChange: vi.fn(layout.event),
+    onDidActivePanelChange: vi.fn(active.event),
+    onDidMaximizedGroupChange: vi.fn(maximized.event),
+    moveToNext: vi.fn((options?: { includePanel?: boolean }) => {
+      if (groups.length === 0) return;
+      if (options?.includePanel && activeGroup && activeGroup.panels.length > 1) {
+        const index = activePanel ? activeGroup.panels.indexOf(activePanel) : -1;
+        activate(activeGroup.panels[(index + 1) % activeGroup.panels.length]);
+        return;
+      }
+      const index = activeGroup ? groups.indexOf(activeGroup) : -1;
+      activate(groups[(index + 1) % groups.length]?.activePanel);
+    }),
+    moveToPrevious: vi.fn((options?: { includePanel?: boolean }) => {
+      if (groups.length === 0) return;
+      if (options?.includePanel && activeGroup && activeGroup.panels.length > 1) {
+        const index = activePanel ? activeGroup.panels.indexOf(activePanel) : 0;
+        activate(
+          activeGroup.panels[
+            (index - 1 + activeGroup.panels.length) % activeGroup.panels.length
+          ],
+        );
+        return;
+      }
+      const index = activeGroup ? groups.indexOf(activeGroup) : 0;
+      activate(groups[(index - 1 + groups.length) % groups.length]?.activePanel);
+    }),
+    hasMaximizedGroup: vi.fn(() => maximizedGroup !== undefined),
+    exitMaximizedGroup: vi.fn(() => {
+      const group = maximizedGroup;
+      maximizedGroup = undefined;
+      if (group) maximized.fire({ group, isMaximized: false });
+    }),
+    clear: vi.fn(() => {
+      panels.clear();
+      groups.splice(0);
+      activePanel = undefined;
+      activeGroup = undefined;
+      maximizedGroup = undefined;
+      layout.fire();
+    }),
   };
 
   return {
     api: api as unknown as DockviewApi,
     panels,
+    groups,
     added,
+    rawApi: api,
     disposeOverlay,
     showOverlay(types: string[]) {
       const preventDefault = vi.fn();
@@ -178,6 +332,98 @@ describe("DockWorkspaceAdapter", () => {
       position: { referencePanel: "attribute", direction: "within" },
     });
     expect(dock.panels.get("caption")?.api.setActive).toHaveBeenCalledOnce();
+  });
+
+  it("destroys a closed Panel and recreates it at its last tab placement", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    const firstEffect = dock.panels.get("effect");
+
+    adapter.closePanel("effect");
+    expect(firstEffect?.api.close).toHaveBeenCalledOnce();
+    expect(adapter.hasPanel("effect")).toBe(false);
+
+    adapter.openPanel("effect");
+    const effects = dock.added.filter((panel) => panel.id === "effect");
+    expect(effects).toHaveLength(2);
+    expect(effects.at(-1)).toMatchObject({
+      position: {
+        referencePanel: "attribute",
+        direction: "within",
+        index: 1,
+      },
+    });
+    expect(dock.panels.get("effect")).not.toBe(firstEffect);
+  });
+
+  it("uses semantic right-side fallback after the former tool group disappears", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    adapter.openPanel("caption");
+    adapter.closePanel("caption");
+    adapter.closePanel("attribute");
+    adapter.closePanel("effect");
+    adapter.closePanel("nearby");
+
+    adapter.openPanel("caption");
+
+    expect(dock.added.filter((panel) => panel.id === "caption").at(-1)).toMatchObject({
+      position: { referencePanel: "preview", direction: "right" },
+    });
+  });
+
+  it("cycles focused Panels through tabs and groups in both directions", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    adapter.openPanel("attribute");
+    expect(adapter.getSnapshot().activePanel).toBe("attribute");
+
+    adapter.focusNextPanel();
+    expect(dock.rawApi.moveToNext).toHaveBeenCalledWith({ includePanel: true });
+    expect(adapter.getSnapshot().activePanel).toBe("effect");
+    adapter.focusPreviousPanel();
+    expect(dock.rawApi.moveToPrevious).toHaveBeenCalledWith({ includePanel: true });
+    expect(adapter.getSnapshot().activePanel).toBe("attribute");
+  });
+
+  it("maximizes the hovered Panel and restores through Dockview without resizing the tree", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    const sizesBefore = dock.panels.get("preview")?.api.setSize.mock.calls.length;
+
+    adapter.setHoveredPanel("preview");
+    adapter.toggleMaximize();
+    expect(dock.panels.get("preview")?.api.maximize).toHaveBeenCalledOnce();
+    expect(adapter.getSnapshot().maximizedPanel).toBe("preview");
+
+    adapter.toggleMaximize();
+    expect(dock.rawApi.exitMaximizedGroup).toHaveBeenCalledOnce();
+    expect(adapter.getSnapshot().maximizedPanel).toBeNull();
+    expect(dock.panels.get("preview")?.api.setSize).toHaveBeenCalledTimes(sizesBefore ?? 0);
+  });
+
+  it("allows an intentional empty state and resets it to Editing", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    for (const kind of EDITING_OPEN_PANEL_KINDS) adapter.closePanel(kind);
+
+    expect(adapter.getSnapshot()).toMatchObject({
+      activePanel: null,
+      maximizedPanel: null,
+      empty: true,
+    });
+
+    adapter.resetWorkspace();
+    expect(dock.rawApi.clear).toHaveBeenCalledOnce();
+    expect(adapter.getSnapshot().empty).toBe(false);
+    expect(adapter.getSnapshot().openPanels).toEqual(
+      new Set(EDITING_OPEN_PANEL_KINDS),
+    );
   });
 
   it("suppresses Dock overlays for Files and business MIME without consuming panel drags", () => {

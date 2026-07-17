@@ -71,6 +71,11 @@ import {
   DockWorkspace,
   type DockPanelContracts,
 } from "./workspace/DockWorkspace";
+import {
+  EMPTY_DOCK_WORKSPACE_SNAPSHOT,
+  type DockWorkspaceController,
+  type DockWorkspaceSnapshot,
+} from "./workspace/dockWorkspaceAdapter";
 
 interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
@@ -121,6 +126,27 @@ export function App({ onCloseProject }: AppProps) {
   // Timeline-local clipboard. It intentionally remembers the copied layer,
   // independent of later selection changes; App remounts for each project.
   const copiedLayerIdRef = useRef<string | null>(null);
+  const [workspaceController, setWorkspaceController] =
+    useState<DockWorkspaceController | null>(null);
+  const [workspaceSnapshot, setWorkspaceSnapshot] =
+    useState<DockWorkspaceSnapshot>(EMPTY_DOCK_WORKSPACE_SNAPSHOT);
+
+  const handleWorkspaceControllerReady = useCallback(
+    (controller: DockWorkspaceController | null) => {
+      setWorkspaceController(controller);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!workspaceController) {
+      setWorkspaceSnapshot(EMPTY_DOCK_WORKSPACE_SNAPSHOT);
+      return;
+    }
+    const update = () => setWorkspaceSnapshot(workspaceController.getSnapshot());
+    update();
+    return workspaceController.subscribe(update);
+  }, [workspaceController]);
 
   // Fresh project session → playhead 0. The store is module-global and would
   // otherwise carry the previous project's position across a close/open
@@ -472,6 +498,15 @@ export function App({ onCloseProject }: AppProps) {
       const current = useAppSettingsStore.getState().settings.media_pool_drawer_open;
       void setMediaPoolDrawerOpen(!current);
     },
+    focusNextPanel: () => workspaceController?.focusNextPanel(),
+    focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),
+    toggleMaximizePanel: () => workspaceController?.toggleMaximize(),
+    ...(workspaceSnapshot.maximizedPanel
+      ? {
+          restoreMaximizedPanel: () =>
+            workspaceController?.restoreMaximizedPanel(),
+        }
+      : {}),
     // Playhead movement. The clock's setPosition snap (clock.ts) absorbs
     // any sub-frame drift back to the canonical frame; `seekTo` clamps
     // to [0, lastFrameAnchorUs]. Callers just hand it raw deltas.
@@ -646,11 +681,16 @@ export function App({ onCloseProject }: AppProps) {
           onOpenConnect={() => setConnectOpen(true)}
           onOpenSettings={() => openSettings("general")}
           onOpenSearch={() => setPaletteOpen(true)}
+          workspaceController={workspaceController}
+          workspaceSnapshot={workspaceSnapshot}
         />
       </div>
 
       <main className="app-main">
-        <DockWorkspace contracts={dockPanelContracts} />
+        <DockWorkspace
+          contracts={dockPanelContracts}
+          onControllerReady={handleWorkspaceControllerReady}
+        />
       </main>
 
       {/* One modal overlay: the settings form while idle, the progress panel

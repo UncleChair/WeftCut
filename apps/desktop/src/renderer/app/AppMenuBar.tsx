@@ -16,6 +16,10 @@ import {
 } from "../i18n";
 import { ViewMenu } from "./ViewMenu";
 import { openPerformanceMonitor } from "../render/performanceMonitorWindow";
+import type {
+  DockWorkspaceController,
+  DockWorkspaceSnapshot,
+} from "../workspace/dockWorkspaceAdapter";
 
 interface AppMenuBarProps {
   busy: boolean;
@@ -38,6 +42,8 @@ interface AppMenuBarProps {
   onOpenConnect: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
+  workspaceController: DockWorkspaceController | null;
+  workspaceSnapshot: DockWorkspaceSnapshot;
 }
 
 interface DevMenuProps {
@@ -94,6 +100,8 @@ export function AppMenuBar({
   onOpenConnect,
   onOpenSettings,
   onOpenSearch,
+  workspaceController,
+  workspaceSnapshot,
 }: AppMenuBarProps) {
   const { t, i18n } = useTranslation();
 
@@ -181,7 +189,10 @@ export function AppMenuBar({
             />
           </Menu>
 
-          <ViewMenu />
+          <ViewMenu
+            workspaceController={workspaceController}
+            workspaceSnapshot={workspaceSnapshot}
+          />
 
 
           <Menu label={t("menu.insert")}>
