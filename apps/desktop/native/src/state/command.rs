@@ -1,13 +1,6 @@
-//! Shared command-surface types that outlive the Rust state actor.
-//!
-//! The Rust actor (`state/actor.rs`) is being decommissioned in Phase 4b.
-//! These types must survive that deletion because kept code in `jobs/`,
-//! `commands/`, `mcp/`, and the napi layer depend on them.
-//!
-//! Phase 4b T4a: moved here verbatim from `actor.rs` (L45–457) and from
-//! `validate.rs` (ValidationError). The actor still compiles this task —
-//! it re-imports the types from here. This is a pure refactor; no behavior
-//! change.
+//! Shared command-surface types — the error/patch vocabulary that `jobs/`,
+//! `commands/`, `mcp/`, and the napi layer depend on. The TS state actor is
+//! the sole writer; these types are the Rust side of that wire contract.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

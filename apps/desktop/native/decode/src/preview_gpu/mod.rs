@@ -5,7 +5,7 @@
 //! poc/shared-texture/INTEGRATION-DESIGN.md.
 pub mod decoder;
 mod session;
-// The registry + its wire types are the seam Task 5 wires to the addon's event
-// channel; unused until then (allow keeps the base build's warning set clean).
+// The registry + its wire types are the seam the addon wires to its event
+// channel; the base build doesn't (allow keeps its warning set clean).
 #[allow(unused_imports)]
 pub use session::{OpenInfo, PreviewGpuPoke, PreviewGpuRegistry, TimingReport, TimingSummary};

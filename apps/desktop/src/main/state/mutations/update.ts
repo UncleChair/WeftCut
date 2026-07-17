@@ -2,7 +2,7 @@
 import type { Project, Uuid } from '../model'
 import { checkTrackLock, locateLayer } from './helpers'
 
-/** Mirrors native/src/state/actor.rs:79-90 LayerPatch. null/absent = "don't touch". */
+/** LayerPatch. null/absent = "don't touch". */
 export interface LayerPatch {
   label?: string | null
   t_start_us?: number | null

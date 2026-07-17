@@ -216,7 +216,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     if (settings.encoderEngine !== "webcodecs") return;
     // Intermediates (ProRes/DNxHR) are native-only — never probed via
     // WebCodecs. Placeholder gate value only; real intermediate UI (profile
-    // pickers, no path badge at all) lands in Task 13.
+    // pickers, no path badge at all) is not built yet.
     if (isIntermediateCodec(settings.codec)) {
       setWebcodecsOk(true);
       return;

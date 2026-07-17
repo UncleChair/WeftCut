@@ -34,7 +34,7 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
   right.id = idGen()
   right.t_start_us = atTUs
   right.t_end_us = original.t_end_us
-  // Phase 2a: no Motif cap in the corpus; capped===false. Phase 2b: real motif cap.
+  // No Motif duration cap is implemented; capped===false for Motif layers.
   const rightCapped = false
   if (right.params.kind === 'VideoClip' || right.params.kind === 'Audio') right.params.src_in_us += splitOffset
   else if (right.params.kind === 'Motif' && rightCapped) right.params.src_in_us += splitOffset

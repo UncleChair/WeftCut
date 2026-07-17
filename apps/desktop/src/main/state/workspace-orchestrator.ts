@@ -1,12 +1,12 @@
 // apps/desktop/src/main/state/workspace-orchestrator.ts
 //
-// The TS-in-main re-home of commands/persistence.rs (project_open / save_as /
+// The TS-in-main home of workspace lifecycle (project_open / save_as /
 // new_workspace). Pure + dependency-injected: the TS actor handle, a WorkspaceNapi
 // facade (the granular Rust bookkeeping), an OrchestratorFs (node:fs in production,
-// in-memory in tests), node:path.join, and an idGen. Dormant in 3c-ii-b — the live
-// wiring into src/main/index.ts is the 3c-ii-d flip. Mirrors the Rust handler order
-// exactly: workspace bookkeeping (cache→workspace→agent-end→LogBus, inside
-// commitWorkspace) BEFORE replace_state; recents AFTER a successful swap/write.
+// in-memory in tests), node:path.join, and an idGen; wired by src/main/index.ts.
+// Handler order is LOAD-BEARING: workspace bookkeeping (cache→workspace→
+// agent-end→LogBus, inside commitWorkspace) BEFORE replace_state; recents AFTER
+// a successful swap/write.
 import type { ActorHandle } from './actor'
 import type { IdGen } from './ids'
 import type { Project } from './model'
@@ -25,9 +25,8 @@ export interface WorkspaceNapi {
   /** recents.set_last_new_project_parent — new-workspace flow only. */
   setLastNewProjectParent(parent: string): Promise<void> | void
   /** jobs::enqueue_for_media per media item (open-time derivative re-fan-out +
-   *  stale-proxy invalidation). Built in 3c-ii-c; injected as enqueueDerivatives
-   *  by the 3c-ii-d flip. mediaItemsJson = JSON array of serialized MediaItem.
-   *  Async napi binding → Promise; the factory fire-and-forgets it. */
+   *  stale-proxy invalidation). mediaItemsJson = JSON array of serialized
+   *  MediaItem. Async napi binding → Promise; the factory fire-and-forgets it. */
   enqueueJobsForMedia(mediaItemsJson: string): Promise<void> | void
 }
 
@@ -49,8 +48,8 @@ export interface OrchestratorDeps {
   fs: OrchestratorFs
   join: (...parts: string[]) => string
   idGen: IdGen
-  /** Open-time derivative re-fan-out. A no-op in 3c-ii-b; 3c-ii-c injects the
-   *  live kick-off (paired with the event-based jobs write-back). See plan S2. */
+  /** Open-time derivative re-fan-out (paired with the event-based jobs
+   *  write-back). Optional — omitted in tests; a no-op then. */
   enqueueDerivatives?: (project: Project) => void
   /** Open-time relink-by-content self-heal (relink.ts) for workspace-managed
    *  media whose on-disk filename changed in transit. Optional — omitted in
@@ -101,8 +100,8 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   if (relinkReport) { try { deps.onRelink?.(relinkReport) } catch { /* best-effort, never blocks the open */ } }
   await napi.pushRecent(dir, project.metadata.name)
 
-  // Re-fan-out derivative jobs (proxies/thumbnails/waveforms). Deferred to
-  // 3c-ii-c with the jobs write-back rework (plan S2); a no-op until then.
+  // Re-fan-out derivative jobs (proxies/thumbnails/waveforms). No-op when the
+  // host doesn't inject it (tests).
   deps.enqueueDerivatives?.(project)
 }
 
@@ -125,8 +124,8 @@ export interface NewWorkspaceArgs {
 /** Build the `enqueueDerivatives` seam from the napi facade: serialize the
  *  project's media-pool values and hand them to the Rust open-time job re-fan-out
  *  (workspace-orchestrator's `enqueueDerivatives?` hook). Fire-and-forget (the
- *  Rust enqueue returns immediately; jobs run on tokio). 3c-ii-d injects this into
- *  the live OrchestratorDeps. Dormant in 3c-ii-c. */
+ *  Rust enqueue returns immediately; jobs run on tokio). Injected into the live
+ *  OrchestratorDeps by the host. */
 export function makeEnqueueDerivatives(
   napi: Pick<WorkspaceNapi, 'enqueueJobsForMedia'>,
 ): (project: Project) => void {

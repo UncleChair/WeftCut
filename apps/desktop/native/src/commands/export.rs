@@ -11,7 +11,7 @@ use crate::napi_backend::Backend;
 /// Audio-only export → `output_path` (.m4a AAC / .mka Opus). The mix is Rust
 /// (sample-accurate over conform PCM); ffmpeg is the encode tail. Emits no
 /// events; the JS orchestrator drives the panel. The TS host passes the full
-/// project (Phase 2) — export is user-triggered and infrequent, so a one-shot
+/// project — export is user-triggered and infrequent, so a one-shot
 /// full serialize is fine.
 pub async fn export_project_audio_only(
     project: crate::state::Project,
@@ -58,7 +58,7 @@ pub async fn mux_export(
 /// Export-readiness audio gate: media ids of audible in-window audio layers
 /// whose conform cache is absent/invalid, each with a conform job kicked.
 /// Selection mirrors the mix plan exactly (mute/solo/lock/window). The TS host
-/// passes the full project (Phase 2).
+/// passes the full project.
 pub async fn ensure_export_audio_conform(
     backend: &Backend,
     project: crate::state::Project,

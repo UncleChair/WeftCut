@@ -103,8 +103,8 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       const layers = deps.motifLayers().map((l) => ({ layerId: l.layerId, motifId: l.motifId, placedVersion: l.version, props: l.props }))
       const updates = buildAckEntries(layers, current)
       if (updates.length) deps.dispatchRebind(updates)
-      // Refresh so applyUpdateLayerParams' content-window clamp sees the current
-      // manifests (parity with the old hybrid's post-ack refresh). Cheap + idempotent.
+      // Refresh so applyUpdateLayerParams' content-window clamp sees the
+      // current manifests. Cheap + idempotent.
       deps.refreshCatalog()
       return updates.length
     }

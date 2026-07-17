@@ -40,7 +40,7 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   const at = dest.layers.findIndex((l) => l.t_start_us > snapped)
   dest.layers.splice(at < 0 ? dest.layers.length : at, 0, layer)
 
-  // Group siblings follow + shift by the same delta (live since Phase 2a).
+  // Group siblings follow + shift by the same delta.
   if (!escapeGroup) {
     for (const sid of siblings) {
       const loc = locateLayer(p, sid)

@@ -198,7 +198,7 @@ mod pbt {
 
             let got = pan_coeffs_at(&env, channels, t_us);
 
-            // --- Independent reference (mirrors Task 9 TS reference exactly) ---
+            // --- Independent reference (mirrors the TS reference exactly) ---
             // coeff(idx) reads the SAME f32-rounded grid value production reads
             // from `env.values` (production round-trips f64→f32→f64), so the
             // comparison is on identical inputs — not the raw proptest f64 vec.

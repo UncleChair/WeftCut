@@ -3,9 +3,9 @@
 // source of truth for any tool it lists: ts mutations + all 6 motif defs come from TS
 // (motifToolDefs.ts). Dedup is BY NAME — any Rust tool whose name is also in the TS
 // def set is dropped and re-added from TS; everything else stays Rust-sourced. This is
-// robust to route (e.g. preview_motif_draft routes 'rust' for execution yet its def is
-// TS-sourced, so it survives the Phase 4 Task 3 deletion of the Rust motif arms without
-// duplicating). The result is an exact, duplicate-free union by construction.
+// robust to route (e.g. preview_motif_draft routes 'rust' for execution yet its
+// def is TS-sourced — the Rust catalog carries no motif arms, so nothing
+// duplicates). The result is an exact, duplicate-free union by construction.
 
 export interface CatalogTool { name: string; description?: string; inputSchema?: Record<string, unknown> }
 export interface ResourceDef { uri: string; name?: string; description?: string; mimeType?: string }

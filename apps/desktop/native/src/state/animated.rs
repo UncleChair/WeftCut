@@ -410,7 +410,7 @@ mod tests {
         assert!((a.value_at(0, 4.2) - 4.2).abs() < 1e-9);
     }
 
-    // ---- Animated<Rgba>::value_at structural shape (exact OkLab values = Task 3) ----
+    // ---- Animated<Rgba>::value_at structural shape (exact OkLab values not pinned here) ----
 
     fn color_kf(t_us: TimeUs, value: Rgba, interp: Interpolation) -> Keyframe<Rgba> {
         Keyframe { id: new_id(), t_us, value, interp }
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(a.value_at(0, Rgba::BLACK), red);
         assert_eq!(a.value_at(15_000_000, Rgba::BLACK), green);
         // Midpoint just has to land strictly between (perceptual blend); exact
-        // values are pinned in Task 3.
+        // values are not pinned here.
         let mid = a.value_at(7_500_000, Rgba::BLACK);
         assert!(mid.r > 0 && mid.r < 255, "r={} interpolated", mid.r);
         assert!(mid.g > 0 && mid.g < 255, "g={} interpolated", mid.g);
@@ -627,7 +627,7 @@ mod tests {
 
     /// Externally-anchored OkLab color golden. Expected mixed values were read back
     /// from Chromium 149 `color-mix(in oklab)` (external authority). The SAME
-    /// fixture is asserted by TS in Task 4; a drift between the two sides indicates
+    /// fixture is asserted by the TS side too; a drift between the two sides indicates
     /// a real math divergence, not a tolerance issue.
     #[test]
     fn golden_color_vectors_match_fixture() {
@@ -658,7 +658,7 @@ mod tests {
                 let got = case.track.value_at(s.t_us, fixture.default);
                 // ±1 tolerance: golden is anchored to Chromium/V8 math while Rust
                 // uses `libm` (last-ULP rounding may differ by one count).
-                // native↔wasm exactness is covered separately in Task 4.
+                // native↔wasm exactness is covered separately.
                 assert!(
                     (got.r as i32 - s.expect.r as i32).abs() <= 1,
                     "case `{}` t_us={}: r got={}, expect={}",

@@ -136,11 +136,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
 
   function broadcastUnrecorded(summary: string, snapshot: Project): void {
-    const opId = idGen() // matches broadcast_unrecorded's new_id (actor.rs:3815)
+    const opId = idGen() // the unrecorded broadcast's own deterministic id
     emit({ op_id: opId, actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: { kind: 'Coarse' } })
   }
 
-  // ── set_composition (do_set_composition actor.rs:2929-3077) — atomic combined
+  // ── set_composition — atomic combined
   //    probe validate; fps re-snaps every layer + Motif src_in_us + duration; the
   //    non-fps canvas path replaces canvas in EVERY snapshot (survives undo). ──
   function setComposition(patch: Record<string, unknown>): void {
@@ -222,12 +222,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Redo', snap)
   }
 
-  // ── checkpoints (do_restore_checkpoint actor.rs:3764; History::checkpoint
-  //    history.rs:135) — used by the MCP checkpoint + begin_agent_session tools
-  //    (3d-c). checkpoint mints 1 id, no op/broadcast; restore success = 2 ids
+  // ── checkpoints — used by the MCP checkpoint + begin_agent_session tools.
+  //    checkpoint mints 1 id, no op/broadcast; restore success = 2 ids
   //    (entry op_id then broadcast op_id); CheckpointNotFound/HistoryLocked = 0. ──
   function checkpoint(label: string, cpActor: Actor = actor): Uuid {
-    const id = idGen() // History::checkpoint's new_id — no commit, no broadcast
+    const id = idGen() // the checkpoint's own id — no commit, no broadcast
     return history.checkpoint(label, cpActor, id, clock())
   }
   function restoreCheckpoint(id: Uuid): void {
@@ -236,7 +235,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (!history.hasCheckpoint(id)) throw new CommandFailure({ error: 'CheckpointNotFound', checkpoint: id }) // 0 ids — peek BEFORE mint
     const opId = idGen() // entry op_id (history.rs:151 new_id, FIRST)
     const snap = history.restoreCheckpoint(id, opId, clock(), actor)!
-    broadcastUnrecorded(`Restored checkpoint ${id}`, snap) // +1 broadcast id (actor.rs:3780, SECOND)
+    broadcastUnrecorded(`Restored checkpoint ${id}`, snap) // +1 broadcast id (the SECOND id)
   }
   function listCheckpoints(): Array<{ id: Uuid; label: string; actor: Actor; created_at: string }> {
     // Mirrors Rust NamedCheckpointSummary (history.rs:426 {id,label,actor,created_at};
@@ -245,7 +244,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return history.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
   }
 
-  // ── move_track (do_move_track:3394-3426) — the cur===new no-op must skip
+  // ── move_track — the cur===new no-op must skip
   //    commit; recording it would burn an op_id and drift every later id. ──
   function moveTrack(id: Uuid, newPosition: number): void {
     const curIdx = current().tracks.findIndex((t) => t.id === id)
@@ -253,7 +252,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     commit('Moved track', [{ kind: 'Track', id }], { kind: 'Coarse' }, (d) => applyMoveTrack(d, id, newPosition))
   }
 
-  // ── update_track_flags (do_update_track_flags:3637-3650) — UNRECORDED.
+  // ── update_track_flags — UNRECORDED.
   //    TrackNotFound first; then replace-everywhere + broadcast (burns one id,
   //    matching broadcast_unrecorded so the det counter stays aligned). ──
   function updateTrackFlags(id: Uuid, patch: TrackFlagsPatch): void {
@@ -262,7 +261,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Updated track flags', current())
   }
 
-  // ── add_media_item (do_add_media_item:2690) — UNRECORDED. Insert into the
+  // ── add_media_item — UNRECORDED. Insert into the
   //    pool (media id is the caller's, NOT counter-minted), validate the probe,
   //    then replace the pool EVERYWHERE (durable across undo) + broadcast (burns
   //    one id). No HistoryEntry. ──
@@ -275,7 +274,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return item.id
   }
 
-  // ── set_media_derivatives (do_set_media_derivatives:3534) — UNRECORDED, NO
+  // ── set_media_derivatives — UNRECORDED, NO
   //    validate. MediaNotFound first (no id); else patch the pool item, replace
   //    EVERYWHERE (durable across undo) + broadcast (1 id). ──
   function setMediaDerivatives(id: Uuid, patch: MediaDerivativesPatch): void {
@@ -283,13 +282,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media derivatives', current())
   }
-  // ── set_media_workspace_paths (do_set_media_workspace_paths:3500) — UNRECORDED. ──
+  // ── set_media_workspace_paths — UNRECORDED. ──
   function setMediaWorkspacePaths(id: Uuid, paths: WorkspacePaths): void {
     const nextPool = applySetMediaWorkspacePaths(current().media_pool, id, paths) // throws MediaNotFound
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media workspace paths', current())
   }
-  // ── set_media_hash — UNRECORDED. Hash-first import (stateless-compute Phase 4):
+  // ── set_media_hash — UNRECORDED. Hash-first import:
   //    the standalone BLAKE3 pass sets the real source hash on the pool item
   //    before derivatives enqueue. Durable across undo (a content fact, not an
   //    edit). MediaNotFound first (no id); else patch + replace EVERYWHERE. ──
@@ -298,11 +297,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media hash', current())
   }
-  // ── remove_media (do_remove_media:3428) — HYBRID. MediaNotFound → MediaInUse
+  // ── remove_media — HYBRID. MediaNotFound → MediaInUse
   //    (when referenced && !force) → unused path (validate probe BEFORE broadcast,
   //    durable, 1 broadcast id) | force-cascade (RAW inline layer removal +
   //    commit, 1 op_id, undoable). The force path must NOT reuse applyDeleteLayer
-  //    (no empty-track prune / no group cleanup — actor.rs:3479-3488). ──
+  //    (no empty-track prune / no group cleanup). ──
   function removeMedia(id: Uuid, force: boolean): void {
     const cur = current()
     if (!(id in cur.media_pool)) throw new CommandFailure({ error: 'MediaNotFound', media: id })
@@ -311,7 +310,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     if (referencing.length === 0) {
       const nextPool = { ...cur.media_pool }
       delete nextPool[id]
-      runValidate({ ...cur, media_pool: nextPool }) // validate-before-broadcast (actor.rs:3470)
+      runValidate({ ...cur, media_pool: nextPool }) // validate-before-broadcast
       history.replaceMediaPoolEverywhere(nextPool)
       broadcastUnrecorded(`Removed media ${id}`, current())
       return
@@ -328,7 +327,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     })
   }
 
-  // ── set_role_gain (do_set_role_gain:3657) — RECORDED (undoable). Read the
+  // ── set_role_gain — RECORDED (undoable). Read the
   //    role's mix bus (default-filled when absent), override ONLY gain_db
   //    (muted/solo preserved), reinsert. No affected entities, Coarse hint. ──
   function setRoleGain(role: string, gainDb: number): void {
@@ -338,7 +337,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     })
   }
 
-  // ── update_role_flags (do_update_role_flags:3681) — UNRECORDED (mirrors
+  // ── update_role_flags — UNRECORDED (mirrors
   //    updateTrackFlags). Patch mute/solo into EVERY snapshot + broadcast (burns
   //    one id). Roles always exist (default-filled), so no not-found branch. ──
   function updateRoleFlags(role: string, patch: RoleFlagsPatch): void {
@@ -346,7 +345,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Updated role flags', current())
   }
 
-  // ── update_project_settings (do_update_project_settings:3619) — UNRECORDED.
+  // ── update_project_settings — UNRECORDED.
   //    Clone settings, apply the present fields, replace-everywhere + broadcast. ──
   function updateProjectSettings(patch: {
     auto_delete_empty_tracks?: boolean | null
@@ -365,7 +364,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Updated project settings', current())
   }
 
-  // ── replace_state (do_replace_state:3581) — wholesale project swap. validate
+  // ── replace_state — wholesale project swap. validate
   //    FIRST (a failure mints NO id and leaves history intact); on success reset
   //    history to a single 'Initial' entry (drops the old project's snapshots +
   //    checkpoints + lock — they reference a different project_id) then broadcast
@@ -464,7 +463,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), { kind: 'Crossfade' })) }
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null, (a.with_audio as boolean | undefined) ?? false)) }
-        // add_media_item — insert a FULL probed MediaItem (Phase 3d-e import_media
+        // add_media_item — insert a FULL probed MediaItem (the import_media
         // hybrid: Rust probes/hashes, the TS host applies the write). Distinct from
         // `add_media` (template-only); the caller passes the serialized MediaItem.
         case 'add_media_item': return { ok: true, value: addMediaItem(a.media as MediaItem) }
@@ -487,7 +486,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // Differential-corpus vehicle: build a blank from the args (mirrors
           // Project::new_blank + project_new_workspace's canvas override) so both
           // engines mint the same 3 blank ids before the swap. Production callers
-          // (Phase 3c project_open) call replaceState(loadedProject) directly.
+          // (project_open) call replaceState(loadedProject) directly.
           const next = blankProject(idGen, (a.name as string) ?? 'untitled')
           if (typeof a.width === 'number') next.composition.width = a.width
           if (typeof a.height === 'number') next.composition.height = a.height
@@ -675,7 +674,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: id }
         }
         case 'add_motif': {
-          // add_motif_impl (commands/motifs.rs:138-212): pure TS mutation (Phase 4a-ii §2.2).
+          // add_motif — pure TS recorded mutation.
           // Renderer camelCase: motifId, trackId?, tStartUs, tEndUs?, props?
           const motifId = wireArgs.motifId as string | undefined
           if (typeof motifId !== 'string') return { ok: false, error: { error: 'InvalidArgument', field: 'motifId', detail: 'motifId must be a string' } }
@@ -701,7 +700,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, value: layerId }
         }
         default:
-          // (meta channels added in Task 4)
+          // (meta channels)
           return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported production op ${channel}` } }
       }
     } catch (e) {
@@ -711,7 +710,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
-  // tools.rs:1563 spec_to_op — MCP OperationSpec (tagged "kind", snake_case) → DryRunOp.
+  // spec_to_op — MCP OperationSpec (tagged "kind", snake_case) → DryRunOp.
   function specToDryRunOp(spec: Record<string, unknown>): DryRunOp {
     const kind = spec.kind as string
     switch (kind) {
@@ -750,7 +749,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     try { a = JSON.parse(argsJson) as Record<string, unknown> }
     catch (e) { return { ok: false, error: { code: 'invalid_params', message: `invalid args for ${name}: ${String(e)}` } } }
     try {
-      // Dedicated arms for explicit-param tools (Task 4). Fall through to the
+      // Dedicated arms for explicit-param tools. Fall through to the
       // table path for mechanical tools.
       switch (name) {
         case 'add_color_layer': {
@@ -831,7 +830,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const p = mcpDef('begin_agent_session').parseDedicated!(a)
           const reason = p.reason as string
           if (reason.trim() === '') return { ok: false, error: { code: 'invalid_params', message: 'reason must be non-empty' } }
-          const checkpointId = checkpoint(`Pre-agent: ${reason}`, MCP_ACTOR) // 1 det id; slot-flip + log are non-state side effects (3d-d)
+          const checkpointId = checkpoint(`Pre-agent: ${reason}`, MCP_ACTOR) // 1 det id; slot-flip + log are non-state side effects
           return { ok: true, result: toolJson({ checkpoint_id: checkpointId, started_at: clock() }) }
         }
         case 'set_keyframe': {
@@ -944,7 +943,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           return { ok: true, result: shapeDryRunResponse(dryRun(ops)) }
         }
         case 'add_motif': {
-          // add_motif MCP arm (mcp/tools.rs:2024-2095): pure TS, dedicated mcpCall.
+          // add_motif MCP arm: pure TS, dedicated mcpCall.
           // Mirrors the Rust tool: catalog lookup → canonicalize → resolve → two-commit.
           const p = mcpDef('add_motif').parseDedicated!(a)
           const motifId = p.motif_id as string

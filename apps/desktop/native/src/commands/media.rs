@@ -14,7 +14,7 @@ use crate::state::{self, MediaItem, MediaKind};
 /// `file_hash_blake3` is a PROVISIONAL sentinel (`pending-{id}`) that is never
 /// used as a cache key: the TS host runs the standalone `hash_media_source` pass
 /// and sets the real hash via `set_media_hash` BEFORE enqueuing any derivative
-/// (stateless-compute Phase 4 — ADR 0007 superseded). Mints the media id
+/// (supersedes ADR 0007). Mints the media id
 /// internally. The `probe_media` napi reuses this exact body.
 pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
     let media_id = uuid::Uuid::new_v4();

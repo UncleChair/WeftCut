@@ -6,8 +6,8 @@ import { normalizeKeyframes } from './animated'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 
-/** native/src/state/actor.rs:99-255 — internally-tagged ("kind") param patch.
- *  Every field optional bar kind; absent = "don't touch". */
+/** Internally-tagged ("kind") param patch. Every field optional bar kind;
+ *  absent = "don't touch". */
 export type LayerParamsPatch =
   | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; color?: Rgba; x?: number; y?: number; opacity?: number }
   | { kind: 'VideoClip'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; speed?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
@@ -100,7 +100,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
   }
 }
 
-/** actor.rs:2734 do_update_layer_params (mutation half): lock-check, locate,
+/** update_layer_params (mutation half): lock-check, locate,
  *  field-merge, then Motif content-window clamp.
  *  After the field-merge: if the layer is a Motif with a known catalog entry and
  *  a finite contentDur, and the placed window exceeds that contentDur, clamp
@@ -222,7 +222,7 @@ export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStart
   return { tStartUs: layer.t_start_us, track }
 }
 
-/** actor.rs:2752 do_update_layer_param_track (mutation half): lock-check →
+/** update_layer_param_track (mutation half): lock-check →
  *  normalize (EmptyKeyframeTrack on empty) → locate → resolve, lazily inserting
  *  Static(0) for a missing slot of an EXISTING effect → re-resolve
  *  (UnknownKeyframeParam) → assign. NO autofit (a keyframe write never moves

@@ -2,7 +2,7 @@ import type { Project } from './model'
 import { serializeProject } from './serialize'
 
 /** Audio-export channels whose Rust fn takes the full project as a call argument;
- *  the TS actor (the sole state owner) serializes and forwards it. Phase 2. */
+ *  the TS actor (the sole state owner) serializes and forwards it. */
 export const EXPORT_PROJECT_CHANNELS: ReadonlySet<string> = new Set([
   'export_project_audio_only', 'ensure_export_audio_conform',
 ])

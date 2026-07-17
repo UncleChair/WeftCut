@@ -39,7 +39,7 @@ export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: L
   return layerId
 }
 
-/** track.rs:65-79 defaults + actor.rs:2353-2380 insertion. */
+/** Insert a new track with Track::new() defaults at `position` (default: end). */
 export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, transient = false, position?: number): Uuid {
   const id = idGen()
   const track = { id, label, enabled: true, locked: false, muted: false, solo: false, removable: true, role: null as TrackRole | null, transient, height_px: 64, layers: [] as Layer[] }
@@ -49,7 +49,7 @@ export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, tr
   return id
 }
 
-/** actor.rs:3101-3135 — marker inserted t-sorted, empty metadata. */
+/** Marker inserted t-sorted, empty metadata. */
 export function applyAddMarker(p: Project, idGen: IdGen, tUs: number, endTUs: number | null, label: string, color: Rgba): Uuid {
   const id = idGen()
   const marker: Marker = { id, t_us: tUs, end_t_us: endTUs, label, color, metadata: {} }

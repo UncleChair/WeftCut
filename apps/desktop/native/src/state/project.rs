@@ -170,9 +170,8 @@ pub struct ProxyOverridePatch {
 
 /// Patch shape for `update_track_flags` — the timeline header's
 /// eye/M/S/lock toggles. Preference-shaped like `ProjectSettingsPatch`:
-/// applied to every history snapshot via
-/// `History::replace_track_flags_everywhere` and never recorded, so
-/// Ctrl-Z never flips a track toggle. Only `Some(_)` fields are applied.
+/// applied to every history snapshot and never recorded, so Ctrl-Z never
+/// flips a track toggle. Only `Some(_)` fields are applied.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct TrackFlagsPatch {
     pub enabled: Option<bool>,

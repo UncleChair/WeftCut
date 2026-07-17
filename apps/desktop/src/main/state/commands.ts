@@ -171,7 +171,7 @@ export function pickFreeOverlayTrack(project: Project, t0: number, t1: number): 
 const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
   add_track: () => ({ op: 'add_track', args: { label: 'Track' } }),
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
-  // Task 4: remaining mechanical + meta channels
+  // Remaining mechanical + meta channels
   move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_group: a.escapeGroup ?? false } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_group: a.escapeGroup ?? false } }),
   delete_layer: (a) => ({ op: 'delete_layer', args: { layer: a.layerId } }),
@@ -208,7 +208,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_track', 'update_layer',
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
-  // Task 4: remaining mechanical + meta channels
+  // Remaining mechanical + meta channels
   'move_layer', 'trim_layer', 'delete_layer', 'duplicate_layer', 'split_layer_grouped',
   'groups_create', 'groups_dissolve',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks',
@@ -217,7 +217,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'update_track_flags', 'set_role_gain', 'update_role_flags',
   'separate_audio_to_new_track', 'restyle_caption_track',
   'update_project_settings', 'project_undo', 'project_redo', 'project_restore_checkpoint',
-  // Task 5: add_motif as a pure TS recorded mutation (Phase 4a-ii §2.2)
+  // add_motif as a pure TS recorded mutation
   'add_motif',
 ])
 

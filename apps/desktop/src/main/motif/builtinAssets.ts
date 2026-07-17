@@ -9,7 +9,7 @@ import type { UserMotifStore } from "./store";
  * resolution (`src/main/index.ts`): packaged → `<resources>/motifs/builtin`;
  * dev → `apps/desktop/src/shared/motifs/builtin` relative to the bundled main
  * (`__dirname = apps/desktop/out/main`, so `../../src/...`). NOT used by unit
- * tests (they pass an explicit dir to `resolveMotifFile`); verified live in Task 9.
+ * tests (they pass an explicit dir to `resolveMotifFile`).
  */
 export function builtinAssetDir(): string {
   return app.isPackaged

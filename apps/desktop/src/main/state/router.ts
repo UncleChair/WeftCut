@@ -18,18 +18,17 @@ export type Route =
   | { kind: 'exportSettings' } // per-workspace export.json store, owned in TS main
   | { kind: 'keybindings' }   // per-user keybinding overrides, owned in TS main (config-dir)
   | { kind: 'recents' }       // recent-projects list + prefs, owned in TS main (config-dir)
-  | { kind: 'hybrid'; tool: string } // native-compute → TS-write (Phase 3d-e)
-  | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install (Phase 2)
+  | { kind: 'hybrid'; tool: string } // native-compute → TS-write
+  | { kind: 'motif'; tool: string }  // TS Motif authoring/read/install
   | { kind: 'reject'; reason: string }
   | { kind: 'rust' }
 
-/** Hybrid Rust-compute → TS-write channels (Phase 3d-e). install_motif moved to
- *  the motif route (Phase 2); acknowledge_motif_staleness moved to the motif
- *  route (Phase 3). */
+/** Hybrid Rust-compute → TS-write channels. install_motif and
+ *  acknowledge_motif_staleness ride the motif route instead. */
 export const HYBRID_CHANNELS: ReadonlySet<string> = new Set(['import_media'])
 
-/** Motif catalog-read + authoring + install + staleness channels, served in TS by
- *  runMotifTool (Phase 2/3). */
+/** Motif catalog-read + authoring + install + staleness channels, served in TS
+ *  by runMotifTool. */
 export const MOTIF_CHANNELS: ReadonlySet<string> = new Set([
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
   'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',

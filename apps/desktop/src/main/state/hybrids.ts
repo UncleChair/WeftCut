@@ -17,12 +17,12 @@ export interface ComputeNapi {
    *  appearance); the item carries a PROVISIONAL hash. (import_media) */
   probeMedia(path: string): Promise<string>
   /** Standalone BLAKE3 of a source file — the hash-first import's hash pass
-   *  (stateless-compute Phase 4). Run AFTER the stat-only probe + insert, BEFORE
+   *  Run AFTER the stat-only probe + insert, BEFORE
    *  derivative enqueue, so jobs bake the real cache key. (Backend.hashMediaSource) */
   hashMediaSource(path: string): Promise<string>
-  /** Parse a subtitle body → {cues, simplified, label} JSON. (apply_subtitles, Task 4) */
+  /** Parse a subtitle body → {cues, simplified, label} JSON. (apply_subtitles) */
   parseSubtitles(body: string, format: string | null): Promise<string>
-  /** synthesize_speech: TTS + cache + probe → {media_item, …} JSON. (Task 6) */
+  /** synthesize_speech: TTS + cache + probe → {media_item, …} JSON. */
   synthesizeSpeechCompute(argsJson: string): Promise<string>
 }
 
@@ -96,16 +96,14 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // Subtitles are CONSUMED into a caption track (not pooled into the media
       // pool). Read the file, derive a label from the filename, hand off to
       // applySubtitleBody (format null → sniff from body), and return the BARE
-      // track id string — flag-off import_media returns `Ok(track_id)` (media.rs)
-      // and discards `simplified`, so the hybrid path must match.
+      // track id string — the channel contract; `simplified` is discarded here.
       if (/\.(srt|ass|vtt)$/i.test(path)) {
         const body = deps.readFile(path)
-        // Full filename WITH extension as the label — flag-off uses file_name()
-        // (e.g. "captions.srt"), so match that for parity.
+        // Full filename WITH extension as the label (e.g. "captions.srt").
         const label = path.replace(/\\/g, '/').split('/').pop() ?? null
         return (await applySubtitleBody(body, null, label, deps)).track_id
       }
-      // Hash-first import (stateless-compute Phase 4). probeMedia is stat-only, so
+      // Hash-first import: probeMedia is stat-only, so
       // the item carries a PROVISIONAL hash; insert it first so the clip appears in
       // the timeline immediately.
       const item = JSON.parse(await deps.compute.probeMedia(path)) as MediaItem
@@ -132,11 +130,10 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       return item.id
     }
     case 'apply_subtitles': {
-      // MCP-only: body + optional format tag. Label is always "Captions" to
-      // match the Rust flag-off path (tools.rs apply_subtitles → "Captions").
-      // Return the exact ToolResult text the Rust tool emits (tools.rs:462-466):
-      // the bare track id, or the id + a simplified-styling annotation. server.ts
-      // wraps this string into `{content:[{type:'text', text}]}`.
+      // MCP-only: body + optional format tag. Label is always "Captions".
+      // ToolResult text contract: the bare track id, or the id + a
+      // simplified-styling annotation. server.ts wraps this string into
+      // `{content:[{type:'text', text}]}`.
       const { track_id, simplified } = await applySubtitleBody(
         args.body as string,
         (args.format as string | null | undefined) ?? null,
@@ -150,8 +147,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // synthesize+write → spawn_blocking probe → build MediaItem). Returns
       // {media_item, duration_us, cached}. The TS host applies the WRITES:
       // add_media_item + enqueueDerivatives + resolve track + add Audio layer
-      // (Voiceover role, single commit). Mirrors synthesize_speech (tools.rs:2673)
-      // flag-off write tail.
+      // (Voiceover role, single commit).
       const { media_item, duration_us, cached } = JSON.parse(
         await deps.compute.synthesizeSpeechCompute(JSON.stringify(args)),
       ) as { media_item: { id: string }; duration_us: number; cached: boolean }

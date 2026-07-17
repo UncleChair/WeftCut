@@ -6,9 +6,9 @@
 //! frame in its native pixel format (e.g. ProRes' `yuv422p10le`) and swscale
 //! packs it to the stream's target format in one pass.
 //!
-//! Task 3's `session` consumes `seek`, the color tags, and the per-frame
-//! timestamps; they are defined here (ahead of that consumer) so the streaming
-//! surface is complete in one place.
+//! The `session` module consumes `seek`, the color tags, and the per-frame
+//! timestamps; they are defined here so the streaming surface is complete in
+//! one place.
 #![allow(dead_code)]
 
 use ffmpeg_next::ffi as ffs;
@@ -36,7 +36,7 @@ fn decode_thread_count() -> i32 {
 /// Threading mode per codec family. Frame-threading (FF_THREAD_FRAME) parallelises
 /// across frames but adds a multi-frame output delay that re-primes after every
 /// seek's avcodec_flush_buffers — measured ~600ms backward-far scrub on 4K ProRes
-/// for no throughput gain on intra codecs (decode-bench, Plan A Task 5). So intra
+/// for no throughput gain on intra codecs (decode-bench). So intra
 /// families (ProRes/DNxHD) use slice-threading only (parallel WITHIN a frame, no
 /// output delay = snappy scrub); long-GOP families (MPEG-2/VC-1/WMV3), whose many
 /// inter-frames frame-threading can actually parallelise, keep FRAME|SLICE.
@@ -133,8 +133,8 @@ pub struct SwVideoStream {
 
 // The ffmpeg-next `Input`/`Video` wrappers hold raw pointers and are `!Send`.
 // Mirror `preview_gpu::VideoStream`: the stream is only ever driven from a single
-// owner (the Node main thread now, a session thread in Task 3) and its pointers
-// never cross threads, so it is sound to mark `Send`.
+// owner (its session thread) and its pointers never cross threads, so it is
+// sound to mark `Send`.
 unsafe impl Send for SwVideoStream {}
 
 /// PTS (in stream time_base units) -> source-normalized microseconds. Mirrors
@@ -238,7 +238,7 @@ impl SwVideoStream {
     /// name (`AVCodec.name` via `self.decoder.codec()`, e.g. `"prores"`);
     /// `pix_fmt` is libavutil's canonical descriptor name (`av_pix_fmt_desc_get`
     /// via `Pixel::descriptor()`, e.g. `"yuv422p10le"`) — both match the strings
-    /// ffprobe reports, so a probe-informed class key (Task 13) needs no
+    /// ffprobe reports, so a probe-informed class key needs no
     /// caller-side guessing. Falls back to `"unknown"` in the (should-not-happen
     /// post-open) case either lookup comes back empty.
     pub fn probe_identity(&self) -> (String, String, u32, u32) {

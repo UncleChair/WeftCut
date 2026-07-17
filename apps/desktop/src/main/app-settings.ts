@@ -1,13 +1,12 @@
 // App-level preferences persisted at <userData>/app_settings.json, owned by the
 // Electron main process. One value across every project (no per-project override).
 //
-// History: persistence used to live in the Rust addon (native/src/app_settings.rs);
-// it moved here so the addon is compute-only and the Rust↔TS struct twin is gone.
-// The on-disk file path + JSON field names are unchanged, so existing users'
-// settings carry over untouched.
+// The on-disk file path + JSON field names are a COMPATIBILITY SURFACE:
+// existing users' app_settings.json files must keep loading, so neither may
+// change without a migration.
 //
-// Bad-config recovery: a missing / empty / corrupt file degrades to all-defaults
-// so a hand-edit mishap can't brick the editor (parity with the old Rust store).
+// Bad-config recovery: a missing / empty / corrupt file degrades to
+// all-defaults so a hand-edit mishap can't brick the editor.
 
 import {
   APP_SETTINGS_DEFAULTS,

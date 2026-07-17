@@ -37,7 +37,7 @@ const APP_OCTET: &str = "application/octet-stream";
 const IMAGE_JPEG: &str = "image/jpeg";
 
 /// The state slice the TS MCP host injects for the resources that stay Rust
-/// compute (Phase 3): `project://compiled` needs the full project (audio mix
+/// compute: `project://compiled` needs the full project (audio mix
 /// plan); `media://*` needs the `MediaItem` resolved by id. `composition://meter`
 /// reads live Rust state and needs neither. Both fields `serde(default)` so a
 /// stateless read (`{}`) parses cleanly. The `project://*` state views are served
@@ -76,7 +76,7 @@ pub(crate) async fn read_resource(
     })?;
 
     // media://* paths return binary content (image bytes, peaks file) and need the
-    // MediaItem the TS host resolved by id (Phase 3 — TS owns state). We peel them
+    // MediaItem the TS host resolved by id (TS owns state). We peel them
     // off here so the rest of `read_resource` can stay text/JSON oriented.
     if let Some(tail) = uri.strip_prefix(PREFIX_MEDIA) {
         return read_media_resource(b, uri, tail, state.media).await;
@@ -91,7 +91,7 @@ pub(crate) async fn read_resource(
             // not values — keyframed gain on a long layer would be hundreds of
             // thousands of floats. A transient ConformMissing state reports inline
             // instead of failing the read. The TS host injects the full project
-            // (Phase 3) — this resource is agent-triggered and infrequent.
+            // — this resource is agent-triggered and infrequent.
             let project = state.project.ok_or_else(|| {
                 McpToolError::internal_error(
                     "project://compiled requires the injected project (TS host)".to_string(),
@@ -121,13 +121,13 @@ pub(crate) async fn read_resource(
                 }),
             }
         }
-        // Phase 3 (stateless-compute-service): project://current / composition /
+        // project://current / composition /
         // media / tracks / markers / history / layers/{id} are served directly by
         // the TS MCP host (the sole state owner) and never reach this reader.
         other => {
             return Err(McpToolError::resource_not_found(
                 format!(
-                    "unknown or TS-served resource URI: {other} (project://* state views are served by the TS MCP host since Phase 3)",
+                    "unknown or TS-served resource URI: {other} (project://* state views are served by the TS MCP host)",
                 ),
                 None,
             ));
@@ -185,7 +185,7 @@ async fn read_media_resource(
         )
     })?;
     // The MediaItem is resolved by the TS host (the sole state owner) and injected
-    // in the request (Phase 3). `None` → the id was absent from the project state.
+    // in the request. `None` → the id was absent from the project state.
     let media = media.ok_or_else(|| {
         McpToolError::resource_not_found(
             format!("media {media_id} not found"),
@@ -375,8 +375,8 @@ mod stateless_tests {
     use super::*;
     use crate::napi_backend::Backend;
 
-    /// project://compiled computes the audio mix plan from the INJECTED project
-    /// (Phase 3), not the mirror. A blank project has no audio layers, so the plan
+    /// project://compiled computes the audio mix plan from the INJECTED
+    /// project, not a mirror. A blank project has no audio layers, so the plan
     /// is an empty layer list — proving the arm read `state.project`.
     #[cfg(feature = "export")]
     #[tokio::test]
@@ -420,7 +420,7 @@ mod stateless_tests {
         );
     }
 
-    /// media://* resolves from the INJECTED MediaItem (Phase 3). With a fabricated
+    /// media://* resolves from the INJECTED MediaItem. With a fabricated
     /// item whose thumbnail cache is empty, the reader reports "not generated yet"
     /// — proving it read `state.media` (it never touched the mirror).
     #[cfg(feature = "jobs")]

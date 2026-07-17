@@ -59,20 +59,20 @@ export async function handleCallTool(
       return out as ServerResult
     }
     if (route === 'hybrid') {
-      // Native-compute → TS-write (Phase 3d-e). import_media returns the new media
+      // Native-compute → TS-write. import_media returns the new media
       // id; shape it as the Rust tool does (ToolResult::text(id) → text content).
       const result = await runHybrid(name, args, tsHost.hybridDeps)
       return { content: [{ type: 'text', text: String(result) }] } as unknown as ServerResult
     }
     if (route === 'motif') {
-      // Catalog-read + authoring + install, served in TS (Phase 2). The raw value
+      // Catalog-read + authoring + install, served in TS. The raw value
       // is shaped to the Rust-faithful ToolResult (list_motifs strips html, etc.).
       const raw = tsHost.motifTool(name, args)
       return shapeMotifMcpResult(name, raw) as unknown as ServerResult
     }
-    // Clip-audio compute (detect_silences / transcribe_clip) routes to 'rust', but
-    // the Rust core no longer holds state (stateless-compute Phase 2): resolve the
-    // { layer, media } slice from the actor (sole state owner) and forward it.
+    // Clip-audio compute (detect_silences / transcribe_clip) routes to 'rust',
+    // but the Rust core holds no state: resolve the { layer, media } slice
+    // from the actor (sole state owner) and forward it.
     if (CLIP_SLICE_TOOLS.has(name)) {
       const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
       return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
@@ -93,8 +93,8 @@ export async function handleCallTool(
 
 /** ReadResource routing (tsHost present): project:// state views served in TS from
  *  the actor (sole state owner); the Rust-compute resources (project://compiled,
- *  media://*, composition://meter) forwarded to the backend with an injected slice.
- *  Stateless-compute Phase 3. */
+ *  media://*, composition://meter) forwarded to the backend with an injected
+ *  slice. */
 export async function handleReadResource(
   backend: Backend,
   getTsHost: () => TsActorHost | null,

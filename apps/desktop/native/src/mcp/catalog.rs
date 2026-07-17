@@ -3,7 +3,7 @@
 //! in one without the other. Each entry's description is the literal text the
 //! MCP catalog advertises to clients.
 //!
-//! Phase 4b T3: this table is trimmed to the native/compute/hybrid tools only.
+//! This table carries the native/compute/hybrid tools only.
 //! The ~47 TS-executed mutations are served by the TS actor's `MCP_TOOLS` table
 //! and routed by `routeMcpTool`; their Rust handlers are deleted.
 
@@ -44,7 +44,7 @@ macro_rules! tool_table {
 tool_table! {
     "ping" => ("Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.", super::EmptyArgs, tools::ping),
     // begin_agent_session routes to the TS actor ('ts' MCP tool) and is supplied
-    // by the TS def; mergeMcpCatalog filters it out of the Rust side (Phase 4b).
+    // by the TS def; mergeMcpCatalog filters it out of the Rust side.
     "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as a caption track of editable Text layers. \
                           Cue timings come from the body. `format` is sniffed when omitted. \
                           Advanced ASS styling (karaoke, drawings) is simplified. \
@@ -134,7 +134,7 @@ mod tests {
         assert!(cat.prompts.iter().any(|p| p.name == "cut-silences"));
     }
 
-    /// Phase 2 (stateless-compute-service): detect_silences / transcribe_clip gain
+    /// detect_silences / transcribe_clip carry
     /// serde-deserialized `layer` / `media` slice fields the TS host injects.
     /// `#[schemars(skip)]` MUST keep them out of the advertised tool schema so
     /// agents never see (or try to fill) them.
@@ -164,7 +164,7 @@ mod tests {
         }
     }
 
-    /// apply_subtitles is a hybrid in Phase 4b: its Rust handler is a stub that
+    /// apply_subtitles is a hybrid: its Rust handler is a stub that
     /// returns an error (the TS host intercepts the real call). The catalog entry
     /// stays (asserted above); dispatch reaching the Rust stub errors cleanly.
     #[tokio::test]

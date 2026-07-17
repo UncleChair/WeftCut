@@ -1,20 +1,20 @@
 // apps/desktop/src/main/state/persistence.ts
 //
-// The PURE on-disk persistence surface — mirrors native/src/io/mod.rs (save/load)
-// + native/src/io/migrate.rs (the schema-version gate). No node:fs here: the file
-// read/write/delete shell + the workspace/cache/LogBus/recents/jobs orchestration
-// stay in Rust until Phase 3c wires this module's pure functions into the
-// project_open/save_as/new_workspace cutover. Filesystem/platform impurities are
-// injected (`join` for path reconcile) or returned (quick-proxy files to delete).
+// The PURE on-disk persistence surface: project serialization + the
+// schema-version gate. No node:fs here — the file read/write/delete shell and
+// the workspace/cache/LogBus/recents/jobs orchestration live in
+// workspace-orchestrator.ts (injected fs). Filesystem/platform impurities are
+// injected (`join` for path reconcile) or returned (quick-proxy files to
+// delete).
 import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
 import { serializeProject, parseProject } from './serialize'
 
 /** io/mod.rs:19 — the on-disk project file name inside a workspace folder. */
 export const PROJECT_FILE = 'project.json'
 
-/** io/mod.rs:25 — serde_json::to_string_pretty (2-space indent, NO trailing
- *  newline; fs::write writes the string verbatim). Round-trip fidelity, not
- *  byte-identical key order vs Rust, is the contract (see Task 5). */
+/** serde_json::to_string_pretty (2-space indent, NO trailing newline;
+ *  fs::write writes the string verbatim). Round-trip fidelity, not
+ *  byte-identical key order vs Rust, is the contract. */
 export function serializeProjectToJson(p: Project): string {
   return JSON.stringify(serializeProject(p), null, 2)
 }
@@ -63,8 +63,8 @@ export function reconcileMediaPaths(p: Project, dir: string, join: (...parts: st
 /** Quick proxies are session-scoped preview accelerators; never trust
  *  serialized paths across launches. Null the `quick_proxy` slot of every
  *  decode route that carries one (DirectExport/Proxied — Bypass has none) and
- *  return the dropped files for the caller (Phase 3c) to delete best-effort —
- *  staying pure (no node:fs), the way 3a injected `fileExists`. */
+ *  return the dropped files for the caller to delete best-effort — staying
+ *  pure (no node:fs; the caller owns the filesystem). */
 export function clearSessionQuickProxies(p: Project): { project: Project; quickProxiesToDelete: string[] } {
   const quickProxiesToDelete: string[] = []
   const media_pool: Record<string, MediaItem> = {}

@@ -4,7 +4,7 @@
 //!
 //! `decoder` is the streaming CPU decode surface; `session` drives it from a
 //! per-source worker thread and fans decoded frames out through a registry sink
-//! (Task 4 wires that sink + registry to the napi addon).
+//! (the napi addon wires that sink + registry).
 
 pub mod decoder;
 mod session;

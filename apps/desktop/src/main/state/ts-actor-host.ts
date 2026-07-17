@@ -39,19 +39,19 @@ export interface TsActorHostDeps {
   join: (...parts: string[]) => string
   /** Backend napi facade for workspace bookkeeping. */
   napi: WorkspaceNapi
-  /** Rust compute facade for the native-compute → TS-write hybrids (Phase 3d-e). */
+  /** Rust compute facade for the native-compute → TS-write hybrids. */
   compute: ComputeNapi
   /** Queue the background workspace-copy job (Backend.enqueueWorkspaceCopy). */
   enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
-  /** node:fs readFile (utf8) — for the subtitle hybrid (Task 4). */
+  /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
   /** Current workspace directory (cached from backend). Null before first open/newWorkspace. */
   workspaceDir: () => string | null
   /** Flip the Rust agent-session slot ON/OFF (backend.beginAgentSessionSlot / endAgentSessionSlot). */
   beginAgentSessionSlot?: (reason: string) => void
   endAgentSessionSlot?: () => void
-  /** Emit a record-panel LogBus pin-row via the Rust log surface (Phase 4a-i §2.1 parity).
-   *  Optional → no-op when omitted (tests that do not care about logging, or flag-off path).
+  /** Emit a record-panel LogBus pin-row via the Rust log surface.
+   *  Optional → no-op when omitted (tests that do not care about logging).
    *  Must never throw — wrap call sites in try/catch; a failing emit must not abort the mutation. */
   emitLog?: (entry: {
     level: 'trace' | 'debug' | 'info' | 'warn' | 'error'
@@ -62,9 +62,9 @@ export interface TsActorHostDeps {
   }) => void
   /** list_motifs JSON from the backend — used to hydrate the actor's motif catalog
    *  after start() and after motif-store-mutating operations (install/delete/write/
-   *  import/amend/create_edit). Optional → no-op when absent (tests, flag-off). */
+   *  import/amend/create_edit). Optional → no-op when absent (tests). */
   listMotifs?: () => Promise<string>
-  /** On-disk user Motif store (Phase 2 — the TS authoring/read/install surface).
+  /** On-disk user Motif store (the TS authoring/read/install surface).
    *  Optional → guard in runMotif throws if absent. Tests that don't exercise
    *  motif tools omit this so they don't need a real temp-dir store. */
   motifStore?: UserMotifStore
@@ -252,7 +252,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   function reject(reason: string): never { throw new Error(reason) }
 
-  // ── LogBus pin-row helpers (Phase 4a-i §2.1) ────────────────────────────────
+  // ── LogBus pin-row helpers ──────────────────────────────────────────────────
   // Emits are best-effort: a failing emitLog must never abort the mutation.
   // All pin-rows: level 'info', category {kind:'Project'}.
 

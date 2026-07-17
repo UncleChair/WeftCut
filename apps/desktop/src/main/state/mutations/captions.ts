@@ -75,8 +75,8 @@ function alignFor(an: number): TextAlign {
   return 'Center'
 }
 
-/** actor.rs:131 CaptionStylePatch — batch style applied to a caption track's
- *  Text layers. null/absent = "don't touch". */
+/** Batch style applied to a caption track's Text layers. null/absent =
+ *  "don't touch". */
 export interface CaptionStylePatch {
   font_family?: string | null
   font_size_px?: number | null
@@ -84,7 +84,7 @@ export interface CaptionStylePatch {
   outline_width?: number | null
 }
 
-/** actor.rs:2412 do_add_caption_track — greedy lane-pack the cues into Caption
+/** add_caption_track — greedy lane-pack the cues into Caption
  *  tracks (one Text layer per cue). Cues stable-sorted by start_us; each cue goes
  *  to the FIRST lane whose last layer's snapped end <= this cue's snapped start,
  *  else a new Caption track is opened (appended after the existing tracks).
@@ -121,7 +121,7 @@ function newCaptionTrack(p: Project, idGen: IdGen, label: string | null): Uuid {
   return id
 }
 
-/** actor.rs:2521 do_restyle_caption_track — patch font_family/font_size_px/color/
+/** restyle_caption_track — patch font_family/font_size_px/color/
  *  outline_width onto every Text layer of the track in one commit; non-Text layers
  *  skipped. TrackNotFound when the track is absent (raised in the recipe → no
  *  op_id). outline_width keeps the existing outline color (or BLACK if none). */

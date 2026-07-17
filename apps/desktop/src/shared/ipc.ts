@@ -291,8 +291,8 @@ export interface WeftcutApi {
     requestFrameAt(args: { streamId: string; targetUs: number }): Promise<void>
     close(args: { streamId: string }): Promise<void>
     requestPort(): void
-    /// E2E/bench-only: drain this session's Stage-3 timing samples. Rejects for
-    /// an unknown stream, or with "preview-gpu not built" off the native path.
+    /// E2E/bench-only: drain this session's per-frame timing samples. Rejects
+    /// for an unknown stream, or with "preview-gpu not built" off the native path.
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport>
     /// E2E/bench-only: drain the MAIN-measured renderer round-trip samples.
     takeMainTimings(): Promise<PreviewGpuMainTiming>

@@ -33,7 +33,7 @@ pub enum PreviewSource {
     /// ffmpeg software decoder can — the whole WebCodecs-blind family
     /// (ProRes / DNxHD / MPEG-2 / VC-1 / WMV3, see `codec_is_blindspot`)
     /// previews through that decoder, no proxy needed for preview. Export
-    /// still proxies (native export is a later phase; see `decide`).
+    /// still routes through the full proxy master (see `decide`).
     NativeFfmpeg,
     /// Original is heavy / long-GOP / undecodable; preview reads a proxy (the
     /// quick scrub proxy, or the full proxy for small undecodable sources).
@@ -87,8 +87,8 @@ pub fn decide(media: &MediaItem, source_gop_secs: Option<f64>) -> ProxyRoute {
     // WebCodecs-blind families (ProRes/DNxHD/MPEG-2/VC-1/WMV3) are never
     // `export_decodable_statically` nor `source_is_safe_to_bypass`, so the two
     // branches above always land them on `BOTH_PROXY`. A native ffmpeg SW decoder
-    // previews them directly, so override the preview axis here. Export stays on
-    // `FullProxy` until the native-export phase teaches export the same path.
+    // previews them directly, so override the preview axis here; export still
+    // routes through the full proxy master.
     if media
         .metadata
         .video
@@ -152,8 +152,8 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
             unreachable!("preview=Original implies export=Original (safe_to_bypass is a subset of export_decodable_statically)")
         }
         // Preview reads the original through the native decoder, but export
-        // still needs the full proxy master (Phase 1) — same background job
-        // as the ordinary FullProxy/Proxy pair.
+        // still needs the full proxy master — same background job as the
+        // ordinary FullProxy/Proxy pair.
         (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => ProxyJob::QuickThenFull,
         (ExportSource::Original, PreviewSource::NativeFfmpeg) => {
             unreachable!("NativeFfmpeg preview implies FullProxy export (decide() always pairs them)")
@@ -236,10 +236,10 @@ pub fn codec_is_prores(codec: &str) -> bool {
 /// directly (no proxy for preview). ProRes / DNxHD / DNxHR (ffprobe reports both
 /// DNxHD and DNxHR as `dnxhd`) are intra-only; MPEG-2 / VC-1 / WMV3 (VC-1
 /// Simple/Main) are long-GOP — the session's decode-forward-to-target seek
-/// handles those. Export still proxies until the native-export phase (see
+/// handles those. Export still routes through the full proxy master (see
 /// `decide`). VC-1/WMV3 have no ffmpeg *encoder*, so they are covered by this
 /// routing gate + the codec-agnostic decoder, not a synthetic conformance
-/// fixture (see the Phase-2 Plan A plan, Task 4).
+/// fixture.
 pub fn codec_is_blindspot(codec: &str) -> bool {
     let c = codec.to_ascii_lowercase();
     codec_is_prores(&c) || matches!(c.as_str(), "dnxhd" | "mpeg2video" | "vc1" | "wmv3")
@@ -401,7 +401,7 @@ mod tests {
     fn non_family_codec_proxies_both() {
         // A truly unhandled blind-spot codec — WebCodecs-blind on every machine
         // AND not in the native-sw family — still full-proxies on both axes.
-        // (mpeg2video moved INTO the family in Phase 2; qtrle guards the fallback.)
+        // (qtrle guards the fallback: it's outside the native-sw family.)
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "qtrle".into();
         });
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn blindspot_family_routes_preview_to_native_ffmpeg() {
         // Every WebCodecs-blind family previews natively (no proxy for preview),
-        // export still proxies in Phase 2 (native export is Phase 3).
+        // export still routes through the full proxy master.
         for codec in ["prores", "dnxhd", "mpeg2video", "vc1", "wmv3"] {
             let item = video(|m| {
                 m.metadata.video.as_mut().unwrap().codec = codec.into();
@@ -434,10 +434,9 @@ mod tests {
 
     #[test]
     fn prores_original_routes_preview_to_native_ffmpeg() {
-        // ProRes is WebCodecs-blind on every machine, but a native ffmpeg SW
-        // decoder (future work) can preview it without a proxy. Phase 1 wires
-        // only the preview axis: export still proxies (a later phase flips
-        // export to native too — see the module-level phase note in decide()).
+        // ProRes is WebCodecs-blind on every machine, but the native ffmpeg SW
+        // decoder previews it without a proxy; export still routes through the
+        // full proxy master.
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "prores".into();
         });

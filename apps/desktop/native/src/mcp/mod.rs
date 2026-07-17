@@ -27,7 +27,7 @@ pub(crate) use catalog::catalog;
 // `dispatch_tool` is `pub` (catalog.rs macro); napi_backend uses
 // `crate::mcp::dispatch_tool`. The `mcp` mod itself is private.
 pub use catalog::dispatch_tool;
-// synthesize_speech hybrid (Phase 3d-e): napi_backend's `synthesize_speech_compute`
+// synthesize_speech hybrid: napi_backend's `synthesize_speech_compute`
 // calls the TTS compute half + needs the args type. Re-exported here (the `tools`
 // mod is private) — same precedent as `dispatch_tool` above; not a public widening.
 #[cfg(feature = "cloud")]

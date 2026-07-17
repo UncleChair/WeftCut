@@ -251,8 +251,8 @@ fn mainFragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 `;
 
 /// Uniform defaults — single source of truth for the filter constructor
-/// (Task 2) and the gate's seed values (Task 5). NOT the registry's param
-/// defaults (Task 3) — the registry hard-codes its own.
+/// and the gate's seed values. NOT the registry's param defaults — the
+/// registry hard-codes its own.
 export const CHROMA_UNIFORM_DEFAULTS = {
   uKey: [0, 1, 0],
   uBalance: 0.5,

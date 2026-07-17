@@ -28,7 +28,7 @@ export interface BenchArgs {
   durationUs: number;
   scenario: BenchScenario;
   strategy: BenchStrategy;
-  /// Native-only: pool size (slot count) for the Stage-3 sweep. Default 3.
+  /// Native-only: pool size (slot count) for the pool-depth sweep. Default 3.
   poolSize?: number;
   /// Throughput driver's per-loop pacing delay (ms). Default 10 (current behavior).
   /// 0 = yield-only (unthrottled) — the max-throughput probe. Baseline stays 10 when absent.
@@ -306,7 +306,7 @@ export async function decodeBenchBudgetProbe(args: {
   }
 }
 
-// ── HW→SW in-place fallback probe (Task 13, REAL budget-rejection trigger) ──
+// ── HW→SW in-place fallback probe (REAL budget-rejection trigger) ──
 // `decodeBenchBudgetProbe` above force-pins every session's lane
 // (`forceLane: 'hardware'`) so it can assert the FORCED-lane hard-fatal path
 // the bench harness itself relies on for deterministic hardware-only

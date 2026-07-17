@@ -1,9 +1,8 @@
 // apps/desktop/src/main/mcp/motifToolDefs.ts
-// TS-owned MCP tool defs + resource defs for the motif surface (Phase 4 Task 1).
-// Descriptions verbatim from native/src/mcp/catalog.rs lines 88–118.
+// TS-owned MCP tool defs + resource defs for the motif surface.
 // inputSchemas verbatim from fixtures/mcp/rust-catalog-snapshot.json.
-// All 6 motif tool DEFS live here so they survive the Phase 4 Task 3 deletion of
-// the Rust motif arms. preview_motif_draft's DEF is TS-sourced like the others, but
+// All 6 motif tool DEFS live here — the Rust catalog carries no motif arms.
+// preview_motif_draft's DEF is TS-sourced like the others, but
 // its EXECUTION still routes 'rust' (the CDP capture special-case in server.ts) —
 // only its advertised def moved.
 

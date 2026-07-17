@@ -97,7 +97,7 @@ pub enum TrackRole {
     AudioA,
     AudioB,
     /// Subtitle / caption track. Hidden from AB display-mode filtering like
-    /// audio tracks; has no audio pair. Created by subtitle import (Task 3.x).
+    /// audio tracks; has no audio pair. Created by subtitle import.
     Caption,
 }
 

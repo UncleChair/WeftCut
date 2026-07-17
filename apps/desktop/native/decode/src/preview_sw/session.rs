@@ -53,8 +53,8 @@ const SEEK_RETRY_MARGIN_US: i64 = 1_000_000;
 
 /// What `open` hands back once the session thread has opened its decoder: the
 /// stream's frame dimensions. Built from `SwVideoStream`'s public `width`/`height`
-/// fields (set at open) — no frame is decoded just to learn them. Task 4 maps this
-/// to a `#[napi(object)]`.
+/// fields (set at open) — no frame is decoded just to learn them. The addon
+/// maps this to a `#[napi(object)]`.
 #[derive(Debug, Clone, Copy)]
 pub struct PreviewSwOpenInfo {
     pub width: u32,
@@ -62,8 +62,8 @@ pub struct PreviewSwOpenInfo {
 }
 
 /// Announced out of a session thread through the shared sink. `Send` (its only
-/// payload is the owned [`SwFrame`] + plain strings) so Task 4 can forward it to
-/// the addon's event channel. Every variant carries `stream_id` so a single sink
+/// payload is the owned [`SwFrame`] + plain strings) so the addon can forward it
+/// to its event channel. Every variant carries `stream_id` so a single sink
 /// can route to the right per-stream callback.
 pub enum SwFramePoke {
     /// A decoded frame, owned NV12 bytes + timing/color. The consumer keeps or
@@ -102,7 +102,7 @@ struct Session {
 }
 
 /// Fire a poke through the shared sink if one is set. The mutex is held across the
-/// call so concurrent sessions serialise (Task 4's sink is a non-blocking event
+/// call so concurrent sessions serialise (the addon's sink is a non-blocking event
 /// enqueue, so this can't deadlock or stall).
 fn emit(sink: &FrameSink, poke: SwFramePoke) {
     let guard = sink.lock().unwrap();
@@ -250,8 +250,8 @@ fn session_thread(
     // `stream` drops here: the decoder + format context release on this thread.
 }
 
-/// The set of live software preview sessions. `Send + Sync`, so Task 4 can hold it
-/// in the addon (e.g. behind an `Arc`) and drive it from napi calls.
+/// The set of live software preview sessions. `Send + Sync`, so the addon can
+/// hold it (e.g. behind an `Arc`) and drive it from napi calls.
 pub struct PreviewSwRegistry {
     sessions: Mutex<HashMap<String, Session>>,
     sink: FrameSink,
@@ -271,7 +271,7 @@ impl PreviewSwRegistry {
         }
     }
 
-    /// Install the sink every session emits pokes through. Set once by Task 4
+    /// Install the sink every session emits pokes through. Set once by the addon
     /// before any `open`; sessions share the same cell, so a later set is seen by
     /// already-running threads too.
     pub fn set_frame_sink(&self, sink: Box<dyn Fn(SwFramePoke) + Send>) {

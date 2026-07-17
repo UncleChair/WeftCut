@@ -113,7 +113,7 @@ export function consumeAckPreviewGpu(backend: NativeDecode, streamId: string, sl
   backend.previewGpuConsumeAck(streamId, slot)
 }
 
-/// Drain a session's Stage-3 timing samples. Delegates straight to the addon;
+/// Drain a session's per-frame timing samples. Delegates straight to the addon;
 /// the registry drains its accumulator and returns the ms summaries.
 export function takeTimingsPreviewGpu(backend: NativeDecode, streamId: string): PreviewGpuTimingReport {
   return backend.previewGpuTakeTimings(streamId)

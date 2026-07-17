@@ -25,7 +25,7 @@ function locate(p: Project, id: Uuid): [number, number] | null {
   return null
 }
 
-/** actor.rs:3200 do_add_transition. Both layers must live on the SAME track.
+/** add_transition. Both layers must live on the SAME track.
  *  Three cases: adjacent (extend from), pre-overlapped by exactly duration
  *  (no-op), or reject TransitionLayersNotAdjacent. The transition id is minted
  *  AFTER those checks (so LayerNotFound/TransitionLayersNotAdjacent burn no id)
@@ -51,8 +51,8 @@ export function applyAddTransition(p: Project, idGen: IdGen, fromLayer: Uuid, to
   return id
 }
 
-/** actor.rs:3270 do_remove_transition — remove by id, then shrink from_layer
- *  back by duration (if it still exists) to restore a validation-passing shape. */
+/** remove_transition — remove by id, then shrink from_layer back by duration
+ *  (if it still exists) to restore a validation-passing shape. */
 export function applyRemoveTransition(p: Project, transitionId: Uuid): void {
   const idx = p.transitions.findIndex((t) => t.id === transitionId)
   if (idx < 0) throw new CommandFailure({ error: 'TransitionNotFound', transition: transitionId })

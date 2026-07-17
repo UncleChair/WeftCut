@@ -3,7 +3,7 @@
 //! Each tool returns `ToolResult` / `McpToolError`. Errors map 1:1 onto the MCP
 //! error model in `wire.rs`.
 //!
-//! Phase 4b T3: only the native/compute/hybrid-compute tool handlers remain.
+//! Only the native/compute/hybrid-compute tool handlers live here.
 //! The ~47 TS-executed mutation handlers are deleted; the TS actor serves them.
 //! Cloud tools (transcribe/synthesize) are gated on `feature = "cloud"`.
 
@@ -33,7 +33,7 @@ use super::EmptyArgs;
 // `agent_actor` + `map_command_error` (the Agent-actor stamp + the structured
 // CommandError→MCP error mapper) were used only by the deleted/stubbed mutation
 // handlers (add_*, import_media, install_motif, synthesize_speech). The kept
-// read/compute tools don't write the actor, so both are gone (Phase 4b).
+// read/compute tools don't write the actor, so both are absent here.
 
 pub(super) fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpToolError> {
     Uuid::parse_str(s)
@@ -50,12 +50,12 @@ pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, M
 
 // `begin_agent_session` routes to the TS actor (it is a `'ts'` MCP tool, so
 // `mergeMcpCatalog` filters it out of the Rust catalog and the TS def supplies
-// it). Its Rust handler + args + catalog entry were deleted in Phase 4b.
+// it). It has no Rust handler / args / catalog entry.
 
 // Track and layer mutation tools (add_track, remove_track, move_track,
 // add_color_layer, add_video_layer, update_layer, update_layer_params,
 // move_layer, trim_layer, delete_layer, split_layer, duplicate_layer) are
-// deleted — they are served by the TS actor (Phase 4b T3).
+// absent — they are served by the TS actor.
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct ApplySubtitlesArgs {
@@ -77,7 +77,7 @@ pub(super) struct ApplySubtitlesArgs {
 /// `apply_subtitles` Rust handler is a stub — the tool routes through the hybrid
 /// orchestrator (parse_subtitles napi compute → TS-actor add_caption_track write);
 /// the schema stays so `listTools` advertises it, but the TS host intercepts the
-/// call before dispatch reaches this handler. (Phase 4b.)
+/// call before dispatch reaches this handler.
 pub(super) async fn apply_subtitles(
     _b: &Backend,
     _args: ApplySubtitlesArgs,
@@ -101,7 +101,7 @@ pub(super) struct DetectSilencesArgs {
     /// Injected by the TS MCP host (sole state owner) — the layer resolved by
     /// `layer_id` and its `MediaItem`. `#[schemars(skip)]` keeps them OUT of the
     /// advertised tool schema; serde still deserializes them. `None` on a direct
-    /// Rust call → the handler produces the same not-found error (Phase 2).
+    /// Rust call → the handler produces the same not-found error.
     #[serde(default)]
     #[schemars(skip)]
     pub layer: Option<crate::state::Layer>,
@@ -203,7 +203,7 @@ pub(super) async fn detect_silences(
 // clear_keyframes, set_param_track), effect tools (add_effect, update_effect,
 // move_effect, remove_effect), composition tools (set_composition,
 // fit_composition_to_layers), and marker tools (add_marker, update_marker,
-// remove_marker) are deleted — served by the TS actor (Phase 4b T3).
+// remove_marker) are absent — served by the TS actor.
 
 // ============================================================
 // Media tools
@@ -218,7 +218,7 @@ pub(super) struct ImportMediaArgs {
 /// `import_media` Rust handler is a stub — the tool routes through the hybrid
 /// orchestrator (probe_media napi compute → TS-actor write); the schema stays so
 /// `listTools` advertises it, but the TS host intercepts the call before dispatch
-/// reaches this handler. (Phase 4b hybrid pattern.)
+/// reaches this handler (the hybrid pattern).
 #[cfg(feature = "jobs")]
 pub(super) async fn import_media(
     _b: &Backend,
@@ -232,7 +232,7 @@ pub(super) async fn import_media(
 
 // remove_media, undo, redo, lock_history, unlock_history, checkpoint,
 // list_checkpoints, restore_checkpoint, dry_run, set_role_gain, set_role_flags
-// are deleted — served by the TS actor (Phase 4b T3).
+// are absent — served by the TS actor.
 
 // ============================================================
 // detect_silences peak-scan helpers (ported verbatim)
@@ -504,7 +504,7 @@ mod tests {
     }
 
     // Tests for audio-role tools, add_track, and the apply_subtitles caption-track
-    // build are deleted along with their handlers (Phase 4b): those tools are now
+    // build are absent along with their handlers: those tools are
     // TS-served or hybrid stubs. The subtitle cue-shift + parse path is covered by
     // the subtitles module tests + the TS-side hybrid e2e.
 }
@@ -530,7 +530,7 @@ pub(super) struct TranscribeClipArgs {
     #[serde(default)]
     pub language: Option<String>,
     /// Injected by the TS MCP host (sole state owner) — see DetectSilencesArgs.
-    /// `skip_serializing` keeps the slice out of the tool's log details (Phase 2).
+    /// `skip_serializing` keeps the slice out of the tool's log details.
     #[serde(default, skip_serializing)]
     #[schemars(skip)]
     pub layer: Option<crate::state::Layer>,
@@ -817,7 +817,7 @@ async fn transcribe_clip_inner(
     Ok(ToolResult::text(shifted))
 }
 
-/// TTS compute half of the `synthesize_speech` hybrid (Phase 3d-e).
+/// TTS compute half of the `synthesize_speech` hybrid.
 /// Validates the text, picks the synthesizer, checks the content-addressed
 /// cache, synthesizes+writes the audio if needed, probes it for duration,
 /// and builds the `MediaItem`. Does NOT write to the project actor — that is
@@ -930,7 +930,7 @@ pub(crate) async fn synthesize_speech_audio(
 /// add_media_item + add Audio layer write); the schema stays so `listTools`
 /// advertises it, but the TS host intercepts the call before dispatch reaches
 /// this handler. The compute half (`synthesize_speech_audio`) stays — the napi
-/// `synthesize_speech_compute` calls it. (Phase 4b.)
+/// `synthesize_speech_compute` calls it.
 #[cfg(feature = "cloud")]
 pub(super) async fn synthesize_speech(
     _b: &Backend,

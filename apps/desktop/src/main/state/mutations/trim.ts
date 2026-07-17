@@ -48,7 +48,7 @@ function sourceDurationForLayer(p: Project, layer: Layer): number | null {
   return p.media_pool[pa.media]?.metadata.duration_us ?? null
 }
 
-/** Motif cap deferred to Phase 2b. */
+/** No Motif duration cap is implemented. */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeGroup: boolean): void {
   const fpsN = p.composition.fps.num, fpsD = p.composition.fps.den
   const snapped = snapFrameRound(newTUs, fpsN, fpsD)

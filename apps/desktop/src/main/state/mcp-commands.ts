@@ -230,8 +230,8 @@ export function keyframePresent(track: { mode: string; value: unknown }, id: str
 }
 
 /** Single-source record per MCP tool. Table-exec tools carry parseArgs (+ optional
- *  shapeResult). Dedicated-exec tools carry stub records only — their parseDedicated
- *  arms are attached in Task 5. */
+ *  shapeResult). Dedicated-exec tools carry stub records only — their
+ *  parseDedicated arms are attached at registration. */
 export interface McpToolDef {
   name: string
   description: string
@@ -239,7 +239,7 @@ export interface McpToolDef {
   exec: 'table' | 'dedicated'
   parseArgs?: (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }  // table-exec only
   shapeResult?: (value: unknown) => ToolResultJson                                             // table-exec only (default toolEmpty)
-  parseDedicated?: (a: Record<string, unknown>) => Record<string, unknown>                    // dedicated-exec only (Task 5)
+  parseDedicated?: (a: Record<string, unknown>) => Record<string, unknown>                    // dedicated-exec only
 }
 
 // ── Single-source MCP tool table ─────────────────────────────────────────────

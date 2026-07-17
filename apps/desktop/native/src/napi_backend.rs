@@ -647,7 +647,7 @@ mod tests {
         let cat = b.mcp_catalog().await.unwrap();
         assert!(cat.contains("\"ping\""));
         assert!(cat.contains("\"apply_subtitles\""));
-        assert!(!cat.contains("\"add_track\""), "add_track must not be in the Rust-native catalog (Phase 4b)");
+        assert!(!cat.contains("\"add_track\""), "add_track must not be in the Rust-native catalog");
         // every tool advertises an object inputSchema
         let v: serde_json::Value = serde_json::from_str(&cat).unwrap();
         for t in v["tools"].as_array().unwrap() {
@@ -907,14 +907,14 @@ mod tests {
         // full project in the request (ADR 0024).
         assert!(
             !export.contains("snapshot_for_read"),
-            "commands/export.rs: export channels must NOT read the mirror — they take a `project` arg (Phase 2)"
+            "commands/export.rs: export channels must NOT read the mirror — they take a `project` arg"
         );
         for name in ["export_project_audio_only", "ensure_export_audio_conform"] {
             let start = export.find(&format!("fn {name}"))
                 .unwrap_or_else(|| panic!("{name} must exist in commands/export.rs"));
             let body = &export[start..(start + 600).min(export.len())];
             assert!(!body.contains("snapshot_for_read"),
-                "{name}: must NOT read the mirror — it takes a `project` arg (Phase 2)");
+                "{name}: must NOT read the mirror — it takes a `project` arg");
         }
 
         // detect_silences / transcribe_clip never read a mirror — the TS MCP
@@ -922,7 +922,7 @@ mod tests {
         // needs.
         assert!(
             !tools.contains("snapshot_for_read"),
-            "mcp/tools.rs: clip-audio compute tools must NOT read the mirror — they take an injected slice (Phase 2)"
+            "mcp/tools.rs: clip-audio compute tools must NOT read the mirror — they take an injected slice"
         );
 
         // MCP resource reads never touch a mirror — the TS host serves the
@@ -931,7 +931,7 @@ mod tests {
         // composition://meter reads live Rust state.
         assert!(
             !resources.contains("snapshot_for_read"),
-            "mcp/resources.rs: resource reads must NOT read the mirror — TS serves state views + injects compute slices (Phase 3)"
+            "mcp/resources.rs: resource reads must NOT read the mirror — TS serves state views + injects compute slices"
         );
 
         // The import / derivative-jobs path is mirror-free — the hash-first
@@ -947,12 +947,12 @@ mod tests {
         ] {
             assert!(
                 !src.contains("read_mirror_handle") && !src.contains("fresh_media_item"),
-                "{name}: the jobs/enqueue path must be mirror-free (no read_mirror_handle / fresh_media_item) — hash-first import (Phase 4)"
+                "{name}: the jobs/enqueue path must be mirror-free (no read_mirror_handle / fresh_media_item) — hash-first import"
             );
         }
         assert!(
             !jobs_import.contains("migrate_hash_artifacts") && !jobs_import.contains("pending_hash_for"),
-            "jobs/import.rs: the pending-hash / migrate machinery is deleted (Phase 4)"
+            "jobs/import.rs: the pending-hash / migrate machinery must not exist"
         );
 
         // Single-media channels never read a mirror — the TS host passes the
@@ -962,7 +962,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));
             let body = &media[start..(start + 600).min(media.len())];
             assert!(!body.contains("snapshot_for_read"),
-                "{name}: must NOT read the mirror — it takes a MediaItem arg (Phase 1)");
+                "{name}: must NOT read the mirror — it takes a MediaItem arg");
         }
 
         // `ensure_full_proxy` routes its derivative write through the seam.

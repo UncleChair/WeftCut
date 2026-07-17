@@ -1,8 +1,8 @@
 import type { Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 
-/** actor.rs:2622-2649 — remove a track. TrackNotFound → TrackNotRemovable
- *  (reserved tracks) → TrackNotEmpty (unless force) → splice. */
+/** Remove a track. TrackNotFound → TrackNotRemovable (reserved tracks) →
+ *  TrackNotEmpty (unless force) → splice. */
 export function applyDeleteTrack(p: Project, id: Uuid, force: boolean): void {
   const idx = p.tracks.findIndex((t) => t.id === id)
   if (idx < 0) throw new CommandFailure({ error: 'TrackNotFound', track: id })
@@ -11,8 +11,8 @@ export function applyDeleteTrack(p: Project, id: Uuid, force: boolean): void {
   p.tracks.splice(idx, 1)
 }
 
-/** actor.rs:3394-3426 — reposition a track. TrackNotFound → TrackPositionOutOfRange
- *  → remove+reinsert. The cur===new no-op (skip commit) is handled by the actor. */
+/** Reposition a track. TrackNotFound → TrackPositionOutOfRange →
+ *  remove+reinsert. The cur===new no-op (skip commit) is handled by the actor. */
 export function applyMoveTrack(p: Project, id: Uuid, newPosition: number): void {
   const cur = p.tracks.findIndex((t) => t.id === id)
   if (cur < 0) throw new CommandFailure({ error: 'TrackNotFound', track: id })

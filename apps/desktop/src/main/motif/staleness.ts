@@ -7,8 +7,8 @@
 // Motif changed since you placed it (v1 → v3)". Acknowledging bumps markers to
 // current in ONE undo entry via rebind_motif.
 //
-// Pure cores take exactly the data they need so they unit-test without an actor
-// or disk. Mirrors native/src/motifs/staleness.rs (ported verbatim, Phase 3).
+// Pure cores take exactly the data they need so they unit-test without an
+// actor or disk.
 import type { Manifest } from '../../shared/motifs/catalog'
 import type { BuiltinMotif } from './authoring'
 import type { MotifRebindEntry } from '../state/model'

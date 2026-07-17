@@ -28,10 +28,9 @@ pub mod track;
 pub mod transform;
 pub mod transition;
 
-// The actor machinery (single-writer `ProjectActor`/`ProjectHandle`/history/
-// validators) was deleted in Phase 4b — the TS state actor is the only writer.
-// The shared command/error/patch types it used were extracted to `command` in
-// Phase 4a and stay here; the model serde modules below are untouched.
+// No actor machinery lives here — the TS state actor is the only writer.
+// This module carries the shared command/error/patch types (`command`) plus
+// the model serde modules: the Rust↔TS wire contract.
 pub use command::{CommandError, FullProxyLanded, MediaDerivativesPatch, ValidationError};
 pub use decode_route::DecodeRoute;
 

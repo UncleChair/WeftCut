@@ -65,9 +65,9 @@ export interface WorkspacePaths {
   path_abs: string; path_rel: string; file_hash_blake3: string; file_size: number; file_mtime: number
 }
 
-/** do_set_media_derivatives (actor.rs:3534) — patch one pool item's derivative
- *  fields, returning a new pool. MediaNotFound if absent. No validation (mirrors
- *  Rust). The caller replaces the pool everywhere + broadcasts unrecorded. */
+/** set_media_derivatives — patch one pool item's derivative fields, returning
+ *  a new pool. MediaNotFound if absent. No validation. The caller replaces the
+ *  pool everywhere + broadcasts unrecorded. */
 export function applySetMediaDerivatives(pool: Record<string, MediaItem>, id: Uuid, patch: MediaDerivativesPatch): Record<string, MediaItem> {
   const item = pool[id]
   if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
@@ -96,8 +96,8 @@ export function applySetMediaDerivatives(pool: Record<string, MediaItem>, id: Uu
   return { ...pool, [id]: next }
 }
 
-/** do_set_media_workspace_paths (actor.rs:3500) — set the workspace-relative
- *  path + file fingerprint after the import copy. path_rel is always set. */
+/** set_media_workspace_paths — set the workspace-relative path + file
+ *  fingerprint after the import copy. path_rel is always set. */
 export function applySetMediaWorkspacePaths(pool: Record<string, MediaItem>, id: Uuid, paths: WorkspacePaths): Record<string, MediaItem> {
   const item = pool[id]
   if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
@@ -106,17 +106,17 @@ export function applySetMediaWorkspacePaths(pool: Record<string, MediaItem>, id:
 }
 
 /** Set ONLY the source content hash on a pool item — used by the hash-first
- *  import (stateless-compute Phase 4): the standalone BLAKE3 pass result replaces
- *  the provisional probe hash BEFORE any derivative job is enqueued. UNRECORDED,
- *  no validation (mirrors the sibling setters). MediaNotFound if absent. */
+ *  import: the standalone BLAKE3 pass result replaces the provisional probe
+ *  hash BEFORE any derivative job is enqueued. UNRECORDED, no validation
+ *  (like the sibling setters). MediaNotFound if absent. */
 export function applySetMediaHash(pool: Record<string, MediaItem>, id: Uuid, hash: string): Record<string, MediaItem> {
   const item = pool[id]
   if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
   return { ...pool, [id]: { ...item, file_hash_blake3: hash } }
 }
 
-/** do_remove_media (actor.rs:3439-3451) — layer ids referencing this media,
- *  scanned in track-then-layer order. VideoClip/Audio/ImageOverlay only. */
+/** Layer ids referencing this media, scanned in track-then-layer order.
+ *  VideoClip/Audio/ImageOverlay only. */
 export function referencingLayers(p: Project, id: Uuid): Uuid[] {
   const out: Uuid[] = []
   for (const t of p.tracks) for (const l of t.layers) {
@@ -126,11 +126,11 @@ export function referencingLayers(p: Project, id: Uuid): Uuid[] {
   return out
 }
 
-/** actor.rs:2573 do_separate_audio — lift an Audio layer onto a fresh
- *  non-reserved track inserted directly BEFORE its source. The new-track id is
- *  minted AFTER the locate + kind checks (so LayerNotFound/WrongLayerKind burn
- *  no id) but BEFORE commit's op_id (the keystone). Track defaults mirror
- *  Track::new() (== applyAddTrack). No autofit (no time change). */
+/** separate_audio — lift an Audio layer onto a fresh non-reserved track
+ *  inserted directly BEFORE its source. The new-track id is minted AFTER the
+ *  locate + kind checks (so LayerNotFound/WrongLayerKind burn no id) but
+ *  BEFORE commit's op_id (the keystone). Track defaults == applyAddTrack.
+ *  No autofit (no time change). */
 export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uuid {
   let ti = -1, li = -1
   for (let t = 0; t < p.tracks.length; t++) {

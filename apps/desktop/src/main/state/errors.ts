@@ -22,8 +22,8 @@ export type ValidationError =
   | { rule: 'GroupMemberMissing'; group: Uuid; layer: Uuid }
   | { rule: 'LayerInMultipleGroups'; layer: Uuid; first: Uuid; second: Uuid }
 
-// ── CommandError — mirrors native/src/state/actor.rs:336-444 variants ──
-// Phase 1 only constructs a subset; the rest are typed for Phase 2/3.
+// ── CommandError — the full mutation-error vocabulary. Individual dispatch
+// arms construct only the variants they need. ──
 export type CommandError =
   | { error: 'TrackNotFound'; track: Uuid }
   | { error: 'LayerNotFound'; layer: Uuid }

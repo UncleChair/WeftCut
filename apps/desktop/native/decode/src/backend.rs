@@ -103,7 +103,7 @@ pub struct PreviewSwProbeResult {
     pub reason: Option<String>,
 }
 
-/// Verdict of a one-frame HW (d3d11va) decode probe (D4). Unlike the SW probe,
+/// Verdict of a one-frame HW (d3d11va) decode probe. Unlike the SW probe,
 /// main supplies `classKey` (derived from `MediaSummary` before deciding to
 /// probe, since the HW probe is comparatively expensive) — this result carries
 /// no codec/pix_fmt/width/height echo.
@@ -205,8 +205,8 @@ pub struct ExportSwMsg {
     pub message: Option<String>,
 }
 
-/// The component's ffmpeg linkage identity — the SW capability-cache envKey
-/// (D3). Changes when the bundled/loaded avcodec changes.
+/// The component's ffmpeg linkage identity — the SW capability-cache envKey.
+/// Changes when the bundled/loaded avcodec changes.
 #[napi]
 pub fn version_info() -> String {
     format!(
@@ -415,7 +415,7 @@ impl NativeDecode {
         self.preview_gpu.close(&stream_id).map_err(napi::Error::from_reason)
     }
 
-    /// One-frame HW decode probe (D4): does d3d11va yield a decodable D3D11
+    /// One-frame HW decode probe: does d3d11va yield a decodable D3D11
     /// surface for this codec on this GPU? Calls the decoder-level primitive
     /// directly (no session, no pool, no poke sink) — a throwaway open +
     /// one-frame decode is self-contained and self-bounding, unlike the
@@ -432,7 +432,7 @@ impl NativeDecode {
         }
     }
 
-    /// Drain + return this session's Stage-3 timing samples (coord-RTT + decode/copy).
+    /// Drain + return this session's per-frame timing samples (coord-RTT + decode/copy).
     #[napi]
     pub fn preview_gpu_take_timings(&self, stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
         let rep = self

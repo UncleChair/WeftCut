@@ -1,13 +1,12 @@
 // apps/desktop/src/main/state/jobs-writeback.ts
 //
-// Main-process adapter for the Rust jobs derivative write-back (spec 3c-ii / D5).
-// When the TS actor is authoritative, a completed background job (proxy /
-// thumbnail / waveform / conform) emits `media:derivatives { media_id, patch }`
-// (native/src/jobs/mod.rs commit_media_derivatives) instead of writing the Rust
-// actor; the onEvent bridge routes it here (live route wired in 3c-ii-d). This
+// Main-process adapter for the Rust jobs derivative write-back. A completed
+// background job (proxy / thumbnail / waveform / conform) emits
+// `media:derivatives { media_id, patch }` (native/src/jobs/mod.rs
+// commit_media_derivatives); the onEvent bridge routes it here. This
 // is a thin adapter over the gated `set_media_derivatives` dispatch arm
-// (actor.ts:374) — the patch's proxy fields carry the absent/null/string
-// tri-state (`'key' in patch`, mutations/media.ts:67) the Rust serialize
+// (actor.ts) — the patch's proxy fields carry the absent/null/string
+// tri-state (`'key' in patch`, mutations/media.ts) the Rust serialize
 // preserves. UNRECORDED on the actor (durable across undo; 1 broadcast id).
 import type { ActorHandle, DispatchResult } from './actor'
 import type { MediaDerivativesPatch } from './mutations/media'

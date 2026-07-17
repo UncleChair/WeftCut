@@ -1,10 +1,8 @@
 // apps/desktop/src/main/motif/authoring.ts
 //
-// TS port of the Motif authoring lifecycle + catalog payload. Mirrors
-// native/src/motifs/authoring_commands.rs and native/src/commands/motifs.rs.
-// Pure: no actor, no IPC, no event emit — the host dispatcher (motifTools.ts)
-// wraps these with the store/actor/emit. Cross-language twin: keep in sync with
-// the Rust source until Phase 4 deletes it.
+// The Motif authoring lifecycle + catalog payload (TS-owned outright — no
+// Rust counterpart exists). Pure: no actor, no IPC, no event emit — the host
+// dispatcher (motifTools.ts) wraps these with the store/actor/emit.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -20,7 +18,7 @@ export interface MotifSourceTs { manifest: Manifest; html: string }
 
 /** Load each built-in's {id, manifest, html}. Manifest comes from the bundled
  *  BUILTIN_MANIFESTS (authoritative); html is read from `<builtinDir>/<id>/index.html`
- *  (the relocated served assets — Phase 1). `builtinDir` is passed explicitly
+ *  (the served assets). `builtinDir` is passed explicitly
  *  (host computes via builtinAssetDir(); tests pass a fixture dir) so this is
  *  hermetic. A built-in whose html can't be read is skipped (defensive). */
 export function builtinMotifs(builtinDir: string): BuiltinMotif[] {
@@ -82,7 +80,7 @@ export function listMotifsInner(store: UserMotifStore, builtins: BuiltinMotif[])
 }
 
 // ---------------------------------------------------------------------------
-// Authoring cores (Task 2) — write / amend / create-edit / import / delete
+// Authoring cores — write / amend / create-edit / import / delete
 // ---------------------------------------------------------------------------
 
 /** Final-ready unique id minted vs published ∪ drafts. The id a draft is born
@@ -156,7 +154,7 @@ export function deleteMotifCore(store: UserMotifStore, id: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Install compute (Task 3) — buildRebindUpdates + installMotifCompute
+// Install compute — buildRebindUpdates + installMotifCompute
 // ---------------------------------------------------------------------------
 
 export interface MotifLayerRef { layerId: string; motifId: string; version: number; props: Record<string, unknown> }

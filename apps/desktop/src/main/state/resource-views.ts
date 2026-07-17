@@ -22,7 +22,7 @@ function resourceNotFound(message: string): never {
 }
 
 /** Serve a `project://*` state-view resource directly from the actor (the sole
- *  state owner — Phase 3): returns the wire ResourceResult, or `null` when the URI
+ *  state owner): returns the wire ResourceResult, or `null` when the URI
  *  is a Rust-compute resource (`project://compiled`, `media://*`,
  *  `composition://meter`) the host forwards to the backend with an injected slice.
  *  Throws not-found for a bad `project://layers/{id}` URI. */
@@ -50,7 +50,7 @@ export function serveProjectResource(
 }
 
 /** Build the injected-state JSON the backend's `mcpReadResource` needs for the
- *  resources that stay Rust compute (Phase 3): `project://compiled` gets the full
+ *  resources that stay Rust compute: `project://compiled` gets the full
  *  project (audio mix plan); `media://*` gets the MediaItem resolved by id;
  *  `composition://meter` gets nothing. */
 export function buildResourceInjection(uri: string, snapshot: Project): string {

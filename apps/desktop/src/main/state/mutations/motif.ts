@@ -17,8 +17,8 @@ export function motifLayerParams(motifId: string, motifVersion: number, canonica
   }
 }
 
-/** 1:1 port of do_rebind_motif (actor.rs:3711): set motif_id/version/props on the
- *  named Motif-param layers; non-Motif or missing layers are skipped. */
+/** rebind_motif: set motif_id/version/props on the named Motif-param layers;
+ *  non-Motif or missing layers are skipped. */
 export function applyRebindMotif(draft: Project, updates: MotifRebindEntry[]): void {
   for (const u of updates) {
     for (const track of draft.tracks) {

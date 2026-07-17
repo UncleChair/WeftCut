@@ -390,7 +390,7 @@ function findCi(haystack: string, needle: string): number {
  * composed island and the content hash serialize. Excludes payload-decoration
  * fields (`status`, `content_hash`, `target_id`, `settle_rafs`) so the island +
  * hash are stable. Keys emitted in a fixed order for deterministic JSON.
- * (Consumed here by `composeMotifHtml` and in Task 4 by `motifContentHash`.)
+ * (Consumed by `composeMotifHtml` and `motifContentHash`.)
  */
 export function coreManifestForHash(m: Manifest): Record<string, unknown> {
   return {

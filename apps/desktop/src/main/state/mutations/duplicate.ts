@@ -4,9 +4,9 @@ import { applyDurationAutofit, cloneLayer, locateLayer } from './helpers'
 import { CommandFailure } from '../errors'
 import { snapFrameRound } from '../snap'
 
-/** actor.rs:2885-2927 — shallow-clone the layer with one fresh id (nested
- *  keyframe/effect ids are NOT regenerated), offset by tOffsetUs, insert
- *  t-start-sorted on the same track, autofit. Duplicate does NOT join a group. */
+/** Shallow-clone the layer with one fresh id (nested keyframe/effect ids are
+ *  NOT regenerated), offset by tOffsetUs, insert t-start-sorted on the same
+ *  track, autofit. Duplicate does NOT join a group. */
 export function applyDuplicateLayer(p: Project, idGen: IdGen, id: Uuid, tOffsetUs: number): Uuid {
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })

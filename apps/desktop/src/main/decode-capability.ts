@@ -1,7 +1,7 @@
 // Machine capability cache (ADR 0030; docs/preview.md §Decode engine):
 // probe verdicts keyed (lane, format class), persisted at
 // <userData>/decode_capability.json. envKey pins the environment the verdict
-// was measured in — SW: the component's ffmpeg version; HW (D4): the GPU +
+// was measured in — SW: the component's ffmpeg version; HW: the GPU +
 // driver identity — a mismatch wipes that lane (machine truth went stale).
 // NOT the session bridge and NOT per-file (ADR 0010 stays: per-file
 // incapability is session-scoped; this caches per-format-CLASS capability).
@@ -55,8 +55,8 @@ export function createDecodeCapabilityStore(deps: { fs: AppSettingsFs; path: str
   }
 }
 
-/// Format-class key: codec::pix_fmt:resolution-class. Probe-informed
-// (Task 12 returns codec/pixFmt); resolution classes keep 4K verdicts from
+/// Format-class key: codec::pix_fmt:resolution-class. Probe-informed (the SW
+// probe returns codec/pixFmt); resolution classes keep 4K verdicts from
 // vouching for 8K.
 export function classKeyOf(codec: string, pixFmt: string | null, width: number, height: number): string {
   const px = Math.max(width, height)

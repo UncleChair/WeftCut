@@ -9,8 +9,8 @@
 // (whichever first), retaining the most recent 20. forceFlush() skips the
 // debounce (the Cmd-S / quit gate). Pure + injected (fs / clock / timer /
 // workspace-dir) so the debounce, interval, and gc are deterministic in tests.
-// Dormant in 3c-ii-c — the live wiring (subscribe at backend bring-up;
-// project_save → forceFlush) is the 3c-ii-d flip.
+// Wired by ts-actor-host: subscribed at backend bring-up; project_save →
+// forceFlush.
 import type { ActorHandle, ChangeEvent } from './actor'
 import type { Project } from './model'
 import { PROJECT_FILE } from './persistence'
