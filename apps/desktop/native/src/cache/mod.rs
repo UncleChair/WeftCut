@@ -1,15 +1,15 @@
 //! Content-addressable cache layout for media derivatives — proxies,
 //! thumbnails, waveforms, on-demand extracted frames.
 //!
-//! **Per `docs/data-model.md`** (decision Q3), the cache is now
-//! rooted at `<workspace>/Cache/`. At app boot, before any workspace is
-//! opened or saved, `CacheLayout` points at the OS app-cache as a
-//! transitional fallback. When `project_save_as` or `project_open` lands,
-//! `set_workspace()` re-points the layout at the workspace's `Cache/` dir.
-//! Interior mutability via `RwLock<PathBuf>` lets consumers keep their
-//! existing `State<CacheLayout>` signatures while the root underneath
-//! moves; reads clone the current root each time, so the cost is one
-//! lock-acquire-and-clone per `proxies_dir()` / `thumbnail()` / ... call.
+//! Per `docs/data-model.md`, the cache is rooted at `<workspace>/Cache/`.
+//! At app boot, before any workspace is opened or saved, `CacheLayout`
+//! points at the OS app-cache as a transitional fallback. When
+//! `project_save_as` or `project_open` lands, `set_workspace()` re-points
+//! the layout at the workspace's `Cache/` dir. Interior mutability via
+//! `RwLock<PathBuf>` lets consumers hold one shared `CacheLayout` while the
+//! root underneath moves; reads clone the current root each time, so the
+//! cost is one lock-acquire-and-clone per `proxies_dir()` / `thumbnail()`
+//! / ... call.
 //!
 //! Atomicity: every writer must write to `<final>.tmp` then rename. Skip-if-
 //! cached checks must verify both `exists()` AND non-zero size — interrupted

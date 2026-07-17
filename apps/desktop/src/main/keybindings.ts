@@ -1,9 +1,9 @@
 // Per-user keyboard-shortcut overrides persisted at <userData>/keybindings.json,
 // owned by the Electron main process. One value across every project (config-dir).
 //
-// History: persistence used to live in the Rust addon (native/src/keybindings.rs);
-// it moved here so the addon is compute-only. The on-disk file path + JSON shape
-// are unchanged, so existing users' keybindings.json keeps working.
+// The on-disk file path + JSON shape are a COMPATIBILITY SURFACE: existing
+// users' keybindings.json files must keep loading, so neither may change
+// without a migration.
 //
 // On-disk shape:
 //   { "overrides": { "<action-id>": ["Mod+Z", "F3"], ... } }
@@ -18,8 +18,8 @@
 // Import validates the source before touching the live file so a bad import
 // can't brick the user's setup.
 //
-// No :changed event (parity with Rust behavior — renderer re-fetches via
-// keybindings_get after each mutation).
+// No :changed event — the renderer re-fetches via keybindings_get after
+// each mutation.
 
 import type { KeybindingsMap } from '../shared/keybindings'
 

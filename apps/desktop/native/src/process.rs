@@ -2,12 +2,9 @@
 //!
 //! A GUI-subsystem process — Electron, and the napi addon hosted inside it —
 //! owns no console, so every ffmpeg/ffprobe spawn makes Windows allocate a
-//! fresh conhost window that flashes on screen. The old Tauri *debug* binary
-//! was a console-subsystem app (`#![cfg_attr(not(debug_assertions),
-//! windows_subsystem = "windows")]`) and inherited the dev terminal, which is
-//! why this never appeared under `tauri dev`. `CREATE_NO_WINDOW` suppresses the
-//! window in both dev and packaged Electron builds, and is a no-op on
-//! macOS/Linux where child processes have no window concept at all.
+//! fresh conhost window that flashes on screen. `CREATE_NO_WINDOW` suppresses
+//! the window in both dev and packaged builds, and is a no-op on macOS/Linux
+//! where child processes have no window concept at all.
 //!
 //! LANDMINE: EVERY non-test ffmpeg/ffprobe spawn MUST call `.no_console_window()`.
 //! A bare `Command::new(..)` re-introduces the popup. The codebase spawns through

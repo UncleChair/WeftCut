@@ -1,5 +1,5 @@
 //! Sensitive-data redactor. Runs on `LogEntry.details` (only) before
-//! broadcast and persistence. See `docs/status-log.md` Q12 —
+//! broadcast and persistence. See `docs/status-log.md` —
 //! we apply a small allowlist of patterns matching the realistic leak
 //! surface: cloud-SDK error reprs that embed bearer tokens and api-key
 //! query parameters.

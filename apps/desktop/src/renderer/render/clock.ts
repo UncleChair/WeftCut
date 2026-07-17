@@ -8,9 +8,9 @@
 //     playback clock — A/V sync is structural.
 //   - Otherwise (no context, or suspended — e.g. before the first user
 //     gesture under autoplay policy), the clock advances by
-//     `performance.now()` deltas, exactly the legacy behavior. The flip
-//     back to audio-derived re-anchors from the CURRENT raw position, so
-//     switching sources never jumps the playhead.
+//     `performance.now()` deltas. The flip back to audio-derived
+//     re-anchors from the CURRENT raw position, so switching sources
+//     never jumps the playhead.
 //
 // The anchor type + mapping live in `audio/chunkSchedule.ts` — the same
 // pair the AudioMixers schedule chunks against. PlaybackEngine forwards

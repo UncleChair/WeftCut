@@ -10,7 +10,7 @@
 //   lookahead window with `setTimeout(8 ms)` poll-and-yield — far too
 //   slow for export, which has no preview-latency budget to protect.
 //
-//   This Worker now drives an `ExportDecoderPool` directly: per
+//   This Worker drives an `ExportDecoderPool` directly: per
 //   ~2 s chunk we feed every needed sample for every active clip
 //   in one shot, `await decoder.flush()`, then run the encode loop
 //   over the chunk with no per-frame waiting. After the chunk
@@ -20,8 +20,7 @@
 //   - Audio is OUT. The Worker has no DOM and audio export rides
 //     the existing Rust ffmpeg compositor. Final mux/transcode combines
 //     this temp video with an optional temp audio file (.m4a/.mka).
-//   - Subtitles (legacy JASSUB kind) are gone; captions now render as Text
-//     layers and export through the normal Text path.
+//   - Captions render as Text layers and export through the normal Text path.
 //   - Motifs DO render: the SVG capture harness can't run in the
 //     Worker (no `document`), so the main thread pre-rasterizes each
 //     Motif layer's frames (`exportBake.ts`) and transfers them in

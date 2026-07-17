@@ -16,15 +16,15 @@
 //! needed, and no background refill pump. One request = one seek + a small,
 //! bounded forward decode burst.
 //!
-//! Thread ownership: [`SwVideoStream`] is `!Send`-in-spirit (raw ffmpeg pointers;
-//! Task 2 marks it `Send` forward-compat) but it is created, driven, and dropped
-//! entirely on the session thread and never crosses a boundary, so that mark is
-//! never exercised here. Only plain `Send` data crosses: the command `Receiver`,
-//! the sink `Arc`, the path/id strings in, and the pokes out.
+//! Thread ownership: [`SwVideoStream`] is `!Send`-in-spirit (raw ffmpeg
+//! pointers; marked `Send` forward-compat) but it is created, driven, and
+//! dropped entirely on the session thread and never crosses a boundary, so
+//! that mark is never exercised here. Only plain `Send` data crosses: the
+//! command `Receiver`, the sink `Arc`, the path/id strings in, and the
+//! pokes out.
 //!
-//! Like `decoder.rs`, this is a surface defined ahead of its consumer: Task 4
-//! wires the registry + sink to the napi addon, so until then the public API is
-//! `dead_code` from the plain-lib build's view (the unit test exercises it).
+//! The napi addon wires the registry + sink; from the plain-lib build's
+//! view the public API is `dead_code` (the unit test exercises it).
 #![allow(dead_code)]
 
 use std::collections::HashMap;

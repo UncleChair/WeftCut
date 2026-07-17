@@ -1,7 +1,7 @@
 //! Background-copy import worker.
 //!
 //! The import hybrid (TS `hybrids.ts` `import_media`) computes the real BLAKE3
-//! content hash BEFORE enqueuing derivative jobs (stateless-compute Phase 4), so
+//! content hash BEFORE enqueuing derivative jobs, so
 //! every derivative is keyed on the final content hash from the start. This
 //! worker only copies the source into `<workspace>/Media/<filename>` (hash-prefix
 //! collision handling), then routes the path/hash result through the

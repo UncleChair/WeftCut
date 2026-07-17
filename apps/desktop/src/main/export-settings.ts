@@ -3,15 +3,14 @@
 // it reads on mount and writes on change. The value schema is OPAQUE — main treats
 // it as unknown; the renderer assembles/consumes the typed shape.
 //
-// History: persistence used to live in the Rust addon (native/src/export_settings_store.rs);
-// it moved here so the addon is compute-only. The on-disk file path is unchanged
-// (<workspace>/export.json), so existing workspaces' export.json keeps working.
+// The on-disk file path (<workspace>/export.json) is a COMPATIBILITY SURFACE:
+// existing workspaces' export.json files must keep loading.
 //
-// None/null semantics (from the Rust original): missing file, empty file, or
-// unparseable JSON all return null — the renderer falls back to its own defaults.
-// There is no TS-side default object; absence means null.
+// None/null semantics: missing file, empty file, or unparseable JSON all
+// return null — the renderer falls back to its own defaults. There is no
+// TS-side default object; absence means null.
 //
-// No :changed event (parity with Rust behavior — renderer re-fetches on next open).
+// No :changed event — the renderer re-fetches on next open.
 //
 // Workspace-scoping is handled by the caller (ts-actor-host): pre-workspace it
 // returns null on read and drops on write. This store always has a concrete

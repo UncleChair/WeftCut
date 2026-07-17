@@ -1,17 +1,17 @@
 //! MCP tool surface (transport-free). The HTTP/streamable server lives in the
 //! Electron main process; this module exposes tools/resources/prompts + a
-//! catalog the napi `Backend` bridges. rmcp/axum are gone — the wire types in
-//! `wire.rs` serialize to the exact JSON the `@modelcontextprotocol/sdk`
-//! low-level Server expects, so the TS layer forwards Rust output verbatim.
+//! catalog the napi `Backend` bridges. The wire types in `wire.rs` serialize
+//! to the exact JSON the `@modelcontextprotocol/sdk` low-level Server
+//! expects, so the TS layer forwards Rust output verbatim.
 //!
 //! Module shape:
 //! - `wire`     — transport-agnostic result/error/catalog types.
-//! - `tools`    — native/compute/hybrid-compute tools; TS-executed mutations
-//!   were deleted in Phase 4b T3 (served by the TS actor's `MCP_TOOLS` table).
+//! - `tools`    — native/compute/hybrid-compute tools only; mutations are
+//!   served by the TS actor's `MCP_TOOLS` table, never here.
 //! - `resources`— the read-only `project://*` / `media://*` resource readers.
 //! - `prompts`  — user-invokable prompt templates (`cut-silences`).
 //! - `catalog`  — the `tool_table!` macro feeding BOTH the advertised schemas
-//!   and the name→handler dispatch (trimmed to native/compute/hybrid, Phase 4b T3).
+//!   and the name→handler dispatch (native/compute/hybrid only).
 //!
 //! Design: `docs/mcp.md`.
 

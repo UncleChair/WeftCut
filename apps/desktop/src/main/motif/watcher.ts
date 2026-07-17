@@ -1,15 +1,11 @@
-// apps/desktop/src/main/motif/watcher.ts
-//
-// Stage-5 file watch: a recursive fs.watch on the user-Motif root. Any disk
+// Motif file watch: a recursive fs.watch on the user-Motif root. Any disk
 // change — external-editor saves included — coalesces through a quiet-window
 // debounce into ONE onChange call. The caller (index.ts) refreshes the actor
 // catalog + emits motifs:changed; the renderer resync pipeline does the rest.
 // Deliberately NO per-file dispatch (the resync is a full idempotent refresh)
 // and NO filtering of the app's own writes (install/delete/amend emit
 // motifs:changed themselves; the debounced duplicate is harmless).
-//
-// Mirrors native/src/motifs/watcher.rs (notify → fs.watch; the debounce is
-// identical and unit-tested independently of the OS watch).
+// The debounce is unit-tested independently of the OS watch.
 import { mkdirSync, watch, type FSWatcher } from 'node:fs'
 
 /** Quiet window (ms): after a change, wait until this long passes with no

@@ -32,12 +32,12 @@
 //             (still→3_000_000; animated→metadata.duration_us if >0 and
 //              multi-frame OR >=500_000, else 3_000_000)
 //   auto-pair: fires when kind==Video AND metadata.audio.is_some() AND
-//              project.settings.auto_pair_audio_on_import==true.
-//             DEFERRED: corpus mediaItemTemplate sets audio:null so the predicate
-//             is false for all corpus seqs; implement when a corpus item carries
-//             audio metadata. When implemented: single commit containing
-//             video-layer-add, audio-layer-add (role=dialogue), groups_create
-//             in that id-allocation order.
+//              project.settings.auto_pair_audio_on_import==true. THREE
+//              separate commits — video-layer-add, audio-layer-add
+//              (role=dialogue), groups_create — in that id-allocation order
+//              (the add_media_layer arm in actor.ts; three op_ids matching
+//              Rust's three handle calls). NOT exercised by the differential
+//              corpus (mediaItemTemplate sets audio:null).
 //
 // add_demo_color_layer:
 //   track   → tracks.front() (first track; create "Track" if empty)

@@ -2,10 +2,9 @@
 // owned by the Electron main process (config-dir, one value across every
 // project).
 //
-// History: persistence used to live in the Rust addon (native/src/recents.rs);
-// it moved here so the addon is compute-only and the Rust↔TS struct twin is
-// gone. The on-disk file path + JSON field names are unchanged, so existing
-// users' recents.json keeps working after the move to TS.
+// The on-disk file path + JSON field names are a COMPATIBILITY SURFACE:
+// existing users' recents.json files must keep loading, so neither may
+// change without a migration.
 //
 // On-disk shape:
 //   {
@@ -14,15 +13,14 @@
 //     "last_new_project_parent": "…" | null
 //   }
 //
-// Bad-config recovery: a missing / empty / corrupt file degrades to all-defaults
-// (entries=[], reopen_on_launch=false, last_new_project_parent=null) so a hand-
-// edit mishap can't brick the editor (parity with the old Rust store).
+// Bad-config recovery: a missing / empty / corrupt file degrades to
+// all-defaults (entries=[], reopen_on_launch=false,
+// last_new_project_parent=null) so a hand-edit mishap can't brick the editor.
 //
-// push() and setLastNewProjectParent() are BEST-EFFORT: they log and swallow on
-// any fs/parse error (parity with the Rust store's warn+return pattern).
+// push() and setLastNewProjectParent() are BEST-EFFORT: they log and swallow
+// on any fs/parse error.
 //
-// No :changed event (parity with Rust behavior — renderer re-fetches via channel
-// calls as needed).
+// No :changed event — the renderer re-fetches via channel calls as needed.
 
 import type { RecentEntry } from '../shared/recents'
 

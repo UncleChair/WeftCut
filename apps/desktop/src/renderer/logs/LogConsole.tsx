@@ -21,16 +21,15 @@ import {
 } from "../ipc";
 import { useLogStore } from "./store";
 
-/// Expanded console overlay — lifts above the editor. See
-/// `docs/status-log.md` Q6 for the layout decision and Q15
-/// for the deferred-features list.
+/// Expanded console overlay — lifts above the editor. Layout decision +
+/// deferred-features list: `docs/status-log.md`.
 ///
 /// Layout (top to bottom):
 ///   * toolbar — filter chips, search, Clear/Copy/Open-folder
 ///   * entry list — collapsed-by-op rows, expand for details
 ///   * footer — counts, JSONL path
 ///
-/// Defaults (Q6): level `Info+`, ops collapsed.
+/// Defaults: level `Info+`, ops collapsed.
 ///
 /// Non-virtualised — the ring is 1000 entries, which renders fine on
 /// any modern Chromium. If a future workload changes that, drop in

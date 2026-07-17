@@ -1,10 +1,9 @@
 //! Workspace tracking — where on disk the current project folder lives.
 //!
-//! Per `docs/data-model.md` Q1, a workspace is a folder. `WorkspaceSlot`
+//! Per `docs/data-model.md`, a workspace is a folder. `WorkspaceSlot`
 //! is the runtime singleton that remembers the current workspace path; it's
 //! `None` only during the blank-on-boot window before any `project_save_as` /
-//! `project_open` runs (Phase B's startup screen will make that window
-//! unreachable).
+//! `project_open` runs.
 //!
 //! The slot is updated by `project_save_as` / `project_open` in commands/persistence.rs
 //! and read wherever a job or command needs the workspace root (cache

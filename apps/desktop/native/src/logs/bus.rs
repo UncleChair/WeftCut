@@ -4,7 +4,7 @@
 //!
 //! See `docs/status-log.md` for the full design.
 //!
-//! Pre-workspace policy (strict, per Q8): the slot is `None` until
+//! Pre-workspace policy (strict): the slot is `None` until
 //! `project_save_as` / `project_open` / `project_new_workspace`
 //! installs a bus. Producers must check `slot.current()` before
 //! emitting — `emit` is otherwise a no-op (silent drop on the caller

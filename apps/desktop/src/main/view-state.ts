@@ -3,14 +3,13 @@
 // it reads on mount and writes debounced. Best-effort UX, not a correctness
 // anchor — a missing / empty / corrupt file degrades to defaults.
 //
-// History: persistence used to live in the Rust addon (native/src/view_state.rs);
-// it moved here so the addon is compute-only. The on-disk file path + JSON field
-// names are unchanged, so existing workspaces' view.json keeps working.
+// The on-disk file path + JSON field names are a COMPATIBILITY SURFACE:
+// existing workspaces' view.json files must keep loading.
 //
 // Workspace-scoping is handled by the caller (ts-actor-host): pre-workspace it
-// returns defaults on read and drops on write. This store always has a concrete
-// workspace dir. (The old Rust prune_track_heights helper is gone — the renderer
-// prunes dead track ids before calling view_state_set.)
+// returns defaults on read and drops on write. This store always has a
+// concrete workspace dir. The renderer prunes dead track ids before calling
+// view_state_set.
 
 import { viewStateDefaults, type ViewState } from '../shared/view-state'
 

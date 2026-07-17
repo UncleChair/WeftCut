@@ -161,10 +161,10 @@ impl<T: Clone + PartialEq> Animated<T> {
     ///
     /// Static tracks and zero/one keyframe tracks return empty.
     ///
-    /// NOTE: out-of-range keyframes are now valid stored state (trim/split keep
-    /// keys outside `[0, duration]`), so returned intervals may fall outside the
-    /// layer span. Currently no consumer (the ffmpeg-IR gap fragmenter was
-    /// removed); re-audit against out-of-range keys before reviving one.
+    /// NOTE: out-of-range keyframes are valid stored state (trim/split keep
+    /// keys outside `[0, duration]`), so returned intervals may fall outside
+    /// the layer span. No live consumer; re-audit against out-of-range keys
+    /// before wiring one up.
     ///
     /// See `docs/data-model.md` §3.
     pub fn animating_runs(&self) -> Vec<(TimeUs, TimeUs)> {

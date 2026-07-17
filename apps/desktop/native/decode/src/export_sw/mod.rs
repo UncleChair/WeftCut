@@ -1,7 +1,6 @@
 //! Cross-platform export-side software decode: decodes a WebCodecs-blind
 //! ORIGINAL directly for export — no lossy full-proxy — over an exactly-once,
-//! GOP-exact, credit-windowed range contract. See ADR 0030 and the export-decode
-//! engine spec (decisions 5 & 6).
+//! GOP-exact, credit-windowed range contract. See ADR 0030 and ADR 0033.
 //!
 //! Owns: a per-source worker thread (`session`) that reuses
 //! `preview_sw::decoder::SwVideoStream` (open / robust seek / presentation-

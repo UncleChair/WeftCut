@@ -9,10 +9,10 @@
 // NOTE: argument order here is (raw, manifest) — intentionally opposite of the
 // shared function — to preserve the existing call sites unchanged.
 //
-// Only the prop canonicalizer lives here now; the old foreignObject SVG
-// rasterizer was removed with the SVG render path (`harness.ts`, `svgRaster.ts`).
-// Importers: `exportBake.ts` (and the canonicalizer twin-checks in catalog /
-// motifFrameDescriptor tests).
+// Only the prop canonicalizer lives here (the file name predates the removal
+// of the SVG rasterizer that once shared it). Importers: `exportBake.ts`
+// (and the canonicalizer twin-checks in catalog / motifFrameDescriptor
+// tests).
 
 import type { MotifManifest } from "./catalog";
 import { canonicalizeProps as _sharedStrict } from "../../../shared/motifs/catalog";
