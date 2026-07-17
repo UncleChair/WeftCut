@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Plain, additive, range, and group selection preserve current Timeline behaviour while updating the global primary and selected set atomically.
-- [ ] External navigation can select one Layer or a complete set without Timeline-local state drifting from the global model.
-- [ ] The primary Layer is null exactly when the selected set is empty and otherwise belongs to the selected set.
-- [ ] Existing delete, copy, grouping, search, reveal, and project-session reset flows continue to work.
-- [ ] Store, navigation, and Timeline interaction tests cover invariant preservation and no-op updates.
+- [x] Plain, additive, range, and group selection preserve current Timeline behaviour while updating the global primary and selected set atomically.
+- [x] External navigation can select one Layer or a complete set without Timeline-local state drifting from the global model.
+- [x] The primary Layer is null exactly when the selected set is empty and otherwise belongs to the selected set.
+- [x] Existing delete, copy, grouping, search, reveal, and project-session reset flows continue to work.
+- [x] Store, navigation, and Timeline interaction tests cover invariant preservation and no-op updates.

@@ -11,13 +11,20 @@ import {
   registerRevealTrack,
   registerScrollToTime,
   revealInMediaPool,
+  selectLayer,
+  selectLayers,
   seekToClamped,
 } from "./navigation";
 import { setMediaPoolDrawerOpen } from "../settings/appSettingsStore";
 import { registerTransport } from "./playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
-import { selectedLayerId, setSelectedLayerId } from "./selectionStore";
+import {
+  selectedLayerId,
+  selectedLayerIds,
+  setLayerSelection,
+  setSelectedLayerId,
+} from "./selectionStore";
 import type { ProjectSummary } from "../ipc";
 
 /// 10 s 30 fps summary with one video track (one clip at 2 s) and one
@@ -28,7 +35,7 @@ function fixtureSummary(): ProjectSummary {
     name: "fixture",
     composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false },
     track_count: 1,
-    layer_count: 1,
+    layer_count: 2,
     duration_us: 10_000_000,
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [
@@ -55,6 +62,17 @@ function fixtureSummary(): ProjectSummary {
               scale_x: { mode: "Static", value: 1 }, scale_y: { mode: "Static", value: 1 },
               opacity: { mode: "Static", value: 1 },
               speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
+            },
+          },
+          {
+            id: "l2", label: "Second", t_start_us: 5_000_000, t_end_us: 6_000_000,
+            kind: "Color", color_hint: "", enabled: true, locked: false,
+            effects: [],
+            params: {
+              kind: "Color",
+              color: { mode: "Static", value: { r: 0, g: 0, b: 0, a: 1 } },
+              width: 1920,
+              height: 1080,
             },
           },
         ],
@@ -98,6 +116,8 @@ describe("jumpToLayer", () => {
     const unScroll = registerScrollToTime(scroll);
     expect(jumpToLayer("l1")).toBe(true);
     expect(reveal).toHaveBeenCalledWith("t1", "l1");
+    expect(selectedLayerId()).toBe("l1");
+    expect(Array.from(selectedLayerIds())).toEqual(["l1"]);
     expect(playheadTimeUs()).toBe(2_000_000);
     expect(scroll).toHaveBeenCalledWith(2_000_000);
     unReveal();
@@ -113,6 +133,35 @@ describe("jumpToLayer", () => {
     expect(jumpToLayer("ghost")).toBe(false);
     expect(selectedLayerId()).toBeNull();
     expect(playheadTimeUs()).toBe(0);
+  });
+});
+
+describe("selectLayer / selectLayers", () => {
+  it("selects one Layer or an exact complete set", () => {
+    expect(selectLayer("l1")).toBe(true);
+    expect(selectedLayerId()).toBe("l1");
+    expect(Array.from(selectedLayerIds())).toEqual(["l1"]);
+
+    expect(selectLayers(["l1", "l2"], "l2")).toBe(true);
+    expect(selectedLayerId()).toBe("l2");
+    expect(Array.from(selectedLayerIds())).toEqual(["l1", "l2"]);
+  });
+
+  it("rejects a stale Layer or invalid primary without a partial update", () => {
+    setLayerSelection("l1", ["l1", "l2"]);
+
+    expect(selectLayers(["l2", "ghost"], "l2")).toBe(false);
+    expect(selectLayers(["l1"], "l2")).toBe(false);
+    expect(selectedLayerId()).toBe("l1");
+    expect(Array.from(selectedLayerIds())).toEqual(["l1", "l2"]);
+  });
+
+  it("clears the complete selection when the Project session resets", () => {
+    setLayerSelection("l2", ["l1", "l2"]);
+    useProjectStore.getState().apply(null);
+
+    expect(selectedLayerId()).toBeNull();
+    expect(selectedLayerIds().size).toBe(0);
   });
 });
 

@@ -22,6 +22,12 @@ import {
   mediaDragPayload,
   useMediaDragStore,
 } from "./mediaDrag";
+import {
+  clearLayerSelection,
+  selectedLayerId,
+  selectedLayerIds,
+  setSelectedLayerId,
+} from "../state/selectionStore";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
@@ -29,6 +35,8 @@ const ipcMocks = vi.hoisted(() => ({
   pasteLayer: vi.fn().mockResolvedValue("duplicated-layer"),
   trimLayer: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
+  groupsCreate: vi.fn().mockResolvedValue("group-created"),
+  logEmit: vi.fn().mockResolvedValue(undefined),
   viewStateGet: vi
     .fn()
     .mockResolvedValue({ timeline_px_per_sec: 80, track_heights: {}, expanded_tracks: [] }),
@@ -54,6 +62,8 @@ vi.mock("../ipc", async (importOriginal) => {
     pasteLayer: ipcMocks.pasteLayer,
     trimLayer: ipcMocks.trimLayer,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
+    groupsCreate: ipcMocks.groupsCreate,
+    logEmit: ipcMocks.logEmit,
     viewStateGet: ipcMocks.viewStateGet,
     viewStateSet: ipcMocks.viewStateSet,
   };
@@ -159,7 +169,6 @@ const sourceMedia: MediaSummary = {
 function renderTimeline(overrides: {
   selectedLayerId?: string | null;
   onSeek?: () => void;
-  onSelect?: (id: string | null) => void;
   bladeMode?: boolean;
   tracks?: TrackSummary[];
   groups?: GroupSummary[];
@@ -167,13 +176,12 @@ function renderTimeline(overrides: {
   onMutated?: () => Promise<void>;
 }) {
   const onSeek = overrides.onSeek ?? vi.fn();
-  const onSelect = overrides.onSelect ?? vi.fn();
+  setSelectedLayerId(overrides.selectedLayerId ?? null);
   return render(
     <Timeline
       tracks={overrides.tracks ?? [track]}
       groups={overrides.groups ?? []}
       durationUs={5_000_000}
-      selectedLayerId={overrides.selectedLayerId ?? null}
       keybindings={{}}
       fpsNum={30}
       fpsDen={1}
@@ -183,7 +191,6 @@ function renderTimeline(overrides: {
       proxyState={new Map()}
       previewDecodable={new Set()}
       onExitBlade={vi.fn()}
-      onSelect={onSelect}
       onSeek={onSeek}
       onMutated={overrides.onMutated ?? vi.fn().mockResolvedValue(undefined)}
     />,
@@ -192,11 +199,14 @@ function renderTimeline(overrides: {
 
 describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
+    clearLayerSelection();
     ipcMocks.addMediaLayer.mockClear();
     ipcMocks.moveLayer.mockClear();
     ipcMocks.pasteLayer.mockClear();
     ipcMocks.trimLayer.mockClear();
     ipcMocks.getWaveformPeaks.mockClear();
+    ipcMocks.groupsCreate.mockClear();
+    ipcMocks.logEmit.mockClear();
     // Show-All so the role-stamped track always renders regardless of the
     // default AB-roll filter.
     useAppSettingsStore.setState((s) => ({
@@ -210,51 +220,99 @@ describe("Timeline seek/selection coupling", () => {
 
   it("clicking the ruler seeks AND keeps the selected clip selected", () => {
     const onSeek = vi.fn();
-    const onSelect = vi.fn();
-    const { container } = renderTimeline({ selectedLayerId: layer.id, onSeek, onSelect });
+    const { container } = renderTimeline({ selectedLayerId: layer.id, onSeek });
     const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
     fireEvent.pointerDown(ruler, { button: 0, clientX: 200 });
     fireEvent.pointerUp(window, { clientX: 200 });
     fireEvent.click(ruler);
     expect(onSeek).toHaveBeenCalled();
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(selectedLayerId()).toBe(layer.id);
+    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
   });
 
   it("clicking empty lane background deselects and does NOT seek", () => {
     const onSeek = vi.fn();
-    const onSelect = vi.fn();
-    const { container } = renderTimeline({ selectedLayerId: layer.id, onSeek, onSelect });
+    const { container } = renderTimeline({ selectedLayerId: layer.id, onSeek });
     const lane = container.querySelector('[data-testid="track-lane"]')!;
     fireEvent.pointerDown(lane, { button: 0, clientX: 200 });
     fireEvent.pointerUp(window, { clientX: 200 });
     fireEvent.click(lane);
     expect(onSeek).not.toHaveBeenCalled();
-    expect(onSelect).toHaveBeenCalledWith(null);
+    expect(selectedLayerId()).toBeNull();
+    expect(selectedLayerIds().size).toBe(0);
   });
 
   it("clicking a clip selects it without seeking", () => {
     const onSeek = vi.fn();
-    const onSelect = vi.fn();
-    const { container } = renderTimeline({ selectedLayerId: null, onSeek, onSelect });
+    const { container } = renderTimeline({ selectedLayerId: null, onSeek });
     const block = container.querySelector(".timeline-layer")!;
     fireEvent.pointerDown(block, { button: 0, clientX: 50 });
     fireEvent.pointerUp(window, { clientX: 50 });
     fireEvent.click(block);
-    expect(onSelect).toHaveBeenCalledWith(layer.id);
+    expect(selectedLayerId()).toBe(layer.id);
+    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
     expect(onSeek).not.toHaveBeenCalled();
-    expect(onSelect).not.toHaveBeenCalledWith(null);
   });
 
   it("clicking the content preview overlay still selects without seeking", () => {
     const onSeek = vi.fn();
-    const onSelect = vi.fn();
-    const { container } = renderTimeline({ selectedLayerId: null, onSeek, onSelect });
+    const { container } = renderTimeline({ selectedLayerId: null, onSeek });
     const preview = container.querySelector('[data-testid="timeline-visual-preview"]')!;
     fireEvent.pointerDown(preview, { button: 0, clientX: 50 });
     fireEvent.pointerUp(window, { clientX: 50 });
     fireEvent.click(preview);
-    expect(onSelect).toHaveBeenCalledWith(layer.id);
+    expect(selectedLayerId()).toBe(layer.id);
+    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
     expect(onSeek).not.toHaveBeenCalled();
+  });
+
+  it("writes plain, Alt escape, and Shift additive group selection globally", () => {
+    const { getByText } = renderTimeline({
+      tracks: [groupedTrack],
+      groups: [group],
+    });
+    const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(first, { button: 0, clientX: 40 });
+    fireEvent.pointerUp(window, { clientX: 40 });
+    expect(selectedLayerId()).toBe(layer.id);
+    expect(Array.from(selectedLayerIds())).toEqual([layer.id, groupedLayer.id]);
+
+    fireEvent.pointerDown(second, { button: 0, clientX: 200, altKey: true });
+    fireEvent.pointerUp(window, { clientX: 200, altKey: true });
+    expect(selectedLayerId()).toBe(groupedLayer.id);
+    expect(Array.from(selectedLayerIds())).toEqual([groupedLayer.id]);
+
+    fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
+    fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
+    expect(selectedLayerId()).toBe(layer.id);
+    expect(new Set(selectedLayerIds())).toEqual(
+      new Set([layer.id, groupedLayer.id]),
+    );
+  });
+
+  it("groups the complete global selection through the existing shortcut", async () => {
+    const { getByText } = renderTimeline({
+      tracks: [groupedTrack],
+      groups: [],
+    });
+    const first = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const second = getByText("Clip B").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(first, { button: 0, clientX: 40 });
+    fireEvent.pointerUp(window, { clientX: 40 });
+    fireEvent.pointerDown(second, { button: 0, clientX: 200, shiftKey: true });
+    fireEvent.pointerUp(window, { clientX: 200, shiftKey: true });
+    fireEvent.keyDown(window, { key: "g", code: "KeyG", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(ipcMocks.groupsCreate).toHaveBeenCalledWith(
+        [layer.id, groupedLayer.id],
+        null,
+        false,
+      );
+    });
   });
 
   it("keeps the layer root overflow visible while the visual preview clips its own content", () => {
@@ -291,15 +349,15 @@ describe("Timeline seek/selection coupling", () => {
 
   it("dragging on the ruler scrubs the playhead repeatedly", () => {
     const onSeek = vi.fn();
-    const onSelect = vi.fn();
-    const { container } = renderTimeline({ selectedLayerId: layer.id, onSeek, onSelect });
+    const { container } = renderTimeline({ selectedLayerId: layer.id, onSeek });
     const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
     fireEvent.pointerDown(ruler, { button: 0, clientX: 100 });
     fireEvent.pointerMove(window, { clientX: 300 });
     fireEvent.pointerUp(window, { clientX: 300 });
     // pointerdown seeks once; the drag-scrub pointermove seeks again.
     expect(onSeek.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(selectedLayerId()).toBe(layer.id);
+    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
   });
 
   it("pins the ruler and playhead head during vertical timeline scrolling", () => {

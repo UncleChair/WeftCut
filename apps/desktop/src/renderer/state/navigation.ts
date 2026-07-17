@@ -3,7 +3,7 @@ import { setMediaPoolDrawerOpen } from "../settings/appSettingsStore";
 import { transportSeek } from "./playbackStore";
 import { setPlayheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
-import { setSelectedLayerId } from "./selectionStore";
+import { setLayerSelection } from "./selectionStore";
 
 /// Imperative navigation verbs for callers outside the React ref chain
 /// (search palette, future agent-driven UI). Handles that need component
@@ -74,6 +74,32 @@ export function jumpToTimeUs(tUs: number): void {
   scrollToTimeFn?.(clamped);
 }
 
+/// Replace the global selection from an imperative navigation surface. Every
+/// requested Layer and the primary must exist in the live Project index; a
+/// stale request fails atomically without disturbing the current selection.
+export function selectLayers(
+  layerIds: Iterable<string>,
+  primaryLayerId?: string | null,
+): boolean {
+  const requested = Array.from(new Set(layerIds));
+  const { layerById } = useProjectStore.getState();
+  if (requested.some((id) => !layerById.has(id))) return false;
+  if (requested.length === 0) {
+    if (primaryLayerId !== undefined && primaryLayerId !== null) return false;
+    setLayerSelection(null, []);
+    return true;
+  }
+
+  const primary = primaryLayerId ?? requested[0] ?? null;
+  if (primary === null || !requested.includes(primary)) return false;
+  setLayerSelection(primary, requested);
+  return true;
+}
+
+export function selectLayer(layerId: string): boolean {
+  return selectLayers([layerId], layerId);
+}
+
 /// Select + seek + scroll to a layer. Validates against the live index —
 /// the caller may hold a stale search entry (index rebuilds are
 /// debounced). Returns false (and changes nothing) when the layer is gone.
@@ -82,12 +108,11 @@ export function jumpToLayer(layerId: string): boolean {
   const layer = layerById.get(layerId);
   if (!layer) return false;
   const trackId = trackIdByLayerId.get(layerId);
+  if (!selectLayer(layerId)) return false;
   if (trackId && revealTrackFn) {
     // App's revealTrack both reveals a hidden track (R.7) and selects the
     // layer; revealing an already-visible track is harmless.
     revealTrackFn(trackId, layerId);
-  } else {
-    setSelectedLayerId(layerId);
   }
   jumpToTimeUs(layer.t_start_us);
   return true;

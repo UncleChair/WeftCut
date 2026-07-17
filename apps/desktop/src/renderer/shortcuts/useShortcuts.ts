@@ -86,7 +86,7 @@ function isInTransientWidget(target: EventTarget | null): boolean {
 /// are disjoint (no two instances both define `handlers[id]` for the
 /// same `id`). In v1 the App-level call covers global actions; the
 /// Timeline call covers `groupSelected` + `dissolveSelectedGroup`
-/// (group ops need `selectedLayerIds`, which is Timeline-local).
+/// (group ops are Timeline-scoped even though Layer selection is global).
 /// Each instance's dispatcher short-circuits on the first matched
 /// entry; entries without a handler don't preventDefault, so the
 /// other instance's matching handler can still fire.

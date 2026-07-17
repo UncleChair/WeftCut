@@ -57,6 +57,13 @@ import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
 import { registerScrollToTime } from "../state/navigation";
+import {
+  clearLayerSelection,
+  extendLayerSelection,
+  setLayerSelection,
+  usePrimaryLayerId,
+  useSelectedLayerIds,
+} from "../state/selectionStore";
 
 // Any media kind drops on any track (tracks are kind-agnostic; the
 // backend enforces overlap rules). Kept as a stub returning true to
@@ -79,7 +86,6 @@ interface TimelineProps {
   /// `docs/groups.md`. Empty array when no groups exist.
   groups: GroupSummary[];
   durationUs: number;
-  selectedLayerId: string | null;
   /// (`docs/data-model.md`): when set, this hidden track is
   /// included in the AB-mode ordered list at its natural accretion
   /// slot. Cleared by the App when the user selects a layer on a
@@ -115,7 +121,6 @@ interface TimelineProps {
   /// optimization is still running.
   previewDecodable: ReadonlySet<string>;
   onExitBlade: () => void;
-  onSelect: (id: string | null) => void;
   onSeek: (tUs: number) => void;
   onMutated: () => Promise<void>;
 }
@@ -125,7 +130,6 @@ export function Timeline({
   tracks,
   groups,
   durationUs,
-  selectedLayerId,
   revealedTrackId,
   keybindings,
   fpsNum,
@@ -136,7 +140,6 @@ export function Timeline({
   proxyState,
   previewDecodable,
   onExitBlade,
-  onSelect,
   onSeek,
   onMutated,
 }: TimelineProps) {
@@ -149,11 +152,8 @@ export function Timeline({
     layerKind: string;
     layerEnabled: boolean;
   } | null>(null);
-  /// `docs/groups.md` — multi-select for `Ctrl+G` and visual highlight.
-  /// `selectedLayerId` (from App) is the primary (drives PropertyPanel);
-  /// this set tracks every layer that should render with the selected
-  /// chrome. Stays in sync via the click handlers below.
-  const [selectedLayerIds, setSelectedLayerIds] = useState<Set<string>>(new Set());
+  const primaryLayerId = usePrimaryLayerId();
+  const selectedLayerIds = useSelectedLayerIds();
   const [bladePreview, setBladePreview] = useState<{
     layerId: string;
     atUs: number;
@@ -257,36 +257,12 @@ export function Timeline({
         const g = groups.find((x) => x.id === gid);
         return new Set(g?.layer_ids ?? [layerId]);
       };
-      if (e.shiftKey) {
-        setSelectedLayerIds((prev) => {
-          const next = new Set(prev);
-          memberSet().forEach((id) => next.add(id));
-          return next;
-        });
-      } else {
-        setSelectedLayerIds(memberSet());
-      }
-      onSelect(layerId);
+      const members = memberSet();
+      if (e.shiftKey) extendLayerSelection(layerId, members);
+      else setLayerSelection(layerId, members);
     },
-    [groupByLayerId, groups, onSelect],
+    [groupByLayerId, groups],
   );
-
-  // Keep the visual set in sync if the primary selection changes from
-  // outside (e.g. PropertyPanel click, agent op). Treat the external set
-  // as plain-click semantics.
-  useEffect(() => {
-    if (selectedLayerId === null) {
-      setSelectedLayerIds(new Set());
-      return;
-    }
-    setSelectedLayerIds((prev) => {
-      if (prev.has(selectedLayerId)) return prev;
-      const gid = groupByLayerId.get(selectedLayerId);
-      if (!gid) return new Set([selectedLayerId]);
-      const g = groups.find((x) => x.id === gid);
-      return new Set(g?.layer_ids ?? [selectedLayerId]);
-    });
-  }, [selectedLayerId, groupByLayerId, groups]);
 
   /// `docs/groups.md` — Mod+G groups the current multi-selection;
   /// Mod+Shift+G dissolves every group represented in the selection.
@@ -661,7 +637,7 @@ export function Timeline({
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-background ${
         drag ? "cursor-grabbing select-none" : ""
       } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
-      onClick={() => onSelect(null)}
+      onClick={clearLayerSelection}
     >
       <div className="flex min-w-max">
         {/* sticky header column */}
@@ -726,7 +702,7 @@ export function Timeline({
                 pxPerSec={pxPerSec}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
                 isExpanded={expandedTracks.has(track.id)}
-                selectedLayerId={selectedLayerId}
+                selectedLayerId={primaryLayerId}
                 selectedLayerIds={selectedLayerIds}
                 groupByLayerId={groupByLayerId}
                 dragState={drag}

@@ -8,6 +8,7 @@ import {
   type ProjectSummary,
   type RoleMixView,
 } from "../ipc";
+import { retainLayerSelection } from "./selectionStore";
 
 /// Frontend mirror of the main-process TS state actor's project, kept in sync
 /// via `project:changed` backend events. The PixiJS preview consumes this
@@ -42,7 +43,8 @@ export interface ProjectStoreState {
 }
 
 interface ProjectStoreActions {
-  /// Apply a fresh summary snapshot, rebuilding lookup indices.
+  /// Apply a fresh summary snapshot, rebuilding lookup indices and dropping
+  /// globally selected Layers that no longer exist in the Project.
   /// Idempotent; safe to call from a debounced refresher.
   apply: (summary: ProjectSummary | null) => void;
 }
@@ -75,12 +77,15 @@ export const useProjectStore = create<
   trackIdByLayerId: new Map(),
   ready: false,
 
-  apply: (summary) =>
+  apply: (summary) => {
+    const indices = buildIndices(summary);
     set({
       summary,
-      ...buildIndices(summary),
+      ...indices,
       ready: true,
-    }),
+    });
+    retainLayerSelection(indices.layerById.keys());
+  },
 }));
 
 /// One-shot mount wiring: fetch the initial summary, then subscribe to

@@ -20,7 +20,11 @@ import {
   playheadTimeUs,
   setPlayheadTimeUs,
 } from "./state/playheadStore";
-import { setSelectedLayerId, useSelectedLayerId } from "./state/selectionStore";
+import {
+  clearLayerSelection,
+  setLayerSelection,
+  usePrimaryLayerId,
+} from "./state/selectionStore";
 import { clampSeekUs, registerRevealTrack } from "./state/navigation";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
@@ -87,7 +91,7 @@ export function App({ onCloseProject }: AppProps) {
   // Write-only: error text is surfaced through the status bar / log (see the
   // setError call sites), not rendered here, so we keep only the setter.
   const [, setError] = useState<string | null>(null);
-  const selectedLayerId = useSelectedLayerId();
+  const primaryLayerId = usePrimaryLayerId();
   // Blade-tool mode: pressing `C` toggles it; clicks on layers in the
   // timeline split the layer at the click point instead of selecting it.
   // Exits on a second `C` press or `Esc`. Living at App level so the
@@ -129,7 +133,7 @@ export function App({ onCloseProject }: AppProps) {
   // (the pre-store `useState(0)` reset with the App mount).
   useEffect(() => {
     setPlayheadTimeUs(0);
-    setSelectedLayerId(null);
+    clearLayerSelection();
   }, []);
 
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
@@ -149,10 +153,27 @@ export function App({ onCloseProject }: AppProps) {
   // R.7: click on a peek item → reveal that hidden track inline at its
   // natural accretion slot AND select the clicked layer. Single-track
   // exclusive (later peek-click replaces).
-  const revealTrack = useCallback((trackId: string, layerId: string) => {
-    setRevealedTrackId(trackId);
-    setSelectedLayerId(layerId);
-  }, []);
+  const selectLayerWithGroup = useCallback(
+    (layerId: string | null) => {
+      if (layerId === null) {
+        clearLayerSelection();
+        return;
+      }
+      const group = summary?.groups.find((candidate) =>
+        candidate.layer_ids.includes(layerId),
+      );
+      setLayerSelection(layerId, group?.layer_ids ?? [layerId]);
+    },
+    [summary?.groups],
+  );
+
+  const revealTrack = useCallback(
+    (trackId: string, layerId: string) => {
+      setRevealedTrackId(trackId);
+      selectLayerWithGroup(layerId);
+    },
+    [selectLayerWithGroup],
+  );
 
   // Palette navigation reaches R.7 reveal-track through the module-level
   // registry (state/navigation.ts) — App owns the revealedTrackId state.
@@ -187,19 +208,19 @@ export function App({ onCloseProject }: AppProps) {
   }, []);
 
   // R.7: when the user clicks a layer on a DIFFERENT track from the
-  // revealed one, collapse the reveal. Plain deselect (selectedLayerId
+  // revealed one, collapse the reveal. Plain deselect (primaryLayerId
   // becomes null) does NOT collapse — the user might still want to peek
   // back at that hidden layer's track. Only an active selection on a
   // foreign track clears the reveal.
   useEffect(() => {
-    if (revealedTrackId === null || selectedLayerId === null) return;
+    if (revealedTrackId === null || primaryLayerId === null) return;
     const owner = (summary?.tracks ?? []).find((t) =>
-      t.layers.some((l) => l.id === selectedLayerId),
+      t.layers.some((l) => l.id === primaryLayerId),
     );
     if (owner && owner.id !== revealedTrackId) {
       setRevealedTrackId(null);
     }
-  }, [selectedLayerId, summary, revealedTrackId]);
+  }, [primaryLayerId, summary, revealedTrackId]);
 
   const togglePlay = useCallback(() => {
     const handle = previewRef.current;
@@ -369,19 +390,19 @@ export function App({ onCloseProject }: AppProps) {
   // selected — the `useShortcuts` dispatcher fires the handler
   // regardless and we cheaply ignore.
   const deleteSelected = useCallback(async () => {
-    if (!selectedLayerId) return;
+    if (!primaryLayerId) return;
     try {
-      await deleteLayer(selectedLayerId);
-      setSelectedLayerId(null);
+      await deleteLayer(primaryLayerId);
+      clearLayerSelection();
       await refresh();
     } catch (err) {
       console.error("delete failed:", err);
     }
-  }, [selectedLayerId, refresh]);
+  }, [primaryLayerId, refresh]);
 
   const copySelected = useCallback(() => {
-    if (selectedLayerId) copiedLayerIdRef.current = selectedLayerId;
-  }, [selectedLayerId]);
+    if (primaryLayerId) copiedLayerIdRef.current = primaryLayerId;
+  }, [primaryLayerId]);
 
   const pasteAtPlayhead = useCallback(async () => {
     const sourceLayerId = copiedLayerIdRef.current;
@@ -605,7 +626,6 @@ export function App({ onCloseProject }: AppProps) {
             tracks={summary?.tracks ?? []}
             groups={summary?.groups ?? []}
             durationUs={summary?.duration_us ?? 0}
-            selectedLayerId={selectedLayerId}
             revealedTrackId={revealedTrackId}
             keybindings={keybindings}
             fpsNum={summary?.composition.fps_num ?? 30}
@@ -616,7 +636,6 @@ export function App({ onCloseProject }: AppProps) {
             proxyState={proxyState}
             previewDecodable={previewDecodableMediaIds}
             onExitBlade={() => setBladeMode(false)}
-            onSelect={setSelectedLayerId}
             onSeek={seekTo}
             onMutated={refresh}
           />
@@ -640,8 +659,8 @@ export function App({ onCloseProject }: AppProps) {
           <RightPanel
             tracks={summary?.tracks ?? []}
             groups={summary?.groups ?? []}
-            selectedLayerId={selectedLayerId}
-            onSelect={setSelectedLayerId}
+            selectedLayerId={primaryLayerId}
+            onSelect={selectLayerWithGroup}
             onMutated={refresh}
             fpsNum={summary?.composition.fps_num ?? 30}
             fpsDen={summary?.composition.fps_den ?? 1}

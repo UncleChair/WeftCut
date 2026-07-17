@@ -86,9 +86,9 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   toggleMediaPool:   { defaultKeys: ["M"],                 labelKey: "actions.toggle_media_pool" },
   // `docs/groups.md` — Ctrl/Cmd+G groups the current multi-
   // selection; Ctrl/Cmd+Shift+G dissolves every group represented in
-  // the selection. Handler lives in Timeline.tsx (needs `selectedLayerIds`
-  // which is Timeline-local). Surfaced here so the Keyboard Shortcuts
-  // panel shows them and the user can rebind.
+  // the selection. Handler lives in Timeline.tsx, while the complete
+  // selection itself is renderer-global. Surfaced here so the Keyboard
+  // Shortcuts panel shows them and the user can rebind.
   groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected" },
   dissolveSelectedGroup:  { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.dissolve_selected_group" },
   // Playhead movement — composition-frame grid. Repeatable so holding

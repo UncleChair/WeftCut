@@ -58,7 +58,7 @@ export function TrackLane({
   /// in-clip diamonds are hidden (the sub-lanes render them instead).
   isExpanded: boolean;
   selectedLayerId: string | null;
-  selectedLayerIds: Set<string>;
+  selectedLayerIds: ReadonlySet<string>;
   groupByLayerId: Map<string, string>;
   dragState: DragState | null;
   pendingPlacements: PendingLayerPlacement[] | null;
