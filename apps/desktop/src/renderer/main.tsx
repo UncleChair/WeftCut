@@ -13,7 +13,7 @@ import {
   startRendererInitialization,
   type StartupProgress,
 } from "./startup/initializeRenderer";
-import { PerfHUDWindow } from "./render/PerfHUD";
+import { PerformanceMonitorWindow } from "./render/PerfHUD";
 import {
   projectOpen,
   recentsGetReopenOnLaunch,
@@ -36,7 +36,7 @@ if (!root) throw new Error("#root missing from index.html");
 
 // macOS uses `titleBarStyle: 'hidden'` (native traffic lights). Tag <html> so
 // the CSS insets each self-drawn titlebar's left edge to clear those buttons.
-// Applies to every renderer surface (main + PerfHUD popup) that shares this bundle.
+// Applies to every renderer surface (main + Performance Monitor) that shares this bundle.
 if (isMac) document.documentElement.classList.add("platform-mac");
 
 // Production: suppress the Chromium/Electron default context menu (reload / print /
@@ -268,13 +268,13 @@ function Root() {
 function mount() {
   ReactDOM.createRoot(root!).render(
     <React.StrictMode>
-      {isPerfHudWindow ? <PerfHUDWindow /> : <Root />}
+      {isPerfHudWindow ? <PerformanceMonitorWindow /> : <Root />}
     </React.StrictMode>,
   );
 }
 
 // Main-window initialization begins before React mounts, then settles behind
-// the splash. The Perf HUD keeps its previous lightweight path and does not
+// the splash. The Performance Monitor keeps a lightweight route and does not
 // initialize main-window-only Motif systems.
 const rendererInitialization = isPerfHudWindow
   ? null

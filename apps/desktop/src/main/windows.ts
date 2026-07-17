@@ -7,11 +7,10 @@ import { isPageZoomShortcut, matchDevKeyAction } from './inputPolicy.js'
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
-// Broadcast (to every window) when a labelled secondary window closes, so its
-// opener can reconcile UI state on ANY close path — caption button, OS, crash.
-// The PerfHUD inline overlay listens for this to un-suppress itself when its
-// popped-out window goes away (the Tauri-era onCloseRequested restore is a dead
-// no-op under Electron). Mirrors the renderer's listen('weftcut://win-closed').
+// Broadcast labelled secondary-window lifecycle to every renderer. Consumers
+// use this to start work only while their independent window exists and to
+// reconcile every close path — caption button, OS, or renderer crash.
+export const WIN_OPENED_EVENT = 'weftcut://win-opened'
 export const WIN_CLOSED_EVENT = 'weftcut://win-closed'
 
 // Lock down navigation + window creation on a window. The renderer only ever
@@ -36,7 +35,7 @@ export function hardenWindow(win: BrowserWindow, opts?: { allowExternalOpen?: bo
   win.webContents.on('before-input-event', (event, input) => {
     if (isPageZoomShortcut(input)) { event.preventDefault(); return }
     // Dev reload/DevTools/fullscreen ride this shared handler, so they cover the
-    // main and secondary (PerfHUD) windows alike. See ADR 0031; matchDevKeyAction
+    // main and secondary (Performance Monitor) windows alike. See ADR 0031; matchDevKeyAction
     // owns the isDev gate.
     const devAction = matchDevKeyAction(input, isDev)
     if (!devAction) return
@@ -60,10 +59,14 @@ export function hardenWindow(win: BrowserWindow, opts?: { allowExternalOpen?: bo
 
 export function createSecondary(label: string, opts?: SecondaryWinOpts): void {
   let win = wins.get(label)
-  if (win && !win.isDestroyed()) { win.show(); return }
+  if (win && !win.isDestroyed()) {
+    win.show()
+    broadcastEvent(BrowserWindow.getAllWindows(), WIN_OPENED_EVENT, { label })
+    return
+  }
   // secondaryWindowConfig decides the frame: a window passing `decorations:false`
-  // is frameless and draws its OWN titlebar + <WindowControls/> (the PerfHUD
-  // popup); everything else gets the native OS frame by default. See
+  // is frameless and draws its OWN titlebar + <WindowControls/> (the Performance
+  // Monitor); everything else gets the native OS frame by default. See
   // windowConfig.ts.
   win = new BrowserWindow({
     ...secondaryWindowConfig(opts),
@@ -73,6 +76,7 @@ export function createSecondary(label: string, opts?: SecondaryWinOpts): void {
     },
   })
   wins.set(label, win)
+  broadcastEvent(BrowserWindow.getAllWindows(), WIN_OPENED_EVENT, { label })
   hardenWindow(win)
   // Maximize-state feed for a frameless secondary window's own caption glyph —
   // same payload the main window ships (index.ts). Sent only to THIS window, so

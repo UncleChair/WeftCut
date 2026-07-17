@@ -662,7 +662,7 @@ app.whenReady().then(async () => {
     catch (e) { console.warn('[main] exportSw:closeAll failed', e) }
   })
 
-  // Secondary windows (PerfHUD popup etc.) via win:* IPC.
+  // Secondary windows (Dev Performance Monitor etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options))
   ipcMain.handle('win:act', (_e, { label, action }: { label: string; action: 'show' | 'hide' | 'close' | 'center' | 'focus' }) => actOnSecondary(label, action))
   ipcMain.handle('win:exists', (_e, { label }: { label: string }) => secondaryExists(label))
@@ -677,8 +677,8 @@ app.whenReady().then(async () => {
   })
 
   // Caption-button controls act on the SENDER's window, not always mainWindow:
-  // secondary windows (the PerfHUD popup) render the same <WindowControls/>, so
-  // their close/min/max must target themselves — otherwise the popup's close
+  // secondary windows (the Performance Monitor) render the same <WindowControls/>, so
+  // their close/min/max must target themselves — otherwise the monitor's close
   // button would close the main editor. fromWebContents resolves the window that
   // invoked the IPC; mainWindow is the fallback if it can't (shouldn't happen).
   const ctlWin = (e: Electron.IpcMainInvokeEvent): BrowserWindow | null =>
@@ -729,12 +729,12 @@ app.whenReady().then(async () => {
 
   // Cross-window event broadcast: re-send to EVERY window (incl. the sender) as
   // `evt:<event>`. Backs the renderer's `emit()` → `listen()` path (e.g. the
-  // main window streaming PerfHUD snapshots to the popped-out HUD window).
+  // main window streaming on-demand telemetry to the Performance Monitor).
   ipcMain.handle('app:emit', (_e, { event, payload }: { event: string; payload?: unknown }) => {
     broadcastEvent(BrowserWindow.getAllWindows(), event, payload)
   })
 
-  // Process-tree resource snapshot for the PerfHUD. Electron tracks the whole
+  // Process-tree resource snapshot for the Performance Monitor. Electron tracks the whole
   // app tree (Browser + renderers + GPU + utility) itself — no Rust round-trip,
   // no system-info crate. Works in dev AND release (unlike the dropped Rust
   // `get_system_stats`, which only ever errored).

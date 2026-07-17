@@ -15,6 +15,7 @@ import {
   type Locale,
 } from "../i18n";
 import { ViewMenu } from "./ViewMenu";
+import { openPerformanceMonitor } from "../render/performanceMonitorWindow";
 
 interface AppMenuBarProps {
   busy: boolean;
@@ -37,6 +38,33 @@ interface AppMenuBarProps {
   onOpenConnect: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
+}
+
+interface DevMenuProps {
+  enabled?: boolean;
+  onOpenPerformanceMonitor?: () => void;
+}
+
+/// Development diagnostics live behind their own dropdown so normal editor
+/// chrome stays free of diagnostic controls. `import.meta.env.DEV` is static at
+/// build time, so the entire trigger and entry are absent from release builds.
+export function DevMenu({
+  enabled = import.meta.env.DEV,
+  onOpenPerformanceMonitor = () => {
+    void openPerformanceMonitor().catch((error) => {
+      console.error("[weftcut/performance-monitor] failed to open:", error);
+    });
+  },
+}: DevMenuProps) {
+  if (!enabled) return null;
+  return (
+    <Menu label="Dev">
+      <MenuItem
+        label="Performance Monitor"
+        onSelect={onOpenPerformanceMonitor}
+      />
+    </Menu>
+  );
 }
 
 /// The frameless-window header: app title, menu bar, core-status pill,
@@ -199,6 +227,8 @@ export function AppMenuBar({
               onSelect={onOpenSettings}
             />
           </Menu>
+
+          <DevMenu />
         </MenuBar>
       </div>
       <div className="header-right" data-drag-region>

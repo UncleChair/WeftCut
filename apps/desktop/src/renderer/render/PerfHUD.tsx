@@ -1,17 +1,7 @@
-// Dev-only performance HUD. Two surfaces share one data feed:
-//
-//  • The inline overlay (this `PerfHUD`) is a compact vitals strip pinned to
-//    the preview corner — a glance-and-go health check. Toggle it with
-//    Ctrl+Shift+P. Its health dot turns amber when any deeper metric is hot,
-//    the cue to pop out the full view.
-//  • The popup (`PerfHUDWindow`, `/?perfHud=1`) is the full dashboard:
-//    stat tiles, a frame-interval sparkline, an audio meter, and the per-clip
-//    decode table. The two are mutually exclusive — while the popup is open
-//    the inline overlay is suppressed, and closing the popup restores it.
-//
-// This component stays mounted regardless of which surface is showing so its
-// polling + `PERF_HUD_SNAPSHOT_EVENT` emit keeps feeding the popup, which has
-// no Compositor ref of its own.
+// Dev-only Performance Monitor. The editor owns a headless telemetry bridge
+// because only the Preview renderer has live Compositor/PlaybackEngine refs.
+// The bridge is idle until the independent monitor window exists, then streams
+// snapshots to that window and tears every sampler/listener down on close.
 //
 // Why this exists: console-only logging is fine for one-shot diagnostics but
 // won't catch trends — e.g. "ring drains during scrub and never refills".
@@ -22,24 +12,27 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import { listen, emit, type UnlistenFn } from "@/bridge/events";
 import { SecondaryWindow } from "@/bridge/window";
 import { WindowControls } from "@/components/WindowControls";
-import { PanelTopOpenIcon, RotateCcwIcon } from "lucide-react";
+import { RotateCcwIcon } from "lucide-react";
 
 import { getSystemStats, type SystemStats } from "../ipc";
 import type { Compositor, CompositorPerfSnapshot } from "./Compositor";
 import type { PlaybackEngine, WarmupStats } from "./PlaybackEngine";
 import { throughputFps, type ThroughputSample } from "./perfHudStats";
+import {
+  PERF_MONITOR_WINDOW_CLOSED_EVENT,
+  PERF_MONITOR_WINDOW_LABEL,
+  PERF_MONITOR_WINDOW_OPENED_EVENT,
+} from "./performanceMonitorWindow";
 
-interface Props {
+interface TelemetryProps {
   /// Live Compositor ref. The HUD calls `getPerfSnapshot()` on it.
   /// Holding the ref (not the live object) lets the HUD survive
   /// Compositor re-construction after a `setSuspended(true)` /
@@ -63,7 +56,7 @@ function readMemory(): PerfMemory | null {
   const m = p.memory;
   // Copy into a plain object: `performance.memory`'s fields are prototype
   // getters, not own enumerable properties, so the live object serializes to
-  // `{}` when the sample crosses the IPC event boundary to the popup —
+  // `{}` when the sample crosses the IPC event boundary to the monitor —
   // which rendered the heap tile as "NaN MB".
   return m
     ? {
@@ -136,17 +129,10 @@ function fpsFromMs(ms: number): number {
   return ms > 0 ? Math.round(1000 / ms) : 0;
 }
 
-const HUD_EDGE_MARGIN = 12;
 export const PERF_HUD_SNAPSHOT_EVENT = "weftcut://perf-hud-snapshot";
-/// Broadcast by main when a secondary window closes, carrying `{ label }`. The
-/// inline overlay restores itself when the popped-out HUD window goes away — on
-/// ANY close path (caption button, OS, crash). Twin of WIN_CLOSED_EVENT in
-/// main/windows.ts.
-const WIN_CLOSED_EVENT = "weftcut://win-closed";
-/// Emitted (globally) by the popup's reset button; the inline component owns
+/// Emitted (globally) by the monitor's reset button; the headless bridge owns
 /// the Compositor ref, so it does the actual peak reset.
 const PERF_HUD_RESET_EVENT = "weftcut://perf-hud-reset";
-const PERF_HUD_WINDOW_LABEL = "perf-hud";
 /// Sparkline history depth (~30 s at the 500 ms emit cadence).
 const SPARK_CAP = 60;
 
@@ -162,51 +148,10 @@ export interface PerfHudSample {
   aud: { rmsDb: number; peakDb: number } | null;
 }
 
-/// One point of the popup's frame-interval sparkline.
+/// One point of the monitor's frame-interval sparkline.
 interface HistPoint {
   p50: number;
   p99: number;
-}
-
-interface HudPosition {
-  left: number;
-  top: number;
-}
-
-interface DragState {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  originLeft: number;
-  originTop: number;
-}
-
-function positionsEqual(a: HudPosition | null, b: HudPosition): boolean {
-  return a !== null && Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5;
-}
-
-function clampHudPosition(
-  pos: HudPosition,
-  hudEl: HTMLElement,
-  parentEl: HTMLElement,
-): HudPosition {
-  const hudRect = hudEl.getBoundingClientRect();
-  const parentRect = parentEl.getBoundingClientRect();
-  const maxLeft = Math.max(HUD_EDGE_MARGIN, parentRect.width - hudRect.width - HUD_EDGE_MARGIN);
-  const maxTop = Math.max(HUD_EDGE_MARGIN, parentRect.height - hudRect.height - HUD_EDGE_MARGIN);
-  return {
-    left: Math.min(Math.max(HUD_EDGE_MARGIN, pos.left), maxLeft),
-    top: Math.min(Math.max(HUD_EDGE_MARGIN, pos.top), maxTop),
-  };
-}
-
-function hudPositionFromRects(hudEl: HTMLElement, parentEl: HTMLElement): HudPosition {
-  const hudRect = hudEl.getBoundingClientRect();
-  const parentRect = parentEl.getBoundingClientRect();
-  return {
-    left: hudRect.left - parentRect.left,
-    top: hudRect.top - parentRect.top,
-  };
 }
 
 /// Heap usage as a fraction of the hard JS heap ceiling, or null if the
@@ -218,8 +163,8 @@ function heapCapRatioOf(memory: PerfMemory | null): number | null {
     : null;
 }
 
-/// True when any tracked metric is in its warn band — drives the inline
-/// health dot so the compact strip still tells you when to pop out.
+/// True when any tracked metric is in its warn band — drives the monitor's
+/// titlebar health dot.
 function sampleHot(s: PerfHudSample): boolean {
   if (s.rafP99 > 34) return true;
   if ((s.snap?.compositeMsMax ?? 0) > 24) return true;
@@ -230,27 +175,6 @@ function sampleHot(s: PerfHudSample): boolean {
   if (s.snap?.clips.some((c) => !c.lookaheadFull)) return true;
   if (s.warmup.lastReason === "deadline-hit") return true;
   return false;
-}
-
-// ── Inline strip ──────────────────────────────────────────────────────────
-
-function InlineStat({
-  value,
-  unit,
-  warn,
-  title,
-}: {
-  value: ReactNode;
-  unit: string;
-  warn?: boolean | undefined;
-  title?: string | undefined;
-}) {
-  return (
-    <span className={`perf-stat${warn ? " is-warn" : ""}`} title={title}>
-      <span className="perf-stat-val">{value}</span>
-      <span className="perf-stat-unit">{unit}</span>
-    </span>
-  );
 }
 
 // ── Dashboard pieces ────────────────────────────────────────────────────────
@@ -595,10 +519,39 @@ function PerfDashboard({
   );
 }
 
-// ── Inline overlay component ────────────────────────────────────────────────
+// ── Headless editor telemetry bridge ────────────────────────────────────────
 
-export function PerfHUD({ compositorRef, engineRef }: Props) {
-  const [visible, setVisible] = useState(true);
+export interface PerfTelemetryProbe {
+  active: boolean;
+  rafActive: boolean;
+  compositorPollActive: boolean;
+  systemPollActive: boolean;
+  resetListenerActive: boolean;
+  compositorPolls: number;
+  systemPolls: number;
+  broadcasts: number;
+}
+
+function e2eProbe(): PerfTelemetryProbe | null {
+  if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return null;
+  const host = window as typeof window & {
+    __weftcutPerfTelemetry?: PerfTelemetryProbe;
+  };
+  host.__weftcutPerfTelemetry ??= {
+    active: false,
+    rafActive: false,
+    compositorPollActive: false,
+    systemPollActive: false,
+    resetListenerActive: false,
+    compositorPolls: 0,
+    systemPolls: 0,
+    broadcasts: 0,
+  };
+  return host.__weftcutPerfTelemetry;
+}
+
+export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps) {
+  const [active, setActive] = useState(false);
   const [snap, setSnap] = useState<CompositorPerfSnapshot | null>(null);
   const [rafP50, setRafP50] = useState(0);
   const [rafP99, setRafP99] = useState(0);
@@ -621,27 +574,20 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   // Master audio bus meter (rms/peak dBFS). Null in export mode or before
   // the graph exists.
   const [aud, setAud] = useState<{ rmsDb: number; peakDb: number } | null>(null);
-  const [hudPosition, setHudPosition] = useState<HudPosition | null>(null);
-  const [dragging, setDragging] = useState(false);
-  // True while the detached Performance window is open. Suppresses the inline
-  // overlay (see render gate) without unmounting this component, so the
-  // snapshot emit keeps feeding the popup.
-  const [poppedOut, setPoppedOut] = useState(false);
 
   // rAF interval tracking. We keep the ring + last-tick time on refs
-  // so the rAF callback doesn't re-render on every frame; the HUD only
+  // so the rAF callback doesn't re-render on every frame; the bridge only
   // re-renders when the 500 ms polling tick recomputes P50/P99.
   const intervalsRef = useRef<IntervalRing | null>(null);
   if (intervalsRef.current === null) intervalsRef.current = newIntervalRing();
   const lastRafMsRef = useRef<number | null>(null);
-  const hudRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<DragState | null>(null);
 
   useEffect(() => {
-    // Reset on every (re)mount — StrictMode double-invokes effects,
-    // and lastRafMsRef.current would otherwise survive the unmount
-    // and feed a stale prev into the first tick of the re-mount.
+    if (!active) return;
+    intervalsRef.current = newIntervalRing();
     lastRafMsRef.current = null;
+    const probe = e2eProbe();
+    if (probe) probe.rafActive = true;
     let rafHandle = 0;
     const tick = (nowMs: number): void => {
       const prev = lastRafMsRef.current;
@@ -652,8 +598,11 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
       rafHandle = requestAnimationFrame(tick);
     };
     rafHandle = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafHandle);
-  }, []);
+    return () => {
+      cancelAnimationFrame(rafHandle);
+      if (probe) probe.rafActive = false;
+    };
+  }, [active]);
 
   // When the tab is hidden/blurred, Chromium pauses rAF. On unhide,
   // the first tick computes a multi-second interval from the
@@ -662,6 +611,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   // is stuttering. Clear `lastRafMsRef` so the first tick after
   // unhide is treated as the start of a fresh measurement.
   useEffect(() => {
+    if (!active) return;
     const onVis = (): void => {
       if (document.visibilityState === "visible") {
         lastRafMsRef.current = null;
@@ -669,13 +619,17 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, []);
+  }, [active]);
 
   // 500 ms polling: read Compositor snapshot, recompute rAF percentiles,
   // sample heap memory + playhead. Decoupled from rAF so a steady-state
-  // HUD update doesn't itself influence what it's measuring.
+  // dashboard update doesn't itself influence what it's measuring.
   useEffect(() => {
+    if (!active) return;
+    const probe = e2eProbe();
+    if (probe) probe.compositorPollActive = true;
     const id = setInterval(() => {
+      if (probe) probe.compositorPolls += 1;
       const c = compositorRef.current;
       if (c) {
         const s = c.getPerfSnapshot();
@@ -703,15 +657,23 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
       setPlayheadUs(e?.positionUs() ?? 0);
       if (e) setWarmup(e.getWarmupStats());
     }, 500);
-    return () => clearInterval(id);
-  }, [compositorRef, engineRef]);
+    return () => {
+      clearInterval(id);
+      prevSamplesRef.current = new Map();
+      if (probe) probe.compositorPollActive = false;
+    };
+  }, [active, compositorRef, engineRef]);
 
   // Process-tree resource poll (app.getAppMetrics() via main), on a slower 1 s
-  // cadence: CPU/RSS move slowly. Available in dev AND release; the .catch is
-  // defensive only.
+  // cadence: CPU/RSS move slowly. It is deliberately absent while the monitor
+  // is closed so diagnostics cannot perturb normal editing.
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
+    const probe = e2eProbe();
+    if (probe) probe.systemPollActive = true;
     const id = setInterval(() => {
+      if (probe) probe.systemPolls += 1;
       getSystemStats()
         .then((s) => {
           if (!cancelled) setSys(s);
@@ -721,48 +683,57 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (probe) probe.systemPollActive = false;
     };
-  }, []);
+  }, [active]);
 
-  // Ctrl+Shift+P toggles ONLY the inline overlay. Captured at the window
-  // level so the user doesn't need to focus the HUD to dismiss it; the popup
-  // window (a separate renderer) has no such binding by design.
+  // Main broadcasts lifecycle for every labelled secondary window. Only our
+  // monitor toggles telemetry. The existence check reconciles HMR/re-mounts
+  // when a monitor survived the editor renderer reload.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.ctrlKey && e.shiftKey && e.code === "KeyP") {
-        e.preventDefault();
-        setVisible((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // Pop-out lifecycle. Main broadcasts WIN_CLOSED_EVENT when any secondary
-  // window closes; restore the inline overlay when it's OUR popup that went away
-  // (focus-independent — a focus check misses closing the popup on a second
-  // monitor while this window stays focused). On mount we also reconcile against
-  // any popup that survived an HMR reload.
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
+    let unlistenOpened: UnlistenFn | null = null;
+    let unlistenClosed: UnlistenFn | null = null;
     let cancelled = false;
-    void listen<{ label?: string }>(WIN_CLOSED_EVENT, (e) => {
-      if (e.payload?.label === PERF_HUD_WINDOW_LABEL) setPoppedOut(false);
+    let sawLifecycle = false;
+    void listen<{ label?: string }>(PERF_MONITOR_WINDOW_OPENED_EVENT, (e) => {
+      if (e.payload?.label !== PERF_MONITOR_WINDOW_LABEL) return;
+      sawLifecycle = true;
+      setActive(true);
     }).then((off) => {
       if (cancelled) {
         off();
         return;
       }
-      unlisten = off;
+      unlistenOpened = off;
     });
-    void SecondaryWindow.getByLabel(PERF_HUD_WINDOW_LABEL).then((w) => {
-      if (!cancelled) setPoppedOut(w !== null);
+    void listen<{ label?: string }>(PERF_MONITOR_WINDOW_CLOSED_EVENT, (e) => {
+      if (e.payload?.label !== PERF_MONITOR_WINDOW_LABEL) return;
+      sawLifecycle = true;
+      setActive(false);
+    }).then((off) => {
+      if (cancelled) {
+        off();
+        return;
+      }
+      unlistenClosed = off;
+    });
+    void SecondaryWindow.getByLabel(PERF_MONITOR_WINDOW_LABEL).then((w) => {
+      if (!cancelled && !sawLifecycle) setActive(w !== null);
     });
     return () => {
       cancelled = true;
-      unlisten?.();
+      unlistenOpened?.();
+      unlistenClosed?.();
     };
   }, []);
+
+  useEffect(() => {
+    const probe = e2eProbe();
+    if (probe) probe.active = active;
+    return () => {
+      if (probe) probe.active = false;
+    };
+  }, [active]);
 
   const onResetPeaks = useCallback(() => {
     compositorRef.current?.resetPerfPeaks();
@@ -770,102 +741,27 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     setWarmup({ lastMs: null, maxMs: 0, lastReason: null });
   }, [compositorRef, engineRef]);
 
-  // Reset requested from the popup (which has no Compositor ref of its own).
+  // Reset requested from the monitor (which has no Compositor ref of its own).
+  // This subscription is intentionally absent whenever the window is closed.
   useEffect(() => {
+    if (!active) return;
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
+    const probe = e2eProbe();
     void listen(PERF_HUD_RESET_EVENT, () => onResetPeaks()).then((off) => {
       if (cancelled) {
         off();
         return;
       }
       unlisten = off;
+      if (probe) probe.resetListenerActive = true;
     });
     return () => {
       cancelled = true;
       unlisten?.();
+      if (probe) probe.resetListenerActive = false;
     };
-  }, [onResetPeaks]);
-
-  useEffect(() => {
-    if (visible) return;
-    dragRef.current = null;
-    setDragging(false);
-  }, [visible]);
-
-  useLayoutEffect(() => {
-    if (!visible || poppedOut) return;
-    const hudEl = hudRef.current;
-    const parentEl = hudEl?.parentElement;
-    if (!hudEl || !parentEl) return;
-
-    const keepInBounds = (): void => {
-      setHudPosition((pos) => {
-        const measured = pos ?? hudPositionFromRects(hudEl, parentEl);
-        const next = clampHudPosition(measured, hudEl, parentEl);
-        return positionsEqual(pos, next) ? pos : next;
-      });
-    };
-
-    keepInBounds();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(keepInBounds);
-    observer.observe(parentEl);
-    observer.observe(hudEl);
-    return () => observer.disconnect();
-  }, [visible, poppedOut]);
-
-  const beginDrag = useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0) return;
-    const target = e.target instanceof Element ? e.target : null;
-    if (target?.closest("button")) return;
-
-    const hudEl = hudRef.current;
-    const parentEl = hudEl?.parentElement;
-    if (!hudEl || !parentEl) return;
-
-    const origin = clampHudPosition(hudPositionFromRects(hudEl, parentEl), hudEl, parentEl);
-    dragRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      originLeft: origin.left,
-      originTop: origin.top,
-    };
-    setHudPosition((pos) => (positionsEqual(pos, origin) ? pos : origin));
-    setDragging(true);
-    e.currentTarget.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  }, []);
-
-  const moveDrag = useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-
-    const hudEl = hudRef.current;
-    const parentEl = hudEl?.parentElement;
-    if (!hudEl || !parentEl) return;
-
-    const next = clampHudPosition(
-      {
-        left: drag.originLeft + e.clientX - drag.startX,
-        top: drag.originTop + e.clientY - drag.startY,
-      },
-      hudEl,
-      parentEl,
-    );
-    setHudPosition((pos) => (positionsEqual(pos, next) ? pos : next));
-    e.preventDefault();
-  }, []);
-
-  const endDrag = useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
-    if (dragRef.current?.pointerId !== e.pointerId) return;
-    dragRef.current = null;
-    setDragging(false);
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-  }, []);
+  }, [active, onResetPeaks]);
 
   const sample = useMemo<PerfHudSample>(
     () => ({
@@ -883,129 +779,18 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   );
 
   useEffect(() => {
+    if (!active) return;
+    const probe = e2eProbe();
+    if (probe) probe.broadcasts += 1;
     void emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
-  }, [sample]);
+  }, [active, sample]);
 
-  const openPerfHudWindow = useCallback(async (): Promise<void> => {
-    try {
-      const existing = await SecondaryWindow.getByLabel(PERF_HUD_WINDOW_LABEL);
-      if (existing) {
-        setPoppedOut(true);
-        await existing.show().catch(() => {});
-        await existing.setFocus().catch(() => {});
-        await emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
-        return;
-      }
-      new SecondaryWindow(PERF_HUD_WINDOW_LABEL, {
-        url: "/?perfHud=1",
-        title: "WeftCut — Performance",
-        width: 640,
-        height: 560,
-        minWidth: 380,
-        minHeight: 320,
-        resizable: true,
-        // Frameless: the popup draws its own titlebar + window controls
-        // (matching the main window), so suppress the native OS frame.
-        decorations: false,
-      });
-      // Dev-only: first-snapshot seeding + create/error feedback aren't bridged
-      // from the secondary-window lifecycle yet.
-      setPoppedOut(true);
-    } catch (e) {
-      console.error("[weftcut/perf-hud] failed to open popup:", e);
-      setPoppedOut(false);
-    }
-  }, [sample]);
-
-  // Hidden while the popup owns the view (poppedOut) or the user dismissed the
-  // overlay (Ctrl+Shift+P → visible). Hooks above keep running regardless, so
-  // the popup keeps receiving snapshots.
-  if (!visible || poppedOut) return null;
-
-  const hot = sampleHot(sample);
-  const fps = fpsFromMs(rafP50);
-  const hudStyle: CSSProperties | undefined = hudPosition
-    ? { left: hudPosition.left, top: hudPosition.top, bottom: "auto" }
-    : undefined;
-
-  return (
-    <div
-      ref={hudRef}
-      className={`perf-hud${dragging ? " is-dragging" : ""}`}
-      style={hudStyle}
-      data-testid="perf-hud"
-    >
-      <div
-        className="perf-bar"
-        onPointerDown={beginDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-      >
-        <span
-          className={`perf-dot${hot ? " is-hot" : ""}`}
-          aria-hidden="true"
-          title={hot ? "A metric is in its warn band — pop out for detail" : "All metrics nominal"}
-        />
-        <span className="perf-bar-title">PERF</span>
-        <span className="perf-bar-stats">
-          <InlineStat
-            value={fps}
-            unit="fps"
-            warn={rafP99 > 34}
-            title={`rAF P50 ${formatMs(rafP50)} ms · P99 ${formatMs(rafP99)} ms`}
-          />
-          <InlineStat
-            value={formatMs(snap?.compositeMsLast ?? 0)}
-            unit="ms"
-            warn={(snap?.compositeMsMax ?? 0) > 24}
-            title={`composite · max ${formatMs(snap?.compositeMsMax ?? 0)} ms`}
-          />
-          {memory ? (
-            <InlineStat
-              value={formatMb(memory.usedJSHeapSize)}
-              unit="MB"
-              warn={heapCapRatioOf(memory) !== null && (heapCapRatioOf(memory) ?? 0) > 0.85}
-              title="JS heap used"
-            />
-          ) : null}
-          {sys ? (
-            <InlineStat
-              value={sys.cpu_percent.toFixed(0)}
-              unit="%"
-              warn={sys.cpu_percent > 80}
-              title={`process CPU · ${sys.process_count}p · ${sys.logical_cores}c`}
-            />
-          ) : null}
-        </span>
-        <span className="perf-bar-actions">
-          <button
-            type="button"
-            className="perf-icon-btn"
-            onClick={() => void openPerfHudWindow()}
-            title="Open performance window"
-            aria-label="Open performance window"
-          >
-            <PanelTopOpenIcon size={12} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="perf-icon-btn"
-            onClick={onResetPeaks}
-            title="Reset peaks"
-            aria-label="Reset performance peaks"
-          >
-            <RotateCcwIcon size={12} aria-hidden="true" />
-          </button>
-        </span>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 // ── Popup window component ──────────────────────────────────────────────────
 
-export function PerfHUDWindow() {
+export function PerformanceMonitorWindow() {
   const [sample, setSample] = useState<PerfHudSample | null>(null);
   const [history, setHistory] = useState<HistPoint[]>([]);
 
@@ -1031,10 +816,8 @@ export function PerfHUDWindow() {
     };
   }, []);
 
-  // Closing the popup restores the inline overlay via main's WIN_CLOSED_EVENT
-  // broadcast (see windows.ts) — no renderer-side close handler needed. The
-  // caption close button (WindowControls) routes through window:close to THIS
-  // window (main resolves the sender), and main fires the broadcast on `closed`.
+  // The caption close button routes through window:close to this sender. Main
+  // then broadcasts the labelled close, which idles the editor-side bridge.
 
   const onReset = useCallback(() => {
     void emit(PERF_HUD_RESET_EVENT).catch(() => {});
@@ -1046,7 +829,7 @@ export function PerfHUDWindow() {
     <div className="perf-hud-window">
       {/* Self-drawn titlebar matching the main window: drag region + health dot
           + title on the left, shared caption buttons (min/max/close) flush
-          right. The window is frameless (decorations:false), so this IS the bar. */}
+          right. The window is frameless (decorations:false), so this is the bar. */}
       <div className="perf-titlebar" data-drag-region data-testid="perf-hud-titlebar">
         <span className={`perf-dot${hot ? " is-hot" : ""}`} aria-hidden="true" />
         <span className="perf-titlebar-title">Performance</span>

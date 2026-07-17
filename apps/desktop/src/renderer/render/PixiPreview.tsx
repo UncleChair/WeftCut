@@ -48,7 +48,7 @@ import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
 import type { ExportDecodeRouting } from "./exportDecodeRouting";
-import { PerfHUD } from "./PerfHUD";
+import { PerfTelemetryBridge } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
 import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
@@ -571,8 +571,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           {status}
         </div>
       )}
-      {import.meta.env.DEV && (
-        <PerfHUD compositorRef={compositorRef} engineRef={engineRef} />
+      {(import.meta.env.DEV || import.meta.env.VITE_WEFTCUT_E2E === "1") && (
+        <PerfTelemetryBridge compositorRef={compositorRef} engineRef={engineRef} />
       )}
       {unsupportedMediaId !== undefined && (
         <UnsupportedClipCard mediaId={unsupportedMediaId} />

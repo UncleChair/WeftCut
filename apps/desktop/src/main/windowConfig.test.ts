@@ -3,7 +3,7 @@ import { secondaryWindowConfig } from './windowConfig'
 
 describe('secondaryWindowConfig', () => {
   it('gives a decorated (framed) window when decorations is true', () => {
-    // The PerfHUD popup passes decorations:true and draws NO custom titlebar.
+    // A decorated utility window draws no custom titlebar.
     // Regression guard: a frameless window here is un-movable and un-closable.
     expect(secondaryWindowConfig({ decorations: true }, 'win32').frame).toBe(true)
   })

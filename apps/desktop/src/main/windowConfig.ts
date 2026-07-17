@@ -1,11 +1,11 @@
-// Pure config for secondary BrowserWindows (PerfHUD popup, Render & Play).
+// Pure config for secondary BrowserWindows (Performance Monitor, Render & Play).
 // Kept electron-free (operates on plain options, returns a plain object) so it's
 // unit-testable without launching a BrowserWindow — same rule as metrics.ts.
 //
 // LANDMINE: a secondary window with NO frame and NO custom titlebar has no bar —
 // un-movable and un-closable. So the default here is DECORATED (native OS frame).
 // A window may pass `decorations: false` ONLY if its renderer draws its own
-// titlebar + <WindowControls/> (the PerfHUD popup does, matching the MAIN
+// titlebar + <WindowControls/> (the Performance Monitor does, matching the MAIN
 // window's frameless self-drawn caption — see index.ts / WindowControls.tsx).
 
 // Twin of the secondary-window fields of `WinCreateOpts` in src/shared/ipc.ts.

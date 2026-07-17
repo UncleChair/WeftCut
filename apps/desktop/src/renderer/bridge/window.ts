@@ -1,7 +1,7 @@
 // Window controls + secondary-window handle, backed by the Electron main
 // process over window.api (window:* / win:* IPC). getCurrentWindow() mirrors
 // the small surface the renderer uses (titlebar controls, taskbar progress);
-// SecondaryWindow is the secondary-window handle (PerfHUD / Render&Play).
+// SecondaryWindow is the secondary-window handle (Performance Monitor / Render&Play).
 
 export function getCurrentWindow() {
   return {
@@ -80,7 +80,7 @@ export class SecondaryWindow {
   async setFocus(): Promise<void> { await window.api.win.act(this.label, 'focus') }
 
   // Returns a handle if the labelled window exists, else null. Mirrors the
-  // shape PerfHUD consumes (it calls .then() on the result).
+  // shape secondary-window consumers use for singleton reconciliation.
   static async getByLabel(label: string): Promise<SecondaryWindow | null> {
     const exists = await window.api.win.exists(label)
     if (!exists) return null

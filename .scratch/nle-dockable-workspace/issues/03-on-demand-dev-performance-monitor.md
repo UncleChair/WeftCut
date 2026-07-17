@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Preview no longer renders inline performance chrome or supports its former visibility/position interaction.
-- [ ] A development-only menu action opens or focuses the existing singleton Performance Monitor window.
-- [ ] Production builds do not render the Dev menu or Performance Monitor entry.
-- [ ] Closing the independent window stops animation frames, compositor polling, system-metrics polling, snapshot broadcasts, and reset listeners.
-- [ ] Unit and Electron tests cover singleton reuse, window lifecycle, absence of inline HUD, and idle telemetry.
+- [x] Preview no longer renders inline performance chrome or supports its former visibility/position interaction.
+- [x] A development-only menu action opens or focuses the existing singleton Performance Monitor window.
+- [x] Production builds do not render the Dev menu or Performance Monitor entry.
+- [x] Closing the independent window stops animation frames, compositor polling, system-metrics polling, snapshot broadcasts, and reset listeners.
+- [x] Unit and Electron tests cover singleton reuse, window lifecycle, absence of inline HUD, and idle telemetry.
