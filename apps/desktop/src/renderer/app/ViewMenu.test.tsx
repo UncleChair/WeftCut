@@ -12,9 +12,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => "AbRoll",
-  useMediaPoolDrawerOpen: () => false,
   toggleDisplayMode: vi.fn(),
-  setMediaPoolDrawerOpen: vi.fn(),
 }));
 
 import { ViewMenu } from "./ViewMenu";
@@ -57,6 +55,10 @@ describe("ViewMenu workspace controls", () => {
     fireEvent.click(screen.getByRole("button", { name: /View/ }));
     fireEvent.click(await screen.findByText("Caption"));
     expect(workspaceController.openPanel).toHaveBeenCalledWith("caption");
+
+    fireEvent.click(screen.getByRole("button", { name: /View/ }));
+    fireEvent.click(await screen.findByText("Media Pool"));
+    expect(workspaceController.openPanel).toHaveBeenCalledWith("media");
 
     fireEvent.click(screen.getByRole("button", { name: /View/ }));
     fireEvent.click(await screen.findByText("Close Active Panel"));

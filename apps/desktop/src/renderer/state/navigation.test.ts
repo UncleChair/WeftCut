@@ -1,12 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../settings/appSettingsStore", () => ({
-  setMediaPoolDrawerOpen: vi.fn(() => Promise.resolve()),
-}));
-
 import {
   clampSeekUs,
   jumpToLayer,
+  registerOpenMediaPoolPanel,
   registerRevealMedia,
   registerRevealTrack,
   registerScrollToTime,
@@ -15,7 +12,6 @@ import {
   selectLayers,
   seekToClamped,
 } from "./navigation";
-import { setMediaPoolDrawerOpen } from "../settings/appSettingsStore";
 import { registerTransport } from "./playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
@@ -166,13 +162,30 @@ describe("selectLayer / selectLayers", () => {
 });
 
 describe("revealInMediaPool", () => {
-  it("opens the drawer and calls the registered handle", () => {
+  it("focuses the Media Pool Panel and calls the mounted reveal handle", () => {
+    const openPanel = vi.fn();
     const flash = vi.fn();
-    const un = registerRevealMedia(flash);
+    const unOpen = registerOpenMediaPoolPanel(openPanel);
+    const unReveal = registerRevealMedia(flash);
     expect(revealInMediaPool("m1")).toBe(true);
-    expect(setMediaPoolDrawerOpen).toHaveBeenCalledWith(true);
+    expect(openPanel).toHaveBeenCalledOnce();
     expect(flash).toHaveBeenCalledWith("m1");
-    un();
+    unReveal();
+    unOpen();
+  });
+
+  it("delivers a pending reveal after a closed Panel is recreated", () => {
+    const openPanel = vi.fn();
+    const unOpen = registerOpenMediaPoolPanel(openPanel);
+
+    expect(revealInMediaPool("m1")).toBe(true);
+    expect(openPanel).toHaveBeenCalledOnce();
+
+    const flash = vi.fn();
+    const unReveal = registerRevealMedia(flash);
+    expect(flash).toHaveBeenCalledWith("m1");
+    unReveal();
+    unOpen();
   });
 
   it("returns false for a stale media id", () => {

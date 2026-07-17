@@ -1,5 +1,4 @@
 import { lastFrameAnchorUs } from "../frames";
-import { setMediaPoolDrawerOpen } from "../settings/appSettingsStore";
 import { transportSeek } from "./playbackStore";
 import { setPlayheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
@@ -14,10 +13,13 @@ import { setLayerSelection } from "./selectionStore";
 type RevealTrackFn = (trackId: string, layerId: string) => void;
 type ScrollToTimeFn = (tUs: number) => void;
 type RevealMediaFn = (mediaId: string) => void;
+type OpenMediaPoolPanelFn = () => void;
 
 let revealTrackFn: RevealTrackFn | null = null;
 let scrollToTimeFn: ScrollToTimeFn | null = null;
 let revealMediaFn: RevealMediaFn | null = null;
+let openMediaPoolPanelFn: OpenMediaPoolPanelFn | null = null;
+let pendingRevealMediaId: string | null = null;
 
 // Identity-guarded unregister (releaseTransport pattern): a stale cleanup
 // from an old mount can't tear down a newer registration.
@@ -37,8 +39,28 @@ export function registerScrollToTime(fn: ScrollToTimeFn): () => void {
 
 export function registerRevealMedia(fn: RevealMediaFn): () => void {
   revealMediaFn = fn;
+  if (pendingRevealMediaId !== null) {
+    const mediaId = pendingRevealMediaId;
+    pendingRevealMediaId = null;
+    fn(mediaId);
+  }
   return () => {
     if (revealMediaFn === fn) revealMediaFn = null;
+  };
+}
+
+/**
+ * Register the app-owned Dock Workspace action used by navigation surfaces.
+ * The callback is intentionally Media-specific so Dockview and Panel ids do
+ * not leak into search/navigation code.
+ */
+export function registerOpenMediaPoolPanel(
+  fn: OpenMediaPoolPanelFn,
+): () => void {
+  openMediaPoolPanelFn = fn;
+  if (pendingRevealMediaId !== null) fn();
+  return () => {
+    if (openMediaPoolPanelFn === fn) openMediaPoolPanelFn = null;
   };
 }
 
@@ -118,11 +140,15 @@ export function jumpToLayer(layerId: string): boolean {
   return true;
 }
 
-/// Open the MediaPool drawer and flash the item. Returns false when the
-/// media id no longer exists.
+/// Focus or reopen the singleton Media Pool Panel and flash the item. The
+/// pending id survives a closed Panel's destroy/recreate boundary.
 export function revealInMediaPool(mediaId: string): boolean {
   if (!useProjectStore.getState().mediaById.has(mediaId)) return false;
-  void setMediaPoolDrawerOpen(true);
-  revealMediaFn?.(mediaId);
+  pendingRevealMediaId = mediaId;
+  openMediaPoolPanelFn?.();
+  if (revealMediaFn) {
+    pendingRevealMediaId = null;
+    revealMediaFn(mediaId);
+  }
   return true;
 }

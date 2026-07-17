@@ -24,7 +24,11 @@ import {
   setLayerSelection,
   usePrimaryLayerId,
 } from "./state/selectionStore";
-import { clampSeekUs, registerRevealTrack } from "./state/navigation";
+import {
+  clampSeekUs,
+  registerOpenMediaPoolPanel,
+  registerRevealTrack,
+} from "./state/navigation";
 import { AgentMode } from "./agent/AgentMode";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
@@ -61,11 +65,7 @@ import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
-import {
-  setMediaPoolDrawerOpen,
-  toggleDisplayMode,
-  useAppSettingsStore,
-} from "./settings/appSettingsStore";
+import { toggleDisplayMode } from "./settings/appSettingsStore";
 import { logEmit } from "./ipc";
 import {
   DockWorkspace,
@@ -146,6 +146,13 @@ export function App({ onCloseProject }: AppProps) {
     const update = () => setWorkspaceSnapshot(workspaceController.getSnapshot());
     update();
     return workspaceController.subscribe(update);
+  }, [workspaceController]);
+
+  useEffect(() => {
+    if (!workspaceController) return;
+    return registerOpenMediaPoolPanel(() => {
+      workspaceController.openPanel("media");
+    });
   }, [workspaceController]);
 
   // Fresh project session → playhead 0. The store is module-global and would
@@ -490,13 +497,6 @@ export function App({ onCloseProject }: AppProps) {
     // every subscriber re-renders via `app_settings:changed`.
     toggleDisplayMode: () => {
       void toggleDisplayMode();
-    },
-    // R.9: M toggles the MediaPool left drawer. Read current state via
-    // `getState()` instead of the hook (hooks can't run in a callback)
-    // and flip it. R.9's drawer wires up the visual changes.
-    toggleMediaPool: () => {
-      const current = useAppSettingsStore.getState().settings.media_pool_drawer_open;
-      void setMediaPoolDrawerOpen(!current);
     },
     focusNextPanel: () => workspaceController?.focusNextPanel(),
     focusPreviousPanel: () => workspaceController?.focusPreviousPanel(),

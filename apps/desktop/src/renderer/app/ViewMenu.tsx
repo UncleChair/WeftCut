@@ -1,12 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 import { Menu, MenuHeading, MenuItem, MenuSeparator } from "../menu/Menu";
-import {
-  useDisplayMode,
-  useMediaPoolDrawerOpen,
-  toggleDisplayMode,
-  setMediaPoolDrawerOpen,
-} from "../settings/appSettingsStore";
+import { toggleDisplayMode, useDisplayMode } from "../settings/appSettingsStore";
 import {
   PANEL_KINDS,
   PANEL_REGISTRY,
@@ -31,7 +26,6 @@ export function ViewMenu({
 }: ViewMenuProps) {
   const { t } = useTranslation();
   const mode = useDisplayMode();
-  const isDrawerOpen = useMediaPoolDrawerOpen();
   return (
     <Menu label={t("menu.view", { defaultValue: "View" })}>
       <MenuHeading
@@ -81,22 +75,6 @@ export function ViewMenu({
         checked={mode === "ShowAll"}
         onSelect={() => {
           if (mode !== "ShowAll") void toggleDisplayMode();
-        }}
-      />
-      <MenuSeparator />
-      <MenuItem
-        actionId="toggleMediaPool"
-        label={
-          isDrawerOpen
-            ? t("view.close_media_pool", {
-                defaultValue: "Close Media Pool drawer",
-              })
-            : t("view.open_media_pool", {
-                defaultValue: "Open Media Pool drawer",
-              })
-        }
-        onSelect={() => {
-          void setMediaPoolDrawerOpen(!isDrawerOpen);
         }}
       />
     </Menu>

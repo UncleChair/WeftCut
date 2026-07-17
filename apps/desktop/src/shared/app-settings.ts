@@ -11,8 +11,6 @@ export interface AppSettings {
   /// Half-width of the symmetric peek window in microseconds (default
   /// 10_000_000 = 10 s). Clamped on write to [1 s, 5 min].
   delta_window_us: number;
-  /// Remembered last-toggle of the left MediaPool drawer.
-  media_pool_drawer_open: boolean;
   /// Snap moved timeline layers to nearby layer boundaries and playhead.
   tail_snap_enabled: boolean;
   /// Pixel threshold for boundary snapping. Clamped on write.
@@ -36,7 +34,6 @@ export interface AppSettings {
 export interface AppSettingsPatch {
   display_mode?: DisplayMode;
   delta_window_us?: number;
-  media_pool_drawer_open?: boolean;
   tail_snap_enabled?: boolean;
   tail_snap_strength_px?: number;
   prebake_motifs?: boolean;
@@ -47,7 +44,6 @@ export interface AppSettingsPatch {
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
   display_mode: "AbRoll",
   delta_window_us: 10_000_000,
-  media_pool_drawer_open: false,
   tail_snap_enabled: true,
   tail_snap_strength_px: 12,
   prebake_motifs: false,

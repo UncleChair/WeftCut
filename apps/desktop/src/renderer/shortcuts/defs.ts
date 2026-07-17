@@ -22,7 +22,6 @@ export type ActionId =
   | "toggleLog"
   | "focusLogSearch"
   | "toggleDisplayMode"
-  | "toggleMediaPool"
   | "focusNextPanel"
   | "focusPreviousPanel"
   | "toggleMaximizePanel"
@@ -89,9 +88,6 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // display_mode (AB ↔ Show All). Rebindable through Settings →
   // Keyboard. Bare-letter chords don't fire in text inputs by default.
   toggleDisplayMode: { defaultKeys: ["T"],                 labelKey: "actions.toggle_display_mode" },
-  // `docs/data-model.md` R.9: bare-letter `M` toggles the MediaPool
-  // left drawer (closed/open). The app-pref store remembers state.
-  toggleMediaPool:   { defaultKeys: ["M"],                 labelKey: "actions.toggle_media_pool" },
   focusNextPanel: {
     defaultKeys: ["Ctrl+Shift+Period"],
     labelKey: "actions.focus_next_panel",

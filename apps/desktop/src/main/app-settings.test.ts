@@ -26,7 +26,7 @@ describe('app-settings store', () => {
   it('apply persists then reads back (independent reader)', () => {
     const { fs, files } = memFs()
     const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
-    const after = s.apply({ display_mode: 'ShowAll', delta_window_us: 5_000_000, media_pool_drawer_open: true, tail_snap_enabled: false, tail_snap_strength_px: 24 })
+    const after = s.apply({ display_mode: 'ShowAll', delta_window_us: 5_000_000, tail_snap_enabled: false, tail_snap_strength_px: 24 })
     expect(after.display_mode).toBe('ShowAll')
     expect(after.delta_window_us).toBe(5_000_000)
     expect(after.tail_snap_strength_px).toBe(24)
@@ -42,6 +42,19 @@ describe('app-settings store', () => {
     expect(got.delta_window_us).toBe(10_000_000)
     expect(got.tail_snap_enabled).toBe(true)
     expect(got.tail_snap_strength_px).toBe(12)
+  })
+
+  it('ignores the retired media drawer key without migrating or persisting it', () => {
+    const { fs, files } = memFs({
+      [PATH]: '{ "display_mode": "ShowAll", "media_pool_drawer_open": true }',
+    })
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+
+    expect(s.get()).toEqual({ ...APP_SETTINGS_DEFAULTS, display_mode: 'ShowAll' })
+    s.apply({ tail_snap_enabled: false })
+
+    const persisted = JSON.parse(files.get(PATH)!) as Record<string, unknown>
+    expect(persisted).not.toHaveProperty('media_pool_drawer_open')
   })
 
   it('corrupt file falls back to defaults (no throw)', () => {

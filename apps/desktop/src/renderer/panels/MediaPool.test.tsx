@@ -16,7 +16,7 @@ vi.mock("../state/proxyPreferenceStore", async (importActual) => {
 
 import { generateQuickProxy, type MediaSummary } from "../ipc";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
-import { formatMediaDuration, MediaPool } from "./MediaPool";
+import { formatMediaDuration, MediaDropZone, MediaPool } from "./MediaPool";
 import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
 
 afterEach(() => {
@@ -177,5 +177,44 @@ describe("MediaPool drag preview", () => {
     expect(preview.style.width).toBe("180px");
     expect(preview.style.height).toBe("120px");
     expect(preview.style.transform).toBe("translate3d(10px, 20px, 0)");
+  });
+});
+
+describe("Media Pool drop isolation", () => {
+  it("accepts OS Files without treating business or Panel drags as imports", () => {
+    const { container } = render(
+      <MediaDropZone>
+        <span>contents</span>
+      </MediaDropZone>,
+    );
+    const zone = container.querySelector(".media-pool") as HTMLElement;
+
+    const mediaDrag = createEvent.dragEnter(zone, {
+      dataTransfer: { types: [MEDIA_DRAG_TYPE] },
+    });
+    fireEvent(zone, mediaDrag);
+    expect(mediaDrag.defaultPrevented).toBe(false);
+    expect(container.querySelector(".media-pool-drop-overlay")).toBeNull();
+
+    const panelDrag = createEvent.dragEnter(zone, {
+      dataTransfer: { types: ["text/plain"] },
+    });
+    fireEvent(zone, panelDrag);
+    expect(panelDrag.defaultPrevented).toBe(false);
+    expect(container.querySelector(".media-pool-drop-overlay")).toBeNull();
+
+    const filesDrag = createEvent.dragEnter(zone, {
+      dataTransfer: { types: ["Files"] },
+    });
+    fireEvent(zone, filesDrag);
+    expect(filesDrag.defaultPrevented).toBe(true);
+    expect(container.querySelector(".media-pool-drop-overlay")).not.toBeNull();
+
+    const filesDrop = createEvent.drop(zone, {
+      dataTransfer: { types: ["Files"] },
+    });
+    fireEvent(zone, filesDrop);
+    expect(filesDrop.defaultPrevented).toBe(true);
+    expect(container.querySelector(".media-pool-drop-overlay")).toBeNull();
   });
 });

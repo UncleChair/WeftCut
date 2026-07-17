@@ -39,7 +39,6 @@ interface AppSettingsActions {
 const FALLBACK: AppSettings = {
   display_mode: "AbRoll",
   delta_window_us: 10_000_000,
-  media_pool_drawer_open: false,
   tail_snap_enabled: true,
   tail_snap_strength_px: 12,
   prebake_motifs: false,
@@ -61,8 +60,6 @@ export const useDisplayMode = (): DisplayMode =>
   useAppSettingsStore((s) => s.settings.display_mode);
 export const useDeltaWindowUs = (): number =>
   useAppSettingsStore((s) => s.settings.delta_window_us);
-export const useMediaPoolDrawerOpen = (): boolean =>
-  useAppSettingsStore((s) => s.settings.media_pool_drawer_open);
 export const useTailSnapEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.tail_snap_enabled);
 export const useTailSnapStrengthPx = (): number =>
@@ -93,12 +90,6 @@ export async function toggleDisplayMode(): Promise<AppSettings> {
   const current = useAppSettingsStore.getState().settings.display_mode;
   const next: DisplayMode = current === "AbRoll" ? "ShowAll" : "AbRoll";
   return setAppSettings({ display_mode: next });
-}
-
-export async function setMediaPoolDrawerOpen(
-  open: boolean,
-): Promise<AppSettings> {
-  return setAppSettings({ media_pool_drawer_open: open });
 }
 
 /// Wire-up: fetch the current settings, subscribe to backend changes.

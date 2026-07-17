@@ -99,6 +99,13 @@ test('a real DOM file-drop on the media pool imports via wireFileDrop', async ()
     await expect
       .poll(() => mediaCount(page), { timeout: 20_000, intervals: [500, 1000, 2000] })
       .toBeGreaterThan(before)
+
+    // A Files payload belongs exclusively to Media import; Dockview must not
+    // create, close, or duplicate any Panel while its overlay is suppressed.
+    const panelKinds = await page.locator('[data-panel-kind]').evaluateAll((panels) =>
+      panels.map((panel) => panel.getAttribute('data-panel-kind')).sort(),
+    )
+    expect(panelKinds).toEqual(['attribute', 'effect', 'media', 'nearby', 'preview', 'timeline'])
   } finally {
     await app.close()
   }

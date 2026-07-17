@@ -194,9 +194,8 @@ export function MediaPool({
   );
   useEffect(() => {
     if (flashId === null) return;
-    // Reveal can arrive while the drawer is mid-open (~160ms width
-    // transition, see the drawer's CSS), so an immediate scrollIntoView can
-    // land off-target against the pre-transition layout. Defer past it.
+    // Reveal can reopen or activate this dock Panel. Defer until Dockview has
+    // settled the new group geometry so scrollIntoView uses the final bounds.
     const scrollTimer = setTimeout(() => {
       document
         .querySelector(`[data-media-id="${CSS.escape(flashId)}"]`)

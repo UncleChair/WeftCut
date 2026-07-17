@@ -164,8 +164,7 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
   // App-level settings stream (`docs/data-model.md`). Seeds the store
   // from the current value, then subscribes to `app_settings:changed`
   // so any pill/menu/shortcut flip propagates to every consumer (the
-  // timeline filter, the right panel's peek-window width, the
-  // MediaPool drawer chevron, …).
+  // timeline filter, the right panel's peek-window width, and settings UI).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;

@@ -48,7 +48,6 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
     return {
       display_mode: parsed.display_mode === 'ShowAll' || parsed.display_mode === 'AbRoll' ? parsed.display_mode : d.display_mode,
       delta_window_us: typeof parsed.delta_window_us === 'number' ? parsed.delta_window_us : d.delta_window_us,
-      media_pool_drawer_open: typeof parsed.media_pool_drawer_open === 'boolean' ? parsed.media_pool_drawer_open : d.media_pool_drawer_open,
       tail_snap_enabled: typeof parsed.tail_snap_enabled === 'boolean' ? parsed.tail_snap_enabled : d.tail_snap_enabled,
       tail_snap_strength_px: typeof parsed.tail_snap_strength_px === 'number' ? parsed.tail_snap_strength_px : d.tail_snap_strength_px,
       prebake_motifs: typeof parsed.prebake_motifs === 'boolean' ? parsed.prebake_motifs : d.prebake_motifs,
@@ -78,7 +77,6 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       const current = read()
       if (patch.display_mode !== undefined) current.display_mode = patch.display_mode
       if (patch.delta_window_us !== undefined) current.delta_window_us = clamp(patch.delta_window_us, DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US)
-      if (patch.media_pool_drawer_open !== undefined) current.media_pool_drawer_open = patch.media_pool_drawer_open
       if (patch.tail_snap_enabled !== undefined) current.tail_snap_enabled = patch.tail_snap_enabled
       if (patch.tail_snap_strength_px !== undefined) current.tail_snap_strength_px = clamp(patch.tail_snap_strength_px, TAIL_SNAP_STRENGTH_MIN_PX, TAIL_SNAP_STRENGTH_MAX_PX)
       if (patch.prebake_motifs !== undefined) current.prebake_motifs = patch.prebake_motifs

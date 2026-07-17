@@ -13,7 +13,7 @@ const handlers: HandlerMap = {
   togglePlay: noop, deleteSelected: noop, copySelected: noop, pasteAtPlayhead: noop,
   importMedia: noop, export: noop,
   toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
-  toggleDisplayMode: noop, toggleMediaPool: noop,
+  toggleDisplayMode: noop,
   seekFrameBack: noop, seekFrameForward: noop, seekSecondBack: noop,
   seekSecondForward: noop, seekStart: noop, seekEnd: noop,
   openSearchPalette: noop,

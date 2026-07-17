@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
-import { useShortcuts, type HandlerMap } from "./useShortcuts";
+import {
+  useShortcuts,
+  type HandlerMap,
+  type OverrideMap,
+} from "./useShortcuts";
 import { usePickSessionStore } from "../colorpick/pickColor";
 import { parseBinding } from "./match";
 
@@ -12,8 +16,14 @@ vi.mock("../ipc", () => ({ logEmit: vi.fn(() => Promise.resolve()) }));
 
 afterEach(cleanup);
 
-function Harness({ handlers }: { handlers: HandlerMap }) {
-  useShortcuts({ handlers });
+function Harness({
+  handlers,
+  overrides,
+}: {
+  handlers: HandlerMap;
+  overrides?: OverrideMap;
+}) {
+  useShortcuts({ handlers, ...(overrides ? { overrides } : {}) });
   return null;
 }
 
@@ -100,6 +110,18 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     expect(ev.defaultPrevented).toBe(false);
 
     input.remove();
+  });
+
+  it("leaves M unbound and ignores a stale retired Media Pool override", () => {
+    render(
+      <Harness
+        handlers={{}}
+        overrides={{ toggleMediaPool: ["M"] } as unknown as OverrideMap}
+      />,
+    );
+
+    const event = dispatchKey(document.body, "m");
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it("leaves Delete in the bubble phase so a capture-phase listener can preempt it", () => {
