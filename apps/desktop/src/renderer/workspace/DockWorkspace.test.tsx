@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { StrictMode, type ComponentProps, type ComponentType } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type DockviewApi } from "dockview-react";
 
@@ -11,6 +11,14 @@ const dockHarness = vi.hoisted(() => ({
   readyCalls: 0,
   renderWatermark: false,
   headerApi: null as unknown,
+  contentApi: null as unknown,
+  contentKind: null as string | null,
+}));
+
+const previewHarness = vi.hoisted(() => ({
+  sequence: 0,
+  mounts: 0,
+  unmounts: 0,
 }));
 
 vi.mock("dockview-react", async () => {
@@ -31,11 +39,21 @@ vi.mock("dockview-react", async () => {
         | Record<string, ComponentType<{ api: unknown }>>
         | undefined;
       const Tab = tabComponents?.["weftcut-tab"];
+      const components = props.components as
+        | Record<string, ComponentType<{ api: unknown; params: { kind: string } }>>
+        | undefined;
+      const Content = components?.["weftcut-panel"];
       return (
         <div data-testid="dockview">
           {dockHarness.renderWatermark && Watermark ? <Watermark /> : null}
           {dockHarness.headerApi && Tab ? (
             <Tab api={dockHarness.headerApi} />
+          ) : null}
+          {dockHarness.contentApi && dockHarness.contentKind && Content ? (
+            <Content
+              api={dockHarness.contentApi}
+              params={{ kind: dockHarness.contentKind }}
+            />
           ) : null}
         </div>
       );
@@ -45,7 +63,29 @@ vi.mock("dockview-react", async () => {
 
 vi.mock("../ipc", () => ({ importCancel: vi.fn() }));
 vi.mock("../timeline/Timeline", () => ({ Timeline: () => null }));
-vi.mock("../app/PreviewSection", () => ({ PreviewSection: () => null }));
+vi.mock("../app/PreviewSection", async () => {
+  const React = await import("react");
+  return {
+    PreviewSection: ({ visible }: { visible: boolean }) => {
+      const [resource] = React.useState(
+        () => `preview-resource-${++previewHarness.sequence}`,
+      );
+      React.useEffect(() => {
+        previewHarness.mounts += 1;
+        return () => {
+          previewHarness.unmounts += 1;
+        };
+      }, []);
+      return (
+        <div
+          data-testid="preview-probe"
+          data-resource={resource}
+          data-visible={visible ? "true" : "false"}
+        />
+      );
+    },
+  };
+});
 vi.mock("../panels/MediaPool", () => ({
   MediaDropZone: ({ children }: { children: React.ReactNode }) => children,
   MediaPool: () => null,
@@ -193,7 +233,37 @@ beforeEach(() => {
   dockHarness.readyCalls = 0;
   dockHarness.renderWatermark = false;
   dockHarness.headerApi = null;
+  dockHarness.contentApi = null;
+  dockHarness.contentKind = null;
+  previewHarness.sequence = 0;
+  previewHarness.mounts = 0;
+  previewHarness.unmounts = 0;
 });
+
+function visibilityApi(initial: boolean) {
+  let visible = initial;
+  const listeners = new Set<() => void>();
+  const dispose = vi.fn((listener: () => void) => listeners.delete(listener));
+  const api = {
+    id: "preview",
+    get isVisible() {
+      return visible;
+    },
+    onDidVisibilityChange(listener: () => void) {
+      listeners.add(listener);
+      return { dispose: () => dispose(listener) };
+    },
+  };
+  return {
+    api,
+    listenerCount: () => listeners.size,
+    setVisible(next: boolean) {
+      visible = next;
+      for (const listener of listeners) listener();
+    },
+    dispose,
+  };
+}
 
 describe("DockWorkspace React integration", () => {
   it("constructs one adapter layout and one DnD subscription under StrictMode", () => {
@@ -229,6 +299,37 @@ describe("DockWorkspace React integration", () => {
     expect(Object.keys(props.tabComponents)).toEqual([DOCK_TAB_COMPONENT_ID]);
     expect(props.disableFloatingGroups).toBe(true);
     expect(props.dndStrategy).toBe("html5");
+  });
+
+  it("publishes Dockview visibility without remounting an always-rendered Preview", () => {
+    const dock = strictModeApi();
+    const visibility = visibilityApi(true);
+    dockHarness.api = dock.api;
+    dockHarness.contentApi = visibility.api;
+    dockHarness.contentKind = "preview";
+
+    const view = render(
+      <StrictMode>
+        <DockWorkspace contracts={contracts} />
+      </StrictMode>,
+    );
+
+    const probe = screen.getByTestId("preview-probe");
+    const resource = probe.dataset.resource;
+    expect(probe.dataset.visible).toBe("true");
+    expect(visibility.listenerCount()).toBe(1);
+
+    act(() => visibility.setVisible(false));
+    expect(screen.getByTestId("preview-probe").dataset.visible).toBe("false");
+    expect(screen.getByTestId("preview-probe").dataset.resource).toBe(resource);
+    expect(visibility.listenerCount()).toBe(1);
+
+    act(() => visibility.setVisible(true));
+    expect(screen.getByTestId("preview-probe").dataset.resource).toBe(resource);
+
+    view.unmount();
+    expect(visibility.listenerCount()).toBe(0);
+    expect(previewHarness.unmounts).toBe(previewHarness.mounts);
   });
 
   it("shows direct close only for multi-Panel tabs and toggles maximize on chrome", () => {

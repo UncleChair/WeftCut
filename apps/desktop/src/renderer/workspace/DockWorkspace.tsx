@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type ReactElement,
   type RefObject,
 } from "react";
@@ -73,6 +74,15 @@ interface DockPanelParams extends Record<string, unknown> {
 
 const ContractsContext = createContext<DockPanelContracts | null>(null);
 
+export interface DockPanelRuntimeContract {
+  kind: PanelKind;
+  isVisible: boolean;
+}
+
+const DockPanelRuntimeContext = createContext<DockPanelRuntimeContract | null>(
+  null,
+);
+
 interface WorkspaceChromeCommands {
   closePanel(kind: PanelKind): void;
   setHoveredPanel(kind: PanelKind | null): void;
@@ -89,6 +99,29 @@ function useContracts(): DockPanelContracts {
   const contracts = useContext(ContractsContext);
   if (!contracts) throw new Error("Dock Panel rendered outside DockWorkspace");
   return contracts;
+}
+
+/** Semantic Panel lifecycle state backed only by Dockview's public API. */
+export function useDockPanelRuntime(): DockPanelRuntimeContract {
+  const runtime = useContext(DockPanelRuntimeContext);
+  if (!runtime) throw new Error("Panel rendered outside its Dock runtime");
+  return runtime;
+}
+
+function useDockviewPanelVisibility(
+  api: IDockviewPanelProps<DockPanelParams>["api"],
+): boolean {
+  return useSyncExternalStore(
+    useCallback(
+      (onStoreChange) => {
+        const disposable = api.onDidVisibilityChange(onStoreChange);
+        return () => disposable.dispose();
+      },
+      [api],
+    ),
+    () => api.isVisible,
+    () => true,
+  );
 }
 
 function useWorkspaceChrome(): WorkspaceChromeCommands {
@@ -119,6 +152,7 @@ function MediaDockPanel() {
 
 function PreviewDockPanel() {
   const contracts = useContracts();
+  const runtime = useDockPanelRuntime();
   return (
     <PreviewSection
       previewRef={contracts.previewRef}
@@ -128,6 +162,7 @@ function PreviewDockPanel() {
       onSeek={contracts.onSeek}
       onTogglePlay={contracts.onTogglePlay}
       previewDecodableOf={contracts.previewDecodableOf}
+      visible={runtime.isVisible}
     />
   );
 }
@@ -240,20 +275,29 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
 };
 
 export function WeftCutPanelRenderer({
+  api,
   params,
 }: IDockviewPanelProps<DockPanelParams>) {
   if (!isPanelKind(params.kind)) return null;
   const Component = PANEL_COMPONENTS[params.kind];
   const chrome = useWorkspaceChrome();
+  const isVisible = useDockviewPanelVisibility(api);
+  const runtime = useMemo<DockPanelRuntimeContract>(
+    () => ({ kind: params.kind, isVisible }),
+    [isVisible, params.kind],
+  );
   return (
-    <div
-      className="weft-dock-panel"
-      data-panel-kind={params.kind}
-      onPointerEnter={() => chrome.setHoveredPanel(params.kind)}
-      onPointerLeave={() => chrome.setHoveredPanel(null)}
-    >
-      <Component />
-    </div>
+    <DockPanelRuntimeContext.Provider value={runtime}>
+      <div
+        className="weft-dock-panel"
+        data-panel-kind={params.kind}
+        data-panel-visible={isVisible ? "true" : "false"}
+        onPointerEnter={() => chrome.setHoveredPanel(params.kind)}
+        onPointerLeave={() => chrome.setHoveredPanel(null)}
+      >
+        <Component />
+      </div>
+    </DockPanelRuntimeContext.Provider>
   );
 }
 

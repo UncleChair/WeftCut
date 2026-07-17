@@ -29,6 +29,8 @@ interface Props {
   /// decodeProbeMemo). When it returns true for a source, the preview
   /// resolver shows the original immediately instead of waiting on a proxy.
   previewDecodableOf?: (mediaId: string) => boolean;
+  /** Dock visibility gates presentation work, never playback ownership. */
+  visible?: boolean;
 }
 
 export interface PreviewSurfaceHandle {
@@ -66,7 +68,7 @@ export interface PreviewSurfaceHandle {
 
 export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
   function PreviewSurface(
-    { hasContent, onTimeUpdate, onPausedChange, previewDecodableOf },
+    { hasContent, onTimeUpdate, onPausedChange, previewDecodableOf, visible = true },
     forwardedRef,
   ) {
     const { t } = useTranslation();
@@ -133,6 +135,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             onTimeUpdate={onTimeUpdate}
             onPausedChange={onPausedChange}
             previewDecodableOf={previewDecodableOf}
+            visible={visible}
           />
         </PixiErrorBoundary>
       </div>

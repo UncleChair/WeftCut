@@ -53,6 +53,11 @@ import { PlaybackEngine } from "./PlaybackEngine";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
 import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
+import {
+  clearMasterMeter,
+  publishMasterMeter,
+} from "../state/masterMeterStore";
+import { setPixiPresentationVisible } from "./previewPresentation";
 
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
@@ -62,16 +67,24 @@ interface Props {
   // bare `?:` would reject an explicitly-`undefined` value. Handled internally
   // via `previewDecodableOf?.(…) ?? false`.
   previewDecodableOf?: ((mediaId: string) => boolean) | undefined;
+  visible?: boolean;
 }
 
 const LOG = "[weftcut/pixi]";
+let previewResourceSequence = 0;
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
-  { onTimeUpdate, onPausedChange, previewDecodableOf },
+  { onTimeUpdate, onPausedChange, previewDecodableOf, visible = true },
   ref,
 ) {
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
+  const applicationRef = useRef<Application | null>(null);
+  // `handleInit` must not change identity when an always-rendered dock tab
+  // flips visibility. Read the current value through a ref at initialization;
+  // the visibility effect owns every subsequent transition.
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   /// MCP meter push timer; set in `onInit`, cleared on unmount (the mount
   /// effect is async and can't return a cleanup itself).
   const meterTimerRef = useRef<number | null>(null);
@@ -134,6 +147,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // Compositor and PlaybackEngine against it.
   const handleInit = useCallback(
     (app: Application) => {
+      applicationRef.current = app;
       console.log(
         `${LOG} application init: canvas=${app.canvas.width}×${app.canvas.height} ` +
           `renderer=${app.renderer.type}`,
@@ -223,10 +237,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         mediaById: lookupMedia,
         conformAssetUrl,
       });
+      compositor.setPresentationVisible(visibleRef.current);
+      setPixiPresentationVisible(app, visibleRef.current);
       const initialSummary = useProjectStore.getState().summary;
       compositor.setProject(initialSummary);
 
       const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
+      const resourceGeneration = ++previewResourceSequence;
       engine.bindFps(
         initialSummary?.composition.fps_num ?? 30,
         initialSummary?.composition.fps_den ?? 1,
@@ -294,6 +311,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         const g = compositor.getAudioGraph();
         if (!g || !engine.isPlaying()) return;
         const snap = g.meterSnapshot();
+        publishMasterMeter(snap);
         void reportAudioMeter({
           rmsDb: Number.isFinite(snap.rmsDb) ? snap.rmsDb : -120,
           peakDb: Number.isFinite(snap.peakDb) ? snap.peakDb : -120,
@@ -428,6 +446,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               }
               return btoa(binary);
             },
+            resourceProbe: () => ({
+              generation: resourceGeneration,
+              playing: engine.isPlaying(),
+              positionUs: engine.positionUs(),
+              ...compositor.presentationSnapshot(),
+            }),
           });
         });
       }
@@ -438,6 +462,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     },
     [onTimeUpdate, onPausedChange, previewDecodableOf],
   );
+
+  useEffect(() => {
+    const compositor = compositorRef.current;
+    const app = applicationRef.current;
+    compositor?.setPresentationVisible(visible);
+    if (app) setPixiPresentationVisible(app, visible);
+  }, [visible]);
 
   // A Standard switch (from the card's own button or the settings panel) or
   // the ffmpeg component finishing load can change whether a given media is
@@ -496,6 +527,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       compositorRef.current?.dispose();
       compositorRef.current = null;
       engineRef.current = null;
+      applicationRef.current = null;
+      clearMasterMeter();
       if (meterTimerRef.current !== null) {
         window.clearInterval(meterTimerRef.current);
         meterTimerRef.current = null;

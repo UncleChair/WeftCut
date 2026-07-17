@@ -28,6 +28,7 @@ interface PreviewSectionProps {
   onSeek: (tUs: number) => void;          // App's seekTo
   onTogglePlay: () => void;
   previewDecodableOf: (id: string) => boolean;
+  visible: boolean;
 }
 
 /// The preview quadrant: `PreviewSurface` plus the transport strip
@@ -43,6 +44,7 @@ export function PreviewSection({
   onSeek,
   onTogglePlay,
   previewDecodableOf,
+  visible,
 }: PreviewSectionProps) {
   const { t } = useTranslation();
   // Timecode-edit state doubles as the field's seed value: capturing the
@@ -69,6 +71,7 @@ export function PreviewSection({
           onTimeUpdate={setPlayheadTimeUs}
           onPausedChange={onPausedChange}
           previewDecodableOf={previewDecodableOf}
+          visible={visible}
         />
       </div>
       <div className="preview-transport" role="toolbar" aria-label="Preview transport">

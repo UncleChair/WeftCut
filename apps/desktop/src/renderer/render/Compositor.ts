@@ -508,6 +508,13 @@ export class Compositor {
   /// `compositeFrame` lazily re-acquires fresh handles via
   /// `ensureClip`.
   private suspended = false;
+  /// Dock-tab presentation state. Hidden Preview retains every owned resource
+  /// and keeps the audio pass alive, but skips decoder targeting and visual
+  /// scene mutation until the Panel becomes visible again.
+  private presentationVisible = true;
+  private presentationDirty = false;
+  private ownerCompositeCount = 0;
+  private presentedCompositeCount = 0;
   /// Raw fps rational so `setAnchorTime` / `compositeFrame` can snap `tUs`
   /// to project-frame boundaries with exact rational arithmetic. Always
   /// `snapFrameFloor(tUs, this.fpsNum, this.fpsDen)`, never a pre-rounded
@@ -566,6 +573,10 @@ export class Compositor {
   /// actively ticking (paused state).
   scheduleRepaint(): void {
     if (this.disposed) return;
+    if (!this.presentationVisible) {
+      this.presentationDirty = true;
+      return;
+    }
     if (this.repaintScheduled) return;
     this.repaintScheduled = true;
     requestAnimationFrame(() => {
@@ -574,6 +585,31 @@ export class Compositor {
       this.setAnchorTime(this.lastTUs);
       this.compositeFrame(this.lastTUs);
     });
+  }
+
+  setPresentationVisible(visible: boolean): void {
+    if (this.presentationVisible === visible) return;
+    this.presentationVisible = visible;
+    if (visible) {
+      this.scheduleRepaint();
+    } else {
+      this.presentationDirty = true;
+    }
+  }
+
+  /** Stable read-only lifecycle probe for integration tests and diagnostics. */
+  presentationSnapshot(): {
+    visible: boolean;
+    dirty: boolean;
+    ownerCompositeCount: number;
+    presentedCompositeCount: number;
+  } {
+    return {
+      visible: this.presentationVisible,
+      dirty: this.presentationDirty,
+      ownerCompositeCount: this.ownerCompositeCount,
+      presentedCompositeCount: this.presentedCompositeCount,
+    };
   }
 
   /// PlaybackEngine flips this during rapid scrub. While true,
@@ -867,6 +903,16 @@ export class Compositor {
       }
     }
 
+    this.ownerCompositeCount += 1;
+    // The audio owner above must keep scheduling against the live clock while
+    // hidden. Everything below this point is visual/presentation-only work.
+    if (!this.presentationVisible) {
+      this.presentationDirty = true;
+      return;
+    }
+    this.presentationDirty = false;
+    this.presentedCompositeCount += 1;
+
     // Export ignores the preview-only LOD toggle — effects are always
     // applied at full quality during export regardless of the user's
     // preview performance setting. The export worker realm never
@@ -1067,6 +1113,7 @@ export class Compositor {
     if (!this.projectSummary) return;
     if (this.scrubbing) return;
     if (this.suspended) return;
+    if (!this.presentationVisible) return;
     // Use the same exact-rational snap as `compositeFrame` so the
     // decoder's anchor matches the frame we're actually painting.
     // See `snapFrameFloor` and the long comment in `compositeFrame`
