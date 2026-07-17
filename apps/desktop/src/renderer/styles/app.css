@@ -61,20 +61,8 @@ html.platform-mac.app-window-fullscreen .app-header {
   flex-shrink: 0;
 }
 
-/* MediaPool lives in a left collapsible drawer (see `docs/data-model.md`).
-   The drawer column is a CSS variable so the M shortcut / View-menu toggle
-   animates open/closed with a single value flip. */
 .app-main {
-  display: grid;
-  grid-template-columns: var(--mediapool-drawer-width, 0px) 1fr 280px;
-  grid-template-rows: 1fr 1fr;
-  grid-template-areas:
-    "mediapool preview properties"
-    "mediapool timeline properties";
+  min-width: 0;
   min-height: 0;
-  transition: grid-template-columns 160ms ease-out;
-}
-
-.app-main.drawer-open {
-  --mediapool-drawer-width: 280px;
+  overflow: hidden;
 }

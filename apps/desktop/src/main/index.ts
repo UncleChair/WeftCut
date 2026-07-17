@@ -26,6 +26,7 @@ import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previ
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
+import { MAIN_WINDOW_MINIMUM_SIZE } from './mainWindowConfig.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -76,6 +77,7 @@ async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
+    ...MAIN_WINDOW_MINIMUM_SIZE,
     // Dev only: electron-vite runs the bare electron.exe, whose taskbar/Alt-Tab
     // icon is Electron's default. The PACKAGED app gets its icon from
     // electron-builder (embedded in the exe + installer — see

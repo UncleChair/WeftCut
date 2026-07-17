@@ -40,6 +40,7 @@
     "@weftcut/native-decode": "file:native/decode",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dockview-react": "7.0.2",
     "express": "^5.2.1",
     "fuzzysort": "^3.1.0",
     "i18next": "^26.2.0",

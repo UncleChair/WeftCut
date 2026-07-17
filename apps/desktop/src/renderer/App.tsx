@@ -6,7 +6,6 @@ import {
   addColorLayer,
   addTextLayer,
   deleteLayer,
-  importCancel,
   pasteLayer,
   projectRedo,
   projectSave,
@@ -26,9 +25,7 @@ import {
   usePrimaryLayerId,
 } from "./state/selectionStore";
 import { clampSeekUs, registerRevealTrack } from "./state/navigation";
-import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
-import { RightPanel } from "./panels/RightPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { MotifPicker } from "./motifs/MotifPicker";
@@ -49,12 +46,10 @@ import { type PreviewSurfaceHandle } from "./preview/PreviewSurface";
 import { SearchPalette } from "./search/SearchPalette";
 
 import { AppMenuBar } from "./app/AppMenuBar";
-import { PreviewSection } from "./app/PreviewSection";
 import { useAppWiring, useWindowTitle } from "./app/useAppWiring";
 import { useExportFlow } from "./app/useExportFlow";
 import { useImportReadiness } from "./app/useImportReadiness";
 import { ExportPanel } from "./panels/ExportPanel";
-import { MediaDropZone, MediaPool } from "./panels/MediaPool";
 import { ShortcutBindingsProvider } from "./shortcuts/bindings-context";
 import {
   useShortcuts,
@@ -70,9 +65,12 @@ import {
   setMediaPoolDrawerOpen,
   toggleDisplayMode,
   useAppSettingsStore,
-  useMediaPoolDrawerOpen,
 } from "./settings/appSettingsStore";
 import { logEmit } from "./ipc";
+import {
+  DockWorkspace,
+  type DockPanelContracts,
+} from "./workspace/DockWorkspace";
 
 interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
@@ -82,10 +80,6 @@ interface AppProps {
 
 export function App({ onCloseProject }: AppProps) {
   const { t } = useTranslation();
-  // MediaPool drawer state lives in the app-pref store (docs/data-model.md R.9).
-  // Read through the atomic selector so a flip doesn't re-render anything that
-  // doesn't depend on it.
-  const mediaPoolDrawerOpen = useMediaPoolDrawerOpen();
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   // Write-only: error text is surfaced through the status bar / log (see the
@@ -556,6 +550,51 @@ export function App({ onCloseProject }: AppProps) {
     ),
   );
 
+  const previewDecodableOf = useCallback(
+    (id: string) => decodeProbeMemo.current.get(id) === "ok",
+    [decodeProbeMemo],
+  );
+
+  const dockPanelContracts = useMemo<DockPanelContracts>(
+    () => ({
+      summary,
+      previewRef,
+      paused,
+      onPausedChange: setPaused,
+      onSeek: seekTo,
+      onTogglePlay: togglePlay,
+      previewDecodableOf,
+      revealedTrackId,
+      keybindings,
+      bladeMode,
+      importingMediaIds,
+      proxyState,
+      previewDecodableMediaIds,
+      onExitBlade: () => setBladeMode(false),
+      onMutated: refresh,
+      selectedLayerId: primaryLayerId,
+      onSelectLayer: selectLayerWithGroup,
+      onRevealTrack: revealTrack,
+    }),
+    [
+      summary,
+      paused,
+      seekTo,
+      togglePlay,
+      previewDecodableOf,
+      revealedTrackId,
+      keybindings,
+      bladeMode,
+      importingMediaIds,
+      proxyState,
+      previewDecodableMediaIds,
+      refresh,
+      primaryLayerId,
+      selectLayerWithGroup,
+      revealTrack,
+    ],
+  );
+
   if (agentSession) {
     // Agent mode swap: backend's `agent_session:changed` event flipped
     // the slot to Some(...). Render the simplified shell instead of the
@@ -610,63 +649,8 @@ export function App({ onCloseProject }: AppProps) {
         />
       </div>
 
-      <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
-        <PreviewSection
-          previewRef={previewRef}
-          summary={summary}
-          paused={paused}
-          onPausedChange={setPaused}
-          onSeek={seekTo}
-          onTogglePlay={togglePlay}
-          previewDecodableOf={(id) => decodeProbeMemo.current.get(id) === "ok"}
-        />
-
-        <section className="timeline">
-          <Timeline
-            tracks={summary?.tracks ?? []}
-            groups={summary?.groups ?? []}
-            durationUs={summary?.duration_us ?? 0}
-            revealedTrackId={revealedTrackId}
-            keybindings={keybindings}
-            fpsNum={summary?.composition.fps_num ?? 30}
-            fpsDen={summary?.composition.fps_den ?? 1}
-            bladeMode={bladeMode}
-            media={summary?.media ?? []}
-            importing={importingMediaIds}
-            proxyState={proxyState}
-            previewDecodable={previewDecodableMediaIds}
-            onExitBlade={() => setBladeMode(false)}
-            onSeek={seekTo}
-            onMutated={refresh}
-          />
-        </section>
-
-        <MediaDropZone>
-          <MediaPool
-            media={summary?.media ?? []}
-            importing={importingMediaIds}
-            proxyState={proxyState}
-            previewDecodable={previewDecodableMediaIds}
-            fpsNum={summary?.composition.fps_num ?? 30}
-            fpsDen={summary?.composition.fps_den ?? 1}
-            onCancelImport={async (id) => {
-              await importCancel(id).catch(() => false);
-            }}
-          />
-        </MediaDropZone>
-
-        <section className="properties">
-          <RightPanel
-            tracks={summary?.tracks ?? []}
-            groups={summary?.groups ?? []}
-            selectedLayerId={primaryLayerId}
-            onSelect={selectLayerWithGroup}
-            onMutated={refresh}
-            fpsNum={summary?.composition.fps_num ?? 30}
-            fpsDen={summary?.composition.fps_den ?? 1}
-            onRevealTrack={revealTrack}
-          />
-        </section>
+      <main className="app-main">
+        <DockWorkspace contracts={dockPanelContracts} />
       </main>
 
       {/* One modal overlay: the settings form while idle, the progress panel
