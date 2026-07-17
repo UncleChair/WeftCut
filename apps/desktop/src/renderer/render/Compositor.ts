@@ -52,8 +52,7 @@ import {
 } from "../timeline/motifBakeStatusStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { swapKeys } from "./swapKeys";
-import { isNativeNv12Frame } from "./decoder/nv12Frame";
-import { isTenBitFrame } from "./decoder/tenBitFrame";
+import { isNativeNv12Frame, isTenBitFrame } from "./decoder/decodedFrame";
 import { Nv12Ingest } from "./nv12/Nv12Ingest";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
 import { loadBundledFontBytes } from "./fonts/registry";

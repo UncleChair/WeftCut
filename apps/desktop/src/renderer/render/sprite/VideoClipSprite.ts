@@ -54,7 +54,8 @@
 //      buffer-defined NV12 VideoFrames still convert as BT.601 (see
 //      nv12Frame.ts). Such frames must never reach this snapshot path;
 //      they ride `NativeNv12Frame` → `Nv12Ingest` → bindExternalTexture
-//      instead (see the updateFrame tripwire).
+//      instead — `updateFrame`'s `BrowserConvertibleFrame` parameter
+//      excludes the CPU-plane kinds at compile time.
 //
 // Cost: a per-frame 2D `drawImage` (a GPU blit) the old export path
 // avoided by binding the VideoFrame directly. Acceptable for offline
@@ -64,26 +65,12 @@
 
 import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
-import type { DecodedFrame } from "../decoder/session";
-import { isNativeNv12Frame } from "../decoder/nv12Frame";
-import { isTenBitFrame } from "../decoder/tenBitFrame";
+import { type BrowserConvertibleFrame, decodedDims } from "../decoder/decodedFrame";
 import type { StageableSprite } from "./StageableSprite";
 
 export interface VideoClipSpriteInit {
   layerId: string;
   mediaId: string;
-}
-
-/// Read the natural dimensions off either flavour of `DecodedFrame`.
-/// `VideoFrame` exposes `codedWidth/codedHeight`; `ImageBitmap` exposes
-/// plain `width/height`. PixiJS's `ImageSource` needs the size at
-/// construction time so the texture's `orig` dims are correct before
-/// any upload completes.
-function decodedDims(frame: DecodedFrame): { width: number; height: number } {
-  if ("codedWidth" in frame) {
-    return { width: frame.codedWidth, height: frame.codedHeight };
-  }
-  return { width: frame.width, height: frame.height };
 }
 
 export class VideoClipSprite implements StageableSprite {
@@ -105,7 +92,7 @@ export class VideoClipSprite implements StageableSprite {
   /// `updateFrame`'s return (they live in `snapCanvas`), so a borrowed
   /// preview bitmap or a soon-evicted export VideoFrame can be released
   /// immediately after.
-  private currentFrame: DecodedFrame | null = null;
+  private currentFrame: BrowserConvertibleFrame | null = null;
 
   constructor(init: VideoClipSpriteInit) {
     this.layerId = init.layerId;
@@ -127,14 +114,10 @@ export class VideoClipSprite implements StageableSprite {
   /// Push a decoded frame onto the GPU. No-op if the same frame is
   /// already current. Both preview frames (`ImageBitmap`) and export
   /// frames (`VideoFrame`) are snapshotted into the sprite-owned canvas
-  /// — see the file header for why this single path serves both.
-  updateFrame(frame: DecodedFrame): void {
-    if (isTenBitFrame(frame)) {
-      throw new Error("VideoClipSprite.updateFrame got a TenBitFrame — use bindExternalTexture");
-    }
-    if (isNativeNv12Frame(frame)) {
-      throw new Error("VideoClipSprite.updateFrame got a NativeNv12Frame — use bindExternalTexture");
-    }
+  /// — see the file header for why this single path serves both, and why
+  /// the parameter type excludes the CPU-plane kinds (they must go through
+  /// `bindExternalTexture` via their ingest shaders).
+  updateFrame(frame: BrowserConvertibleFrame): void {
     if (this.currentFrame === frame) return;
     this.currentFrame = frame;
     const { width, height } = decodedDims(frame);
@@ -156,7 +139,7 @@ export class VideoClipSprite implements StageableSprite {
   }
 
   private bindFromSnapshot(
-    frame: DecodedFrame,
+    frame: BrowserConvertibleFrame,
     width: number,
     height: number,
   ): void {

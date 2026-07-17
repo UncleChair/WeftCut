@@ -142,9 +142,18 @@ deliberately deferred:
   export no longer share one bloated contract; `ExportDecodeSession` names the
   export Worker's driving surface (`decodeRange`/`evictBefore`) as an explicit
   contract.
-- **Unified `DecodedFrame` metadata/ownership.** The frame union already
-  exists across the decode paths; standardizing its metadata and ownership is
-  a safe later cleanup, not a blocker.
+- **Unified `DecodedFrame` metadata/ownership — resolved as a type-honesty
+  pass.** The union, its guards, and the dims helper live together in
+  `decoder/decodedFrame.ts`, and `VideoClipSprite.updateFrame` accepts only
+  the `BrowserConvertibleFrame` subset (compile-time exclusion of the
+  CPU-plane kinds). The remaining per-kind differences are deliberate design,
+  not debt: `close()` is uniform across all four kinds, the stores own
+  `ptsUs`/`durationUs` in their entries (an `ImageBitmap` cannot carry PTS),
+  and each kind's color fields follow its conversion path (ADR 0032). A
+  metadata-envelope wrapper and an NV12/I420P10 type merge were evaluated and
+  rejected — per-frame allocation on the preview hot path, and the two
+  CPU-plane types' parallelism is honest (different layouts, shaders, and
+  target texture formats).
 
 The export-decode lane's deliberate scope cuts, in rough leverage order — the
 v2 debt list:

@@ -59,8 +59,9 @@ The mechanism, shared by both bit depths:
   `coefForMatrix` (`render/tenbit/yuv10.ts`) is the single source of
   coefficient selection (BT.601 for `smpte170m`/`bt470bg`, else BT.709;
   limited/full scale explicit).
-- The `drawImage` snapshot path keeps a tripwire that throws on a CPU-plane
-  frame kind, so the forbidden route fails loudly instead of tinting.
+- The `drawImage` snapshot path excludes CPU-plane frame kinds at compile
+  time — `VideoClipSprite.updateFrame` takes `BrowserConvertibleFrame`
+  (`decoder/decodedFrame.ts`), so the forbidden route cannot be written.
 - Decoder-produced `VideoFrame`s keep the verified snapshot path — ADR
   0021's delegation stands for them, arbitrated by the color-conformance
   gates as before.

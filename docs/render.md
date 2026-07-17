@@ -181,7 +181,17 @@ export-side `ExportFrameStore` keeps `VideoFrame`s because its
 consumer closes them immediately after each encoded frame, so the
 pool stays drained without snapshotting; both stores satisfy a shared
 `FrameStore` interface that returns a `DecodedFrame`
-(`VideoFrame | ImageBitmap | TenBitFrame | NativeNv12Frame`). See ADR 0004.
+(`VideoFrame | ImageBitmap | TenBitFrame | NativeNv12Frame`). The union,
+its type guards, and the dims helper live together in
+`renderer/render/decoder/decodedFrame.ts` — a new frame kind extends
+that module first, and the compiler then surfaces every consumer
+branch. Its `BrowserConvertibleFrame` subset (`VideoFrame |
+ImageBitmap` — the kinds a 2D-canvas `drawImage` converts correctly)
+is what `VideoClipSprite.updateFrame` accepts, so routing a CPU-plane
+kind into the snapshot path is a compile error. Frames do not carry
+authoritative timing: each store's entries record `ptsUs`/`durationUs`
+alongside the frame (an `ImageBitmap` has no timestamp field, and
+WebCodecs may null a frame's `duration`). See ADR 0004.
 
 Idle handles are disposed 5 s after the last `requestFrameAt` and
 recreated on demand. The shared `SourceMedia` is freed only once its
@@ -319,7 +329,7 @@ loop, the playhead store, or anything that subscribes per frame.
 
 | Sprite | Source | Notes |
 |---|---|---|
-| `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` (WebCodecs preview, native GPU lane) and `VideoFrame` (export) are snapshotted into a sprite-owned canvas before upload (see the snapshot rule below); CPU-plane kinds (`NativeNv12Frame`, `TenBitFrame`) bypass the snapshot entirely — the Compositor routes them through their owned ingest shaders to `bindExternalTexture` (ADR 0032). |
+| `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` (WebCodecs preview, native GPU lane) and `VideoFrame` (export) are snapshotted into a sprite-owned canvas before upload (see the snapshot rule below); CPU-plane kinds (`NativeNv12Frame`, `TenBitFrame`) bypass the snapshot entirely — `updateFrame` accepts only the `BrowserConvertibleFrame` subset, and the Compositor routes CPU-plane kinds through their owned ingest shaders to `bindExternalTexture` (ADR 0032). |
 | `ImageOverlaySprite` | `createImageBitmap` / `ImageDecoder` → `Texture` | Two branches. **Still images:** one-shot `createImageBitmap` at sprite spawn; texture cached for the layer's lifetime. **Animated images (GIF, animated WebP, APNG, animated AVIF):** `decodeAnimatedImage` decodes all frames once via WebCodecs `ImageDecoder` (downscaled to composition size) and caches the resulting `DecodedAnimation` per `mediaId`. Each `render(tUs)` call selects the frame whose cumulative native delay covers `tInLayerUs mod totalDuration` (via `gifFrameIndexAt`) — looping at native speed to fill the layer. The same sprite class and the same `Compositor` run inside the export Worker, so export animation is inherent; the Worker awaits `preloadImages()` before starting the encode loop. |
 | `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. Caption cues imported from SRT/VTT/ASS files are ordinary `Text` layers and render through this same sprite — no separate subtitle path exists (see [`captions.md`](captions.md)). Bundled fonts (Liberation Sans, Noto Sans SC) are loaded into the export Worker before the encode loop so burned-in captions never tofu. |
 | `MotifSprite` | CDP-captured PNG frame → `Texture` | Binds the Motif's frame for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG); frames come from the webcap CDP capture path, not an in-process raster; see [`motifs.md`](motifs.md). |
@@ -349,7 +359,8 @@ frame (the native lanes' CPU planes) is converted by Chromium as
 BT.601 regardless of its stamped `colorSpace`, so those ride their own
 frame kinds (`NativeNv12Frame`, `TenBitFrame`) through owned ingest
 shaders on both surfaces instead — never through this snapshot path,
-which trips a tripwire on them (ADR 0032).
+whose `BrowserConvertibleFrame` parameter excludes them at compile
+time (ADR 0032).
 
 ADR 0014 records the evidence: reverting the export snapshot scores
 ~22 on the perceptual conformance gate vs ≈0 with it. The zero-copy

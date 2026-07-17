@@ -4,7 +4,7 @@ status: accepted
 
 # Preview's `FrameRing` caches `ImageBitmap` snapshots, not `VideoFrame`s
 
-`SourceHandle.output` converts each emitted `VideoFrame` to an `ImageBitmap` via `createImageBitmap(frame)` and `frame.close()`s the source as soon as the bitmap is ready. The `FrameRing` stores `{ ptsUs, durationUs, bitmap: ImageBitmap }` entries; eviction and flush call `bitmap.close()`. `VideoClipSprite.updateFrame` accepts `DecodedFrame = VideoFrame | ImageBitmap` and feeds it directly to PixiJS v8's `ImageSource` (which natively accepts both).
+`SourceHandle.output` converts each emitted `VideoFrame` to an `ImageBitmap` via `createImageBitmap(frame)` and `frame.close()`s the source as soon as the bitmap is ready. The `FrameRing` stores `{ ptsUs, durationUs, bitmap: ImageBitmap }` entries; eviction and flush call `bitmap.close()`. `VideoClipSprite.updateFrame` accepts `BrowserConvertibleFrame` (`VideoFrame | ImageBitmap` — the subset of `DecodedFrame` a 2D-canvas `drawImage` converts correctly, `decoder/decodedFrame.ts`) and snapshots it into the sprite-owned canvas (the snapshot rule, `docs/render.md`).
 
 Rationale:
 
