@@ -34,6 +34,9 @@ export const MATRIX = [
   // the 709ltd chart as color-tagged 10-bit ProRes 422 HQ — the export
   // decode-engine ProRes fidelity gate (export-prores-fidelity.spec.ts)
   { colorProres: true },
+  // the same chart 601-tagged — the preview native-SW color gate's
+  // no-over-correction leg (preview-sw-color.spec.ts)
+  { colorProres: true, colorProresEnc: "601ltd" },
   // 10-bit BT.709 grayscale ramp (HEVC Main10) — axis B "proxy fidelity on gradients"
   { gradient: true },
   // 10-bit ramps as H.264 High10 (the one 10-bit shape Chromium software-
@@ -74,7 +77,7 @@ export const MATRIX = [
   { fps: 10, format: "gif" },
 ];
 
-export function outputName({ fps, format, audio, color, colorProres, gradient, gradientH264, gradientH264Bf, gradientAv1, gradientH2644k, eostail, imageset, audiotones, aformat, audioTiming, audioTimingLong, ptsOffsetMs }) {
+export function outputName({ fps, format, audio, color, colorProres, colorProresEnc, gradient, gradientH264, gradientH264Bf, gradientAv1, gradientH2644k, eostail, imageset, audiotones, aformat, audioTiming, audioTimingLong, ptsOffsetMs }) {
   if (imageset) return "test_chart_320x240.png";
   if (audiotones) return `test_tones_10s.${aformat}`;
   if (audioTiming) return ptsOffsetMs === 0
@@ -82,7 +85,7 @@ export function outputName({ fps, format, audio, color, colorProres, gradient, g
     : `test_audio_timing_offset_${ptsOffsetMs}ms.mkv`;
   if (audioTimingLong) return "test_audio_timing_long_125s.mkv";
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
-  if (colorProres) return `test_${WIDTH_HEIGHT}p_color_709ltd_prores.mov`;
+  if (colorProres) return `test_${WIDTH_HEIGHT}p_color_${colorProresEnc ?? "709ltd"}_prores.mov`;
   if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
   if (gradientH264) return `test_${WIDTH_HEIGHT}p_gradient10_h264.mp4`;
   if (gradientH264Bf) return `test_${WIDTH_HEIGHT}p_gradient10_h264_bf.mp4`;
@@ -115,7 +118,8 @@ export async function ensureFixtures(mediaDir) {
         : entry.color
           ? ["run", GENERATOR, "--color", entry.color]
         : entry.colorProres
-          ? ["run", GENERATOR, "--color-prores"]
+          ? ["run", GENERATOR, "--color-prores",
+             ...(entry.colorProresEnc ? ["--color-prores-enc", entry.colorProresEnc] : [])]
           : entry.gradient
             ? ["run", GENERATOR, "--gradient"]
             : entry.gradientH264

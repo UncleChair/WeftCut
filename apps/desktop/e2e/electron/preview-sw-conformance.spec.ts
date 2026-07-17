@@ -12,9 +12,12 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } fr
 // `FfmpegSource` on its SOFTWARE lane for a `DecodeRoute::NativeSw`-routed
 // ProRes clip — the whole real-app path (import → Rust proxy_decision routes
 // `NativeSw` → PixiPreview.resolveSource resolves the ffmpeg engine →
-// Compositor.ensureClip acquires it → FfmpegSource's SwTransport decodes NV12
-// → ImageBitmap → sprite). Plus an SSIM color/decode-correctness check of the
-// rendered preview frame vs an ffmpeg reference of the same source frame.
+// Compositor.ensureClip acquires it → FfmpegSource's SwTransport rings NV12
+// as NativeNv12Frames → Nv12Ingest → sprite). Plus an SSIM
+// color/decode-correctness check of the rendered preview frame vs an ffmpeg
+// reference of the same source frame. NOTE: this natural-content SSIM is
+// alignment/decode evidence only — it is structurally blind to a 601↔709
+// matrix swap (chroma weighs ~1/6); preview-sw-color.spec.ts is the color gate.
 //
 // Model: e2e/electron/conformance.spec.ts. Requires a VITE_WEFTCUT_E2E=1
 // build (the __weftcutTest hook surface) and the current preview-sw
@@ -177,7 +180,7 @@ test('preview-sw: Compositor uses the ffmpeg engine\'s software lane for the Nat
       expect(probe!.sourceKind).toBe('sw')
       expect(probe!.isSoftware).toBe(true)
       expect(probe!.sourceDisposed).toBe(false)
-      // A decoded frame (NV12 → VideoFrame → ImageBitmap) reached the ring,
+      // A decoded frame (NV12 ringed as a NativeNv12Frame) reached the ring,
       // including the seeked target frame…
       expect(probe!.ringSize).toBeGreaterThan(0)
       expect(probe!.ringLastPtsUs).toBeGreaterThanOrEqual(SEEK_US)

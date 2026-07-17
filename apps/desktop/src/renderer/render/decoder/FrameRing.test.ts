@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FrameRing } from "./FrameRing";
+import { nv12FrameFromBytes } from "./nv12Frame";
 
 /// Stub `ImageBitmap` carrying only the fields `FrameRing` and its
 /// consumers touch. We tag each stub with `ptsUs` so the assertions
@@ -43,9 +44,9 @@ function pushFrames(
   }
 }
 
-function ptsOf(bitmap: ImageBitmap | null): number | null {
-  if (!bitmap) return null;
-  return (bitmap as BitmapStub).ptsUs;
+function ptsOf(frame: unknown): number | null {
+  if (!frame) return null;
+  return (frame as BitmapStub).ptsUs;
 }
 
 describe("FrameRing.frameAt", () => {
@@ -143,6 +144,29 @@ describe("FrameRing.push", () => {
     expect(ptsOf(r.frameAt(0))).toBe(0);
     expect(ptsOf(r.frameAt(1 * 16667))).toBe(1 * 16667);
     expect(ptsOf(r.frameAt(2 * 16667))).toBe(2 * 16667);
+  });
+
+  it("carries NativeNv12Frames (native SW preview lane) through lookup and eviction", () => {
+    // The ring must treat CPU-plane frames exactly like bitmaps via the
+    // shared close() — the native SW preview rings these so they convert in
+    // Nv12Ingest, never through createImageBitmap (nv12Frame.ts).
+    const r = new FrameRing();
+    const frames = [0, 1, 2].map((i) =>
+      nv12FrameFromBytes({
+        data: new Uint8Array(2 * 2 + 2),
+        width: 2,
+        height: 2,
+        timestamp: i * 16667,
+        duration: 16667,
+        colorSpace: { matrix: "bt709" },
+      }),
+    );
+    for (const f of frames) r.push(f, f.timestamp, 16667);
+    expect(r.frameAt(16667)).toBe(frames[1]);
+    // Evict everything behind a far-forward anchor; the no-op close must not throw.
+    r.setAnchor(10_000_000);
+    expect(r.size()).toBe(0);
+    expect(r.frameAt(16667)).toBeNull();
   });
 });
 

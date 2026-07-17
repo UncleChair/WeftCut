@@ -145,9 +145,9 @@ export class FfmpegSource implements PreviewDecodeSession {
     const t = lane === "hardware"
       ? (this.deps.makeGpu?.() ?? new GpuTransport())
       : (this.deps.makeSw?.() ?? new SwTransport());
-    t.onFrame((bitmap, ptsUs, durUs) => {
-      if (this._disposed) { bitmap.close(); return; }
-      this.ring.push(bitmap, ptsUs, durUs);
+    t.onFrame((frame, ptsUs, durUs) => {
+      if (this._disposed) { frame.close(); return; }
+      this.ring.push(frame, ptsUs, durUs);
       if (!this.firedFirstFrame) {
         this.firedFirstFrame = true;
         this.onFirstFrameCb?.();

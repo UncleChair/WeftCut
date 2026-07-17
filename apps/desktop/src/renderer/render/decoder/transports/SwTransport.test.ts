@@ -1,31 +1,32 @@
 // @vitest-environment jsdom
 //
-// SwTransport.test.ts — NV12 -> ImageBitmap conversion + streamId filter,
-// `window.api.previewSw` faked. jsdom (25.0.1, via vitest 4.1.7) implements
-// neither `VideoFrame` nor `createImageBitmap` as globals (verified in the
-// deleted native-SW handle's test), so both are stubbed on `globalThis` the
-// same way that sibling test did, rather than exercising a real NV12 decode.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// SwTransport.test.ts — NV12 → NativeNv12Frame wrapping + streamId filter,
+// `window.api.previewSw` faked. The transport must NOT reconstruct a
+// `VideoFrame` (Chromium converts buffer-defined NV12 as BT.601 regardless of
+// the stamped colorSpace — see nv12Frame.ts); frames wrap zero-copy and the
+// Compositor converts them in `Nv12Ingest`.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { isNativeNv12Frame, type NativeNv12Frame } from "../nv12Frame";
 import { SwTransport } from "./SwTransport";
 
-class FakeVideoFrame {
-  close = vi.fn();
-  constructor(
-    public data: unknown,
-    public init: unknown,
-  ) {}
+interface FakePreviewSwApi {
+  open: ReturnType<typeof vi.fn>;
+  requestFrameAt: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  onFrame: ReturnType<typeof vi.fn>;
 }
 
-function installFakeCodecGlobals(): void {
-  (globalThis as unknown as { VideoFrame: unknown }).VideoFrame = FakeVideoFrame;
-  (globalThis as unknown as { createImageBitmap: unknown }).createImageBitmap = vi.fn(
-    async () => ({ width: 2, height: 2, close: vi.fn() }) as unknown as ImageBitmap,
-  );
+function installApi(): { api: FakePreviewSwApi; emit: (f: unknown) => void } {
+  let onFrameCb: ((f: unknown) => void) | null = null;
+  const api: FakePreviewSwApi = {
+    open: vi.fn(async () => {}),
+    requestFrameAt: vi.fn(() => {}),
+    close: vi.fn(() => {}),
+    onFrame: vi.fn((cb: (f: unknown) => void) => { onFrameCb = cb; return () => {}; }),
+  };
+  (window as unknown as { api: { previewSw: FakePreviewSwApi } }).api = { previewSw: api };
+  return { api, emit: (f) => onFrameCb!(f) };
 }
-
-beforeEach(() => {
-  installFakeCodecGlobals();
-});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -33,24 +34,68 @@ afterEach(() => {
 });
 
 describe("SwTransport", () => {
-  it("converts NV12 frames for its stream and ignores foreign ones", async () => {
-    let onFrameCb: ((f: unknown) => void) | null = null;
-    const api = {
-      open: vi.fn(async () => {}),
-      requestFrameAt: vi.fn(() => {}),
-      close: vi.fn(() => {}),
-      onFrame: vi.fn((cb: (f: unknown) => void) => { onFrameCb = cb; return () => {}; }),
-    };
-    (window as unknown as { api: { previewSw: typeof api } }).api = { previewSw: api };
+  it("wraps NV12 frames zero-copy as NativeNv12Frame for its stream and ignores foreign ones", async () => {
+    const { emit } = installApi();
     const t = new SwTransport();
-    const got: number[] = [];
-    t.onFrame((_b, ptsUs) => got.push(ptsUs));
+    const got: Array<{ frame: unknown; ptsUs: number; durUs: number }> = [];
+    t.onFrame((frame, ptsUs, durUs) => got.push({ frame, ptsUs, durUs }));
     await t.open({ streamId: "s1", path: "C:/x.mov" });
     const nv12 = new Uint8Array(2 * 2 + 2); // 2x2 NV12 = 4 Y + 2 UV
-    onFrameCb!({ streamId: "s2", data: nv12, width: 2, height: 2, ptsUs: 5, durUs: 33 });
-    onFrameCb!({ streamId: "s1", data: nv12, width: 2, height: 2, ptsUs: 15, durUs: 33 });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(got).toEqual([15]);
+    emit({ streamId: "s2", data: nv12, width: 2, height: 2, ptsUs: 5, durUs: 33 });
+    emit({ streamId: "s1", data: nv12, width: 2, height: 2, ptsUs: 15, durUs: 33 });
+    expect(got).toHaveLength(1);
+    expect(got[0]!.ptsUs).toBe(15);
+    const f = got[0]!.frame as NativeNv12Frame;
+    expect(isNativeNv12Frame(f)).toBe(true);
+    expect(f.data).toBe(nv12); // zero-copy adoption, no plane copy
+    expect(f.width).toBe(2);
+    expect(f.height).toBe(2);
+    expect(f.uvOffset).toBe(4);
+    expect(f.timestamp).toBe(15);
+    expect(f.duration).toBe(33);
+    t.dispose();
+  });
+
+  it("stamps the open-time sourceColor on frames, defaulting bt709/limited", async () => {
+    const { emit } = installApi();
+    const t = new SwTransport();
+    const frames: NativeNv12Frame[] = [];
+    t.onFrame((frame) => frames.push(frame as NativeNv12Frame));
+    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    emit({ streamId: "s1", data: new Uint8Array(6), width: 2, height: 2, ptsUs: 0, durUs: 33 });
+    expect(frames[0]!.colorSpace).toEqual({
+      primaries: "bt709",
+      transfer: "bt709",
+      matrix: "bt709",
+      fullRange: false,
+    });
+    t.dispose();
+
+    // A 601-tagged source keeps its matrix — the ingest must not over-correct.
+    const second = installApi();
+    const t601 = new SwTransport();
+    const frames601: NativeNv12Frame[] = [];
+    t601.onFrame((frame) => frames601.push(frame as NativeNv12Frame));
+    await t601.open({
+      streamId: "s1",
+      path: "C:/y.mov",
+      sourceColor: { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", fullRange: false },
+    });
+    second.emit({ streamId: "s1", data: new Uint8Array(6), width: 2, height: 2, ptsUs: 0, durUs: 33 });
+    expect(frames601[0]!.colorSpace?.matrix).toBe("smpte170m");
+    t601.dispose();
+  });
+
+  it("drops a layout-drifted frame with a warning instead of crashing the stream", async () => {
+    const { emit } = installApi();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const t = new SwTransport();
+    const got: number[] = [];
+    t.onFrame((_f, ptsUs) => got.push(ptsUs));
+    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    emit({ streamId: "s1", data: new Uint8Array(5), width: 2, height: 2, ptsUs: 0, durUs: 33 }); // 6 expected
+    expect(got).toEqual([]);
+    expect(warn).toHaveBeenCalled();
     t.dispose();
   });
 

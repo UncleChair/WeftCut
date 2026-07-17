@@ -8,6 +8,7 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { FfmpegSource } from "./FfmpegSource";
 import type { FfmpegLane } from "./decodeEngine";
+import { isNativeNv12Frame } from "./nv12Frame";
 import { percentile } from "../../../shared/msStats";
 export { percentile } from "../../../shared/msStats";
 
@@ -200,12 +201,30 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
         if (performance.now() - wStart > PER_FRAME_BUDGET_MS) break;
         await sleep(1);
       }
-      const bmp = h.ring.frameAt(pts) as ImageBitmap | null;
-      if (!bmp || !h.ring.containsPts(pts)) {
+      const ringFrame = h.ring.frameAt(pts);
+      if (!ringFrame || !h.ring.containsPts(pts)) {
         missing++;
         continue;
       }
-      ctx.drawImage(bmp, 0, 0);
+      if (isNativeNv12Frame(ringFrame)) {
+        // SW-lane rings carry CPU planes. drawImage needs a CanvasImageSource,
+        // so wrap them in a scratch VideoFrame — bench-only and safe here:
+        // Chromium's buffer-frame conversion mis-picks BT.601 (nv12Frame.ts),
+        // but the barcode is black/white, unambiguous under either matrix.
+        const vf = new VideoFrame(ringFrame.data as BufferSource, {
+          format: "NV12",
+          codedWidth: ringFrame.width,
+          codedHeight: ringFrame.height,
+          timestamp: ringFrame.timestamp,
+        });
+        try {
+          ctx.drawImage(vf, 0, 0);
+        } finally {
+          vf.close();
+        }
+      } else {
+        ctx.drawImage(ringFrame, 0, 0);
+      }
       const decodedIdx = decodeBarcodeIndex(
         ctx.getImageData(0, 0, width, height).data,
         width,

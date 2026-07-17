@@ -11,6 +11,10 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } fr
 // preview-sw-conformance.spec.ts. VC-1/WMV3 have no ffmpeg encoder → covered by
 // the Rust routing test + codec-agnostic decoder, not here. Reuses the
 // decode-bench fixtures (e2e/scripts/gen-decode-bench-fixtures.mjs).
+//
+// NOTE: the natural-content SSIM floor here is alignment/decode evidence only —
+// it is structurally blind to a 601↔709 matrix swap (ffmpeg SSIM weights chroma
+// ~1/6); preview-sw-color.spec.ts is the color gate (ADR 0032).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BENCH_DIR = path.resolve(__dirname, '../fixtures/decode-bench')

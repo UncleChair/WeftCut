@@ -75,12 +75,12 @@ not evidence of matrix correctness.
   `createImageBitmap`, converge at the `drawImage` chokepoint") is superseded
   as to conversion *location*; its transport decision (ship bytes, not
   shared textures) is untouched.
-- The export lane complies (`Nv12Ingest`/`TenBitIngest`; the export worker
-  prefers WebGL when native-decoded media is present, since the ingests are
-  WebGL2 passes). The preview software transport (`SwTransport`) still rides
-  `createImageBitmap` and therefore previews native-SW sources with the 601
-  tint — a known open defect queued for the same fix shape; until it lands,
-  preview≠export on color for those sources.
+- Both surfaces comply. Export: `Nv12Ingest`/`TenBitIngest` (the export
+  worker prefers WebGL when native-decoded media is present; `TenBitIngest`
+  is WebGL2-only). Preview: the software transport (`SwTransport`) rings
+  `NativeNv12Frame`s that convert through the same `Nv12Ingest`, which
+  carries a WGSL twin of its GLSL pass because the preview renderer prefers
+  WebGPU. One ingest, one `coefForMatrix`, both surfaces.
 - Any NEW CPU-plane lane (4:2:2 transport, HDR planes, screen/mic capture
   surfaces, future pixel formats) must arrive as its own frame kind + owned
   ingest + saturated-chart gate. Adding a `new VideoFrame(bytes, …)` +
@@ -96,4 +96,6 @@ not evidence of matrix correctness.
 - ADR 0029 — the ship-bytes transport these frames arrive over.
 - Gates: `e2e/electron/export-prores-fidelity.spec.ts` (chart + differential),
   `e2e/electron/export-native-wedges.spec.ts` (ramp precision),
+  `e2e/electron/preview-sw-color.spec.ts` (preview charts: 709 tint leg +
+  601 no-over-correction leg),
   `e2e/electron/color-conformance.spec.ts` (decoder-frame delegation).

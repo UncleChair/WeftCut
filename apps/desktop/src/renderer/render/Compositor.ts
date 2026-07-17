@@ -441,9 +441,10 @@ export class Compositor {
   /// export forces the WebGL backend, so reaching this non-null on WebGPU
   /// is a wiring bug caught by ensureTenBitIngest).
   private tenBitIngest: TenBitIngest | null = null;
-  /// Lazily created on the first NativeNv12Frame (8-bit native export lane).
-  /// Same posture as tenBitIngest: null in preview and WebGPU contexts
-  /// (native-decode exports force the WebGL backend — see exportWorker).
+  /// Lazily created on the first NativeNv12Frame — the 8-bit native export
+  /// lane AND the native SW preview lane both ring these (CPU planes convert
+  /// in our shader, never the browser's — nv12Frame.ts / ADR 0032). Backend
+  /// posture: see ensureNv12Ingest.
   private nv12Ingest: Nv12Ingest | null = null;
   /// Most recent composition time we composited at. Used by
   /// `scheduleRepaint()` for async-arrived frames when the playhead
@@ -1324,19 +1325,13 @@ export class Compositor {
     return this.tenBitIngest;
   }
 
-  /// Lazily construct the NV12 ingest. NativeNv12Frames only flow when the
-  /// export worker runs the WebGL backend (any native-decode routing forces
-  /// preference "webgl"), so reaching this on a WebGPU renderer is a wiring
-  /// bug — fail loudly rather than mis-render.
+  /// Lazily construct the NV12 ingest. Backend-agnostic (GLSL + WGSL): the
+  /// export worker forces WebGL when native decode is routed, but the native
+  /// SW PREVIEW lane rings NativeNv12Frames on the WebGPU-preferring preview
+  /// renderer too.
   private ensureNv12Ingest(): Nv12Ingest {
     if (!this.nv12Ingest) {
-      const renderer = this.app.renderer;
-      if (!("gl" in renderer)) {
-        throw new Error(
-          "NativeNv12Frame reached a non-WebGL renderer — native-decode export requires the WebGL backend",
-        );
-      }
-      this.nv12Ingest = new Nv12Ingest(renderer as WebGLRenderer);
+      this.nv12Ingest = new Nv12Ingest(this.app.renderer);
     }
     return this.nv12Ingest;
   }
@@ -1895,9 +1890,10 @@ export class Compositor {
           this.ensureTenBitIngest().textureFor(clip.layerId, frame),
         );
       } else if (isNativeNv12Frame(frame)) {
-        // Native 8-bit relay frames convert in OUR shader — Chromium's
-        // software conversion of buffer-defined NV12 VideoFrames applies
-        // BT.601 regardless of the stamped colorSpace (see nv12Frame.ts).
+        // Native 8-bit CPU-plane frames (export relay AND the SW preview
+        // lane) convert in OUR shader — Chromium's software conversion of
+        // buffer-defined NV12 VideoFrames applies BT.601 regardless of the
+        // stamped colorSpace (see nv12Frame.ts).
         clip.sprite.bindExternalTexture(
           this.ensureNv12Ingest().textureFor(clip.layerId, frame),
         );

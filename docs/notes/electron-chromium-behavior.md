@@ -63,7 +63,7 @@ Observed 2026-07-16 in the real app (the export ProRes fidelity gate), Electron 
 
 Caught by the saturated-chart SSIM gate: the native-decode lane's HD frames converted visibly wrong (chart SSIM 0.616 vs the proxy path's 0.892) while natural-content SSIM barely moved — chroma-coefficient error hides in low-saturation material, so gates on natural clips are blind to it.
 
-Rule: never hand a buffer-defined YUV frame to the browser for color conversion. Frames from the native decode relay carry their own kinds (`NativeNv12Frame` / `TenBitFrame`) and convert in owned shaders (`Nv12Ingest` / `TenBitIngest`, matrix selected from the stamped `colorSpace` via `coefForMatrix`). Policy: ADR 0032. Third member of the platform color-gap family, alongside `VideoEncoder` ignoring `colorSpace` (below) and WebGPU `copyExternalImageToTexture` converting as BT.709/limited regardless of tags (ADR 0021's offender list).
+Rule: never hand a buffer-defined YUV frame to the browser for color conversion. CPU planes from the native decode lanes (export relay AND the SW preview transport) carry their own kinds (`NativeNv12Frame` / `TenBitFrame`) and convert in owned shaders (`Nv12Ingest` / `TenBitIngest`, matrix selected from the stamped `colorSpace` via `coefForMatrix`). Policy: ADR 0032. Third member of the platform color-gap family, alongside `VideoEncoder` ignoring `colorSpace` (below) and WebGPU `copyExternalImageToTexture` converting as BT.709/limited regardless of tags (ADR 0021's offender list).
 
 ## Not re-probed (kept as known Blink behavior)
 

@@ -5,9 +5,12 @@
 // the full transport recap): `window.api.previewSw.{open,requestFrameAt,close}` carry
 // session commands only. Decoded frames arrive as plain NV12 byte buffers
 // directly over the contextBridge (no shared texture, no MessagePort — a
-// `previewSw:frame` IPC event per frame), delivered via `onFrame`. This
-// transport does the NV12 -> VideoFrame -> ImageBitmap conversion itself
-// (the preload does that for the GPU path instead).
+// `previewSw:frame` IPC event per frame), delivered via `onFrame`.
+//
+// Frames are wrapped ZERO-COPY as `NativeNv12Frame`s — never reconstructed as
+// `VideoFrame`s: Chromium's software conversion of a buffer-defined NV12 frame
+// applies BT.601 regardless of the stamped colorSpace (see nv12Frame.ts /
+// ADR 0032), so the Compositor converts these in its own `Nv12Ingest` pass.
 //
 // preview_sw sends no eof/error to the renderer mid-stream (log-only in
 // main) — `onError` fires ONLY on `open()` failure, and `onEof` is a
@@ -18,7 +21,8 @@
 // which owns exactly one `DecodeTransport` at a time and sets the ring's
 // eviction anchor itself (see `requestFrameAt` below).
 import type { PreviewSwFrameMsg } from "../../../../shared/ipc";
-import type { DecodeTransport, DecodeTransportOpen } from "./DecodeTransport";
+import { nv12FrameFromBytes } from "../nv12Frame";
+import type { DecodeTransport, DecodeTransportOpen, TransportFrame } from "./DecodeTransport";
 
 export class SwTransport implements DecodeTransport {
   /// Stream identity supplied by the caller's `open()` call, stamped on every
@@ -32,7 +36,7 @@ export class SwTransport implements DecodeTransport {
 
   private _disposed = false;
 
-  private frameCb: ((bitmap: ImageBitmap, ptsUs: number, durUs: number) => void) | null = null;
+  private frameCb: ((frame: TransportFrame, ptsUs: number, durUs: number) => void) | null = null;
   private errorCb: ((reason: string) => void) | null = null;
 
   /// Last target sent to `previewSw.requestFrameAt`, for cheap same-target
@@ -50,9 +54,7 @@ export class SwTransport implements DecodeTransport {
     // Subscribe BEFORE open() — frames can start flowing as soon as the
     // native decode thread is up, so a listener attached after open() could
     // miss an early frame.
-    this.unsub = window.api.previewSw.onFrame((f) => {
-      void this.handleFrame(f); // handleFrame is async; fire-and-forget
-    });
+    this.unsub = window.api.previewSw.onFrame((f) => this.handleFrame(f));
     try {
       await window.api.previewSw.open({ streamId: this.streamId, path: o.path });
     } catch (err) {
@@ -67,42 +69,33 @@ export class SwTransport implements DecodeTransport {
     }
   }
 
-  /// Convert one NV12 frame message into an `ImageBitmap`. Async because the
-  /// NV12 -> VideoFrame -> ImageBitmap conversion the preload does for the
-  /// GPU path happens here instead. A bad NV12 buffer / unsupported
-  /// colorSpace must not crash the `onFrame` callback (mirrors the GPU
-  /// transport's non-fatal posture for a bad port message).
-  private async handleFrame(f: PreviewSwFrameMsg): Promise<void> {
+  /// Wrap one NV12 frame message as a `NativeNv12Frame` — zero-copy: the
+  /// structured-cloned IPC bytes are adopted as the frame's planes. A
+  /// layout-drifted buffer (nv12FrameFromBytes throws) must not crash the
+  /// `onFrame` callback (mirrors the GPU transport's non-fatal posture for a
+  /// bad port message).
+  private handleFrame(f: PreviewSwFrameMsg): void {
     if (f.streamId !== this.streamId) return;
     if (this._disposed) return;
-    let bmp: ImageBitmap;
+    let frame: TransportFrame;
     try {
-      const vf = new VideoFrame(f.data, {
-        format: "NV12",
-        codedWidth: f.width,
-        codedHeight: f.height,
+      frame = nv12FrameFromBytes({
+        data: f.data,
+        width: f.width,
+        height: f.height,
         timestamp: f.ptsUs,
+        duration: f.durUs,
         colorSpace: this.colorSpaceFor(),
       });
-      try {
-        bmp = await createImageBitmap(vf);
-      } finally {
-        vf.close();
-      }
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.warn(`[weftcut/pixi] preview-sw ${this.streamId} frame convert failed:`, e);
-      return;
-    }
-    if (this._disposed) {
-      // Disposed during the await — drop the bitmap rather than leak it.
-      bmp.close?.();
+      console.warn(`[weftcut/pixi] preview-sw ${this.streamId} frame wrap failed:`, e);
       return;
     }
     // ptsUs is already source-normalized microseconds (Rust's
     // `pts_to_source_us`, mirroring the renderer's `frameToSourceUs`) — no
     // further offset needed before handing it to the caller.
-    this.frameCb?.(bmp, f.ptsUs, f.durUs);
+    this.frameCb?.(frame, f.ptsUs, f.durUs);
   }
 
   /// Build a `VideoColorSpaceInit` from the source's already-mapped
@@ -127,7 +120,7 @@ export class SwTransport implements DecodeTransport {
     };
   }
 
-  onFrame(cb: (bitmap: ImageBitmap, ptsUs: number, durUs: number) => void): void {
+  onFrame(cb: (frame: TransportFrame, ptsUs: number, durUs: number) => void): void {
     this.frameCb = cb;
   }
 

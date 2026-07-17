@@ -194,6 +194,12 @@ means for licensing.
   codec-agnostic and the readback is a pipeline flush, not a frame transfer.
 - **SW transport** — libavcodec decodes the original in the main process and
   ships NV12 bytes over classic IPC ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
+  The bytes ring as `NativeNv12Frame`s and convert to RGB in the compositor's
+  own `Nv12Ingest` pass (dual GLSL/WGSL — the preview renderer prefers
+  WebGPU), with the matrix selected from the source's mapped color tags —
+  never via `createImageBitmap`, whose buffer-frame conversion is always
+  BT.601 ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)).
+  Gate: `preview-sw-color.spec.ts` (saturated charts, 709 + 601 legs).
 - **HW→SW fallback is internal.** A HW decode error, device loss, or the
   budget throw disposes the GPU transport and opens the SW transport **into
   the same `FrameRing`** — a fresh `streamId` so no stale GPU frame lands, the

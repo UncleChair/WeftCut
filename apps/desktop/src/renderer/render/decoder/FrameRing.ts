@@ -2,12 +2,17 @@
 //
 // Plan: docs/render.md §Decoder pool — 1 s lookahead / 0.5 s lookbehind per clip
 //
-// Behavior: caller `push(frame)`es decoded VideoFrames in monotonic
-// PTS order. `frameAt(tUs)` returns the frame whose presentation
+// Behavior: caller `push(frame)`es decoded frames in monotonic PTS order —
+// `ImageBitmap`s (WebCodecs snapshots, native GPU lane) or `NativeNv12Frame`s
+// (native SW lane's CPU planes, converted later in the Compositor's
+// `Nv12Ingest` — see nv12Frame.ts). The ring treats both alike through their
+// shared `close()`. `frameAt(tUs)` returns the frame whose presentation
 // interval contains `tUs`, or `null` if not yet decoded. `setAnchor(tUs)`
 // evicts frames older than `tUs - lookbehindUs` and rejects pushes for
 // PTS more than `lookaheadUs` ahead — the caller's decode loop pauses
 // when the lookahead window is full.
+
+import type { TransportFrame } from "./transports/DecodeTransport";
 
 const DEFAULT_LOOKAHEAD_US = 1_000_000;
 const DEFAULT_LOOKBEHIND_US = 500_000;
@@ -26,7 +31,7 @@ const CLAMP_TO_FIRST_GAP_US = 100_000;
 interface RingEntry {
   ptsUs: number;
   durationUs: number;
-  bitmap: ImageBitmap;
+  frame: TransportFrame;
 }
 
 export interface FrameRingInit {
@@ -61,7 +66,7 @@ export class FrameRing {
     while (this.entries.length > 0) {
       const first = this.entries[0]!;
       if (first.ptsUs + first.durationUs <= minKeepUs) {
-        first.bitmap.close();
+        first.frame.close();
         this.entries.shift();
       } else {
         break;
@@ -86,15 +91,14 @@ export class FrameRing {
     return last.ptsUs >= this.anchorUs + this.lookaheadUs;
   }
 
-  /// Push a decoded frame as an ImageBitmap. Caller transfers
-  /// ownership; we close the bitmap on eviction. `ptsUs` and
-  /// `durationUs` come from the source `VideoFrame.timestamp` /
-  /// `.duration` (saved before the source frame was closed, since
-  /// `ImageBitmap` itself carries no PTS metadata).
-  push(bitmap: ImageBitmap, ptsUs: number, durationUs: number): void {
+  /// Push a decoded frame. Caller transfers ownership; we close the frame on
+  /// eviction. `ptsUs` and `durationUs` come from the source
+  /// `VideoFrame.timestamp` / `.duration` (saved before the source frame was
+  /// closed, since `ImageBitmap` itself carries no PTS metadata).
+  push(frame: TransportFrame, ptsUs: number, durationUs: number): void {
     // If this frame is already behind the lookbehind window, drop it.
     if (ptsUs + durationUs < this.anchorUs - this.lookbehindUs) {
-      bitmap.close();
+      frame.close();
       return;
     }
     this._pushCount += 1;
@@ -108,7 +112,7 @@ export class FrameRing {
     // sources, async-bitmap races on closely-spaced frames) hit the
     // safety-net sort.
     const prevLast = this.entries[this.entries.length - 1];
-    this.entries.push({ ptsUs, durationUs, bitmap });
+    this.entries.push({ ptsUs, durationUs, frame });
     if (prevLast && prevLast.ptsUs > ptsUs) {
       this.entries.sort((a, b) => a.ptsUs - b.ptsUs);
     }
@@ -136,7 +140,7 @@ export class FrameRing {
   /// relying on `VideoFrame.duration` — WebCodecs may report it null even when
   /// the input chunk set it, and a duration-based upper bound mis-selects
   /// (lands on an earlier entry, not the latest `ptsUs <= tUs`).
-  frameAt(tUs: number): ImageBitmap | null {
+  frameAt(tUs: number): TransportFrame | null {
     if (this.entries.length === 0) return null;
     const firstPts = this.entries[0]!.ptsUs;
     if (tUs < firstPts) {
@@ -144,15 +148,15 @@ export class FrameRing {
       // offset); otherwise the painter should hold its previous
       // frame rather than flash a wrong-region frame.
       if (firstPts - tUs > CLAMP_TO_FIRST_GAP_US) return null;
-      return this.entries[0]!.bitmap;
+      return this.entries[0]!.frame;
     }
     const idx = this.findLatestAtOrBefore(tUs);
-    return idx === -1 ? null : this.entries[idx]!.bitmap;
+    return idx === -1 ? null : this.entries[idx]!.frame;
   }
 
   /// Drop everything. Use on seek beyond the lookahead window.
   flush(): void {
-    for (const e of this.entries) e.bitmap.close();
+    for (const e of this.entries) e.frame.close();
     this.entries = [];
   }
 
