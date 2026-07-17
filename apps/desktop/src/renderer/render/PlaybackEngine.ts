@@ -97,7 +97,7 @@ export class PlaybackEngine {
       debounceMs: 50,
       // Ceiling so an unbroken drag still re-targets the decoder a few
       // times/sec (live scrub preview) instead of staying frozen on the
-      // last cached frame until the user pauses. Safe now that the proxy
+      // last cached frame until the user pauses. Safe because the proxy
       // is short-GOP (ADR 0008): a seek decodes only a few frames, well
       // within this window, so each fire's frame lands before the next
       // re-target (no churn). > debounceMs so a real pause fires first.
@@ -340,19 +340,12 @@ export class PlaybackEngine {
       const endUs = this.autoPauseEndUs();
       if (this.clock.isPlaying() && endUs > 0 && tUs >= endUs) {
         // Park the clock at the START of the last visible frame
-        // (frame-anchor playhead rule — see docs/data-model.md). That
-        // value is already inside the final layer's exclusive
-        // `[t_start, t_end)` interval, so the same value can drive
-        // both the emitted timecode AND the composite. No more
-        // `endUs − 1 µs` hack: the parked position IS the painted
-        // frame, end-of-comp display reads as the true last frame
-        // (e.g. `00:00:09:29` for a 10 s 30 fps comp).
-        //
-        // Exact-rational `lastFrameAnchorUs` is required here — the
-        // naive `endUs − pre-rounded-frameDurUs` drifts ~1 µs/frame
-        // and at frame 299 lands above the true grid value, so the
-        // compositor's frame lookup drops into the SECOND-to-last
-        // sample's PTS interval and paints the wrong frame.
+        // (frame-anchor playhead rule — docs/data-model.md). That value is
+        // inside the final layer's exclusive `[t_start, t_end)` interval,
+        // so one value drives both the emitted timecode AND the composite.
+        // Exact-rational `lastFrameAnchorUs` is required — a pre-rounded
+        // frame duration drifts onto the second-to-last frame (see
+        // `Compositor.fpsNum`).
         const parkUs = this.compositor.lastFrameAnchorUs(endUs);
         this.clock.setPosition(parkUs);
         this.compositor.setAnchorTime(parkUs);

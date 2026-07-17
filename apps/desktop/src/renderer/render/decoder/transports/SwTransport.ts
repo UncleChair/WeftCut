@@ -1,9 +1,8 @@
-// Native-SOFTWARE `DecodeTransport` — the per-frame NV12-over-IPC path.
-// Extracted from the original native software-decode handle (the
-// ffmpeg-sw-decode-blindspot plan's Task 7; see
-// docs/superpowers/specs/2026-07-05-ffmpeg-sw-decode-blindspot-design.md for
-// the full transport recap): `window.api.previewSw.{open,requestFrameAt,close}` carry
-// session commands only. Decoded frames arrive as plain NV12 byte buffers
+// Native-SOFTWARE `DecodeTransport` — the per-frame NV12-over-IPC path
+// (transport recap: docs/superpowers/specs/
+// 2026-07-05-ffmpeg-sw-decode-blindspot-design.md).
+// `window.api.previewSw.{open,requestFrameAt,close}` carry session commands
+// only. Decoded frames arrive as plain NV12 byte buffers
 // directly over the contextBridge (no shared texture, no MessagePort — a
 // `previewSw:frame` IPC event per frame), delivered via `onFrame`.
 //
@@ -138,8 +137,7 @@ export class SwTransport implements DecodeTransport {
   /// `send` — no async round-trip to coalesce behind, so this only needs a
   /// cheap same-target dedup rather than `GpuTransport`'s in-flight
   /// coalescing pump. Does NOT touch a ring anchor — the ring lives on
-  /// `FfmpegSource` now, which sets its own anchor before/around calling
-  /// this.
+  /// `FfmpegSource`, which sets its own anchor before/around calling this.
   requestFrameAt(tUs: number): void {
     if (this._disposed) return;
     if (tUs === this.lastSentTargetUs) return;

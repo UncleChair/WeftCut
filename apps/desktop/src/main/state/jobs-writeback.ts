@@ -46,11 +46,11 @@ export interface MediaWorkspacePathsEvent {
 }
 
 /** Apply a `media:workspace_paths` event to the TS actor (sibling of
- *  applyDerivativesEvent; the workspace-copy job's path/hash write-back under
- *  WEFTCUT_TS_ACTOR). The dispatch arg shape is `{ media, paths }` (actor.ts
- *  set_media_workspace_paths arm, ported 3c-i — `paths` is the 5-field
- *  WorkspacePaths). MediaNotFound is benign (the media may have been removed
- *  between import and copy-completion) — logged, not thrown. */
+ *  applyDerivativesEvent; the workspace-copy job's path/hash write-back).
+ *  The dispatch arg shape is `{ media, paths }` (actor.ts
+ *  set_media_workspace_paths arm — `paths` is the 5-field WorkspacePaths).
+ *  MediaNotFound is benign (the media may have been removed between import
+ *  and copy-completion) — logged, not thrown. */
 export function applyWorkspacePathsEvent(
   actor: Pick<ActorHandle, 'dispatch'>,
   payload: MediaWorkspacePathsEvent,

@@ -1,18 +1,17 @@
 // apps/desktop/src/main/state/hybrids.ts
 //
-// Native-compute → TS-write hybrid orchestrator (Phase 3d-e). Under
-// WEFTCUT_TS_ACTOR a write-bearing native channel splits into two halves: Rust
-// does the heavy/impure COMPUTE (probe/hash/parse/synthesize) and hands back a
-// serializable result; the TS host applies the WRITE through the authoritative
-// TS actor. This file is the shared dispatcher both the renderer router
-// (router.ts `{kind:'hybrid'}`) and the MCP handler (server.ts) call via the
-// host's `hybridDeps`. One arm per hybrid tool; the rest land in later tasks.
+// Native-compute → TS-write hybrid orchestrator. A write-bearing native
+// channel splits into two halves: Rust does the heavy/impure COMPUTE
+// (probe/hash/parse/synthesize) and hands back a serializable result; the TS
+// host applies the WRITE through the authoritative TS actor. This file is the
+// shared dispatcher both the renderer router (router.ts `{kind:'hybrid'}`)
+// and the MCP handler (server.ts) call via the host's `hybridDeps`. One arm
+// per hybrid tool.
 import type { ActorHandle } from './actor'
 import type { MediaItem } from './model'
 
 /** Rust compute facade — each method runs a native (no-actor-write) computation
- *  and returns a serialized result. Built in index.ts from the Backend napi; the
- *  later-task methods are wired as their hybrids land (Tasks 4-6). */
+ *  and returns a serialized result. Built in index.ts from the Backend napi. */
 export interface ComputeNapi {
   /** Probe a media file → serialized MediaItem JSON. Stat-only (instant
    *  appearance); the item carries a PROVISIONAL hash. (import_media) */
@@ -38,9 +37,9 @@ export type HybridDeps = {
   enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
   /** Current workspace dir, or null. Gate for the workspace-copy enqueue. */
   workspaceDir: () => string | null
-  /** node:fs readFile (utf8) — for the subtitle hybrid (Task 4). */
+  /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
-  /** Current composition geometry — for caption layout (Task 4) / placement (Task 6). */
+  /** Current composition geometry — for caption layout / speech placement. */
   snapshotComposition: () => { width: number; height: number; duration_us: number }
 }
 

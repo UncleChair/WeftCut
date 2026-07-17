@@ -33,7 +33,7 @@ export function classKeyOfMedia(m: {
 /// session indefinitely on a backward seek (observed: MPEG-2 on an RTX 3050 —
 /// the driver HW-decodes it, the one-frame probe says ok, then playback wedges
 /// on a backward seek with no recovery). This list encodes the seek-VALIDATED
-/// HW scope (decode-bench Stage-2, measured today: 8-bit H.264 / HEVC / VP9),
+/// HW scope (via decode-bench: 8-bit H.264 / HEVC / VP9),
 /// gating which codecs are even PROBE-ELIGIBLE for tier 1 (spec P1: "lists may
 /// seed or short-circuit probes"). It NARROWS what's eligible; it never
 /// overrules a probe's negative verdict. Eligible = codec ∈ {h264, hevc, vp9}

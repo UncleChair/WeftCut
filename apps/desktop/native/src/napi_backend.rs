@@ -199,12 +199,12 @@ impl Backend {
         Ok(())
     }
 
-    /// Probe + hash a source file into a serialized `MediaItem` — the compute half
-    /// of the `import_media` hybrid (Phase 3d-e). NO actor write: the TS host
-    /// applies the insert (`actor.dispatch('add_media_item', { media })`). Reuses
-    /// the EXACT probe body `import_media` uses, so the hybrid and the flag-off
-    /// path produce identical items. (Subtitles route through the subtitle hybrid;
-    /// `probe_media` is for non-subtitle media — the orchestrator branches by ext.)
+    /// Probe + hash a source file into a serialized `MediaItem` — the compute
+    /// half of the `import_media` hybrid (body: `commands::media::probe_media_item`).
+    /// NO actor write: the TS host applies the insert
+    /// (`actor.dispatch('add_media_item', { media })`). Subtitles route through
+    /// the subtitle hybrid; `probe_media` is for non-subtitle media — the
+    /// orchestrator branches by ext.
     #[napi]
     #[cfg(feature = "jobs")]
     pub async fn probe_media(&self, path: String) -> napi::Result<String> {
@@ -217,7 +217,7 @@ impl Backend {
     }
 
     /// Standalone BLAKE3 hash of a source file — the "lightweight hash step" of
-    /// the hash-first import (stateless-compute Phase 4). The probe is stat-only
+    /// the hash-first import. The probe is stat-only
     /// (instant timeline appearance) and the item carries a provisional hash; the
     /// TS host runs this pass next, sets the real hash, THEN enqueues derivatives,
     /// so jobs bake the final cache key and never touch a pending alias. Pure
@@ -234,7 +234,7 @@ impl Backend {
         Ok(facts.blake3_hex)
     }
 
-    /// Pure parse half of the `apply_subtitles` hybrid (Phase 3d-e). Validates
+    /// Pure parse half of the `apply_subtitles` hybrid. Validates
     /// the body, sniffs/applies the format, runs the parser, and returns a JSON
     /// string `{ cues: Cue[], simplified: boolean }`. NO actor write — the TS
     /// host applies the caption-track write via `actor.dispatch('add_caption_track',
@@ -317,7 +317,7 @@ impl Backend {
 #[cfg(feature = "cloud")]
 #[napi]
 impl Backend {
-    /// synthesize_speech hybrid compute (Phase 3d-e): validate text → pick
+    /// synthesize_speech hybrid compute: validate text → pick
     /// synthesizer → content-addressed cache key → synthesize+write if not cached
     /// → spawn_blocking probe → build `MediaItem`. Returns JSON
     /// `{ media_item: MediaItem, duration_us: i64, cached: boolean }`.
@@ -357,7 +357,7 @@ impl Backend {
     #[napi]
     pub async fn mcp_read_resource(&self, uri: String, state_json: Option<String>) -> napi::Result<String> {
         // The TS MCP host injects the { project } / { media } slice the Rust
-        // compute resources need (Phase 3); empty for stateless reads (meter).
+        // compute resources need; empty for stateless reads (meter).
         let state = state_json.as_deref().unwrap_or("{}");
         Ok(crate::mcp::reply(crate::mcp::read_resource(self, &uri, state).await))
     }
@@ -600,7 +600,7 @@ mod tests {
 
     /// Blank project has no audio layers, so the export-audio gate returns an
     /// empty waiting list with no ffmpeg involvement — proves the arm reads the
-    /// project from the request (Phase 2), not the mirror.
+    /// project from the request, not a mirror.
     #[cfg(feature = "export")]
     #[tokio::test]
     async fn ensure_export_audio_conform_blank_is_empty() {
@@ -640,7 +640,7 @@ mod tests {
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn mcp_catalog_lists_ping_and_apply_subtitles() {
-        // Phase 4b: Rust catalog is native/compute/hybrid only.
+        // Rust catalog is native/compute/hybrid only.
         // `add_track` is TS-served and must NOT appear here.
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
@@ -773,8 +773,8 @@ mod tests {
     async fn transcribe_clip_without_key_is_clean_error() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
-        // No mirror, no injected layer → "layer not found" (resolves from
-        // args.layer == None, Phase 2). Old mirror-backed code: "read-mirror not set".
+        // No injected layer → "layer not found" (resolves from args.layer ==
+        // None). A mirror-backed regression would say "read-mirror not set".
         let reply: serde_json::Value = serde_json::from_str(
             &b.mcp_call_tool("transcribe_clip".into(), r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into())
                 .await
@@ -789,10 +789,10 @@ mod tests {
         );
     }
 
-    /// Phase 2: `detect_silences` resolves from the injected `layer` arg, NOT the
-    /// mirror. With no mirror pushed and no injected layer, the new code reports
-    /// "layer not found" (it read `args.layer == None`); the old mirror-backed
-    /// code would report "read-mirror not set" instead.
+    /// `detect_silences` resolves from the injected `layer` arg, NOT a mirror.
+    /// With no injected layer it reports "layer not found" (`args.layer ==
+    /// None`); a mirror-backed regression would report "read-mirror not set"
+    /// instead — the negative assert below discriminates exactly that.
     #[cfg(all(feature = "jobs", feature = "mcp"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn detect_silences_resolves_injected_layer_not_mirror() {
@@ -816,9 +816,9 @@ mod tests {
     }
 
     /// hash_media_source returns the BLAKE3 hex of the file's bytes — the
-    /// standalone hash pass the import hybrid runs before enqueuing derivatives
-    /// (stateless-compute Phase 4). Asserts against blake3's known hash of the
-    /// content so the value, not just non-emptiness, is pinned.
+    /// standalone hash pass the import hybrid runs before enqueuing
+    /// derivatives. Asserts against blake3's known hash of the content so the
+    /// value, not just non-emptiness, is pinned.
     #[cfg(feature = "jobs")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn hash_media_source_returns_blake3_of_file() {
@@ -867,9 +867,9 @@ mod tests {
     }
 
     /// Durable guard for the stateless-compute boundary: the read/compute handlers
-    /// take their state slice at the call boundary (Phases 1–3) and the jobs path
-    /// bakes the real hash at enqueue (Phase 4), so no file reads a resident mirror
-    /// or the deleted Rust actor (`.project()?.snapshot()`). `ensure_full_proxy`
+    /// take their state slice at the call boundary and the jobs path bakes the
+    /// real hash at enqueue, so no file reads a resident mirror or a resident
+    /// Rust actor (`.project()?.snapshot()`). `ensure_full_proxy`
     /// must route its derivative write through the `commit_media_derivatives` seam.
     /// A MECHANICAL source-scan — no Backend / tokio runtime.
     #[test]
@@ -903,8 +903,8 @@ mod tests {
             );
         }
 
-        // Phase 2 (stateless-compute-service): the export-audio channels no longer
-        // read the mirror — the TS host passes the full project in the request.
+        // Export-audio channels never read a mirror — the TS host passes the
+        // full project in the request (ADR 0024).
         assert!(
             !export.contains("snapshot_for_read"),
             "commands/export.rs: export channels must NOT read the mirror — they take a `project` arg (Phase 2)"
@@ -917,29 +917,28 @@ mod tests {
                 "{name}: must NOT read the mirror — it takes a `project` arg (Phase 2)");
         }
 
-        // Phase 2 (stateless-compute-service): detect_silences / transcribe_clip
-        // no longer read the mirror — the TS MCP host passes the { layer, media }
-        // slice resolve_clip_audio_source needs.
+        // detect_silences / transcribe_clip never read a mirror — the TS MCP
+        // host passes the { layer, media } slice resolve_clip_audio_source
+        // needs.
         assert!(
             !tools.contains("snapshot_for_read"),
             "mcp/tools.rs: clip-audio compute tools must NOT read the mirror — they take an injected slice (Phase 2)"
         );
 
-        // Phase 3 (stateless-compute-service): MCP resource reads no longer touch
-        // the mirror — the TS host serves the project:// state views directly and
-        // injects the project / MediaItem the Rust compute resources need
-        // (project://compiled, media://*). composition://meter reads live Rust state.
+        // MCP resource reads never touch a mirror — the TS host serves the
+        // project:// state views directly and injects the project / MediaItem
+        // the Rust compute resources need (project://compiled, media://*).
+        // composition://meter reads live Rust state.
         assert!(
             !resources.contains("snapshot_for_read"),
             "mcp/resources.rs: resource reads must NOT read the mirror — TS serves state views + injects compute slices (Phase 3)"
         );
 
-        // Phase 4 (stateless-compute-service): the import / derivative-jobs path is
-        // mirror-free — the hash-first import bakes the real content hash into the
-        // enqueued MediaItem, so no job re-reads the mirror (fresh_media_item gone)
-        // and the workspace copy no longer migrates a pending alias. The read-mirror
-        // itself was deleted wholesale in Phase 5 (no read_mirror / set_project_mirror
-        // / snapshot_for_read / ReadMirror anywhere).
+        // The import / derivative-jobs path is mirror-free — the hash-first
+        // import bakes the real content hash into the enqueued MediaItem, so
+        // no job re-reads state (no fresh_media_item) and the workspace copy
+        // never migrates a pending alias. No read-mirror exists anywhere (no
+        // read_mirror / set_project_mirror / snapshot_for_read / ReadMirror).
         for (name, src) in [
             ("commands/media.rs", &media),
             ("commands/export.rs", &export),
@@ -956,8 +955,8 @@ mod tests {
             "jobs/import.rs: the pending-hash / migrate machinery is deleted (Phase 4)"
         );
 
-        // Phase 1 (stateless-compute-service): the single-media channels no
-        // longer read the mirror — the TS host passes the resolved MediaItem.
+        // Single-media channels never read a mirror — the TS host passes the
+        // resolved MediaItem.
         for name in ["get_media_thumbnail", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform", "get_filmstrip_tile", "generate_quick_proxy"] {
             let start = media.find(&format!("fn {name}"))
                 .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));

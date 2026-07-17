@@ -6,7 +6,7 @@
 
 export type DecodeEngineSetting = "auto" | "ffmpeg" | "webcodecs";
 
-// --- Collapsed decode model (2026-07-12). ---
+// --- Collapsed decode model. ---
 export type DecodeEngine = "ffmpeg" | "webcodecs";
 export type DecodeSource = "original" | "proxy";
 /// PRIVATE to FfmpegSource — declared here only so the module shares one vocabulary.

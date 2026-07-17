@@ -38,7 +38,7 @@ export interface Manifest {
   content_duration_s?: number | null;
   props_schema: Record<string, PropSpec>;
   // Extra optional fields present in the renderer's MotifManifest — preserved
-  // so Task 3 can re-export `MotifManifest = Manifest` without dropping fields.
+  // so its `MotifManifest = Manifest` re-export doesn't drop fields.
   settle_rafs?: number;
   content_hash?: string;
   status?: "builtin" | "installed" | "draft";
@@ -427,7 +427,7 @@ export function composeMotifHtml(manifest: Manifest, html: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Validation and duration resolution (Task 3)
+// Validation and duration resolution
 // ---------------------------------------------------------------------------
 
 const MAX_DIMENSION = 8192;

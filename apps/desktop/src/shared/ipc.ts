@@ -69,8 +69,8 @@ export type AppNotice = { level: 'info' | 'warn' | 'error'; code: string }
 /// Color-space tag for a native GPU-preview shared-texture import. Mirrors
 /// Electron's `ColorSpace` structure (main passes it straight to
 /// `importSharedTexture`); typed structurally here so this DOM/electron-free
-/// contract file stays free of the Electron types. Task 7 supplies the enum
-/// values (e.g. bt709/limited) from the source's color metadata.
+/// contract file stays free of the Electron types. The enum values (e.g.
+/// bt709/limited) come from the source's color metadata.
 export type PreviewGpuColorSpace = {
   primaries: string
   transfer: string
@@ -278,7 +278,7 @@ export interface WeftcutApi {
   /// `ImageBitmap`s do NOT travel over this bridge (a MessagePort/frame can't
   /// cross contextBridge). Instead `requestPort()` hands a MessagePort to the
   /// main world via `window.postMessage`, over which the preload posts each
-  /// decoded frame; the renderer (Task 7) listens for the one-time port message
+  /// decoded frame; the renderer listens for the one-time port message
   /// then reads frames off `port.onmessage`. consumeAck is preload-internal
   /// (fired after createImageBitmap), so it is deliberately NOT exposed here.
   previewGpu: {
@@ -342,9 +342,9 @@ export interface WeftcutApi {
   /// gate). The renderer pulls this once on mount (availability is fixed for a
   /// process lifetime — the require is memoized in main).
   decodeComponent: { status(): Promise<DecodeComponentStatus> }
-  /// Machine capability probe (D3): runs the SW decode probe on `path` and
+  /// Machine capability probe: runs the SW decode probe on `path` and
   /// returns the cache-informed verdict for that file's format class.
-  /// `probeHw` (D4) is the GPU-keyed HW-lane counterpart: caller supplies
+  /// `probeHw` is the GPU-keyed HW-lane counterpart: caller supplies
   /// `classKey` (probing is expensive, so the cache must be consulted before
   /// deciding to probe, not after).
   decodeCap: {

@@ -1,9 +1,8 @@
-// Neutral decode-contract module. Extracted from SourceDecoderPool.ts so the
-// preview pool file no longer owns the shared vocabulary alongside SourceMedia,
-// the WebCodecs SourceHandle, and the pool. Defines the surface the Compositor
-// composites through (DecodeSession) plus the two role interfaces. Both imports
-// below are `import type` (erased), so the session <-> ExportDecoderPool
-// reference (ExportDecodeSession.ring) is not a runtime cycle.
+// Neutral decode-contract module: the surface the Compositor composites
+// through (DecodeSession) plus the two role interfaces. Owns no
+// implementation — both imports below are `import type` (erased), so the
+// session <-> ExportDecoderPool reference (ExportDecodeSession.ring) is not
+// a runtime cycle.
 import type { DecodedFrame } from "./decodedFrame";
 import type { ExportColorDiag, ExportFrameStore } from "./ExportDecoderPool";
 
@@ -25,8 +24,8 @@ export interface SourceHandleInit {
   proxyAssetUrl: string;
   /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
   /// applied to ANY decode target for this media — the original trivially,
-  /// and proxies too (a proxy preserves the source's colorimetry; the recipe
-  /// asserts the tags outright since proxy v7). Threaded into
+  /// and proxies too (a proxy preserves the source's colorimetry; the proxy
+  /// recipe asserts the tags outright). Threaded into
   /// `withDefaultColorSpace` as the middle-priority layer (below the decode
   /// target's own mediabunny colr tag, above the resolution default).
   /// Undefined ⇒ untagged source ⇒ resolution default applies. The preview

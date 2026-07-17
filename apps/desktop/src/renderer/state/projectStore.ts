@@ -9,8 +9,8 @@ import {
   type RoleMixView,
 } from "../ipc";
 
-/// Frontend mirror of the Rust `Project` actor's state, kept in sync via
-/// `project:changed` backend events. The PixiJS preview consumes this
+/// Frontend mirror of the main-process TS state actor's project, kept in sync
+/// via `project:changed` backend events. The PixiJS preview consumes this
 /// directly; there is no separate IR emit target for the preview
 /// (see `docs/preview.md`).
 ///
@@ -21,7 +21,7 @@ import {
 ///
 /// Pre-workspace: `summary` is `null`; consumers should guard.
 ///
-/// `App.tsx` keeps a local-state fetch alongside this store: both
+/// `useAppWiring` keeps a local-state fetch alongside this store: both
 /// subscribe to `project:changed` and re-fetch independently, with no
 /// cross-talk.
 

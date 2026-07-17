@@ -303,7 +303,7 @@ const SEEK_FORWARD_THRESHOLD_US: i64 = 1_000_000;
 const RECV_TIMEOUT: Duration = Duration::from_millis(4);
 
 /// Announced out of the session thread. `Send` so it can travel to whatever
-/// sink Task 5 wires to the addon's event channel. Carries only plain data.
+/// sink the addon wires to its event channel. Carries only plain data.
 pub enum PreviewGpuPoke {
     /// A decoded frame was copied into `slot`; the renderer may import/snapshot
     /// it, then `consume_ack(slot)` to release it back to the pool.
@@ -760,8 +760,8 @@ unsafe fn copy_frame_into_slot(
 }
 
 /// Fire a poke through the shared sink if one is set. The mutex is held across
-/// the call so concurrent sessions serialise (Task 5's sink is a non-blocking
-/// event enqueue, so this can't deadlock or stall).
+/// the call so concurrent sessions serialise (the addon's sink is a
+/// non-blocking event enqueue, so this can't deadlock or stall).
 fn emit(poke: &PokeSink, poke_val: PreviewGpuPoke) {
     let guard = poke.lock().unwrap();
     if let Some(sink) = guard.as_ref() {
@@ -929,8 +929,8 @@ fn session_thread(
     // (unrefs the hw context), device, context, and pool textures.
 }
 
-/// The set of live preview sessions. `Send + Sync`, so Task 5 can hold it in the
-/// addon (e.g. behind an `Arc`) and drive it from napi calls.
+/// The set of live preview sessions. `Send + Sync`, so the addon can hold it
+/// (e.g. behind an `Arc`) and drive it from napi calls.
 pub struct PreviewGpuRegistry {
     sessions: Mutex<HashMap<String, Session>>,
     poke: PokeSink,
@@ -950,9 +950,9 @@ impl PreviewGpuRegistry {
         }
     }
 
-    /// Install the sink every session emits pokes through. Set once by Task 5
-    /// before any `open`; sessions share the same cell, so a later set is seen
-    /// by already-running threads too.
+    /// Install the sink every session emits pokes through. Set once by the
+    /// addon before any `open`; sessions share the same cell, so a later set
+    /// is seen by already-running threads too.
     pub fn set_poke_sink(&self, sink: Box<dyn Fn(PreviewGpuPoke) + Send>) {
         *self.poke.lock().unwrap() = Some(sink);
     }

@@ -276,11 +276,8 @@ export class MotifSprite implements StageableSprite {
     this.disposed = true;
     if (this.texture && this.texture !== Texture.EMPTY) {
       try {
-        // destroy(true) frees this sprite's own ImageSource/GPU texture.
-        // The shared cache's ImageBitmap is NOT closed by destroy(true) —
-        // ImageSource.destroy() calls unload() (GPU texture) and nulls
-        // `resource` but never calls ImageBitmap.close(). The cache owns
-        // bitmap lifetime; destroy(true) only frees this sprite's wrapper.
+        // Frees this sprite's own wrapper only — never the cache-owned
+        // ImageBitmap (see bindBitmap).
         this.texture.destroy(true);
       } catch {
         // ignore

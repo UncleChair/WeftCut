@@ -61,9 +61,9 @@ import { EffectChain } from "./effects/EffectChain";
 import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
 
-/// Match the preview ring's default lookahead window. We only use
-/// this to warm the next clip boundary; the play() warm-up gate stays
-/// smaller so clicking play remains responsive.
+/// Match the preview ring's default lookahead window
+/// (`FrameRing.DEFAULT_LOOKAHEAD_US`). We only use this to warm the next clip
+/// boundary; the play() warm-up gate stays smaller so play stays responsive.
 const UPCOMING_CLIP_PREWARM_US = 1_000_000;
 
 /// Plain-numbers diagnostic snapshot for the dev `PerfHUD`. All fields
@@ -127,9 +127,8 @@ export interface UpcomingClipPrewarmSnapshot {
 /// runtime path (import → native-sw route → `resolveSource` resolves the
 /// ffmpeg engine → acquire) ends in a real `FfmpegSource` on its software lane
 /// AND that a decoded frame reached the sprite — the single runtime fact no
-/// other surface exposes (Task 8b was typecheck-only before this). All fields
-/// are plain numbers/strings/booleans so the whole thing survives the
-/// `page.evaluate` boundary.
+/// other surface exposes. All fields are plain numbers/strings/booleans so
+/// the whole thing survives the `page.evaluate` boundary.
 export interface ActiveClipProbe {
   layerId: string;
   mediaId: string;
@@ -140,7 +139,7 @@ export interface ActiveClipProbe {
   sourceKind: "webcodecs" | "native-gpu" | "sw" | "unknown";
   /// Derived from `sourceKind === "sw"`: whether the active handle is the native
   /// software-decode path. Kept as a distinct field so the spec can assert the
-  /// software tier explicitly (Task 10 extends the probe with the resolved key).
+  /// software tier explicitly.
   isSoftware: boolean;
   /// True once the pool's idle sweeper has reclaimed this handle.
   sourceDisposed: boolean;
@@ -163,7 +162,7 @@ export interface ActiveClipProbe {
   spriteHeight: number;
   /// The resolver IDENTITY (`${engine}:${source}:${target}`) the active clip's
   /// source was built from — see `ActiveClip.builtFromKey`. Lets the decode-
-  /// engine e2e spec (Task 10) assert the resolved ENGINE/SOURCE (the two
+  /// engine e2e spec assert the resolved ENGINE/SOURCE (the two
   /// leading segments) rather than inferring it from `sourceKind` alone, which
   /// can't distinguish webcodecs-original from webcodecs-proxy — both decode
   /// through the WebCodecs pool and surface as `sourceKind: "webcodecs"`. Null
@@ -191,10 +190,10 @@ export interface ResolvedRendererSource {
   key: string | null;
 }
 
-/// Export mode has exactly one source today (the proxy/master, decoded via
+/// Export mode has exactly one source (the proxy/master, decoded via
 /// WebCodecs). Wrap its asset URL in the `ResolvedRendererSource` shape so
 /// `ensureClip` runs ONE acquire path across preview + export; preview injects
-/// the real engine resolver instead. D5 will fold export onto the resolver too.
+/// the real engine resolver instead.
 function rsFromExportProxy(url: string | null): ResolvedRendererSource | null {
   return url
     ? { engine: "webcodecs", source: "proxy", status: "ok", target: url, key: `webcodecs:proxy:${url}` }
@@ -213,30 +212,25 @@ export interface CompositorInit {
   /// throughput. Currently advisory.
   mode: "preview" | "export";
   /// EXPORT mode's resolver for the asset URL of a media item's master proxy
-  /// (decoded via WebCodecs). Preview mode uses `resolveSource` instead and does
-  /// NOT pass this; export keeps it until Phase D5 folds export onto the
-  /// resolver. Defaults to `() => null` when absent.
+  /// (decoded via WebCodecs). Preview mode uses `resolveSource` instead and
+  /// does NOT pass this. Defaults to `() => null` when absent.
   proxyAssetUrl?: (mediaId: string) => string | null;
   /// PREVIEW mode's engine resolution: gathers store inputs and runs the pure
   /// `resolveDecodeEngine`, returning the resolved decode source (engine +
-  /// source + target + swap key). REQUIRED in preview mode; export mode keeps
-  /// `proxyAssetUrl` (Phase D5). Defaults to `() => null` so export/worker are
+  /// source + target + swap key). REQUIRED in preview mode; export mode uses
+  /// `proxyAssetUrl` instead. Defaults to `() => null` so export/worker are
   /// unaffected.
   resolveSource?: (mediaId: string) => ResolvedRendererSource | null;
   /// Preview-only: called when `resolveSource` reports `status: "unsupported"`
   /// for a media — no engine can decode it (e.g. a pinned Standard engine with
   /// no usable component, or WebCodecs failing the original with no proxy
-  /// underway). Export omits it; an unsupported clip is silently skipped from
-  /// the composite either way. A later task uses this to surface an
-  /// unsupported-format card in place of the clip. Fires a SNAPSHOT
-  /// (`ReadonlySet<string>`) of every media unsupported AT THE CURRENT
-  /// COMPOSITE — not a single mediaId — and ONLY when set membership
-  /// actually changes vs. the previous composite (media added/removed from
-  /// the unsupported set), never per-frame/per-composite. `ensureClip` can
-  /// run every tick; a per-tick fire here would drive React state above a
-  /// leaf and reproduce the whole-tree re-render memory ratchet
-  /// (feedback_playhead_gate_and_tiers). See `compositeFrame`'s reset/diff/
-  /// fire around its layer sweep.
+  /// underway). Drives PixiPreview's `UnsupportedClipCard`; export omits it,
+  /// and an unsupported clip is skipped from the composite either way. Fires a
+  /// SNAPSHOT (`ReadonlySet<string>`) of every media unsupported AT THE
+  /// CURRENT COMPOSITE, and ONLY when membership changed vs. the previous
+  /// composite — never per-frame, which would drive React state above a leaf
+  /// (feedback_playhead_gate_and_tiers). See `compositeFrame`'s
+  /// reset/diff/fire around its layer sweep.
   onUnsupported?: (unsupported: ReadonlySet<string>) => void;
   /// Resolver for the asset URL of a media item's ORIGINAL file.
   /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
@@ -272,13 +266,9 @@ interface ActiveClip {
   sprite: VideoClipSprite;
   effects: EffectChain;
   /// The resolver IDENTITY (`${engine}:${source}:${target}`) the current
-  /// `source` was built from. When the resolver later returns a DIFFERENT key
-  /// for this media (a proxy landed, the engine flipped, or a runtime ffmpeg
-  /// failure), `ensureClip` starts a no-flash overlap-swap to the new source.
-  /// Keying on engine+source+target (not URL) is what makes a landed proxy
-  /// unable to displace an already-decoding original: the resolver keeps
-  /// returning `source: "original"` while it's still decodable, so the key
-  /// never changes (feedback_native_nle_conventions).
+  /// `source` was built from. When the resolver later returns a different key
+  /// for this media, `ensureClip` starts a no-flash overlap-swap to the new
+  /// source. Key semantics: see `ResolvedRendererSource`.
   builtFromKey: string;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
   /// found `ring.frameAt(srcTUs)` returned null. Used so the
@@ -375,15 +365,11 @@ export class Compositor {
   readonly pool: DecoderPool;
   private clips = new Map<string, ActiveClip>();
   /// On-screen media reported `status: "unsupported"` by `resolveSource`
-  /// AT THE CURRENT COMPOSITE — recomputed fresh every `compositeFrame`
-  /// (reset at the start of its layer sweep), not accumulated across ticks.
-  /// `ensureClip`'s unsupported branch only ADDS to this set; `compositeFrame`
-  /// owns the reset (frame start) and the membership-change diff that fires
-  /// `onUnsupported` (frame end). This is what makes the set mean "is there
-  /// an unsupported clip on-screen right now" rather than "was one ever
-  /// unsupported since the last structural edit" — a clip the playhead has
-  /// scrolled off of, or a disabled/non-composited layer, simply isn't
-  /// visited by the sweep and so never re-adds itself.
+  /// AT THE CURRENT COMPOSITE. Ownership split: `compositeFrame` resets the
+  /// set at the start of its layer sweep and fires `onUnsupported` on
+  /// membership change at the end; `ensureClip`'s unsupported branch only
+  /// ADDS. A clip the playhead scrolled off of (or a disabled layer) is never
+  /// visited by the sweep, so it drops out instead of lingering.
   private unsupportedMedia = new Set<string>();
   private images = new Map<string, ActiveImage>();
   /// In-flight loadFromAsset promises, keyed by layerId. Used by `preloadImages`
@@ -402,12 +388,8 @@ export class Compositor {
   /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
   /// Preview-only; empty in export mode (export URLs are fixed per run).
   private swaps = new Map<string, SwapState>();
-  /// Host element where AudioMixers append their hidden `<audio>`
-  /// elements. Null in export mode (no DOM). The Compositor owns
-  /// lifecycle; mixers append / remove themselves under this host.
-  private audioHost: HTMLDivElement | null;
-  /// Preview or export. Affects audio setup + (future) hardware-
-  /// accel preferences.
+  /// Preview or export. Gates audio setup, decode-source resolution
+  /// (`resolveSource` vs `proxyAssetUrl`), and the upcoming-clip prewarm.
   private mode: "preview" | "export";
   private projectSummary: ProjectSummary | null = null;
   /// O(1) layer lookup by id. Rebuilt in `setProject` whenever the
@@ -463,7 +445,7 @@ export class Compositor {
           },
           schedule: (cb) => scheduleIdle(cb),
           cancel: (t) => cancelIdle(t),
-          // batchSize 1: captures now serialize in Rust, so a larger batch only
+          // batchSize 1: captures serialize in Rust, so a larger batch only
           // adds head-of-line latency for an on-demand scrub. One in-flight
           // capture per loop keeps the shared host queue short.
           batchSize: 1,
@@ -476,9 +458,7 @@ export class Compositor {
       ? new MotifBaker({
           schedule: (cb) => scheduleIdle(cb),
           cancel: (t) => cancelIdle(t),
-          // batchSize 1: captures now serialize in Rust, so a larger batch only
-          // adds head-of-line latency for an on-demand scrub. One in-flight
-          // capture per loop keeps the shared host queue short.
+          // batchSize 1: same head-of-line rationale as the prewarmer above.
           batchSize: 1,
           isOnDisk: (k, f) => sharedMotifFrameCache.hasPng(k, f),
           persist: async (k, f, bmp) => {
@@ -529,17 +509,11 @@ export class Compositor {
   /// `ensureClip`.
   private suspended = false;
   /// Raw fps rational so `setAnchorTime` / `compositeFrame` can snap `tUs`
-  /// to project-frame boundaries with exact rational arithmetic via
-  /// `snapFrameFloor`. This matters on a 60 Hz display with a 60fps source
-  /// in a 30fps project: snapping gives one consistent project-frame's
-  /// worth of source every two rAFs (matching export) instead of rAF
-  /// jitter. A pre-rounded frame duration (33_333 µs for 30 fps, vs
-  /// 33_333.333… exact) accumulates ~1 µs of drift per frame; by frame 299
-  /// (last frame of a 10 s 30 fps comp) the cumulative error is large
-  /// enough to drop the lookup into the previous frame's source-PTS
-  /// interval and paint the wrong frame. Always use
+  /// to project-frame boundaries with exact rational arithmetic. Always
   /// `snapFrameFloor(tUs, this.fpsNum, this.fpsDen)`, never a pre-rounded
-  /// `Math.floor(tUs / frameDur) * frameDur`.
+  /// `Math.floor(tUs / frameDur) * frameDur` — the rounded duration drifts
+  /// ~1 µs/frame until a lookup lands in the previous frame's source-PTS
+  /// interval and paints the wrong frame (arithmetic: frames.ts).
   private fpsNum = 30;
   private fpsDen = 1;
   /// Diagnostic counters for the dev `PerfHUD`. `compositeMsLast` is
@@ -567,10 +541,8 @@ export class Compositor {
     this.mode = init.mode;
     this.conformAssetUrl = init.conformAssetUrl ?? ((): string | null => null);
     this.app.stage.addChild(this.stage);
-    // Hidden DOM host element. The buffer-scheduled audio mixer no longer
-    // mounts `<audio>` elements, but the host remains the "am I in a real
-    // DOM context" gate — the export Worker has neither `document` nor
-    // preview audio.
+    // Preview + real DOM only — the export Worker has neither `document`
+    // nor preview audio.
     if (this.mode === "preview" && typeof document !== "undefined") {
       // Bundled fonts: same set as the export Worker, so preview matches the
       // burned-in output. Awaited off the constructor; the first post-load
@@ -578,13 +550,7 @@ export class Compositor {
       void loadBundledFontBytes().then((b) =>
         loadFontsIntoFaceSet(document.fonts, b),
       );
-      this.audioHost = document.createElement("div");
-      this.audioHost.setAttribute("data-pixi-audio-host", "");
-      this.audioHost.style.display = "none";
-      document.body.appendChild(this.audioHost);
       this.audioGraph = new AudioGraph();
-    } else {
-      this.audioHost = null;
     }
   }
 
@@ -683,11 +649,8 @@ export class Compositor {
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
-      // No `unsupportedMedia` bookkeeping needed here: `compositeFrame`
-      // short-circuits while `this.projectSummary` is null (no sweep, no
-      // fire), so nothing reads this set until a real project loads again —
-      // at which point the very next `compositeFrame` resets + repopulates
-      // it from scratch and fires on any resulting membership change.
+      // No `unsupportedMedia` bookkeeping: `compositeFrame` short-circuits
+      // while the summary is null, and its next real sweep resets the set.
       this.tenBitIngest?.dispose();
       this.tenBitIngest = null;
       this.nv12Ingest?.dispose();
@@ -714,12 +677,8 @@ export class Compositor {
         this.layerById.set(l.id, l);
       }
     }
-    // No `unsupportedMedia` reconciliation needed here: the very next
-    // `compositeFrame` resets the set and repopulates it from THIS project's
-    // truth (which VideoClip layers are actually on-screen and unsupported at
-    // the current playhead), firing `onUnsupported` on any membership change.
-    // A media whose only unsupported layer just got deleted simply won't be
-    // re-added by that sweep.
+    // No `unsupportedMedia` reconciliation: the next `compositeFrame` sweep
+    // rebuilds the set from this project's layers and fires on any change.
     for (const [layerId, c] of this.clips) {
       if (!livingLayerIds.has(layerId)) {
         this.abandonSwap(layerId);
@@ -822,22 +781,14 @@ export class Compositor {
     if (!this.projectSummary) return;
     const compositeStart = performance.now();
 
-    // Snap wall-clock tUs to the project's frame grid. Without this,
-    // rAF jitter (real-world ticks at 14–19 ms instead of a clean
-    // 16.67 ms) causes high-fps source frames to land in two
-    // different rAF windows, showing one source frame twice while
-    // skipping its neighbor — the "frame missing" stutter the user
-    // saw with 60fps content in a 30fps project. Snapping keeps the
-    // frame selection consistent across rAF ticks at the cost of
-    // rendering at the project's authored fps rather than the
-    // display's native rate (the export behavior, matched).
-    //
-    // Uses exact-rational `snapFrameFloor` instead of `Math.floor(tUs
-    // / this.frameDurUs) * this.frameDurUs`: the pre-rounded
-    // `frameDurUs` (33_333 for 30 fps, vs 33_333.333… exact) drifts
-    // ~1 µs/frame and by frame 299 of a 10 s 30 fps comp lands ~99 µs
-    // BEFORE the last frame's true source-PTS start, paint = the
-    // second-to-last frame.
+    // Snap wall-clock tUs to the project's frame grid. Without this, rAF
+    // jitter (real ticks at 14–19 ms, not a clean 16.67) lands high-fps
+    // source frames in two different rAF windows — one source frame shows
+    // twice while its neighbor is skipped. Snapping keeps frame selection
+    // consistent across ticks at the cost of rendering at the project's
+    // authored fps rather than the display rate (matching export).
+    // Exact-rational snap only — pre-rounded frame durations drift (see
+    // `fpsNum`).
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
 
     const prevChildCount = this.stage.children.length;
@@ -927,13 +878,9 @@ export class Compositor {
         : useAppSettingsStore.getState().settings.preview_effects_enabled;
     const effectOpts = { previewEffectsEnabled };
 
-    // Fresh per-composite unsupported-media set. `ensureClip`'s
-    // `status === "unsupported"` branch (reached below, for every on-screen
-    // VideoClip layer the sweep visits) only ADDS to `this.unsupportedMedia`;
-    // this reset is what turns "ever unsupported since the last edit" into
-    // "unsupported RIGHT NOW" — a clip the playhead scrolled off of, or a
-    // disabled/non-composited layer, simply never gets visited this sweep
-    // and so drops out instead of lingering.
+    // Fresh per-composite unsupported-media set — the reset half of the
+    // ownership split documented on `unsupportedMedia`; `ensureClip` only
+    // ADDS during the sweep below.
     const prevUnsupported = this.unsupportedMedia;
     this.unsupportedMedia = new Set<string>();
 
@@ -975,12 +922,9 @@ export class Compositor {
         }
       }
     }
-    // Fire `onUnsupported` ONLY when this composite's set differs from the
-    // previous one — size first (cheap), then membership (early-exits on the
-    // first mismatch; no intermediate array). `ensureClip` runs every tick
-    // for every on-screen VideoClip layer, so firing unconditionally here
-    // would drive React `setState` per frame — the whole-tree re-render
-    // memory ratchet this project has already been bitten by once
+    // Fire `onUnsupported` ONLY on membership change — size first (cheap),
+    // then an early-exit membership scan. An unconditional fire would drive
+    // React `setState` per frame — the whole-tree re-render memory ratchet
     // (feedback_playhead_gate_and_tiers).
     let unsupportedChanged = this.unsupportedMedia.size !== prevUnsupported.size;
     if (!unsupportedChanged) {
@@ -1048,15 +992,11 @@ export class Compositor {
     return this.projectSummary?.duration_us ?? 0;
   }
 
-  /// Exact-rational "last frame start" for an exclusive `endUs`
-  /// boundary, against the current project's fps. Returns 0 if no
-  /// project / degenerate fps / `endUs <= 0`.
-  ///
-  /// Exposed so PlaybackEngine can park the playhead at the start of
-  /// the last visible frame on auto-pause without carrying its own
-  /// fps state, AND without the `endUs − pre-rounded-frameDurUs` drift
-  /// that would otherwise land 1 µs above the true frame-grid value
-  /// and confuse downstream lookups.
+  /// Exact-rational "last frame start" for an exclusive `endUs` boundary,
+  /// against the current project's fps. Returns 0 if no project / degenerate
+  /// fps / `endUs <= 0`. Exposed so PlaybackEngine can park the playhead on
+  /// auto-pause without carrying its own fps state or a drift-prone
+  /// pre-rounded frame duration (see `fpsNum`).
   lastFrameAnchorUs(endUs: number): number {
     return computeLastFrameStartUs(endUs, this.fpsNum, this.fpsDen);
   }
@@ -1136,15 +1076,10 @@ export class Compositor {
       const layer = this.layerById.get(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
       // Mirror compositeFrame's window check. `this.clips` retains every
-      // clip that's ever been active (it's only pruned in `setProject`
-      // when a layer is deleted); without this filter every accumulated
-      // entry would fire `requestFrameAt` on each tick with srcTUs
-      // computed from a clip not under the playhead, churning the
-      // decoder + ring with anchors for time-regions the user isn't
-      // viewing. With per-layer decoders (each clip owns its own
-      // SourceHandle / VideoDecoder / FrameRing) the "N clips of one
-      // mediaId fight over one decoder" failure mode is gone, but
-      // wasting work on out-of-window clips is still pointless.
+      // clip that's ever been active (pruned only in `setProject` on layer
+      // delete); without this filter every accumulated entry would fire
+      // `requestFrameAt` each tick for time-regions the user isn't viewing,
+      // churning the decoder + ring.
       if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us) continue;
       // Stale handle (pool reclaimed during idle): skip this tick.
       // The next `compositeFrame` runs immediately after this and its
@@ -1198,11 +1133,11 @@ export class Compositor {
     this.compositeMsMax = 0;
   }
 
-  /// E2E-only (preview-sw conformance / Task 8b runtime proof): snapshot the
-  /// decode source + bound sprite of the active VideoClip named by `layerId`
-  /// (or the first live clip when omitted). Returns null when no matching clip
-  /// is active. `sourceKind` is decided by `instanceof` so it is robust to the
-  /// minified E2E build. Read-only — never mutates compositor state.
+  /// E2E-only (preview-sw conformance): snapshot the decode source + bound
+  /// sprite of the active VideoClip named by `layerId` (or the first live
+  /// clip when omitted). Returns null when no matching clip is active.
+  /// `sourceKind` is decided by `instanceof` so it is robust to the minified
+  /// E2E build. Read-only — never mutates compositor state.
   activeClipProbe(layerId?: string): ActiveClipProbe | null {
     let clip: ActiveClip | undefined;
     if (layerId != null) {
@@ -1246,10 +1181,8 @@ export class Compositor {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    // No fire needed: the host's listener is going away with this Compositor
-    // (and `compositeFrame` is now a no-op per the `this.disposed` guard
-    // above), so there's no future frame that would read a stale set. Just
-    // drop the bookkeeping.
+    // No final `onUnsupported` fire: the host's listener dies with this
+    // Compositor and `compositeFrame` is now a no-op.
     this.unsupportedMedia.clear();
     for (const c of this.clips.values()) { c.sprite.dispose(); c.effects.dispose(); }
     this.clips.clear();
@@ -1281,9 +1214,6 @@ export class Compositor {
     this.audios.clear();
     this.audioGraph?.dispose();
     this.audioGraph = null;
-    if (this.audioHost && this.audioHost.parentNode) {
-      this.audioHost.parentNode.removeChild(this.audioHost);
-    }
     this.cancelAllSwaps();
     this.tenBitIngest?.dispose();
     this.tenBitIngest = null;
@@ -1310,10 +1240,8 @@ export class Compositor {
     if (!this.tenBitIngest) {
       const renderer = this.app.renderer;
       // `"gl" in renderer` distinguishes WebGLRenderer (exposes `gl`) from
-      // WebGPURenderer (exposes `gpu`). Both share the `Renderer` union type;
-      // this narrowing is sufficient and avoids importing WebGLRenderer as a
-      // value (it's already in the bundle via TenBitIngest, so no bloat either
-      // way — kept as type-import to match the rest of this file's style).
+      // WebGPURenderer (exposes `gpu`) without importing WebGLRenderer as a
+      // value.
       if (!("gl" in renderer)) {
         throw new Error(
           "TenBitFrame reached a non-WebGL renderer — 10-bit export requires the WebGL backend",
@@ -1466,9 +1394,8 @@ export class Compositor {
         const view = layer.params;
         const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
         if (!desc) continue;
-        // Capture the plan-time inputs in locals so the async render closure
-        // binds the values that produced THIS cacheKey, not whatever `this.fps*`
-        // is at raster time (which could drift if the project fps changes).
+        // Plan-time fps in locals — same closure-capture rationale as
+        // `updatePrewarmTargets`.
         const fpsNum = this.fpsNum;
         const fpsDen = this.fpsDen;
         const canonicalProps = desc.canonicalProps;
@@ -1587,10 +1514,7 @@ export class Compositor {
       // changes (a proxy landed, the engine flipped, or a runtime ffmpeg
       // failure), begin an overlap-swap; keep returning the existing clip so
       // the current frame stays on screen until the new handle holds the
-      // visible frame. Keying on engine+source+target (not URL) means a
-      // landed proxy can NEVER displace an already-decoding original — the
-      // resolver simply keeps returning `source: "original"`, so the key
-      // doesn't change (feedback_native_nle_conventions). Only a fully
+      // visible frame (key semantics: `ResolvedRendererSource`). Only a fully
       // resolved ("ok") result is swap-worthy; "pending"/"unsupported" leave
       // the existing clip alone.
       if (this.mode === "preview") {
@@ -1603,9 +1527,8 @@ export class Compositor {
     }
     const mediaId = layer.params.media_id;
     // Preview resolves the decode engine once here (ffmpeg vs webcodecs ×
-    // original vs proxy); export keeps today's single proxy path (D5 folds
-    // export onto the resolver too). `rsFromExportProxy` wraps the proxy URL in
-    // the same shape so this acquire path is shared.
+    // original vs proxy); export keeps its single proxy path, wrapped by
+    // `rsFromExportProxy` in the same shape so this acquire path is shared.
     const rs =
       this.mode === "preview"
         ? this.resolveSource(mediaId)
@@ -1616,13 +1539,10 @@ export class Compositor {
       return null;
     }
     if (rs.status === "unsupported") {
-      // No engine can decode this media at all — add it to THIS composite's
-      // unsupported set (reset at the start of `compositeFrame`'s layer
-      // sweep, fired to the host on membership change at the sweep's end)
-      // and skip the clip entirely. Export never wires `onUnsupported`, so
-      // this add is inert bookkeeping there (nothing ever reads it back out).
-      // Only ADD here — never fire, never remove; that's `compositeFrame`'s
-      // job so the set reflects "unsupported at THIS tUs".
+      // No engine can decode this media — record it and skip the clip. Only
+      // ADD here; reset + fire are `compositeFrame`'s job (see
+      // `unsupportedMedia`). Export never wires `onUnsupported`, so the add
+      // is inert there.
       this.unsupportedMedia.add(mediaId);
       return null;
     }
@@ -1631,15 +1551,8 @@ export class Compositor {
       // The next resolution (probe settling / proxy landing) will retry.
       return null;
     }
-    // Resolved to a real decode target: nothing to do for `unsupportedMedia`
-    // — this composite's sweep already reset the set, and not adding IS the
-    // "no longer unsupported" signal.
-    // Source color tags apply to ANY decode target for this media: the
-    // original carries them trivially, and a proxy/quick-proxy PRESERVES the
-    // source's colorimetry (the recipe never converts matrix/range). The
-    // decode target's own container tag still outranks this per-field in
-    // `withDefaultColorSpace`, so a self-describing (colr-tagged) proxy is
-    // unaffected; colr-less ones stop being misread as bt709/limited.
+    // Color tags apply to ANY decode target for this media — a proxy
+    // preserves the source's colorimetry (see `CompositorInit.sourceColor`).
     const sourceColor = this.sourceColor(mediaId);
     const sourceStartPtsUs = this.mediaById(mediaId)?.video_start_pts_us ?? this.mediaById(mediaId)?.start_pts_us ?? null;
     // Swap/revival identity (engine + source + decode target). Non-null: the
@@ -1683,17 +1596,14 @@ export class Compositor {
     source.onFirstFrame(() => {
       this.scheduleRepaint();
     });
-    // Sticky runtime failure: an ffmpeg-engine handle (`FfmpegSource`) that
-    // dies at runtime (GPU decode error, device loss, session crash, or a
-    // budget-rejected open) fires `onFatalError`. Mark the ffmpeg engine
-    // unusable for this media (sticky this session; `isFfmpegUnusable`) and
-    // schedule a repaint — the next `ensureClip` re-resolves via
-    // `resolveSource`: an "auto" setting falls through to webcodecs, a pinned
-    // "ffmpeg" setting resolves "unsupported" (routed to `onUnsupported`
-    // above). Either way the resolved key changes, so the no-flash swap above
-    // (the `existing` branch) rebuilds onto the new source. WebCodecs'
-    // `SourceHandle` has no `onFatalError` (its own downgrade-to-software
-    // machinery handles GPU decode errors internally), so this is a no-op there.
+    // Sticky runtime failure: an ffmpeg-engine handle that dies at runtime
+    // (GPU decode error, device loss, session crash, budget-rejected open)
+    // fires `onFatalError`. Mark the engine unusable for this media (sticky
+    // this session — `isFfmpegUnusable`) and repaint: the next `ensureClip`
+    // re-resolves, so "auto" falls through to webcodecs and a pinned "ffmpeg"
+    // resolves "unsupported". Either way the key changes and the no-flash
+    // swap rebuilds onto the new source. WebCodecs' `SourceHandle` has no
+    // `onFatalError` (it downgrades to software internally) — no-op there.
     if (source.onFatalError) {
       source.onFatalError((reason) => {
         markFfmpegUnusable(mediaId, reason);
@@ -1751,11 +1661,9 @@ export class Compositor {
       this.abandonSwap(clip.layerId);
     }
     const { swapLayerId, swapMediaId } = swapKeys(clip.layerId, clip.mediaId);
-    // Resolve color/start (and, for an ffmpeg-engine swap, codec/pixFmt/
-    // dimensions below) against the REAL media (`clip.mediaId`) even though we
-    // acquire under the synthetic `swapMediaId`: a proxy preserves the source
-    // colorimetry (its own colr tag still outranks this per-field), and
-    // ffmpeg decodes the original directly.
+    // Resolve color/start/codec facts against the REAL media (`clip.mediaId`)
+    // even though the handle is acquired under the synthetic `swapMediaId`
+    // (a proxy preserves source color — `CompositorInit.sourceColor`).
     const sourceColor = this.sourceColor(clip.mediaId);
     const m = this.mediaById(clip.mediaId);
     const sourceStartPtsUs = m?.video_start_pts_us ?? m?.start_pts_us ?? null;
@@ -1915,10 +1823,6 @@ export class Compositor {
       }
     }
     if (frame) clip.loggedNull = false;
-
-    // (Per-tick clip diagnostic removed; rAF tick milestones removed.
-    // Renderer is in steady state — bring them back only when a new
-    // class of bug surfaces.)
 
     // Keep transform semantics tied to the original media dimensions, not
     // the currently decoded proxy dimensions. Quick proxies may be 540p and

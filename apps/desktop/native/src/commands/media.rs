@@ -50,12 +50,11 @@ pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
     })
 }
 
-// `import_media` (the monolithic flag-off importer that wrote the Rust actor and
-// fanned out jobs in one call) was deleted in Phase 4b: the renderer + MCP route
-// `import_media` through the hybrid (probe_media / parse_subtitles napi compute →
-// TS-actor write), and the workspace copy + derivative jobs are kicked separately
-// (enqueue_workspace_copy / enqueue_jobs_for_media napi). `probe_media_item`
-// above stays — it is the compute half the `probe_media` napi reuses.
+// Import routes through the hybrid — `probe_media` / `parse_subtitles` napi
+// compute → TS-actor write — with the workspace copy + derivative jobs kicked
+// separately (enqueue_workspace_copy / enqueue_jobs_for_media napi). There is
+// no monolithic Rust importer; `probe_media_item` above is the compute half
+// the `probe_media` napi reuses.
 
 pub async fn import_cancel(backend: &Backend, media_id: String) -> Result<bool, String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;

@@ -52,11 +52,11 @@ const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
 // App-level startup notices the renderer PULLS on mount via the `app:notices`
 // IPC (see AppNotice in src/shared/ipc.ts). Collected here at startup, fetched
-// when the renderer is ready — a pull model so a notice can't be lost to the
-// fire-once-before-subscribe race the old `evt:app:notice` send had.
+// when the renderer is ready — a pull model, because a push send loses any
+// notice emitted before the renderer subscribes.
 const startupNotices: { level: string; code: string }[] = []
 
-// GPU identity for the HW capability lane (D4): vendor/device/driver — a
+// GPU identity for the HW capability lane: vendor/device/driver — a
 // driver update or GPU swap invalidates every cached HW verdict. `getGPUInfo`
 // payload shape varies by Electron version — the `catch -> 'gpu:unknown'`
 // guard makes a shape change degrade to "cache never hits," not a crash.
@@ -226,9 +226,9 @@ app.whenReady().then(async () => {
         mcpHostRef?.notifyChange(payload)
         return
       }
-      // `media:derivatives` write-back: when the TS actor is authoritative, apply
-      // the derivative patch to the TS actor instead of forwarding to the renderer.
-      // tsHost is module-scoped (set later); the closure captures it by reference.
+      // `media:derivatives` write-back: apply the derivative patch to the TS
+      // actor instead of forwarding to the renderer. tsHost is module-scoped
+      // (set later); the closure captures it by reference.
       if (event === 'media:derivatives') {
         // Synchronous (jobs-writeback is statically imported — type-only deps, no
         // eager actor construction) so the TSFN callback stays sync and can't race
@@ -240,18 +240,18 @@ app.whenReady().then(async () => {
           catch (e) { console.warn('[main] media:derivatives write-back threw', e) }
           return
         }
-        // flag-off: Rust is authoritative and never emits this event — fall through is defensive
+        // tsHost not constructed yet (boot window) — fall through is defensive
       }
       // `media:workspace_paths` write-back: the background import-copy job's
-      // path/hash result. Same seam shape as media:derivatives (Phase 3d-e) —
-      // apply to the TS actor under the flag instead of forwarding to the renderer.
+      // path/hash result. Same seam shape as media:derivatives — apply to the
+      // TS actor instead of forwarding to the renderer.
       if (event === 'media:workspace_paths') {
         if (tsHost) {
           try { applyWorkspacePathsEvent(tsHost.actor, payload as never) }
           catch (e) { console.warn('[main] media:workspace_paths write-back threw', e) }
           return
         }
-        // flag-off: Rust is authoritative and never emits this event — fall through is defensive
+        // tsHost not constructed yet (boot window) — fall through is defensive
       }
       mainWindow?.webContents.send('evt:' + event, payload)
     },
@@ -298,7 +298,7 @@ app.whenReady().then(async () => {
 
   // Construct the motif store + resolve the built-in dir once at boot.
   // Both are passed to the protocol handler and the capture singleton so
-  // captureMotifFrameB64 and registerMotifProtocol no longer need the backend.
+  // captureMotifFrameB64 and registerMotifProtocol don't need the backend.
   const motifStore = new UserMotifStore(path.join(app.getPath('userData'), 'motifs'))
   const motifBuiltinDir = builtinAssetDir()
   setMotifStore(motifStore)
@@ -371,7 +371,7 @@ app.whenReady().then(async () => {
     },
   }
 
-  // Rust compute facade for the native-compute → TS-write hybrids (Phase 3d-e):
+  // Rust compute facade for the native-compute → TS-write hybrids:
   // Rust probes/hashes/parses (no actor write); the TS host applies the write.
   const computeFacade = {
     probeMedia: (p: string) => backend!.probeMedia(p),
@@ -381,7 +381,7 @@ app.whenReady().then(async () => {
   }
 
   // Load built-in Motif sources once (manifest + relocated index.html) for the
-  // TS catalog/authoring surface (Phase 2). builtinMotifs reads from motifBuiltinDir.
+  // TS catalog/authoring surface. builtinMotifs reads from motifBuiltinDir.
   const { builtinMotifs } = await import('./motif/authoring.js')
   const motifBuiltins = builtinMotifs(motifBuiltinDir)
 
@@ -454,11 +454,9 @@ app.whenReady().then(async () => {
   tsHost.start()
   console.log('[main] TS state actor authoritative; MCP host starting')
 
-  // Stage-5 file watch (TS): on any disk change under <userData>/motifs/,
-  // refresh the actor catalog (so a disk-written Motif is placeable via
-  // add_motif) AND emit motifs:changed (renderer resync → ?v= host buster).
-  // Supersedes the Rust watcher (still live until Phase 4 deletes the feature;
-  // its duplicate emit is idempotent).
+  // Motif file watch: on any disk change under <userData>/motifs/, refresh
+  // the actor catalog (so a disk-written Motif is placeable via add_motif)
+  // AND emit motifs:changed (renderer resync → ?v= host buster).
   motifWatcher = spawnMotifWatcher(motifStore.root(), () => {
     tsHost?.refreshMotifCatalog()
     mainWindow?.webContents.send('evt:motifs:changed', {})
@@ -505,15 +503,15 @@ app.whenReady().then(async () => {
       return null
     }
     // Single-media compute: the TS actor owns state, so resolve the MediaItem
-    // here and forward it — the Rust fns take it as a call argument (Phase 1).
+    // here and forward it — the Rust fns take it as a call argument.
     if (tsHost && SINGLE_MEDIA_CHANNELS.has(channel)) {
       const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
       const resolved = resolveSingleMediaArgs((args ?? {}) as { mediaId?: string }, pool)
       const json = await backend!.invoke(channel, JSON.stringify(resolved))
       return JSON.parse(json)
     }
-    // Audio export: the TS actor owns state, so inject the full project here and
-    // forward it — the Rust fns take it as a call argument (Phase 2).
+    // Audio export: the TS actor owns state, so inject the full project here
+    // and forward it — the Rust fns take it as a call argument.
     if (tsHost && EXPORT_PROJECT_CHANNELS.has(channel)) {
       const merged = injectProjectArgs((args ?? {}) as Record<string, unknown>, tsHost.actor.snapshot())
       const json = await backend!.invoke(channel, JSON.stringify(merged))
@@ -567,13 +565,13 @@ app.whenReady().then(async () => {
     version: nd.version,
   }))
 
-  // Machine capability probe (D3): runs the SW one-frame decode probe (Task 12),
+  // Machine capability probe: runs the SW one-frame decode probe,
   // derives the format-class key from what it learned, and consults/updates the
   // per-machine cache above. KNOWN LIMITATION: previewSwProbe is SYNCHRONOUS and
   // UNINTERRUPTIBLE — it blocks the main thread until the one-frame decode
   // finishes. Acceptable because it only ever runs on import-vetted local media
   // (ffprobe'd at import time), so practical hang risk is low; no interrupt
-  // callback is built here (out of scope for this task).
+  // callback exists.
   ipcMain.handle('decodeCap:probeSw', (_e, a: { path: string }) => {
     if (!nd.backend) return { ok: false, classKey: null, reason: 'component unavailable' }
     const envKey = nd.version ?? 'unknown'
@@ -590,10 +588,10 @@ app.whenReady().then(async () => {
     return { ok: probe.ok, classKey, reason: probe.reason ?? null }
   })
 
-  // Machine capability probe (D4): runs the HW (d3d11va) one-frame decode
-  // probe (Task 16) for a caller-supplied classKey. Unlike the SW probe, the
+  // Machine capability probe: runs the HW (d3d11va) one-frame decode
+  // probe for a caller-supplied classKey. Unlike the SW probe, the
   // HW probe doesn't derive the class key itself — it's expensive enough that
-  // the renderer (Task 17) computes classKey from MediaSummary BEFORE deciding
+  // the renderer computes classKey from MediaSummary BEFORE deciding
   // to probe, so an already-cached verdict never pays for a decode. envKey is
   // GPU identity (vendor/device/driver): a driver update or GPU swap
   // invalidates every cached HW verdict for this machine.

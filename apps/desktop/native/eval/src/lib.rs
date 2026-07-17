@@ -460,8 +460,8 @@ pub fn role_gain_linear(gain_db: f64) -> f32 {
 
 /// Equal-power pan law as a 2×2 mix matrix `[a, b, c, d]`, applied as
 /// `out_l = a·l + b·r`, `out_r = c·l + d·r`. Branch-matched to Chromium's
-/// `StereoPannerNode` (`third_party/blink/.../stereo_panner.cc`), the node the
-/// renderer used to delegate to. `channels <= 1` (mono) routes the single input
+/// `StereoPannerNode` (`third_party/blink/.../stereo_panner.cc`) so the matrix
+/// reproduces WebAudio's pan exactly. `channels <= 1` (mono) routes the single input
 /// through the `l` slot: `[cos, 0, sin, 0]`. `libm` trig in f64→f32 so native +
 /// wasm agree bit-for-bit (see `db_to_linear`). Shared by the export mixer
 /// (`audio/mix.rs`) and the renderer's preview matrix mixer (`render/audio/
@@ -689,8 +689,8 @@ mod tests {
     }
 
     // ---- color: Rgba8 OkLab + premultiplied-alpha lerp ----
-    // Structural / endpoint / gamma-sanity only; exact OkLab golden values are
-    // Task 3.
+    // Structural / endpoint / gamma-sanity only — exact OkLab golden values
+    // are not pinned here.
 
     #[test]
     fn rgba8_lerp_endpoints_return_inputs() {

@@ -4,13 +4,12 @@
 // session so the underlying D3D11 NV12 textures stay reusable. Per-frame
 // traffic is only frameReady/consumeAck pokes — never a per-frame import/send.
 //
-// Why persistent, not per-frame: per-frame sendSharedTexture is the stale
-// IPC-bound path (Result-4 persistent-import model in the Stage-2 design). A
-// benchmark built on it would report IPC latency as "native throughput".
+// Why persistent, not per-frame: per-frame sendSharedTexture is IPC-bound —
+// a benchmark built on it reports IPC latency as "native throughput".
 //
 // Windows-only: the addon's previewGpu* methods throw "preview-gpu not built"
 // elsewhere. This module never inspects the platform — it just delegates; the
-// selection gate upstream (Task 7) decides when a GPU session is even opened.
+// selection gate upstream decides when a GPU session is even opened.
 import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
@@ -29,10 +28,10 @@ interface GpuSession {
 
 const sessions = new Map<string, GpuSession>()
 
-/// Conservative v1 HW-session cap (spec Risk 3: bench data is single-source).
-/// 3 sessions × 3 slots × ~4.5MB/1080p-NV12-slot ≈ 40MB VRAM steady-state;
-/// widen only on measurement. Over-budget opens throw the typed reason the
-/// renderer's resolver maps to a per-source downgrade to the next tier (Task 18).
+/// Conservative HW-session cap (bench data is single-source; widen only on
+/// measurement). 3 sessions × 3 slots × ~4.5MB/1080p-NV12-slot ≈ 40MB VRAM
+/// steady-state. Over-budget opens throw the typed reason the renderer's
+/// resolver maps to a per-source downgrade to the next tier.
 const MAX_HW_SESSIONS = 3
 
 /// Live HW-session count (for the renderer's budget-aware resolution + tests).
@@ -56,7 +55,7 @@ export async function openPreviewGpu(
 ): Promise<{ width: number; height: number; poolSize: number }> {
   // Budget gate FIRST — before any native allocation. The throw rejects the
   // `previewGpu:open` invoke; the renderer's resolver treats 'hw-budget-exceeded'
-  // as a sticky downgrade off tier 1 (Task 18) rather than a hard failure.
+  // as a sticky downgrade off tier 1 rather than a hard failure.
   if (sessions.size >= MAX_HW_SESSIONS) throw new Error('hw-budget-exceeded')
   const info = backend.previewGpuOpen(streamId, path, poolSize)
   const imported: SharedTextureImported[] = []

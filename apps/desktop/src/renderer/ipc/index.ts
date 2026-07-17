@@ -41,9 +41,9 @@ export interface MediaSummary {
   width: number | null;
   height: number | null;
   size_bytes: number;
-  /// Phase C.2 (workspace-redesign): false when path_abs doesn't resolve
-  /// to a real file. UI surfaces a "missing source" badge; project still
-  /// opens; layers referencing the missing item render placeholders.
+  /// False when path_abs doesn't resolve to a real file. UI surfaces a
+  /// "missing source" badge; project still opens; layers referencing the
+  /// missing item render placeholders.
   available: boolean;
   /// Where preview/export decode from + proxy readiness. See decodeRoute.ts.
   decode_route: DecodeRoute;
@@ -310,9 +310,8 @@ export type AnimTrack<T> =
   | { mode: "Static"; value: T }
   | { mode: "Keyframed"; value: Keyframe<T>[] };
 
-/// Static read of a track — the editing-surface view of "the value".
-/// Mirrors the semantics the Rust flattener used to apply at the IPC
-/// boundary (Static → value; Keyframed → first keyframe, else fallback).
+/// Static read of a track — the editing-surface view of "the value"
+/// (Static → value; Keyframed → first keyframe, else fallback).
 /// UI panels read through this; the RENDER path must use
 /// `render/animated.ts`'s time-aware `resolveAnimated` instead.
 export function trackStatic<T>(track: AnimTrack<T>, fallback: T): T {
@@ -507,7 +506,7 @@ export async function projectOpen(path: string): Promise<void> {
 }
 
 // ============================================================
-// Workspace lifecycle (Phase B — docs/data-model.md)
+// Workspace lifecycle (docs/data-model.md)
 // ============================================================
 
 export interface CanvasPreset {
@@ -704,7 +703,7 @@ export async function agentSessionEnd(): Promise<void> {
 }
 
 // ============================================================
-// Background import worker (Phase C.1 — docs/data-model.md Q6)
+// Background import worker (docs/data-model.md)
 // ============================================================
 
 export type ImportStatus =
@@ -730,8 +729,8 @@ export const IMPORT_EVENTS = {
 
 /// Per-media derivative job events. Emitted by `jobs/{proxy,thumbnails,
 /// waveform}.rs` so the UI can react to background generation finishing.
-/// Phase C.3 uses started/complete/error to track an in-flight count for
-/// a small "Generating derivatives…" indicator near the project bar.
+/// started/complete/error drive an in-flight count for the small
+/// "Generating derivatives…" indicator near the project bar.
 export const MEDIA_JOB_EVENTS = {
   started: "media:job_started",
   complete: "media:job_complete",

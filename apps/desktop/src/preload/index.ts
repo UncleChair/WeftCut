@@ -166,9 +166,9 @@ const api: WeftcutApi = {
     },
     // Hand a MessagePort to the main world so it can receive decoded frames.
     // A contextBridge function MAY be called from the main world and MAY itself
-    // call window.postMessage with a transfer list (Task 1: only PASSING a port
-    // as a bridge ARGUMENT fails). Task 7 attaches its `message` listener BEFORE
-    // calling this, then grabs `ev.ports[0]`.
+    // call window.postMessage with a transfer list (only PASSING a port
+    // as a bridge ARGUMENT fails). The renderer attaches its `message` listener
+    // BEFORE calling this, then grabs `ev.ports[0]`.
     requestPort(): void {
       const ch = new MessageChannel()
       mainPort = ch.port1
@@ -241,10 +241,10 @@ const api: WeftcutApi = {
     status: () => ipcRenderer.invoke('decodeComponent:status') as Promise<DecodeComponentStatus>,
   },
 
-  // Machine capability probe (D3): runs the SW decode probe + consults the
+  // Machine capability probe: runs the SW decode probe + consults the
   // per-machine capability cache for the probed file's format class.
-  // probeHw (D4) is the GPU-keyed HW-lane counterpart — caller supplies the
-  // classKey (Task 17 derives it from MediaSummary).
+  // probeHw is the GPU-keyed HW-lane counterpart — caller supplies the
+  // classKey (the renderer derives it from MediaSummary).
   decodeCap: {
     probeSw: (path: string) =>
       ipcRenderer.invoke('decodeCap:probeSw', { path }) as Promise<DecodeCapabilityProbeResult>,
@@ -256,7 +256,7 @@ const api: WeftcutApi = {
 // ---------------------------------------------------------------------------
 // Native GPU-decode preview receiver (Windows). This wiring lives in the
 // isolated preload world — the ONLY world where setSharedTextureReceiver is
-// available and where the imported textures land (Task 1 spike). It bridges
+// available and where the imported textures land. It bridges
 // received frames to the renderer main world over a MessagePort.
 // ---------------------------------------------------------------------------
 

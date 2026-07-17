@@ -161,7 +161,7 @@ export interface E2EHook {
     props?: Record<string, unknown>;
     settings?: Partial<ExportSettings>;
   }): Promise<void>;
-  /// Drive the REAL `MotifSprite` (Task A) over a built-in motif at two
+  /// Drive the REAL `MotifSprite` over a built-in motif at two
   /// layer-relative times and read back the interior pixel of each bound
   /// raster. Exercises the full sprite chain in real Electron renderer:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
@@ -285,13 +285,13 @@ export interface E2EHook {
   /// mounted. Dev/e2e only — this is what proves the countdown's CDP pixels
   /// reach the live compositor.
   weftcutSampleComposite(x: number, y: number): Promise<CompositeSample>;
-  /// Preview-sw conformance (Task 8b runtime proof): snapshot the active
+  /// Preview-sw conformance: snapshot the active
   /// VideoClip's decode source + bound sprite off the LIVE Compositor. Proves
   /// the Compositor acquired a `FfmpegSource` on its software lane (native
   /// software decode) for a native-sw ProRes clip and that a decoded frame
   /// reached the sprite. Pass the clip's `layerId`; omit for the first live
   /// clip. Returns null until a clip is active. Delegates to the PixiPreview
-  /// bridge (Dev/e2e only). `builtFromKey` (Task 10) additionally exposes the
+  /// bridge (Dev/e2e only). `builtFromKey` additionally exposes the
   /// resolver's `${engine}:${source}:${target}` identity so the decode-engine
   /// e2e spec can assert the resolved ENGINE/SOURCE, not just the coarser
   /// `sourceKind`.
@@ -350,7 +350,7 @@ export interface E2EHook {
   /// reject with `hw-budget-exceeded` and surface it via onFatalError (the
   /// resolver then downgrades that source off tier 1). Dev/e2e only.
   decodeBenchBudgetProbe(args: { sourcePath: string; count: number }): Promise<BudgetProbeResult>;
-  /// HW→SW in-place fallback (Task 13): a REAL (unforced) counterpart to
+  /// HW→SW in-place fallback: a REAL (unforced) counterpart to
   /// `decodeBenchBudgetProbe` — opens `count` ffmpeg-engine sources on an
   /// HW-eligible clip WITHOUT forcing a lane, so `pickInitialLane`'s real
   /// probe puts the first `MAX_HW_SESSIONS` on hardware exactly as production
@@ -781,7 +781,7 @@ export function installMotifHook(): void {
     if (!previewBridge) throw new Error("weftcutSampleComposite: preview bridge not registered");
     return previewBridge.sampleComposite(x, y);
   };
-  // Preview-sw conformance (Task 8b): read the active clip's decode source +
+  // Preview-sw conformance: read the active clip's decode source +
   // sprite off the live Compositor, capture the composited frame, and expose
   // the persisted decode route — the three facts the spec needs to prove the
   // native software-decode preview path end-to-end.

@@ -19,9 +19,8 @@ export interface PixiExportResult {
 }
 
 /// Transport interface exposed by `<PixiPreview ref={...}>`. Mirrors
-/// `PreviewSurfaceHandle` so the parent's imperative handle can
-/// forward play/pause/seek straight through to the underlying PIXI
-/// `PlaybackEngine` when the flag is on.
+/// `PreviewSurfaceHandle` so the parent's imperative handle forwards
+/// play/pause/seek straight through to the underlying PIXI `PlaybackEngine`.
 export interface PixiPreviewHandle {
   play(): void;
   pause(): void;
@@ -38,9 +37,9 @@ export interface PixiPreviewHandle {
   /// frame counters after video chunks have streamed through `writeChunk`;
   /// rejects on failure.
   ///
-  /// App.tsx owns the save dialog, temp file, audio export, and final
-  /// mux/transcode so the existing ExportPanel progress UI can drive the
-  /// full pipeline.
+  /// `useExportFlow` owns the save dialog, temp file, audio export, and
+  /// final mux/transcode so the ExportPanel progress UI can drive the full
+  /// pipeline.
   runExport(opts: {
     onProgress?: (encoded: number, total: number) => void;
     /// Full encoder config (codec/dims/bitrate/bitrateMode/framerate). When
