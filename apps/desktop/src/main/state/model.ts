@@ -139,7 +139,7 @@ function defaultComposition(): Composition {
     duration_pinned: false, sample_rate: 48000, channels: 2, color_space: 'Bt709',
     background: { r: 0, g: 0, b: 0, a: 255 } }
 }
-function defaultSettings(): ProjectSettings {
+export function defaultSettings(): ProjectSettings {
   return { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
     history_capacity: 200, auto_pair_audio_on_import: true, auto_delete_empty_tracks: true,
     prefer_proxies: false, proxy_overrides: {} }

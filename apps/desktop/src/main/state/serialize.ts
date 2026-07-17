@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION, type Group, type Project } from './model'
+import { SCHEMA_VERSION, defaultSettings, type Group, type Project } from './model'
 
 function serializeGroup(g: Group): unknown {
   const out: Record<string, unknown> = { id: g.id, members: [...g.members].sort() }
@@ -46,5 +46,12 @@ export function parseProject(json: unknown): Project {
   requireArray('groups')
   requireObject('audio_roles')
   requireObject('settings')
+  // Additive settings fields (prefer_proxies/proxy_overrides, added later WITHOUT
+  // a schema bump) deserialize as absent on projects saved before they existed.
+  // Rust's #[serde(default)] used to backfill them on load; the TS parse path must
+  // do the same, or a consumer that reads a field as non-optional (e.g.
+  // get_project_settings → the renderer proxy store) hands `undefined` downstream
+  // and a `settings.proxy_overrides[id]` read throws mid-render. Existing keys win.
+  o.settings = { ...defaultSettings(), ...(o.settings as Record<string, unknown>) }
   return json as Project
 }
