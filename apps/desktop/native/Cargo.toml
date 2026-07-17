@@ -44,6 +44,10 @@ uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
 blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 parking_lot = "0.12"
+# Workspace copies land under NFC-normalized names (jobs/import.rs): macOS
+# hands out NFD filenames, and an NFD name that survives a byte-preserving
+# transfer looks identical to the recorded NFC path_rel yet never matches it.
+unicode-normalization = "0.1"
 
 # Errors / logs
 anyhow = "1"

@@ -329,6 +329,19 @@ app.whenReady().then(async () => {
     rm: (p: string) => { fs.rmSync(p, { force: true }) },
   }
 
+  // Directory-scan/stat/rename shell for the open-time media relink self-heal.
+  const relinkFs = {
+    exists: (p: string) => fs.existsSync(p),
+    listDir: (d: string) => { try { return fs.readdirSync(d) as string[] } catch { return [] } },
+    statFile: (p: string) => {
+      try {
+        const s = fs.statSync(p)
+        return s.isFile() ? { size: s.size, mtimeSecs: Math.floor(s.mtimeMs / 1000) } : null
+      } catch { return null }
+    },
+    rename: (from: string, to: string) => { fs.renameSync(from, to) },
+  }
+
   // Napi facade for workspace bookkeeping — delegates workspace/job ops to the
   // Backend instance; recents ops delegate to the TS recents store.
   const napiFacade = {
@@ -419,6 +432,7 @@ app.whenReady().then(async () => {
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
     fileExists: (p) => fs.existsSync(p),
     fs: nodeFs,
+    relinkFs,
     join: path.join,
     napi: napiFacadeWithCache,
     compute: computeFacade,

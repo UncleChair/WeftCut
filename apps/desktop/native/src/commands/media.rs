@@ -21,7 +21,12 @@ pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
     let (file_size, file_mtime) = io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
     let metadata = io::probe::probe_metadata(&source_buf);
     let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
-    let label = source_buf.file_name().map(|n| n.to_string_lossy().to_string());
+    // NFC-normalized: a macOS-origin NFD label renders identically but breaks
+    // string matching downstream (search palette, path_rel comparison).
+    let label = source_buf.file_name().map(|n| {
+        use unicode_normalization::UnicodeNormalization;
+        n.to_string_lossy().nfc().collect::<String>()
+    });
     Ok(MediaItem {
         id: media_id,
         label,

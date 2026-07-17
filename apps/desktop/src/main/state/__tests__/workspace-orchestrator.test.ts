@@ -68,6 +68,55 @@ describe('openProject', () => {
     expect(d.napi.pushRecent).not.toHaveBeenCalled()
   })
 
+  const managedItem: MediaItem = {
+    id: 'm1', label: null,
+    path_abs: '/elsewhere/电子榨菜.mp3', path_rel: 'Media/电子榨菜.mp3', kind: 'Audio',
+    metadata: { duration_us: 1_000_000 }, file_hash_blake3: 'b3:AAAA', file_size: 4, file_mtime: 1,
+    imported_at: '2026-01-01T00:00:00Z',
+    decode_route: { route: 'bypass' },
+    conform_path: null, waveform_path: null, thumbnails_dir: null,
+  }
+  const managedJson = serializeProjectToJson({ ...project, media_pool: { m1: managedItem } })
+
+  it('relinks a mangled media filename when the relink dep is present, and logs via onRelink', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: managedJson }); fs.dirs.add('/ws')
+    // The workspace copy survived the transfer under a garbled name —
+    // "电子榨菜"'s UTF-8 bytes decoded as GBK, the real flag-less-zip artifact.
+    const disk = new Map([['/ws/Media/鐢靛瓙姒ㄨ彍.mp3', 'AAAA']])
+    const relink = {
+      fs: {
+        exists: (p: string) => disk.has(p),
+        listDir: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/')).map((p) => p.slice(d.length + 1)),
+        statFile: (p: string) => (disk.has(p) ? { size: disk.get(p)!.length, mtimeSecs: 9 } : null),
+        rename: (from: string, to: string) => { disk.set(to, disk.get(from)!); disk.delete(from) },
+      },
+      join: posixJoin,
+      hashFile: async (p: string) => `b3:${disk.get(p) ?? ''}`,
+    }
+    const reports: unknown[] = []
+    let swapped: any
+    const d = deps({ fs, relink, onRelink: (r) => reports.push(r) })
+    d.actor.replaceState = vi.fn((p) => { swapped = p })
+    await openProject(d, '/ws')
+    expect(swapped.media_pool.m1.path_abs).toBe('/ws/Media/电子榨菜.mp3')  // healed + renamed back
+    expect(disk.has('/ws/Media/电子榨菜.mp3')).toBe(true)
+    expect(reports).toHaveLength(1)
+  })
+
+  it('opens the un-healed project when the relink pass itself throws', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: managedJson }); fs.dirs.add('/ws')
+    const relink = {
+      fs: { exists: (): boolean => { throw new Error('boom') }, listDir: () => [], statFile: () => null, rename: () => {} },
+      join: posixJoin,
+      hashFile: async () => '',
+    }
+    const reports: unknown[] = []
+    const d = deps({ fs, relink, onRelink: (r) => reports.push(r) })
+    await openProject(d, '/ws')
+    expect(d.actor.replaceState).toHaveBeenCalledOnce()
+    expect(reports).toHaveLength(0)
+  })
+
   it('deletes stale quick proxies returned by the loader', async () => {
     const quickProxyPath = '/ws/Cache/quick/m1.mp4'
     const item: MediaItem = {

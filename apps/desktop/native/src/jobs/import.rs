@@ -384,12 +384,16 @@ struct CopyResult {
 }
 
 /// Pick a destination filename in `<workspace>/Media/`. Prefers the source
-/// basename; if that name is already taken on disk, prefix with the first
-/// 8 hex chars of the source's blake3 hash to disambiguate.
+/// basename NFC-normalized (a macOS source hands NFD names; the copy we own
+/// must byte-match the `path_rel` recorded in project.json after any
+/// byte-preserving transfer — see relink.ts); if that name is already taken
+/// on disk, prefix with the first 8 hex chars of the source's blake3 hash to
+/// disambiguate.
 fn pick_dest_filename(media_dir: &Path, source: &Path, hash_hint: Option<&str>) -> PathBuf {
+    use unicode_normalization::UnicodeNormalization;
     let base = source
         .file_name()
-        .map(PathBuf::from)
+        .map(|n| PathBuf::from(n.to_string_lossy().nfc().collect::<String>()))
         .unwrap_or_else(|| PathBuf::from("media"));
     if !media_dir.join(&base).exists() {
         return base;
@@ -515,6 +519,18 @@ mod tests {
             Some("deadbeef00112233"),
         );
         assert_eq!(picked, PathBuf::from("clip.mp4"));
+    }
+
+    #[test]
+    fn pick_dest_filename_normalizes_nfd_to_nfc() {
+        let tmp = TempDir::new().unwrap();
+        // "デート.mp4" with the katakana ダクテン decomposed (NFD), as macOS
+        // filesystems hand it out: テ + U+3099 combining voiced sound mark.
+        let nfd = "テ\u{3099}ート.mp4";
+        let nfc = "デート.mp4";
+        assert_ne!(nfd, nfc); // sanity: distinct byte sequences
+        let picked = pick_dest_filename(tmp.path(), Path::new(nfd), None);
+        assert_eq!(picked.to_string_lossy(), nfc);
     }
 
     #[test]

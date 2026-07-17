@@ -12,6 +12,7 @@ import type { IdGen } from './ids'
 import type { Project } from './model'
 import { blankProject } from './model'
 import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE } from './persistence'
+import { relinkMissingMedia, type RelinkDeps, type RelinkReport } from './relink'
 import { serializeProject } from './serialize'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
@@ -51,6 +52,13 @@ export interface OrchestratorDeps {
   /** Open-time derivative re-fan-out. A no-op in 3c-ii-b; 3c-ii-c injects the
    *  live kick-off (paired with the event-based jobs write-back). See plan S2. */
   enqueueDerivatives?: (project: Project) => void
+  /** Open-time relink-by-content self-heal (relink.ts) for workspace-managed
+   *  media whose on-disk filename changed in transit. Optional — omitted in
+   *  tests / hosts without a native hash, and the open skips healing. */
+  relink?: RelinkDeps
+  /** Surfaced only when the heal did something (or left items missing) —
+   *  the host turns it into a LogBus entry. */
+  onRelink?: (report: RelinkReport) => void
 }
 
 /** project_open (persistence.rs:50-108). Pre-check sentinels → load (3b) →
@@ -64,9 +72,21 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   if (!fs.exists(file)) throw new Error('NOT_PROJECT_FOLDER')
 
   const text = fs.readFile(file)
-  const { project, quickProxiesToDelete } = loadProjectFromJson(text, { dir, join })
+  const loaded = loadProjectFromJson(text, { dir, join })
+  let project = loaded.project
+  const { quickProxiesToDelete } = loaded
   // Best-effort: never fail the open on a leftover proxy we couldn't remove.
   for (const p of quickProxiesToDelete) { try { fs.rm(p) } catch { /* ignore */ } }
+
+  // Relink-by-content self-heal (relink.ts). Best-effort: a heal crash must
+  // never block the open — the un-healed project still loads (MissingMedia UI).
+  if (deps.relink) {
+    try {
+      const healed = await relinkMissingMedia(project, dir, deps.relink)
+      project = healed.project
+      if (healed.report.healed.length > 0 || healed.report.missing.length > 0) deps.onRelink?.(healed.report)
+    } catch { /* keep the un-healed project */ }
+  }
 
   // Re-point cache + workspace BEFORE the state swap, so project:changed
   // consumers see the workspace, not the boot fallback (persistence.rs:71-79).

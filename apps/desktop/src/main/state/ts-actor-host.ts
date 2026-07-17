@@ -6,6 +6,7 @@ import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs } from './workspace-orchestrator'
+import type { RelinkFs, RelinkReport } from './relink'
 import { serializeProjectToJson } from './persistence'
 import { agentSessionEnd } from './agent-session-seam'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
@@ -31,6 +32,9 @@ export interface TsActorHostDeps {
   fileExists: (absPath: string) => boolean
   /** Combined OrchestratorFs & AutosaveFs adapter — node:fs in production, in-memory in tests. */
   fs: OrchestratorFs & AutosaveFs
+  /** Directory-scan/stat/rename shell for the open-time media relink self-heal
+   *  (relink.ts). Optional → openProject skips healing (tests, flag-off). */
+  relinkFs?: RelinkFs
   /** node:path.join — injected for testability. */
   join: (...parts: string[]) => string
   /** Backend napi facade for workspace bookkeeping. */
@@ -160,7 +164,35 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   })
 
   const enqueueDerivatives = makeEnqueueDerivatives(deps.napi)
-  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives }
+  // Open-time relink self-heal: content identity comes from the same BLAKE3
+  // napi the import hash pass uses; the report lands as a status-log row.
+  // Emits are best-effort — a failing emitLog must never abort the open.
+  const onRelink = (report: RelinkReport): void => {
+    try {
+      if (report.healed.length > 0) {
+        deps.emitLog?.({
+          level: 'info',
+          category: { kind: 'Project' },
+          source: { kind: 'System' },
+          message: `Relinked ${report.healed.length} media file(s) by content`,
+          details: { kind: 'Relink', healed: report.healed },
+        })
+      }
+      if (report.missing.length > 0) {
+        deps.emitLog?.({
+          level: 'warn',
+          category: { kind: 'Project' },
+          source: { kind: 'System' },
+          message: `${report.missing.length} media file(s) missing from the workspace`,
+          details: { kind: 'Relink', missing: report.missing },
+        })
+      }
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (relink)', err) }
+  }
+  const relink = deps.relinkFs
+    ? { fs: deps.relinkFs, join: deps.join, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
+    : undefined
+  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
