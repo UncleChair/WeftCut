@@ -95,12 +95,38 @@ describe('openProject', () => {
     }
     const reports: unknown[] = []
     let swapped: any
-    const d = deps({ fs, relink, onRelink: (r) => reports.push(r) })
-    d.actor.replaceState = vi.fn((p) => { swapped = p })
+    const d = deps({ fs, relink })
+    // Pushes into d.calls so the emit's position in the open sequence is
+    // assertable — it must land AFTER commitWorkspace's LogBus rotate.
+    d.onRelink = (r) => { reports.push(r); d.calls.push('relinkLog') }
+    d.actor.replaceState = vi.fn((p) => { swapped = p; d.calls.push('replaceState') })
     await openProject(d, '/ws')
     expect(swapped.media_pool.m1.path_abs).toBe('/ws/Media/电子榨菜.mp3')  // healed + renamed back
     expect(disk.has('/ws/Media/电子榨菜.mp3')).toBe(true)
     expect(reports).toHaveLength(1)
+    // The report emits after the workspace commit (per-workspace LogBus has
+    // rotated) and the state swap — never during the heal, where the row
+    // would land in the doomed pre-open bus and silently vanish.
+    expect(d.calls).toEqual(['commit:/ws', 'replaceState', 'relinkLog', 'recent:/ws:Demo'])
+  })
+
+  it('never lets a throwing onRelink abort the open', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: managedJson }); fs.dirs.add('/ws')
+    const disk = new Map([['/ws/Media/鐢靛瓙姒ㄨ彍.mp3', 'AAAA']])
+    const relink = {
+      fs: {
+        exists: (p: string) => disk.has(p),
+        listDir: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/')).map((p) => p.slice(d.length + 1)),
+        statFile: (p: string) => (disk.has(p) ? { size: disk.get(p)!.length, mtimeSecs: 9 } : null),
+        rename: (from: string, to: string) => { disk.set(to, disk.get(from)!); disk.delete(from) },
+      },
+      join: posixJoin,
+      hashFile: async (p: string) => `b3:${disk.get(p) ?? ''}`,
+    }
+    const d = deps({ fs, relink, onRelink: () => { throw new Error('emit failed') } })
+    await openProject(d, '/ws')
+    expect(d.actor.replaceState).toHaveBeenCalledOnce()
+    expect(d.napi.pushRecent).toHaveBeenCalledOnce()
   })
 
   it('opens the un-healed project when the relink pass itself throws', async () => {

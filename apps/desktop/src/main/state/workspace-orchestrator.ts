@@ -57,13 +57,15 @@ export interface OrchestratorDeps {
    *  tests / hosts without a native hash, and the open skips healing. */
   relink?: RelinkDeps
   /** Surfaced only when the heal did something (or left items missing) —
-   *  the host turns it into a LogBus entry. */
+   *  the host turns it into a LogBus entry. Fired AFTER commitWorkspace
+   *  (which rotates the per-workspace LogBus), never during the heal. */
   onRelink?: (report: RelinkReport) => void
 }
 
 /** project_open (persistence.rs:50-108). Pre-check sentinels → load (3b) →
- *  delete stale quick proxies → commit_workspace (pre-broadcast) → replace_state
- *  → push_recent → (deferred) derivative re-fan-out. */
+ *  delete stale quick proxies → relink heal → commit_workspace (pre-broadcast)
+ *  → replace_state → onRelink report → push_recent → (deferred) derivative
+ *  re-fan-out. */
 export async function openProject(deps: OrchestratorDeps, dir: string): Promise<void> {
   const { actor, napi, fs, join } = deps
   // Typed sentinels for the two common failure modes (renderer matches them).
@@ -80,11 +82,12 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
 
   // Relink-by-content self-heal (relink.ts). Best-effort: a heal crash must
   // never block the open — the un-healed project still loads (MissingMedia UI).
+  let relinkReport: RelinkReport | null = null
   if (deps.relink) {
     try {
       const healed = await relinkMissingMedia(project, dir, deps.relink)
       project = healed.project
-      if (healed.report.healed.length > 0 || healed.report.missing.length > 0) deps.onRelink?.(healed.report)
+      if (healed.report.healed.length > 0 || healed.report.missing.length > 0) relinkReport = healed.report
     } catch { /* keep the un-healed project */ }
   }
 
@@ -92,6 +95,10 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // consumers see the workspace, not the boot fallback (persistence.rs:71-79).
   await napi.commitWorkspace(dir)
   actor.replaceState(project)                 // throws CommandFailure on invalid; matches Rust replace_state Err
+  // Surface the relink report only NOW: the LogBus is per-workspace and
+  // commitWorkspace ROTATES it, so an emit during the heal lands in the doomed
+  // pre-open bus (or none on a fresh launch) and silently vanishes.
+  if (relinkReport) { try { deps.onRelink?.(relinkReport) } catch { /* best-effort, never blocks the open */ } }
   await napi.pushRecent(dir, project.metadata.name)
 
   // Re-fan-out derivative jobs (proxies/thumbnails/waveforms). Deferred to
