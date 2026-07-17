@@ -1,3 +1,10 @@
+/** Dockview component ids for the single WeftCut Panel + tab renderers. Kept
+ *  here (not in the adapter) so the persistence layer can synthesize Panel
+ *  definitions on restore without importing the adapter — keeping the module
+ *  graph one-directional (adapter → workspaceLayout, never the reverse). */
+export const DOCK_COMPONENT_ID = "weftcut-panel";
+export const DOCK_TAB_COMPONENT_ID = "weftcut-tab";
+
 export const PANEL_KINDS = [
   "media",
   "preview",

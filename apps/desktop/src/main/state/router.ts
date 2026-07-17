@@ -14,6 +14,7 @@ export type Route =
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
   | { kind: 'agentSessionEnd' } // agentSessionEnd seam: endSlot + unlockHistory
   | { kind: 'appSettings' }   // app-level prefs store, owned in TS main (config-dir)
+  | { kind: 'workspace' }     // app-level Dock arrangement document, owned in TS main (config-dir)
   | { kind: 'viewState' }     // per-workspace view.json store, owned in TS main
   | { kind: 'exportSettings' } // per-workspace export.json store, owned in TS main
   | { kind: 'keybindings' }   // per-user keybinding overrides, owned in TS main (config-dir)
@@ -68,6 +69,13 @@ export function routeChannel(channel: string): Route {
     case 'agent_session_end': return { kind: 'agentSessionEnd' }
     case 'app_settings_get':
     case 'app_settings_set': return { kind: 'appSettings' }
+    case 'workspace_get':
+    case 'workspace_set_current':
+    case 'workspace_set_active':
+    case 'workspace_save_baseline':
+    case 'workspace_create_profile':
+    case 'workspace_rename_profile':
+    case 'workspace_delete_profile': return { kind: 'workspace' }
     case 'view_state_get':
     case 'view_state_set': return { kind: 'viewState' }
     case 'export_settings_get':

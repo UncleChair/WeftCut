@@ -48,6 +48,9 @@ let mainWindow: BrowserWindow | null = null
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
 let motifWatcher: MotifWatcher | null = null
+// Held at module scope so the before-quit handler can flush the debounced
+// Workspace-layout write before the process exits.
+let workspaceStore: import('./workspace.js').WorkspaceStore | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
@@ -412,6 +415,11 @@ app.whenReady().then(async () => {
     path: path.join(app.getPath('userData'), 'keybindings.json'),
     dir: app.getPath('userData'),
   })
+  // App-level Workspace document (Dock arrangement) — persists
+  // <userData>/workspaces.json. Debounced writes; flushed on quit (below).
+  const { createWorkspaceStore } = await import('./workspace.js')
+  const workspace = createWorkspaceStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'workspaces.json'), dir: app.getPath('userData') })
+  workspaceStore = workspace
   // Recent-projects list + startup prefs — persists <userData>/recents.json.
   const { createRecentsStore } = await import('./recents.js')
   const recents = createRecentsStore({
@@ -452,6 +460,7 @@ app.whenReady().then(async () => {
     exportSettings,
     keybindings,
     recents,
+    workspace,
   })
   tsHost.start()
   console.log('[main] TS state actor authoritative; MCP host starting')
@@ -937,6 +946,9 @@ app.on('window-all-closed', () => {
 let quitFlushed = false
 app.on('before-quit', (event) => {
   motifWatcher?.close(); motifWatcher = null
+  // Flush the debounced Workspace-layout write synchronously — an arrangement
+  // change made inside the debounce window would otherwise be dropped on quit.
+  workspaceStore?.flush()
   if (quitFlushed || !tsHost) return
   event.preventDefault()
   quitFlushed = true

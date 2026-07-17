@@ -39,7 +39,10 @@ const ALL_CHANNELS: readonly string[] = [
   'generate_quick_proxy',
   'get_media_thumbnail', 'get_waveform_peaks',
   // backend stores (config-dir, not the project actor)
-  'app_settings_get', 'app_settings_set', 'view_state_get', 'view_state_set', 'export_settings_get',
+  'app_settings_get', 'app_settings_set', 'workspace_get', 'workspace_set_current',
+  'workspace_set_active', 'workspace_save_baseline', 'workspace_create_profile',
+  'workspace_rename_profile', 'workspace_delete_profile',
+  'view_state_get', 'view_state_set', 'export_settings_get',
   'export_settings_set', 'workspace_dir', 'recents_list', 'recents_remove',
   'recents_get_reopen_on_launch', 'recents_set_reopen_on_launch', 'recents_most_recent',
   'recents_last_new_project_parent', 'keybindings_get', 'keybindings_set', 'keybindings_reset_all',
@@ -138,6 +141,14 @@ describe('routeChannel', () => {
   it('routes view_state_get/set to the viewState TS handler (migrated off rust)', () => {
     expect(routeChannel('view_state_get').kind).toBe('viewState')
     expect(routeChannel('view_state_set').kind).toBe('viewState')
+  })
+  it('routes every workspace channel to the workspace TS handler (app-level Dock arrangement + named profiles)', () => {
+    for (const ch of [
+      'workspace_get', 'workspace_set_current', 'workspace_set_active',
+      'workspace_save_baseline', 'workspace_create_profile',
+      'workspace_rename_profile', 'workspace_delete_profile',
+    ])
+      expect(routeChannel(ch).kind, ch).toBe('workspace')
   })
   it('routes all 6 recents channels to the recents TS handler (migrated off rust)', () => {
     for (const ch of ['recents_list', 'recents_remove', 'recents_get_reopen_on_launch', 'recents_set_reopen_on_launch', 'recents_most_recent', 'recents_last_new_project_parent'])

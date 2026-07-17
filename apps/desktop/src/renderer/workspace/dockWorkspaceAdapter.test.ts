@@ -204,6 +204,75 @@ function fakeDockview(width = 1_000, height = 800) {
       maximizedGroup = undefined;
       layout.fire();
     }),
+    toJSON: vi.fn(() => ({
+      grid: {
+        root: {
+          type: "branch",
+          data: groups.map((group) => ({
+            type: "leaf",
+            data: {
+              views: group.panels.map((panel) => panel.id),
+              activeView: group.activePanel?.id,
+              id: group.id,
+            },
+            size: 100,
+          })),
+          size: 100,
+        },
+        orientation: "HORIZONTAL",
+        width,
+        height,
+      },
+      panels: Object.fromEntries(
+        [...panels.keys()].map((id) => [id, { id }]),
+      ),
+      activeGroup: activeGroup?.id,
+    })),
+    fromJSON: vi.fn(
+      (data: { grid?: { root?: unknown } }, _options?: { reuseExistingPanels: boolean }) => {
+        panels.clear();
+        groups.splice(0);
+        activePanel = undefined;
+        activeGroup = undefined;
+        maximizedGroup = undefined;
+        const walk = (node: unknown) => {
+          if (!node || typeof node !== "object") return;
+          const n = node as { type?: string; data?: unknown };
+          if (n.type === "branch") {
+            for (const child of (n.data as unknown[]) ?? []) walk(child);
+            return;
+          }
+          const leaf = n.data as { views?: string[]; activeView?: string; id?: string };
+          const group: FakeGroup = {
+            id: leaf.id ?? `group-${++groupSequence}`,
+            panels: [],
+            activePanel: undefined,
+            api: { isMaximized: vi.fn(() => maximizedGroup === group) },
+          };
+          groups.push(group);
+          for (const id of leaf.views ?? []) {
+            const panel: AddedPanel = { id, group, api: {} as AddedPanel["api"] };
+            panel.api = {
+              setActive: vi.fn(() => activate(panel)),
+              setSize: vi.fn(),
+              close: vi.fn(() => close(panel)),
+              maximize: vi.fn(),
+              isMaximized: vi.fn(() => maximizedGroup === group),
+              exitMaximized: vi.fn(),
+            };
+            group.panels.push(panel);
+            panels.set(id, panel);
+          }
+          group.activePanel =
+            group.panels.find((panel) => panel.id === leaf.activeView) ??
+            group.panels[0];
+        };
+        walk(data?.grid?.root);
+        activePanel = groups[0]?.activePanel;
+        activeGroup = groups[0];
+        layout.fire();
+      },
+    ),
   };
 
   return {
@@ -424,6 +493,113 @@ describe("DockWorkspaceAdapter", () => {
     expect(adapter.getSnapshot().openPanels).toEqual(
       new Set(EDITING_OPEN_PANEL_KINDS),
     );
+  });
+
+  it("serializes the live Editing tree as a versioned, non-empty snapshot", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    const snapshot = adapter.serialize();
+    expect(snapshot.empty).toBe(false);
+    expect(snapshot.version).toBe(1);
+    expect(Object.keys((snapshot.dockview as { panels: object }).panels).sort()).toEqual(
+      [...EDITING_OPEN_PANEL_KINDS].sort(),
+    );
+  });
+
+  it("serializes an all-closed workspace as the intentionally empty state, keeping closed placements", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    for (const kind of EDITING_OPEN_PANEL_KINDS) adapter.closePanel(kind);
+
+    const snapshot = adapter.serialize();
+    expect(snapshot).toMatchObject({ version: 1, empty: true, dockview: null });
+    // Closed Panels keep their last placement so they reopen deterministically.
+    expect(Object.keys(snapshot.placements).sort()).toEqual(
+      [...EDITING_OPEN_PANEL_KINDS].sort(),
+    );
+  });
+
+  it("restores a non-empty snapshot through Dockview panel reuse", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    const snapshot = adapter.serialize();
+
+    expect(adapter.restore(snapshot)).toBe(true);
+    expect(dock.rawApi.fromJSON).toHaveBeenCalledWith(snapshot.dockview, {
+      reuseExistingPanels: true,
+    });
+    expect(adapter.getSnapshot().openPanels).toEqual(
+      new Set(EDITING_OPEN_PANEL_KINDS),
+    );
+  });
+
+  it("restores the intentionally empty state by clearing the tree", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    expect(
+      adapter.restore({ version: 1, empty: true, dockview: null, placements: {} }),
+    ).toBe(true);
+    expect(dock.rawApi.clear).toHaveBeenCalledOnce();
+    expect(dock.rawApi.fromJSON).not.toHaveBeenCalled();
+    expect(adapter.getSnapshot().empty).toBe(true);
+  });
+
+  it("round-trips serialize → restore back to the same open Panels", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    adapter.closePanel("effect");
+    adapter.openPanel("caption");
+    const before = adapter.getSnapshot().openPanels;
+
+    const snapshot = adapter.serialize();
+    adapter.restore(snapshot);
+
+    expect(adapter.getSnapshot().openPanels).toEqual(before);
+  });
+
+  it("reports a failed restore without leaving the caller stranded", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    dock.rawApi.fromJSON.mockImplementationOnce(() => {
+      throw new Error("corrupt tree");
+    });
+
+    expect(
+      adapter.restore({
+        version: 1,
+        empty: false,
+        dockview: { grid: { root: {} } } as never,
+        placements: {},
+      }),
+    ).toBe(false);
+  });
+
+  it("restores closed-Panel placement so a reopened Panel returns to its remembered spot", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    // Effect's remembered spot is the attribute tab group at index 1.
+    adapter.closePanel("effect");
+    const snapshot = adapter.serialize();
+
+    // Simulate a restart into a fresh adapter over a cleared dock.
+    dock.rawApi.clear();
+    const restarted = new DockWorkspaceAdapter(dock.api);
+    expect(restarted.restore(snapshot)).toBe(true);
+    dock.added.length = 0;
+
+    restarted.openPanel("effect");
+    expect(dock.added.find((panel) => panel.id === "effect")).toMatchObject({
+      position: { referencePanel: "attribute", direction: "within", index: 1 },
+    });
   });
 
   it("suppresses Dock overlays for Files and business MIME without consuming panel drags", () => {

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(cleanup);
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -15,11 +17,12 @@ vi.mock("../settings/appSettingsStore", () => ({
   toggleDisplayMode: vi.fn(),
 }));
 
-import { ViewMenu } from "./ViewMenu";
+import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
 import {
   EMPTY_DOCK_WORKSPACE_SNAPSHOT,
   type DockWorkspaceController,
 } from "../workspace/dockWorkspaceAdapter";
+import { EDITING_WORKSPACE_ID } from "../../shared/workspace";
 
 function controller(): DockWorkspaceController {
   return {
@@ -34,8 +37,33 @@ function controller(): DockWorkspaceController {
     toggleMaximize: vi.fn(),
     restoreMaximizedPanel: vi.fn(),
     resetWorkspace: vi.fn(),
+    serialize: vi.fn(() => ({ version: 1, empty: true, dockview: null, placements: {} })),
+    restore: vi.fn(() => true),
   };
 }
+
+function workspaceProfiles(
+  overrides: Partial<ViewMenuWorkspaces> = {},
+): ViewMenuWorkspaces {
+  return {
+    profiles: [
+      { id: EDITING_WORKSPACE_ID, name: "Editing", isBuiltin: true },
+      { id: "ws-1", name: "Cutting", isBuiltin: false },
+    ],
+    activeId: "ws-1",
+    activeIsBuiltin: false,
+    onSwitch: vi.fn(),
+    onSave: vi.fn(),
+    onSaveAs: vi.fn(),
+    onReset: vi.fn(),
+    onRename: vi.fn(),
+    onDelete: vi.fn(),
+    ...overrides,
+  };
+}
+
+const openView = () =>
+  fireEvent.click(screen.getByRole("button", { name: /View/ }));
 
 describe("ViewMenu workspace controls", () => {
   it("focuses or reopens singleton Panels and exposes close/reset recovery", async () => {
@@ -43,6 +71,7 @@ describe("ViewMenu workspace controls", () => {
     render(
       <ViewMenu
         workspaceController={workspaceController}
+        workspaceProfiles={null}
         workspaceSnapshot={{
           openPanels: new Set(["preview", "timeline"]),
           activePanel: "preview",
@@ -52,20 +81,81 @@ describe("ViewMenu workspace controls", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /View/ }));
+    openView();
     fireEvent.click(await screen.findByText("Caption"));
     expect(workspaceController.openPanel).toHaveBeenCalledWith("caption");
 
-    fireEvent.click(screen.getByRole("button", { name: /View/ }));
+    openView();
     fireEvent.click(await screen.findByText("Media Pool"));
     expect(workspaceController.openPanel).toHaveBeenCalledWith("media");
 
-    fireEvent.click(screen.getByRole("button", { name: /View/ }));
+    openView();
     fireEvent.click(await screen.findByText("Close Active Panel"));
     expect(workspaceController.closeActivePanel).toHaveBeenCalledOnce();
 
-    fireEvent.click(screen.getByRole("button", { name: /View/ }));
+    // With no profiles wired yet, Reset falls back to the adapter's built-in rebuild.
+    openView();
     fireEvent.click(await screen.findByText("Reset Workspace"));
     expect(workspaceController.resetWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("lists Editing + custom Workspaces and drives switch, save, save-as, rename, delete, reset", async () => {
+    const profiles = workspaceProfiles();
+    render(
+      <ViewMenu
+        workspaceController={controller()}
+        workspaceProfiles={profiles}
+        workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
+      />,
+    );
+
+    // Both workspaces are listed; switching activates the other one.
+    openView();
+    expect(await screen.findByText("Cutting")).toBeTruthy(); // custom profile listed
+    fireEvent.click(await screen.findByText("Editing"));
+    expect(profiles.onSwitch).toHaveBeenCalledWith(EDITING_WORKSPACE_ID);
+
+    openView();
+    fireEvent.click(await screen.findByText("Save Workspace"));
+    expect(profiles.onSave).toHaveBeenCalledOnce();
+
+    openView();
+    fireEvent.click(await screen.findByText("Save Workspace As…"));
+    expect(profiles.onSaveAs).toHaveBeenCalledOnce();
+
+    openView();
+    fireEvent.click(await screen.findByText("Rename Workspace…"));
+    expect(profiles.onRename).toHaveBeenCalledWith("ws-1");
+
+    openView();
+    fireEvent.click(await screen.findByText("Delete Workspace"));
+    expect(profiles.onDelete).toHaveBeenCalledWith("ws-1");
+
+    // Reset now goes through the profiles API (restore the saved baseline).
+    openView();
+    fireEvent.click(await screen.findByText("Reset Workspace"));
+    expect(profiles.onReset).toHaveBeenCalledOnce();
+  });
+
+  it("disables Save / Rename / Delete while the built-in Editing profile is active", async () => {
+    const profiles = workspaceProfiles({ activeId: EDITING_WORKSPACE_ID, activeIsBuiltin: true });
+    render(
+      <ViewMenu
+        workspaceController={controller()}
+        workspaceProfiles={profiles}
+        workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
+      />,
+    );
+
+    openView();
+    // Base UI renders disabled items with aria-disabled; clicks must be inert.
+    for (const label of ["Save Workspace", "Rename Workspace…", "Delete Workspace"]) {
+      const item = await screen.findByText(label);
+      expect(item.closest('[aria-disabled="true"]')).not.toBeNull();
+    }
+    // Save As stays available on the built-in Workspace.
+    expect(
+      (await screen.findByText("Save Workspace As…")).closest('[aria-disabled="true"]'),
+    ).toBeNull();
   });
 });

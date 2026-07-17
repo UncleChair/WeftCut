@@ -7,9 +7,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// output is apps/desktop/out/main/index.js → three levels up.
 export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 
-export async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
+export async function launchApp(
+  opts: { userDataDir?: string } = {},
+): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
-    args: [MAIN],
+    // A fixed `--user-data-dir` lets a spec relaunch over the same userData so
+    // app-level state (e.g. <userData>/workspaces.json) survives a restart.
+    args: opts.userDataDir ? [MAIN, `--user-data-dir=${opts.userDataDir}`] : [MAIN],
     // The elevated-run notice is a modal dialog; suppress it so it can't block the
     // (often elevated) e2e/CI Electron process. `env` replaces process.env, so
     // spread it to keep PATH etc. that the app needs.

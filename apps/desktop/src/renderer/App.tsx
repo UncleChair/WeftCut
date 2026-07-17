@@ -76,6 +76,12 @@ import {
   type DockWorkspaceController,
   type DockWorkspaceSnapshot,
 } from "./workspace/dockWorkspaceAdapter";
+import { useWorkspacePersistence } from "./workspace/useWorkspacePersistence";
+import {
+  WorkspaceNameDialog,
+  type WorkspaceNameMode,
+} from "./app/WorkspaceNameDialog";
+import type { ViewMenuWorkspaces } from "./app/ViewMenu";
 
 interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
@@ -137,6 +143,39 @@ export function App({ onCloseProject }: AppProps) {
     },
     [],
   );
+
+  // Restore the persisted Dock arrangement on startup, persist every layout
+  // change back to the app-level Workspace document (debounced in main), and
+  // expose the named-Workspace operations the View menu drives.
+  const workspaceProfiles = useWorkspacePersistence(workspaceController);
+
+  // Save As / Rename raise a name prompt; App owns its open state so the menu
+  // (which closes on activation) doesn't have to host a dialog.
+  const [workspaceNameDialog, setWorkspaceNameDialog] = useState<
+    { mode: WorkspaceNameMode; id: string; initialName: string } | null
+  >(null);
+
+  const viewMenuWorkspaces = useMemo<ViewMenuWorkspaces | null>(() => {
+    if (!workspaceProfiles) return null;
+    return {
+      profiles: workspaceProfiles.profiles,
+      activeId: workspaceProfiles.activeId,
+      activeIsBuiltin: workspaceProfiles.activeIsBuiltin,
+      onSwitch: workspaceProfiles.switchTo,
+      onSave: workspaceProfiles.save,
+      onReset: workspaceProfiles.reset,
+      onSaveAs: () =>
+        setWorkspaceNameDialog({ mode: "save-as", id: "", initialName: "" }),
+      onRename: (id) =>
+        setWorkspaceNameDialog({
+          mode: "rename",
+          id,
+          initialName:
+            workspaceProfiles.profiles.find((p) => p.id === id)?.name ?? "",
+        }),
+      onDelete: workspaceProfiles.remove,
+    };
+  }, [workspaceProfiles]);
 
   useEffect(() => {
     if (!workspaceController) {
@@ -683,6 +722,7 @@ export function App({ onCloseProject }: AppProps) {
           onOpenSearch={() => setPaletteOpen(true)}
           workspaceController={workspaceController}
           workspaceSnapshot={workspaceSnapshot}
+          workspaceProfiles={viewMenuWorkspaces}
         />
       </div>
 
@@ -692,6 +732,23 @@ export function App({ onCloseProject }: AppProps) {
           onControllerReady={handleWorkspaceControllerReady}
         />
       </main>
+
+      {/* Save Workspace As / Rename Workspace name prompt. */}
+      {workspaceNameDialog && workspaceProfiles && (
+        <WorkspaceNameDialog
+          mode={workspaceNameDialog.mode}
+          initialName={workspaceNameDialog.initialName}
+          onCancel={() => setWorkspaceNameDialog(null)}
+          onSubmit={(name) => {
+            if (workspaceNameDialog.mode === "save-as") {
+              workspaceProfiles.saveAs(name);
+            } else {
+              workspaceProfiles.rename(workspaceNameDialog.id, name);
+            }
+            setWorkspaceNameDialog(null);
+          }}
+        />
+      )}
 
       {/* One modal overlay: the settings form while idle, the progress panel
           once an export is running (exportState set). Keeping the dialog open

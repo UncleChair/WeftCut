@@ -5,12 +5,21 @@ import {
 } from "dockview-react";
 
 import {
+  DOCK_COMPONENT_ID,
+  DOCK_TAB_COMPONENT_ID,
   PANEL_REGISTRY,
   type PanelKind,
 } from "./panelRegistry";
+import {
+  WEFTCUT_LAYOUT_VERSION,
+  type PanelPlacement,
+  type PanelPlacements,
+  type WeftCutLayout,
+} from "./workspaceLayout";
 
-export const DOCK_COMPONENT_ID = "weftcut-panel";
-export const DOCK_TAB_COMPONENT_ID = "weftcut-tab";
+// Re-exported for existing importers (DockWorkspace, tests) that reach for these
+// through the adapter; the canonical home is now panelRegistry (see the note there).
+export { DOCK_COMPONENT_ID, DOCK_TAB_COMPONENT_ID };
 export const WEFTCUT_MEDIA_MIME_PREFIX = "application/x-weftcut-";
 
 export interface DockViewport {
@@ -24,11 +33,6 @@ interface Disposable {
 
 interface DockPanelParams {
   kind: PanelKind;
-}
-
-interface PanelPlacement {
-  siblings: PanelKind[];
-  index: number;
 }
 
 export interface DockWorkspaceSnapshot {
@@ -51,6 +55,14 @@ export interface DockWorkspaceController {
   toggleMaximize(kind?: PanelKind): void;
   restoreMaximizedPanel(): void;
   resetWorkspace(): void;
+  /** Capture the live Dock Tree as a validated, versioned WeftCut layout
+   *  snapshot. Transient maximize/focus/hover state is excluded. */
+  serialize(): WeftCutLayout;
+  /** Replace the live layout from a normalized snapshot, reusing open Panel
+   *  instances. Returns false (leaving the tree untouched-or-cleared) if the
+   *  snapshot cannot be applied, so callers can fall through to the next
+   *  fallback level. */
+  restore(layout: WeftCutLayout): boolean;
 }
 
 export const EMPTY_DOCK_WORKSPACE_SNAPSHOT: DockWorkspaceSnapshot = {
@@ -275,6 +287,59 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     this.lastPlacements.clear();
     this.hoveredPanel = null;
     this.initializeEditingLayout();
+  }
+
+  serialize(): WeftCutLayout {
+    const placements = this.serializePlacements();
+    // An intentionally empty Workspace is a first-class, valid snapshot —
+    // distinct from missing (null) or corrupt data on the persistence side. Its
+    // placements still carry the closed Panels' remembered spots.
+    if (this.api.totalPanels === 0) {
+      return { version: WEFTCUT_LAYOUT_VERSION, empty: true, dockview: null, placements };
+    }
+    // Dockview only ever holds known singleton Panels here, so toJSON is already
+    // canonical; the read path (normalizeLayout) is where corruption is repaired.
+    // Maximize is a runtime overlay, not grid geometry, so it never lands in the
+    // serialized tree and is never re-applied on restore.
+    return {
+      version: WEFTCUT_LAYOUT_VERSION,
+      empty: false,
+      dockview: this.api.toJSON(),
+      placements,
+    };
+  }
+
+  restore(layout: WeftCutLayout): boolean {
+    try {
+      if (this.api.hasMaximizedGroup()) this.api.exitMaximizedGroup();
+      // Seed the recovery map from persisted placements first; captureOpenPlacements
+      // then refreshes the entries for Panels the restored tree actually opens,
+      // leaving closed Panels' remembered spots intact.
+      this.lastPlacements.clear();
+      for (const [kind, placement] of Object.entries(layout.placements)) {
+        if (placement) this.lastPlacements.set(kind as PanelKind, placement);
+      }
+      if (layout.empty || !layout.dockview) {
+        this.api.clear();
+      } else {
+        this.api.fromJSON(layout.dockview, { reuseExistingPanels: true });
+      }
+      this.hoveredPanel = null;
+      this.captureOpenPlacements();
+      this.emitChange();
+      return true;
+    } catch (error) {
+      console.warn("[dock-workspace] layout restore failed:", error);
+      return false;
+    }
+  }
+
+  private serializePlacements(): PanelPlacements {
+    const placements: PanelPlacements = {};
+    for (const [kind, placement] of this.lastPlacements) {
+      placements[kind] = { siblings: [...placement.siblings], index: placement.index };
+    }
+    return placements;
   }
 
   dispose(): void {

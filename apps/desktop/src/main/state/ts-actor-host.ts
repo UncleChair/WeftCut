@@ -22,6 +22,7 @@ import { viewStateDefaults, type ViewState } from '../../shared/view-state'
 import type { ExportSettingsStore } from '../export-settings'
 import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
+import type { WorkspaceStore } from '../workspace'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -87,6 +88,10 @@ export interface TsActorHostDeps {
   /** Recent-projects list + startup prefs (config-dir JSON, owned in TS main). Optional → the
    *  'recents' route throws if a renderer hits it without one wired. */
   recents?: RecentsStore
+  /** App-level Workspace document (Dock arrangement; config-dir JSON, owned in TS
+   *  main). Optional → the 'workspace' route throws if a renderer hits it without
+   *  one wired. */
+  workspace?: WorkspaceStore
 }
 
 interface PersistenceHandlers {
@@ -355,6 +360,35 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         const after = store.apply(patch)
         deps.send('app_settings:changed', after)
         return after
+      }
+      case 'workspace': {
+        const store = deps.workspace
+        if (!store) return reject('workspace: store not configured')
+        // Every workspace op is opaque to the Project actor, so none of these can
+        // dirty the Project or enter undo history. Layout slots stay opaque — the
+        // renderer validates them.
+        switch (channel) {
+          case 'workspace_get': return store.get()
+          case 'workspace_set_current':
+            // Buffer + debounce (main flushes on quit / before a profile switch).
+            store.setCurrent((args as { current?: unknown }).current ?? null)
+            return null
+          case 'workspace_set_active':
+            return store.setActive((args as { id: string }).id)
+          case 'workspace_save_baseline':
+            return store.saveBaseline()
+          case 'workspace_create_profile': {
+            const a = args as { name: string; current?: unknown }
+            return store.createProfile(a.name, a.current ?? null)
+          }
+          case 'workspace_rename_profile': {
+            const a = args as { id: string; name: string }
+            return store.renameProfile(a.id, a.name)
+          }
+          case 'workspace_delete_profile':
+            return store.deleteProfile((args as { id: string }).id)
+        }
+        return reject(`workspace: unhandled channel ${channel}`)
       }
       case 'viewState': {
         const store = deps.viewState

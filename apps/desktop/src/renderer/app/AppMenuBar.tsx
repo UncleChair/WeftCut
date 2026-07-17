@@ -14,7 +14,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
-import { ViewMenu } from "./ViewMenu";
+import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
 import { openPerformanceMonitor } from "../render/performanceMonitorWindow";
 import type {
   DockWorkspaceController,
@@ -44,6 +44,7 @@ interface AppMenuBarProps {
   onOpenSearch: () => void;
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
+  workspaceProfiles: ViewMenuWorkspaces | null;
 }
 
 interface DevMenuProps {
@@ -102,6 +103,7 @@ export function AppMenuBar({
   onOpenSearch,
   workspaceController,
   workspaceSnapshot,
+  workspaceProfiles,
 }: AppMenuBarProps) {
   const { t, i18n } = useTranslation();
 
@@ -192,6 +194,7 @@ export function AppMenuBar({
           <ViewMenu
             workspaceController={workspaceController}
             workspaceSnapshot={workspaceSnapshot}
+            workspaceProfiles={workspaceProfiles}
           />
 
 

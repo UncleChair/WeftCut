@@ -673,6 +673,69 @@ export const APP_SETTINGS_EVENTS = {
   changed: "app_settings:changed",
 } as const;
 
+// ============================================================
+// App-level Workspace document (Dock arrangement + named profiles).
+// Lives at `<userData>/workspaces.json`, owned by main. The renderer reads it
+// once on startup to restore the layout and writes the active profile's current
+// arrangement on every layout change; main debounces the disk write and flushes
+// on quit. The layout slots are opaque here — the DockWorkspace adapter owns the
+// schema. The named-profile operations (switch/save/save-as/rename/delete)
+// commit immediately and return the resulting document.
+// ============================================================
+
+// Single-sourced in src/shared/workspace.ts (main owns persistence; renderer
+// consumes). Imported locally for the wrappers below + re-exported for call sites.
+import type {
+  WorkspaceDocument,
+  WorkspaceProfile,
+} from "../../shared/workspace";
+export type { WorkspaceDocument, WorkspaceProfile };
+
+export async function workspaceGet(): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_get");
+}
+
+/// Autosave the ACTIVE profile's current Dock arrangement (opaque). Debounced +
+/// flushed on quit in main.
+export async function workspaceSetCurrent(current: unknown): Promise<void> {
+  return invoke<void>("workspace_set_current", { current });
+}
+
+/// Switch the active Workspace profile. Flushes the outgoing profile's buffered
+/// current first, then activates `id`. Returns the resulting document.
+export async function workspaceSetActive(id: string): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_set_active", { id });
+}
+
+/// Save Workspace: promote the active profile's current layout to its saved reset
+/// baseline. No-op on the immutable built-in Editing profile.
+export async function workspaceSaveBaseline(): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_save_baseline");
+}
+
+/// Save Workspace As: create a new custom profile from the current arrangement
+/// (seeds both its current layout and its reset baseline) and activate it.
+export async function workspaceCreateProfile(
+  name: string,
+  current: unknown,
+): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_create_profile", { name, current });
+}
+
+/// Rename a custom profile. No-op on the built-in Editing profile.
+export async function workspaceRenameProfile(
+  id: string,
+  name: string,
+): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_rename_profile", { id, name });
+}
+
+/// Delete a custom profile; if it was active, Editing becomes active. No-op on
+/// the built-in Editing profile.
+export async function workspaceDeleteProfile(id: string): Promise<WorkspaceDocument> {
+  return invoke<WorkspaceDocument>("workspace_delete_profile", { id });
+}
+
 export async function projectRestoreCheckpoint(checkpointId: string): Promise<void> {
   return invoke<void>("project_restore_checkpoint", { checkpointId });
 }

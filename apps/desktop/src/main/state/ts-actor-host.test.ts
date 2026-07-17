@@ -9,6 +9,8 @@ import { createViewStateStore } from '../view-state'
 import { createExportSettingsStore } from '../export-settings'
 import { createKeybindingsStore } from '../keybindings'
 import { createRecentsStore } from '../recents'
+import { createWorkspaceStore } from '../workspace'
+import { EDITING_WORKSPACE_ID, activeWorkspaceProfile, type WorkspaceDocument } from '../../shared/workspace'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the Rust project:changed payload shape', () => {
@@ -70,6 +72,8 @@ describe('createTsActorHost — persistence-route integration', () => {
       exportSettings: createExportSettingsStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
       keybindings: createKeybindingsStore({ fs: memFs, path: '/cfg/keybindings.json', dir: '/cfg' }),
       recents: createRecentsStore({ fs: memFs, path: '/cfg/recents.json', dir: '/cfg' }),
+      // debounceMs 0 + immediate timer → writes land synchronously in tests.
+      workspace: createWorkspaceStore({ fs: memFs, path: '/cfg/workspaces.json', dir: '/cfg', debounceMs: 0, timer: { set: (cb: () => void) => { cb(); return null }, clear: () => {} } }),
     }
 
     return { deps, vfs, napiCalls, sent }
@@ -156,6 +160,80 @@ describe('createTsActorHost — persistence-route integration', () => {
     await host.handleInvoke('app_settings_set', { patch: { tail_snap_strength_px: 20 } })
     const got = await host.handleInvoke('app_settings_get', {}) as { tail_snap_strength_px: number }
     expect(got.tail_snap_strength_px).toBe(20)
+    host.stop()
+  })
+
+  it('workspace_set_current persists the active profile layout and workspace_get reads it back across a restart', async () => {
+    const { deps, vfs } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    const layout = { version: 1, empty: false, dockview: { grid: { root: { type: 'leaf', data: { views: ['preview'] } } } } }
+    await host.handleInvoke('workspace_set_current', { current: layout })
+    expect(vfs['/cfg/workspaces.json']).toBeDefined()
+    const got = await host.handleInvoke('workspace_get', {}) as WorkspaceDocument
+    expect(got.activeId).toBe(EDITING_WORKSPACE_ID)
+    expect(activeWorkspaceProfile(got).current).toEqual(layout)
+    expect(activeWorkspaceProfile(got).saved).toBeNull()
+    host.stop()
+
+    // A fresh host over the same on-disk document restores the same current.
+    const restart = createTsActorHost(deps)
+    restart.start()
+    const afterRestart = await restart.handleInvoke('workspace_get', {}) as WorkspaceDocument
+    expect(activeWorkspaceProfile(afterRestart).current).toEqual(layout)
+    restart.stop()
+  })
+
+  it('workspace profile CRUD (save-as / switch / save / delete) persists across a restart', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+
+    // Save As from the live Editing arrangement → a custom profile becomes active.
+    const cutLayout = { version: 1, empty: false, dockview: { grid: { root: { type: 'leaf', data: { views: ['timeline'] } } } } }
+    const created = await host.handleInvoke('workspace_create_profile', { name: 'Cutting', current: cutLayout }) as WorkspaceDocument
+    expect(created.profiles.map((p) => p.name)).toEqual(['Editing', 'Cutting'])
+    const cutId = created.activeId
+    expect(cutId).not.toBe(EDITING_WORKSPACE_ID)
+
+    // Edit the custom current, then Save promotes it to the reset baseline.
+    await host.handleInvoke('workspace_set_current', { current: { version: 1, empty: true, dockview: null } })
+    const saved = await host.handleInvoke('workspace_save_baseline', {}) as WorkspaceDocument
+    expect(activeWorkspaceProfile(saved).saved).toEqual({ version: 1, empty: true, dockview: null })
+
+    // Switch back to Editing.
+    const switched = await host.handleInvoke('workspace_set_active', { id: EDITING_WORKSPACE_ID }) as WorkspaceDocument
+    expect(switched.activeId).toBe(EDITING_WORKSPACE_ID)
+    host.stop()
+
+    // Restart: the custom profile + its baseline + the active selection survive.
+    const restart = createTsActorHost(deps)
+    restart.start()
+    const afterRestart = await restart.handleInvoke('workspace_get', {}) as WorkspaceDocument
+    expect(afterRestart.activeId).toBe(EDITING_WORKSPACE_ID)
+    const cutting = afterRestart.profiles.find((p) => p.id === cutId)!
+    expect(cutting.name).toBe('Cutting')
+    expect(cutting.saved).toEqual({ version: 1, empty: true, dockview: null })
+
+    // Deleting the custom profile leaves just Editing.
+    const deleted = await restart.handleInvoke('workspace_delete_profile', { id: cutId }) as WorkspaceDocument
+    expect(deleted.profiles.map((p) => p.id)).toEqual([EDITING_WORKSPACE_ID])
+    restart.stop()
+  })
+
+  it('workspace_set_current does not dirty the Project or its undo history', async () => {
+    const { deps } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+    await host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'ws', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
+    const before = await host.handleInvoke('project_summary', {}) as unknown
+    const historyBefore = host.actor.historyStatus()
+
+    await host.handleInvoke('workspace_set_current', { current: { version: 1, empty: true, dockview: null } })
+
+    const after = await host.handleInvoke('project_summary', {}) as unknown
+    expect(after).toEqual(before)
+    expect(host.actor.historyStatus()).toEqual(historyBefore)
     host.stop()
   })
 
