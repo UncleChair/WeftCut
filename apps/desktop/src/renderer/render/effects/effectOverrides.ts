@@ -3,7 +3,7 @@
 // sync rewrites every uniform from resolved params each frame, so writing
 // filter uniforms directly gets clobbered on the next composite. Never enters
 // React state or undo. Spec:
-// docs/superpowers/specs/2026-07-11-color-picker-design.md
+// docs/color-picker.md
 
 const overrides = new Map<string, Record<string, number>>();
 const disabled = new Set<string>();

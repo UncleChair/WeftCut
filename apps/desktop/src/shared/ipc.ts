@@ -95,7 +95,7 @@ export type PreviewGpuTimingSummary = {
 /// throughput-bottleneck probe — `ackToEmit` (a slot's ConsumeAck -> its next
 /// FrameReady, the one per-slot-cycle segment coordRtt does NOT cover) plus
 /// `lookaheadGatedSkips` (how often the pump idled on the lookahead gate rather
-/// than pool-full). See docs/superpowers/decode-bench-throughput-bottleneck-handoff.md.
+/// than pool-full). See docs/decode-bench.md §Native strategy.
 export type PreviewGpuTimingReport = {
   coordRtt: PreviewGpuTimingSummary
   decodeCopy: PreviewGpuTimingSummary

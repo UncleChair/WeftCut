@@ -39,10 +39,10 @@ measure-first spike (§7) that must run before the export slice (Phase 3) is com
   route through `createImageBitmap`/`drawImage` to honor `colorSpace`" rule (ADR 0014/0021).
 - `docs/preview.md` §Proxies + ADR 0009 (two-axis proxy decision) + ADR 0028 (folded
   `DecodeRoute` enum) — the routing this extends.
-- `docs/decode-bench.md` + the Stage-2/3 specs under `docs/superpowers/specs/2026-07-03…`
-  and `…-07-04…` — the `DecoderHandle` seam, the `NativeGpuSourceHandle` precedent, and the
-  **measure-first discipline** ("do not build SharedArrayBuffer/Atomics before the data
-  demands it") this spec inherits.
+- `docs/decode-bench.md` — the `DecoderHandle` seam, the `NativeGpuSourceHandle`
+  precedent, and the **measure-first discipline** ("do not build
+  SharedArrayBuffer/Atomics before the data demands it") this spec inherits
+  (the Stage-2/3 bench specs are consolidated there; git is the archive).
 - Branch `poc/shared-texture-import` (`poc/shared-texture/FINDINGS.md`) — proves the
   *hardware* GPU-shared-texture ingress; explicitly **not** the path taken here (see §1.3).
 - Project memory: `feedback_native_nle_conventions` (native-decode-always default;

@@ -1,5 +1,5 @@
-// Idempotent decode-bench fixture generator. Synthesizes the spec §2 matrix
-// (docs/superpowers/specs/2026-07-03-decode-bench-design.md) with ffmpeg:
+// Idempotent decode-bench fixture generator. Synthesizes the fixture matrix
+// (docs/decode-bench.md §What it measures) with ffmpeg:
 // 60 s testsrc2, 30 fps, GOP 240, bt709/limited, no audio. Skips existing
 // outputs (delete a file or pass --force to regenerate). Requires ffmpeg +
 // ffprobe on PATH (`npm run fetch-ffmpeg` from apps/desktop).

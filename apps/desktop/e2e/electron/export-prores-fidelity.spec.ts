@@ -14,8 +14,9 @@ import {
 } from './helpers/driver'
 
 // ProRes fidelity gates on the export decode engine
-// (docs/superpowers/specs/2026-07-16-export-decode-engine-design.md, Testing
-// Decisions). Two proofs of the native lane's reason to exist on a
+// (docs/adr/0033-export-decode-joins-the-engine-overlay.md;
+// docs/render.md §Export decode pipelines). Two proofs of the native
+// lane's reason to exist on a
 // WebCodecs-blind source:
 //   A. color — a color-tagged ProRes chart exported through the PINNED native
 //      route keeps the bt709/limited 4-tuple and shows the source's colors.

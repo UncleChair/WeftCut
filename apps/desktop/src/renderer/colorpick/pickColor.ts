@@ -3,7 +3,7 @@
 // read, and live-apply re-renders can never pollute the sample source (the
 // chromakey feedback-loop fix). The overlay (PickOverlayHost) renders whenever
 // the store holds a session and calls settle() to finish it.
-// Spec: docs/superpowers/specs/2026-07-11-color-picker-design.md
+// Spec: docs/color-picker.md
 
 import { create } from "zustand";
 import { logEmit } from "../ipc";

@@ -45,7 +45,11 @@ What remains:
   §5). Sub-lane selection and drag are single-keyframe today; the batch
   `update_layer_param_tracks` actor command exists but no UI rides it yet.
   Add marquee box-select and cross-property/cross-layer multi-drag (one undo
-  via that batch surface).
+  via that batch surface), then the rest of the desktop-grade batch set on
+  the same selection model: time-scale a selection about an anchor
+  (stretch/squash a group of keys), copy/paste keyframes (serialize the
+  selected keys, layer-local times rebased on paste at the playhead), and
+  per-frame nudge.
 - **A color stopwatch + MCP color keyframing.** `Animated<Rgba>` now
   interpolates end-to-end — OkLab + premultiplied alpha in the shared
   `weftcut-eval` engine (a native `value_at` twin plus a wasm packed-i32 preview
@@ -53,6 +57,45 @@ What remains:
   `resolveView` so keyframed text and color-fill color render in preview and
   export. What remains is the authoring surface: a color stopwatch in the
   inspector and the MCP color-keyframe tools.
+- **Extrapolation modes.** Outside the first/last keyframe the value clamps
+  to the endpoint (`native/eval/src/lib.rs`); there is no
+  loop / ping-pong / continue — the first thing a user reaches for on looping
+  overlays, Motifs, and text FX. Shape: an `extrapolate: { before, after }`
+  enum on the keyframed track, honored in `eval` before the segment lookup;
+  extend the golden fixture. Low effort; a schema addition (ship it with its
+  `.vproj` migration — see the migration note below).
+- **Per-keyframe tangent model — auto-bezier that stays smooth.** `interp` is
+  owned by the *segment* (stored on the left keyframe), so a key's velocity
+  is split across two records and `smooth_keyframes` is a one-shot bake:
+  editing a neighbor's value or time does not re-smooth, so smoothed motion
+  silently goes stale (unlike AE's auto-bezier, which re-solves
+  continuously), and the model has no home for the per-key interpolation
+  type (auto / continuous / bezier / linear / hold) every pro UI presents.
+  Cheap option: keep the segment model and re-run `smooth_one` on affected
+  keys behind a per-key "auto" flag. Proper option: promote `interp` to a
+  per-keyframe `{ in, out, mode }` tangent record and derive segment beziers
+  at eval time (schema + engine + UI + golden).
+- **Spatial motion paths.** Position is two independent scalar tracks
+  (`Transform.x` / `Transform.y`), which cannot represent a curved spatial
+  path — arcs, roving keyframes, and orient-along-path are impossible;
+  per-axis time-remaps only produce axis-aligned eased moves. Worth building
+  only if WeftCut targets motion graphics (the Motif / text-FX direction
+  suggests it eventually will): model position as a single `Animated<Vec2>`
+  carrying per-key *spatial* tangents separate from the *temporal* curve,
+  plus a viewport path editor. Structural — and the longer it waits, the
+  more keyframe data has to migrate, so flag the decision early even if the
+  build stays deferred.
+- **Keyframe minor / cleanup.** Animatable anchor (`Transform.anchor` is a
+  static pair, so the pivot can't be keyframed — fold into the vector type
+  when convenient); the `"ease"` preset loses its named identity on reload
+  (stored as a raw `Bezier{p1,p2}` while EaseIn/EaseOut are named variants);
+  the curve-graph UI still hand-mirrors the Rust bezier solver in one JS
+  `unitBezier` (`src/renderer/render/animated.ts`) — have it call the wasm
+  `unit_bezier` instead (kills the last non-audio twin); and **schema
+  migration**: pre-release currently hard-rejects old `.vproj`, and the
+  extrapolation / tangent / motion-path items above all touch the keyframe
+  schema — once the format ships, each needs a migration planned with the
+  feature, not after.
 
 See [`data-model.md`](data-model.md).
 
@@ -72,6 +115,19 @@ rows on every visual kind). See
   contrast / saturation, then the wider pixi-filters set). Each filter is one
   `effectRegistry.ts` entry, classified `f16-verified` or
   `precision-reduced` by the GL-parity gate.
+- **Chroma Key v2 — keyer quality**, in priority order: despill bias color
+  (preserve skin tones under heavy spill; 3 scalars), clip rollback (recover
+  edge detail lost to levels clipping), despot + large-radius softness
+  (needs a matte-texture multi-pass — shared infrastructure with IBK),
+  IBK-style clean-plate mode (per-pixel local screen color for unevenly lit
+  screens), and linear-light keying (rides colorspace bracketing). Out of
+  scope for the keyer: ML background removal is a separate feature — and a
+  licensing landmine: RVM is GPL-3.0 and @imgly/background-removal is
+  AGPL/commercial, both incompatible with the open-source licensing plan, so
+  it needs a license-clean model plus an offline-analysis + cached-alpha
+  architecture; garbage/holdout masks belong to a general masking feature;
+  and no shader code may be ported from OBS/Natron (GPL) — algorithm math
+  from public literature only.
 - **Non-scalar params** — a `ParamValue` sum type (color / bool / enum);
   v1 is scalar-only. Animated color params can now reuse the `Animated<Rgba>`
   interpolation engine (OkLab, shared `weftcut-eval`); what's missing is the
@@ -279,9 +335,14 @@ to verify on real macOS + Linux hardware:
   (rendered lazily via a CDP still; verify each Motif renders end-to-end
   through the picker → export path).
 - Media-pool thumbnail strip (backend data already cached; React + canvas
-  work). The timeline waveform strip ships already; the filmstrip's
-  tile-engine rebuild is planned in
-  `docs/superpowers/plans/2026-07-02-timeline-display-upgrades.md` (Plan B).
+  work). The timeline waveform and filmstrip strips ship already (see
+  [`timeline-content-preview.md`](timeline-content-preview.md)); this is the
+  media-pool panel counterpart.
+- Drive the menus from the command registry
+  (`renderer/commands/registry.ts`, see [`search.md`](search.md)) so
+  `ACTION_DEFS` and the menu markup stop being parallel books; while there,
+  render platform-pretty shortcut hints (`⌘K` / `Ctrl+K`) in the palette and
+  menus instead of the raw chord string.
 
 ### MCP tool gating
 

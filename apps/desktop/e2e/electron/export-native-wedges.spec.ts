@@ -17,8 +17,9 @@ import {
 } from './helpers/driver'
 
 // Wedge-scenario gates on the NATIVE export decode path
-// (docs/superpowers/specs/2026-07-16-export-decode-engine-design.md, Testing
-// Decisions). The export shapes that historically deadlocked or corrupted the
+// (docs/adr/0033-export-decode-joins-the-engine-overlay.md;
+// docs/render.md §Export decode pipelines). The export shapes that
+// historically deadlocked or corrupted the
 // WebCodecs decode path are replayed against the in-process ffmpeg session
 // (`NativeExportSourceHandle` over the frame relay), so the Rust-side
 // GOP/EOS/credit logic can never silently regress into the same failures.

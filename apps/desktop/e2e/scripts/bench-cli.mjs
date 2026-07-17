@@ -1,6 +1,6 @@
 // Pure, side-effect-free CLI helpers for decode-bench.mjs — extracted so they can
 // be unit-checked without importing the orchestrator (which launches Electron on
-// import). See docs/superpowers/plans/2026-07-04-decode-bench-stage3-measure-first.md.
+// import). See docs/decode-bench.md.
 
 /// The native pool sizes swept in --pool-sweep mode (Stage 3). 12 x 1080p NV12 ~= 48MB.
 export const SWEEP_POOL_SIZES = [3, 6, 9, 12];

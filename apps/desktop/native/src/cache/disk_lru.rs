@@ -1,6 +1,6 @@
 //! Disk-cache LRU sweep + filename-keyed hygiene for the cheap-to-regenerate
 //! derivative dirs: `filmstrip/`, `thumbnails/`, `waveforms/`.
-//! Design: `docs/superpowers/specs/2026-07-02-disk-cache-lru-design.md`.
+//! Design: `docs/timeline-content-preview.md`.
 //!
 //! The filesystem is the database: a cache read refreshes mtime
 //! (`cache::touch_if_stale`), this sweep sorts units by mtime and deletes

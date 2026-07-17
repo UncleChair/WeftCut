@@ -1,6 +1,6 @@
 // Export-side decode-engine resolution (the export mirror of
-// decoder/decodeEngine.ts; spec 2026-07-16-export-decode-engine-design.md,
-// decisions 2/3/8). PURE — a function of (setting × component availability ×
+// decoder/decodeEngine.ts; ADR 0033 + docs/render.md §Export source
+// resolution). PURE — a function of (setting × component availability ×
 // composite bit depth × per-media decode route); no store reads, no probes.
 // Resolution runs ONCE, at export start, on the renderer main thread
 // (useExportFlow), BEFORE the readiness gate — native-routed media never enter

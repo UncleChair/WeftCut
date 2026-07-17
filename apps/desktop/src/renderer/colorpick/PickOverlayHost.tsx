@@ -1,7 +1,7 @@
 // Full-window pick overlay + magnifier. ALL hover-rate work is imperative DOM
 // through refs — pointer-move-rate React state is banned (playhead-gate
 // discipline); the only React state is the store's session presence.
-// Spec: docs/superpowers/specs/2026-07-11-color-picker-design.md
+// Spec: docs/color-picker.md
 
 import { useEffect, useRef, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";

@@ -3,7 +3,7 @@
 // so scenarios are deterministic and UI-independent. Installed on
 // window.__weftcutTest by e2eHook.installDecodeBenchHooks; imported only from
 // there, so prod bundles tree-shake it out with the rest of the hook surface.
-// Spec: docs/superpowers/specs/2026-07-03-decode-bench-design.md
+// Spec: docs/decode-bench.md
 import { convertFileSrc } from "@/bridge/ipc";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { FfmpegSource } from "./FfmpegSource";
