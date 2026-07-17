@@ -4,23 +4,7 @@
 // and a label key reused from the menu's i18n namespace. New shortcuts
 // are added by extending the `ActionId` union and `ACTION_DEFS`, then
 // wiring the handler in `App.tsx`'s `useShortcuts({...})` call.
-//
-// Notes on the optional fields:
-// - `fireWhenEditing`: by default, chord bindings (any of Ctrl/Meta/Alt)
-//   fire while an `<input>` / `<textarea>` / `contentEditable` is
-//   focused; bare-key bindings (Delete, Space, plain letters) don't.
-//   Override here if a specific binding needs the opposite — none of v1
-//   does, so the field stays absent everywhere below.
-// - `repeatable`: key-repeat events (`e.repeat === true`) are dropped by
-//   default. Set `true` for bindings the user wants to hold (Undo /
-//   Redo) — every other v1 binding is a one-shot toggle or save.
-// - `captureGlobal`: dispatch this binding in the keydown *capture* phase so
-//   it wins over a focused chrome control that would otherwise consume the
-//   key (NLE-style transport: Space toggles playback even when focus is
-//   parked on a menubar trigger / toolbar button after a click). The
-//   dispatcher still yields to text editors and open transient widgets
-//   (menu / listbox / dialog), where the key belongs to the focused context.
-//   Reserve for bare single keys that read as global app commands.
+// Optional-field semantics live on `ActionDef`'s fields below.
 
 export type ActionId =
   | "save"
@@ -52,8 +36,19 @@ export type ActionId =
 export interface ActionDef {
   defaultKeys: string[];
   labelKey: string;
+  /// While an `<input>` / `<textarea>` / `contentEditable` is focused,
+  /// chord bindings (Ctrl/Meta/Alt) fire by default and bare keys don't
+  /// (derived at `resolveEntries`). Set only to force the opposite for
+  /// one action — e.g. copy/paste stay native inside text fields.
   fireWhenEditing?: boolean;
+  /// Key-repeat events (`e.repeat === true`) are dropped unless true.
+  /// Set for bindings the user holds down (undo/redo, arrow seeks).
   repeatable?: boolean;
+  /// Dispatch in the keydown CAPTURE phase so the binding wins over a
+  /// focused chrome control that would otherwise consume the key
+  /// (NLE-style transport). The dispatcher still yields to text editors
+  /// and open transient widgets — see `useShortcuts`. Reserve for bare
+  /// single keys that read as global app commands.
   captureGlobal?: boolean;
 }
 
@@ -63,10 +58,9 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   closeProject:    { defaultKeys: ["Mod+W"],               labelKey: "actions.save_and_close" },
   undo:            { defaultKeys: ["Mod+Z"],               labelKey: "actions.undo", repeatable: true },
   redo:            { defaultKeys: ["Mod+Shift+Z"],         labelKey: "actions.redo", repeatable: true },
-  // Capture-phase global: Space toggles playback even when focus is parked on
-  // a menubar trigger / toolbar button after a click (a Base UI trigger would
-  // otherwise treat Space as "open the menu"). Yields inside text inputs and
-  // open menus/dialogs — see `captureGlobal` notes above.
+  // captureGlobal: Space must toggle playback even when focus is parked on a
+  // menubar trigger / toolbar button after a click — a Base UI trigger would
+  // otherwise treat Space as "open the menu".
   togglePlay:      { defaultKeys: ["Space"],               labelKey: "actions.toggle_play", captureGlobal: true },
   deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected" },
   // Clipboard actions belong to the timeline, not an active text editor. The

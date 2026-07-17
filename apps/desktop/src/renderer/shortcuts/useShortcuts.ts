@@ -91,19 +91,14 @@ function isInTransientWidget(target: EventTarget | null): boolean {
 /// entry; entries without a handler don't preventDefault, so the
 /// other instance's matching handler can still fire.
 ///
-/// Dispatch rules:
-/// - Always `preventDefault` + `stopPropagation` on a matched event.
-/// - Skip `e.repeat === true` unless the action declared `repeatable`.
-/// - When focus is inside an editable element, fire only if the action
-///   declared `fireWhenEditing` (auto-derived: chord = yes, bare = no).
+/// Dispatch rules: always `preventDefault` + `stopPropagation` on a matched
+/// event; `repeatable` / `fireWhenEditing` semantics live on `ActionDef`.
 ///
 /// Two phases:
 /// - `captureGlobal` actions dispatch in the **capture** phase (on `window`,
-///   so they run before any focused control's own keydown). This is how
-///   Space → togglePlay wins over a Base UI menubar trigger that still holds
-///   focus after a click. They additionally yield when focus is inside an open
-///   transient widget (menu / listbox / dialog), where the key is the
-///   widget's.
+///   so they run before any focused control's own keydown), yielding when
+///   focus is inside an open transient widget
+///   (`TRANSIENT_WIDGET_SELECTOR`).
 /// - Every other action dispatches in the **bubble** phase, which keeps
 ///   deeper capture-phase listeners (e.g. KeyframeLane's selected-keyframe
 ///   Delete) ahead of the app-level handler.

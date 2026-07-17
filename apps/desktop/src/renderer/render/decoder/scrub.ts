@@ -1,37 +1,25 @@
-// Debounced scrub coalescer.
+// Debounced scrub coalescer. Caller `requestSeek(tUs)` may fire at
+// scroll-wheel speed (hundreds/sec); the coalescer batches into one
+// seek-to-IDR + decode per target — mid-scrub frames are discarded, only
+// the latest target frame paints. Two timers gate a fire (whichever
+// elapses first): DEBOUNCE (quiet period, reset per seek) and MAX-WAIT
+// (ceiling, armed once per pending sequence) — semantics + the GOP-bound
+// landmine live on `ScrubCoalescerInit`.
 //
 // See docs/render.md#scrub.
-//
-// Behavior: caller `requestSeek(tUs)` may fire at scroll-wheel speed
-// (hundreds of times per second). The coalescer batches into one
-// seek-to-IDR + decode operation per target. Mid-scrub frames are
-// discarded; only the latest target frame paints.
-//
-// Two timers gate a fire, whichever elapses first:
-//   - DEBOUNCE (quiet period): reset on every `requestSeek`, so a pause
-//     in the drag lands a precise final seek promptly.
-//   - MAX-WAIT (ceiling): armed once when a fresh pending sequence starts
-//     and NOT reset by subsequent seeks. Without it, a drag that never
-//     pauses for `debounceMs` keeps resetting the debounce timer forever,
-//     so the decoder is never re-targeted and the preview stays frozen on
-//     the last cached frame for the whole drag. The ceiling forces a fire
-//     every `maxWaitMs` → live scrub preview.
-//
-//     This is safe ONLY because the proxy now uses a short GOP (ADR 0008):
-//     a seek decodes at most a few frames from its keyframe, so each fire's
-//     decode completes well within `maxWaitMs` and the target frame lands
-//     before the next re-target. On the old ~1 s GOP the same timer churned
-//     (each seek's ~30-frame decode far outran the interval, so every fire
-//     flushed an unfinished decode and nothing ever painted). Keep
-//     `maxWaitMs` ≥ the worst-case short-GOP decode time.
 
 export interface ScrubCoalescerInit {
   /// Debounce window in ms. Default: 20.
   debounceMs?: number;
   /// Ceiling (ms) after which a pending target fires even under an
-  /// unbroken stream of `requestSeek` calls. Must be > `debounceMs` so a
-  /// real pause still fires first, and ≥ the worst-case short-GOP decode
-  /// time so a fire's frame lands before the next re-target. Default: 180.
+  /// unbroken stream of `requestSeek` calls — without it, a drag that
+  /// never pauses for `debounceMs` keeps resetting the debounce timer and
+  /// the preview stays frozen on the last cached frame for the whole drag.
+  /// Must be > `debounceMs` so a real pause still fires first, and ≥ the
+  /// worst-case decode time from a keyframe: if a seek's decode outruns
+  /// this interval, every fire flushes an unfinished decode and nothing
+  /// ever paints (safe with the short-GOP proxy — ADR 0008; a ~1 s GOP
+  /// churns exactly that way). Default: 180.
   maxWaitMs?: number;
   /// Callback invoked with the stable target after the debounce window.
   onStableSeek: (tUs: number) => Promise<void>;

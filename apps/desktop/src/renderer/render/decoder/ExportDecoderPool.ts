@@ -1,21 +1,9 @@
 // Export-only decoder pool. Drops every preview-tuned mechanism the
 // SourceDecoderPool needs (lookahead window, per-frame setAnchor, polling-
-// based catch-up) in favor of two batched primitives:
-//
-//   `decodeRange(aUs, bUs)` — an async seek-and-forward loop over the
-//   mediabunny EncodedPacketSink: seek to the GOP key at/before `aUs` (or
-//   continue from the packet cursor when the range moves forward of the
-//   dispatch frontier), then dispatch packets in DECODE order through the
-//   first key packet strictly after `bUs`, so every frame with presentation
-//   PTS ≤ bUs — including open-GOP B-frames referencing the next GOP's key —
-//   is fed. No `decoder.flush()` between ranges (flushing would deadlock
-//   against the VideoFrame pool slots the worker holds); the worker awaits
-//   each output frame via `ring.waitForPts`. Awaiting `getNextPacket` faults
-//   in uncached bytes natively, so there is no byte pre-fault.
-//
-//   `evictBefore(cutoffUs)` — drop frames whose presentation interval
-//   ends at or before `cutoffUs`. Called after the export chunk is
-//   encoded so memory stays bounded.
+// based catch-up) in favor of two batched primitives: `decodeRange(aUs, bUs)`
+// (seek-and-forward dispatch; NO `decoder.flush()` between ranges — the
+// deadlock landmine lives on the method) and `evictBefore(cutoffUs)`
+// (bounded memory after each encoded chunk).
 //
 // The store + handle expose `frameAt` / `containsPts` / `ensureReady`
 // / `requestFrameAt` (no-op) / `onFirstFrame` (no-op) so the Compositor

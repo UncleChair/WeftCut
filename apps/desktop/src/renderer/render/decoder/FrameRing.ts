@@ -1,16 +1,12 @@
-// Lookahead/lookbehind frame ring for one source.
+// Lookahead/lookbehind frame ring for one source — the preview-side
+// FrameStore. Holds decoded frames from either preview lane:
+// `ImageBitmap`s (WebCodecs snapshots, native GPU lane) or
+// `NativeNv12Frame`s (native SW lane's CPU planes, converted later in the
+// Compositor's `Nv12Ingest` — see nv12Frame.ts); the ring treats both
+// alike through their shared `close()`. Anchor / eviction / lookup
+// semantics live on the methods below.
 //
 // Plan: docs/render.md §Decoder pool — 1 s lookahead / 0.5 s lookbehind per clip
-//
-// Behavior: caller `push(frame)`es decoded frames in monotonic PTS order —
-// `ImageBitmap`s (WebCodecs snapshots, native GPU lane) or `NativeNv12Frame`s
-// (native SW lane's CPU planes, converted later in the Compositor's
-// `Nv12Ingest` — see nv12Frame.ts). The ring treats both alike through their
-// shared `close()`. `frameAt(tUs)` returns the frame whose presentation
-// interval contains `tUs`, or `null` if not yet decoded. `setAnchor(tUs)`
-// evicts frames older than `tUs - lookbehindUs` and rejects pushes for
-// PTS more than `lookaheadUs` ahead — the caller's decode loop pauses
-// when the lookahead window is full.
 
 import type { TransportFrame } from "./transports/DecodeTransport";
 
@@ -102,7 +98,7 @@ export class FrameRing {
       return;
     }
     this._pushCount += 1;
-    // Fast path: append in order. Proxy v4 disables B-frames
+    // Fast path: append in order. The proxy disables B-frames
     // (`-bf 0`, see proxy.rs) so the decoder emits frames in PTS
     // order; the async `createImageBitmap` step is sequenced via
     // microtasks per output, so consecutive resolves preserve order

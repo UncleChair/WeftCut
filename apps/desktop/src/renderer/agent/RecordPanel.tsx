@@ -8,32 +8,27 @@ import {
 } from "../ipc";
 import { useLogStore } from "../logs/store";
 
-/// Agent-mode record panel — filtered + grouped view of the log
-/// stream that the agent-attributed entries produce while a session
-/// is active. See `docs/mcp.md` Q6 + Q7 + Q8 for the design.
+/// Agent-mode record panel — filtered + grouped view of the log stream
+/// that agent-attributed entries produce while a session is active
+/// (design: `docs/mcp.md`, agent sessions).
 ///
-/// Filter (Q6.B + Q6.X):
-///   * source.kind === "Agent"     (agent-attributed events only)
-///   * ts >= session.started_at    (this-session-only window)
+/// Filter: source.kind === "Agent" AND ts >= session.started_at
+/// (this-session-only window).
 ///
-/// Grouping:
-///   * Entries with op_id collapse into a single row per op. The
-///     row shows the latest message + a status icon derived from the
-///     terminal op_state (Started/Progress → running, Ok → done,
-///     Err → error).
-///   * Entries with details.kind === "Checkpoint" are rendered as
-///     pin-style rows with a Restore button regardless of op_id.
-///   * Entries with neither become single-entry rows.
+/// Grouping: entries with op_id collapse into one row per op (latest
+/// message + status icon from the terminal op_state); entries with
+/// details.kind === "Checkpoint" render as pin-style rows with a
+/// Restore button regardless of op_id; everything else is a
+/// single-entry row.
 ///
-/// Order: chronological (oldest first), with an auto-scroll-to-bottom
-/// behavior that yields the moment the user scrolls up — Premiere /
-/// build-log convention.
+/// Order: chronological (oldest first), auto-scroll-to-bottom that
+/// yields the moment the user scrolls up — Premiere / build-log
+/// convention.
 ///
-/// Lock badge (Q8): rendered above the row list when the project's
-/// HistoryView reports a non-null lock_reason. Restore buttons on
-/// checkpoint rows are disabled while the lock is held (the backend
-/// command would reject anyway, but disabling the click is friendlier
-/// UX).
+/// Lock badge: rendered when the project's HistoryView reports a
+/// non-null lock_reason; checkpoint Restore buttons are disabled while
+/// the lock is held (the backend would reject anyway — disabling the
+/// click is friendlier UX).
 
 interface RecordPanelProps {
   sessionStartedAt: string; // ISO 8601 (chrono::DateTime<Utc>)

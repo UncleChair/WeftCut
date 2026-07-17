@@ -177,14 +177,13 @@ export class SourceHandle {
   private outputsInWindow = 0;
   private windowStartMs = 0;
   /// Diagnostic: VideoFrames decoded but not yet snapshotted to an
-  /// ImageBitmap (i.e. `createImageBitmap` is still in flight). Each such
-  /// frame pins one of the hardware decoder's ~13 output-pool slots, so a
-  /// burst that outruns `createImageBitmap` can exhaust the pool and stall
-  /// decode — the pump caps the INPUT queue (`decodeQueueSize`) but nothing
-  /// caps this OUTPUT-side count. Surfaced in the throughput log (`inflight`
-  /// = current, `peak` = window max) so a repro shows whether a stall is
-  /// pool-pinning (high peak) vs. external GPU starvation (low peak, slow
-  /// `createImageBitmap`). See systematic-debugging note on the preview stall.
+  /// ImageBitmap (`createImageBitmap` still in flight). Each such frame pins
+  /// a HW-decoder pool slot (why that stalls decode: the snapshot comment in
+  /// the output callback); the pump caps the INPUT queue (`decodeQueueSize`)
+  /// but nothing caps this OUTPUT-side count. Surfaced in the throughput log
+  /// (`inflight` = current, `peak` = window max) so a repro shows whether a
+  /// stall is pool-pinning (high peak) vs. external GPU starvation (low
+  /// peak, slow `createImageBitmap`).
   private conversionsInFlight = 0;
   private peakConversionsInWindow = 0;
   private _disposed = false;

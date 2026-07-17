@@ -1,24 +1,10 @@
 // The async packet pump for preview decode: a single-flight async loop
 // driven by mediabunny's EncodedPacketSink (getKeyPacket / getNextPacket).
+// Control-flow invariants live on the fields that enforce them: `pumping`
+// (single-flight), `generation` (the mid-await race guard), and the pure
+// `decideReset` (synchronous, key-packet-free reset DECISION — only the
+// reset ACTION fetches a key packet).
 // See docs/render.md#byte-handling.
-//
-// Control-flow invariants (the spec's "dominant risk"):
-//   - SINGLE-FLIGHT: at most one runPump() loop is live at a time
-//     (the `pumping` flag). Re-entrant requestFrameAt sets `wakeRequested`
-//     instead of starting a second loop.
-//   - TWO things interleave across an `await`: (1) dispose(), and (2) the
-//     WebCodecs error callback, which fires as a queued event-loop task
-//     and runs `SourceHandle.nullForRebuild → pump.invalidateCursor()`
-//     (software-downgrade / inactivity-rebuild). Both bump a `generation`
-//     counter; every await captures the generation before it and bails
-//     after it if the generation moved (or `_disposed`). This is the
-//     spec's named race guard — without it, an in-flight getNextPacket
-//     continuation resurrects `cursor` to a delta packet after a rebuild
-//     nulled it, feeding the fresh decoder a delta → decode error →
-//     recovery never completes.
-//   - The reset DECISION (decideReset) is synchronous and key-packet-free
-//     (see the design note in the plan). Only the reset ACTION fetches a
-//     key packet.
 
 import { packetToSourceUs, sourceToContainerUs } from "./ptsOffset";
 
@@ -161,11 +147,17 @@ export class PacketPump {
   /// Cleared on any reset / cursor invalidation. Prevents re-flushing the
   /// DPB every pass once the pump has settled at EOS.
   private flushedThisRun = false;
-  /// Bumped by `invalidateCursor` (decoder rebuild) and `dispose`. Each
-  /// await captures it beforehand and bails after if it moved — the race
-  /// guard against the WebCodecs error callback firing mid-await (see the
-  /// file-top comment). NOT bumped by in-loop resets (those are
-  /// serialized inside runPump; nothing else interleaves with them).
+  /// Bumped by `invalidateCursor` (decoder rebuild) and `dispose` — the two
+  /// things that interleave across the pump's awaits (the WebCodecs error
+  /// callback fires as a queued event-loop task and runs
+  /// `SourceHandle.nullForRebuild → invalidateCursor()` on
+  /// software-downgrade / inactivity-rebuild). Every await captures the
+  /// generation before it and bails after it if it moved (or `_disposed`).
+  /// Without this guard, an in-flight getNextPacket continuation resurrects
+  /// `cursor` to a delta packet after a rebuild nulled it, feeding the fresh
+  /// decoder a delta → decode error → recovery never completes. NOT bumped
+  /// by in-loop resets (those are serialized inside runPump; nothing else
+  /// interleaves with them).
   private generation = 0;
   private _disposed = false;
 
