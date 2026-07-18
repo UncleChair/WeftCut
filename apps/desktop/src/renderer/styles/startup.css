@@ -808,7 +808,7 @@
 .new-project-preview {
   margin: -6px 0 4px;
   padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-tint);
   border-radius: var(--radius-control);
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);

@@ -51,7 +51,9 @@ html, body, #root { height: 100%; margin: 0; }
 
 /* Frameless main-window edge. An inset overlay preserves every existing layout
  * dimension while separating WeftCut's near-black surface from a dark desktop.
- * Keep the edge neutral: blue remains reserved for focus and selection. */
+ * Keep the edge neutral: blue remains reserved for focus and selection.
+ * The 0.10/0.08 (focused/unfocused) alphas stay literal — this OS-adjacent
+ * chrome keeps its own calibration instead of joining --border-on-dark. */
 html.app-window-framed::after {
   content: "";
   position: fixed;
@@ -107,8 +109,8 @@ button.preview-timecode:focus-visible {
 }
 
 input.preview-timecode {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: var(--hover-neutral);
+  border: 1px solid var(--border-on-dark);
   border-radius: var(--radius-control);
   color: var(--foreground);
   padding: 1px 4px;

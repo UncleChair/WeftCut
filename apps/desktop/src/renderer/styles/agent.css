@@ -157,7 +157,7 @@
 }
 
 .agent-record-row:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-tint);
 }
 
 @keyframes agent-spin {
@@ -210,7 +210,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-on-dark);
   padding-bottom: 8px;
 }
 
@@ -275,7 +275,7 @@
 .realtime-preview-controls button {
   padding: 6px 12px;
   border-radius: var(--radius-card);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-on-dark);
   background: rgba(63, 63, 70, 0.5);
   color: var(--color-zinc-200);
   cursor: pointer;
@@ -311,7 +311,7 @@
 
 .realtime-preview-divider {
   width: 1px;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border-on-dark);
   margin: 0 4px;
 }
 
@@ -348,7 +348,7 @@
 .realtime-preview-overlay-ctrls select {
   background: rgba(63, 63, 70, 0.5);
   color: var(--color-zinc-200);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-on-dark);
   padding: 4px 6px;
   border-radius: var(--radius-control);
 }

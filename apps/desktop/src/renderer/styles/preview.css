@@ -61,7 +61,7 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.12);
+  border: 2px solid var(--border-on-dark);
   border-top-color: var(--color-blue-400);
   animation: preview-spin 0.9s linear infinite;
 }
@@ -70,7 +70,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid var(--border-on-dark);
   border-top-color: var(--muted-foreground);
   animation: preview-spin 0.9s linear infinite;
   display: inline-block;
@@ -87,7 +87,7 @@
   gap: 8px;
   max-width: 80%;
   padding: 12px 16px;
-  border: 1px solid rgba(248, 113, 113, 0.4);
+  border: 1px solid color-mix(in srgb, var(--destructive) 40%, transparent);
   background: rgba(127, 29, 29, 0.18);
   border-radius: var(--radius-card);
   color: var(--color-red-200);
@@ -110,8 +110,8 @@
 }
 
 .preview-retry {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: var(--hover-neutral);
+  border: 1px solid var(--border-on-dark);
   color: var(--foreground);
   border-radius: var(--radius-control);
   padding: 4px 12px;
@@ -120,7 +120,7 @@
 }
 
 .preview-retry:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--active-neutral);
 }
 
 .preview-transport {
@@ -180,7 +180,7 @@
 }
 
 .preview-transport button:active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--active-neutral);
 }
 
 .preview-transport button:disabled {

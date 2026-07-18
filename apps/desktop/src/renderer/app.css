@@ -225,6 +225,15 @@
        otherwise-transparent controls, replacing scattered rgba(255,255,255,α). */
     --hover-neutral: rgba(255, 255, 255, 0.06);
     --hover-neutral-strong: rgba(255, 255, 255, 0.10);
+    /* Pressed state — one step above the hover overlays. */
+    --active-neutral: rgba(255, 255, 255, 0.16);
+    /* Faintest lift — quiet row hovers, inset wells, and hairline seams that
+       must stay below --hover-neutral. */
+    --surface-tint: rgba(255, 255, 255, 0.04);
+    /* Strokes that sit on near-black / monitor surfaces, where the solid
+       --border reads too strong. The strong variant is the hover step. */
+    --border-on-dark: rgba(255, 255, 255, 0.15);
+    --border-on-dark-strong: rgba(255, 255, 255, 0.3);
 
     /* Status hues — shared feedback colors. Bake status (properties panel +
        motif dots), keyframe markers, and media badges all drew these as

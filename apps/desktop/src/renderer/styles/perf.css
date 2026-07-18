@@ -29,13 +29,13 @@
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-tint);
   color: var(--muted-foreground);
   cursor: pointer;
 }
 
 .perf-icon-btn:hover {
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--hover-neutral-strong);
   color: var(--foreground);
 }
 
