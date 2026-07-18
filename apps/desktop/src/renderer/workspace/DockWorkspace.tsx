@@ -27,6 +27,7 @@ import { NearbyPanel } from "../panels/NearbyPanel";
 import { RoleMixerPanel } from "../panels/RoleMixerPanel";
 import {
   importCancel,
+  updateLayer,
   type KeybindingsMap,
   type ProjectSummary,
 } from "../ipc";
@@ -255,8 +256,19 @@ function NearbyDockPanel() {
         fpsNum={summary?.composition.fps_num ?? 30}
         fpsDen={summary?.composition.fps_den ?? 1}
         onPick={(layerId, trackId) => {
+          // Reveal without seeking: the near-playhead window stays put.
           contracts.onSelectLayer(layerId);
           contracts.onRevealTrack(trackId, layerId);
+        }}
+        onGoTo={(layerId, trackId, startUs) => {
+          // Explicit navigation: seek the playhead and scroll into view.
+          contracts.onSelectLayer(layerId);
+          contracts.onSeek(startUs);
+          contracts.onRevealTrack(trackId, layerId);
+        }}
+        onRename={async (layerId, nextLabel) => {
+          await updateLayer(layerId, { label: nextLabel });
+          await contracts.onMutated();
         }}
       />
     </div>

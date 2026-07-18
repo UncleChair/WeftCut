@@ -1,10 +1,14 @@
 // A/B-roll context panel. This module owns the full "near playhead" feature:
-// mode gating, window calculation, filtering, grouping, and row presentation.
-// Its caller only handles the semantic result of a pick (layer + track).
+// mode gating, window calculation, filtering, grouping, row presentation, and
+// the two navigation gestures. A plain pick selects + reveals the layer WITHOUT
+// moving the playhead (the near-playhead observation window stays put); an
+// explicit Go To seeks + scrolls. Double-click renames via the recorded Layer
+// label command. Outside A/B Roll (or with an empty window) the panel explains
+// itself rather than leaving an unexplained blank area.
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
+import { CrosshairIcon, FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
 
 import { formatTimecode } from "../frames";
 import { type LayerSummary, type TrackSummary } from "../ipc";
@@ -27,7 +31,15 @@ export interface NearbyPanelProps {
   selectedLayerId: string | null;
   fpsNum: number;
   fpsDen: number;
+  /// Plain pick: select + reveal the Track WITHOUT seeking, so the
+  /// near-playhead observation window is not disturbed.
   onPick: (layerId: string, trackId: string) => void;
+  /// Explicit Go To: seek to the Layer's start and scroll it into view.
+  /// Optional so the retiring RightPanel can omit it (no seek there).
+  onGoTo?: ((layerId: string, trackId: string, startUs: number) => void) | undefined;
+  /// Commit a lightweight inline rename through the recorded Layer label
+  /// command. The host wires this to `updateLayer` + summary refresh.
+  onRename?: ((layerId: string, nextLabel: string) => void) | undefined;
 }
 
 export function NearbyPanel({
@@ -36,6 +48,8 @@ export function NearbyPanel({
   fpsNum,
   fpsDen,
   onPick,
+  onGoTo,
+  onRename,
 }: NearbyPanelProps) {
   const { t } = useTranslation();
   const displayMode = useDisplayMode();
@@ -50,9 +64,27 @@ export function NearbyPanel({
 
   const sections = useMemo(() => groupPeekItems(items, filter), [items, filter]);
 
-  // The module is contextual, not a permanent empty destination: outside
-  // A/B Roll or with an empty ±Δ window it contributes no layout at all.
-  if (displayMode !== "AbRoll" || items.length === 0) return null;
+  // Never an unexplained blank Panel: Show All mode has no hidden tracks to
+  // surface, and an empty ±Δ window means nothing intersects right now — both
+  // states say so explicitly instead of collapsing to nothing.
+  if (displayMode !== "AbRoll") {
+    return (
+      <Explainer
+        title={t("peek.show_all_title")}
+        message={t("peek.show_all_msg")}
+      />
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <Explainer
+        title={t("peek.empty_title")}
+        message={t("peek.empty_msg", {
+          window: formatTimecode(deltaWindowUs, fpsNum, fpsDen),
+        })}
+      />
+    );
+  }
 
   return (
     <section className="right-panel-peek" aria-label={t("peek.section_label")}>
@@ -100,7 +132,22 @@ export function NearbyPanel({
                     isSelected={item.layer.id === selectedLayerId}
                     fpsNum={fpsNum}
                     fpsDen={fpsDen}
-                    onClick={() => onPick(item.layer.id, item.trackId)}
+                    onReveal={() => onPick(item.layer.id, item.trackId)}
+                    onGoTo={
+                      onGoTo
+                        ? () =>
+                            onGoTo(
+                              item.layer.id,
+                              item.trackId,
+                              item.layer.t_start_us,
+                            )
+                        : undefined
+                    }
+                    onRename={
+                      onRename
+                        ? (next) => onRename(item.layer.id, next)
+                        : undefined
+                    }
                   />
                 ))}
               </ul>
@@ -112,18 +159,39 @@ export function NearbyPanel({
   );
 }
 
+/// Self-explaining empty state — keeps the Nearby dock Panel from ever
+/// rendering as an unexplained blank area.
+function Explainer({ title, message }: { title: string; message: string }) {
+  const { t } = useTranslation();
+  return (
+    <section
+      className="right-panel-peek right-panel-peek--empty"
+      aria-label={t("peek.section_label")}
+    >
+      <header className="right-panel-peek-header">
+        <span>{title}</span>
+      </header>
+      <p className="peek-empty">{message}</p>
+    </section>
+  );
+}
+
 function PeekRow({
   item,
   isSelected,
   fpsNum,
   fpsDen,
-  onClick,
+  onReveal,
+  onGoTo,
+  onRename,
 }: {
   item: PeekItem;
   isSelected: boolean;
   fpsNum: number;
   fpsDen: number;
-  onClick: () => void;
+  onReveal: () => void;
+  onGoTo?: (() => void) | undefined;
+  onRename?: ((nextLabel: string) => void) | undefined;
 }) {
   const { t } = useTranslation();
   const durationUs = item.layer.t_end_us - item.layer.t_start_us;
@@ -139,36 +207,103 @@ function PeekRow({
   const primaryLabel =
     item.layer.label ?? mediaLabelFor(item.layer) ?? item.trackLabel;
 
+  // Inline rename. Enter commits, Escape cancels, click-away commits — all
+  // funnelled through `commit`/`cancel`, which a single latch (`settled`)
+  // guards so a key-driven finish can't also fire the follow-up blur.
+  const currentLabel = item.layer.label ?? "";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const settled = useRef(false);
+
+  const startEdit = () => {
+    if (!onRename) return;
+    settled.current = false;
+    setDraft(currentLabel);
+    setEditing(true);
+  };
+  const commit = () => {
+    if (settled.current) return;
+    settled.current = true;
+    setEditing(false);
+    const next = draft.trim();
+    // Empty reverts (the label command can't clear to null); an unchanged
+    // value records no undo entry.
+    if (next === "" || next === currentLabel) return;
+    onRename?.(next);
+  };
+  const cancel = () => {
+    settled.current = true;
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <li>
+        <input
+          className="peek-rename-input"
+          aria-label={t("peek.rename_label", { label: primaryLabel })}
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancel();
+            }
+          }}
+          onBlur={commit}
+        />
+      </li>
+    );
+  }
+
   return (
     <li>
-      <button
-        type="button"
-        className={`peek-item kind-${item.trackKind.toLowerCase()} ${
-          isSelected ? "is-selected" : ""
-        } ${item.spansPlayhead ? "is-live" : ""}`}
-        onClick={onClick}
-        title={primaryLabel}
-      >
-        <span className="peek-thumb">
-          {thumbMediaId ? (
-            <MediaThumbnail mediaId={thumbMediaId} mediaKind={item.trackKind} />
-          ) : (
-            <span className="peek-thumb-fallback" aria-hidden="true">
-              {iconForCategory(peekCategory(item.layer.params.kind))}
-            </span>
-          )}
-        </span>
-        <span className="peek-meta">
-          <span className="peek-label">{primaryLabel}</span>
-          <span className="peek-sublabel">{item.trackLabel}</span>
-        </span>
-        <span className="peek-times">
-          <span className={`peek-offset ${item.spansPlayhead ? "is-live" : ""}`}>
-            {offsetLabel}
+      <div className="peek-item-row">
+        <button
+          type="button"
+          className={`peek-item kind-${item.trackKind.toLowerCase()} ${
+            isSelected ? "is-selected" : ""
+          } ${item.spansPlayhead ? "is-live" : ""}`}
+          onClick={onReveal}
+          onDoubleClick={onRename ? startEdit : undefined}
+          title={primaryLabel}
+        >
+          <span className="peek-thumb">
+            {thumbMediaId ? (
+              <MediaThumbnail mediaId={thumbMediaId} mediaKind={item.trackKind} />
+            ) : (
+              <span className="peek-thumb-fallback" aria-hidden="true">
+                {iconForCategory(peekCategory(item.layer.params.kind))}
+              </span>
+            )}
           </span>
-          <span className="peek-duration">{durationLabel}</span>
-        </span>
-      </button>
+          <span className="peek-meta">
+            <span className="peek-label">{primaryLabel}</span>
+            <span className="peek-sublabel">{item.trackLabel}</span>
+          </span>
+          <span className="peek-times">
+            <span className={`peek-offset ${item.spansPlayhead ? "is-live" : ""}`}>
+              {offsetLabel}
+            </span>
+            <span className="peek-duration">{durationLabel}</span>
+          </span>
+        </button>
+        {onGoTo && (
+          <button
+            type="button"
+            className="peek-goto"
+            onClick={onGoTo}
+            title={t("peek.goto", { label: primaryLabel })}
+            aria-label={t("peek.goto", { label: primaryLabel })}
+          >
+            <CrosshairIcon size={14} />
+          </button>
+        )}
+      </div>
     </li>
   );
 }

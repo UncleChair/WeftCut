@@ -344,6 +344,63 @@
   padding: 0;
 }
 
+/* Row wraps the reveal button and the explicit Go To affordance side by side. */
+.peek-item-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.peek-item-row .peek-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.peek-goto {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease;
+}
+
+.peek-item-row:hover .peek-goto,
+.peek-goto:focus-visible {
+  opacity: 1;
+}
+
+.peek-goto:hover {
+  color: var(--foreground);
+}
+
+.peek-rename-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 12px;
+  font: inherit;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--ring, var(--border-soft));
+  border-radius: 4px;
+  outline: none;
+}
+
+/* Self-explaining empty / Show All state. */
+.peek-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
 .mixer-panel {
   padding: 12px 14px;
   display: flex;

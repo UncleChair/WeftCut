@@ -276,6 +276,14 @@ const enUS = {
     cat_audio: "Audio",
     cat_text: "Text",
     filter_empty: "Nothing of that kind near the playhead",
+    goto: "Go to {{label}}",
+    rename_label: "Rename {{label}}",
+    show_all_title: "All tracks visible",
+    show_all_msg:
+      "Nearby surfaces hidden A/B-roll layers. In Show All mode every track is already visible, so there is nothing to reveal here.",
+    empty_title: "Nothing near the playhead",
+    empty_msg:
+      "No hidden-track layers fall within ±{{window}} of the playhead. Move the playhead or widen the window.",
   },
   right_panel: {
     tablist_label: "Right panel",

@@ -274,6 +274,14 @@ const zhCN: Resources = {
     cat_audio: "音频",
     cat_text: "文本",
     filter_empty: "播放头附近没有该类别的内容",
+    goto: "跳转到 {{label}}",
+    rename_label: "重命名 {{label}}",
+    show_all_title: "所有轨道均可见",
+    show_all_msg:
+      "Nearby 用于呈现被隐藏的 A/B Roll 图层。在「显示全部」模式下每条轨道都已可见，这里没有需要揭示的内容。",
+    empty_title: "播放头附近没有内容",
+    empty_msg:
+      "播放头 ±{{window}} 范围内没有隐藏轨道的图层。请移动播放头或扩大窗口。",
   },
   right_panel: {
     tablist_label: "右侧面板",

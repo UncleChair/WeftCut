@@ -55,7 +55,15 @@ function nearbyTrack(): TrackSummary {
   };
 }
 
-function renderPanel(tracks: TrackSummary[], onPick = vi.fn()) {
+function renderPanel(
+  tracks: TrackSummary[],
+  handlers: {
+    onPick?: (layerId: string, trackId: string) => void;
+    onGoTo?: (layerId: string, trackId: string, startUs: number) => void;
+    onRename?: (layerId: string, nextLabel: string) => void;
+  } = {},
+) {
+  const onPick = handlers.onPick ?? vi.fn();
   render(
     <NearbyPanel
       tracks={tracks}
@@ -63,13 +71,15 @@ function renderPanel(tracks: TrackSummary[], onPick = vi.fn()) {
       fpsNum={30}
       fpsDen={1}
       onPick={onPick}
+      onGoTo={handlers.onGoTo}
+      onRename={handlers.onRename}
     />,
   );
   return onPick;
 }
 
 describe("NearbyPanel", () => {
-  it("contributes no layout outside A/B Roll mode", () => {
+  it("explains Show All mode instead of collapsing to a blank Panel", () => {
     settings.displayMode = "ShowAll";
     const { container } = render(
       <NearbyPanel
@@ -81,11 +91,12 @@ describe("NearbyPanel", () => {
       />,
     );
 
-    expect(container.firstChild).toBeNull();
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByText("All tracks visible")).toBeTruthy();
   });
 
-  it("collapses when the nearby window has no items", () => {
-    const { container } = render(
+  it("explains an empty nearby window instead of a blank Panel", () => {
+    render(
       <NearbyPanel
         tracks={[]}
         selectedLayerId={null}
@@ -95,14 +106,46 @@ describe("NearbyPanel", () => {
       />,
     );
 
-    expect(container.firstChild).toBeNull();
+    expect(screen.getByText("Nothing near the playhead")).toBeTruthy();
   });
 
-  it("renders nearby items and reports the picked layer and track", () => {
+  it("renders nearby items and reveals the picked layer without seeking", () => {
     const onPick = renderPanel([nearbyTrack()]);
 
     expect(screen.getByText("Near playhead (1)")).toBeTruthy();
     fireEvent.click(screen.getByTitle("Clip one"));
     expect(onPick).toHaveBeenCalledWith("layer-1", "track-1");
+  });
+
+  it("Go To seeks to the layer's start", () => {
+    const onGoTo = vi.fn();
+    renderPanel([nearbyTrack()], { onGoTo });
+
+    fireEvent.click(screen.getByLabelText("Go to Clip one"));
+    expect(onGoTo).toHaveBeenCalledWith("layer-1", "track-1", 500_000);
+  });
+
+  it("double-click renames through the label command on Enter", () => {
+    const onRename = vi.fn();
+    renderPanel([nearbyTrack()], { onRename });
+
+    fireEvent.doubleClick(screen.getByTitle("Clip one"));
+    const input = screen.getByLabelText("Rename Clip one");
+    fireEvent.change(input, { target: { value: "Renamed clip" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onRename).toHaveBeenCalledWith("layer-1", "Renamed clip");
+  });
+
+  it("Escape cancels an inline rename without committing", () => {
+    const onRename = vi.fn();
+    renderPanel([nearbyTrack()], { onRename });
+
+    fireEvent.doubleClick(screen.getByTitle("Clip one"));
+    const input = screen.getByLabelText("Rename Clip one");
+    fireEvent.change(input, { target: { value: "Renamed clip" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(onRename).not.toHaveBeenCalled();
   });
 });
