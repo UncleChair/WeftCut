@@ -217,12 +217,17 @@ export interface DecodeCapabilityProbeResult {
 }
 
 /// Verdict of `decodeCap:probeHw` (D4 GPU-keyed HW capability cache): main
-/// runs the one-frame d3d11va decode probe for a caller-supplied `classKey`
-/// (the renderer derives it from `MediaSummary` — the HW probe itself does
-/// not, unlike the SW probe, since probing is comparatively expensive).
+/// resolves the best HW decode lane for a caller-supplied `classKey` (the
+/// renderer derives it from `MediaSummary` — the HW probe itself does not,
+/// unlike the SW probe, since probing is comparatively expensive). `lane` is the
+/// HW lane that passed (`d3d11va` | `nvdec` | `vaapi`), or null on software
+/// fallback; `device` names the DRM render node for a `vaapi` verdict (null for
+/// NVDEC/d3d11va, which decode on the sole GPU handle).
 export interface DecodeHwProbeResult {
   ok: boolean
   reason: string | null
+  lane: string | null
+  device: string | null
 }
 
 export interface WeftcutApi {

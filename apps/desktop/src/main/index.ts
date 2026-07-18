@@ -76,6 +76,24 @@ async function hwEnvKey(): Promise<string> {
   }
 }
 
+// DRM render nodes (/dev/dri/renderD*) for VAAPI device enumeration (issue #5
+// Block C, User Story 9): libva's default device selection picks the wrong GPU
+// on a multi-GPU machine, so the resolver probes each node explicitly. Sorted
+// for a stable probe order; [] off Linux or when the dir is absent (a
+// non-VAAPI platform simply enumerates no devices, so the VAAPI lane is
+// skipped even if somehow advertised).
+function enumerateDrmRenderNodes(): string[] {
+  try {
+    return fs
+      .readdirSync('/dev/dri')
+      .filter((n) => n.startsWith('renderD'))
+      .sort()
+      .map((n) => `/dev/dri/${n}`)
+  } catch {
+    return []
+  }
+}
+
 async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
@@ -440,7 +458,7 @@ app.whenReady().then(async () => {
   // Machine capability cache (ADR 0030; docs/preview.md §Decode engine) —
   // persists <userData>/decode_capability.json. Keyed by (lane, format class),
   // invalidated per-lane when its envKey changes (SW: ffmpeg version).
-  const { createDecodeCapabilityStore, classKeyOf, resolveHwProbe } = await import('./decode-capability.js')
+  const { createDecodeCapabilityStore, classKeyOf, resolveHwLane } = await import('./decode-capability.js')
   const decodeCapability = createDecodeCapabilityStore({
     fs: atomicFs,
     path: path.join(app.getPath('userData'), 'decode_capability.json'),
@@ -609,28 +627,37 @@ app.whenReady().then(async () => {
     return { ok: probe.ok, classKey, reason: probe.reason ?? null }
   })
 
-  // Machine capability probe: runs the HW (d3d11va) one-frame decode
-  // probe for a caller-supplied classKey. Unlike the SW probe, the
-  // HW probe doesn't derive the class key itself — it's expensive enough that
-  // the renderer computes classKey from MediaSummary BEFORE deciding
-  // to probe, so an already-cached verdict never pays for a decode. envKey is
-  // GPU identity (vendor/device/driver): a driver update or GPU swap
-  // invalidates every cached HW verdict for this machine. `resolveHwProbe`
-  // gates the probe on the component's ADVERTISED lanes (`nd.lanes`), so a build
-  // without the HW lane (Linux — the by-design GPU-preview stub) never reaches
-  // `previewGpuProbe`, no platform string special-casing needed.
-  ipcMain.handle('decodeCap:probeHw', (_e, a: { path: string; classKey: string }) =>
-    resolveHwProbe({
+  // Machine capability probe: resolves the best HW decode lane for a
+  // caller-supplied classKey. Unlike the SW probe, the HW probe doesn't derive
+  // the class key itself — it's expensive enough that the renderer computes
+  // classKey from MediaSummary BEFORE deciding to probe, so an already-cached
+  // verdict never pays for a decode. envKey is GPU identity
+  // (vendor/device/driver): a driver update or GPU swap invalidates every cached
+  // HW verdict for this machine. `resolveHwLane` walks the component's ADVERTISED
+  // lanes (`nd.lanes`) in NVDEC > VAAPI > d3d11va order, per DRM node for VAAPI,
+  // and falls back to software when none pass — so a build without a HW lane
+  // (Linux SW-only) never reaches a native probe, no platform special-casing.
+  ipcMain.handle('decodeCap:probeHw', async (_e, a: { path: string; classKey: string }) => {
+    const r = await resolveHwLane({
       lanes: nd.lanes,
       store: decodeCapability,
       classKey: a.classKey,
-      envKey: hwEnvKey,
-      probe: () => {
-        const r = ndBackend().previewGpuProbe(a.path, 4000)
-        return { ok: r.ok, reason: r.reason ?? null }
+      envKey: () => hwEnvKey(),
+      devices: (lane) => (lane === 'vaapi' ? enumerateDrmRenderNodes() : [null]),
+      probe: (lane) => {
+        // d3d11va is the only lane with a native probe today; the NVDEC/VAAPI
+        // probes land in Block C2 alongside their decoders. resolveHwLane only
+        // probes ADVERTISED lanes, so until capabilities() advertises nvdec/vaapi
+        // the non-d3d11va branch is unreachable.
+        if (lane === 'd3d11va') {
+          const v = ndBackend().previewGpuProbe(a.path, 4000)
+          return { ok: v.ok, reason: v.reason ?? null }
+        }
+        return { ok: false, reason: 'lane not built' }
       },
-    }),
-  )
+    })
+    return { ok: r.ok, reason: r.reason, lane: r.lane, device: r.device }
+  })
 
   // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
   // WebCodecs-blind-format path). Frames flow out of band on the dedicated
