@@ -72,14 +72,16 @@ pub enum DecodeAccel {
     /// SYSTEM-libva REQUIREMENT (validated on real hardware, issue #5 Block C):
     /// the BtbN LGPL build lazily `dlopen`s the *system* `libva.so.2` via
     /// implib-gen, and the copy-back (`av_hwframe_transfer_data` mapping the
-    /// surface to CPU) calls `vaMapBuffer2`. On a system libva too old to export
-    /// it (< ~2.13) the implib trampoline asserts and aborts the process
-    /// UNCATCHABLY — decode + the one-frame probe succeed (they never map), but
-    /// the first real copy-back frame crashes. Block C2 MUST pre-flight-check the
-    /// system libva for `vaMapBuffer2` (dlsym) BEFORE advertising/using VAAPI and
-    /// decline the lane when absent, so an old-libva machine falls back to the
-    /// software lane instead of crashing. (NVDEC is unaffected: its implib'd
-    /// `libcuda` comes from the current NVIDIA driver.)
+    /// surface to CPU) calls `vaMapBuffer2`. The BtbN nightly is built against a
+    /// bleeding-edge libva, but `vaMapBuffer2` is a 2024 libva addition NEWER than
+    /// the 2.20 current stable distros ship (e.g. Ubuntu 24.04) — so on such a
+    /// system the implib trampoline asserts and aborts the process UNCATCHABLY.
+    /// Decode + the one-frame probe succeed (they never map), but the first real
+    /// copy-back frame crashes. Block C2 MUST pre-flight-check the system libva for
+    /// `vaMapBuffer2` (dlsym) BEFORE advertising/using VAAPI and decline the lane
+    /// when absent, so a stale-libva machine falls back to the software lane
+    /// instead of crashing. (NVDEC is unaffected: its implib'd `libcuda` comes
+    /// from the current NVIDIA driver, which carries every symbol it needs.)
     Vaapi { device: String },
 }
 

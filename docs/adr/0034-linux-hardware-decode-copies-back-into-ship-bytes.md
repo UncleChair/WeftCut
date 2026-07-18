@@ -92,7 +92,8 @@ line — the private HW-vs-SW choice of ADR 0030, extended to Linux.
 Advertisement gates NVDEC and VAAPI on the compiled lanes, but VAAPI carries one
 more gate. The copy-back (`av_hwframe_transfer_data` mapping a VAAPI surface to
 CPU) calls `vaMapBuffer2` through the implib'd **system** libva. On a host libva
-too old to export that symbol (roughly < 2.13) the implib trampoline asserts and
+that predates that symbol (`vaMapBuffer2` is a 2024 libva addition, NEWER than
+the 2.20 current stable distros ship — e.g. Ubuntu 24.04) the implib trampoline asserts and
 **aborts the process uncatchably on the first mapped frame** — while decode and
 the one-frame probe still pass, because they never map a surface. So the
 component `dlsym`-checks `vaMapBuffer2` up front and declines to advertise VAAPI
