@@ -1,4 +1,6 @@
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -6,6 +8,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// Built Electron main entry. Helpers live at e2e/electron/helpers; the build
 /// output is apps/desktop/out/main/index.js → three levels up.
 export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
+
+/// Launch over a brand-new, empty userData dir so the app boots the pristine
+/// built-in Editing baseline instead of restoring whatever a previous spec (or
+/// a previous run) autosaved to the shared default userData. Any spec that opens
+/// a normally-closed Panel, moves Panels, or otherwise mutates the Dock Tree must
+/// use this — the app-level Workspace document persists layout across launches, so
+/// bare `launchApp()` would leak that layout into every other default-userData
+/// spec. (A spec that must relaunch over the SAME userData mints its own dir and
+/// passes it to `launchApp` twice, as dock-workspace's restart test does.)
+export async function launchFreshApp(
+  prefix = 'weftcut-e2e-',
+): Promise<{ app: ElectronApplication; page: Page }> {
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  return launchApp({ userDataDir })
+}
 
 export async function launchApp(
   opts: { userDataDir?: string } = {},

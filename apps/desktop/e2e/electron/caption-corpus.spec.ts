@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { invokeCmd, launchApp, newProject, waitForHook } from "./helpers/driver";
+import { invokeCmd, launchFreshApp, newProject, waitForHook } from "./helpers/driver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
@@ -43,7 +43,10 @@ async function captionLayers(page: import("@playwright/test").Page): Promise<Cap
 
 test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one undo", async () => {
   test.skip(!fs.existsSync(SRT_PATH), `subtitle fixture missing: ${SRT_PATH}`);
-  const { app, page } = await launchApp();
+  // Fresh userData: this test opens the normally-closed Caption Panel, whose
+  // arrangement the app autosaves — a shared userData would leak it into the
+  // dock-workspace baseline specs that assert the default six-Panel set.
+  const { app, page } = await launchFreshApp("weftcut-caption-data-");
   try {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-caption-"));
     await newProject(page, { parentFolder: parent, name: "caption-corpus", canvas: CANVAS });

@@ -3,7 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { invokeCmd, launchApp, newProject, summary } from "./helpers/driver";
+import {
+  invokeCmd,
+  launchApp,
+  launchFreshApp,
+  newProject,
+  summary,
+} from "./helpers/driver";
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 
@@ -22,7 +28,9 @@ interface WorkspaceDocument {
 }
 
 test("built-in Editing workspace docks every default Panel at NLE proportions", async () => {
-  const { app, page } = await launchApp();
+  // Fresh userData: the built-in baseline assertions require the pristine
+  // Editing layout, not whatever a previous default-userData spec autosaved.
+  const { app, page } = await launchFreshApp("weftcut-dock-proportions-");
   try {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-"));
     await newProject(page, {
@@ -90,7 +98,9 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
 });
 
 test("closing Preview destroys its resources and reopening creates a new instance", async () => {
-  const { app, page } = await launchApp();
+  // Fresh userData: this test reopens Preview into its remembered spot, which
+  // requires the pristine built-in layout rather than a leaked prior arrangement.
+  const { app, page } = await launchFreshApp("weftcut-dock-life-");
   try {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-life-"));
     await newProject(page, {
@@ -148,7 +158,9 @@ test("closing Preview destroys its resources and reopening creates a new instanc
 });
 
 test("hidden Preview keeps clock resources alive while presentation sleeps", async () => {
-  const { app, page } = await launchApp();
+  // Fresh userData: the test drags the Effect tab onto Preview from the known
+  // built-in positions; a leaked layout would move those drag targets.
+  const { app, page } = await launchFreshApp("weftcut-dock-hide-");
   try {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-hide-"));
     await newProject(page, {

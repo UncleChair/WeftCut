@@ -446,6 +446,28 @@ export function App({ onCloseProject }: AppProps) {
     );
   }, [runExportWithSettings]);
 
+  // E2E-only: expose the live Dock Workspace snapshot (open Panels, focused
+  // Panel, maximized Panel, empty) so the cross-Panel acceptance specs can
+  // assert focus/maximize/open-close/empty without reaching into Dockview's
+  // private DOM. Reads the controller's live getSnapshot at call time; the
+  // effect re-runs (reinstalling, or nulling out) as the controller mounts and
+  // unmounts. Stripped from prod (static `VITE_WEFTCUT_E2E` check).
+  useEffect(() => {
+    if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
+    void import("./testhook/e2eHook").then(({ installDockWorkspaceProbe }) =>
+      installDockWorkspaceProbe(() => {
+        const snapshot = workspaceController?.getSnapshot();
+        if (!snapshot) return null;
+        return {
+          openPanels: [...snapshot.openPanels].sort(),
+          activePanel: snapshot.activePanel,
+          maximizedPanel: snapshot.maximizedPanel,
+          empty: snapshot.empty,
+        };
+      }),
+    );
+  }, [workspaceController]);
+
   // No React-side preview init: the Rust `preview::PreviewRenderer` task
   // subscribes to actor commits and writes `<workspace>/Cache/preview/<hash>.mp4`;
   // PreviewSurface listens for the resulting events and swaps its `<video src>`.

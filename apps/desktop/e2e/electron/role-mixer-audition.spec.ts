@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { invokeCmd, launchApp, newProject, waitForHook } from './helpers/driver'
+import { invokeCmd, launchApp, launchFreshApp, newProject, waitForHook } from './helpers/driver'
 
 // Role Gain audition — renders the REAL preview Role-gain fold
 // (`auditionedRoleGainLinear` → GainNode) in an OfflineAudioContext and checks
@@ -67,7 +67,10 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
   let workspace: string
 
   test.beforeAll(async () => {
-    ;({ app, page } = await launchApp())
+    // Fresh userData: this block reopens the normally-closed Role Mixer Panel,
+    // which the app autosaves — a shared userData would leak it into the
+    // dock-workspace baseline specs that assert the default six-Panel set.
+    ;({ app, page } = await launchFreshApp('weftcut-mixer-data-'))
     workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-mixer-'))
     await newProject(page, {
       parentFolder: workspace,

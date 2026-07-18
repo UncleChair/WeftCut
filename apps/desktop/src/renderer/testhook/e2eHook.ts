@@ -383,6 +383,22 @@ export interface E2EHook {
   /// uses this to prove a caption/clip jump (Enter on a result row) actually
   /// moved the playhead, without importing the bundled store module.
   getPlayheadUs(): number;
+  /// Live Dock Workspace snapshot as plain JSON — open Panel kinds (sorted), the
+  /// focused/active Panel, the maximized Panel, and whether the workspace is
+  /// empty. WeftCut-owned observability so the Electron acceptance specs can
+  /// assert focus cycling, maximize/restore, open/close, and empty recovery
+  /// without reaching into Dockview's private DOM or serialized JSON. Null before
+  /// the workspace controller mounts. Dev/e2e only.
+  dockWorkspaceProbe(): DockWorkspaceProbe | null;
+}
+
+/// JSON-serializable projection of DockWorkspaceSnapshot (its `openPanels` Set
+/// becomes a sorted string[] so it survives the page.evaluate boundary).
+export interface DockWorkspaceProbe {
+  openPanels: string[];
+  activePanel: string | null;
+  maximizedPanel: string | null;
+  empty: boolean;
 }
 
 /// Pixel + whole-frame diagnostics from the live composite readback. `r/g/b/a`
@@ -460,6 +476,17 @@ export function installBootstrapHook(
     enterEditor();
   };
   hookSlot().getPlayheadUs = () => playheadTimeUs();
+}
+
+/// App-side: expose the live Dock Workspace snapshot to Electron acceptance
+/// specs. `read` returns the already-serialized probe (or null before the
+/// controller mounts); App wires it to the controller's live getSnapshot so the
+/// value is always current at call time. Installing null uninstalls (controller
+/// unmounted). Guarded by the caller's static VITE_WEFTCUT_E2E check.
+export function installDockWorkspaceProbe(
+  read: () => DockWorkspaceProbe | null,
+): void {
+  hookSlot().dockWorkspaceProbe = read;
 }
 
 /// Root-side: install the decode-bench hooks (docs/decode-bench.md). No
