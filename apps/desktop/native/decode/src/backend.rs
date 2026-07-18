@@ -636,6 +636,42 @@ impl NativeDecode {
             }),
         }
     }
+
+    /// One-frame HARDWARE decode probe (issue #5 Block C). `lane` is `"nvdec"` or
+    /// `"vaapi"`; for `vaapi`, `device` is the DRM render node this probe targets
+    /// (main enumerates the nodes and probes each). Opens a throwaway stream on
+    /// that hardware lane, decodes one frame, and confirms the surface came back
+    /// HARDWARE-decoded — a silent software fallback counts as `ok:false`, so the
+    /// resolver's per-machine cache records the negative and the Standard engine
+    /// stays on its software lane. Failure is a verdict, not an error (matches the
+    /// SW and d3d11va probes): callers branch on `ok`, never catch. Reuses
+    /// `PreviewGpuProbeResult` — main-supplied classKey, no codec/dims echo.
+    /// `_timeout_ms` is advisory (kept for API symmetry with the other probes) —
+    /// this synchronous one-frame decode has no deadline machinery to wire it to.
+    #[napi]
+    pub fn preview_hw_probe(
+        &self,
+        path: String,
+        lane: String,
+        device: Option<String>,
+        _timeout_ms: u32,
+    ) -> napi::Result<PreviewGpuProbeResult> {
+        use crate::preview_sw::decoder::DecodeAccel;
+        let accel = match lane.as_str() {
+            "nvdec" => DecodeAccel::Nvdec,
+            "vaapi" => DecodeAccel::Vaapi { device: device.unwrap_or_default() },
+            other => {
+                return Ok(PreviewGpuProbeResult {
+                    ok: false,
+                    reason: Some(format!("unknown hw lane '{other}'")),
+                })
+            }
+        };
+        match crate::preview_sw::decoder::probe_hw_first_frame(&path, accel) {
+            Ok(()) => Ok(PreviewGpuProbeResult { ok: true, reason: None }),
+            Err(e) => Ok(PreviewGpuProbeResult { ok: false, reason: Some(e) }),
+        }
+    }
 }
 
 // ── export-decode methods (all platforms) ────────────────────────────────────

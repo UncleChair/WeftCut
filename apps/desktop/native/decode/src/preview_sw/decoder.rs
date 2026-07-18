@@ -16,6 +16,8 @@ use ffmpeg_next::format::{input, Pixel};
 use ffmpeg_next::media::Type;
 use ffmpeg_next::software::scaling::{context::Context as SwsContext, flag::Flags};
 use ffmpeg_next::util::frame::video::Video as VideoFrame;
+use std::ffi::CString;
+use std::ptr;
 
 // FF_THREAD_FRAME (1) / FF_THREAD_SLICE (2) from libavcodec/avcodec.h. Literals,
 // not ffs:: symbols: ffmpeg-sys-next does not re-export these #define flags
@@ -46,6 +48,146 @@ fn thread_type_for(id: ffmpeg_next::codec::Id) -> i32 {
         Id::PRORES | Id::DNXHD => FF_THREAD_SLICE,
         _ => FF_THREAD_FRAME | FF_THREAD_SLICE,
     }
+}
+
+/// Which decode acceleration a stream opens with (issue #5 Block C). Software is
+/// the universal lane; the hardware lanes decode on the GPU and copy the surface
+/// back to a CPU frame (`av_hwframe_transfer_data`) so the packed bytes feed the
+/// SAME NV12 transport as software (ADR 0029 ship-bytes) — hardware-vs-software
+/// stays private to the Standard engine, one transport, no new IPC. Mirrors the
+/// Windows `preview_gpu` hwaccel setup but yields CPU bytes instead of a shared
+/// D3D11 texture (copy-back, not zero-copy — the deferred zero-copy path awaits
+/// decode-bench numbers).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecodeAccel {
+    /// libavcodec decodes to a CPU frame (every platform).
+    Software,
+    /// NVDEC via the CUDA hwcontext; decodes on the default NVIDIA GPU handle
+    /// (no device string — one NVDEC decoder per machine in v1).
+    Nvdec,
+    /// VAAPI pinned to a specific DRM render node (e.g. `/dev/dri/renderD128`):
+    /// libva's default device selection picks the wrong GPU on a multi-GPU
+    /// machine, so the node is always explicit.
+    ///
+    /// SYSTEM-libva REQUIREMENT (validated on real hardware, issue #5 Block C):
+    /// the BtbN LGPL build lazily `dlopen`s the *system* `libva.so.2` via
+    /// implib-gen, and the copy-back (`av_hwframe_transfer_data` mapping the
+    /// surface to CPU) calls `vaMapBuffer2`. On a system libva too old to export
+    /// it (< ~2.13) the implib trampoline asserts and aborts the process
+    /// UNCATCHABLY — decode + the one-frame probe succeed (they never map), but
+    /// the first real copy-back frame crashes. Block C2 MUST pre-flight-check the
+    /// system libva for `vaMapBuffer2` (dlsym) BEFORE advertising/using VAAPI and
+    /// decline the lane when absent, so an old-libva machine falls back to the
+    /// software lane instead of crashing. (NVDEC is unaffected: its implib'd
+    /// `libcuda` comes from the current NVIDIA driver.)
+    Vaapi { device: String },
+}
+
+impl DecodeAccel {
+    /// The libavutil hw device type, or `None` for software.
+    fn hw_device_type(&self) -> Option<ffs::AVHWDeviceType> {
+        match self {
+            DecodeAccel::Software => None,
+            DecodeAccel::Nvdec => Some(ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA),
+            DecodeAccel::Vaapi { .. } => Some(ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI),
+        }
+    }
+
+    /// The hardware surface format the decoder yields for this lane — what
+    /// `get_format` must select to keep frames on the GPU, and what the probe
+    /// checks to prove hardware decode actually engaged. `None` for software.
+    fn hw_pix_fmt(&self) -> Option<Pixel> {
+        match self {
+            DecodeAccel::Software => None,
+            DecodeAccel::Nvdec => Some(Pixel::CUDA),
+            DecodeAccel::Vaapi { .. } => Some(Pixel::VAAPI),
+        }
+    }
+
+    /// The device string passed to `av_hwdevice_ctx_create` (VAAPI: the DRM node;
+    /// NVDEC/software: none = default).
+    fn device_cstr(&self) -> Option<CString> {
+        match self {
+            DecodeAccel::Vaapi { device } => CString::new(device.as_str()).ok(),
+            _ => None,
+        }
+    }
+}
+
+/// True for the GPU-surface pixel formats a hardware lane decodes to — the frame
+/// must be transferred to system memory before it can be packed. (D3D11 is
+/// included for symmetry with the Windows path, though this module's hw lanes are
+/// CUDA/VAAPI.)
+fn is_hw_pix_format(fmt: Pixel) -> bool {
+    matches!(fmt, Pixel::CUDA | Pixel::VAAPI | Pixel::D3D11)
+}
+
+/// Walk libavcodec's offered `pix_fmts` (NONE-terminated) and return `want` if
+/// present, so hardware frames stay on the GPU; otherwise the first offered
+/// (software) format — the same fall-through the Windows `get_format_d3d11` uses,
+/// which is what makes a failed hw negotiation surface as a software-format frame
+/// the probe can detect.
+fn pick_hw_pix_format(
+    pix_fmts: *const ffs::AVPixelFormat,
+    want: ffs::AVPixelFormat,
+) -> ffs::AVPixelFormat {
+    let mut p = pix_fmts;
+    while unsafe { *p } != ffs::AVPixelFormat::AV_PIX_FMT_NONE {
+        if unsafe { *p } == want {
+            return want;
+        }
+        p = unsafe { p.add(1) };
+    }
+    unsafe { *pix_fmts }
+}
+
+unsafe extern "C" fn get_format_cuda(
+    _ctx: *mut ffs::AVCodecContext,
+    pix_fmts: *const ffs::AVPixelFormat,
+) -> ffs::AVPixelFormat {
+    pick_hw_pix_format(pix_fmts, ffs::AVPixelFormat::AV_PIX_FMT_CUDA)
+}
+
+unsafe extern "C" fn get_format_vaapi(
+    _ctx: *mut ffs::AVCodecContext,
+    pix_fmts: *const ffs::AVPixelFormat,
+) -> ffs::AVPixelFormat {
+    pick_hw_pix_format(pix_fmts, ffs::AVPixelFormat::AV_PIX_FMT_VAAPI)
+}
+
+/// Attach `accel`'s hw device context + `get_format` override to `codec_ctx`
+/// (called BEFORE `avcodec_open2`). Returns the created `AVBufferRef` — the
+/// caller owns it and must `av_buffer_unref` it (SwVideoStream does so on drop).
+/// Errors if the device can't be created (GPU/driver absent → the resolver's
+/// silent software fallback). Must not be called for `Software`.
+unsafe fn attach_hw_device(
+    codec_ctx: &mut ffmpeg_next::codec::context::Context,
+    accel: &DecodeAccel,
+) -> Result<*mut ffs::AVBufferRef, String> {
+    let hw_type = accel
+        .hw_device_type()
+        .ok_or_else(|| "attach_hw_device called for software".to_string())?;
+    // Keep the CString alive across the create call (dev_ptr borrows it).
+    let device = accel.device_cstr();
+    let dev_ptr = device.as_ref().map(|c| c.as_ptr()).unwrap_or(ptr::null());
+
+    let mut hw_ctx: *mut ffs::AVBufferRef = ptr::null_mut();
+    let ret = unsafe {
+        ffs::av_hwdevice_ctx_create(&mut hw_ctx, hw_type, dev_ptr, ptr::null_mut(), 0)
+    };
+    if ret < 0 || hw_ctx.is_null() {
+        return Err(format!("av_hwdevice_ctx_create({accel:?}) failed (ret={ret})"));
+    }
+    unsafe {
+        let raw = codec_ctx.as_mut_ptr();
+        (*raw).hw_device_ctx = ffs::av_buffer_ref(hw_ctx);
+        (*raw).get_format = Some(match accel {
+            DecodeAccel::Nvdec => get_format_cuda,
+            DecodeAccel::Vaapi { .. } => get_format_vaapi,
+            DecodeAccel::Software => unreachable!("guarded above"),
+        });
+    }
+    Ok(hw_ctx)
 }
 
 /// FFmpeg color metadata carried alongside each decoded frame, as canonical
@@ -129,6 +271,10 @@ pub struct SwVideoStream {
     pub thread_count: i32,
     /// Target format every decoded frame is packed into, fixed at open.
     out_format: SwOutFormat,
+    /// The hw device context when this stream decodes on a hardware lane
+    /// (`DecodeAccel::Nvdec`/`Vaapi`), else null. Owned here; unref'd on drop.
+    /// Must outlive the decoder (which holds a ref via `hw_device_ctx`).
+    hw_ctx: *mut ffs::AVBufferRef,
 }
 
 // The ffmpeg-next `Input`/`Video` wrappers hold raw pointers and are `!Send`.
@@ -136,6 +282,18 @@ pub struct SwVideoStream {
 // owner (its session thread) and its pointers never cross threads, so it is
 // sound to mark `Send`.
 unsafe impl Send for SwVideoStream {}
+
+impl Drop for SwVideoStream {
+    fn drop(&mut self) {
+        // Release our owning ref to the hw device context (the decoder's own ref
+        // dropped when `decoder` did). Null on the software lane — no-op.
+        unsafe {
+            if !self.hw_ctx.is_null() {
+                ffs::av_buffer_unref(&mut self.hw_ctx);
+            }
+        }
+    }
+}
 
 /// PTS (in stream time_base units) -> source-normalized microseconds. Mirrors
 /// the renderer's `frameToSourceUs`: convert to us via time_base, then subtract
@@ -149,13 +307,28 @@ pub fn pts_to_source_us(pts: i64, time_base: (i32, i32), start_pts_us: i64) -> i
 impl SwVideoStream {
     /// Open `path` for pure-software decode into NV12 (all preview callers).
     pub fn open(path: &str) -> Result<SwVideoStream, String> {
-        Self::open_with_format(path, SwOutFormat::Nv12)
+        Self::open_with_accel(path, SwOutFormat::Nv12, DecodeAccel::Software)
     }
 
-    /// Open `path` for pure-software decode and prepare for streaming, packing
-    /// every decoded frame into `out_format`. No hardware device is attached —
-    /// libavcodec always decodes to CPU frames.
+    /// Open `path` for pure-software decode, packing every decoded frame into
+    /// `out_format` (the export lane's 10-bit selector). Software only.
     pub fn open_with_format(path: &str, out_format: SwOutFormat) -> Result<SwVideoStream, String> {
+        Self::open_with_accel(path, out_format, DecodeAccel::Software)
+    }
+
+    /// Open `path` on `accel` and prepare for streaming, packing every decoded
+    /// frame into `out_format`. On a hardware lane a hw device context is attached
+    /// (`get_format` keeps frames on the GPU) and each `next_frame` transfers the
+    /// surface back to system memory before packing — the packed bytes are
+    /// identical to the software lane's, so the same transport carries both. On
+    /// the software lane libavcodec decodes to CPU frames with parallel threads.
+    /// A hw device that can't be created (GPU/driver absent) surfaces as an `Err`
+    /// so the caller falls back to software.
+    pub fn open_with_accel(
+        path: &str,
+        out_format: SwOutFormat,
+        accel: DecodeAccel,
+    ) -> Result<SwVideoStream, String> {
         ffmpeg_next::init().ok();
         let map = |e: ffmpeg_next::Error| e.to_string();
 
@@ -183,19 +356,36 @@ impl SwVideoStream {
         let mut codec_ctx =
             ffmpeg_next::codec::context::Context::from_parameters(stream.parameters())
                 .map_err(map)?;
-        // Parallel decode: set on the raw context BEFORE avcodec_open2 reads it.
-        // thread_type is per-codec-family (see `thread_type_for`): slice-only for
-        // intra ProRes/DNxHD (no output-latency, keeps scrub snappy), FRAME|SLICE
-        // for long-GOP MPEG-2/VC-1/WMV3 throughput. Threaded decode is byte-identical
-        // to single-thread; only speed changes.
-        let requested_threads = decode_thread_count();
-        let thread_type = thread_type_for(stream.parameters().id());
-        unsafe {
-            let raw = codec_ctx.as_mut_ptr();
-            (*raw).thread_count = requested_threads;
-            (*raw).thread_type = thread_type;
+        // hw lane: attach the device + get_format BEFORE avcodec_open2. sw lane:
+        // request parallel decode threads instead (per-codec-family thread_type —
+        // slice-only for intra ProRes/DNxHD to keep scrub snappy, FRAME|SLICE for
+        // long-GOP throughput; threaded decode is byte-identical, only faster). A
+        // hardware decoder runs on the GPU, so CPU thread tuning does not apply.
+        let mut hw_ctx: *mut ffs::AVBufferRef = ptr::null_mut();
+        if accel.hw_device_type().is_some() {
+            hw_ctx = unsafe { attach_hw_device(&mut codec_ctx, &accel)? };
+        } else {
+            let requested_threads = decode_thread_count();
+            let thread_type = thread_type_for(stream.parameters().id());
+            unsafe {
+                let raw = codec_ctx.as_mut_ptr();
+                (*raw).thread_count = requested_threads;
+                (*raw).thread_type = thread_type;
+            }
         }
-        let mut decoder = codec_ctx.decoder().video().map_err(map)?;
+        // If the decoder open fails after we created a hw context, release it so a
+        // failed hw open never leaks the device.
+        let mut decoder = match codec_ctx.decoder().video() {
+            Ok(d) => d,
+            Err(e) => {
+                unsafe {
+                    if !hw_ctx.is_null() {
+                        ffs::av_buffer_unref(&mut hw_ctx);
+                    }
+                }
+                return Err(map(e));
+            }
+        };
         // Count libavcodec actually settled on (clamped to 1 for a codec without
         // threading support). Read via the raw context (as_mut_ptr is already used
         // by `seek`).
@@ -230,6 +420,7 @@ impl SwVideoStream {
             color,
             thread_count,
             out_format,
+            hw_ctx,
         })
     }
 
@@ -278,11 +469,29 @@ impl SwVideoStream {
                         dur_us,
                     )
                 };
-                let data = match self.out_format {
-                    SwOutFormat::Nv12 => frame_to_nv12(&self.frame, self.width, self.height),
-                    SwOutFormat::I420p10 => {
-                        frame_to_i420p10(&self.frame, self.width, self.height)
+                // A hardware lane decodes to a GPU surface; copy it back to system
+                // memory before packing so the bytes feed the same transport as
+                // software. The software lane's frame is already in system memory
+                // (`is_hw_pix_format` false) — no transfer, byte-identical output.
+                let mut hw_scratch = VideoFrame::empty();
+                let src: &VideoFrame = if is_hw_pix_format(self.frame.format()) {
+                    unsafe {
+                        let ret = ffs::av_hwframe_transfer_data(
+                            hw_scratch.as_mut_ptr(),
+                            self.frame.as_ptr(),
+                            0,
+                        );
+                        if ret < 0 {
+                            return Err(format!("av_hwframe_transfer_data failed (ret={ret})"));
+                        }
                     }
+                    &hw_scratch
+                } else {
+                    &self.frame
+                };
+                let data = match self.out_format {
+                    SwOutFormat::Nv12 => frame_to_nv12(src, self.width, self.height),
+                    SwOutFormat::I420p10 => frame_to_i420p10(src, self.width, self.height),
                 }
                 .map_err(map)?;
                 return Ok(Some(SwFrame {
@@ -341,6 +550,55 @@ impl SwVideoStream {
         }
         self.eof_sent = false;
         Ok(())
+    }
+
+    /// Decode one frame and return its RAW pixel format — the hardware surface
+    /// format (`Pixel::CUDA`/`Pixel::VAAPI`) when a hw lane actually engaged, or
+    /// the CPU format when the decoder fell back to software. No transfer, no
+    /// packing. `Ok(None)` at immediate end of stream. Backs the hw probe.
+    fn decode_one_raw_format(&mut self) -> Result<Option<Pixel>, String> {
+        let map = |e: ffmpeg_next::Error| e.to_string();
+        loop {
+            if self.decoder.receive_frame(&mut self.frame).is_ok() {
+                return Ok(Some(self.frame.format()));
+            }
+            match self.ictx.packets().next() {
+                Some((s, p)) => {
+                    if s.index() == self.stream_index {
+                        self.decoder.send_packet(&p).map_err(map)?;
+                    }
+                }
+                None => {
+                    self.decoder.send_eof().map_err(map)?;
+                    if self.decoder.receive_frame(&mut self.frame).is_ok() {
+                        return Ok(Some(self.frame.format()));
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+    }
+}
+
+/// One-frame hardware-decode probe (issue #5 Block C). Opens `path` on `accel`,
+/// decodes a single frame, and confirms the decoder produced a HARDWARE surface
+/// rather than silently falling back to software (`get_format` returns the SW
+/// format when the GPU can't handle the codec/profile on this machine). A
+/// throwaway stream — opened, decoded to the first frame, dropped. `Ok(())` means
+/// the lane decodes this class here; `Err(reason)` means unavailable, and the
+/// resolver caches the negative and falls back to the software lane. Never call
+/// with `DecodeAccel::Software`.
+pub fn probe_hw_first_frame(path: &str, accel: DecodeAccel) -> Result<(), String> {
+    let want = accel
+        .hw_pix_fmt()
+        .ok_or_else(|| "software is not a hardware lane".to_string())?;
+    let mut stream = SwVideoStream::open_with_accel(path, SwOutFormat::Nv12, accel)?;
+    match stream.decode_one_raw_format()? {
+        Some(fmt) if fmt == want => Ok(()),
+        Some(fmt) => Err(format!(
+            "decoder produced {fmt:?}, not the hw surface (hardware decode unavailable)"
+        )),
+        None => Err("no frame decoded".to_string()),
     }
 }
 
@@ -520,5 +778,40 @@ mod tests {
         for id in [Id::MPEG2VIDEO, Id::VC1, Id::WMV3] {
             assert_eq!(super::thread_type_for(id), super::FF_THREAD_FRAME | super::FF_THREAD_SLICE);
         }
+    }
+
+    #[test]
+    fn is_hw_pix_format_flags_gpu_surfaces_only() {
+        use super::is_hw_pix_format;
+        use ffmpeg_next::format::Pixel;
+        assert!(is_hw_pix_format(Pixel::CUDA));
+        assert!(is_hw_pix_format(Pixel::VAAPI));
+        assert!(is_hw_pix_format(Pixel::D3D11));
+        // CPU formats must NOT be treated as hw surfaces (they skip the transfer).
+        for f in [Pixel::NV12, Pixel::YUV420P, Pixel::YUV422P10LE, Pixel::YUV420P10LE] {
+            assert!(!is_hw_pix_format(f), "{f:?} wrongly flagged hw");
+        }
+    }
+
+    #[test]
+    fn probe_rejects_software_accel() {
+        // The hw probe is meaningless for the software lane — it must error
+        // rather than "succeed" (there is no hw surface to confirm).
+        use super::{probe_hw_first_frame, DecodeAccel};
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        assert!(probe_hw_first_frame(p, DecodeAccel::Software).is_err());
+    }
+
+    #[test]
+    fn probe_rejects_absent_vaapi_device() {
+        // A non-existent DRM render node must surface as a graceful Err (device
+        // create fails), never a panic/abort — this is the resolver's silent
+        // software-fallback path. (Real-hardware NVDEC/VAAPI correctness is
+        // verified at the conformance seam, not here — crate tests stay
+        // hardware-independent.)
+        use super::{probe_hw_first_frame, DecodeAccel};
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let r = probe_hw_first_frame(p, DecodeAccel::Vaapi { device: "/dev/dri/renderD999".into() });
+        assert!(r.is_err(), "absent vaapi node should Err, got {r:?}");
     }
 }
