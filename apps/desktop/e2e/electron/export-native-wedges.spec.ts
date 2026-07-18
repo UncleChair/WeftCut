@@ -572,14 +572,10 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
   // profile assertion — AV1's "Main" profile covers 10-bit, so pix_fmt is the
   // depth signal.
   test('10-bit ramp through the native route to AV1 10-bit keeps its step count', async () => {
-    // Linux: pending Block A (controlled sidecar ffmpeg). The AV1 10-bit path
-    // needs a sidecar built with libsvtav1; the currently auto-downloaded Linux
-    // sidecar lacks that encoder, so the software-encoder pick lands on the
-    // absent libsvtav1 and the encode dies with a broken pipe. This is an
-    // encode/sidecar-build gap, ORTHOGONAL to the software DECODE lane — the
-    // same native I420P10 decode is proven green by the HEVC-10 gate above.
-    // Re-enable once Block A pins the libsvtav1-carrying sidecar.
-    test.skip(process.platform === 'linux', 'AV1-10 sidecar encode needs libsvtav1 (pending Block A); the software decode lane is proven by the HEVC-10 gate')
+    // AV1 10-bit needs a sidecar built with libsvtav1. Block A pins the Linux
+    // sidecar to the BtbN n7.1 GPL build (fetch-ffmpeg.mjs), which carries
+    // libsvtav1 (8/10-bit) — so the software-encoder probe picks it and this
+    // gate runs on Linux too, alongside Windows.
     test.setTimeout(420_000)
     await exportRampNative('e2e-nw-ramp10-av1-', OUT_RAMP_AV1, RAMP10_AV1_SETTINGS, 400_000)
     const st = probeVideoStream(OUT_RAMP_AV1, 'codec_name,pix_fmt')

@@ -44,8 +44,9 @@ impl TargetCodec {
     }
 
     /// Software encoder candidates in preference order. LANDMINE: the pinned
-    /// sidecar is Gyan's ESSENTIALS build (fetch-ffmpeg.mjs), which ships
-    /// libaom-av1 but NOT libsvtav1 — candidates must be probed at pick time
+    /// sidecar differs by OS (fetch-ffmpeg.mjs) — Windows is Gyan's ESSENTIALS
+    /// build (libaom-av1 but NOT libsvtav1), Linux is the BtbN n7.1 GPL build
+    /// (libsvtav1 present). Candidates must be probed at pick time
     /// (`pick_software_encoder`), never assumed present.
     pub fn software_encoder_candidates(self) -> &'static [&'static str] {
         match self {

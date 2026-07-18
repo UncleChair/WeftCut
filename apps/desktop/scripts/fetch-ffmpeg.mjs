@@ -11,10 +11,10 @@ import { tmpdir } from 'node:os'
 
 const FFMPEG_VERSION = '7.1.1'
 // SHA-256 of the version-pinned Windows archive (gyan 7.1.1 essentials build) —
-// verified, rejects a tampered/corrupt download. Linux (BtbN `latest`) and macOS
-// (evermeet `getrelease`) are ROLLING sources, so a pinned hash there would break
-// on every upstream rebuild; they stay size-validated only until their URLs are
-// version-pinned (rolling upstream builds have no stable hash to pin against).
+// verified, rejects a tampered/corrupt download. Linux (BtbN `n7.1` asset) and
+// macOS (evermeet `getrelease`) are ROLLING WITHIN their pinned major.minor line,
+// so a pinned hash there would break on every upstream rebuild; they stay
+// size-validated only (rolling upstream builds have no stable hash to pin against).
 const FFMPEG_WIN_SHA256 = '04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4'
 const MIN_ARCHIVE_BYTES = 1 * 1024 * 1024   // 1 MB — corrupt/truncated guard
 const MIN_BINARY_BYTES  = 1 * 1024 * 1024   // 1 MB — incomplete-extract guard
@@ -128,10 +128,14 @@ if (plat === 'win32') {
   rmSync(zipPath, { force: true })
 
 } else if (plat === 'linux') {
-  // BtbN/FFmpeg-Builds static GPL build (linux64) — GitHub CDN, reliable
-  // Archive layout: ffmpeg-master-latest-linux64-gpl/bin/ffmpeg + ffprobe
-  // strip-components=2 drops both the top dir and bin/, leaving binaries in dest
-  const url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz'
+  // BtbN/FFmpeg-Builds static GPL build (linux64) — GitHub CDN, reliable.
+  // Version-pinned to the `n7.1` asset (NOT `master`): it tracks the same 7.1.x
+  // line as the Windows build, so libavcodec 61 keeps `-vsync` working (master's
+  // avcodec 63 removed it, breaking the conformance e2e), and the GPL build ships
+  // libsvtav1 (AV1 8/10-bit export), plus vaapi + ffnvcodec for the hardware lanes.
+  // Archive layout: ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffmpeg + ffprobe —
+  // strip-components=2 drops both the top dir and bin/, leaving binaries in dest.
+  const url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz'
   const tarPath = join(tmp, 'ffmpeg-btbn-linux64-gpl.tar.xz')
 
   console.log('Downloading ffmpeg + ffprobe (Linux static amd64) from BtbN/FFmpeg-Builds (GitHub CDN)...')

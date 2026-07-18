@@ -23,7 +23,8 @@ pub async fn bootstrap() -> Result<BootstrapStatus> {
             if let Err(e) = auto_download() {
                 let msg = format!(
                     "ffmpeg auto-download failed ({e:#}). Install manually: \
-                     `winget install Gyan.FFmpeg` (Windows) or `brew install ffmpeg` (macOS)."
+                     `winget install Gyan.FFmpeg` (Windows), `brew install ffmpeg` (macOS), \
+                     or your distro's package (Linux, e.g. `apt install ffmpeg`)."
                 );
                 warn!("{msg}");
                 return Ok::<BootstrapStatus, anyhow::Error>(BootstrapStatus::Unavailable(msg));
