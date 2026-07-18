@@ -36,9 +36,16 @@ widget chrome; the rest is editor-specific layout no library replaces.
 - **Tailwind v4 is the token carrier.** `src/renderer/app.css` is the Tailwind entry:
   the shadcn token convention (`--background`, `--primary`, `--radius`, …)
   holds the app palette in the `.dark` block, hex-verbatim from the legacy
-  stylesheet so later `var(--*)` sweeps stay greppable. The app is dark-only:
-  `html.dark` is hardwired in `index.html`; `:root` keeps inert light
-  defaults for theme-tool compatibility.
+  stylesheet so later `var(--*)` sweeps stay greppable. The app is dark-only,
+  deliberately and permanently: it is an NLE whose neutral surround keeps
+  color judgment honest, and a second theme would double the visual QA
+  surface of every panel. `html.dark` is hardwired in `index.html` and
+  `color-scheme: dark` in `base.css`. The inert light defaults in `:root`
+  exist solely for theme-tool (tweakcn) compatibility — they are tooling
+  scaffolding, **not** a maintained theme, and must not drift into feature
+  CSS. If a light mode is ever revisited, it is a full design pass (new
+  surface ladder, status-hue recalibration, media/preview contrast audit),
+  not a palette flip.
 - **The cascade contract.** Everything Tailwind emits is layered
   (`@layer theme/base/utilities`); `styles.css` stays **unlayered** and
   therefore wins wherever both target the same element. Two corollaries every

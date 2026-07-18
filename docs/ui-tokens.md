@@ -10,6 +10,16 @@ This document is the full reference for the semantic layer. When a value
 here drifts from `app.css`, `app.css` wins — update the doc in the same
 commit.
 
+## Dark-only, on purpose
+
+WeftCut is a dark-only application: a neutral dark surround is part of an
+editor's color judgment, and one theme keeps the visual QA surface of
+every panel at ×1. `html.dark` is hardwired, `color-scheme: dark` is set
+in `base.css`, and there is no theme switcher and no
+`prefers-color-scheme` handling. The light values in `:root` are inert
+theme-tool scaffolding, not a supported theme — never consume them as if
+a light mode existed (decision: ADR 0018).
+
 ## Surfaces
 
 | Token | Value | Use |
