@@ -30,7 +30,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const onFatal = vi.fn();
     const src = new FfmpegSource(
       { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
-      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
     await src.ensureReady();
@@ -55,7 +55,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const onFatal = vi.fn();
     const src = new FfmpegSource(
       { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
-      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
     await src.ensureReady();
@@ -71,7 +71,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const sw = fakeTransport();
     const src = new FfmpegSource(
       { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
-      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     await src.ensureReady();
 
@@ -90,7 +90,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     const sw = fakeTransport();
     const src = new FfmpegSource(
       { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
-      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     await src.ensureReady();
 
@@ -109,7 +109,7 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
   it("threads media width/height into pickInitialLane for classKey correctness (mod C)", async () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
-    const pickLane = vi.fn(async () => "hardware" as const);
+    const pickLane = vi.fn(async () => ({ lane: "hardware" as const, hwLane: null, device: null }));
     const src = new FfmpegSource(
       {
         layerId: "L",
@@ -139,7 +139,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
     const onFatal = vi.fn();
     const src = new FfmpegSource(
       { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
-      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
 
@@ -161,7 +161,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
     const onFatal = vi.fn();
     const src = new FfmpegSource(
       { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
-      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => "hardware" },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
     );
     src.onFatalError(onFatal);
 
@@ -191,6 +191,60 @@ describe("FfmpegSource — HW open failure fallback", () => {
     await expect(src.ensureReady()).rejects.toThrow("hw-budget-exceeded");
 
     expect(onFatal).toHaveBeenCalledWith(expect.stringContaining("hw-budget-exceeded"));
+    expect(sw.t.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("FfmpegSource — hardware transport routing by HW lane (C2.2)", () => {
+  it("routes a resolved NVDEC copy-back lane through the SW transport (not the GPU one)", async () => {
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      {
+        makeGpu: () => gpu.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "nvdec", device: null }),
+      },
+    );
+    await src.ensureReady();
+    // Copy-back: decode on the GPU, frames ship over the SAME previewSw transport.
+    expect(src.currentLane()).toBe("hardware");
+    expect(sw.t.open).toHaveBeenCalled();
+    expect(gpu.t.open).not.toHaveBeenCalled();
+  });
+
+  it("routes a resolved VAAPI copy-back lane through the SW transport", async () => {
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      {
+        makeGpu: () => gpu.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "vaapi", device: "/dev/dri/renderD128" }),
+      },
+    );
+    await src.ensureReady();
+    expect(src.currentLane()).toBe("hardware");
+    expect(sw.t.open).toHaveBeenCalled();
+    expect(gpu.t.open).not.toHaveBeenCalled();
+  });
+
+  it("routes the Windows shared-texture lane (d3d11va) through the GPU transport", async () => {
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      {
+        makeGpu: () => gpu.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+      },
+    );
+    await src.ensureReady();
+    expect(src.currentLane()).toBe("hardware");
+    expect(gpu.t.open).toHaveBeenCalled();
     expect(sw.t.open).not.toHaveBeenCalled();
   });
 });

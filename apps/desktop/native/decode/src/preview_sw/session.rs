@@ -32,7 +32,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use super::decoder::{SwFrame, SwVideoStream};
+use super::decoder::{DecodeAccel, SwFrame, SwOutFormat, SwVideoStream};
 
 /// How many frames a single `request_frame_at` emits, starting at the frame that
 /// covers the seek target. A "handful" pre-buffers a little playback smoothness
@@ -217,11 +217,12 @@ fn serve_request(stream: &mut SwVideoStream, target_us: i64, sink: &FrameSink, s
 fn session_thread(
     stream_id: String,
     path: String,
+    accel: DecodeAccel,
     rx: Receiver<SwSessionMsg>,
     init_tx: Sender<Result<PreviewSwOpenInfo, String>>,
     sink: FrameSink,
 ) {
-    let mut stream = match SwVideoStream::open(&path) {
+    let mut stream = match SwVideoStream::open_with_accel(&path, SwOutFormat::Nv12, accel) {
         Ok(s) => s,
         Err(e) => {
             let _ = init_tx.send(Err(e));
@@ -280,8 +281,26 @@ impl PreviewSwRegistry {
 
     /// Open `path` for software preview: spawn its decode thread and hand back the
     /// frame dimensions once the thread reports ready. Blocks on the init
-    /// handshake so a decoder-open failure surfaces synchronously.
+    /// handshake so a decoder-open failure surfaces synchronously. Delegates to
+    /// [`open_with_accel`](Self::open_with_accel) on the software lane.
     pub fn open(&self, stream_id: &str, path: &str) -> Result<PreviewSwOpenInfo, String> {
+        self.open_with_accel(stream_id, path, DecodeAccel::Software)
+    }
+
+    /// Open `path` for preview on `accel` — the software lane (mirrors [`open`]) or
+    /// a copy-back hardware lane (`DecodeAccel::Nvdec`/`Vaapi`, issue #5 Block C):
+    /// the session thread opens its [`SwVideoStream`] via `open_with_accel` so hw
+    /// frames are transferred back to CPU NV12, feeding the SAME frame transport as
+    /// software. Blocks on the init handshake so a decoder-open failure (including a
+    /// hw device that can't be created) surfaces synchronously and falls back.
+    ///
+    /// [`open`]: Self::open
+    pub fn open_with_accel(
+        &self,
+        stream_id: &str,
+        path: &str,
+        accel: DecodeAccel,
+    ) -> Result<PreviewSwOpenInfo, String> {
         let mut sessions = self.sessions.lock().unwrap();
         if sessions.contains_key(stream_id) {
             return Err(format!("preview-sw session '{stream_id}' is already open"));
@@ -295,7 +314,7 @@ impl PreviewSwRegistry {
 
         let join = thread::Builder::new()
             .name(format!("preview-sw-{sid}"))
-            .spawn(move || session_thread(sid, path_owned, cmd_rx, init_tx, sink))
+            .spawn(move || session_thread(sid, path_owned, accel, cmd_rx, init_tx, sink))
             .map_err(|e| format!("spawn preview-sw session thread failed: {e}"))?;
 
         match init_rx.recv() {

@@ -155,11 +155,40 @@ unsafe extern "C" fn get_format_vaapi(
     pick_hw_pix_format(pix_fmts, ffs::AVPixelFormat::AV_PIX_FMT_VAAPI)
 }
 
+/// Whether the SYSTEM libva is new enough for VAAPI copy-back (issue #5 Block C).
+/// The BtbN LGPL ffmpeg implib-gen's libva and calls `vaMapBuffer2` during
+/// `av_hwframe_transfer_data`; a system libva without that symbol aborts the
+/// process UNCATCHABLY on the first mapped frame. dlopen the system libva and
+/// dlsym the symbol up front so VAAPI is declined (software fallback) rather than
+/// crashed on an old-libva machine. Off Linux: false (VAAPI is a Linux lane).
+#[cfg(target_os = "linux")]
+pub fn vaapi_copyback_supported() -> bool {
+    use std::ffi::CString;
+    unsafe {
+        let name = CString::new("libva.so.2").unwrap();
+        let handle = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+        if handle.is_null() {
+            return false;
+        }
+        let sym = CString::new("vaMapBuffer2").unwrap();
+        let ok = !libc::dlsym(handle, sym.as_ptr()).is_null();
+        libc::dlclose(handle);
+        ok
+    }
+}
+#[cfg(not(target_os = "linux"))]
+pub fn vaapi_copyback_supported() -> bool {
+    false
+}
+
 /// Attach `accel`'s hw device context + `get_format` override to `codec_ctx`
 /// (called BEFORE `avcodec_open2`). Returns the created `AVBufferRef` — the
 /// caller owns it and must `av_buffer_unref` it (SwVideoStream does so on drop).
 /// Errors if the device can't be created (GPU/driver absent → the resolver's
-/// silent software fallback). Must not be called for `Software`.
+/// silent software fallback). Must not be called for `Software`. For VAAPI it
+/// also errors BEFORE creating the device when the system libva can't copy back
+/// (see [`vaapi_copyback_supported`]) — turning the would-be uncatchable abort on
+/// the first mapped frame into a graceful `Err` + software fallback.
 unsafe fn attach_hw_device(
     codec_ctx: &mut ffmpeg_next::codec::context::Context,
     accel: &DecodeAccel,
@@ -167,6 +196,15 @@ unsafe fn attach_hw_device(
     let hw_type = accel
         .hw_device_type()
         .ok_or_else(|| "attach_hw_device called for software".to_string())?;
+    // VAAPI copy-back (`av_hwframe_transfer_data`) calls `vaMapBuffer2` through
+    // the implib'd system libva; on a libva too old to export it the process
+    // aborts UNCATCHABLY on the first mapped frame. Decline the lane up front —
+    // BEFORE creating the device — so the caller falls back to software instead.
+    if matches!(accel, DecodeAccel::Vaapi { .. }) && !vaapi_copyback_supported() {
+        return Err(
+            "system libva too old (no vaMapBuffer2); vaapi copy-back would abort".to_string(),
+        );
+    }
     // Keep the CString alive across the create call (dev_ptr borrows it).
     let device = accel.device_cstr();
     let dev_ptr = device.as_ref().map(|c| c.as_ptr()).unwrap_or(ptr::null());

@@ -51,29 +51,43 @@ describe("hwEligibleCodec", () => {
 });
 
 describe("pickInitialLane", () => {
-  it("returns software for an ineligible codec without probing", async () => {
+  it("resolves software for an ineligible codec without probing", async () => {
     const probe = vi.fn();
-    const lane = await pickInitialLane({ mediaId: "m", codec: "mpeg2video", pixFmt: "yuv420p", componentAvailable: true }, probe);
-    expect(lane).toBe("software");
+    const res = await pickInitialLane({ mediaId: "m", codec: "mpeg2video", pixFmt: "yuv420p", componentAvailable: true }, probe);
+    expect(res).toEqual({ lane: "software", hwLane: null, device: null });
     expect(probe).not.toHaveBeenCalled();
   });
-  it("returns hardware when an eligible codec's probe passes", async () => {
+  it("resolves hardware when an eligible codec's probe passes", async () => {
     const probe = vi.fn(async () => ({ ok: true }));
-    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4")).toBe("hardware");
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4"))
+      .toEqual({ lane: "hardware", hwLane: null, device: null });
   });
-  it("returns software after markHwUnusable, even for an eligible codec", async () => {
+  it("surfaces the resolved NVDEC copy-back lane from the probe verdict", async () => {
+    const probe = vi.fn(async () => ({ ok: true, lane: "nvdec", device: null }));
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "/tmp/x.mp4"))
+      .toEqual({ lane: "hardware", hwLane: "nvdec", device: null });
+  });
+  it("surfaces the resolved VAAPI lane and its DRM render node from the probe verdict", async () => {
+    const probe = vi.fn(async () => ({ ok: true, lane: "vaapi", device: "/dev/dri/renderD128" }));
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "/tmp/x.mp4"))
+      .toEqual({ lane: "hardware", hwLane: "vaapi", device: "/dev/dri/renderD128" });
+  });
+  it("resolves software after markHwUnusable, even for an eligible codec", async () => {
     markHwUnusable("m", "device-lost");
     const probe = vi.fn(async () => ({ ok: true }));
-    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4")).toBe("software");
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4"))
+      .toEqual({ lane: "software", hwLane: null, device: null });
   });
-  it("returns software when the component is unavailable", async () => {
+  it("resolves software when the component is unavailable", async () => {
     const probe = vi.fn(async () => ({ ok: true }));
-    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: false }, probe, "C:/x.mp4")).toBe("software");
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: false }, probe, "C:/x.mp4"))
+      .toEqual({ lane: "software", hwLane: null, device: null });
     expect(probe).not.toHaveBeenCalled();
   });
-  it("returns software when the probe declines (ok:false)", async () => {
+  it("resolves software when the probe declines (ok:false)", async () => {
     const probe = vi.fn(async () => ({ ok: false }));
-    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4")).toBe("software");
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "C:/x.mp4"))
+      .toEqual({ lane: "software", hwLane: null, device: null });
   });
 });
 

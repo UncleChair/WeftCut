@@ -188,7 +188,7 @@ const api: WeftcutApi = {
   // arriving on the dedicated `previewSw:frame` channel (NOT the generic
   // `evt:*` EventSink relay), so `onFrame` subscribes to that channel directly.
   previewSw: {
-    open(args: { streamId: string; path: string }): Promise<{ width: number; height: number }> {
+    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null }): Promise<{ width: number; height: number }> {
       return ipcRenderer.invoke('previewSw:open', args) as Promise<{ width: number; height: number }>
     },
     requestFrameAt(args: { streamId: string; targetUs: number }): void {

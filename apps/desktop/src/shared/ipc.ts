@@ -309,7 +309,11 @@ export interface WeftcutApi {
   /// `previewSw:frame` channel (NOT the generic `evt:*` relay) and surfaced via
   /// `onFrame`.
   previewSw: {
-    open(args: { streamId: string; path: string }): Promise<{ width: number; height: number }>
+    /// `lane`/`device` select the Standard engine's hardware copy-back lane
+    /// (Linux NVDEC/VAAPI; `device` = the DRM node for VAAPI). Absent/null =
+    /// software. This is the private HW-vs-SW choice — the frame contract the
+    /// session emits is unchanged NV12 either way.
+    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null }): Promise<{ width: number; height: number }>
     requestFrameAt(args: { streamId: string; targetUs: number }): void
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void

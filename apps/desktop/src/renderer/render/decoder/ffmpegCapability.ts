@@ -73,12 +73,29 @@ export function isFfmpegUnusable(mediaId: string): boolean {
   return ffmpegUnusable.has(mediaId);
 }
 
+/// Resolved lane verdict `pickInitialLane` hands back. Carries the binary lane
+/// `FfmpegSource`'s ring/recovery logic keys on PLUS the specific HW lane that
+/// passed, so the source can route the hardware transport by lane NAME (Linux
+/// copy-back NVDEC/VAAPI ride SwTransport; Windows d3d11va rides GpuTransport).
+export interface FfmpegLaneResolution {
+  /// Binary lane the FfmpegSource ring/recovery logic keys on.
+  lane: FfmpegLane;
+  /// The specific advertised HW lane that passed (`nvdec` | `vaapi` | `d3d11va`)
+  /// when `lane === "hardware"`, else null. Drives the FfmpegSource transport
+  /// choice: nvdec/vaapi ride SwTransport (copy-back), d3d11va rides GpuTransport.
+  hwLane: string | null;
+  /// VAAPI DRM render node the verdict was measured on (else null).
+  device: string | null;
+}
+
 /// Async lane-selection entry point for `FfmpegSource`: consults the sticky
 /// `markHwUnusable` marker and the seek-validated HW codec allow-list. An
 /// HW-eligible codec with a valid classKey AND a path is probed; missing
-/// classKey or path → `"software"` (no probe). Returns `"hardware"` only if the
-/// probe succeeds (ok: true); all other failures (unavailable, marked unusable,
-/// ineligible codec, probe rejection/exception) also return `"software"`.
+/// classKey or path → software (no probe). Resolves `lane: "hardware"` only if
+/// the probe succeeds (ok: true) — carrying the resolved HW lane name + device
+/// so the caller can pick the matching transport; all other failures
+/// (unavailable, marked unusable, ineligible codec, probe rejection/exception)
+/// resolve `lane: "software"` with null hwLane/device.
 export async function pickInitialLane(
   input: {
     mediaId: string;
@@ -91,13 +108,16 @@ export async function pickInitialLane(
     height?: number | null;
     componentAvailable: boolean;
   },
-  probeFn: (path: string, classKey: string) => Promise<{ ok: boolean }> = (p, k) =>
+  probeFn: (
+    path: string,
+    classKey: string,
+  ) => Promise<{ ok: boolean; lane?: string | null; device?: string | null }> = (p, k) =>
     window.api.decodeCap.probeHw(p, k),
   path?: string,
-): Promise<FfmpegLane> {
-  if (!input.componentAvailable) return "software"; // caller shouldn't ask, but be safe
-  if (hwUnusable.has(input.mediaId)) return "software";
-  if (!hwEligibleCodec(input.codec, input.pixFmt)) return "software";
+): Promise<FfmpegLaneResolution> {
+  if (!input.componentAvailable) return { lane: "software", hwLane: null, device: null }; // caller shouldn't ask, but be safe
+  if (hwUnusable.has(input.mediaId)) return { lane: "software", hwLane: null, device: null };
+  if (!hwEligibleCodec(input.codec, input.pixFmt)) return { lane: "software", hwLane: null, device: null };
   // Conditional spread, not `width: input.width` — exactOptionalPropertyTypes
   // rejects assigning `number | null | undefined` to the optional `width?:
   // number | null` field when the key is present with an `undefined` value.
@@ -107,12 +127,14 @@ export async function pickInitialLane(
     ...(input.width !== undefined ? { width: input.width } : {}),
     ...(input.height !== undefined ? { height: input.height } : {}),
   });
-  if (classKey === null || !path) return "software";
+  if (classKey === null || !path) return { lane: "software", hwLane: null, device: null };
   try {
     const r = await probeFn(path, classKey);
-    return r.ok ? "hardware" : "software";
+    return r.ok
+      ? { lane: "hardware", hwLane: r.lane ?? null, device: r.device ?? null }
+      : { lane: "software", hwLane: null, device: null };
   } catch {
-    return "software";
+    return { lane: "software", hwLane: null, device: null };
   }
 }
 

@@ -221,15 +221,31 @@ pub fn version_info() -> String {
 /// (the libavcodec SW lane builds on every platform); the `"d3d11va"` HW-preview
 /// lane rides the SAME `#[cfg(windows)]` gate as the `preview_gpu` module it
 /// names, so the advertisement can never claim a lane the addon didn't compile.
-/// Resolvers probe ONLY advertised lanes: on Linux, where `preview_gpu_probe` is
-/// a by-design stub returning a "not built" verdict, the GPU lane is never
-/// advertised and so is never probed — replacing the old platform-string guard.
+/// On Linux (issue #5 Block C) the copy-back HW lanes are advertised: `"nvdec"`
+/// unconditionally (a missing libcuda makes the probe Err cleanly, no abort) and
+/// `"vaapi"` ONLY when the system libva is new enough for copy-back — an old libva
+/// aborts the process UNCATCHABLY on the first mapped frame, so the lane is gated
+/// on [`crate::preview_sw::decoder::vaapi_copyback_supported`] rather than advertised
+/// and later crashed. Resolvers probe ONLY advertised lanes: on Linux, where
+/// `preview_gpu_probe` is a by-design stub returning a "not built" verdict, the
+/// d3d11va lane is never advertised and so is never probed — replacing the old
+/// platform-string guard.
 #[napi]
 pub fn capabilities() -> Vec<String> {
     #[allow(unused_mut)]
     let mut lanes = vec!["software".to_string()];
     #[cfg(windows)]
     lanes.push("d3d11va".to_string());
+    #[cfg(target_os = "linux")]
+    {
+        // NVDEC is safe to advertise unconditionally — a missing libcuda makes
+        // the probe Err cleanly (no abort). VAAPI is gated on the system libva
+        // being new enough for copy-back (see vaapi_copyback_supported).
+        lanes.push("nvdec".to_string());
+        if crate::preview_sw::decoder::vaapi_copyback_supported() {
+            lanes.push("vaapi".to_string());
+        }
+    }
     lanes
 }
 
@@ -544,23 +560,42 @@ impl NativeDecode {
 /// by the single sink installed in the constructor.
 #[napi]
 impl NativeDecode {
-    /// Open `path` for software preview: register the per-stream frame callback,
-    /// then spawn the session's decode thread and return the frame dimensions.
-    /// The callback is registered BEFORE `open` so no early poke is dropped.
+    /// Open `path` for preview: register the per-stream frame callback, then spawn
+    /// the session's decode thread and return the frame dimensions. The callback is
+    /// registered BEFORE opening so no early poke is dropped. `lane`/`device` select
+    /// the decode acceleration (issue #5 Block C); either way the session yields the
+    /// SAME CPU NV12 frame transport:
+    /// - `lane` `None`/`Some("software")` → the pure-software lane (default).
+    /// - `Some("nvdec")` → NVDEC copy-back (default GPU handle; `device` ignored).
+    /// - `Some("vaapi")` → VAAPI copy-back pinned to the `device` DRM render node
+    ///   (empty when absent, letting libva default-select).
+    /// - any other `lane` → treated as software (safe fallback; the caller should
+    ///   only ever open an already-probed lane).
     #[napi]
     pub fn preview_sw_open(
         &self,
         stream_id: String,
         path: String,
         on_frame: ThreadsafeFunction<PreviewSwFrame>,
+        lane: Option<String>,
+        device: Option<String>,
     ) -> napi::Result<PreviewSwOpenInfoJs> {
+        use crate::preview_sw::decoder::DecodeAccel;
+        let accel = match lane.as_deref() {
+            None | Some("software") => DecodeAccel::Software,
+            Some("nvdec") => DecodeAccel::Nvdec,
+            Some("vaapi") => DecodeAccel::Vaapi { device: device.unwrap_or_default() },
+            // Unknown lane: fall back to software rather than error — the resolver
+            // only opens lanes it has already probed, so this is defensive.
+            Some(_) => DecodeAccel::Software,
+        };
         self.preview_sw_sinks
             .lock()
             .unwrap()
             .insert(stream_id.clone(), on_frame);
         let info = self
             .preview_sw
-            .open(&stream_id, &path)
+            .open_with_accel(&stream_id, &path, accel)
             .map_err(napi::Error::from_reason)?;
         Ok(PreviewSwOpenInfoJs {
             width: info.width,

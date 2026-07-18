@@ -99,6 +99,43 @@ describe("SwTransport", () => {
     t.dispose();
   });
 
+  it("forwards a hardware copy-back accel (lane + device) into the native open call", async () => {
+    const { api } = installApi();
+    // Linux VAAPI copy-back: decode on the GPU, frames still ship NV12 over this
+    // same transport — the accel rides through on open().
+    const t = new SwTransport({ lane: "vaapi", device: "/dev/dri/renderD128" });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    expect(api.open).toHaveBeenCalledWith({
+      streamId: "s1",
+      path: "/tmp/x.mov",
+      lane: "vaapi",
+      device: "/dev/dri/renderD128",
+    });
+    t.dispose();
+  });
+
+  it("forwards an NVDEC accel with a null device", async () => {
+    const { api } = installApi();
+    const t = new SwTransport({ lane: "nvdec", device: null });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    expect(api.open).toHaveBeenCalledWith({
+      streamId: "s1",
+      path: "/tmp/x.mov",
+      lane: "nvdec",
+      device: null,
+    });
+    t.dispose();
+  });
+
+  it("forwards no lane/device on the software path (no accel)", async () => {
+    const { api } = installApi();
+    const t = new SwTransport();
+    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    // Exact-match: the conditional spread must leave no lane/device keys behind.
+    expect(api.open).toHaveBeenCalledWith({ streamId: "s1", path: "C:/x.mov" });
+    t.dispose();
+  });
+
   it("does not fire onError when disposed before a failing open() settles", async () => {
     let rejectOpen!: (e: Error) => void;
     const api = {

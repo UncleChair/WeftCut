@@ -11,6 +11,7 @@ import type { DecodeTransport } from "./transports/DecodeTransport";
 import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
+import type { FfmpegLaneResolution } from "./ffmpegCapability";
 
 const IDLE_DISPOSE_MS = 5_000;
 let nextStreamSeq = 0;
@@ -47,6 +48,11 @@ export class FfmpegSource implements PreviewDecodeSession {
   private readonly deps: FfmpegSourceDeps;
   private transport: DecodeTransport | null = null;
   private lane: FfmpegLane = "software";
+  /// The resolved HW lane the current hardware attempt keys its transport on
+  /// (Linux copy-back nvdec/vaapi → SwTransport; Windows d3d11va → GpuTransport).
+  /// null unless `pickInitialLane` resolved a named HW lane; a forced-lane bench
+  /// run leaves it null and falls to the GPU transport.
+  private hwPlan: { lane: string; device: string | null } | null = null;
   private startedHardware = false;
   private readyP: Promise<void> | null = null;
   private ready = false;
@@ -92,8 +98,9 @@ export class FfmpegSource implements PreviewDecodeSession {
 
   private async _doEnsureReady(): Promise<void> {
     const pick = this.deps.pickLane ?? pickInitialLane;
-    this.lane = this.init.forceLane
-      ?? await pick(
+    const res: FfmpegLaneResolution = this.init.forceLane
+      ? { lane: this.init.forceLane, hwLane: null, device: null }
+      : await pick(
         {
           mediaId: this.mediaId,
           codec: this.init.codec ?? null,
@@ -109,6 +116,10 @@ export class FfmpegSource implements PreviewDecodeSession {
         this.init.sourcePath,
       );
     if (this._disposed) return;
+    this.lane = res.lane;
+    this.hwPlan = res.lane === "hardware" && res.hwLane
+      ? { lane: res.hwLane, device: res.device }
+      : null;
     this.startedHardware = this.lane === "hardware";
     try {
       await this.openLane(this.lane);
@@ -143,7 +154,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   private async openLane(lane: FfmpegLane): Promise<void> {
     this.eof = false; // a fresh transport can produce frames again
     const t = lane === "hardware"
-      ? (this.deps.makeGpu?.() ?? new GpuTransport())
+      ? this.makeHardwareTransport()
       : (this.deps.makeSw?.() ?? new SwTransport());
     t.onFrame((frame, ptsUs, durUs) => {
       if (this._disposed) { frame.close(); return; }
@@ -171,6 +182,20 @@ export class FfmpegSource implements PreviewDecodeSession {
       ...(this.init.poolSize !== undefined ? { poolSize: this.init.poolSize } : {}),
     });
     if (this.lastTargetUs !== null) t.requestFrameAt(this.lastTargetUs);
+  }
+
+  /// Pick the hardware transport by the resolved HW lane: the Linux copy-back
+  /// lanes (nvdec/vaapi) ride the SW transport with a hw accel — decode happens
+  /// on the GPU but frames ship as CPU NV12 over the SAME previewSw transport;
+  /// the Windows shared-texture lane (d3d11va) rides the GPU transport. A forced
+  /// lane (bench) has no hwPlan and falls to the GPU transport (its historical
+  /// behavior).
+  private makeHardwareTransport(): DecodeTransport {
+    const hw = this.hwPlan;
+    if (hw && (hw.lane === "nvdec" || hw.lane === "vaapi")) {
+      return this.deps.makeSw?.() ?? new SwTransport({ lane: hw.lane, device: hw.device });
+    }
+    return this.deps.makeGpu?.() ?? new GpuTransport();
   }
 
   /// Recovery. A hardware-transport failure is recoverable ONCE: swap to SW in

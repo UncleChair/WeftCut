@@ -19,6 +19,12 @@
 // hooks, no idle bookkeeping. Those stay with `FfmpegSource` (the caller),
 // which owns exactly one `DecodeTransport` at a time and sets the ring's
 // eviction anchor itself (see `requestFrameAt` below).
+//
+// It can also carry a hardware COPY-BACK accel (Linux NVDEC/VAAPI): the caller
+// passes a `{ lane, device }` accel into the constructor and it rides through
+// on `open()`, telling main to decode on the GPU and copy frames back to CPU.
+// The frame path is IDENTICAL NV12 either way — copy-back is not a distinct
+// frame format, just a different decode source — so nothing below changes.
 import type { PreviewSwFrameMsg } from "../../../../shared/ipc";
 import { nv12FrameFromBytes } from "../nv12Frame";
 import type { DecodeTransport, DecodeTransportOpen, TransportFrame } from "./DecodeTransport";
@@ -44,6 +50,11 @@ export class SwTransport implements DecodeTransport {
   /// behind.
   private lastSentTargetUs: number | null = null;
 
+  /// Optional hardware copy-back accel (Linux NVDEC/VAAPI): forwarded to main on
+  /// `open()` so the GPU decodes and copies NV12 back to CPU. Absent (software)
+  /// means no accel rides through and the native path stays plain CPU decode.
+  constructor(private readonly accel?: { lane: string; device: string | null }) {}
+
   /// Subscribe to the frame event, then open the native session. Throws on
   /// failure (`previewSw.open` rejecting); the caller (`FfmpegSource`)
   /// decides whether that's recoverable.
@@ -55,7 +66,11 @@ export class SwTransport implements DecodeTransport {
     // miss an early frame.
     this.unsub = window.api.previewSw.onFrame((f) => this.handleFrame(f));
     try {
-      await window.api.previewSw.open({ streamId: this.streamId, path: o.path });
+      await window.api.previewSw.open({
+        streamId: this.streamId,
+        path: o.path,
+        ...(this.accel ? { lane: this.accel.lane, device: this.accel.device } : {}),
+      });
     } catch (err) {
       // Open failure: surface it as the terminal error BEFORE rethrowing —
       // this is the ONLY SW error signal (see file header).

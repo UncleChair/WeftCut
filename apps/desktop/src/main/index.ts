@@ -644,13 +644,18 @@ app.whenReady().then(async () => {
       classKey: a.classKey,
       envKey: () => hwEnvKey(),
       devices: (lane) => (lane === 'vaapi' ? enumerateDrmRenderNodes() : [null]),
-      probe: (lane) => {
-        // d3d11va is the only lane with a native probe today; the NVDEC/VAAPI
-        // probes land in Block C2 alongside their decoders. resolveHwLane only
-        // probes ADVERTISED lanes, so until capabilities() advertises nvdec/vaapi
-        // the non-d3d11va branch is unreachable.
+      probe: (lane, device) => {
+        // Each advertised lane routes to its native one-frame probe: d3d11va to
+        // previewGpuProbe (Windows), NVDEC/VAAPI to previewHwProbe (Linux copy-back,
+        // which takes the DRM node as `device` — null for NVDEC). resolveHwLane only
+        // probes ADVERTISED lanes, so `lane not built` is inert (an unadvertised lane
+        // never reaches here).
         if (lane === 'd3d11va') {
           const v = ndBackend().previewGpuProbe(a.path, 4000)
+          return { ok: v.ok, reason: v.reason ?? null }
+        }
+        if (lane === 'nvdec' || lane === 'vaapi') {
+          const v = ndBackend().previewHwProbe(a.path, lane, device, 4000)
           return { ok: v.ok, reason: v.reason ?? null }
         }
         return { ok: false, reason: 'lane not built' }
@@ -663,10 +668,10 @@ app.whenReady().then(async () => {
   // WebCodecs-blind-format path). Frames flow out of band on the dedicated
   // `previewSw:frame` channel (see ./previewSw), not through the generic
   // `evt:*` EventSink relay above.
-  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string }) => {
+  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string; lane?: string | null; device?: string | null }) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) throw new Error('previewSw:open — no window for sender')
-    return openPreviewSw(ndBackend(), win, a.streamId, a.path)
+    return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null)
   })
   ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) => {
     // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer
