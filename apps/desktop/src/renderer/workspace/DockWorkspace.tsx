@@ -231,7 +231,18 @@ function CaptionDockPanel() {
   const contracts = useContracts();
   return (
     <div className="weft-dock-panel-scroll">
-      <CaptionPanel onMutated={contracts.onMutated} />
+      <CaptionPanel
+        onMutated={contracts.onMutated}
+        selectedLayerId={contracts.selectedLayerId}
+        onActivateCue={(layerId, trackId, startUs) => {
+          // Cue activation = select the Text Layer, seek to its start, and
+          // reveal it in Timeline — synchronizing caption navigation with
+          // timeline context (mirrors Nearby's explicit Go To).
+          contracts.onSelectLayer(layerId);
+          contracts.onSeek(startUs);
+          contracts.onRevealTrack(trackId, layerId);
+        }}
+      />
     </div>
   );
 }

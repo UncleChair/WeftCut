@@ -11,76 +11,85 @@ vi.mock("../ipc", async (importActual) => {
   return {
     ...actual,
     updateLayerParams: vi.fn().mockResolvedValue(undefined),
-    restyleCaptionTrack: vi.fn().mockResolvedValue(undefined),
+    restyleCaptions: vi.fn().mockResolvedValue(undefined),
   };
 });
 
 import { transportSeek } from "../state/playbackStore";
-import { updateLayerParams, restyleCaptionTrack } from "../ipc";
+import { updateLayerParams, restyleCaptions } from "../ipc";
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
 
-function seed() {
-  const summary = {
+/// A Text caption layer at `startUs` with `content` and font size `size`.
+function textLayer(id: string, startUs: number, content: string, size = 54) {
+  return {
+    id,
+    label: null,
+    t_start_us: startUs,
+    t_end_us: startUs + 1_000_000,
+    kind: "Text",
+    color_hint: "#fff",
+    enabled: true,
+    locked: false,
+    params: {
+      kind: "Text" as const,
+      content,
+      font_family: "Liberation Sans",
+      font_size_px: size,
+      weight: 400,
+      italic: false,
+      align: "Center" as const,
+      anchor_x: 0.5,
+      anchor_y: 1,
+      color: { mode: "Static" as const, value: { r: 255, g: 255, b: 255, a: 255 } },
+      x: { mode: "Static" as const, value: 960 },
+      y: { mode: "Static" as const, value: 990 },
+      opacity: { mode: "Static" as const, value: 1 },
+      outline: null,
+      shadow: null,
+    },
+    effects: [],
+  };
+}
+
+function captionTrack(id: string, layers: ReturnType<typeof textLayer>[]) {
+  return {
+    id,
+    kind: "Text",
+    label: null,
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: "caption" as const,
+    transient: false,
+    layers,
+  };
+}
+
+function apply(tracks: ReturnType<typeof captionTrack>[]) {
+  useProjectStore.getState().apply({
     project_id: "p1",
     name: "Test",
     composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false },
-    track_count: 1,
-    layer_count: 1,
+    track_count: tracks.length,
+    layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
     duration_us: 3_000_000,
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [],
     markers: [],
     groups: [],
     audio_roles: [],
-    tracks: [
-      {
-        id: "t1",
-        kind: "Text",
-        label: null,
-        enabled: true,
-        locked: false,
-        muted: false,
-        solo: false,
-        role: "caption" as const,
-        transient: false,
-        layers: [
-          {
-            id: "L1",
-            label: null,
-            t_start_us: 1_000_000,
-            t_end_us: 2_000_000,
-            kind: "Text",
-            color_hint: "#fff",
-            enabled: true,
-            locked: false,
-            params: {
-              kind: "Text" as const,
-              content: "Hello",
-              font_family: "Liberation Sans",
-              font_size_px: 54,
-              weight: 400,
-              italic: false,
-              align: "Center" as const,
-              anchor_x: 0.5,
-              anchor_y: 1,
-              color: { mode: "Static" as const, value: { r: 255, g: 255, b: 255, a: 255 } },
-              x: { mode: "Static" as const, value: 960 },
-              y: { mode: "Static" as const, value: 990 },
-              opacity: { mode: "Static" as const, value: 1 },
-              outline: null,
-              shadow: null,
-            },
-            effects: [],
-          },
-        ],
-      },
-    ],
-  };
-  useProjectStore.getState().apply(summary);
+    tracks,
+  });
+}
+
+/// Single caption track with one cue "Hello" at 1s (layer L1 / track t1).
+function seed() {
+  apply([captionTrack("t1", [textLayer("L1", 1_000_000, "Hello")])]);
 }
 
 describe("CaptionsPanel", () => {
@@ -99,7 +108,21 @@ describe("CaptionsPanel", () => {
     expect(screen.getByDisplayValue("Hello")).toBeTruthy();
   });
 
-  it("seeks to cue start when the seek button is clicked", () => {
+  it("aggregates cues from every caption track in start-time order", () => {
+    // Two overlapping lanes → two caption tracks; the panel flattens BOTH and
+    // sorts by start, so the earlier cue on track t2 precedes t1's cue.
+    apply([
+      captionTrack("t1", [textLayer("L1", 1_000_000, "second")]),
+      captionTrack("t2", [textLayer("L2", 500_000, "first")]),
+    ]);
+    const { container } = render(<CaptionPanel onMutated={async () => {}} />);
+    const inputs = Array.from(
+      container.querySelectorAll<HTMLInputElement>("input.caption-text"),
+    );
+    expect(inputs.map((i) => i.value)).toEqual(["first", "second"]);
+  });
+
+  it("falls back to a bare transport seek when no onActivateCue is provided", () => {
     seed();
     render(<CaptionPanel onMutated={async () => {}} />);
     const seekBtn = screen.getByRole("button", { name: "seek 00:01" });
@@ -107,7 +130,26 @@ describe("CaptionsPanel", () => {
     expect(transportSeek).toHaveBeenCalledWith(1_000_000);
   });
 
-  it("calls updateLayerParams on blur with changed value", async () => {
+  it("activates a cue (select + seek + reveal) through onActivateCue", () => {
+    seed();
+    const onActivateCue = vi.fn();
+    render(<CaptionPanel onMutated={async () => {}} onActivateCue={onActivateCue} />);
+    fireEvent.click(screen.getByRole("button", { name: "seek 00:01" }));
+    // layerId, trackId, startUs — the host composes select/seek/reveal from these.
+    expect(onActivateCue).toHaveBeenCalledWith("L1", "t1", 1_000_000);
+    // Activation goes through the host, not the bare transport seek.
+    expect(transportSeek).not.toHaveBeenCalled();
+  });
+
+  it("marks the selected cue row", () => {
+    seed();
+    const { container } = render(
+      <CaptionPanel onMutated={async () => {}} selectedLayerId="L1" />,
+    );
+    expect(container.querySelector(".caption-row.is-selected")).toBeTruthy();
+  });
+
+  it("calls updateLayerParams on blur with changed value (inline text edit)", async () => {
     seed();
     const onMutated = vi.fn().mockResolvedValue(undefined);
     render(<CaptionPanel onMutated={onMutated} />);
@@ -126,7 +168,7 @@ describe("CaptionsPanel", () => {
     expect(screen.getByText("Caption style")).toBeTruthy();
   });
 
-  it("calls restyleCaptionTrack with font_size_px on commit", async () => {
+  it("restyles the whole corpus (restyleCaptions, no track id) on font-size commit", async () => {
     seed();
     const onMutated = vi.fn().mockResolvedValue(undefined);
     render(<CaptionPanel onMutated={onMutated} />);
@@ -135,10 +177,10 @@ describe("CaptionsPanel", () => {
     fireEvent.change(sizeInput, { target: { value: "80" } });
     fireEvent.blur(sizeInput);
     await Promise.resolve();
-    expect(restyleCaptionTrack).toHaveBeenCalledWith("t1", { font_size_px: 80 });
+    expect(restyleCaptions).toHaveBeenCalledWith({ font_size_px: 80 });
   });
 
-  it("calls restyleCaptionTrack with a color value after debounce on color change", async () => {
+  it("calls restyleCaptions with a color value after debounce on color change", async () => {
     vi.useFakeTimers();
     seed();
     const onMutated = vi.fn().mockResolvedValue(undefined);
@@ -146,15 +188,16 @@ describe("CaptionsPanel", () => {
     // AppColorField renders <input type="color">; query by its aria-label
     const colorInput = screen.getByLabelText("Color");
     fireEvent.change(colorInput, { target: { value: "#ff0000" } });
-    // restyleCaptionTrack is debounced at 250ms — not called yet
-    expect(restyleCaptionTrack).not.toHaveBeenCalled();
+    // restyleCaptions is debounced at 250ms — not called yet
+    expect(restyleCaptions).not.toHaveBeenCalled();
     vi.advanceTimersByTime(250);
     // Now the debounced call fires; allow the promise chain to settle
     await Promise.resolve();
-    expect(restyleCaptionTrack).toHaveBeenCalledOnce();
-    const call = (restyleCaptionTrack as ReturnType<typeof vi.fn>).mock.calls[0] as [string, { color: { r: number; g: number; b: number; a: number } }];
-    const [trackId, patch] = call;
-    expect(trackId).toBe("t1");
+    expect(restyleCaptions).toHaveBeenCalledOnce();
+    const call = (restyleCaptions as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      { color: { r: number; g: number; b: number; a: number } },
+    ];
+    const [patch] = call;
     expect(patch.color).toMatchObject({ r: 255, g: 0, b: 0 });
     expect(typeof patch.color.a).toBe("number");
     vi.useRealTimers();

@@ -27,7 +27,7 @@ import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, m
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
-import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
+import { applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
@@ -476,7 +476,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
         case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null; prefer_proxies?: boolean | null; proxy_override?: { media_id: string; value: boolean | null } | null }); return { ok: true, value: null }
         case 'add_caption_track': return { ok: true, value: commit('Added caption track', [], { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
-        case 'restyle_caption_track': commit('Restyled caption track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRestyleCaptionTrack(d, a.track as Uuid, a.patch as CaptionStylePatch)); return { ok: true, value: null }
+        case 'restyle_captions': {
+          // Project-wide: one commit over EVERY caption-role track, so overlapping
+          // caption lanes restyle as a single undo entry. Affected refs are read
+          // from the pre-mutation snapshot (same tracks the recipe patches).
+          const captionRefs: EntityRef[] = current().tracks.filter((t) => t.role === 'Caption').map((t) => ({ kind: 'Track', id: t.id }))
+          commit('Restyled captions', captionRefs, { kind: 'Coarse' }, (d) => applyRestyleCaptions(d, a.patch as CaptionStylePatch))
+          return { ok: true, value: null }
+        }
         case 'rebind_motif': {
           const updates = a.updates as MotifRebindEntry[]
           const affected: EntityRef[] = updates.map((u) => ({ kind: 'Layer', id: u.layer_id }))

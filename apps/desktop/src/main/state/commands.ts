@@ -193,7 +193,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   set_role_gain: (a) => ({ op: 'set_role_gain', args: { role: a.role, gain_db: a.gainDb } }),
   update_role_flags: (a) => ({ op: 'update_role_flags', args: { role: a.role, patch: a.patch } }),
   separate_audio_to_new_track: (a) => ({ op: 'separate_audio', args: { layer: a.layerId } }),
-  restyle_caption_track: (a) => ({ op: 'restyle_caption_track', args: { track: a.trackId, patch: a.patch } }),
+  restyle_captions: (a) => ({ op: 'restyle_captions', args: { patch: a.patch } }),
   update_project_settings: (a) => ({ op: 'update_project_settings', args: { patch: a.patch } }),
   project_undo: () => ({ op: 'undo', args: {} }),
   project_redo: () => ({ op: 'redo', args: {} }),
@@ -215,7 +215,7 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',
   'update_track_flags', 'set_role_gain', 'update_role_flags',
-  'separate_audio_to_new_track', 'restyle_caption_track',
+  'separate_audio_to_new_track', 'restyle_captions',
   'update_project_settings', 'project_undo', 'project_redo', 'project_restore_checkpoint',
   // add_motif as a pure TS recorded mutation
   'add_motif',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cueToTextParams, applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CueStyle } from './captions'
+import { cueToTextParams, applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CueStyle } from './captions'
 import { seededGen } from '../ids'
 import { blankProject } from '../model'
 import type { TextParams } from '../model'
@@ -74,17 +74,51 @@ describe('applyAddCaptionTrack', () => {
   })
 })
 
-describe('applyRestyleCaptionTrack', () => {
-  it('patches every Text layer; outline_width keeps the existing outline color', () => {
+describe('applyRestyleCaptions (project-wide)', () => {
+  // Two overlapping cues lane-pack into TWO caption tracks — the cross-track
+  // corpus the project-wide restyle must cover in one pass.
+  function twoLaneProject() {
     const gen = seededGen(); const p = blankProject(gen, 'c')
-    const tid = applyAddCaptionTrack(p, gen, [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], 1920, 1080, null)
-    applyRestyleCaptionTrack(p, tid, { font_family: 'Arial', font_size_px: 60, outline_width: 4 })
-    const tp = p.tracks[2].layers[0].params as TextParams
-    expect([tp.font.family, tp.font.size_px]).toEqual(['Arial', 60])
-    expect(tp.outline).toEqual({ color: { r: 0, g: 0, b: 0, a: 255 }, width: 4 }) // BLACK kept from the original outline
+    applyAddCaptionTrack(p, gen, [
+      { start_us: 0, end_us: 2_000_000, text: 'a', style: CLEAN },        // lane1
+      { start_us: 1_000_000, end_us: 3_000_000, text: 'b', style: CLEAN }, // lane2 (overlaps)
+    ], 1920, 1080, null)
+    return p
+  }
+
+  it('patches Text layers on EVERY caption-role track, not just the first', () => {
+    const p = twoLaneProject()
+    const caps = p.tracks.filter((t) => t.role === 'Caption')
+    expect(caps).toHaveLength(2)
+    applyRestyleCaptions(p, { font_family: 'Arial', font_size_px: 72, outline_width: 4 })
+    for (const track of caps) {
+      for (const layer of track.layers) {
+        const tp = layer.params as TextParams
+        expect([tp.font.family, tp.font.size_px]).toEqual(['Arial', 72])
+        // outline_width keeps the existing outline color (BLACK from the seed).
+        expect(tp.outline).toEqual({ color: { r: 0, g: 0, b: 0, a: 255 }, width: 4 })
+      }
+    }
   })
-  it('TrackNotFound on a missing track', () => {
+
+  it('leaves non-caption tracks untouched', () => {
+    const p = twoLaneProject()
+    // A-roll is a non-caption track from blankProject; give it a Text layer.
+    const aRoll = p.tracks.find((t) => t.role === 'ARoll')!
+    aRoll.layers.push({
+      id: 'x', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false,
+      metadata: {},
+      params: cueToTextParams({ start_us: 0, end_us: 1, text: 'not a caption', style: CLEAN }, 1920, 1080),
+      effects: [],
+    })
+    const before = (aRoll.layers[0].params as TextParams).font.size_px
+    applyRestyleCaptions(p, { font_size_px: 99 })
+    expect((aRoll.layers[0].params as TextParams).font.size_px).toBe(before)
+  })
+
+  it('no-op (no throw) when the project has zero caption tracks', () => {
     const gen = seededGen(); const p = blankProject(gen, 'c')
-    expect(() => applyRestyleCaptionTrack(p, '00000000-0000-0000-0000-0000000000ff', { font_size_px: 60 })).toThrow()
+    expect(p.tracks.some((t) => t.role === 'Caption')).toBe(false)
+    expect(() => applyRestyleCaptions(p, { font_size_px: 60 })).not.toThrow()
   })
 })

@@ -1548,16 +1548,18 @@ export function exportVideoSinkWrite(bytes: Uint8Array): Promise<void> {
   return window.api.videoSinkWrite(bytes);
 }
 
-/// Batch-restyle all Text layers on a caption track in one undo entry.
-/// `patch` fields are snake_case to match Rust `CaptionStylePatch`.
-export async function restyleCaptionTrack(
-  trackId: string,
-  patch: {
-    font_family?: string;
-    font_size_px?: number;
-    color?: Rgba;
-    outline_width?: number;
-  },
-): Promise<void> {
-  return invoke<void>("restyle_caption_track", { trackId, patch });
+/// Caption restyle patch. Fields are snake_case to match the actor
+/// `CaptionStylePatch`.
+export interface CaptionStylePatch {
+  font_family?: string;
+  font_size_px?: number;
+  color?: Rgba;
+  outline_width?: number;
+}
+
+/// Project-wide caption restyle: patch every caption-role Track's Text layers
+/// atomically as one undo entry — the Caption Panel's corpus-level styling
+/// command.
+export async function restyleCaptions(patch: CaptionStylePatch): Promise<void> {
+  return invoke<void>("restyle_captions", { patch });
 }

@@ -19,7 +19,7 @@ describe('PRODUCTION_OPS', () => {
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'delete_layer', 'duplicate_layer',
       'fit_composition_to_layers', 'groups_create', 'groups_dissolve', 'move_effect',
       'move_layer', 'paste_layer', 'project_redo', 'project_restore_checkpoint', 'project_undo',
-      'remove_effect', 'restyle_caption_track',
+      'remove_effect', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'split_layer_grouped',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track',
       'update_layer_param_tracks', 'update_layer_params', 'update_project_settings',

@@ -503,18 +503,44 @@ describe('dispatch: caption tracks', () => {
     actor.dispatch('undo', {})
     expect(actor.snapshot().tracks.some((t) => t.role === 'Caption')).toBe(false)
   })
-  it('restyle_caption_track patches the Text layers', () => {
+  // Project-wide restyle over overlapping caption lanes: two cues that overlap
+  // lane-pack into TWO caption tracks, so this exercises the cross-track corpus.
+  function setupTwoCaptionLanes() {
     const { actor } = setup()
-    const tid = (actor.dispatch('add_caption_track', { cues: [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], comp_w: 1920, comp_h: 1080, label: null }) as { ok: true; value: string }).value
-    const r = actor.dispatch('restyle_caption_track', { track: tid, patch: { font_size_px: 60 } })
+    actor.dispatch('add_caption_track', { cues: [
+      { start_us: 0, end_us: 2_000_000, text: 'a', style: CLEAN },
+      { start_us: 1_000_000, end_us: 3_000_000, text: 'b', style: CLEAN },
+    ], comp_w: 1920, comp_h: 1080, label: null })
+    const caps = actor.snapshot().tracks.filter((t) => t.role === 'Caption')
+    expect(caps).toHaveLength(2)
+    return { actor }
+  }
+  const sizeOf = (t: { layers: Array<{ params: unknown }> }) =>
+    (t.layers[0].params as { font: { size_px: number } }).font.size_px
+
+  it('restyle_captions patches Text layers on EVERY caption track in one entry', () => {
+    const { actor } = setupTwoCaptionLanes()
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('restyle_captions', { patch: { font_size_px: 72 } })
     expect(r.ok).toBe(true)
-    const ct = actor.snapshot().tracks.find((t) => t.id === tid)!
-    expect((ct.layers[0].params as { font: { size_px: number } }).font.size_px).toBe(60)
+    for (const t of actor.snapshot().tracks.filter((t) => t.role === 'Caption')) expect(sizeOf(t)).toBe(72)
+    // One atomic command ⇒ exactly one new recorded history entry.
+    expect(actor.historyStatus().len).toBe(lenBefore + 1)
   })
-  it('restyle_caption_track on a missing track → TrackNotFound', () => {
+
+  it('restyle_captions is one undo entry that reverts all caption tracks together', () => {
+    const { actor } = setupTwoCaptionLanes()
+    actor.dispatch('restyle_captions', { patch: { font_size_px: 72 } })
+    actor.dispatch('undo', {})
+    for (const t of actor.snapshot().tracks.filter((t) => t.role === 'Caption')) expect(sizeOf(t)).toBe(54)
+  })
+
+  it('restyle_captions with no caption tracks records nothing (no-op guard)', () => {
     const { actor } = setup()
-    const r = actor.dispatch('restyle_caption_track', { track: '00000000-0000-0000-0000-0000000000ff', patch: { font_size_px: 60 } })
-    expect((r as { ok: false; error: { error: string } }).error.error).toBe('TrackNotFound')
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('restyle_captions', { patch: { font_size_px: 72 } })
+    expect(r.ok).toBe(true)
+    expect(actor.historyStatus().len).toBe(lenBefore)
   })
 })
 

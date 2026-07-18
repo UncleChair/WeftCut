@@ -1,8 +1,7 @@
-import type { Project, Rgba, TextAlign, TextParams, Uuid } from '../model'
+import type { Project, Rgba, TextAlign, TextParams, Track, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
 import { applyAddLayer, defaultTransform } from './add'
-import { CommandFailure } from '../errors'
 
 /** subtitles/mod.rs:27 CueStyle — per-cue style hints (all optional; absent ⇒
  *  the default caption look applies). `align` is the ASS 9-grid (1..9). */
@@ -121,13 +120,10 @@ function newCaptionTrack(p: Project, idGen: IdGen, label: string | null): Uuid {
   return id
 }
 
-/** restyle_caption_track — patch font_family/font_size_px/color/
- *  outline_width onto every Text layer of the track in one commit; non-Text layers
- *  skipped. TrackNotFound when the track is absent (raised in the recipe → no
- *  op_id). outline_width keeps the existing outline color (or BLACK if none). */
-export function applyRestyleCaptionTrack(p: Project, trackId: Uuid, patch: CaptionStylePatch): void {
-  const track = p.tracks.find((t) => t.id === trackId)
-  if (!track) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
+/** Patch every Text layer of ONE track with a caption style patch; non-Text
+ *  layers skipped. outline_width keeps the existing outline color (or BLACK if
+ *  none). */
+function restyleTrackTextLayers(track: Track, patch: CaptionStylePatch): void {
   for (const layer of track.layers) {
     if (layer.params.kind !== 'Text') continue
     const tp = layer.params
@@ -138,5 +134,17 @@ export function applyRestyleCaptionTrack(p: Project, trackId: Uuid, patch: Capti
       const existingColor = tp.outline ? tp.outline.color : BLACK
       tp.outline = { color: existingColor, width: patch.outline_width }
     }
+  }
+}
+
+/** restyle_captions — the Project-wide caption corpus restyle: patch EVERY
+ *  caption-role Track's Text layers in one commit, so overlapping caption lanes
+ *  restyle atomically as one undo entry. Non-caption tracks are untouched. There
+ *  is no TrackNotFound — a project may legitimately hold zero caption tracks, in
+ *  which case this is a no-op (commit's no-op guard then records nothing). */
+export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch): void {
+  for (const track of p.tracks) {
+    if (track.role !== 'Caption') continue
+    restyleTrackTextLayers(track, patch)
   }
 }

@@ -20,7 +20,7 @@ const ALL_CHANNELS: readonly string[] = [
   'groups_create', 'groups_dissolve', 'duplicate_layer', 'paste_layer', 'delete_layer', 'set_composition',
   'fit_composition_to_layers', 'update_track_flags', 'set_role_gain', 'update_role_flags',
   'project_undo', 'project_redo', 'project_restore_checkpoint', 'update_project_settings',
-  'restyle_caption_track', 'add_motif',
+  'restyle_captions', 'add_motif',
   // router special-cases (summary / settings / persistence seam / agent-session)
   'project_summary', 'get_project_settings', 'project_open', 'project_save_as',
   'project_new_workspace', 'project_save', 'agent_session_end',

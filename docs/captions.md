@@ -90,14 +90,19 @@ determinism contract — a font on the author's machine may be absent on a
 collaborator's — and when a family does not resolve it is omitted, so rendering
 falls back to the bundled chain. Captions never tofu.
 
-## Editing — the captions panel
+## Editing — the Caption panel
 
-The captions panel (in the right panel) reads the caption-role tracks and lists
-their cues in time order. Each row seeks the playhead to the cue and offers inline
-text editing (committed on blur through `update_layer_params`). A track-level
+The Caption panel is a Project-wide corpus surface: it reads **every**
+caption-role track and lists their cues flattened in time order, including
+overlapping lanes. Activating a cue (its timecode) selects that `Text` layer,
+seeks the playhead to its start, and reveals it in the Timeline — keeping caption
+navigation and timeline context in sync. Each row also offers inline text editing
+of the single cue, committed on blur through `update_layer_params`. A corpus-level
 restyle control batch-applies font family, size, colour, and outline across every
-`Text` layer on the caption track in a single undo step (`restyle_caption_track`);
-the colour commit is debounced because it fans out to every layer on the track.
+`Text` layer on **all** caption-role tracks in a single undo step
+(`restyle_captions`); the colour commit is debounced because it fans out to every
+caption layer in the project. A selected caption cue remains editable as an
+ordinary `Text` layer in the Attribute panel.
 
 Because cues are plain `Text` layers, they are also editable directly on the
 timeline and in the inspector like any other layer — the panel is a convenience
