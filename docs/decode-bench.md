@@ -155,6 +155,92 @@ fixture here and never will: ffmpeg decodes it but has no VC-1/WMV3
 encoder, so the family can't be synthesized — it stays covered by the
 routing test and the codec-agnostic decoder instead of a bench row.
 
+## Linux hardware (copy-back) strategy
+
+`--strategy native-copyback --hw-lane nvdec|vaapi` benches the Linux hardware
+**copy-back** lane ([ADR 0034](adr/0034-linux-hardware-decode-copies-back-into-ship-bytes.md))
+at the same `DecodeSession` seam. The lane decodes the **original** file on the
+GPU (NVDEC, or VAAPI on Intel/AMD), then `av_hwframe_transfer_data` copies each
+surface back to a CPU NV12 frame that rides the **same** ship-bytes
+`SwTransport` the `sw` strategy uses — the packed bytes are byte-identical to the
+software lane's, so everything downstream is unchanged; only the decode *source*
+is hardware. Unlike `native` (Windows d3d11va → `GpuTransport`), it is
+cross-platform-shaped but only meaningful where a HW lane is advertised.
+
+**Unforced resolution + env pin.** Crucially this strategy does **not** force the
+lane. Forcing `hardware` on Linux routes to the Windows-only `GpuTransport`
+("preview-gpu not built") and silently falls back to software — it cannot
+measure the copy-back lane at all. Instead the driver leaves the lane unforced
+and feeds `pickInitialLane` the fixture's codec/pixFmt/dimensions so its real
+one-frame HW probe resolves the advertised lane exactly as production does; the
+orchestrator sets `WEFTCUT_FORCE_HW_LANE=<hw-lane>` in the app's env, which pins
+main's `decodeCap:probeHw` resolver to that single advertised lane (NVDEC or
+VAAPI) instead of the NVDEC→VAAPI priority walk. The driver **records the
+resolved lane** (`hwLane` on every `BenchResult`) and, for `native-copyback`
+only, **rejects a software fallback as an error** — a run that resolved to
+software returns `native-copyback: resolved to software …` rather than reporting
+a software number under a hardware label. Confirm each cell's `hwLane` column
+reads the pinned lane (not `—`) before trusting the numbers.
+
+**Coverage** is the 8-bit interframe delivery families — **h264 / hevc / vp9**
+(`h264-1080`, `hevc-1080`/`hevc-2160`, `vp9-1080`). AV1 is excluded by the
+renderer's HW allow-list; the 10-bit (`hi10p-1080`) and intra/production rows
+(ProRes, DNxHR, MPEG-2) have **no** copy-back cell — they never probe hardware
+(ADR 0034's coverage rule).
+
+**GPU sampling caveat.** The Windows `typeperf` GPU-engine sampler has no Linux
+analogue for NVDEC, so the `gpuVideoDecode`/`gpu3d` columns come back empty
+here. For `native-copyback` on Linux the orchestrator instead streams
+`nvidia-smi --query-gpu=utilization.decoder` (the `nvdecDecoderUtil` field / the
+table's `dec mean %` column); it is **machine-wide** like `typeperf`, degrades to
+empty when `nvidia-smi` is absent, and reports the NVDEC *decode* engine only —
+not the copy/DMA engine or PCIe. The load-bearing signals are the fps/×realtime,
+the per-process CPU split, and that decoder-util reading.
+
+**What the RTX 3050 measured** (NVDEC, `h264-1080`, 3 runs; git `eda76e87`, all
+cells `hwLane: nvdec`):
+
+| signal | reading |
+|---|---|
+| throughput fps (median) | ~22–24 |
+| ×realtime | ~0.20 |
+| NVDEC decoder util (mean / max) | ~88% / ~96% |
+| host CPU — main (napi copy-back + NV12 pack) | ~4% |
+| host CPU — renderer (NV12 unpack + paint) | ~1.4% |
+| seek P95 — forward-near / forward-far / backward-far | ~75 / ~460 / ~865 ms |
+| cold start — first frame / warm P50 | ~435 / ~525 ms |
+
+**Read on the deferred zero-copy / export-HW decisions
+([ADR 0034](adr/0034-linux-hardware-decode-copies-back-into-ship-bytes.md)).**
+The axis zero-copy DMA-BUF and hardware export would improve is the **host-CPU**
+cost of the copy-back — the `av_hwframe_transfer_data` GPU→CPU copy, the NV12
+pack, and the IPC ship. The bench shows that cost is already **near-zero**:
+NVDEC decodes `h264-1080` with the main process at ~4% and the renderer at ~1.4%
+CPU — the copy-back frees exactly the CPU decode headroom ADR 0034 built it for,
+and there is essentially no host-CPU work left for zero-copy to reclaim on this
+box. So **zero-copy DMA-BUF stays deferred**, matching the Windows `native`
+finding that the transport/coordination is not the limiter, and **export stays
+on the software lane** — the decode headroom exists, but nothing in these numbers
+argues the proven ship-bytes path is costing enough to justify the DMA-BUF
+format-modifier / multi-GPU / NVIDIA-export risk surface.
+
+Two honest caveats keep this a *deferral*, not a *closure*: (1) the throughput
+driver evicts the ring and re-requests at the frontier — tuned for
+faster-than-realtime decoders (WebCodecs, d3d11va) — and on this near-realtime
+copy-back lane that produces heavy redundant re-decode (`pushCount` ~710 vs the
+~180 unique forward frames the ×realtime ~0.20 implies, ~4× over), which is why
+the NVDEC engine reads ~88% busy; that util is **inflated by the driver, not a
+clean saturation ceiling**, and is unchanged by `--throttle-ms 0`. Cross-family
+runs corroborate this: `hevc-1080` and `vp9-1080` decode at similar ~realtime fps
+yet read only ~50% and ~37% decoder-util — a spread that a true saturation
+ceiling would not show, so the per-codec figure tracks how much GOP prefix each
+re-request re-decodes, not the lane's headroom. (2) the NVDEC
+decoder-util sampler does not cover the copy/PCIe engine, so a clean
+"copy-back leaves N% on the table" throughput number — and any PCIe-bandwidth
+cost — awaits a forward-only drive that isolates the copy-back lane's true
+decode rate. Until then, the host-CPU idleness is the decisive signal and it
+points to *keep deferred*.
+
 ## What it deliberately is not
 
 - **Not a proxy-vs-original comparison.** Both strategies decode the
@@ -222,15 +308,21 @@ At run time the native strategy also needs the FFmpeg shared DLLs on `PATH`
 
 Useful flags, passed after `--` when invoked through npm:
 
-- `--strategy webcodecs|native|sw` — which decode path to profile (default
-  `webcodecs`). `native` requires the `@weftcut/native-decode` component
-  build (above); it's Windows-only and applies to the `Proxied`-route 8-bit
-  codecs (see
+- `--strategy webcodecs|native|sw|native-copyback` — which decode path to
+  profile (default `webcodecs`). `native` requires the `@weftcut/native-decode`
+  component build (above); it's Windows-only and applies to the `Proxied`-route
+  8-bit codecs (see
   [Native strategy](#native-strategy)). It exercises the same
   `SourceDecoderPool.acquire` path a real `ffmpeg`/`auto` `decode_engine`
   session uses in production — there is no separate E2E-only escape hatch
   gating it; the only gate is the Standard engine's own HW-probe requirement.
-  `sw` benches the native **software**-decode path (see below).
+  `sw` benches the native **software**-decode path (see above).
+  `native-copyback` benches the Linux hardware **copy-back** lane (NVDEC/VAAPI →
+  CPU NV12 → the same ship-bytes transport; see
+  [Linux hardware (copy-back) strategy](#linux-hardware-copy-back-strategy)).
+- `--hw-lane nvdec|vaapi` — for `native-copyback` only, which advertised HW lane
+  to pin via `WEFTCUT_FORCE_HW_LANE` (default `nvdec`). Ignored by the other
+  strategies.
 - `--fixture <name>|all` — one fixture (`h264-1080`, `hevc-1080`,
   `hevc-2160`, `vp9-1080`, `av1-1080`, `hi10p-1080`, `prores-1080`,
   `prores-2160`, `dnxhr-1080`, `mpeg2-1080`) or the whole matrix

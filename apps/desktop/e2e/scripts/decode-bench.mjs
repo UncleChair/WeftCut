@@ -36,11 +36,26 @@ const selfCheck = process.argv.includes("--self-check");
 const fixtureArg = arg("fixture", "all");
 const scenarioArg = arg("scenario", "all");
 const runs = Number(arg("runs", "3"));
-const STRATEGY = arg("strategy", "webcodecs"); // 'webcodecs' | 'native' | 'sw'
-if (STRATEGY !== "webcodecs" && STRATEGY !== "native" && STRATEGY !== "sw") {
-  console.error(`[decode-bench] invalid --strategy '${STRATEGY}' (expected webcodecs|native|sw)`);
+const STRATEGY = arg("strategy", "webcodecs"); // 'webcodecs' | 'native' | 'sw' | 'native-copyback'
+if (!["webcodecs", "native", "sw", "native-copyback"].includes(STRATEGY)) {
+  console.error(`[decode-bench] invalid --strategy '${STRATEGY}' (expected webcodecs|native|sw|native-copyback)`);
   process.exit(1);
 }
+// The Linux HW copy-back lane to pin via WEFTCUT_FORCE_HW_LANE. Only meaningful
+// for `native-copyback`; the app leaves the lane UNFORCED and this env just
+// filters the resolver to one advertised HW lane (see ADR 0034).
+const HW_LANE = arg("hw-lane", "nvdec");
+if (STRATEGY === "native-copyback" && HW_LANE !== "nvdec" && HW_LANE !== "vaapi") {
+  console.error(`[decode-bench] invalid --hw-lane '${HW_LANE}' (expected nvdec|vaapi)`);
+  process.exit(1);
+}
+// Env for every electron.launch: the copy-back strategy pins the resolver to one
+// advertised HW lane; the app itself leaves the lane unforced (real probe picks it).
+const launchEnv = {
+  ...process.env,
+  WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1",
+  ...(STRATEGY === "native-copyback" ? { WEFTCUT_FORCE_HW_LANE: HW_LANE } : {}),
+};
 const POOL_SWEEP = process.argv.includes("--pool-sweep");
 const poolSizeParsed = parsePoolSize(arg("pool-size", undefined));
 if (!poolSizeParsed.ok) {
@@ -114,11 +129,48 @@ function startGpuSampler() {
   };
 }
 
+// ── NVDEC decoder-utilization sampler (Linux native-copyback; machine-wide) ──
+// The Windows typeperf sampler has no Linux analogue for the NVDEC engine, so for
+// the copy-back strategy we stream `nvidia-smi`'s decoder-utilization % (the same
+// signal typeperf's VideoDecode counter carries on Windows). Only active for
+// `native-copyback` on Linux; a missing `nvidia-smi` (no NVIDIA driver) emits an
+// 'error' event we swallow, degrading to an empty series rather than crashing.
+function startNvdecSampler() {
+  if (process.platform !== "linux" || STRATEGY !== "native-copyback") {
+    return { stop: () => ({ decoderUtil: [] }) };
+  }
+  const child = spawn(
+    "nvidia-smi",
+    ["--query-gpu=utilization.decoder", "--format=csv,noheader,nounits", "-lms", "500"],
+    { windowsHide: true },
+  );
+  child.on("error", () => {});
+  const decoderUtil = [];
+  let buf = "";
+  child.stdout?.on("data", (d) => {
+    buf += d.toString();
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const v = Number(line);
+      if (!Number.isNaN(v)) decoderUtil.push(Math.min(100, v));
+    }
+  });
+  return {
+    stop: () => {
+      child.kill();
+      return { decoderUtil };
+    },
+  };
+}
+
 // ── One app session: run the scenario list for one fixture ─────────────────
 async function runSession(fixture, wantScenarios, poolSize, throttleMs) {
   const app = await electron.launch({
     args: [MAIN],
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1" },
+    env: launchEnv,
   });
   const page = await app.firstWindow({ timeout: 60_000 });
   await page.waitForLoadState("domcontentloaded");
@@ -137,6 +189,12 @@ async function runSession(fixture, wantScenarios, poolSize, throttleMs) {
         strategy: STRATEGY,
         poolSize,
         throttleMs,
+        // native-copyback needs the fixture's codec/pixFmt/dimensions so the
+        // UNforced pickInitialLane probe resolves the advertised HW lane (the
+        // WEFTCUT_FORCE_HW_LANE env pins WHICH one). Harmless for other strategies.
+        ...(STRATEGY === "native-copyback"
+          ? { codec: fixture.codec, pixFmt: fixture.pixFmt, width: fixture.width, height: fixture.height }
+          : {}),
       };
       if (scenario !== "throughput") {
         out[scenario] = await page.evaluate((a) => window.__weftcutTest.decodeBenchRun(a), args);
@@ -151,20 +209,23 @@ async function runSession(fixture, wantScenarios, poolSize, throttleMs) {
         await new Promise((r) => setTimeout(r, 100));
       }
       const gpu = startGpuSampler();
+      const nvdec = startNvdecSampler();
       const metricSamples = [];
       const metricsTimer = setInterval(() => {
         void app.evaluate(({ app: a }) => a.getAppMetrics()).then((m) => metricSamples.push(m)).catch(() => {});
       }, 500);
       // A rejection of resultP (target crash / disconnect) must still tear down
-      // the interval and the typeperf child — otherwise the interval keeps the
-      // event loop alive forever and the sampler process is orphaned.
+      // the interval and the sampler children — otherwise the interval keeps the
+      // event loop alive forever and the sampler processes are orphaned.
       let result;
       let gpuS;
+      let nvdecS;
       try {
         result = await resultP;
       } finally {
         clearInterval(metricsTimer);
         gpuS = gpu.stop();
+        nvdecS = nvdec.stop();
       }
       const byType = {};
       for (const sample of metricSamples) {
@@ -180,7 +241,11 @@ async function runSession(fixture, wantScenarios, poolSize, throttleMs) {
           ),
           gpuVideoDecode: { mean: mean(gpuS.videoDecode), max: Math.max(0, ...gpuS.videoDecode) },
           gpu3d: { mean: mean(gpuS.gpu3d), max: Math.max(0, ...gpuS.gpu3d) },
-          samples: { appMetrics: metricSamples.length, gpu: gpuS.videoDecode.length },
+          // Linux NVDEC copy-back only (empty elsewhere): the decoder engine's
+          // machine-wide utilization % from nvidia-smi. `decode-idle` here + the
+          // fps/×realtime signal is what gates the ADR 0034 zero-copy deferral.
+          nvdecDecoderUtil: { mean: mean(nvdecS.decoderUtil), max: Math.max(0, ...nvdecS.decoderUtil) },
+          samples: { appMetrics: metricSamples.length, gpu: gpuS.videoDecode.length, nvdec: nvdecS.decoderUtil.length },
         },
       };
     }
@@ -192,7 +257,7 @@ async function runSession(fixture, wantScenarios, poolSize, throttleMs) {
 
 // ── Environment block ────────────────────────────────────────────────────────
 async function envBlock() {
-  const app = await electron.launch({ args: [MAIN], env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1" } });
+  const app = await electron.launch({ args: [MAIN], env: launchEnv });
   try {
     // Wait for the app to be ready before the first main-process evaluate.
     // Evaluating immediately after launch races the main context's startup and
@@ -325,7 +390,16 @@ if (POOL_SWEEP) {
 }
 
 const env = await envBlock();
-const report = { env, strategy: STRATEGY, runs, cells: [] };
+const report = {
+  env,
+  strategy: STRATEGY,
+  // The HW lane the copy-back run PINNED via WEFTCUT_FORCE_HW_LANE (the resolver
+  // still ran unforced-but-filtered); each cell's actually-resolved lane lives in
+  // its per-run result's `hwLane`. Undefined for the non-copy-back strategies.
+  ...(STRATEGY === "native-copyback" ? { hwLanePin: HW_LANE } : {}),
+  runs,
+  cells: [],
+};
 // Resolve the output path + ensure the dir up front so we can rewrite the
 // report after every fixture — a crash late in a multi-fixture batch must not
 // discard the fixtures already measured.
@@ -350,17 +424,31 @@ for (const fixture of fixtures) {
 log(`report → ${outFile}`);
 
 // Markdown summary: median across runs for the headline numbers.
-console.log(`\n| fixture | fps (median) | ×realtime | seek ffar P95 ms | cold first ms | GPU dec mean % |`);
-console.log(`|---|---|---|---|---|---|`);
+// The `dec mean %` column is the Windows GPU VideoDecode engine util for the
+// default samplers, but the Linux NVDEC decoder util (nvidia-smi) for
+// `native-copyback`; `hwLane` records the lane each cell actually resolved to
+// (should equal --hw-lane; a `—` there with a copy-back error row below means the
+// HW lane was unavailable and the SW fallback was correctly rejected).
+console.log(`\n| fixture | hwLane | fps (median) | ×realtime | seek ffar P95 ms | cold first ms | dec mean % |`);
+console.log(`|---|---|---|---|---|---|---|`);
 for (const cell of report.cells) {
   const tp = cell.perRun.map((r) => r.throughput).filter((t) => t?.kind === "throughput");
   const sk = cell.perRun.map((r) => r.seek).filter((s) => s?.kind === "seek");
   const cs = cell.perRun.map((r) => r.coldstart).filter((c) => c?.kind === "coldstart");
   const fmt = (x) => (Number.isFinite(x) ? x.toFixed(1) : "—");
+  // Resolved HW lane: pull from whichever scenario ran (all resolve identically).
+  let hwLane = null;
+  for (const r of cell.perRun) {
+    hwLane = r.throughput?.hwLane ?? r.seek?.hwLane ?? r.coldstart?.hwLane ?? null;
+    if (hwLane) break;
+  }
+  const decMean = STRATEGY === "native-copyback"
+    ? median(tp.map((t) => t.resources?.nvdecDecoderUtil?.mean))
+    : median(tp.map((t) => t.resources?.gpuVideoDecode?.mean));
   console.log(
-    `| ${cell.fixture} | ${fmt(median(tp.map((t) => t.fps)))} | ${fmt(median(tp.map((t) => t.xRealtime)))} ` +
+    `| ${cell.fixture} | ${hwLane ?? "—"} | ${fmt(median(tp.map((t) => t.fps)))} | ${fmt(median(tp.map((t) => t.xRealtime)))} ` +
     `| ${fmt(median(sk.map((s) => s.perCategory["forward-far"]?.p95)))} ` +
-    `| ${fmt(median(cs.map((c) => c.firstMs)))} | ${fmt(median(tp.map((t) => t.resources?.gpuVideoDecode.mean)))} |`,
+    `| ${fmt(median(cs.map((c) => c.firstMs)))} | ${fmt(decMean)} |`,
   );
   for (const [i, r] of cell.perRun.entries()) {
     if (r.harnessError) {

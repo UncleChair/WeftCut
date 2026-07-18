@@ -21,7 +21,13 @@ export { percentile } from "../../../shared/msStats";
 /// `DecodeSession` seam as the WebCodecs strategy.
 type BenchHandle = SourceHandle | FfmpegSource;
 
-export type BenchStrategy = "webcodecs" | "native" | "sw";
+/// `native-copyback` is the Linux hardware copy-back HW lane (ADR 0034): decode
+/// on the GPU (NVDEC/VAAPI), `av_hwframe_transfer_data` back to a CPU NV12 frame,
+/// then feed the SAME `DecodeSession` seam as `sw` (the ship-bytes `SwTransport`).
+/// UNLIKE `native` it does NOT force the lane — it hands `pickInitialLane` the
+/// codec/pixFmt/dimensions so the real HW probe resolves the advertised lane; the
+/// orchestrator's `WEFTCUT_FORCE_HW_LANE` env pins WHICH one (nvdec/vaapi).
+export type BenchStrategy = "webcodecs" | "native" | "sw" | "native-copyback";
 export type BenchScenario = "throughput" | "seek" | "coldstart";
 export interface BenchArgs {
   sourcePath: string; // absolute fixture path; served via weftcut-media:// (unconfined by design)
@@ -33,15 +39,26 @@ export interface BenchArgs {
   /// Throughput driver's per-loop pacing delay (ms). Default 10 (current behavior).
   /// 0 = yield-only (unthrottled) — the max-throughput probe. Baseline stays 10 when absent.
   throttleMs?: number;
+  /// `native-copyback`-only: the fixture's codec/pixFmt/dimensions, threaded to
+  /// `pickInitialLane` so its probe resolves the advertised HW lane (the env pins
+  /// which one). Unused by the other strategies (which force or need no lane hint).
+  codec?: string | null;
+  pixFmt?: string | null;
+  width?: number;
+  height?: number;
 }
 
 export type SeekCategory = "forward-near" | "forward-far" | "backward-near" | "backward-far";
 interface CategoryStats { p50: number; p95: number; max: number; n: number }
 
 export type BenchResult =
-  | { kind: "throughput"; measuredMs: number; frames: number; fps: number; xRealtime: number; endedAtEof: boolean }
-  | { kind: "seek"; perCategory: Record<SeekCategory, CategoryStats> }
-  | { kind: "coldstart"; firstMs: number; restP50: number; restMax: number; iterationsMs: number[] }
+  // `hwLane` records the HW lane the source RESOLVED to (`nvdec`|`vaapi`|
+  // `d3d11va`, or null on software) — informational for every strategy, and the
+  // `native-copyback` HW-vs-SW-fallback confirmation (a SW fallback there is
+  // rejected as an error before it can be mislabeled a HW number).
+  | { kind: "throughput"; measuredMs: number; frames: number; fps: number; xRealtime: number; endedAtEof: boolean; hwLane?: string | null }
+  | { kind: "seek"; perCategory: Record<SeekCategory, CategoryStats>; hwLane?: string | null }
+  | { kind: "coldstart"; firstMs: number; restP50: number; restMax: number; iterationsMs: number[]; hwLane?: string | null }
   | { kind: "error"; error: string };
 
 const WARMUP_MS = 2_000;
@@ -426,14 +443,41 @@ export async function waitContains(h: BenchHandle, tUs: number, token: CancelTok
   }
 }
 
+/// Read the resolved HW lane name off a bench handle (null for WebCodecs handles
+/// / the software lane / a forced-lane run). Duck-typed: only `FfmpegSource`
+/// exposes `currentHwLane`.
+function readHwLane(h: BenchHandle): string | null {
+  return (h as { currentHwLane?: () => string | null }).currentHwLane?.() ?? null;
+}
+
+/// `native-copyback` must be on a genuine hardware lane; a software fallback
+/// (HW lane unavailable / the env pin found no candidate) is an INVALID HW
+/// measurement, not a slower one — return an error so it can never be reported
+/// as a HW number. Null for every other strategy (no guard).
+function copybackFallbackError(h: BenchHandle, strategy: BenchStrategy): BenchResult | null {
+  if (strategy !== "native-copyback") return null;
+  const lane = (h as { currentLane?: () => string }).currentLane?.();
+  if (lane !== "hardware") {
+    return {
+      kind: "error",
+      error: "native-copyback: resolved to software (HW lane unavailable/unforced) — invalid HW measurement",
+    };
+  }
+  return null;
+}
+
 async function runThroughput(
   h: BenchHandle,
   durationUs: number,
   token: CancelToken,
   throttleMs = 10,
+  strategy: BenchStrategy = "webcodecs",
 ): Promise<BenchResult> {
   phase = "warmup";
   await h.ensureReady();
+  const fallback = copybackFallbackError(h, strategy);
+  if (fallback) return fallback;
+  const hwLane = readHwLane(h);
   void h.requestFrameAt(0);
   await sleep(WARMUP_MS);
   phase = "measuring";
@@ -479,12 +523,21 @@ async function runThroughput(
     fps: frames / (measuredMs / 1000),
     xRealtime: contentUs / 1000 / measuredMs,
     endedAtEof,
+    hwLane,
   };
 }
 
-async function runSeek(h: BenchHandle, durationUs: number, token: CancelToken): Promise<BenchResult> {
+async function runSeek(
+  h: BenchHandle,
+  durationUs: number,
+  token: CancelToken,
+  strategy: BenchStrategy = "webcodecs",
+): Promise<BenchResult> {
   phase = "warmup";
   await h.ensureReady();
+  const fallback = copybackFallbackError(h, strategy);
+  if (fallback) return fallback;
+  const hwLane = readHwLane(h);
   void h.requestFrameAt(10_000_000);
   await waitContains(h, 10_000_000, token);
   phase = "measuring";
@@ -507,16 +560,18 @@ async function runSeek(h: BenchHandle, durationUs: number, token: CancelToken): 
       n: sorted.length,
     };
   }
-  return { kind: "seek", perCategory };
+  return { kind: "seek", perCategory, hwLane };
 }
 
 async function runColdstart(
   pool: SourceDecoderPool,
   mkInit: (layerId: string) => Parameters<SourceDecoderPool["acquire"]>[0],
   token: CancelToken,
+  strategy: BenchStrategy = "webcodecs",
 ): Promise<BenchResult> {
   phase = "measuring";
   const iterationsMs: number[] = [];
+  let hwLane: string | null = null;
   for (let i = 0; i < COLD_ITERATIONS; i++) {
     // Checked BEFORE acquire so a cancelled run never re-acquires on a pool
     // the caller is about to dispose.
@@ -525,6 +580,14 @@ async function runColdstart(
     const h = pool.acquire(mkInit(layerId));
     const t0 = performance.now();
     await h.ensureReady();
+    // Guard + lane-record on the FIRST iteration (each iteration reopens the same
+    // source, so the resolved lane is identical): reject a copy-back SW fallback
+    // before spending 10 cold opens on an invalid HW measurement.
+    if (i === 0) {
+      const fallback = copybackFallbackError(h, strategy);
+      if (fallback) { pool.release(layerId); return fallback; }
+      hwLane = readHwLane(h);
+    }
     void h.requestFrameAt(5_000_000);
     await waitContains(h, 5_000_000, token);
     iterationsMs.push(performance.now() - t0);
@@ -539,6 +602,7 @@ async function runColdstart(
     restP50: percentile(rest, 50),
     restMax: rest[rest.length - 1]!,
     iterationsMs,
+    hwLane,
   };
 }
 
@@ -568,6 +632,22 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
             // rejects assigning `number | undefined` to the optional `poolSize: number` field.
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
           }
+        : args.strategy === "native-copyback"
+        ? {
+            // NO forceLane — `pickInitialLane`'s real HW probe resolves the lane
+            // (WEFTCUT_FORCE_HW_LANE, set by the orchestrator, pins WHICH one).
+            // Feed it the codec/pixFmt/dimensions so the probe's classKey matches
+            // main's; the resolved HW lane then rides the SwTransport (copy-back).
+            engine: "ffmpeg" as const,
+            sourcePath: args.sourcePath,
+            componentAvailable: true,
+            // Conditional spreads keep exactOptionalPropertyTypes happy (no
+            // explicit `undefined`/`null` assigned to the optional fields).
+            ...(args.codec != null ? { codec: args.codec } : {}),
+            ...(args.pixFmt != null ? { pixFmt: args.pixFmt } : {}),
+            ...(args.width != null ? { width: args.width } : {}),
+            ...(args.height != null ? { height: args.height } : {}),
+          }
         : args.strategy === "sw"
         ? {
             engine: "ffmpeg" as const,
@@ -580,11 +660,11 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
     scenarioP = (async (): Promise<BenchResult> => {
       switch (args.scenario) {
         case "throughput":
-          return runThroughput(livePool.acquire(mkInit("bench-0")), args.durationUs, token, args.throttleMs);
+          return runThroughput(livePool.acquire(mkInit("bench-0")), args.durationUs, token, args.throttleMs, args.strategy);
         case "seek":
-          return runSeek(livePool.acquire(mkInit("bench-0")), args.durationUs, token);
+          return runSeek(livePool.acquire(mkInit("bench-0")), args.durationUs, token, args.strategy);
         case "coldstart":
-          return runColdstart(livePool, mkInit, token);
+          return runColdstart(livePool, mkInit, token, args.strategy);
       }
     })();
     // Always-handled: if the timeout wins the race, the orphan's eventual
