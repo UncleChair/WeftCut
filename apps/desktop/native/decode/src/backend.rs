@@ -216,6 +216,23 @@ pub fn version_info() -> String {
     )
 }
 
+/// The decode lanes THIS build actually compiled in — the component's capability
+/// advertisement (ADR 0030 §Lane advertisement). `"software"` is unconditional
+/// (the libavcodec SW lane builds on every platform); the `"d3d11va"` HW-preview
+/// lane rides the SAME `#[cfg(windows)]` gate as the `preview_gpu` module it
+/// names, so the advertisement can never claim a lane the addon didn't compile.
+/// Resolvers probe ONLY advertised lanes: on Linux, where `preview_gpu_probe` is
+/// a by-design stub returning a "not built" verdict, the GPU lane is never
+/// advertised and so is never probed — replacing the old platform-string guard.
+#[napi]
+pub fn capabilities() -> Vec<String> {
+    #[allow(unused_mut)]
+    let mut lanes = vec!["software".to_string()];
+    #[cfg(windows)]
+    lanes.push("d3d11va".to_string());
+    lanes
+}
+
 #[napi]
 pub struct NativeDecode {
     #[cfg(windows)]

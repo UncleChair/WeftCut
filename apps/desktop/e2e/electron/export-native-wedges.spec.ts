@@ -61,9 +61,16 @@ const OFFSET_FRAMES = 60
 
 // Component presence (level-0 probe, same signal the napi integration test
 // uses): without the built addon the app cannot open native sessions, so the
-// gates skip rather than fail. Windows-only today.
-const DECODE_ADDON = path.resolve(__dirname, '../../native/decode/index.win32-x64-msvc.node')
-const COMPONENT_PRESENT = process.platform === 'win32' && existsSync(DECODE_ADDON)
+// gates skip rather than fail. The Standard engine's software lane now ships on
+// Linux too (issue #5 block B), so the gate resolves the per-OS addon filename
+// and admits Windows + Linux; macOS stays out of scope (no LGPL supply chain).
+const DECODE_ADDON = path.resolve(
+  __dirname,
+  '../../native/decode',
+  process.platform === 'win32' ? 'index.win32-x64-msvc.node' : 'index.linux-x64-gnu.node',
+)
+const COMPONENT_PRESENT =
+  (process.platform === 'win32' || process.platform === 'linux') && existsSync(DECODE_ADDON)
 
 // Deliberately slow consumer for the credit-stall gate: WebCodecs software AV1
 // encode (same shape as export_codecs.spec.ts's AV1 cell) can't keep up with
@@ -565,6 +572,10 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
   // profile assertion — AV1's "Main" profile covers 10-bit, so pix_fmt is the
   // depth signal.
   test('10-bit ramp through the native route to AV1 10-bit keeps its step count', async () => {
+    // AV1 10-bit needs a sidecar built with libsvtav1. Block A pins the Linux
+    // sidecar to the BtbN n7.1 GPL build (fetch-ffmpeg.mjs), which carries
+    // libsvtav1 (8/10-bit) — so the software-encoder probe picks it and this
+    // gate runs on Linux too, alongside Windows.
     test.setTimeout(420_000)
     await exportRampNative('e2e-nw-ramp10-av1-', OUT_RAMP_AV1, RAMP10_AV1_SETTINGS, 400_000)
     const st = probeVideoStream(OUT_RAMP_AV1, 'codec_name,pix_fmt')

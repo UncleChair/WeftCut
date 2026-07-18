@@ -2,5 +2,6 @@
 index.js
 index.d.ts
 
-# FFmpeg LGPL shared libs (fetched/copied next to the addon for local runs; never committed)
+# FFmpeg LGPL shared libs co-located next to the .node so $ORIGIN resolves them
+# on Linux (fetched/copied by napi-build-decode.mjs for local runs; never committed).
 *.so*
