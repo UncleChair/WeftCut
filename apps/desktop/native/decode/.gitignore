@@ -1,3 +1,6 @@
 *.node
 index.js
 index.d.ts
+
+# FFmpeg LGPL shared libs (fetched/copied next to the addon for local runs; never committed)
+*.so*
