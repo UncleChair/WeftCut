@@ -47,7 +47,7 @@ export function EasingMenu({
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Positioner anchor={anchor} side="bottom" align="start" sideOffset={4} className="z-50">
           <PopoverPrimitive.Popup
-            className="menu-list"
+            className="app-menu-list"
             style={{ padding: "6px", display: "flex", flexWrap: "wrap", gap: "4px", width: "168px" }}
           >
             {PRESETS.map((p) => (

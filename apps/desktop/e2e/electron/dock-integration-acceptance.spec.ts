@@ -188,7 +188,7 @@ test("closing every Panel shows the recovery view, and Open Panel + Reset restor
     // Panel promotes a new one; six passes empties the whole workspace.
     for (let i = 0; i < 6; i++) {
       await viewMenuTrigger(page).click();
-      await page.locator(".menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
+      await page.locator(".app-menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
     }
     await expect(page.locator("[data-panel-kind]")).toHaveCount(0);
     await expect.poll(() => probe(page).then((p) => p?.empty ?? false)).toBe(true);
@@ -201,14 +201,14 @@ test("closing every Panel shows the recovery view, and Open Panel + Reset restor
 
     // Open Panel → Timeline reopens exactly that one Panel.
     await recovery.locator(".menu-trigger").click();
-    await page.locator(".menu-item").filter({ hasText: /^Timeline$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Timeline$/ }).click();
     await expect(page.locator('[data-panel-kind="timeline"]')).toHaveCount(1);
     await expect(page.locator("[data-panel-kind]")).toHaveCount(1);
 
     // Close it again and Reset Workspace from the recovery view rebuilds the
     // full built-in Editing set.
     await viewMenuTrigger(page).click();
-    await page.locator(".menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
+    await page.locator(".app-menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
     await expect(page.locator("[data-panel-kind]")).toHaveCount(0);
     await page
       .getByRole("region", { name: /Empty workspace/i })
@@ -372,11 +372,11 @@ test("Workspace mutations never change Project undo depth, and a business edit a
     // the app-level Workspace document only. None may dirty the Project or move
     // its undo cursor/depth.
     await viewMenuTrigger(page).click();
-    await page.locator(".menu-item").filter({ hasText: /^Caption$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
     await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(1);
 
     await viewMenuTrigger(page).click();
-    await page.locator(".menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
+    await page.locator(".app-menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
     await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(0);
 
     await page.getByTitle("Move Preview").dblclick();
@@ -475,16 +475,16 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     // so the selected Layer and its reordered chain are still there afterwards.
     await viewMenuTrigger(page).click();
     await page
-      .locator(".menu-item")
+      .locator(".app-menu-item")
       .filter({ hasText: /Save Workspace As|工作区另存为/ })
       .click();
     await page.getByLabel(/Workspace name|工作区名称/).fill("Grading");
     await page.getByRole("button", { name: /^(Save|保存)$/ }).click();
 
     await viewMenuTrigger(page).click();
-    await page.locator(".menu-item").filter({ hasText: /^(Editing|编辑)$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^(Editing|编辑)$/ }).click();
     await viewMenuTrigger(page).click();
-    await page.locator(".menu-item").filter({ hasText: /^Grading$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Grading$/ }).click();
 
     // Effect still owns the reordered chain and the primary Layer is still edited
     // in Attribute after the Workspace switch.
@@ -517,7 +517,7 @@ test("Caption cue navigation still selects and seeks after the Caption Panel mov
 
     // Open the initially-closed Caption Panel.
     await viewMenuTrigger(page).click();
-    await page.locator(".menu-item").filter({ hasText: /^Caption$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
     const caption = page.locator('[data-panel-kind="caption"]');
     await expect(caption).toHaveCount(1);
     await expect(caption.locator(".caption-row")).toHaveCount(3);

@@ -31,8 +31,8 @@ widget chrome; the rest is editor-specific layout no library replaces.
   focus, dismissal, and aria wiring, while the popup/panel elements keep the
   existing CSS classes as their visual identity. Migrations are therefore
   behavior upgrades with near-zero visual churn, and dropdown chrome is
-  shared (`.menu-list` / `.menu-item` skin the menubar, `AppSelect` popups,
-  and the context menu alike).
+  shared (`.app-menu-list` / `.app-menu-item` skin the menubar, `AppSelect`
+  popups, and the context menu alike).
 - **Tailwind v4 is the token carrier.** `src/renderer/app.css` is the Tailwind entry:
   the shadcn token convention (`--background`, `--primary`, `--radius`, …)
   holds the app palette in the `.dark` block, hex-verbatim from the legacy
@@ -78,10 +78,12 @@ widget chrome; the rest is editor-specific layout no library replaces.
 - The `var(--*)` token sweep is done: the legacy hex in `styles.css` (since
   split into the `styles/*.css` feature sheets) was migrated onto the shadcn
   `var(--*)` tokens. The palette has since grown a **dark-NLE semantic layer**
-  on top of the shadcn roles (depth-ladder / selection / motion / radius roles
-  in `src/renderer/app.css`); documenting those roles in full is a follow-up
-  while the polish settles. The shared dropdown chrome classes still deserve
-  token-era names.
+  on top of the shadcn roles (depth-ladder / selection / status / neutral
+  overlays / motion / radius / type roles in `src/renderer/app.css`),
+  documented in full at [docs/ui-tokens.md](../ui-tokens.md). The shared
+  dropdown chrome classes are renamed to the App-prefixed convention
+  (`.app-menu-list` / `.app-menu-item` and the `-check` / `-label` /
+  `-accelerator` parts).
 - Remote/automated UI driving must account for Base UI listening to real
   pointer streams: synthesized clicks without `pointerdown` (and synthetic
   hover without human-scale timing) don't move sliders or trigger

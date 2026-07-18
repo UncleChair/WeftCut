@@ -21,7 +21,7 @@ interface AppSelectProps {
 }
 
 /// The one dropdown control for every WeftCut form. Replaces native
-/// `<select>`: the popup is app-styled (reusing the menu-list/menu-item
+/// `<select>`: the popup is app-styled (reusing the app-menu-list/app-menu-item
 /// chrome instead of the OS-rendered list), keyboard/typeahead behavior
 /// comes from Base UI, and the selected item shows a ✓ in the popup.
 /// String values only — numeric call sites convert at the boundary,
@@ -62,20 +62,20 @@ export function AppSelect({
           alignItemWithTrigger={false}
           className="z-50"
         >
-          <Select.Popup className="menu-list">
+          <Select.Popup className="app-menu-list">
             {options.map((o) => (
               <Select.Item
                 key={o.value}
                 value={o.value}
                 disabled={o.disabled ?? false}
-                className="menu-item"
+                className="app-menu-item"
               >
-                <span className="menu-item-check" aria-hidden="true">
+                <span className="app-menu-item-check" aria-hidden="true">
                   <Select.ItemIndicator>
                     <CheckIcon size={12} />
                   </Select.ItemIndicator>
                 </span>
-                <Select.ItemText className="menu-item-label">
+                <Select.ItemText className="app-menu-item-label">
                   {o.label}
                 </Select.ItemText>
               </Select.Item>

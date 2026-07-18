@@ -126,10 +126,10 @@ test("closing Preview destroys its resources and reopening creates a new instanc
 
     const viewMenu = page.locator(".menu-trigger").nth(2);
     await viewMenu.click();
-    await page.locator(".menu-item").filter({ hasText: /^Preview$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Preview$/ }).click();
     await viewMenu.click();
     await page
-      .locator(".menu-item")
+      .locator(".app-menu-item")
       .filter({ hasText: /Close Active Panel|关闭活动面板/ })
       .click();
 
@@ -143,7 +143,7 @@ test("closing Preview destroys its resources and reopening creates a new instanc
       .toBeNull();
 
     await viewMenu.click();
-    await page.locator(".menu-item").filter({ hasText: /^Preview$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Preview$/ }).click();
     await expect(page.locator('[data-panel-kind="preview"]')).toHaveCount(1);
     await expect
       .poll(() =>
@@ -381,7 +381,7 @@ test("View menu creates a custom Workspace from the current arrangement and swit
     // Save Workspace As… → name dialog → a custom Workspace becomes active.
     await viewMenu.click();
     await page
-      .locator(".menu-item")
+      .locator(".app-menu-item")
       .filter({ hasText: /Save Workspace As|工作区另存为/ })
       .click();
     await page.getByLabel(/Workspace name|工作区名称/).fill("Cutting");
@@ -389,26 +389,26 @@ test("View menu creates a custom Workspace from the current arrangement and swit
 
     // Close a Panel so the two Workspaces diverge, then confirm it persisted.
     await viewMenu.click();
-    await page.locator(".menu-item").filter({ hasText: /^Nearby$/ }).click(); // focus Nearby
+    await page.locator(".app-menu-item").filter({ hasText: /^Nearby$/ }).click(); // focus Nearby
     await viewMenu.click();
     await page
-      .locator(".menu-item")
+      .locator(".app-menu-item")
       .filter({ hasText: /Close Active Panel|关闭活动面板/ })
       .click();
     await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(0);
 
     // The View menu now lists both Workspaces.
     await viewMenu.click();
-    await expect(page.locator(".menu-item").filter({ hasText: cuttingItem })).toHaveCount(1);
-    await expect(page.locator(".menu-item").filter({ hasText: editingItem })).toHaveCount(1);
+    await expect(page.locator(".app-menu-item").filter({ hasText: cuttingItem })).toHaveCount(1);
+    await expect(page.locator(".app-menu-item").filter({ hasText: editingItem })).toHaveCount(1);
 
     // Switch to Editing — no save prompt — and the full default set returns.
-    await page.locator(".menu-item").filter({ hasText: editingItem }).click();
+    await page.locator(".app-menu-item").filter({ hasText: editingItem }).click();
     await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(1);
 
     // Switch back to Cutting: its diverged arrangement (Nearby closed) is restored.
     await viewMenu.click();
-    await page.locator(".menu-item").filter({ hasText: cuttingItem }).click();
+    await page.locator(".app-menu-item").filter({ hasText: cuttingItem }).click();
     await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(0);
   } finally {
     await app.close();

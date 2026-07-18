@@ -81,7 +81,7 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
     // Role Mixer is closed in the built-in Editing workspace — reopen it from
     // the View menu (index 2, matching dock-workspace.spec.ts).
     await page.locator('.menu-trigger').nth(2).click()
-    await page.locator('.menu-item').filter({ hasText: /^Role Mixer$/ }).click()
+    await page.locator('.app-menu-item').filter({ hasText: /^Role Mixer$/ }).click()
     await expect(page.locator('[data-panel-kind="role-mixer"]')).toHaveCount(1)
   })
   test.afterAll(async () => {

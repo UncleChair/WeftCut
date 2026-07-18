@@ -59,10 +59,10 @@ test('media search reopens and reveals the singleton Media Pool Panel', async ()
     // Panel destroys that surface, and the retired M binding must not reopen it.
     const viewMenu = page.locator('.menu-trigger').nth(2)
     await viewMenu.click()
-    await page.locator('.menu-item').filter({ hasText: 'Media Pool' }).click()
+    await page.locator('.app-menu-item').filter({ hasText: 'Media Pool' }).click()
     await viewMenu.click()
     await page
-      .locator('.menu-item')
+      .locator('.app-menu-item')
       .filter({ hasText: /Close Active Panel|关闭活动面板/ })
       .click()
     await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(0)

@@ -63,15 +63,15 @@ export function LayerContextMenu({
           sideOffset={0}
           className="z-50"
         >
-          <MenuPrimitive.Popup className="menu-list">
+          <MenuPrimitive.Popup className="app-menu-list">
             <MenuPrimitive.Item
-              className="menu-item"
+              className="app-menu-item"
               onClick={() => onRename(layerId)}
             >
               {t("timeline.rename", { defaultValue: "Rename" })}
             </MenuPrimitive.Item>
             <MenuPrimitive.Item
-              className="menu-item"
+              className="app-menu-item"
               onClick={() => onToggleEnabled(layerId, !layerEnabled)}
             >
               {layerEnabled
@@ -82,7 +82,7 @@ export function LayerContextMenu({
               <>
                 <MenuPrimitive.Separator className="menu-separator" />
                 <MenuPrimitive.Item
-                  className="menu-item"
+                  className="app-menu-item"
                   onClick={() => onSeparateAudio(layerId)}
                 >
                   {t("timeline.separate_audio", {
@@ -95,7 +95,7 @@ export function LayerContextMenu({
               <>
                 <MenuPrimitive.Separator className="menu-separator" />
                 <MenuPrimitive.Item
-                  className="menu-item"
+                  className="app-menu-item"
                   onClick={() => onPrebakeNow(layerId)}
                 >
                   {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}

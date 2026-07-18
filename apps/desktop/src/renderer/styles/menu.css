@@ -47,7 +47,7 @@
 
 /* Placement (portal + 4px below the trigger) is owned by Base UI's
  * Positioner; this class is purely the dropdown's visual chrome. */
-.menu-list {
+.app-menu-list {
   min-width: 220px;
   background: var(--card);
   border: 1px solid var(--border);
@@ -56,7 +56,7 @@
   padding: 4px 0;
 }
 
-.menu-item {
+.app-menu-item {
   display: flex;
   align-items: center;
   width: 100%;
@@ -72,16 +72,16 @@
 /* data-highlighted covers BOTH hover and keyboard navigation (Base UI
  * moves the highlight with ArrowUp/Down); data-disabled replaces
  * :disabled now that items render as divs, not buttons. */
-.menu-item[data-highlighted] {
+.app-menu-item[data-highlighted] {
   background: var(--hover-neutral-strong);
 }
 
-.menu-item[data-disabled] {
+.app-menu-item[data-disabled] {
   color: var(--color-gray-500);
   cursor: not-allowed;
 }
 
-.menu-item-check {
+.app-menu-item-check {
   width: 16px;
   flex: 0 0 16px;
   display: inline-flex;
@@ -89,11 +89,11 @@
   color: var(--color-blue-300);
 }
 
-.menu-item-label {
+.app-menu-item-label {
   flex: 1;
 }
 
-.menu-item-accelerator {
+.app-menu-item-accelerator {
   margin-left: 24px;
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
@@ -101,7 +101,7 @@
   white-space: nowrap;
 }
 
-.menu-item[data-disabled] .menu-item-accelerator {
+.app-menu-item[data-disabled] .app-menu-item-accelerator {
   color: var(--color-gray-600);
 }
 

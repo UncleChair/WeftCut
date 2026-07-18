@@ -64,7 +64,7 @@ test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one 
     // Open the initially-closed Caption Panel from the View menu.
     const viewMenu = page.locator(".menu-trigger").nth(2);
     await viewMenu.click();
-    await page.locator(".menu-item").filter({ hasText: /^Caption$/ }).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
     await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(1);
 
     // Aggregation: cues from BOTH caption Tracks appear as one flattened list.

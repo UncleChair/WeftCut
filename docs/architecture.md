@@ -324,7 +324,7 @@ The rules a day-to-day change must respect:
 | A component that consumes Escape inside a dialog must `stopPropagation()`. | Base UI closes the dialog on Escape otherwise. |
 | `styles.css` is unlayered and beats Tailwind's layered output; don't stack utilities onto elements legacy rules target — remove the legacy rule instead. | Layered-vs-unlayered cascade ordering. |
 | If a layout relied on a UA default that preflight resets, pin the value explicitly in `styles.css` (`line-height` is the canonical case). | Preflight only leaks through UA-default reliance. |
-| Tokens live in `src/renderer/app.css` (`.dark` block, shadcn naming + a dark-NLE semantic role layer on top); the app is dark-only via the hardwired `html.dark`. | Single palette source; the `var(--*)` sweep is done, with semantic roles layered above. |
+| Tokens live in `src/renderer/app.css` (`.dark` block, shadcn naming + a dark-NLE semantic role layer on top — full reference: [ui-tokens.md](ui-tokens.md)); the app is dark-only via the hardwired `html.dark`. | Single palette source; the `var(--*)` sweep is done, with semantic roles layered above. |
 | Icons come from [lucide](https://lucide.dev/icons) via `lucide-react` named imports (`size` explicit, `aria-hidden`, color via `currentColor`) — no inline `<svg>`, no Unicode glyphs. [ADR 0020](adr/0020-ui-icons-from-lucide-react.md); `WindowControls` and CSS cursors are the documented exceptions. | One drawing style; glyph rendering no longer font-dependent. |
 
 ## Internationalization (UI)

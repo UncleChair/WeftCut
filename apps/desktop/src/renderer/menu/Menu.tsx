@@ -41,7 +41,7 @@ export function Menu({ label, hint, children }: MenuProps) {
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner align="start" sideOffset={4} className="z-50">
-          <MenuPrimitive.Popup className="menu-list">
+          <MenuPrimitive.Popup className="app-menu-list">
             {children}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
@@ -84,7 +84,7 @@ export function MenuItem({
   const accelerator = effective ? resolveAccelerator(effective) : "";
   return (
     <MenuPrimitive.Item
-      className="menu-item"
+      className="app-menu-item"
       title={hint}
       disabled={disabled ?? false}
       // Base UI closes the menu on activation before this runs, so an
@@ -92,12 +92,12 @@ export function MenuItem({
       // Promise rejections are the caller's responsibility.
       onClick={() => void onSelect()}
     >
-      <span className="menu-item-check" aria-hidden="true">
+      <span className="app-menu-item-check" aria-hidden="true">
         {checked ? <CheckIcon size={12} /> : null}
       </span>
-      <span className="menu-item-label">{label}</span>
+      <span className="app-menu-item-label">{label}</span>
       {accelerator && (
-        <span className="menu-item-accelerator" aria-hidden="true">
+        <span className="app-menu-item-accelerator" aria-hidden="true">
           {accelerator}
         </span>
       )}

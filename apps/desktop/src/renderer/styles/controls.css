@@ -5,7 +5,7 @@
 /* ============================================================ */
 
 /* AppSelect trigger — the closed control. The open popup reuses the
- * .menu-list / .menu-item dropdown chrome. */
+ * .app-menu-list / .app-menu-item dropdown chrome. */
 .app-select {
   display: inline-flex;
   align-items: center;
