@@ -69,19 +69,19 @@ pub enum DecodeAccel {
     /// libva's default device selection picks the wrong GPU on a multi-GPU
     /// machine, so the node is always explicit.
     ///
-    /// SYSTEM-libva REQUIREMENT (validated on real hardware, issue #5 Block C):
-    /// the BtbN LGPL build lazily `dlopen`s the *system* `libva.so.2` via
-    /// implib-gen, and the copy-back (`av_hwframe_transfer_data` mapping the
-    /// surface to CPU) calls `vaMapBuffer2`. The BtbN nightly is built against a
-    /// bleeding-edge libva, but `vaMapBuffer2` is a 2024 libva addition NEWER than
-    /// the 2.20 current stable distros ship (e.g. Ubuntu 24.04) — so on such a
-    /// system the implib trampoline asserts and aborts the process UNCATCHABLY.
-    /// Decode + the one-frame probe succeed (they never map), but the first real
-    /// copy-back frame crashes. Block C2 MUST pre-flight-check the system libva for
-    /// `vaMapBuffer2` (dlsym) BEFORE advertising/using VAAPI and decline the lane
-    /// when absent, so a stale-libva machine falls back to the software lane
-    /// instead of crashing. (NVDEC is unaffected: its implib'd `libcuda` comes
-    /// from the current NVIDIA driver, which carries every symbol it needs.)
+    /// libva REQUIREMENT (validated on real hardware, issue #5 Block C): the BtbN
+    /// LGPL build lazily `dlopen`s `libva.so.2` via implib-gen, and the copy-back
+    /// (`av_hwframe_transfer_data` mapping the surface to CPU) calls `vaMapBuffer2`
+    /// — a libva 2.21 (2024-03) symbol the current stable distros' 2.20 lack (e.g.
+    /// Ubuntu 24.04). Against a libva without it the implib trampoline aborts the
+    /// process UNCATCHABLY on the first mapped frame (decode + the one-frame probe
+    /// succeed — they never map). We fix this by BUNDLING a >= 2.21 libva beside
+    /// the addon and pinning it so the implib resolves it (see
+    /// [`vaapi_copyback_supported`]); its `vaMapBuffer2` gracefully dispatches to
+    /// the system driver's `vaMapBuffer`. When the bundled libva can't load (glibc
+    /// too old), that guard declines VAAPI → software fallback, never a crash.
+    /// (NVDEC is unaffected: its implib'd `libcuda` comes from the current NVIDIA
+    /// driver, which carries every symbol it needs.)
     Vaapi { device: String },
 }
 
@@ -157,25 +157,46 @@ unsafe extern "C" fn get_format_vaapi(
     pick_hw_pix_format(pix_fmts, ffs::AVPixelFormat::AV_PIX_FMT_VAAPI)
 }
 
-/// Whether the SYSTEM libva is new enough for VAAPI copy-back (issue #5 Block C).
-/// The BtbN LGPL ffmpeg implib-gen's libva and calls `vaMapBuffer2` during
-/// `av_hwframe_transfer_data`; a system libva without that symbol aborts the
-/// process UNCATCHABLY on the first mapped frame. dlopen the system libva and
-/// dlsym the symbol up front so VAAPI is declined (software fallback) rather than
-/// crashed on an old-libva machine. Off Linux: false (VAAPI is a Linux lane).
+/// Pin the BUNDLED libva (>= 2.21) and report whether it can copy back (issue #5
+/// Block C). The BtbN LGPL ffmpeg calls `vaMapBuffer2` (a libva 2.21 symbol)
+/// unconditionally during `av_hwframe_transfer_data`; against a libva without it
+/// the implib-gen trampoline aborts the process UNCATCHABLY on the first mapped
+/// frame. We ship a >= 2.21 `libva.so.2` beside the addon and MUST make the BtbN
+/// implib resolve it instead of a stale system libva.
+///
+/// The mechanism is "same soname wins": `dlopen("libva.so.2")` from THIS addon
+/// resolves the bundled copy via the .node's RUNPATH (`$ORIGIN`), and we keep it
+/// resident (`RTLD_GLOBAL | RTLD_NODELETE`, never `dlclose`d). The implib lives
+/// in `libavutil.so`, which carries no rpath of its own — RUNPATH does NOT climb
+/// the loader chain, so ITS later lazy `dlopen("libva.so.2")` would otherwise hit
+/// the system libva via `ld.so.cache`. Because we pinned ours first, that dlopen
+/// returns the already-loaded bundled object, so `vaMapBuffer2` is present and
+/// dispatches to the system driver's `vaMapBuffer` (libva falls back for drivers
+/// that predate the symbol). Verified on real hardware (Intel iHD, system libva
+/// 2.20): a real NV12 copy-back frame, no abort.
+///
+/// Returns false — declining VAAPI so the caller falls back to software, no crash
+/// — when the bundled `.so` can't load (glibc older than its 2.38 floor) or when
+/// a system libva was already resident and lacks `vaMapBuffer2`. Off Linux: false
+/// (VAAPI is a Linux lane). Idempotent: repeated calls just re-`dlopen` the
+/// already-resident handle.
 #[cfg(target_os = "linux")]
 pub fn vaapi_copyback_supported() -> bool {
     use std::ffi::CString;
     unsafe {
         let name = CString::new("libva.so.2").unwrap();
-        let handle = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+        // RTLD_NODELETE + no dlclose: pin bundled libva for the process lifetime
+        // so the implib's dlopen finds it. RTLD_GLOBAL so the implib's symbol
+        // resolution sees it uniformly.
+        let handle = libc::dlopen(
+            name.as_ptr(),
+            libc::RTLD_LAZY | libc::RTLD_GLOBAL | libc::RTLD_NODELETE,
+        );
         if handle.is_null() {
             return false;
         }
         let sym = CString::new("vaMapBuffer2").unwrap();
-        let ok = !libc::dlsym(handle, sym.as_ptr()).is_null();
-        libc::dlclose(handle);
-        ok
+        !libc::dlsym(handle, sym.as_ptr()).is_null()
     }
 }
 #[cfg(not(target_os = "linux"))]
@@ -188,9 +209,10 @@ pub fn vaapi_copyback_supported() -> bool {
 /// caller owns it and must `av_buffer_unref` it (SwVideoStream does so on drop).
 /// Errors if the device can't be created (GPU/driver absent → the resolver's
 /// silent software fallback). Must not be called for `Software`. For VAAPI it
-/// also errors BEFORE creating the device when the system libva can't copy back
-/// (see [`vaapi_copyback_supported`]) — turning the would-be uncatchable abort on
-/// the first mapped frame into a graceful `Err` + software fallback.
+/// also errors BEFORE creating the device when the bundled libva can't copy back
+/// (see [`vaapi_copyback_supported`], which also pins the bundled libva so the
+/// implib resolves it) — turning the would-be uncatchable abort on the first
+/// mapped frame into a graceful `Err` + software fallback.
 unsafe fn attach_hw_device(
     codec_ctx: &mut ffmpeg_next::codec::context::Context,
     accel: &DecodeAccel,
@@ -198,13 +220,14 @@ unsafe fn attach_hw_device(
     let hw_type = accel
         .hw_device_type()
         .ok_or_else(|| "attach_hw_device called for software".to_string())?;
-    // VAAPI copy-back (`av_hwframe_transfer_data`) calls `vaMapBuffer2` through
-    // the implib'd system libva; on a libva too old to export it the process
-    // aborts UNCATCHABLY on the first mapped frame. Decline the lane up front —
+    // VAAPI copy-back (`av_hwframe_transfer_data`) calls `vaMapBuffer2` through the
+    // implib'd libva; against a libva without it the process aborts UNCATCHABLY on
+    // the first mapped frame. This call also pins the bundled >= 2.21 libva so the
+    // implib resolves it; if it can't (glibc too old), decline the lane up front —
     // BEFORE creating the device — so the caller falls back to software instead.
     if matches!(accel, DecodeAccel::Vaapi { .. }) && !vaapi_copyback_supported() {
         return Err(
-            "system libva too old (no vaMapBuffer2); vaapi copy-back would abort".to_string(),
+            "bundled libva unavailable (no vaMapBuffer2); vaapi copy-back would abort".to_string(),
         );
     }
     // Keep the CString alive across the create call (dev_ptr borrows it).

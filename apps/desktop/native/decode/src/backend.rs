@@ -223,10 +223,13 @@ pub fn version_info() -> String {
 /// names, so the advertisement can never claim a lane the addon didn't compile.
 /// On Linux (issue #5 Block C) the copy-back HW lanes are advertised: `"nvdec"`
 /// unconditionally (a missing libcuda makes the probe Err cleanly, no abort) and
-/// `"vaapi"` ONLY when the system libva is new enough for copy-back — an old libva
-/// aborts the process UNCATCHABLY on the first mapped frame, so the lane is gated
-/// on [`crate::preview_sw::decoder::vaapi_copyback_supported`] rather than advertised
-/// and later crashed. Resolvers probe ONLY advertised lanes: on Linux, where
+/// `"vaapi"` ONLY when the bundled libva can copy back — the BtbN ffmpeg calls
+/// `vaMapBuffer2` unconditionally, so a libva without it (glibc too old to load
+/// the bundled >= 2.21 copy, or a stale system libva) aborts the process
+/// UNCATCHABLY on the first mapped frame. The lane is gated on
+/// [`crate::preview_sw::decoder::vaapi_copyback_supported`] (which also pins the
+/// bundled libva so the implib resolves it) rather than advertised and later
+/// crashed. Resolvers probe ONLY advertised lanes: on Linux, where
 /// `preview_gpu_probe` is a by-design stub returning a "not built" verdict, the
 /// d3d11va lane is never advertised and so is never probed — replacing the old
 /// platform-string guard.
@@ -239,8 +242,8 @@ pub fn capabilities() -> Vec<String> {
     #[cfg(target_os = "linux")]
     {
         // NVDEC is safe to advertise unconditionally — a missing libcuda makes
-        // the probe Err cleanly (no abort). VAAPI is gated on the system libva
-        // being new enough for copy-back (see vaapi_copyback_supported).
+        // the probe Err cleanly (no abort). VAAPI is gated on the bundled libva
+        // being loadable + copy-back-capable (see vaapi_copyback_supported).
         lanes.push("nvdec".to_string());
         if crate::preview_sw::decoder::vaapi_copyback_supported() {
             lanes.push("vaapi".to_string());

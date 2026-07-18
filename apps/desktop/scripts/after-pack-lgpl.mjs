@@ -48,4 +48,27 @@ export default function afterPack(context) {
     `  • afterPack(lgpl): ${platform} native-decode runtime banner clean ` +
       `(${manifest.asset}); §6 gate held.`,
   )
+
+  // Linux also bundles libva (>= 2.21) beside the addon for VAAPI copy-back
+  // (issue #5 Block C). It's MIT (Expat) — no LGPL §6 obligation — but assert
+  // both that the manifest records the bundle and that its notice shipped, so a
+  // regression that silently drops the VAAPI runtime is caught before release.
+  if (platform === 'linux') {
+    if (!manifest.libva) {
+      throw new Error(
+        'afterPack(lgpl): manifest records no bundled libva — the VAAPI ' +
+          'copy-back runtime was not carried (fetch-ffmpeg-lgpl regression).',
+      )
+    }
+    const libvaNotice = join(resourcesDir, 'native-decode', 'LIBVA-LICENSE.txt')
+    if (!existsSync(libvaNotice)) {
+      throw new Error(
+        `afterPack(lgpl): bundled libva notice missing at ${libvaNotice} — MIT ` +
+          'attribution not carried (extraResources regression).',
+      )
+    }
+    console.log(
+      `  • afterPack(lgpl): linux bundled libva ${manifest.libva.version} present; MIT notice shipped.`,
+    )
+  }
 }

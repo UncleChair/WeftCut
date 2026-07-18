@@ -79,6 +79,11 @@ linux:
       to: native-decode/LICENSE.txt
     - from: resources/ffmpeg-lgpl/linux/manifest.json
       to: native-decode/manifest.json
+    # MIT (Expat) notice for the bundled libva (>= 2.21, VAAPI copy-back — issue
+    # #5 Block C). Like the libav*.so, libva.so.2 + libva-drm.so.2 ride co-located
+    # beside the .node via files/asarUnpack; this carries its license text.
+    - from: resources/ffmpeg-lgpl/linux/LIBVA-LICENSE.txt
+      to: native-decode/LIBVA-LICENSE.txt
 mac:
   target: [dmg]
   category: public.app-category.video
