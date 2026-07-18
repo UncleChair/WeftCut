@@ -723,8 +723,10 @@ const zhCN: Resources = {
   mixer: {
     title: "混音",
     gain_db: "{{role}} 增益 (dB)",
+    gain_fader: "{{role}} 增益推子",
     mute_hint: "静音此角色（全局）",
     solo_hint: "独奏此角色（静音其余）",
+    reset_hint: "将 {{role}} 增益重置为 0 dB",
   },
   motif_picker: {
     heading: "Motifs",

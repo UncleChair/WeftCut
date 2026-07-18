@@ -442,6 +442,14 @@ describe('dispatch: role gain + flags + project settings', () => {
     actor.dispatch('undo', {})
     expect(actor.snapshot().audio_roles).toEqual({}) // recorded → undo clears the bus
   })
+  it('reset (set_role_gain to 0) restores neutral gain and is undoable back to the prior gain', () => {
+    const { actor } = setup()
+    actor.dispatch('set_role_gain', { role: 'music', gain_db: 6 })
+    expect(actor.dispatch('set_role_gain', { role: 'music', gain_db: 0 }).ok).toBe(true) // reset = 0 dB
+    expect(actor.snapshot().audio_roles.music).toEqual({ gain_db: 0, muted: false, solo: false })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().audio_roles.music).toEqual({ gain_db: 6, muted: false, solo: false }) // recorded → undo restores
+  })
   it('set_role_gain then update_role_flags: flags preserve the gain', () => {
     const { actor } = setup()
     actor.dispatch('set_role_gain', { role: 'music', gain_db: 6 })
@@ -456,6 +464,15 @@ describe('dispatch: role gain + flags + project settings', () => {
     actor.dispatch('undo', {})
     expect(actor.snapshot().tracks[0].layers).toHaveLength(0) // edit undone
     expect(actor.snapshot().audio_roles.dialogue).toEqual({ gain_db: 0, muted: true, solo: false }) // flag persists
+  })
+  it('update_role_flags toggles solo (unrecorded) and survives undo of a later edit', () => {
+    const { actor, a } = setup()
+    actor.dispatch('update_role_flags', { role: 'music', patch: { solo: true } })
+    expect(actor.snapshot().audio_roles.music).toEqual({ gain_db: 0, muted: false, solo: true })
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().tracks[0].layers).toHaveLength(0) // edit undone
+    expect(actor.snapshot().audio_roles.music).toEqual({ gain_db: 0, muted: false, solo: true }) // flag persists
   })
   it('update_project_settings flips auto_delete_empty_tracks (unrecorded, survives undo)', () => {
     const { actor, a } = setup()

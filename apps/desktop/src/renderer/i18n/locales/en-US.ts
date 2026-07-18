@@ -740,8 +740,10 @@ const enUS = {
   mixer: {
     title: "Mixer",
     gain_db: "{{role}} gain (dB)",
+    gain_fader: "{{role}} gain fader",
     mute_hint: "Mute this role everywhere",
     solo_hint: "Solo this role (mutes the others)",
+    reset_hint: "Reset {{role}} gain to 0 dB",
   },
   motif_picker: {
     heading: "Motifs",

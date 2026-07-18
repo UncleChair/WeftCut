@@ -404,8 +404,37 @@
 .mixer-panel {
   padding: 12px 14px;
   display: flex;
+  gap: 10px;
+}
+
+/* Narrow: one horizontal row per Role, controls stacked top-to-bottom. */
+.mixer-panel--rows {
   flex-direction: column;
   gap: 8px;
+}
+
+/* Wide: side-by-side channel strips, each control stacked within its column. */
+.mixer-panel--strips {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.mixer-channel {
+  display: flex;
+  min-width: 0;
+}
+
+.mixer-panel--rows .mixer-channel {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.mixer-panel--strips .mixer-channel {
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 
 .mixer-role-name {
@@ -415,10 +444,37 @@
   white-space: nowrap;
 }
 
-.mixer-row-controls {
+.mixer-panel--rows .mixer-role-name {
+  flex: 0 0 72px;
+}
+
+.mixer-panel--strips .mixer-role-name {
+  text-align: center;
+}
+
+/* The fader fills the row's free space; in a strip it spans the column width
+   without stretching vertically (AppSlider defaults to flex: 1 1 0). */
+.mixer-panel--rows .mixer-fader {
+  flex: 1 1 0;
+}
+
+.mixer-panel--strips .mixer-fader {
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+
+.mixer-panel--strips .mixer-gain-field {
+  align-self: center;
+}
+
+.mixer-channel-flags {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.mixer-panel--strips .mixer-channel-flags {
+  justify-content: center;
 }
 
 .property-panel {
