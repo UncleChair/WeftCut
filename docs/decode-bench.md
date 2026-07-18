@@ -210,6 +210,27 @@ cells `hwLane: nvdec`):
 | seek P95 — forward-near / forward-far / backward-far | ~75 / ~460 / ~865 ms |
 | cold start — first frame / warm P50 | ~435 / ~525 ms |
 
+**What the Intel iGPU measured** (VAAPI, `--hw-lane vaapi`, 3 runs; git
+`296840b6`, every cell `hwLane: vaapi` across H.264 / HEVC / VP9 — the
+bundled-libva copy-back fix, issue #5 Block C):
+
+| fixture | throughput fps (median) | ×realtime | seek forward-far P95 | cold start first frame |
+|---|---|---|---|---|
+| `h264-1080` | ~13.7 | ~0.1 | ~1190 ms | ~746 ms |
+| `hevc-1080` | ~14.5 | ~0.1 | ~1134 ms | ~671 ms |
+| `vp9-1080`  | ~14.3 | ~0.1 | ~1109 ms | ~634 ms |
+
+The value here is coverage: all three codecs resolve to `hwLane: vaapi` and
+produce correct frames (SSIM ≥ 0.98 in `preview-hw-conformance`), proving the
+copy-back lane engages on Intel iHD — not a silent software fallback. There is no
+`dec mean %`: the decoder-util sampler is `nvidia-smi` (NVIDIA-only), so it reads
+0 on the VAAPI path; an Intel `intel_gpu_top` analogue is unwired. The
+throughput/×realtime **reproduce the NVDEC re-decode-churn pattern below on a
+second vendor + API** — sub-realtime because the frontier re-request re-decodes
+the GOP prefix, not because copy-back is costly. The Intel iGPU is a weaker
+decoder than the RTX 3050, so its absolute seek/cold-start run higher (same
+order), but the *shape* is identical, which is what the deferral turns on.
+
 **Read on the deferred zero-copy / export-HW decisions
 ([ADR 0034](adr/0034-linux-hardware-decode-copies-back-into-ship-bytes.md)).**
 The axis zero-copy DMA-BUF and hardware export would improve is the **host-CPU**
