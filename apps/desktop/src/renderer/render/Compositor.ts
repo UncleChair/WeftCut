@@ -160,6 +160,11 @@ export interface ActiveClipProbe {
   spriteBound: boolean;
   spriteWidth: number;
   spriteHeight: number;
+  /// The resolved HW lane (`nvdec`|`vaapi`|`d3d11va`) when the active clip's
+  /// source is a `FfmpegSource` on its hardware lane, else null (software lane,
+  /// a WebCodecs source, or no matching clip). The lane-parameterized preview-hw
+  /// conformance spec asserts this to prove WHICH HW lane engaged.
+  hwLane: string | null;
   /// The resolver IDENTITY (`${engine}:${source}:${target}`) the active clip's
   /// source was built from — see `ActiveClip.builtFromKey`. Lets the decode-
   /// engine e2e spec assert the resolved ENGINE/SOURCE (the two
@@ -1221,6 +1226,7 @@ export class Compositor {
       spriteBound: !isEmpty,
       spriteWidth: isEmpty ? 0 : tex.orig.width,
       spriteHeight: isEmpty ? 0 : tex.orig.height,
+      hwLane: s instanceof FfmpegSource ? s.currentHwLane() : null,
       builtFromKey: clip.builtFromKey,
     };
   }

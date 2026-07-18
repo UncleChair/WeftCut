@@ -25,7 +25,7 @@ export async function launchFreshApp(
 }
 
 export async function launchApp(
-  opts: { userDataDir?: string; locale?: string } = {},
+  opts: { userDataDir?: string; locale?: string; env?: Record<string, string> } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const locale = opts.locale ?? 'en-US'
   const localeBase = locale.split('-')[0] ?? locale
@@ -44,12 +44,16 @@ export async function launchApp(
     // The elevated-run notice is a modal dialog; suppress it so it can't block the
     // (often elevated) e2e/CI Electron process. `env` replaces process.env, so
     // spread it to keep PATH etc. that the app needs.
+    // Caller-supplied `opts.env` is spread LAST so a spec can inject extra
+    // vars (e.g. WEFTCUT_FORCE_HW_LANE for the lane-parameterized preview-hw
+    // conformance spec) without disturbing the locale/elevation keys above.
     env: {
       ...process.env,
       LANG: processLocale,
       LANGUAGE: `${locale.replace('-', '_')}:${localeBase}`,
       LC_ALL: processLocale,
       WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1',
+      ...(opts.env ?? {}),
     } as Record<string, string>,
   })
   const page = await app.firstWindow({ timeout: 60_000 })

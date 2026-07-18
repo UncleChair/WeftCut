@@ -78,6 +78,11 @@ export class FfmpegSource implements PreviewDecodeSession {
 
   get disposed(): boolean { return this._disposed; }
   currentLane(): FfmpegLane { return this.lane; }
+  /// The resolved HW lane name (`nvdec`|`vaapi`|`d3d11va`) the current hardware
+  /// attempt keyed its transport on, or null on the software lane / a forced-lane
+  /// bench run. E2E-only: the lane-parameterized conformance spec reads this
+  /// (via `ActiveClipProbe.hwLane`) to assert WHICH HW lane engaged.
+  currentHwLane(): string | null { return this.hwPlan?.lane ?? null; }
   isDowngraded(): boolean { return this.startedHardware && this.lane === "software"; }
   isLookaheadFull(): boolean { return this.ring.isLookaheadFull(); }
   isIdle(nowMs: number): boolean { return this.lastUseMs > 0 && nowMs - this.lastUseMs > IDLE_DISPOSE_MS; }

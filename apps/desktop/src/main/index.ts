@@ -638,8 +638,20 @@ app.whenReady().then(async () => {
   // and falls back to software when none pass — so a build without a HW lane
   // (Linux SW-only) never reaches a native probe, no platform special-casing.
   ipcMain.handle('decodeCap:probeHw', async (_e, a: { path: string; classKey: string }) => {
+    // E2E/bench lane pin: the lane-parameterized preview-hw conformance spec
+    // sets WEFTCUT_FORCE_HW_LANE so ONE variant tests exactly one HW lane on a
+    // multi-lane machine. When set, hide every advertised HW lane except the
+    // forced one (keep `software` so the resolver's SW fallback is intact), which
+    // pins `resolveHwLane` to that single lane instead of the normal NVDEC>VAAPI
+    // priority walk. Forcing a lane the addon never advertised (e.g. `vaapi` on a
+    // box whose libva can't copy-back) leaves no candidate → software fallback —
+    // exactly the clean-skip the e2e wants. Absent = normal priority walk.
+    const forcedHwLane = process.env.WEFTCUT_FORCE_HW_LANE
+    const advertisedLanes = forcedHwLane
+      ? nd.lanes.filter((l) => l === forcedHwLane || l === 'software')
+      : nd.lanes
     const r = await resolveHwLane({
-      lanes: nd.lanes,
+      lanes: advertisedLanes,
       store: decodeCapability,
       classKey: a.classKey,
       envKey: () => hwEnvKey(),
