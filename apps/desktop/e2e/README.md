@@ -12,7 +12,7 @@ skip). From `apps/desktop` unless noted:
 ```bash
 npm run napi:build                         # build the @weftcut/core native addon
 npm run fetch-ffmpeg                        # ffmpeg on PATH (or use a system ffmpeg)
-( cd e2e && npm run fixtures )              # generate test media (needs ffmpeg + go)
+( cd e2e && npm run fixtures )              # generate test media (needs ffmpeg)
 VITE_WEFTCUT_E2E=1 npm run build            # MUST set the flag — see below
 ```
 
@@ -62,7 +62,7 @@ electron/            Playwright specs (*.spec.ts) — the live suite
 electron/helpers/    driver.ts: launchApp / newProject / driveExport / waitForHook
 lib/                 analyzer + comparison: analyze.mjs (media_conformance),
                      compare-determinism.mjs, image-ssim.mjs
-fixtures/            generate-fixtures.mjs (real test media via ffmpeg);
+fixtures/            generate.mjs + generate-fixtures.mjs (real test media via ffmpeg);
                      media/ is generated, gitignored
 scripts/             standalone color diagnostics (color-*.mjs) — invoke
                      cargo media_conformance / ffmpeg directly, not the suite;
@@ -79,8 +79,13 @@ cover pure logic — put fast, logic-only checks there, not here.
 ## Fixtures
 
 `npm run fixtures` (from this dir) materializes the test media into
-`fixtures/media/` (needs `ffmpeg` on PATH). Point at an external set with
-`WEFTCUT_TEST_MEDIA`. See `docs/conformance.md`.
+`fixtures/media/` (needs `ffmpeg` on PATH; no Go toolchain). The Node generator
+does not invoke a command shell, so paths containing spaces work on Windows,
+macOS, and Linux. Point at an external set with `WEFTCUT_TEST_MEDIA`. See
+`docs/conformance.md`.
+
+`npm run test:fixtures` exercises all recipes and the cross-platform path
+boundary with a fake encoder, so it does not require `ffmpeg`.
 
 The waveform/alignment pair (`test_audio_timing_zero_pts.mkv` and
 `test_audio_timing_offset_375ms.mkv`) contains 250 ms sound islands at source

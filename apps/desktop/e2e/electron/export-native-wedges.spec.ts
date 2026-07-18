@@ -390,7 +390,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
 // ---------------------------------------------------------------------------
 // Ramp precision gates: the native 10-bit lane (I420P10 transport).
 // A true-10-bit gradient ramp (test_1080p_gradient10_h264.mp4 — H.264 Hi10P,
-// horizontal 0..1023 luma sweep, bt709/limited; generate.go --gradient-h264)
+// horizontal 0..1023 luma sweep, bt709/limited; generate.mjs --gradient-h264)
 // exports through the PINNED native decode route (`decodeEngine: "ffmpeg"`)
 // to a 10-bit target, and the analyzer's --gradient-row mode proves the
 // ramp's step count survived: an 8-bit-banded lane caps at <=256 distinct
@@ -560,7 +560,7 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
     expect(['yuv420p10le', 'p010le']).toContain(st.pix_fmt)
     expect(st.profile).toContain('Main 10')
     // The output decodes under the same forced bt709/tv the fixture was
-    // authored with (generate.go tags the source; the native sink writes the
+    // authored with (generate.mjs tags the source; the native sink writes the
     // explicit bt709/limited 4-tuple) — pinning keeps the level count stable.
     const ramp = analyzeGradientRow({ output: OUT_RAMP_HEVC, sample: 10, inMatrix: 'bt709', inRange: 'tv' })
     console.log('[e2e] HEVC-10 ramp report:', JSON.stringify(ramp))

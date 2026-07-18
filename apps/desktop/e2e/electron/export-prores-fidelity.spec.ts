@@ -32,7 +32,7 @@ const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../
 // 10 s @ 30 fps testsrc2 ProRes — the frame counters give analyze()'s
 // best-match alignment real teeth on the differential legs.
 const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
-// 1 s color-chart ProRes (bt709/limited, yuv422p10le; generate.go
+// 1 s color-chart ProRes (bt709/limited, yuv422p10le; generate.mjs
 // --color-prores) — same chart + manifest as the axis-A 709ltd fixture.
 const CHART_PRORES = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')

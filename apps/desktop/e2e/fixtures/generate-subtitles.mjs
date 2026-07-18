@@ -1,5 +1,5 @@
 // Subtitle test-fixture generator. Unlike the media fixtures (binary, gitignored,
-// produced by generate.go), these are tiny text files written directly here and
+// produced by generate.mjs), these are tiny text files written directly here and
 // committed — diffable and usable straight from a checkout. Covers the parser
 // matrix: plain SRT, CJK SRT (the burn-in spike), multi-line, overlapping cues
 // (multi-track auto-stack), Tier-3 ASS (style table + mapped + dropped overrides),

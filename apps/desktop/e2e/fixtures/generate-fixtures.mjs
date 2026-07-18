@@ -1,17 +1,18 @@
 // Idempotent fixture generator: defines the matrix (single source of truth) and
-// generates any missing clips into `mediaDir` by shelling `go run generate.go`.
-// Media is gitignored; the generator + this script are committed, so fixtures
-// are reproducible from a checkout. Requires `go` + `ffmpeg` on PATH.
-import { existsSync } from "node:fs";
+// generates missing clips through the dependency-free Node generator. Media is
+// gitignored; both scripts are committed, so a checkout only needs Node +
+// ffmpeg to reproduce the fixtures.
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GENERATOR = path.join(HERE, "generate.go");
-const WIDTH_HEIGHT = "1080"; // generate.go is hard-coded 1920x1080
+import { generateFixture, outputName } from "./generate.mjs";
 
-// The fixture matrix. Output filenames MUST match what generate.go writes.
+export { outputName } from "./generate.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+// The fixture matrix. Output filenames MUST match what generate.mjs writes.
 export const MATRIX = [
   // video-only (true BT.709, -an) — the video conformance axis
   { fps: 30, format: "mp4" },
@@ -77,69 +78,25 @@ export const MATRIX = [
   { fps: 10, format: "gif" },
 ];
 
-export function outputName({ fps, format, audio, color, colorProres, colorProresEnc, gradient, gradientH264, gradientH264Bf, gradientAv1, gradientH2644k, eostail, imageset, audiotones, aformat, audioTiming, audioTimingLong, ptsOffsetMs }) {
-  if (imageset) return "test_chart_320x240.png";
-  if (audiotones) return `test_tones_10s.${aformat}`;
-  if (audioTiming) return ptsOffsetMs === 0
-    ? "test_audio_timing_zero_pts.mkv"
-    : `test_audio_timing_offset_${ptsOffsetMs}ms.mkv`;
-  if (audioTimingLong) return "test_audio_timing_long_125s.mkv";
-  if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
-  if (colorProres) return `test_${WIDTH_HEIGHT}p_color_${colorProresEnc ?? "709ltd"}_prores.mov`;
-  if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
-  if (gradientH264) return `test_${WIDTH_HEIGHT}p_gradient10_h264.mp4`;
-  if (gradientH264Bf) return `test_${WIDTH_HEIGHT}p_gradient10_h264_bf.mp4`;
-  if (gradientAv1) return `test_${WIDTH_HEIGHT}p_gradient10_av1.mp4`;
-  if (gradientH2644k) return "test_2160p_gradient10_h264.mp4";
-  if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
-  if (eostail) return `test_${WIDTH_HEIGHT}p_${fps}fps_eostail.${format}`;
-  if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
-  return `test_${WIDTH_HEIGHT}p_${fps}fps.${format}`;
-}
-
 /// Generate any missing matrix clip into `mediaDir`. Existing files are skipped
 /// (fast no-op). Throws if a generation fails or produces no file.
-export async function ensureFixtures(mediaDir) {
-  for (const entry of MATRIX) {
+export async function ensureFixtures(mediaDir, {
+  matrix = MATRIX,
+  generate = generateFixture,
+} = {}) {
+  mkdirSync(mediaDir, { recursive: true });
+
+  for (const entry of matrix) {
     const name = outputName(entry);
     const dest = path.join(mediaDir, name);
     if (existsSync(dest)) {
       console.log(`[fixtures] skip (exists): ${name}`);
       continue;
     }
-    const args = entry.imageset
-      ? ["run", GENERATOR, "--imageset"]
-      : entry.audiotones
-        ? ["run", GENERATOR, "--audiotones", "--aformat", entry.aformat]
-        : entry.audioTiming
-          ? ["run", GENERATOR, "--audio-timing", "--pts-offset-ms", String(entry.ptsOffsetMs)]
-        : entry.audioTimingLong
-          ? ["run", GENERATOR, "--audio-timing-long"]
-        : entry.color
-          ? ["run", GENERATOR, "--color", entry.color]
-        : entry.colorProres
-          ? ["run", GENERATOR, "--color-prores",
-             ...(entry.colorProresEnc ? ["--color-prores-enc", entry.colorProresEnc] : [])]
-          : entry.gradient
-            ? ["run", GENERATOR, "--gradient"]
-            : entry.gradientH264
-              ? ["run", GENERATOR, "--gradient-h264"]
-              : entry.gradientH264Bf
-                ? ["run", GENERATOR, "--gradient-h264-bf"]
-                : entry.gradientAv1
-                  ? ["run", GENERATOR, "--gradient-av1"]
-                  : entry.gradientH2644k
-                    ? ["run", GENERATOR, "--gradient-h264-4k"]
-                    : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
-    if (entry.audio) args.push("--audio");
-    if (entry.eostail) args.push("--eostail");
     console.log(`[fixtures] generating ${name} ...`);
-    const r = spawnSync("go", args, { cwd: mediaDir, stdio: "inherit", shell: true });
-    if (r.status !== 0) {
-      throw new Error(`generate.go failed for ${name} (exit ${r.status})`);
-    }
+    await generate(entry, { outputDir: mediaDir });
     if (!existsSync(dest)) {
-      throw new Error(`generate.go ran but did not produce ${dest}`);
+      throw new Error(`generate.mjs ran but did not produce ${dest}`);
     }
   }
 }

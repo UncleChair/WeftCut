@@ -34,7 +34,7 @@ apps/desktop/
       analyze.mjs                  # Node wrapper around the Rust analyzer
       image-ssim.mjs, compare-determinism.mjs   # determinism-capture comparison
     fixtures/
-      generate.go                  # deterministic media fixture producer
+      generate.mjs                 # deterministic Node media fixture producer
       generate-fixtures.mjs        # orchestrator (npm run fixtures)
       color_baseline.json          # expected color error for the color encodings
       gradient_baseline.json       # expected error for the 10-bit gradient fixture
@@ -56,12 +56,19 @@ otherwise they use `apps/desktop/e2e/fixtures/media`.
 
 ## Fixture Generation
 
-`generate.go` creates deterministic clips for the matrix. `generate-fixtures.mjs`
-is the single source of truth for which files belong in the matrix; run it with
-`npm run fixtures` (from `apps/desktop/e2e`) to materialize any missing clips —
-it is idempotent. The Playwright run does **not** auto-generate them (there is no
-global-setup step), so generate them before running the analyzer-backed gates.
-Requires `go` and `ffmpeg` on PATH.
+`generate.mjs` creates deterministic clips for the matrix.
+`generate-fixtures.mjs` is the single source of truth for which files belong in
+the matrix; run it with `npm run fixtures` (from `apps/desktop/e2e`) to
+materialize any missing clips — it is idempotent. Both scripts use only Node
+built-ins and invoke `ffmpeg` without a command shell, so output directories
+with spaces and native Windows paths are preserved. The Playwright run does
+**not** auto-generate fixtures (there is no global-setup step), so generate them
+before running the analyzer-backed gates. Requires `ffmpeg` on PATH.
+
+For a single recipe, run `node fixtures/generate.mjs --help` from
+`apps/desktop/e2e`; `--output-dir` accepts any native path. The fast
+`npm run test:fixtures` regression covers every matrix recipe without invoking
+real encoders.
 
 | Clip family | Examples | Used by |
 |---|---|---|
@@ -172,7 +179,7 @@ instance.
 ```bash
 npm run napi:build                    # build the @weftcut/core native addon
 npm run fetch-ffmpeg                   # ffmpeg on PATH (or use a system ffmpeg)
-( cd e2e && npm run fixtures )         # generate test media (needs ffmpeg + go)
+( cd e2e && npm run fixtures )         # generate test media (needs ffmpeg)
 VITE_WEFTCUT_E2E=1 npm run build       # build WITH the E2E hook — see warning
 ```
 
