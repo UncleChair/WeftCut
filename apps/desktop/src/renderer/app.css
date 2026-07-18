@@ -246,6 +246,14 @@
        accent, not a warning; kept distinct from --warning on purpose. */
     --keyframe: #facc15;
 
+    /* Elevation — three levels for floating chrome. On near-black surfaces
+       the 1px --border every menu/popover/dialog already carries does most
+       of the separation; the shadow only lifts, so blurs stay tight. The
+       log drawer casts upward and keeps a literal matched to its level. */
+    --shadow-menu: 0 4px 16px rgba(0, 0, 0, 0.35);
+    --shadow-popover: 0 8px 28px rgba(0, 0, 0, 0.45);
+    --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.55);
+
     /* Motion — two speeds, shared easing, so hover/focus transitions stop
        ranging across 80/100/120/160/180ms with mixed easings. Continuous
        data-driven transitions (meter/progress width updates) deliberately

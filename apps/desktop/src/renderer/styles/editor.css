@@ -109,9 +109,9 @@
   width: 2px;
   background: var(--color-red-500);
   pointer-events: none;
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.55),
-    0 0 4px rgba(239, 68, 68, 0.45);
+  /* The dark hairline keeps the red line legible over bright content;
+     the old red outer glow read as neon against the flat chrome. */
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.55);
   border-radius: 1px;
   z-index: 2;
 }
@@ -595,7 +595,7 @@
   line-height: 1.45;
   text-align: left;
   white-space: normal;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-menu);
 }
 
 .prop-field-control {
@@ -756,7 +756,7 @@
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-control);
   min-width: 140px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-menu);
 }
 .add-effect-menu li {
   list-style: none;

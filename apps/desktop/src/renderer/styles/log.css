@@ -16,7 +16,8 @@
   max-height: 80vh;
   background: var(--popover);
   border-top: 2px solid var(--border-soft);
-  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
+  /* Upward cast of --shadow-popover — the drawer opens from the bottom edge. */
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   z-index: 80;

@@ -26,6 +26,10 @@
   --dv-paneview-active-outline-color: var(--ring);
   --dv-separator-border: var(--border-soft);
   --dv-tab-divider-color: var(--border);
+  /* Dockview's default drop highlight is a neutral gray — route it through
+     the shared selection blue so dock feedback matches every other drop. */
+  --dv-drag-over-background-color: var(--selection-bg);
+  --dv-drag-over-border-color: var(--selection-border);
 }
 
 .weft-dockview .dv-groupview {
@@ -34,13 +38,10 @@
   min-height: 0;
 }
 
-.weft-dockview .dv-groupview.dv-active-group::after {
-  content: "";
-  position: absolute;
-  z-index: 30;
-  inset: 0;
-  border: 1px solid color-mix(in srgb, var(--ring) 72%, transparent);
-  pointer-events: none;
+/* Active-group signal: a flat 2px accent line under the group's tab strip.
+   (The old full-perimeter outline read as a glowing frame around the Panel.) */
+.weft-dockview .dv-groupview.dv-active-group .dv-tabs-and-actions-container {
+  box-shadow: inset 0 -2px 0 0 color-mix(in srgb, var(--ring) 72%, transparent);
 }
 
 .weft-dock-panel {

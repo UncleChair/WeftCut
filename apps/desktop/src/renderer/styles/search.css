@@ -13,7 +13,7 @@
   background: var(--popover);
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-popover);
   overflow: hidden;
   outline: none;
 }

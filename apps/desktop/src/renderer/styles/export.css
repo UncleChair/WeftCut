@@ -31,7 +31,7 @@
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-popover);
   overflow: hidden;
 }
 

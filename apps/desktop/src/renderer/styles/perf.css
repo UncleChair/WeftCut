@@ -11,12 +11,10 @@
   height: 7px;
   border-radius: 50%;
   background: var(--color-emerald-400);
-  box-shadow: 0 0 9px rgba(52, 211, 153, 0.55);
 }
 
 .perf-dot.is-hot {
   background: var(--color-amber-400);
-  box-shadow: 0 0 9px rgba(251, 191, 36, 0.6);
 }
 
 .perf-icon-btn {

@@ -208,7 +208,7 @@
   border: 1px solid rgba(147, 197, 253, 0.72);
   border-radius: var(--radius-control);
   background: var(--surface-raised);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.48);
+  box-shadow: var(--shadow-popover);
   opacity: 0.78;
   pointer-events: none;
   will-change: transform, width, height, opacity;

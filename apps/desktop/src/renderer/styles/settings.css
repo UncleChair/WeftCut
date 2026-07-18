@@ -11,7 +11,7 @@
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
   overflow: hidden;

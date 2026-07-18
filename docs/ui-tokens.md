@@ -81,6 +81,21 @@ Deliberate exceptions that stay literal: the focused/unfocused
 window-frame hairline (0.10/0.08 — OS-adjacent chrome, see `base.css`)
 and the bright bake-spinner arc (0.85).
 
+## Elevation
+
+Three shadow levels for floating chrome. On near-black surfaces the 1px
+`--border` every floating surface already carries does most of the
+separation work; the shadow only lifts, so blurs stay tight.
+
+| Token | Value | Use |
+|---|---|---|
+| `--shadow-menu` | `0 4px 16px`, black @ 35% | Dropdowns, context menus, small popups, editor tooltips. |
+| `--shadow-popover` | `0 8px 28px`, black @ 45% | Floating panels: command palette, export/status panels, drag previews. |
+| `--shadow-modal` | `0 16px 48px`, black @ 55% | Dialogs: settings, motif picker, connect agent. |
+
+Directional exception: the log drawer opens from the bottom edge and casts
+upward — it keeps a literal `0 -8px 28px` matched to `--shadow-popover`.
+
 ## Motion
 
 | Token | Value | Use |

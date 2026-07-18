@@ -120,7 +120,6 @@
 
 .status-bar-level-dot.level-error {
   background: var(--destructive);
-  box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
 }
 
 .status-bar-badge {
@@ -239,7 +238,7 @@
   background: var(--popover);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48);
+  box-shadow: var(--shadow-popover);
   z-index: 81;
 }
 

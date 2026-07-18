@@ -161,7 +161,6 @@
   flex: 0 0 auto;
   border-radius: 50%;
   background: #6696e6;
-  box-shadow: 0 0 8px rgba(102, 150, 230, 0.72);
 }
 
 .splash-progress-message {
@@ -266,7 +265,7 @@
   font-size: var(--font-size-caption);
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-menu);
 }
 
 .dev-splash-toggle:hover {
