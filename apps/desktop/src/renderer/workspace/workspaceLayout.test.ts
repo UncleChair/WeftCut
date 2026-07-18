@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   WEFTCUT_LAYOUT_VERSION,
+  createEditingLayout,
   normalizeLayout,
   resolveWorkspaceLayout,
 } from "./workspaceLayout";
@@ -162,6 +163,70 @@ describe("normalizeLayout", () => {
     expect(
       normalizeLayout({ version: WEFTCUT_LAYOUT_VERSION, empty: false, dockview: { grid: {} } }),
     ).toBeNull();
+  });
+});
+
+describe("createEditingLayout", () => {
+  it("builds the complete 22/53/25 by 62/38 Editing baseline", () => {
+    const result = createEditingLayout({ width: 1_000, height: 800 });
+    const dockview = result.dockview as unknown as {
+      grid: {
+        orientation: string;
+        width: number;
+        height: number;
+        root: {
+          type: string;
+          data: [
+            {
+              type: string;
+              size: number;
+              data: Array<{ size: number; data: { views: string[] } }>;
+            },
+            { type: string; size: number; data: { views: string[] } },
+          ];
+        };
+      };
+      panels: Record<string, unknown>;
+    };
+
+    expect(result).toMatchObject({ version: 1, empty: false });
+    expect(dockview.grid).toMatchObject({
+      orientation: "VERTICAL",
+      width: 1_000,
+      height: 800,
+    });
+    const [editor, timeline] = dockview.grid.root.data;
+    expect(editor).toMatchObject({ type: "branch", size: 496 });
+    expect(editor.data.map((node) => node.size)).toEqual([220, 530, 250]);
+    expect(editor.data.map((node) => node.data.views)).toEqual([
+      ["media"],
+      ["preview"],
+      ["attribute", "effect", "nearby"],
+    ]);
+    expect(timeline).toMatchObject({
+      type: "leaf",
+      size: 304,
+      data: { views: ["timeline"] },
+    });
+    expect(Object.keys(dockview.panels).sort()).toEqual([
+      "attribute",
+      "effect",
+      "media",
+      "nearby",
+      "preview",
+      "timeline",
+    ]);
+    expect(result.placements.effect).toEqual({
+      siblings: ["attribute", "effect", "nearby"],
+      index: 1,
+    });
+  });
+
+  it("falls back to usable dimensions for an unmeasured viewport", () => {
+    const result = createEditingLayout({ width: 0, height: Number.NaN });
+    expect(result.dockview).toMatchObject({
+      grid: { width: 1_000, height: 720 },
+    });
   });
 });
 

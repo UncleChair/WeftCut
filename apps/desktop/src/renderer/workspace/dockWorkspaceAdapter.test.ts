@@ -46,7 +46,11 @@ function signal<T>() {
   };
 }
 
-function fakeDockview(width = 1_000, height = 800) {
+function fakeDockview(
+  width = 1_000,
+  height = 800,
+  options: { loseFirstReferenceAfterClear?: boolean } = {},
+) {
   const panels = new Map<string, AddedPanel>();
   const groups: FakeGroup[] = [];
   const added: Record<string, unknown>[] = [];
@@ -54,6 +58,8 @@ function fakeDockview(width = 1_000, height = 800) {
   let activeGroup: FakeGroup | undefined;
   let activePanel: AddedPanel | undefined;
   let maximizedGroup: FakeGroup | undefined;
+  let loseNextAddedReference = false;
+  let unavailableReference: string | null = null;
   let overlayListener:
     | ((event: {
         nativeEvent: { dataTransfer?: Pick<DataTransfer, "types"> };
@@ -117,6 +123,14 @@ function fakeDockview(width = 1_000, height = 800) {
       const reference = position?.referencePanel
         ? panels.get(position.referencePanel)
         : undefined;
+      if (
+        position?.referencePanel &&
+        position.referencePanel === unavailableReference
+      ) {
+        throw new Error(
+          `dockview: referencePanel '${position.referencePanel}' does not exist`,
+        );
+      }
       let group = position?.direction === "within" && reference
         ? reference.group
         : undefined;
@@ -155,6 +169,10 @@ function fakeDockview(width = 1_000, height = 800) {
       if (!group.activePanel || options.inactive !== true) group.activePanel = panel;
       added.push(options);
       panels.set(panel.id, panel);
+      if (loseNextAddedReference) {
+        unavailableReference = panel.id;
+        loseNextAddedReference = false;
+      }
       if (options.inactive !== true) activate(panel);
       layout.fire();
       return panel;
@@ -202,6 +220,8 @@ function fakeDockview(width = 1_000, height = 800) {
       activePanel = undefined;
       activeGroup = undefined;
       maximizedGroup = undefined;
+      unavailableReference = null;
+      loseNextAddedReference = options.loseFirstReferenceAfterClear === true;
       layout.fire();
     }),
     toJSON: vi.fn(() => ({
@@ -235,6 +255,8 @@ function fakeDockview(width = 1_000, height = 800) {
         activePanel = undefined;
         activeGroup = undefined;
         maximizedGroup = undefined;
+        unavailableReference = null;
+        loseNextAddedReference = false;
         const walk = (node: unknown) => {
           if (!node || typeof node !== "object") return;
           const n = node as { type?: string; data?: unknown };
@@ -488,11 +510,44 @@ describe("DockWorkspaceAdapter", () => {
     });
 
     adapter.resetWorkspace();
-    expect(dock.rawApi.clear).toHaveBeenCalledOnce();
+    expect(dock.rawApi.clear).not.toHaveBeenCalled();
+    expect(dock.rawApi.fromJSON).toHaveBeenCalledWith(expect.anything(), {
+      reuseExistingPanels: true,
+    });
     expect(adapter.getSnapshot().empty).toBe(false);
     expect(adapter.getSnapshot().openPanels).toEqual(
       new Set(EDITING_OPEN_PANEL_KINDS),
     );
+  });
+
+  it("resets atomically when a cleared Dockview cannot immediately resolve a new reference Panel", () => {
+    const dock = fakeDockview(1_000, 800, {
+      loseFirstReferenceAfterClear: true,
+    });
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    adapter.openPanel("caption");
+
+    expect(() => adapter.resetWorkspace()).not.toThrow();
+    expect(adapter.getSnapshot().openPanels).toEqual(
+      new Set(EDITING_OPEN_PANEL_KINDS),
+    );
+  });
+
+  it("rolls back the previous layout if the atomic reset load fails", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+    adapter.openPanel("caption");
+    const before = adapter.getSnapshot().openPanels;
+    dock.rawApi.fromJSON.mockImplementationOnce(() => {
+      dock.rawApi.clear();
+      throw new Error("reset load failed");
+    });
+
+    expect(() => adapter.resetWorkspace()).toThrow("reset load failed");
+    expect(dock.rawApi.fromJSON).toHaveBeenCalledTimes(2);
+    expect(adapter.getSnapshot().openPanels).toEqual(before);
   });
 
   it("serializes the live Editing tree as a versioned, non-empty snapshot", () => {

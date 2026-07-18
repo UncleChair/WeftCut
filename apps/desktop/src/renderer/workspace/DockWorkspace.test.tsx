@@ -181,6 +181,60 @@ function strictModeApi() {
     return { dispose };
   });
   const event = vi.fn(() => ({ dispose: vi.fn() }));
+  const clear = vi.fn(() => {
+    panels.clear();
+    groups.splice(0);
+  });
+  const toJSON = vi.fn(() => ({
+    grid: {
+      root: {
+        type: "branch",
+        data: groups.map((group, index) => {
+          const views = group.panels.map((candidate) =>
+            String((candidate as { id: string }).id),
+          );
+          return {
+            type: "leaf",
+            size: 100,
+            data: {
+              id: `test-group-${index}`,
+              views,
+              activeView: views[0],
+            },
+          };
+        }),
+        size: 100,
+      },
+      orientation: "HORIZONTAL",
+      width: 1_000,
+      height: 800,
+    },
+    panels: Object.fromEntries([...panels.keys()].map((id) => [id, { id }])),
+  }));
+  const fromJSON = vi.fn((data: unknown) => {
+    clear();
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      const candidate = node as { type?: string; data?: unknown };
+      if (candidate.type === "branch") {
+        for (const child of (candidate.data as unknown[]) ?? []) walk(child);
+        return;
+      }
+      const views = (candidate.data as { views?: string[] } | undefined)?.views ?? [];
+      let reference: string | undefined;
+      for (const id of views) {
+        addPanel({
+          id,
+          title: id,
+          ...(reference
+            ? { position: { referencePanel: reference, direction: "within" } }
+            : {}),
+        });
+        reference ??= id;
+      }
+    };
+    walk((data as { grid?: { root?: unknown } })?.grid?.root);
+  });
   const api = {
     width: 1_000,
     height: 800,
@@ -201,12 +255,18 @@ function strictModeApi() {
     onDidMaximizedGroupChange: event,
     hasMaximizedGroup: vi.fn(() => false),
     exitMaximizedGroup: vi.fn(),
-    clear: vi.fn(() => {
-      panels.clear();
-      groups.splice(0);
-    }),
+    clear,
+    toJSON,
+    fromJSON,
   } as unknown as DockviewApi;
-  return { api, panels, addPanel, onWillShowOverlay, overlayDisposers };
+  return {
+    api,
+    panels,
+    addPanel,
+    fromJSON,
+    onWillShowOverlay,
+    overlayDisposers,
+  };
 }
 
 const contracts: DockPanelContracts = {
@@ -388,8 +448,8 @@ describe("DockWorkspace React integration", () => {
     )).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Reset Workspace" }));
-    expect(
-      dock.api.clear as unknown as ReturnType<typeof vi.fn>,
-    ).toHaveBeenCalledOnce();
+    expect(dock.fromJSON).toHaveBeenCalledOnce();
+    expect(dock.panels.size).toBe(6);
+    expect(dock.panels.has("role-mixer")).toBe(false);
   });
 });

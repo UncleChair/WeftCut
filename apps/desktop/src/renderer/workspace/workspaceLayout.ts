@@ -215,6 +215,95 @@ export function normalizeLayout(raw: unknown): WeftCutLayout | null {
 }
 
 /**
+ * Produce the immutable, code-owned Editing baseline as a complete Dockview
+ * snapshot. Reset applies this snapshot in one Dockview load transaction; it
+ * must not clear the tree and then rebuild Panels one at a time because a
+ * transiently missing reference Panel would strand the Workspace half-built.
+ */
+export function createEditingLayout(
+  viewport: { width?: number; height?: number } = {},
+): WeftCutLayout {
+  const width = sizeOf(viewport.width) ?? 1_000;
+  const height = sizeOf(viewport.height) ?? 720;
+  const contextual: PanelKind[] = ["attribute", "effect", "nearby"];
+  const placements: PanelPlacements = {
+    media: { siblings: ["media"], index: 0 },
+    preview: { siblings: ["preview"], index: 0 },
+    timeline: { siblings: ["timeline"], index: 0 },
+    attribute: { siblings: contextual, index: 0 },
+    effect: { siblings: contextual, index: 1 },
+    nearby: { siblings: contextual, index: 2 },
+  };
+  const layout = normalizeLayout({
+    version: WEFTCUT_LAYOUT_VERSION,
+    empty: false,
+    dockview: {
+      grid: {
+        // Grid branches alternate axes. A vertical root gives the 62/38
+        // editor/timeline rows; its first child then lays out the three editor
+        // columns horizontally.
+        orientation: "VERTICAL",
+        width,
+        height,
+        root: {
+          type: "branch",
+          size: height,
+          data: [
+            {
+              type: "branch",
+              size: Math.round(height * 0.62),
+              data: [
+                {
+                  type: "leaf",
+                  size: Math.round(width * 0.22),
+                  data: {
+                    id: "editing-media",
+                    views: ["media"],
+                    activeView: "media",
+                  },
+                },
+                {
+                  type: "leaf",
+                  size: Math.round(width * 0.53),
+                  data: {
+                    id: "editing-preview",
+                    views: ["preview"],
+                    activeView: "preview",
+                  },
+                },
+                {
+                  type: "leaf",
+                  size: Math.round(width * 0.25),
+                  data: {
+                    id: "editing-context",
+                    views: contextual,
+                    activeView: "attribute",
+                  },
+                },
+              ],
+            },
+            {
+              type: "leaf",
+              size: Math.round(height * 0.38),
+              data: {
+                id: "editing-timeline",
+                views: ["timeline"],
+                activeView: "timeline",
+              },
+            },
+          ],
+        },
+      },
+      // normalizeLayout derives trusted definitions for every referenced Panel.
+      panels: {},
+    },
+    placements,
+  });
+  if (!layout) throw new Error("Built-in Editing layout is invalid");
+  return layout;
+}
+
+/**
  * Turn a Workspace profile's opaque layout slots into the ordered restore
  * candidates: `current` first, then the saved baseline. Each is included only
  * when it normalizes to a valid layout. An empty result means the caller should

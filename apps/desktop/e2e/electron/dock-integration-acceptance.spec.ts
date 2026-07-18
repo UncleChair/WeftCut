@@ -222,6 +222,39 @@ test("closing every Panel shows the recovery view, and Open Panel + Reset restor
   }
 });
 
+test("Reset Workspace atomically replaces a populated arrangement", async () => {
+  const { app, page } = await launchFreshApp("weftcut-dock-reset-populated-");
+  try {
+    await setupEditor(page, "dock-reset-populated");
+
+    // Make the live arrangement differ from Editing, then reset it while the
+    // reference Panels that used to drive incremental reconstruction are open.
+    await viewMenuTrigger(page).click();
+    await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
+    await expect(page.locator("[data-panel-kind]")).toHaveCount(7);
+
+    await viewMenuTrigger(page).click();
+    await page
+      .locator(".app-menu-item")
+      .filter({ hasText: /Reset Workspace|重置工作区/ })
+      .click();
+
+    await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
+    expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
+    await expect(page.locator('[data-panel-kind="preview"]')).toHaveCount(1);
+    await expect(page.locator('[data-panel-kind="timeline"]')).toHaveCount(1);
+    await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(1);
+    for (const kind of ["preview", "timeline", "media"]) {
+      expect(await panelVisible(page, kind)).toBe(true);
+      const bounds = await rect(page, `[data-panel-kind="${kind}"]`);
+      expect(bounds.width).toBeGreaterThan(0);
+      expect(bounds.height).toBeGreaterThan(0);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
 test("dragging a tab past another reorders it within the multi-Panel group", async () => {
   const { app, page } = await launchFreshApp("weftcut-dock-tabreorder-");
   try {

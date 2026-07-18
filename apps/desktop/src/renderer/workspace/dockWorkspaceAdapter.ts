@@ -13,6 +13,7 @@ import {
 } from "./panelRegistry";
 import {
   WEFTCUT_LAYOUT_VERSION,
+  createEditingLayout,
   normalizeLayout,
   type PanelPlacement,
   type PanelPlacements,
@@ -287,11 +288,28 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   }
 
   resetWorkspace(): void {
-    if (this.api.hasMaximizedGroup()) this.api.exitMaximizedGroup();
-    this.api.clear();
-    this.lastPlacements.clear();
-    this.hoveredPanel = null;
-    this.initializeEditingLayout();
+    const previous = this.serialize();
+    const editing = createEditingLayout({
+      width: positiveSize(this.api.width, 1_000),
+      height: positiveSize(this.api.height, 720),
+    });
+
+    try {
+      this.applyLayout(editing);
+    } catch (resetError) {
+      // Dockview clears before deserializing. If that atomic load itself fails,
+      // reconstruct the pre-reset snapshot so Reset can never leave a blank or
+      // partially rebuilt Workspace behind.
+      try {
+        this.applyLayout(previous);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [resetError, rollbackError],
+          "Failed to reset Dock Workspace and restore its previous layout",
+        );
+      }
+      throw resetError;
+    }
   }
 
   serialize(): WeftCutLayout {
@@ -316,27 +334,31 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
 
   restore(layout: WeftCutLayout): boolean {
     try {
-      if (this.api.hasMaximizedGroup()) this.api.exitMaximizedGroup();
-      // Seed the recovery map from persisted placements first; captureOpenPlacements
-      // then refreshes the entries for Panels the restored tree actually opens,
-      // leaving closed Panels' remembered spots intact.
-      this.lastPlacements.clear();
-      for (const [kind, placement] of Object.entries(layout.placements)) {
-        if (placement) this.lastPlacements.set(kind as PanelKind, placement);
-      }
-      if (layout.empty || !layout.dockview) {
-        this.api.clear();
-      } else {
-        this.api.fromJSON(layout.dockview, { reuseExistingPanels: true });
-      }
-      this.hoveredPanel = null;
-      this.captureOpenPlacements();
-      this.emitChange();
+      this.applyLayout(layout);
       return true;
     } catch (error) {
       console.warn("[dock-workspace] layout restore failed:", error);
       return false;
     }
+  }
+
+  private applyLayout(layout: WeftCutLayout): void {
+    if (this.api.hasMaximizedGroup()) this.api.exitMaximizedGroup();
+    // Seed the recovery map from persisted placements first; captureOpenPlacements
+    // then refreshes the entries for Panels the restored tree actually opens,
+    // leaving closed Panels' remembered spots intact.
+    this.lastPlacements.clear();
+    for (const [kind, placement] of Object.entries(layout.placements)) {
+      if (placement) this.lastPlacements.set(kind as PanelKind, placement);
+    }
+    if (layout.empty || !layout.dockview) {
+      this.api.clear();
+    } else {
+      this.api.fromJSON(layout.dockview, { reuseExistingPanels: true });
+    }
+    this.hoveredPanel = null;
+    this.captureOpenPlacements();
+    this.emitChange();
   }
 
   private serializePlacements(): PanelPlacements {
