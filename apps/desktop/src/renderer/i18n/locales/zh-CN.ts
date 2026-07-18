@@ -611,7 +611,11 @@ const zhCN: Resources = {
   },
   effects: {
     heading: "效果",
+    empty: "选择一个图层以编辑其效果。",
+    unsupported_audio: "音频图层不支持效果。",
     add: "添加效果",
+    collapse: "折叠 {{name}}",
+    expand: "展开 {{name}}",
     enable: "切换 {{name}}",
     move_up: "上移",
     move_down: "下移",

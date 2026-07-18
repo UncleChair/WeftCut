@@ -405,6 +405,52 @@
   gap: 6px;
 }
 
+/* Effect chain cards. The grip is a pointer-only reorder affordance; Dockview
+   docking starts exclusively from the native tab chrome, so no style here may
+   imply an HTML5 drag source. */
+.prop-effect-row {
+  padding: 2px 0;
+}
+
+.prop-effect-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prop-effect-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-effect-grip {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted-foreground);
+  cursor: grab;
+  touch-action: none;
+}
+
+.prop-effects--reordering,
+.prop-effects--reordering * {
+  user-select: none;
+}
+
+.prop-effect-row--dragging {
+  opacity: 0.55;
+}
+
+.prop-effect-row--drop-before {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+
+.prop-effect-row--drop-after {
+  box-shadow: 0 2px 0 0 var(--accent);
+}
+
 .prop-field {
   display: grid;
   /* `minmax(0, 1fr)` (NOT plain `1fr`) so the control column can shrink

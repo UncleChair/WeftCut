@@ -628,7 +628,11 @@ const enUS = {
   },
   effects: {
     heading: "Effects",
+    empty: "Select a layer to edit its effects.",
+    unsupported_audio: "Audio layers don't support effects.",
     add: "Add effect",
+    collapse: "Collapse {{name}}",
+    expand: "Expand {{name}}",
     enable: "Toggle {{name}}",
     move_up: "Move up",
     move_down: "Move down",

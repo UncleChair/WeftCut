@@ -214,6 +214,14 @@ describe('dispatch: effect chain', () => {
     const eAfter = (actor.dispatch('add_effect', { layer: l, kind: 'blur' }) as { ok: true; value: string }).value
     expect(fx(actor, l)).toHaveLength(1); expect(fx(actor, l)[0].id).toBe(eAfter)
   })
+  it('one move_effect dispatch records exactly one history entry (pointer drop = one undo)', () => {
+    const { actor, l } = setup()
+    const e1 = (actor.dispatch('add_effect', { layer: l, kind: 'blur' }) as { ok: true; value: string }).value
+    actor.dispatch('add_effect', { layer: l, kind: 'brightness' })
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('move_effect', { layer: l, effect: e1, new_index: 1 }).ok).toBe(true)
+    expect(actor.historyStatus().len).toBe(before + 1)
+  })
 })
 
 describe('dispatch: transitions', () => {

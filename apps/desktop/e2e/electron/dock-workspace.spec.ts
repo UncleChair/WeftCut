@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { invokeCmd, launchApp, newProject } from "./helpers/driver";
+import { invokeCmd, launchApp, newProject, summary } from "./helpers/driver";
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 
@@ -241,6 +241,106 @@ test("hidden Preview keeps clock resources alive while presentation sleeps", asy
         (window as any).__weftcutTest.previewResourceProbe()?.generation,
       ),
     ).toBe(before.generation);
+  } finally {
+    await app.close();
+  }
+});
+
+test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tabs never reorder Effects", async () => {
+  // Own userData dir: the test moves Panels, and the autosaved current layout
+  // must neither read from nor pollute the shared default userData.
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-fx-data-"));
+  const { app, page } = await launchApp({ userDataDir });
+  try {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-fx-"));
+    await newProject(page, {
+      parentFolder: parent,
+      name: "dock-effect-reorder",
+      canvas: CANVAS,
+    });
+
+    // A visual Layer carrying a three-effect chain; blur/chromakey are the two
+    // catalog kinds, so the chromakey card's color-pick button doubles as a
+    // visual order marker inside the Panel.
+    const layerId = await invokeCmd<string>(page, "add_color_layer", {
+      tStartUs: 0,
+      durationUs: 3_000_000,
+    });
+    const effectIds: string[] = [];
+    for (const kind of ["blur", "chromakey", "blur"]) {
+      effectIds.push(await invokeCmd<string>(page, "add_effect", { layerId, kind }));
+    }
+    await page.evaluate(
+      (id) => (window as any).__weftcutTest.revealLayer({ layerId: id }),
+      layerId,
+    );
+
+    const effectOrder = async (): Promise<string[]> => {
+      const s = await summary(page);
+      for (const track of s.tracks) {
+        for (const layer of track.layers as Array<{ id: string; effects?: Array<{ id: string }> }>) {
+          if (layer.id === layerId) return (layer.effects ?? []).map((e) => e.id);
+        }
+      }
+      throw new Error("layer not found in summary");
+    };
+    const panelKinds = async () =>
+      (await page
+        .locator("[data-panel-kind]")
+        .evaluateAll((panels) => panels.map((p) => p.getAttribute("data-panel-kind")))).sort();
+    const visibleTabLabels = async () =>
+      page
+        .locator(".weft-dock-tab-label")
+        .evaluateAll((els) =>
+          els.filter((el) => el.checkVisibility()).map((el) => el.textContent),
+        );
+
+    // Effect opens inactive in the contextual tab group; activate its tab.
+    await page.locator(".weft-dock-tab-label", { hasText: "Effect" }).click();
+    await page.getByTestId("effect-drag-0").waitFor({ state: "visible" });
+    expect(await effectOrder()).toEqual(effectIds);
+
+    // Pointer drag: card 0 (blur) below card 2. The gesture shows a live
+    // target but issues no command before the pointer is released.
+    const grip = await page.getByTestId("effect-drag-0").boundingBox();
+    const lastRow = await page.getByTestId("effect-row-2").boundingBox();
+    if (!grip || !lastRow) throw new Error("effect cards not laid out");
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(lastRow.x + 30, lastRow.y + lastRow.height - 2, { steps: 8 });
+    await expect(page.getByTestId("effect-row-2")).toHaveClass(/prop-effect-row--drop-after/);
+    expect(await effectOrder()).toEqual(effectIds); // nothing committed mid-gesture
+    await page.mouse.up();
+
+    const reordered = [effectIds[1]!, effectIds[2]!, effectIds[0]!];
+    await expect.poll(effectOrder).toEqual(reordered);
+
+    // One gesture = one undo entry: a single undo restores the original chain.
+    await invokeCmd(page, "project_undo", {});
+    await expect.poll(effectOrder).toEqual(effectIds);
+    await invokeCmd(page, "project_redo", {});
+    await expect.poll(effectOrder).toEqual(reordered);
+
+    // The card gesture never touched the Dock Tree.
+    const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "timeline"];
+    expect(await panelKinds()).toEqual(defaultPanelSet);
+    expect(await visibleTabLabels()).toEqual(["Attribute", "Effect", "Nearby"]);
+
+    // The converse isolation: docking the Effect Panel tab must not reorder
+    // the chain. Drop the Effect tab onto Preview's group center.
+    await page
+      .getByTitle("Move Effect")
+      .dragTo(page.locator('[data-panel-kind="preview"]'), {
+        targetPosition: { x: 240, y: 140 },
+      });
+    await expect.poll(async () => (await visibleTabLabels()).sort()).toEqual([
+      "Attribute",
+      "Effect",
+      "Nearby",
+      "Preview",
+    ]);
+    expect(await panelKinds()).toEqual(defaultPanelSet);
+    expect(await effectOrder()).toEqual(reordered);
   } finally {
     await app.close();
   }

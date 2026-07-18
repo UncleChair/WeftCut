@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const { addEffect, updateEffect, moveEffect, removeEffect, getDescriptor } = vi.hoisted(() => ({
@@ -21,7 +21,11 @@ vi.mock("../render/effects/effectRegistry", () => ({
   listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name" }],
   getDescriptor,
 }));
-vi.mock("./EffectParamField", () => ({ EffectParamFields: () => null }));
+vi.mock("./EffectParamField", () => ({
+  EffectParamFields: ({ effect }: { effect: EffectView }) => (
+    <div data-testid={`effect-params-${effect.id}`} />
+  ),
+}));
 const { pickColor } = vi.hoisted(() => ({
   pickColor: vi.fn(async () => ({ hex: "#0000ff", source: "composition" as const })),
 }));
@@ -51,6 +55,10 @@ vi.mock("../components/AppSwitch", () => ({
 
 import { EffectsSection } from "./EffectsSection";
 import type { EffectView, LayerSummary } from "../ipc";
+
+// jsdom has no PointerEvent constructor; MouseEvent carries the same client
+// coordinates the pointer sequence needs.
+(window as unknown as { PointerEvent: unknown }).PointerEvent = window.MouseEvent;
 
 afterEach(() => {
   cleanup();
@@ -101,6 +109,142 @@ describe("EffectsSection", () => {
     expect((screen.getByTestId("effect-up-0") as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByTestId("effect-down-0"));
     expect(moveEffect).toHaveBeenCalledWith("L1", "E1", 1);
+  });
+
+  it("cards start expanded; the collapse toggle hides and restores the param rows", async () => {
+    render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    const toggle = screen.getByTestId("effect-collapse-0");
+    expect(screen.getByTestId("effect-params-E1")).toBeTruthy();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    await userEvent.click(toggle);
+    expect(screen.queryByTestId("effect-params-E1")).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    await userEvent.click(toggle);
+    expect(screen.getByTestId("effect-params-E1")).toBeTruthy();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("collapse state follows the card across a reorder, not the row position", async () => {
+    const { rerender } = render(
+      <EffectsSection layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+    );
+    await userEvent.click(screen.getByTestId("effect-collapse-0")); // collapse E1
+
+    rerender(
+      <EffectsSection layer={layerWith([blur("E2"), blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+    );
+    expect(screen.getByTestId("effect-params-E2")).toBeTruthy();
+    expect(screen.queryByTestId("effect-params-E1")).toBeNull();
+    expect(screen.getByTestId("effect-collapse-1").getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("pointer reorder", () => {
+  const three = () => layerWith([blur("E1"), blur("E2"), blur("E3")]);
+  const rows = () => [0, 1, 2].map((i) => screen.getByTestId(`effect-row-${i}`));
+
+  // jsdom rects are all zero; give each row a real vertical slot so the
+  // gesture math has something to hit.
+  function mockRowRects(tops: number[], height = 40) {
+    rows().forEach((row, i) => {
+      const top = tops[i]!;
+      row.getBoundingClientRect = () =>
+        ({
+          top,
+          bottom: top + height,
+          height,
+          left: 0,
+          right: 120,
+          width: 120,
+          x: 0,
+          y: top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    });
+  }
+
+  function renderThreeRows() {
+    render(<EffectsSection layer={three()} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    mockRowRects([0, 40, 80]);
+  }
+
+  it("issues exactly one moveEffect at drop, none during the move, and never starts an HTML5 drag", async () => {
+    renderThreeRows();
+    const dragstart = vi.fn();
+    document.addEventListener("dragstart", dragstart);
+    try {
+      const grip = screen.getByTestId("effect-drag-0");
+      expect(grip.getAttribute("draggable")).toBeNull();
+      fireEvent.pointerDown(grip, { button: 0, clientX: 8, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+
+      // Live target indication mid-gesture, but no command before release.
+      expect(rows()[0]!.className).toContain("prop-effect-row--dragging");
+      expect(rows()[2]!.className).toContain("prop-effect-row--drop-before");
+      expect(moveEffect).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+      expect(moveEffect).toHaveBeenCalledTimes(1);
+      expect(moveEffect).toHaveBeenCalledWith("L1", "E1", 1);
+      await vi.waitFor(() => expect(onMutated).toHaveBeenCalled());
+      expect(dragstart).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("dragstart", dragstart);
+    }
+  });
+
+  it("dropping back onto the origin gap issues no command", () => {
+    renderThreeRows();
+    fireEvent.pointerDown(screen.getByTestId("effect-drag-0"), { button: 0, clientX: 8, clientY: 10 });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 30 });
+    expect(moveEffect).not.toHaveBeenCalled();
+  });
+
+  it("Escape cancels the gesture and clears the target indication", () => {
+    renderThreeRows();
+    fireEvent.pointerDown(screen.getByTestId("effect-drag-0"), { button: 0, clientX: 8, clientY: 10 });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+    expect(rows()[2]!.className).toContain("prop-effect-row--drop-before");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(rows()[2]!.className).not.toContain("prop-effect-row--drop-before");
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+    expect(moveEffect).not.toHaveBeenCalled();
+  });
+
+  it("pointercancel disarms the gesture; a later pointerup commits nothing", () => {
+    renderThreeRows();
+    fireEvent.pointerDown(screen.getByTestId("effect-drag-0"), { button: 0, clientX: 8, clientY: 10 });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 70 });
+    expect(rows()[2]!.className).toContain("prop-effect-row--drop-before");
+
+    fireEvent.pointerCancel(window);
+    expect(rows()[2]!.className).not.toContain("prop-effect-row--drop-before");
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 70 });
+    expect(moveEffect).not.toHaveBeenCalled();
+  });
+
+  it("dragging the last card above the first moves it to index 0", () => {
+    renderThreeRows();
+    fireEvent.pointerDown(screen.getByTestId("effect-drag-2"), { button: 0, clientX: 8, clientY: 90 });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 5 });
+    expect(rows()[0]!.className).toContain("prop-effect-row--drop-before");
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 5 });
+    expect(moveEffect).toHaveBeenCalledTimes(1);
+    expect(moveEffect).toHaveBeenCalledWith("L1", "E3", 0);
+  });
+
+  it("dragging the first card below the last targets the end of the chain", () => {
+    renderThreeRows();
+    fireEvent.pointerDown(screen.getByTestId("effect-drag-0"), { button: 0, clientX: 8, clientY: 10 });
+    fireEvent.pointerMove(window, { clientX: 8, clientY: 110 });
+    expect(rows()[2]!.className).toContain("prop-effect-row--drop-after");
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 110 });
+    expect(moveEffect).toHaveBeenCalledTimes(1);
+    expect(moveEffect).toHaveBeenCalledWith("L1", "E1", 2);
   });
 });
 

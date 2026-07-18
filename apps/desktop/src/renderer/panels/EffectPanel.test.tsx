@@ -84,8 +84,8 @@ describe("EffectPanel boundary", () => {
     expect(chain.textContent).toBe("2 effect");
   });
 
-  it("preserves the legacy hidden state for no selection and Audio", () => {
-    const { container, rerender } = render(
+  it("shows an empty state with no chain surface when nothing is selected", () => {
+    render(
       <EffectPanel
         tracks={[]}
         selectedLayerId={null}
@@ -93,9 +93,14 @@ describe("EffectPanel boundary", () => {
         onMutated={async () => {}}
       />,
     );
-    expect(container.firstChild).toBeNull();
 
-    rerender(
+    expect(screen.getByRole("complementary", { name: "Effects" })).toBeTruthy();
+    expect(screen.getByText("Select a layer to edit its effects.")).toBeTruthy();
+    expect(screen.queryByTestId("effect-chain")).toBeNull();
+  });
+
+  it("shows an explicit unsupported state for an Audio selection with no chain surface", () => {
+    render(
       <EffectPanel
         tracks={[trackWithLayer("Audio")]}
         selectedLayerId="layer-1"
@@ -103,6 +108,9 @@ describe("EffectPanel boundary", () => {
         onMutated={async () => {}}
       />,
     );
-    expect(container.firstChild).toBeNull();
+
+    expect(screen.getByRole("complementary", { name: "Effects" })).toBeTruthy();
+    expect(screen.getByText("Audio layers don't support effects.")).toBeTruthy();
+    expect(screen.queryByTestId("effect-chain")).toBeNull();
   });
 });
