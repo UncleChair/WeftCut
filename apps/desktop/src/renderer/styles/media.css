@@ -344,8 +344,8 @@
   left: 50%;
   right: auto;
   transform: translate(-50%, -50%);
-  background: rgba(96, 165, 250, 0.85);
-  border: 1px solid rgba(96, 165, 250, 0.9);
+  background: color-mix(in srgb, var(--color-blue-400) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-blue-400) 90%, transparent);
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
@@ -358,7 +358,7 @@
 }
 
 .media-import-cancel:hover {
-  background: rgba(96, 165, 250, 1);
+  background: var(--color-blue-400);
 }
 
 .media-missing-badge {
@@ -367,8 +367,8 @@
   left: 50%;
   right: auto;
   transform: translate(-50%, -50%);
-  background: rgba(248, 113, 113, 0.85);
-  border: 1px solid rgba(248, 113, 113, 0.9);
+  background: color-mix(in srgb, var(--destructive) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--destructive) 90%, transparent);
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
@@ -385,8 +385,8 @@
   left: 50%;
   right: auto;
   transform: translate(-50%, -50%);
-  background: rgba(250, 204, 21, 0.85);
-  border: 1px solid rgba(250, 204, 21, 0.9);
+  background: color-mix(in srgb, var(--keyframe) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--keyframe) 90%, transparent);
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
@@ -403,8 +403,8 @@
   left: 50%;
   right: auto;
   transform: translate(-50%, -50%);
-  background: rgba(248, 113, 113, 0.9);
-  border: 1px solid rgba(248, 113, 113, 1);
+  background: color-mix(in srgb, var(--destructive) 90%, transparent);
+  border: 1px solid var(--destructive);
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
@@ -455,13 +455,13 @@
 .media-proxy-pill.is-proxy {
   color: var(--color-blue-200);
   background: rgba(20, 48, 96, 0.9);
-  border-color: rgba(96, 165, 250, 0.65);
+  border-color: color-mix(in srgb, var(--color-blue-400) 65%, transparent);
 }
 
 .media-proxy-pill.is-original {
-  color: #fde68a;
+  color: var(--color-amber-200);
   background: rgba(74, 55, 12, 0.9);
-  border-color: rgba(250, 204, 21, 0.58);
+  border-color: color-mix(in srgb, var(--keyframe) 58%, transparent);
 }
 
 /* Status-bar pill: "Generating N derivatives…". */

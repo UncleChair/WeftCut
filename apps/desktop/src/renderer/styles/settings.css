@@ -2,7 +2,7 @@
 
 .kind-video { background: #1e3a5f; color: var(--color-blue-300); }
 .kind-audio { background: var(--color-green-900); color: var(--color-green-300); }
-.kind-image { background: #581c87; color: #d8b4fe; }
+.kind-image { background: #581c87; color: var(--color-purple-300); }
 .kind-subtitle { background: #713f12; color: var(--color-amber-300); }
 
 .settings-panel {

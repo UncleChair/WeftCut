@@ -46,6 +46,9 @@
     --color-green-900: #14532d;
     --color-emerald-400: #34d399;
     --color-violet-300: #c4b5fd;
+    --color-purple-300: #d8b4fe;
+    --color-sky-300: #7dd3fc;
+    --color-pink-300: #f9a8d4;
     --color-zinc-200: #e4e4e7;
     --color-zinc-300: #d4d4d8;
     --color-zinc-400: #a1a1aa;
@@ -221,6 +224,17 @@
        otherwise-transparent controls, replacing scattered rgba(255,255,255,α). */
     --hover-neutral: rgba(255, 255, 255, 0.06);
     --hover-neutral-strong: rgba(255, 255, 255, 0.10);
+
+    /* Status hues — shared feedback colors. Bake status (properties panel +
+       motif dots), keyframe markers, and media badges all drew these as
+       one-off literals; they now share one ramp. --destructive (above) stays
+       the error role. Translucent badge fills derive via color-mix from
+       these, e.g. color-mix(in srgb, var(--destructive) 85%, transparent). */
+    --success: #46c46a;
+    --warning: #f0a020;
+    /* Keyframe diamonds, armed stopwatches, and pending badges — a domain
+       accent, not a warning; kept distinct from --warning on purpose. */
+    --keyframe: #facc15;
 
     /* Motion — two speeds, shared easing, so hover/focus transitions stop
        ranging across 80/100/120/160/180ms with mixed easings. */

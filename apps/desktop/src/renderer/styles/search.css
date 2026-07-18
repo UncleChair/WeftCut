@@ -38,7 +38,7 @@
 }
 .search-row-badge {
   font-size: 10px; padding: 1px 6px; border-radius: 999px;
-  background: rgba(255, 99, 99, 0.2); color: #ff9b9b;
+  background: color-mix(in srgb, var(--destructive) 20%, transparent); color: var(--color-red-300);
 }
 .search-row-kbd { font-size: 10px; opacity: 0.6; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 1px 5px; }
 .search-show-more {

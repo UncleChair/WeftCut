@@ -200,8 +200,8 @@
 .log-category-pill.category-shortcut { background: rgba(34, 197, 94, 0.14); color: var(--color-green-300); }
 .log-category-pill.category-mcp      { background: rgba(168, 85, 247, 0.14); color: var(--color-violet-300); }
 .log-category-pill.category-export   { background: rgba(59, 130, 246, 0.14); color: var(--color-blue-300); }
-.log-category-pill.category-import   { background: rgba(14, 165, 233, 0.14); color: #7dd3fc; }
-.log-category-pill.category-project  { background: rgba(244, 114, 182, 0.14); color: #f9a8d4; }
+.log-category-pill.category-import   { background: rgba(14, 165, 233, 0.14); color: var(--color-sky-300); }
+.log-category-pill.category-project  { background: rgba(244, 114, 182, 0.14); color: var(--color-pink-300); }
 .log-category-pill.category-system   { background: rgba(148, 163, 184, 0.14); color: var(--foreground); }
 .log-category-pill.category-job      { background: rgba(251, 191, 36, 0.14); color: var(--color-amber-300); }
 .log-category-pill.category-agent    { background: rgba(168, 85, 247, 0.14); color: var(--color-violet-300); }

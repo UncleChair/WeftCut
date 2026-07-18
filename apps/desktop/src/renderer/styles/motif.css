@@ -269,9 +269,9 @@
   border-radius: 50%;
   pointer-events: none;
 }
-.motif-bake-dot.is-warming { background: #f0a020; }
-.motif-bake-dot.is-ready { background: #46c46a; }
-.motif-bake-dot.is-error { background: #e5534b; }
+.motif-bake-dot.is-warming { background: var(--warning); }
+.motif-bake-dot.is-ready { background: var(--success); }
+.motif-bake-dot.is-error { background: var(--destructive); }
 .motif-bake-dot.is-baking {
   background: transparent;
   border: 1.5px solid rgba(255, 255, 255, 0.85);

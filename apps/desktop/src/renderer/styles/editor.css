@@ -741,7 +741,7 @@
 .anim-field-control { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; }
 .anim-stopwatch { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
 .anim-stopwatch:hover:not(:disabled) { color: var(--muted-foreground); background: var(--secondary); }
-.anim-stopwatch.is-lit { color: #facc15; }
+.anim-stopwatch.is-lit { color: var(--keyframe); }
 .anim-stopwatch:disabled { opacity: 0.35; cursor: default; }
 
 /* Range inputs are gone — .app-slider's own flex: 1 1 0 / min-width: 0
@@ -949,16 +949,16 @@
 .kf-remove:hover {
   background: var(--destructive);
   border-color: var(--destructive);
-  color: #fff;
+  color: var(--primary-foreground);
 }
 .kf-add {
   align-self: flex-start;
 }
 
 .prop-bake-status { margin: 0 0 8px; font-size: 12px; opacity: 0.8; }
-.prop-bake-status.is-error { color: #e5534b; }
-.prop-bake-status.is-warming { color: #f0a020; }
-.prop-bake-status.is-ready { color: #46c46a; }
+.prop-bake-status.is-error { color: var(--destructive); }
+.prop-bake-status.is-warming { color: var(--warning); }
+.prop-bake-status.is-ready { color: var(--success); }
 .prop-motif-lifecycle { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
 .prop-motif-source { margin: 8px 0; }
 .prop-motif-source-text {
@@ -971,7 +971,7 @@
 }
 .kf-diamond-row { position: absolute; left: 0; right: 0; bottom: 1px; height: 8px; pointer-events: none; }
 .kf-diamond { position: absolute; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); background: #fff; border: 1px solid rgba(0,0,0,0.5); }
-.kf-diamond.is-selected { background: #facc15; box-shadow: 0 0 0 1.5px var(--ring); }
+.kf-diamond.is-selected { background: var(--keyframe); box-shadow: 0 0 0 1.5px var(--ring); }
 /* Sub-lane diamonds span the whole track row, vertically centered in the
    24px sub-lane (vs the in-clip diamonds, which are bottom-pinned in
    .kf-diamond-row). The base .kf-diamond transform keeps the 45° rotation. */
