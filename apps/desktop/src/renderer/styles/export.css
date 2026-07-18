@@ -12,7 +12,7 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-label);
   color: var(--foreground);
 }
 
@@ -41,7 +41,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--foreground);
 }
 
@@ -50,7 +50,7 @@
   border: 1px solid var(--border);
   color: var(--foreground);
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   border-radius: var(--radius-control);
   font-family: inherit;
 }
@@ -63,7 +63,7 @@
 .export-experimental-points {
   margin: 0 0 12px;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--muted-foreground);
   line-height: 1.5;
 }
@@ -97,7 +97,7 @@
 
 .export-estimate {
   margin: 14px 0 0;
-  font-size: 13px;
+  font-size: var(--font-size-label);
   font-weight: 500;
   color: var(--color-gray-300);
 }
@@ -115,7 +115,7 @@
 .export-path-input {
   width: 220px;
   text-align: left;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .export-filename {
@@ -162,7 +162,7 @@
   display: flex;
   align-items: baseline;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--font-size-label);
   color: var(--foreground);
   word-break: break-word;
 }

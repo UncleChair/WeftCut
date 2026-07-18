@@ -349,7 +349,7 @@
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -372,7 +372,7 @@
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 600;
   white-space: nowrap;
   cursor: default;
@@ -390,7 +390,7 @@
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 600;
   white-space: nowrap;
   cursor: not-allowed;
@@ -408,7 +408,7 @@
   color: #0a0c10;
   border-radius: var(--radius-control);
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 700;
   white-space: nowrap;
   cursor: help;

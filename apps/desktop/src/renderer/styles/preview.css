@@ -343,7 +343,7 @@
   gap: 12px;
   background: rgba(15, 23, 42, 0.55);
   color: var(--color-red-200);
-  font-size: 13px;
+  font-size: var(--font-size-label);
   pointer-events: auto;
 }
 
@@ -363,7 +363,7 @@
   background: rgba(127, 29, 29, 0.6);
   color: var(--color-red-200);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .preview-failed-retry:hover {
@@ -376,7 +376,7 @@
 }
 .html-transform-empty .placeholder {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   margin: 0;
   line-height: 1.4;
 }
@@ -387,7 +387,7 @@
   margin-bottom: 4px;
 }
 .html-transform-header .effect-name {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--color-gray-300);
   font-weight: 600;
 }
@@ -398,7 +398,7 @@
 }
 .html-transform-hint {
   margin: 6px 0 0 0;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--color-gray-500);
   line-height: 1.4;
 }

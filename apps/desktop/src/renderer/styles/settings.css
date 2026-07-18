@@ -26,7 +26,7 @@
 
 .settings-panel header h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-size-title);
   font-weight: 600;
   color: var(--foreground);
 }
@@ -47,7 +47,7 @@
 
 .settings-panel h3 {
   margin: 16px 0 8px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   font-weight: 600;
   color: var(--color-gray-300);
   text-transform: uppercase;
@@ -57,13 +57,13 @@
 .settings-blurb,
 .settings-status {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--muted-foreground);
 }
 
 .settings-error {
   margin: 8px 0;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--destructive);
   background: rgba(248, 113, 113, 0.1);
   border: 1px solid rgba(248, 113, 113, 0.3);
@@ -75,7 +75,7 @@
    an error. Used for the experimental 10-bit export notice. */
 .settings-warn {
   margin: 8px 0 12px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--foreground);
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.35);
@@ -137,12 +137,12 @@
 
 .settings-slider-label {
   min-width: 92px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--color-gray-300);
 }
 
 .settings-slider-unit {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--color-gray-500);
 }
 
@@ -153,14 +153,14 @@
 }
 
 .settings-key-label {
-  font-size: 12px;
+  font-size: var(--font-size-body);
   font-weight: 600;
   color: var(--foreground);
 }
 
 .settings-badge {
   margin-left: auto;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   padding: 2px 8px;
   border-radius: 999px;
   text-transform: uppercase;
@@ -181,13 +181,13 @@
 
 .settings-test-ok {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--color-emerald-400);
 }
 
 .settings-test-err {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--destructive);
   word-break: break-word;
 }
@@ -222,14 +222,14 @@
 
 .settings-toggle-label {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-size-label);
   color: var(--foreground);
   font-weight: 500;
 }
 
 .settings-toggle-hint {
   display: block;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--color-gray-500);
   margin-top: 2px;
   max-width: 460px;
@@ -304,7 +304,7 @@
   background: transparent;
   border-radius: var(--radius-card);
   padding: 7px 10px;
-  font-size: 13px;
+  font-size: var(--font-size-label);
   font-weight: 500;
   text-align: left;
   color: var(--muted-foreground);
@@ -346,7 +346,7 @@
 .settings-pane-title {
   margin: 0 0 14px;
   padding-bottom: 8px;
-  font-size: 14px;
+  font-size: var(--font-size-title);
   font-weight: 600;
   color: var(--foreground);
   border-bottom: 1px solid var(--border-soft);
@@ -356,7 +356,7 @@
   display: inline-block;
   margin-left: 8px;
   padding: 1px 7px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
   text-transform: none;
   letter-spacing: 0;
@@ -418,7 +418,7 @@
 .keybindings-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .keybindings-row > td {
@@ -457,7 +457,7 @@
 }
 
 .keybindings-chip-label {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--foreground);
 }
 
@@ -481,7 +481,7 @@
   color: var(--muted-foreground);
   border-radius: var(--radius-control);
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   cursor: pointer;
 }
 
@@ -500,7 +500,7 @@
   background: transparent;
   border: none;
   color: var(--color-blue-300);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   cursor: pointer;
   padding: 2px 4px;
 }
@@ -514,7 +514,7 @@
   align-items: center;
   border-radius: var(--radius-control);
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   outline: none;
 }
 
@@ -568,7 +568,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .settings-preview-status code {
@@ -592,7 +592,7 @@
   align-items: center;
 }
 .field-label {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--color-slate-300);
 }
 .field-value {
@@ -600,7 +600,7 @@
   border: 1px solid var(--border-soft);
   color: var(--foreground);
   padding: 2px 6px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   border-radius: var(--radius-control);
   font-family: inherit;
   font-variant-numeric: tabular-nums;

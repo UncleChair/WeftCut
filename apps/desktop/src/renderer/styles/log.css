@@ -21,7 +21,7 @@
   flex-direction: column;
   z-index: 80;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   font-family: var(--font-ui);
 }
 
@@ -65,7 +65,7 @@
   color: var(--muted-foreground);
   border: 1px solid transparent;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .log-chip:hover {
@@ -97,7 +97,7 @@
   border: 1px solid var(--border);
   color: var(--foreground);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .log-action:hover:not(:disabled) {
@@ -186,7 +186,7 @@
 
 .log-category-pill,
 .log-source-pill {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   padding: 1px 6px;
   border-radius: 999px;
   flex-shrink: 0;
@@ -219,7 +219,7 @@
 }
 
 .log-op-state {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   padding: 1px 6px;
   border-radius: 8px;
   flex-shrink: 0;
@@ -253,7 +253,7 @@
 }
 
 .log-op-counter {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   background: rgba(148, 163, 184, 0.12);
   color: var(--foreground);
   border: none;
@@ -273,7 +273,7 @@
   color: var(--muted-foreground);
   cursor: pointer;
   padding: 0 6px;
-  font-size: 14px;
+  font-size: var(--font-size-title);
   line-height: 1;
 }
 
@@ -286,7 +286,7 @@
   padding: 8px 12px;
   background: rgba(15, 23, 42, 0.65);
   border-radius: var(--radius-control);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .log-op-id {
@@ -305,7 +305,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--foreground);
   max-height: 240px;
   overflow-y: auto;
@@ -322,7 +322,7 @@
   align-items: center;
   gap: 6px;
   padding: 2px 4px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .log-empty {
@@ -339,7 +339,7 @@
   padding: 4px 12px;
   border-top: 1px solid var(--border-soft);
   background: var(--surface-raised);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--muted-foreground);
 }
 

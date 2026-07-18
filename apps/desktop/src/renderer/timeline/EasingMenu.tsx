@@ -8,9 +8,9 @@ import { PRESETS } from "../keyframe/curve";
 import { setKeyframeInterp, smoothKeyframe } from "../keyframe/edits";
 
 const CHIP_STYLE: React.CSSProperties = {
-  fontSize: "11px",
+  fontSize: "var(--font-size-caption)",
   padding: "2px 8px",
-  borderRadius: "4px",
+  borderRadius: "var(--radius-control)",
   border: "1px solid var(--border, #3f3f46)",
   background: "var(--secondary, #27272a)",
   color: "var(--foreground, #fafafa)",

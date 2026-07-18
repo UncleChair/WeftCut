@@ -10,12 +10,12 @@
 
 .error {
   color: var(--destructive);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   margin-left: auto;
 }
 
 .ping {
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--muted-foreground);
 }
 
@@ -65,7 +65,7 @@
 }
 
 .placeholder {
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--color-gray-500);
 }
 

@@ -110,8 +110,9 @@
 :root {
     /* Compact desktop-editor type scale. Feature styles should consume these
        roles instead of introducing another one-off pixel size. The 10px
-       micro role is reserved for rulers and similarly dense instrumentation,
-       not ordinary labels or help text. */
+       micro role covers dense instrumentation (rulers, badges, kbd hints,
+       monospace ids); ordinary labels start at caption. Sizes outside the
+       scale (9px fine print, 16px+ display type) stay literal by design. */
     --font-size-micro: 10px;
     --font-size-caption: 11px;
     --font-size-body: 12px;

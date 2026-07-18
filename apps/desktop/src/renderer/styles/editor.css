@@ -12,7 +12,7 @@
   background: var(--secondary);
   padding: 6px 10px;
   border-radius: var(--radius-control);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--muted-foreground);
 }
 .timeline { grid-area: timeline; }
@@ -117,7 +117,7 @@
 }
 
 .mini-timeline-tc {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
   letter-spacing: 0.04em;
@@ -125,14 +125,14 @@
 }
 
 .row-time {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
   color: var(--color-gray-500);
   letter-spacing: 0.04em;
 }
 
 .row-icon {
-  font-size: 13px;
+  font-size: var(--font-size-label);
   width: 14px;
   text-align: center;
 }
@@ -180,7 +180,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   padding: 3px 8px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 
@@ -500,7 +500,7 @@
 
 .mixer-master-label {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -553,7 +553,7 @@
   flex: 0 0 44px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--muted-foreground, hsl(0 0% 100% / 0.7));
 }
 
@@ -940,7 +940,7 @@
   color: var(--muted-foreground);
   border-radius: var(--radius-control);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1;
   padding: 0;
   height: 18px;
@@ -955,7 +955,7 @@
   align-self: flex-start;
 }
 
-.prop-bake-status { margin: 0 0 8px; font-size: 12px; opacity: 0.8; }
+.prop-bake-status { margin: 0 0 8px; font-size: var(--font-size-body); opacity: 0.8; }
 .prop-bake-status.is-error { color: var(--destructive); }
 .prop-bake-status.is-warming { color: var(--warning); }
 .prop-bake-status.is-ready { color: var(--success); }
@@ -965,7 +965,7 @@
   width: 100%;
   min-height: 160px;
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   resize: vertical;
   white-space: pre;
 }
