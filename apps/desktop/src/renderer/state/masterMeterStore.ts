@@ -8,7 +8,10 @@ export interface MasterMeterSnapshot {
   sampledAtMs: number | null;
 }
 
-const SILENCE_DB = -120;
+/** The dBFS a non-finite (true-silence) analyser reading normalizes to. The one
+ *  home for this contract — consumers threshold against it rather than hard-code
+ *  their own silence floor. */
+export const SILENCE_DB = -120;
 
 export const useMasterMeterStore = create<MasterMeterSnapshot>(() => ({
   rmsDb: SILENCE_DB,

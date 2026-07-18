@@ -404,17 +404,27 @@
 .mixer-panel {
   padding: 12px 14px;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The responsive Role strip/row area. The strips/rows modifier lives on the
+   panel (so width measurement and tests read one element) but drives this inner
+   flow. */
+.mixer-roles {
+  display: flex;
   gap: 10px;
+  min-width: 0;
 }
 
 /* Narrow: one horizontal row per Role, controls stacked top-to-bottom. */
-.mixer-panel--rows {
+.mixer-panel--rows .mixer-roles {
   flex-direction: column;
   gap: 8px;
 }
 
 /* Wide: side-by-side channel strips, each control stacked within its column. */
-.mixer-panel--strips {
+.mixer-panel--strips .mixer-roles {
   flex-direction: row;
   align-items: flex-start;
 }
@@ -475,6 +485,76 @@
 
 .mixer-panel--strips .mixer-channel-flags {
   justify-content: center;
+}
+
+/* Real master RMS/Peak meter — the only meter the Role Mixer shows. Sits below
+   the Role strips/rows, separated by a hairline, and reads off the shared store
+   (no per-Role meters, no Compositor polling). */
+.mixer-master {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border, hsl(0 0% 100% / 0.08));
+}
+
+.mixer-master-label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground, hsl(0 0% 100% / 0.55));
+}
+
+.mixer-master-bars {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mixer-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mixer-meter-label {
+  flex: 0 0 30px;
+  font-size: 9px;
+  color: var(--muted-foreground, hsl(0 0% 100% / 0.55));
+}
+
+.mixer-meter-track {
+  flex: 1 1 0;
+  height: 6px;
+  min-width: 0;
+  border-radius: 3px;
+  background: var(--secondary, hsl(0 0% 100% / 0.06));
+  overflow: hidden;
+}
+
+.mixer-meter-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    hsl(150 60% 45%) 0%,
+    hsl(80 70% 50%) 70%,
+    hsl(45 90% 55%) 88%,
+    hsl(0 80% 55%) 100%
+  );
+  transition: width 90ms linear;
+}
+
+.mixer-meter-value {
+  flex: 0 0 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--muted-foreground, hsl(0 0% 100% / 0.7));
 }
 
 .property-panel {

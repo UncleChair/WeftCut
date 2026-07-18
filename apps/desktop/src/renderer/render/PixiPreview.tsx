@@ -44,6 +44,7 @@ import {
   setEffectDisabled,
   subscribeEffectOverrides,
 } from "./effects/effectOverrides";
+import { subscribeRoleGainOverrides } from "./audio/roleGainOverrides";
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
@@ -90,6 +91,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const meterTimerRef = useRef<number | null>(null);
   const samplerRef = useRef<PreviewSampler | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
+  const unsubRoleOverridesRef = useRef<(() => void) | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
   // On-screen media the Compositor can't decode with any engine — fed ONLY
   // by `Compositor.onUnsupported` (membership-change snapshots, never
@@ -297,6 +299,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // Hover live-apply while paused: sync() only runs inside compositeFrame,
       // so poke one on every transient-override change.
       unsubOverridesRef.current = subscribeEffectOverrides(() => {
+        compositor.compositeFrame(engine.positionUs());
+      });
+      // Role Gain fader audition: the audio pass re-derives the mixer from the
+      // renderer-local override only inside compositeFrame, so poke one on every
+      // change (the change-detection guard skips a reschedule when the folded
+      // gain is unchanged). Playing already composites per rAF; this keeps the
+      // audition responsive at the very start/end of a gesture.
+      unsubRoleOverridesRef.current?.();
+      unsubRoleOverridesRef.current = subscribeRoleGainOverrides(() => {
         compositor.compositeFrame(engine.positionUs());
       });
 
@@ -523,6 +534,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       samplerRef.current = null;
       unsubOverridesRef.current?.();
       unsubOverridesRef.current = null;
+      unsubRoleOverridesRef.current?.();
+      unsubRoleOverridesRef.current = null;
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
       compositorRef.current = null;

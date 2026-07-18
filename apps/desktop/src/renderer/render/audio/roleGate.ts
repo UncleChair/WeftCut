@@ -11,6 +11,7 @@
 import type { AudioRole, RoleMixView } from "../../ipc";
 import { dbToLinear } from "./envelope";
 import { roleAudible as wasmRoleAudible } from "../../eval";
+import { roleGainOverrideDb } from "./roleGainOverrides";
 
 export function anyRoleSolo(roles: RoleMixView[]): boolean {
   return roles.some((r) => r.solo);
@@ -32,4 +33,17 @@ export function roleAudible(
 export function roleGainLinear(role: AudioRole, roles: RoleMixView[]): number {
   const r = roles.find((x) => x.role === role);
   return dbToLinear(r ? r.gain_db : 0);
+}
+
+/// The Role gain the preview should actually fold this frame: a live fader
+/// audition override (roleGainOverrides.ts) wins over the committed Role gain so
+/// a drag is audible before it commits; with no gesture active it is exactly
+/// `roleGainLinear`. Preview-only — the export mixer folds the committed gain.
+export function auditionedRoleGainLinear(
+  role: AudioRole,
+  roles: RoleMixView[],
+): number {
+  const overrideDb = roleGainOverrideDb(role);
+  if (overrideDb !== undefined) return dbToLinear(overrideDb);
+  return roleGainLinear(role, roles);
 }

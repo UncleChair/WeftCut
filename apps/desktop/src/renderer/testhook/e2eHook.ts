@@ -43,6 +43,12 @@ import { decodeAnimatedImage } from "../render/sprite/animatedImageCache";
 import type { ResolvedImageOverlayView } from "../render/resolveView";
 import { convertFileSrc } from "@/bridge/ipc";
 import { buildPanGraph, constantPanGains } from "../render/audio/panGraph";
+import { auditionedRoleGainLinear } from "../render/audio/roleGate";
+import {
+  clearRoleGainOverride,
+  setRoleGainOverride,
+} from "../render/audio/roleGainOverrides";
+import type { AudioRole, RoleMixView } from "../ipc";
 import {
   decodeBenchRun,
   decodeBenchPhase,
@@ -335,6 +341,19 @@ export interface E2EHook {
     pan: number;
     frames: number;
   }): Promise<{ l: number; r: number }>;
+  /// Render a constant-1.0 mono source through a GainNode set to the REAL
+  /// preview Role-gain fold (`auditionedRoleGainLinear`) in an OfflineAudio
+  /// context, and return the output RMS. Proves the live fader audition:
+  /// with `overrideDb` set, the renderer-local override folds in place of the
+  /// committed Role gain (audible immediately); with it null, the committed
+  /// gain folds instead. `folded` echoes the linear gain applied. Clears the
+  /// override before resolving. No media fixtures required. Dev/e2e only.
+  roleGainAuditionProbe(args: {
+    role: AudioRole;
+    committedDb: number;
+    overrideDb: number | null;
+    frames: number;
+  }): Promise<{ rms: number; folded: number }>;
   /// decode-bench (docs/decode-bench.md): run one benchmark scenario against
   /// a private decoder pool. Orchestrated by e2e/scripts/decode-bench.mjs.
   decodeBenchRun(args: BenchArgs): Promise<BenchResult>;
@@ -1058,5 +1077,38 @@ export function installAudioTestHooks(): void {
       r += rCh[i]! * rCh[i]!;
     }
     return { l: Math.sqrt(l / frames), r: Math.sqrt(r / frames) };
+  };
+
+  // Render the REAL preview Role-gain fold (audition override → committed gain)
+  // through a GainNode so the e2e observes the audition wiring end to end, not
+  // math. A constant-1.0 source makes the output RMS equal the folded linear
+  // gain, so the spec can assert the override wins while active and the
+  // committed gain returns once cleared.
+  hookSlot().roleGainAuditionProbe = async ({ role, committedDb, overrideDb, frames }) => {
+    const sr = 48_000;
+    const roles: RoleMixView[] = [
+      { role, gain_db: committedDb, muted: false, solo: false },
+    ];
+    if (overrideDb !== null) setRoleGainOverride(role, overrideDb);
+    try {
+      const folded = auditionedRoleGainLinear(role, roles);
+      const ctx = new OfflineAudioContext(1, frames, sr);
+      const buf = ctx.createBuffer(1, frames, sr);
+      buf.copyToChannel(new Float32Array(frames).fill(1), 0);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const gain = ctx.createGain();
+      gain.gain.value = folded;
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      src.start();
+      const rendered = await ctx.startRendering();
+      const ch = rendered.getChannelData(0);
+      let sum = 0;
+      for (let i = 0; i < frames; i++) sum += ch[i]! * ch[i]!;
+      return { rms: Math.sqrt(sum / frames), folded };
+    } finally {
+      clearRoleGainOverride(role);
+    }
   };
 }

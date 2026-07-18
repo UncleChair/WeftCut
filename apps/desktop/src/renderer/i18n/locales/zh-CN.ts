@@ -727,6 +727,10 @@ const zhCN: Resources = {
     mute_hint: "静音此角色（全局）",
     solo_hint: "独奏此角色（静音其余）",
     reset_hint: "将 {{role}} 增益重置为 0 dB",
+    master: "主输出",
+    master_meter: "主输出电平表",
+    rms: "RMS",
+    peak: "峰值",
   },
   motif_picker: {
     heading: "Motifs",

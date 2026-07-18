@@ -14,7 +14,7 @@ import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "..
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { AudioGraph } from "./audio/AudioGraph";
 import { AudioMixer } from "./audio/AudioMixer";
-import { anyRoleSolo, roleAudible, roleGainLinear } from "./audio/roleGate";
+import { anyRoleSolo, auditionedRoleGainLinear, roleAudible } from "./audio/roleGate";
 import type { ClockAnchor } from "./audio/chunkSchedule";
 import {
   resolveColorView,
@@ -859,7 +859,9 @@ export class Compositor {
             if (!roleAudible(layer.params.role, roles, anySolo)) continue;
             const audio = this.ensureAudio(layer);
             if (audio) {
-              const rGain = roleGainLinear(layer.params.role, roles);
+              // Audition override (live fader drag) folds in place of the
+              // committed Role gain; equal to `roleGainLinear` when idle.
+              const rGain = auditionedRoleGainLinear(layer.params.role, roles);
               if (
                 audio.lastParamsRef !== layer.params ||
                 audio.lastRoleGain !== rGain
