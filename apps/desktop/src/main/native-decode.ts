@@ -17,6 +17,12 @@ export interface NativeDecodeComponent {
   backend: NativeDecode | null
   reason: string | null
   version: string | null
+  /// The decode lanes this build advertised (`capabilities()`, ADR 0030
+  /// §Lane advertisement): `software` on every platform, plus `d3d11va` on the
+  /// Windows HW-preview build. Empty when the component failed to load.
+  /// Resolvers probe ONLY advertised lanes, so the Linux resolver never touches
+  /// the GPU-preview stub that returns a "not built" verdict by design.
+  lanes: string[]
 }
 
 type ComponentModule = typeof import('@weftcut/native-decode')
@@ -35,10 +41,15 @@ export function loadNativeDecodeWith(
   if (dllDir) process.env.PATH = `${dllDir}${path.delimiter}${prevPath ?? ''}`
   try {
     const mod = requireFn()
-    return { backend: new mod.NativeDecode(onEvent), reason: null, version: mod.versionInfo() }
+    return {
+      backend: new mod.NativeDecode(onEvent),
+      reason: null,
+      version: mod.versionInfo(),
+      lanes: mod.capabilities(),
+    }
   } catch (e) {
     if (dllDir) process.env.PATH = prevPath
-    return { backend: null, reason: e instanceof Error ? e.message : String(e), version: null }
+    return { backend: null, reason: e instanceof Error ? e.message : String(e), version: null, lanes: [] }
   }
 }
 

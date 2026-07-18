@@ -145,6 +145,81 @@ failure-isolation decision; it does no licensing work by itself.
   any future native-decode consumer must link the same LGPL build, not a
   convenient GPL one, or the boundary this ADR names moves with it.
 
+## Amendment: Linux component loading and supply chain
+
+The level-0 gate and the LGPL supply chain above were built and proven
+Windows-only. Bringing the Standard engine's software lane up on Linux
+surfaced three facts the original decision did not anticipate; they are
+recorded here so that a later change to the loader or the packaging glob does
+not silently regress the fix. The point-in-time enablement log — environment
+measured, full verification list, and the packaging work still deferred — is
+[`docs/notes/linux-native-decode-spike.md`](../notes/linux-native-decode-spike.md).
+
+### Chromium's bundled libffmpeg interposes the component's own LGPL symbols
+
+Electron bundles Chromium's own `libffmpeg.so` — a minimal ffmpeg build that
+exports ~840 global `av*` `FUNC` symbols (`avformat_open_input`, `avcodec_*`,
+…) and carries no `file` protocol. Under ELF's default global symbol scope
+those symbols interpose the component's co-located full LGPL `libavformat`, so
+`avformat_open_input` runs *Chromium's* implementation, which cannot open a
+plain path: every file open fails with libavformat's `Protocol not found`,
+even though the same `.node` opens the same file correctly under plain `node`.
+Windows PE and macOS Mach-O resolve symbols per module, so the collision cannot
+arise there — this, not the shared-library supply chain, is the real reason
+native decode had been Windows-only. It is a known, upstream-wontfix Electron
+issue (electron/electron#31397, closed "not planned"), so the workaround has to
+live in the app.
+
+### The Linux load path deep-binds the component past the global symbol scope
+
+`main/native-decode.ts` wraps `process.dlopen` for the single synchronous
+`require` of the component's `.node` (napi's generated `index.js` loads it with
+a plain `require`), OR-ing in the documented maximum-isolation combination
+`RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND`. Deep binding makes the component
+resolve its `av*` symbols from its own dependency tree first — the co-located
+`$ORIGIN` LGPL build — ahead of the global scope, so `avformat_open_input`
+binds to the full LGPL implementation again. This cannot be baked into the
+binary at link time: GNU `ld` emits `-z deepbind ignored`, and there is no
+`DF_1` dynamic flag for deep binding, so it has to be a `dlopen`-time flag. The
+gate is Linux-only for the same reason the collision is Linux-only: the other
+two platforms resolve symbols per module and need no correction.
+
+The caveat, per `dlopen(3)`: `RTLD_DEEPBIND` misbehaves when a library and the
+main program define the same symbol and the library expects the program's copy
+(the textbook case is `malloc`). It is safe here because the component's only
+cross-boundary symbols are `napi_*`, which are absent from `libav*` — deep
+binding falls through to the global scope and still resolves them from the Node
+executable. Adding a symbol the component shares with its host would reopen
+this hazard, and is the thing a future change to the loader must not do
+blindly.
+
+### Runtime library resolution is per-OS, and Linux must bake DT_RPATH not DT_RUNPATH
+
+The component's own runtime-library bundling resolves differently per OS at
+load time. Windows resolves the component's `NEEDED` `*.dll` lazily through a
+process-`PATH` prepend at dlopen (`resolveDllDir` returns `null` off Windows).
+Linux resolves the addon's `NEEDED` `libav*.so` at load time from the ELF
+rpath, so the shared libraries ship *beside* the `.node` and the addon carries
+an rpath of `$ORIGIN` — no runtime environment mutation.
+
+That rpath must be `DT_RPATH`, not the modern `DT_RUNPATH` default. The BtbN
+`.so` carry no rpath of their own, and `RUNPATH` is consulted only for an
+object's *direct* `NEEDED` — not for transitive dependencies (`libavcodec` →
+`libswresample`, `libavdevice` → `libavfilter`), which would then fail to
+resolve. An ancestor's `DT_RPATH` *is* searched across the whole dependency
+subtree, so the addon links with `--disable-new-dtags` (which emits `RPATH`)
+and `-rpath,$ORIGIN`. The build then co-locates the `*.so*` beside the freshly
+built `.node` so `$ORIGIN` resolves in dev exactly as it will when packaged,
+preserving the SONAME symlink chain as relative basenames so the `DT_NEEDED`
+middle link survives relocation. libclang becomes a build prerequisite on Linux
+(bindgen in `ffmpeg-sys-next`). Packaging the Linux `.so*` into the shipped app
+(the `files` glob plus `asarUnpack`, with the LGPL manifest carried for §6) is
+the one piece the deep-bind loader does not already cover, and is now landed:
+`electron-builder.yml` whitelists and asar-unpacks the addon's `*.so*` beside
+its `.node`, ships the LGPL `LICENSE.txt` + `manifest.json` as
+`resources/native-decode/`, and an `afterPack` hook re-asserts the manifest's
+LGPL banner at pack time so a GPL build can never ship.
+
 ## References
 
 - ADR 0021 — color converges at ingest; the working space is the output
@@ -159,3 +234,10 @@ failure-isolation decision; it does no licensing work by itself.
   Route, Session bridge.
 - [`docs/preview.md`](../preview.md#decode-engine) — the resolution flow and
   the Standard engine's internals as consumed by preview.
+- [`docs/notes/linux-native-decode-spike.md`](../notes/linux-native-decode-spike.md)
+  — the Linux enablement spike this amendment condenses (measured environment,
+  the `RTLD_DEEPBIND` fix and its caveat, the full verification list, and the
+  packaging still deferred).
+- [electron/electron#31397](https://github.com/electron/electron/issues/31397)
+  — the upstream "works in Node, `Protocol not found` in Electron" report,
+  closed "not planned"; why the deep-bind workaround has to live in the app.

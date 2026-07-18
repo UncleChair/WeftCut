@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -307,6 +308,30 @@ func writeLongAudioTimingFixture() error {
 	return cmd.Run()
 }
 
+// drawtextFontFile returns a monospace TTF path for the drawtext burn-ins,
+// chosen per-OS so the video fixtures generate on Windows and Linux/CI alike
+// (the burn-in font is cosmetic — content, tags and frame timing are what the
+// gates measure). Windows keeps Consolas; note the escaped `\:`, since drawtext
+// parses `:` as an option separator. Other platforms use DejaVu Sans Mono,
+// which ships broadly (fonts-dejavu-core on Debian/Ubuntu, incl. CI); the first
+// existing candidate wins, else the canonical Debian path (ffmpeg errors
+// clearly if it truly can't be opened).
+func drawtextFontFile() string {
+	if runtime.GOOS == "windows" {
+		return `C\:/Windows/Fonts/consola.ttf`
+	}
+	for _, p := range []string{
+		"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+		"/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+		"/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+}
+
 func main() {
 	fps := flag.Int("fps", 0, "frame rate (required, positive integer)")
 	format := flag.String("format", "mp4", "output format: mp4, mkv, mov, webm, gif, prores")
@@ -601,7 +626,7 @@ func main() {
 	)
 	out := fmt.Sprintf("test_%dp_%dfps.%s", height, *fps, *format)
 
-	font := `C\:/Windows/Fonts/consola.ttf`
+	font := drawtextFontFile()
 	common := fmt.Sprintf(`fontfile='%s':fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=8`, font)
 
 	filters := []string{

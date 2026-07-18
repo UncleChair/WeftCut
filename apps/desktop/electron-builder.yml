@@ -1,6 +1,10 @@
 appId: dev.weftcut.desktop
 productName: WeftCut
 executableName: WeftCut
+# Re-assert LGPL-cleanliness from the packaged ffmpeg-lgpl manifest before the
+# app is folded into a distributable, so a GPL/nonfree build can never ship even
+# if the fetched runtime were swapped out from under the packager (§6 gate).
+afterPack: ./scripts/after-pack-lgpl.mjs
 directories:
   output: release
   buildResources: build
@@ -16,8 +20,19 @@ files:
   - "**/node_modules/@weftcut/native-decode/index.js"
   - "**/node_modules/@weftcut/native-decode/index.d.ts"
   - "**/node_modules/@weftcut/native-decode/*.node"
+  # Linux: the co-located LGPL libav*/libsw* shared objects (+ their SONAME
+  # symlink chains) that the addon's DT_RPATH $ORIGIN resolves at dlopen. On
+  # Windows the runtime is DLLs shipped as extraResources (win: block) instead,
+  # so these globs simply match nothing there.
+  - "**/node_modules/@weftcut/native-decode/*.so"
+  - "**/node_modules/@weftcut/native-decode/*.so.*"
 asarUnpack:
   - "**/*.node"
+  # $ORIGIN resolves against the .node's on-disk directory, which only exists
+  # once the shared objects are unpacked out of the asar archive beside it —
+  # inside app.asar there is no real directory for ld.so to search.
+  - "**/node_modules/@weftcut/native-decode/*.so"
+  - "**/node_modules/@weftcut/native-decode/*.so.*"
 extraResources:
   - from: resources/ffmpeg/${os}
     to: ffmpeg
@@ -53,6 +68,17 @@ linux:
   icon: build/icon.png
   category: AudioVideo
   artifactName: ${productName}-${version}-${arch}.${ext}
+  extraResources:
+    # LGPL §6 obligations for @weftcut/native-decode's ffmpeg runtime. The .so
+    # themselves ride co-located beside the .node (files + asarUnpack above) so
+    # $ORIGIN resolves in the packaged app exactly as in dev; here we only carry
+    # the license notice + build manifest (the exact source pointer + banner).
+    # Placed under resources/native-decode/ to mirror the win: layout and to
+    # give the afterPack LGPL re-check a stable, platform-uniform path to read.
+    - from: resources/ffmpeg-lgpl/linux/LICENSE.txt
+      to: native-decode/LICENSE.txt
+    - from: resources/ffmpeg-lgpl/linux/manifest.json
+      to: native-decode/manifest.json
 mac:
   target: [dmg]
   category: public.app-category.video

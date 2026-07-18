@@ -298,16 +298,32 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
     ).then((h) => h.jsonValue())
     expect(kind).toBe('sw')
 
-    // Forced-GC renderer private-memory floor (mirrors memory-ratchet.mjs):
-    // collect twice with settle waits, then read the max renderer 'Tab'
-    // privateBytes via getAppMetrics.
+    // Forced-GC renderer memory floor (mirrors memory-ratchet.mjs): collect
+    // twice with settle waits, then read the max renderer 'Tab' memory via
+    // getAppMetrics. `privateBytes` is a Windows-only metric — on Linux /
+    // Electron 42 getAppMetrics reports it as null for every process — so fall
+    // back to the cross-platform `workingSetSize` (RSS) when it is unavailable.
+    // RSS is the right observable here: the leak this ratchet guards is retained
+    // ImageBitmap frames, which live in native/GPU memory (not the JS heap) and
+    // therefore surface as RSS growth. The assertion is on the growth
+    // floorB−floorA — both read after a forced GC + settle — so an inflated RSS
+    // baseline does not affect the delta.
     const cdp = await page.context().newCDPSession(page)
     await cdp.send('HeapProfiler.enable').catch(() => {})
     const rendererPrivMB = async (): Promise<number> => {
       const ms = (await app.evaluate(async ({ app: a }) =>
-        a.getAppMetrics().map((m) => ({ type: m.type, privKB: m.memory.privateBytes ?? 0 })),
-      )) as Array<{ type: string; privKB: number }>
-      return Math.round(Math.max(...ms.filter((m) => m.type === 'Tab').map((m) => m.privKB), 0) / 1024)
+        a.getAppMetrics().map((m) => ({
+          type: m.type,
+          privKB: m.memory.privateBytes ?? 0,
+          workingKB: m.memory.workingSetSize ?? 0,
+        })),
+      )) as Array<{ type: string; privKB: number; workingKB: number }>
+      return Math.round(
+        Math.max(
+          ...ms.filter((m) => m.type === 'Tab').map((m) => (m.privKB > 0 ? m.privKB : m.workingKB)),
+          0,
+        ) / 1024,
+      )
     }
     const gcFloor = async (): Promise<number> => {
       await cdp.send('HeapProfiler.collectGarbage').catch(() => {})

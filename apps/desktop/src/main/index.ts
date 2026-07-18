@@ -430,7 +430,7 @@ app.whenReady().then(async () => {
   // Machine capability cache (ADR 0030; docs/preview.md §Decode engine) —
   // persists <userData>/decode_capability.json. Keyed by (lane, format class),
   // invalidated per-lane when its envKey changes (SW: ffmpeg version).
-  const { createDecodeCapabilityStore, classKeyOf } = await import('./decode-capability.js')
+  const { createDecodeCapabilityStore, classKeyOf, resolveHwProbe } = await import('./decode-capability.js')
   const decodeCapability = createDecodeCapabilityStore({
     fs: atomicFs,
     path: path.join(app.getPath('userData'), 'decode_capability.json'),
@@ -605,18 +605,22 @@ app.whenReady().then(async () => {
   // the renderer computes classKey from MediaSummary BEFORE deciding
   // to probe, so an already-cached verdict never pays for a decode. envKey is
   // GPU identity (vendor/device/driver): a driver update or GPU swap
-  // invalidates every cached HW verdict for this machine.
-  ipcMain.handle('decodeCap:probeHw', async (_e, a: { path: string; classKey: string }) => {
-    if (process.platform !== 'win32' || !nd.backend) {
-      return { ok: false, reason: 'hw lane unavailable' }
-    }
-    const envKey = await hwEnvKey()
-    const cached = decodeCapability.get('hw', a.classKey, envKey)
-    if (cached !== null) return { ok: cached, reason: 'cached' }
-    const r = nd.backend.previewGpuProbe(a.path, 4000)
-    decodeCapability.put('hw', a.classKey, envKey, r.ok)
-    return { ok: r.ok, reason: r.reason ?? null }
-  })
+  // invalidates every cached HW verdict for this machine. `resolveHwProbe`
+  // gates the probe on the component's ADVERTISED lanes (`nd.lanes`), so a build
+  // without the HW lane (Linux — the by-design GPU-preview stub) never reaches
+  // `previewGpuProbe`, no platform string special-casing needed.
+  ipcMain.handle('decodeCap:probeHw', (_e, a: { path: string; classKey: string }) =>
+    resolveHwProbe({
+      lanes: nd.lanes,
+      store: decodeCapability,
+      classKey: a.classKey,
+      envKey: hwEnvKey,
+      probe: () => {
+        const r = ndBackend().previewGpuProbe(a.path, 4000)
+        return { ok: r.ok, reason: r.reason ?? null }
+      },
+    }),
+  )
 
   // Native SOFTWARE-decode preview (ProRes/DNxHD/MPEG-2/VC-1 — the
   // WebCodecs-blind-format path). Frames flow out of band on the dedicated
