@@ -1,25 +1,8 @@
-// Restore-on-startup + persist-on-change glue for the app-level Workspace
-// document, plus the named-profile operations the View menu drives. This is the
-// thin renderer half of the boundary: the store (main/workspace.ts) owns
-// atomic/versioned/debounced disk I/O + profile CRUD, the adapter owns
-// serialize/restore, and the resolver (workspaceLayout.ts) owns validation and
-// the fallback order. This hook sequences them and exposes a stable API.
-//
-// Ordering on mount: DockWorkspace.onReady has already built the built-in Editing
-// baseline by the time the controller reaches us, so we (1) fetch the document,
-// (2) restore the active profile's first applying candidate (current → saved),
-// (3) fall back to a clean built-in only if a stored candidate FAILED at runtime
-// (an empty candidate list leaves the already-built baseline untouched), (4)
-// repair the stored current whenever the source wasn't already `current`, and
-// only THEN subscribe for autosave — so the restore's own layout events aren't
-// written back as intermediate states.
-//
-// Every explicit profile op (switch / save / save-as / rename / delete / reset)
-// commits through the main store and re-applies the destination layout under an
-// `applying` guard that suppresses the autosave listener, so a programmatic
-// restore never round-trips back to disk as spurious current edits. Switching
-// flushes the outgoing profile first and restores the destination WITHOUT a save
-// prompt (the outgoing arrangement stays auto-saved).
+// Renderer boundary for the app-level Workspace document and named-profile
+// commands. Main owns profile CRUD and disk I/O, the adapter owns live Dockview
+// state, and workspaceLayout owns snapshot validation. Programmatic restores
+// must not reach autosave, async results belong only to the controller that
+// started them, and an invalid active profile is repaired from a valid fallback.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -90,9 +73,14 @@ export function useWorkspacePersistence(
   const persistCurrent = useCallback(() => {
     const active = controllerRef.current;
     if (!active || disposedRef.current || applyingRef.current) return;
-    void workspaceSetCurrent(active.serialize()).catch((error) => {
+    try {
+      const layout = active.serialize();
+      void workspaceSetCurrent(layout).catch((error) => {
+        console.warn("[dock-workspace] persist failed:", error);
+      });
+    } catch (error) {
       console.warn("[dock-workspace] persist failed:", error);
-    });
+    }
   }, []);
 
   // Restore a profile's layout: current → saved, else (on a runtime failure or
@@ -128,9 +116,14 @@ export function useWorkspacePersistence(
       try {
         const source = restoreProfile(profile, opts);
         if (source !== "current" && source !== "none") {
-          void workspaceSetCurrent(active.serialize()).catch((error) => {
+          try {
+            const layout = active.serialize();
+            void workspaceSetCurrent(layout).catch((error) => {
+              console.warn("[dock-workspace] persist failed:", error);
+            });
+          } catch (error) {
             console.warn("[dock-workspace] persist failed:", error);
-          });
+          }
         }
       } finally {
         applyingRef.current = false;
@@ -143,12 +136,14 @@ export function useWorkspacePersistence(
     if (!controller) {
       controllerRef.current = null;
       docRef.current = null;
+      disposedRef.current = true;
       setDocState(null);
       return;
     }
     controllerRef.current = controller;
     disposedRef.current = false;
     applyingRef.current = false;
+    let cancelled = false;
     let unsubscribe: (() => void) | null = null;
 
     void (async () => {
@@ -159,21 +154,29 @@ export function useWorkspacePersistence(
         console.warn("[dock-workspace] workspace_get failed:", error);
         next = workspaceDocumentDefaults();
       }
-      if (disposedRef.current) return;
+      if (cancelled || controllerRef.current !== controller) return;
       commitDoc(next);
 
-      // Restore the active profile. An empty candidate list leaves the built-in
-      // baseline DockWorkspace.onReady already built in place (rebuildOnEmpty
-      // false); a runtime failure still falls back to a clean built-in.
-      applyAndRepairProfile(activeWorkspaceProfile(next), { rebuildOnEmpty: false });
-      if (disposedRef.current) return;
+      const profile = activeWorkspaceProfile(next);
+      const hasStoredLayout = profile.current !== null || profile.saved !== null;
+      applyAndRepairProfile(profile, {
+        // DockWorkspace already presents the built-in baseline on first mount.
+        // Only an unusable stored value needs a rebuild + repair here.
+        rebuildOnEmpty: hasStoredLayout || !isBuiltinWorkspace(profile.id),
+      });
+      if (cancelled || controllerRef.current !== controller) return;
 
       unsubscribe = controller.subscribe(persistCurrent);
     })();
 
     return () => {
-      disposedRef.current = true;
+      cancelled = true;
       unsubscribe?.();
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        disposedRef.current = true;
+        applyingRef.current = false;
+      }
     };
   }, [controller, commitDoc, persistCurrent, applyAndRepairProfile]);
 
@@ -188,7 +191,7 @@ export function useWorkspacePersistence(
           // active by the store's setActive), switch, then restore the destination.
           await workspaceSetCurrent(active.serialize());
           const next = await workspaceSetActive(id);
-          if (disposedRef.current) return;
+          if (disposedRef.current || controllerRef.current !== active) return;
           commitDoc(next);
           applyAndRepairProfile(activeWorkspaceProfile(next), { rebuildOnEmpty: true });
         } catch (error) {
@@ -207,7 +210,7 @@ export function useWorkspacePersistence(
       try {
         await workspaceSetCurrent(active.serialize());
         const next = await workspaceSaveBaseline();
-        if (!disposedRef.current) commitDoc(next);
+        if (!disposedRef.current && controllerRef.current === active) commitDoc(next);
       } catch (error) {
         console.warn("[dock-workspace] save failed:", error);
       }
@@ -225,7 +228,7 @@ export function useWorkspacePersistence(
           // from the same live arrangement (which stays mounted — no restore).
           await workspaceSetCurrent(layout);
           const next = await workspaceCreateProfile(name, layout);
-          if (!disposedRef.current) commitDoc(next);
+          if (!disposedRef.current && controllerRef.current === active) commitDoc(next);
         } catch (error) {
           console.warn("[dock-workspace] save-as failed:", error);
         }
@@ -236,10 +239,12 @@ export function useWorkspacePersistence(
 
   const rename = useCallback(
     (id: string, name: string) => {
+      const active = controllerRef.current;
+      if (!active) return;
       void (async () => {
         try {
           const next = await workspaceRenameProfile(id, name);
-          if (!disposedRef.current) commitDoc(next);
+          if (!disposedRef.current && controllerRef.current === active) commitDoc(next);
         } catch (error) {
           console.warn("[dock-workspace] rename failed:", error);
         }
@@ -257,7 +262,7 @@ export function useWorkspacePersistence(
       void (async () => {
         try {
           const next = await workspaceDeleteProfile(id);
-          if (disposedRef.current) return;
+          if (disposedRef.current || controllerRef.current !== active) return;
           commitDoc(next);
           // Deleting the active profile activated Editing — restore it.
           if (wasActive) {

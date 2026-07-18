@@ -31,11 +31,12 @@ export interface NearbyPanelProps {
   selectedLayerId: string | null;
   fpsNum: number;
   fpsDen: number;
+  visible?: boolean;
   /// Plain pick: select + reveal the Track WITHOUT seeking, so the
   /// near-playhead observation window is not disturbed.
   onPick: (layerId: string, trackId: string) => void;
-  /// Explicit Go To: seek to the Layer's start and scroll it into view.
-  /// Optional so the retiring RightPanel can omit it (no seek there).
+  /// Explicit Go To: seek to the Layer's start and scroll it into view. When
+  /// omitted, the panel hides that optional action.
   onGoTo?: ((layerId: string, trackId: string, startUs: number) => void) | undefined;
   /// Commit a lightweight inline rename through the recorded Layer label
   /// command. The host wires this to `updateLayer` + summary refresh.
@@ -47,6 +48,7 @@ export function NearbyPanel({
   selectedLayerId,
   fpsNum,
   fpsDen,
+  visible = true,
   onPick,
   onGoTo,
   onRename,
@@ -54,7 +56,7 @@ export function NearbyPanel({
   const { t } = useTranslation();
   const displayMode = useDisplayMode();
   const deltaWindowUs = useDeltaWindowUs();
-  const currentTimeUs = usePlayheadTimeUsThrottled();
+  const currentTimeUs = usePlayheadTimeUsThrottled(100, visible);
   const [filter, setFilter] = useState<"all" | PeekCategory>("all");
 
   const items = useMemo(() => {

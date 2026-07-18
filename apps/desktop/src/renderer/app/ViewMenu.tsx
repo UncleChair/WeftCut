@@ -109,7 +109,7 @@ export function ViewMenu({
       {PANEL_KINDS.map((kind) => (
         <MenuItem
           key={kind}
-          label={PANEL_REGISTRY[kind].title}
+          label={t(PANEL_REGISTRY[kind].titleKey)}
           checked={workspaceSnapshot.openPanels.has(kind)}
           disabled={!workspaceController}
           onSelect={() => workspaceController?.openPanel(kind)}

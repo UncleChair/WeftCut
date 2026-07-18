@@ -84,6 +84,20 @@ describe("normalizeLayout", () => {
     expect(dockview.grid.root.data).toHaveLength(3);
   });
 
+  it("drops transient focus and maximize metadata", () => {
+    const result = normalizeLayout(
+      nonEmpty(leaf(["preview"]), {
+        maximizedNode: { location: [0] },
+      }),
+    );
+    const dockview = result!.dockview as unknown as {
+      activeGroup?: string;
+      grid: { maximizedNode?: unknown };
+    };
+    expect(dockview.activeGroup).toBeUndefined();
+    expect(dockview.grid.maximizedNode).toBeUndefined();
+  });
+
   it("drops unknown Panel kinds while keeping the known ones", () => {
     const result = normalizeLayout(
       nonEmpty({

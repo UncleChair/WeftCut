@@ -103,10 +103,7 @@ import {
   DockWorkspace,
   type DockPanelContracts,
 } from "./DockWorkspace";
-import {
-  DOCK_COMPONENT_ID,
-  DOCK_TAB_COMPONENT_ID,
-} from "./dockWorkspaceAdapter";
+import { DOCK_COMPONENT_ID, DOCK_TAB_COMPONENT_ID } from "./panelRegistry";
 
 afterEach(() => cleanup());
 
@@ -121,6 +118,7 @@ function strictModeApi() {
         title: string;
         group: { panels: unknown[] };
         setActive: ReturnType<typeof vi.fn>;
+        setTitle: ReturnType<typeof vi.fn>;
         setSize: ReturnType<typeof vi.fn>;
         close: ReturnType<typeof vi.fn>;
         maximize: ReturnType<typeof vi.fn>;
@@ -150,6 +148,7 @@ function strictModeApi() {
         title: string;
         group: { panels: unknown[] };
         setActive: ReturnType<typeof vi.fn>;
+        setTitle: ReturnType<typeof vi.fn>;
         setSize: ReturnType<typeof vi.fn>;
         close: ReturnType<typeof vi.fn>;
         maximize: ReturnType<typeof vi.fn>;
@@ -160,6 +159,9 @@ function strictModeApi() {
       title: String(options.title ?? panel.id),
       group,
       setActive: vi.fn(),
+      setTitle: vi.fn((title: string) => {
+        panel.api.title = title;
+      }),
       setSize: vi.fn(),
       close: vi.fn(() => {
         panels.delete(panel.id);
@@ -294,11 +296,15 @@ describe("DockWorkspace React integration", () => {
       tabComponents: Record<string, unknown>;
       disableFloatingGroups: boolean;
       dndStrategy: string;
+      keyboardNavigation: boolean;
+      announcements: boolean;
     };
     expect(Object.keys(props.components)).toEqual([DOCK_COMPONENT_ID]);
     expect(Object.keys(props.tabComponents)).toEqual([DOCK_TAB_COMPONENT_ID]);
     expect(props.disableFloatingGroups).toBe(true);
     expect(props.dndStrategy).toBe("html5");
+    expect(props.keyboardNavigation).toBe(true);
+    expect(props.announcements).toBe(true);
   });
 
   it("publishes Dockview visibility without remounting an always-rendered Preview", () => {

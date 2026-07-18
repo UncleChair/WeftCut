@@ -51,7 +51,7 @@ export class TextSprite implements StageableSprite {
 
   update(view: ResolvedTextView): void {
     const o = view.outline, sh = view.shadow;
-    // Default align when field is absent (stale backend / old serialised view).
+    // Pixi expects its lowercase alignment vocabulary.
     const align = ((view.align ?? "Center") as string).toLowerCase() as "left" | "center" | "right";
     const sig =
       `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${align}|` +
@@ -87,9 +87,11 @@ export class TextSprite implements StageableSprite {
       });
     }
 
-    // Per-frame: anchor + position + alpha (cheap — no atlas rebuild).
+    // Per-frame transforms and alpha are cheap and do not rebuild the atlas.
     this.text.anchor.set(view.anchor_x ?? 0.5, view.anchor_y ?? 0.5);
     this.text.position.set(view.x, view.y);
+    this.text.scale.set(view.scale_x, view.scale_y);
+    this.text.angle = view.rotation_deg;
     // Color alpha (Rgba.a) multiplies the layer's `opacity` field.
     this.text.alpha = view.opacity * (view.color.a / 255);
   }

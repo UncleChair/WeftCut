@@ -109,6 +109,10 @@ const enUS = {
     export: "Export",
     tools: "Tools",
   },
+  dev: {
+    menu: "Dev",
+    performance_monitor: "Performance Monitor",
+  },
   view: {
     display_mode_heading: "Track display",
     panels_heading: "Panels",
@@ -122,6 +126,45 @@ const enUS = {
     save_workspace_as: "Save Workspace As…",
     rename_workspace: "Rename Workspace…",
     delete_workspace: "Delete Workspace",
+  },
+  dock_workspace: {
+    editing_label: "Editing workspace",
+    empty_label: "Empty workspace",
+    all_closed: "All panels are closed.",
+    open_panel: "Open Panel",
+    reset: "Reset Workspace",
+    move_panel: "Move {{title}}",
+    close_panel: "Close {{title}}",
+    panels: {
+      media: "Media Pool",
+      preview: "Preview",
+      timeline: "Timeline",
+      attribute: "Attribute",
+      caption: "Caption",
+      "role-mixer": "Role Mixer",
+      effect: "Effect",
+      nearby: "Nearby",
+    },
+    position: {
+      left: "left",
+      right: "right",
+      top: "top",
+      bottom: "bottom",
+      center: "center",
+    },
+    announce: {
+      opened: "{{title}} opened",
+      closed: "{{title}} closed",
+      maximized: "{{title}} maximized",
+      restored: "{{title}} restored",
+      pick_target:
+        "Moving {{source}}. Target {{target}}, {{current}} of {{total}}. Press Enter to choose it.",
+      pick_edge:
+        "Dock at the {{position}} of {{target}}. Use the arrow keys to change position, then press Enter.",
+      committed: "Moved {{source}} to the {{position}} of {{target}}.",
+      cancelled: "Panel move cancelled.",
+      not_allowed: "That panel move is not allowed.",
+    },
   },
   workspace_name: {
     save_as_title: "Save Workspace As",
@@ -284,12 +327,6 @@ const enUS = {
     empty_title: "Nothing near the playhead",
     empty_msg:
       "No hidden-track layers fall within ±{{window}} of the playhead. Move the playhead or widen the window.",
-  },
-  right_panel: {
-    tablist_label: "Right panel",
-    properties: "Properties",
-    captions: "Captions",
-    audio: "Audio",
   },
   agent_mode: {
     client_label: "Agent: {{client}}",
@@ -693,6 +730,7 @@ const enUS = {
     media: "Media",
     scale_x: "Scale X",
     scale_y: "Scale Y",
+    rotation: "Rotation (°)",
     speed: "Speed",
     fade_in: "Fade in",
     fade_out: "Fade out",
@@ -735,6 +773,7 @@ const enUS = {
     title: "Captions",
     empty: "Import a subtitle file or auto-caption to create captions.",
     style_heading: "Caption style",
+    seek_to: "Go to caption at {{timecode}}",
   },
   audio_roles: { dialogue: "Dialogue", music: "Music", sfx: "SFX", voiceover: "Voiceover" },
   mixer: {

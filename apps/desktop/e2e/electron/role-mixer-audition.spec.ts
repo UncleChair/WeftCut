@@ -11,7 +11,7 @@ import { invokeCmd, launchApp, launchFreshApp, newProject, waitForHook } from '.
 // A constant-1.0 source makes the output RMS equal the folded linear gain, so
 // each case is analytic. Covers the audition WIRING that the headless override
 // and fold goldens cannot reach — the real Web Audio path preview playback runs.
-// (Role Mixer decisions: .scratch/nle-dockable-workspace/spec.md, ticket 15.)
+// Role Mixer behavior and gain semantics are documented in docs/audio.md.
 test.describe('Role Gain audition (Electron preview audio)', () => {
   let app: ElectronApplication | undefined
   let page: Page
@@ -49,7 +49,8 @@ test.describe('Role Gain audition (Electron preview audio)', () => {
   })
 
   test('audition changes the audible level relative to the committed gain', async () => {
-    const [audition, committed] = await Promise.all([probe(OVERRIDE_DB), probe(null)])
+    const audition = await probe(OVERRIDE_DB)
+    const committed = await probe(null)
     // The override (−6 dB) must be audibly quieter than the committed +6 dB.
     expect(audition.rms).toBeLessThan(committed.rms)
     expect(committed.rms / audition.rms).toBeCloseTo(dbToLinear(COMMITTED_DB - OVERRIDE_DB), 1)

@@ -1,3 +1,5 @@
+import i18n from "../i18n";
+
 /** Dockview component ids for the single WeftCut Panel + tab renderers. Kept
  *  here (not in the adapter) so the persistence layer can synthesize Panel
  *  definitions on restore without importing the adapter — keeping the module
@@ -20,7 +22,7 @@ export type PanelKind = (typeof PANEL_KINDS)[number];
 
 export interface PanelDefinition {
   kind: PanelKind;
-  title: string;
+  titleKey: `dock_workspace.panels.${PanelKind}`;
   minimumWidth: number;
   minimumHeight: number;
   initiallyOpen: boolean;
@@ -29,62 +31,66 @@ export interface PanelDefinition {
 const TOOL_MINIMUM = { minimumWidth: 240, minimumHeight: 160 } as const;
 
 /**
- * The complete v1 Panel catalogue. Panel identity is the semantic kind: no
+ * The complete Panel catalogue. Panel identity is the semantic kind: no
  * second instance id exists anywhere above the Dockview adapter boundary.
  */
 export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
   media: {
     kind: "media",
-    title: "Media Pool",
+    titleKey: "dock_workspace.panels.media",
     minimumWidth: 240,
     minimumHeight: 160,
     initiallyOpen: true,
   },
   preview: {
     kind: "preview",
-    title: "Preview",
+    titleKey: "dock_workspace.panels.preview",
     minimumWidth: 320,
     minimumHeight: 180,
     initiallyOpen: true,
   },
   timeline: {
     kind: "timeline",
-    title: "Timeline",
+    titleKey: "dock_workspace.panels.timeline",
     minimumWidth: 420,
     minimumHeight: 180,
     initiallyOpen: true,
   },
   attribute: {
     kind: "attribute",
-    title: "Attribute",
+    titleKey: "dock_workspace.panels.attribute",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
   },
   caption: {
     kind: "caption",
-    title: "Caption",
+    titleKey: "dock_workspace.panels.caption",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
   },
   "role-mixer": {
     kind: "role-mixer",
-    title: "Role Mixer",
+    titleKey: "dock_workspace.panels.role-mixer",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
   },
   effect: {
     kind: "effect",
-    title: "Effect",
+    titleKey: "dock_workspace.panels.effect",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
   },
   nearby: {
     kind: "nearby",
-    title: "Nearby",
+    titleKey: "dock_workspace.panels.nearby",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
   },
 };
+
+export function panelTitle(kind: PanelKind): string {
+  return i18n.t(PANEL_REGISTRY[kind].titleKey);
+}
 
 export const EDITING_OPEN_PANEL_KINDS = PANEL_KINDS.filter(
   (kind) => PANEL_REGISTRY[kind].initiallyOpen,
@@ -96,4 +102,3 @@ export function isPanelKind(value: unknown): value is PanelKind {
     (PANEL_KINDS as readonly string[]).includes(value)
   );
 }
-

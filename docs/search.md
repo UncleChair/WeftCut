@@ -32,7 +32,7 @@ carries everything searchable).
 | `renderer/search/matcher.ts` | fuzzysort ranking across haystacks |
 | `renderer/search/SearchPalette.tsx` | Overlay UI (AppDialog pattern, mounted in App.tsx) |
 | `renderer/state/navigation.ts` | `jumpToLayer` / `jumpToTimeUs` / `revealInMediaPool` verbs |
-| `renderer/state/selectionStore.ts` | Module-level layer selection (shared with Timeline/RightPanel) |
+| `renderer/state/selectionStore.ts` | Module-level layer selection shared by Timeline and docked tools |
 
 Dependencies: `fuzzysort` (scoring + highlight ranges) and `pinyin-pro`.
 `cmdk` was rejected — its dialog binds Radix while the app is on Base UI, and

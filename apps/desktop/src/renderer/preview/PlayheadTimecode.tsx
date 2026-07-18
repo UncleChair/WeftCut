@@ -10,22 +10,25 @@ import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
 export function PlayheadTimecode({
   fpsNum,
   fpsDen,
+  visible,
   editHint,
   onActivate,
 }: {
   fpsNum: number;
   fpsDen: number;
+  visible: boolean;
   editHint: string;
   onActivate: () => void;
 }) {
   const ref = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
+    if (!visible) return;
     const apply = (tUs: number) => {
       if (ref.current) ref.current.textContent = formatTimecode(tUs, fpsNum, fpsDen);
     };
     apply(playheadTimeUs());
     return usePlayheadStore.subscribe((s) => apply(s.timeUs));
-  }, [fpsNum, fpsDen]);
+  }, [fpsNum, fpsDen, visible]);
   return (
     <button
       type="button"

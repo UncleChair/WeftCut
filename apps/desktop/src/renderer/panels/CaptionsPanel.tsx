@@ -11,7 +11,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useProjectSummary } from "../state/projectStore";
-import { transportSeek } from "../state/playbackStore";
 import { AppColorField } from "../components/AppColorField";
 import { AppNumberField } from "../components/AppNumberField";
 import {
@@ -36,9 +35,52 @@ export interface CaptionPanelProps {
   /// The primary selected Layer — highlights the matching cue row.
   selectedLayerId?: string | null;
   /// Activate a cue: select its Text Layer, seek to its start, and reveal it in
-  /// Timeline. When omitted (the retiring RightPanel), the cue timecode falls
-  /// back to a bare transport seek.
-  onActivateCue?: ((layerId: string, trackId: string, startUs: number) => void) | undefined;
+  /// Timeline.
+  onActivateCue: (layerId: string, trackId: string, startUs: number) => void;
+}
+
+function CaptionCueRow({
+  cue,
+  selected,
+  onActivate,
+  onCommit,
+}: {
+  cue: CaptionCue;
+  selected: boolean;
+  onActivate: (cue: CaptionCue) => void;
+  onCommit: (layerId: string, content: string) => void;
+}) {
+  const { t } = useTranslation();
+  const { layer } = cue;
+  const content = layer.params.kind === "Text" ? layer.params.content : "";
+  const [draft, setDraft] = useState(content);
+
+  // Undo/redo and external edits replace the authoritative cue content. Keep
+  // the input draft aligned whenever that value changes; ordinary keystrokes
+  // only update local state and therefore are not disturbed.
+  useEffect(() => setDraft(content), [content]);
+
+  return (
+    <li className={`caption-row ${selected ? "is-selected" : ""}`}>
+      <button
+        type="button"
+        className="caption-seek"
+        onClick={() => onActivate(cue)}
+        aria-label={t("captions.seek_to", { timecode: fmtTc(layer.t_start_us) })}
+      >
+        {fmtTc(layer.t_start_us)}
+      </button>
+      <input
+        className="app-input caption-text"
+        value={draft}
+        aria-label={`${t("captions.title")} ${fmtTc(layer.t_start_us)}`}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (draft !== content) onCommit(layer.id, draft);
+        }}
+      />
+    </li>
+  );
 }
 
 export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: CaptionPanelProps) {
@@ -70,12 +112,12 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
   // coalesce bursts into one commit per gesture.
   const colorDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Resync style controls when the first caption track changes (e.g. after undo).
+  // Undo/redo and external edits can restyle the same track without changing
+  // its id, so synchronize from the actual seed values.
   useEffect(() => {
     setFontSize(seedSize);
     setColor(seedColor);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captionTracks[0]?.id]);
+  }, [seedSize, seedColor.r, seedColor.g, seedColor.b, seedColor.a]);
 
   // Clear any pending debounced color commit on unmount so a late call can't
   // fire after the component is gone.
@@ -91,8 +133,7 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
       .catch((e) => console.warn("update caption text failed:", e));
 
   const activateCue = ({ layer, trackId }: CaptionCue) => {
-    if (onActivateCue) onActivateCue(layer.id, trackId, layer.t_start_us);
-    else transportSeek(layer.t_start_us);
+    onActivateCue(layer.id, trackId, layer.t_start_us);
   };
 
   return (
@@ -102,30 +143,15 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
       ) : (
         <>
           <ul className="captions-list">
-            {cues.map((cue) => {
-              const { layer } = cue;
-              return (
-                <li
-                  key={layer.id}
-                  className={`caption-row ${layer.id === selectedLayerId ? "is-selected" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="caption-seek"
-                    onClick={() => activateCue(cue)}
-                    aria-label={`seek ${fmtTc(layer.t_start_us)}`}
-                  >
-                    {fmtTc(layer.t_start_us)}
-                  </button>
-                  <input
-                    className="app-input caption-text"
-                    defaultValue={layer.params.kind === "Text" ? layer.params.content : ""}
-                    aria-label={`${t("captions.title")} ${fmtTc(layer.t_start_us)}`}
-                    onBlur={(e) => commitText(layer.id, e.target.value)}
-                  />
-                </li>
-              );
-            })}
+            {cues.map((cue) => (
+              <CaptionCueRow
+                key={cue.layer.id}
+                cue={cue}
+                selected={cue.layer.id === selectedLayerId}
+                onActivate={activateCue}
+                onCommit={commitText}
+              />
+            ))}
           </ul>
           <section className="captions-style-section" aria-label={t("captions.style_heading")}>
             <h4>{t("captions.style_heading")}</h4>
@@ -162,9 +188,6 @@ export function CaptionPanel({ onMutated, selectedLayerId, onActivateCue }: Capt
     </section>
   );
 }
-
-// Temporary source-compatible name while the fixed RightPanel is retired.
-export { CaptionPanel as CaptionsPanel };
 
 /// Format microseconds as MM:SS for the cue timecode label.
 function fmtTc(us: number): string {

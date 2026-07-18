@@ -134,6 +134,7 @@ export class MotifSprite implements StageableSprite {
     // transform-only change with an unchanged frame must still take.
     this.sprite.position.set(view.x, view.y);
     this.sprite.scale.set(view.scale_x, view.scale_y);
+    this.sprite.angle = view.rotation_deg;
     this.sprite.alpha = view.opacity;
 
     // Injected-frames path (export). Bind synchronously by layer-local
@@ -288,4 +289,3 @@ export class MotifSprite implements StageableSprite {
     this.sprite.destroy({ children: true });
   }
 }
-

@@ -25,9 +25,8 @@
 // The on-disk file path + envelope field names are a COMPATIBILITY SURFACE:
 // once shipped, neither may change without a migration.
 
-/** Envelope schema version. v2 introduced named profiles (was `{current, saved}`
- *  in v1). A v1 document is migrated on read; any other version degrades to
- *  defaults. Distinct from the inner layout's own version. */
+/** Envelope schema version, distinct from the renderer-owned layout version.
+ *  Unsupported documents degrade to defaults unless an explicit migration exists. */
 export const WORKSPACE_DOC_VERSION = 2;
 
 /** Reserved id of the immutable, code-owned built-in Workspace. */
@@ -103,19 +102,14 @@ export function normalizeWorkspaceName(value: unknown, fallback: string): string
  * Turn an untrusted persisted value into a canonical WorkspaceDocument. The
  * store calls this on every read AND before every write, so the invariants
  * (built-in Editing present + first + immutable, unique ids, valid activeId)
- * hold regardless of how the document got there — a hand-edit, a stale write,
- * or a v1 upgrade.
- *
- * - A v1 `{version:1, current, saved}` document migrates its `current` into the
- *   built-in Editing profile (the v1 `saved` is dropped: Editing's baseline is
- *   code-owned). The app is pre-release, so no richer migration is warranted.
- * - Any other non-v2 / non-object value degrades to the all-defaults document.
+ * hold regardless of how the document got there. Known legacy envelopes retain
+ * their current layout; unsupported versions and non-object values degrade to
+ * defaults.
  */
 export function normalizeWorkspaceDocument(raw: unknown): WorkspaceDocument {
   if (!isRecord(raw)) return workspaceDocumentDefaults();
 
-  // v1 → v2: single {current, saved} became the built-in Editing profile's
-  // current layout (Editing keeps no explicit saved baseline).
+  // Editing's reset baseline is code-owned, so migration retains only current.
   if (raw.version === 1) {
     return {
       version: WORKSPACE_DOC_VERSION,

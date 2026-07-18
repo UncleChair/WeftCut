@@ -193,6 +193,7 @@ describe("MotifSprite.refreshMotif", () => {
     y: 0,
     scale_x: 1,
     scale_y: 1,
+    rotation_deg: 0,
     opacity: 1,
     src_in_us: 0,
     props: {},

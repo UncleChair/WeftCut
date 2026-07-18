@@ -25,16 +25,32 @@ export async function launchFreshApp(
 }
 
 export async function launchApp(
-  opts: { userDataDir?: string } = {},
+  opts: { userDataDir?: string; locale?: string } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
+  const locale = opts.locale ?? 'en-US'
+  const localeBase = locale.split('-')[0] ?? locale
+  const processLocale = `${locale.replace('-', '_')}.UTF-8`
+  // Chromium switches must precede the app entry. Otherwise Electron forwards
+  // them as application arguments and userData isolation is ignored. Linux
+  // Chromium derives navigator.language from the process locale despite
+  // --lang, so set both inputs for deterministic accessible names.
+  const args = [`--lang=${locale}`]
+  if (opts.userDataDir) args.push(`--user-data-dir=${opts.userDataDir}`)
+  args.push(MAIN)
   const app = await electron.launch({
     // A fixed `--user-data-dir` lets a spec relaunch over the same userData so
     // app-level state (e.g. <userData>/workspaces.json) survives a restart.
-    args: opts.userDataDir ? [MAIN, `--user-data-dir=${opts.userDataDir}`] : [MAIN],
+    args,
     // The elevated-run notice is a modal dialog; suppress it so it can't block the
     // (often elevated) e2e/CI Electron process. `env` replaces process.env, so
     // spread it to keep PATH etc. that the app needs.
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+    env: {
+      ...process.env,
+      LANG: processLocale,
+      LANGUAGE: `${locale.replace('-', '_')}:${localeBase}`,
+      LC_ALL: processLocale,
+      WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1',
+    } as Record<string, string>,
   })
   const page = await app.firstWindow({ timeout: 60_000 })
   await page.waitForLoadState('domcontentloaded')

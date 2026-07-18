@@ -54,9 +54,10 @@ export const usePlayheadTimeUs = (): number =>
 /// write, reading the latest value — so a pause or single seek always
 /// converges on the exact final position (a leading-edge throttle would
 /// freeze one frame early).
-export function usePlayheadTimeUsThrottled(intervalMs = 100): number {
+export function usePlayheadTimeUsThrottled(intervalMs = 100, enabled = true): number {
   const [timeUs, setTimeUs] = useState<number>(() => playheadTimeUs());
   useEffect(() => {
+    if (!enabled) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unsub = usePlayheadStore.subscribe(() => {
       if (timer !== null) return;
@@ -65,13 +66,13 @@ export function usePlayheadTimeUsThrottled(intervalMs = 100): number {
         setTimeUs(playheadTimeUs());
       }, intervalMs);
     });
-    // Re-sync after (re)mount — the store may have moved while unmounted
-    // (StrictMode remount, panel toggled closed during playback).
+    // Re-sync after (re)mount or re-enable. The store may have moved while the
+    // consumer was hidden, and playback may now be paused with no future event.
     setTimeUs(playheadTimeUs());
     return () => {
       unsub();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [intervalMs]);
+  }, [enabled, intervalMs]);
   return timeUs;
 }

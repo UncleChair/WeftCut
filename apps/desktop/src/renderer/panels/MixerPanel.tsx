@@ -1,11 +1,10 @@
 // The project-wide Role Mixer Panel and the single home for per-Role mute/solo.
 // Boundary: it mixes the four canonical Audio Roles, never Tracks or per-Layer
 // audio, and folds Role gain — no real per-Role buses or meters live here. The
-// only meter is the real master RMS/Peak read off the shared store. See
-// `docs/audio.md` for the recorded-gain / unrecorded-mute-solo model and the Role
-// Mixer decisions in `.scratch/nle-dockable-workspace/spec.md`.
+// only meter is the real master RMS/Peak read off the shared store. The
+// recorded-gain / unrecorded-mute-solo model is documented in `docs/audio.md`.
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RotateCcwIcon } from "lucide-react";
 import { AppNumberField } from "../components/AppNumberField";
@@ -93,6 +92,13 @@ function RoleChannel({ role, mix, onMutated }: {
   // Set by Escape so the pointer-release `onValueCommitted` that still fires
   // after a cancel records nothing.
   const cancelledRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      clearRoleGainOverride(role);
+    },
+    [role],
+  );
 
   // Live audition: the fader drives the draft (so the number field mirrors it)
   // and a renderer-local Role override the Compositor's audio pass folds in
@@ -237,9 +243,10 @@ function MasterMeter() {
 
 export interface RoleMixerPanelProps {
   onMutated: () => Promise<void>;
+  visible?: boolean;
 }
 
-export function RoleMixerPanel({ onMutated }: RoleMixerPanelProps) {
+export function RoleMixerPanel({ onMutated, visible = true }: RoleMixerPanelProps) {
   const { t } = useTranslation();
   const roles = useAudioRoles();
   const byRole = new Map(roles.map((r) => [r.role, r]));
@@ -277,10 +284,7 @@ export function RoleMixerPanel({ onMutated }: RoleMixerPanelProps) {
           return <RoleChannel key={role} role={role} mix={mix} onMutated={onMutated} />;
         })}
       </div>
-      <MasterMeter />
+      {visible ? <MasterMeter /> : null}
     </section>
   );
 }
-
-// Temporary source-compatible name while the fixed RightPanel is retired.
-export { RoleMixerPanel as MixerPanel };

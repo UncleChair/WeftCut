@@ -26,6 +26,7 @@ export const X: ParamDescriptor = { paramKey: "x", labelKey: "property_panel.x",
 export const Y: ParamDescriptor = { paramKey: "y", labelKey: "property_panel.y", fallback: 0, step: 1, widgets: ["number"] };
 export const SCALE_X: ParamDescriptor = { paramKey: "scale_x", labelKey: "property_panel.scale_x", fallback: 1, step: 0.05, widgets: ["number"] };
 export const SCALE_Y: ParamDescriptor = { paramKey: "scale_y", labelKey: "property_panel.scale_y", fallback: 1, step: 0.05, widgets: ["number"] };
+export const ROTATION: ParamDescriptor = { paramKey: "rotation_deg", labelKey: "property_panel.rotation", fallback: 0, step: 1, widgets: ["number"] };
 export const OPACITY: ParamDescriptor = { paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1, step: 0.01, min: 0, max: 1, widgets: ["slider", "readout"] };
 export const GAIN_DB: ParamDescriptor = { paramKey: "gain_db", labelKey: "property_panel.gain_db", fallback: 0, step: 0.5, min: -30, max: 20, widgets: ["number"] };
 export const PAN: ParamDescriptor = { paramKey: "pan", labelKey: "property_panel.pan", fallback: 0, step: 0.05, min: -1, max: 1, widgets: ["slider"] };
@@ -34,10 +35,9 @@ export function animatableParams(kind: string): ParamDescriptor[] {
   switch (kind) {
     case "VideoClip":
     case "Motif":
-      return [X, Y, SCALE_X, SCALE_Y, OPACITY];
     case "ImageOverlay":
     case "Text":
-      return [X, Y, OPACITY];
+      return [X, Y, SCALE_X, SCALE_Y, ROTATION, OPACITY];
     case "Audio":
       return [GAIN_DB, PAN];
     default:

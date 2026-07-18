@@ -3,14 +3,16 @@ import { animatableParams, readParamTrack } from "./descriptors";
 import type { AnimTrack, LayerSummary } from "../ipc";
 
 describe("animatableParams", () => {
-  it("VideoClip exposes the five transform+opacity params", () => {
+  it("visual layers expose the complete transform plus opacity", () => {
     expect(animatableParams("VideoClip").map((d) => d.paramKey)).toEqual([
-      "x", "y", "scale_x", "scale_y", "opacity",
+      "x", "y", "scale_x", "scale_y", "rotation_deg", "opacity",
     ]);
-  });
-  it("ImageOverlay and Text omit scale", () => {
-    expect(animatableParams("ImageOverlay").map((d) => d.paramKey)).toEqual(["x", "y", "opacity"]);
-    expect(animatableParams("Text").map((d) => d.paramKey)).toEqual(["x", "y", "opacity"]);
+    expect(animatableParams("ImageOverlay").map((d) => d.paramKey)).toEqual([
+      "x", "y", "scale_x", "scale_y", "rotation_deg", "opacity",
+    ]);
+    expect(animatableParams("Text").map((d) => d.paramKey)).toEqual([
+      "x", "y", "scale_x", "scale_y", "rotation_deg", "opacity",
+    ]);
   });
   it("Audio exposes gain_db + pan", () => {
     expect(animatableParams("Audio").map((d) => d.paramKey)).toEqual(["gain_db", "pan"]);

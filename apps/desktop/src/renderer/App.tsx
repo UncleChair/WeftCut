@@ -752,6 +752,7 @@ export function App({ onCloseProject }: AppProps) {
         <DockWorkspace
           contracts={dockPanelContracts}
           onControllerReady={handleWorkspaceControllerReady}
+          {...(workspaceProfiles ? { onResetWorkspace: workspaceProfiles.reset } : {})}
         />
       </main>
 

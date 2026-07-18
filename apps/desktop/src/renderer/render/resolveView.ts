@@ -5,8 +5,8 @@
 // keyframed properties hold preview==export by construction.
 //
 // Fallback constants mirror the Rust view builder's per-property defaults
-// when a track is absent (x/y -> 0, scale -> 1, opacity -> 1, gain/pan -> 0,
-// text WHITE, color BLACK).
+// when a track is absent (x/y/rotation -> 0, scale/opacity -> 1,
+// gain/pan -> 0, text WHITE, color BLACK).
 import type {
   ColorView,
   ImageOverlayView,
@@ -18,36 +18,43 @@ import type {
 import { resolveAnimated, resolveAnimatedColor } from "./animated";
 
 export interface ResolvedVideoClipView
-  extends Omit<VideoClipView, "x" | "y" | "scale_x" | "scale_y" | "opacity"> {
+  extends Omit<VideoClipView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
   x: number;
   y: number;
   scale_x: number;
   scale_y: number;
+  rotation_deg: number;
   opacity: number;
 }
 export interface ResolvedImageOverlayView
-  extends Omit<ImageOverlayView, "x" | "y" | "scale_x" | "scale_y" | "opacity"> {
+  extends Omit<ImageOverlayView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
   x: number;
   y: number;
   scale_x: number;
   scale_y: number;
+  rotation_deg: number;
   opacity: number;
 }
-export interface ResolvedTextView extends Omit<TextView, "color" | "x" | "y" | "opacity"> {
+export interface ResolvedTextView
+  extends Omit<TextView, "color" | "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
   color: Rgba;
   x: number;
   y: number;
+  scale_x: number;
+  scale_y: number;
+  rotation_deg: number;
   opacity: number;
 }
 export interface ResolvedColorView extends Omit<ColorView, "color"> {
   color: Rgba;
 }
 export interface ResolvedMotifView
-  extends Omit<MotifView, "x" | "y" | "scale_x" | "scale_y" | "opacity"> {
+  extends Omit<MotifView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
   x: number;
   y: number;
   scale_x: number;
   scale_y: number;
+  rotation_deg: number;
   opacity: number;
 }
 
@@ -61,6 +68,7 @@ export function resolveVideoClipView(v: VideoClipView, tInLayerUs: number): Reso
     y: resolveAnimated(v.y, tInLayerUs, 0),
     scale_x: resolveAnimated(v.scale_x, tInLayerUs, 1),
     scale_y: resolveAnimated(v.scale_y, tInLayerUs, 1),
+    rotation_deg: resolveAnimated(v.rotation_deg, tInLayerUs, 0),
     opacity: resolveAnimated(v.opacity, tInLayerUs, 1),
   };
 }
@@ -75,6 +83,7 @@ export function resolveImageOverlayView(
     y: resolveAnimated(v.y, tInLayerUs, 0),
     scale_x: resolveAnimated(v.scale_x, tInLayerUs, 1),
     scale_y: resolveAnimated(v.scale_y, tInLayerUs, 1),
+    rotation_deg: resolveAnimated(v.rotation_deg, tInLayerUs, 0),
     opacity: resolveAnimated(v.opacity, tInLayerUs, 1),
   };
 }
@@ -85,6 +94,9 @@ export function resolveTextView(v: TextView, tInLayerUs: number): ResolvedTextVi
     color: resolveAnimatedColor(v.color, tInLayerUs, WHITE),
     x: resolveAnimated(v.x, tInLayerUs, 0),
     y: resolveAnimated(v.y, tInLayerUs, 0),
+    scale_x: resolveAnimated(v.scale_x, tInLayerUs, 1),
+    scale_y: resolveAnimated(v.scale_y, tInLayerUs, 1),
+    rotation_deg: resolveAnimated(v.rotation_deg, tInLayerUs, 0),
     opacity: resolveAnimated(v.opacity, tInLayerUs, 1),
   };
 }
@@ -100,6 +112,7 @@ export function resolveMotifView(v: MotifView, tInLayerUs: number): ResolvedMoti
     y: resolveAnimated(v.y, tInLayerUs, 0),
     scale_x: resolveAnimated(v.scale_x, tInLayerUs, 1),
     scale_y: resolveAnimated(v.scale_y, tInLayerUs, 1),
+    rotation_deg: resolveAnimated(v.rotation_deg, tInLayerUs, 0),
     opacity: resolveAnimated(v.opacity, tInLayerUs, 1),
   };
 }

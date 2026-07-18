@@ -1891,6 +1891,7 @@ export class Compositor {
       params.scale_y * sourceScaleY * (params.flip_v ? -1 : 1),
     );
     clip.sprite.sprite.position.set(params.x, params.y);
+    clip.sprite.sprite.angle = params.rotation_deg;
     clip.sprite.sprite.alpha = params.opacity;
     clip.sprite.sprite.zIndex = z;
   }

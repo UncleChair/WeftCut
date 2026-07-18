@@ -1,7 +1,7 @@
 // Pure peek-list logic: which hidden-track layers sit near the playhead
 // (`buildPeekItems`), what category a layer falls into (`peekCategory`),
 // and how the items group under the AB-mode filter (`groupPeekItems`).
-// Kept out of RightPanel.tsx so it is unit-testable without a DOM.
+// Kept separate from presentation so it is unit-testable without a DOM.
 
 import type { LayerSummary, TrackSummary } from "../ipc";
 

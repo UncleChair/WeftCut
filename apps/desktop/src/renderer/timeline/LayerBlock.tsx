@@ -170,7 +170,7 @@ export function LayerBlock({
   /// layer paired with audio); "bottom" = bottom half (audio paired
   /// with visual). Determines the rendered height + top offset.
   slice: LayerSlice;
-  /// Primary selection (drives PropertyPanel). One layer at a time.
+  /// Primary selection (drives the Attribute panel). One layer at a time.
   isPrimary: boolean;
   /// Member of the current selection set (highlight only).
   isSelected: boolean;

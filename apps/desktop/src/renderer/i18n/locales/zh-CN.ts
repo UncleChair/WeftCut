@@ -113,6 +113,10 @@ const zhCN: Resources = {
     export: "导出",
     tools: "工具",
   },
+  dev: {
+    menu: "开发",
+    performance_monitor: "性能监视器",
+  },
   view: {
     display_mode_heading: "轨道显示",
     panels_heading: "面板",
@@ -126,6 +130,44 @@ const zhCN: Resources = {
     save_workspace_as: "工作区另存为…",
     rename_workspace: "重命名工作区…",
     delete_workspace: "删除工作区",
+  },
+  dock_workspace: {
+    editing_label: "编辑工作区",
+    empty_label: "空工作区",
+    all_closed: "所有面板均已关闭。",
+    open_panel: "打开面板",
+    reset: "重置工作区",
+    move_panel: "移动{{title}}",
+    close_panel: "关闭{{title}}",
+    panels: {
+      media: "素材库",
+      preview: "预览",
+      timeline: "时间线",
+      attribute: "属性",
+      caption: "字幕",
+      "role-mixer": "角色混音",
+      effect: "效果",
+      nearby: "附近",
+    },
+    position: {
+      left: "左侧",
+      right: "右侧",
+      top: "上方",
+      bottom: "下方",
+      center: "中央",
+    },
+    announce: {
+      opened: "已打开{{title}}",
+      closed: "已关闭{{title}}",
+      maximized: "已最大化{{title}}",
+      restored: "已还原{{title}}",
+      pick_target:
+        "正在移动{{source}}。当前目标为{{target}}，第 {{current}} 个，共 {{total}} 个。按 Enter 选择。",
+      pick_edge: "停靠到{{target}}的{{position}}。使用方向键更改位置，然后按 Enter。",
+      committed: "已将{{source}}移动到{{target}}的{{position}}。",
+      cancelled: "已取消移动面板。",
+      not_allowed: "无法执行该面板移动。",
+    },
   },
   workspace_name: {
     save_as_title: "工作区另存为",
@@ -282,12 +324,6 @@ const zhCN: Resources = {
     empty_title: "播放头附近没有内容",
     empty_msg:
       "播放头 ±{{window}} 范围内没有隐藏轨道的图层。请移动播放头或扩大窗口。",
-  },
-  right_panel: {
-    tablist_label: "右侧面板",
-    properties: "属性",
-    captions: "字幕",
-    audio: "音频",
   },
   agent_mode: {
     client_label: "代理：{{client}}",
@@ -676,6 +712,7 @@ const zhCN: Resources = {
     media: "素材",
     scale_x: "缩放 X",
     scale_y: "缩放 Y",
+    rotation: "旋转（°）",
     speed: "速度",
     fade_in: "淡入",
     fade_out: "淡出",
@@ -718,6 +755,7 @@ const zhCN: Resources = {
     title: "字幕",
     empty: "导入字幕文件或自动字幕以创建字幕。",
     style_heading: "字幕样式",
+    seek_to: "跳到 {{timecode}} 的字幕",
   },
   audio_roles: { dialogue: "对白", music: "音乐", sfx: "音效", voiceover: "旁白" },
   mixer: {

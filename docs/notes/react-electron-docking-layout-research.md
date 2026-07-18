@@ -1,7 +1,5 @@
 # React/Electron docking layout research
 
-Date: 2026-07-17
-
 ## Question
 
 Which existing layout manager best fits WeftCut's editor workspace: recursive
@@ -13,21 +11,20 @@ secondary-window surfaces?
 
 - The renderer is React 19.2 under `React.StrictMode`, Electron 42, ESM,
   TypeScript 6 with strict options, and an Electron sandbox with no Node globals.
-- The editor is currently a fixed CSS grid. Timeline and preview sizing depends
+- Timeline and preview sizing depends
   on `min-width: 0`, `min-height: 0`, and explicit overflow boundaries; a dock
   host must preserve those constraints.
 - Media Pool to Timeline uses native HTML5 drag-and-drop with the custom
   `application/x-weftcut-media` MIME type. OS file drops use `Files`. Panel
   docking must not consume either drag class.
-- App-level JSON persistence already has a main-process-owned atomic-store
-  pattern. Named workspace layouts should follow it and remain outside project
-  state and undo history.
-- Renderer-created `window.open` is currently denied. Library popout features
-  are therefore out of scope for the first phase even if a candidate supports
+- Workspace JSON persistence follows the main-process-owned atomic-store
+  pattern and remains outside project state and undo history.
+- Renderer-created `window.open` is denied. Library popout features
+  are therefore outside the supported workspace scope even if a candidate supports
   them.
 
 Relevant local sources: [desktop dependencies](../../apps/desktop/package.json),
-[current fixed layout](../../apps/desktop/src/renderer/styles/app.css),
+[workspace styling](../../apps/desktop/src/renderer/styles/workspace.css),
 [editor mounting](../../apps/desktop/src/renderer/App.tsx), and
 [window hardening](../../apps/desktop/src/main/windows.ts).
 
@@ -52,7 +49,7 @@ the serialized form.
 Dockview's built-in popouts open a same-origin browser window and require a
 separate host page. That conflicts with WeftCut's current `window.open` denial
 and does not solve the app's renderer-local playback/selection/GPU-preview
-routing. Do not enable it in phase 1. Its serialized floating/popout model is
+routing. Do not enable it. Its serialized floating/popout model is
 still useful as a future seam.
 
 Primary sources:
@@ -78,7 +75,7 @@ window's JavaScript realm and renders into another document. That can preserve
 React state, but global `window`/`document` listeners, timers, resize observers,
 and third-party portals need owner-document awareness. WeftCut has many direct
 global listeners, and renderer `window.open` is denied, so this feature must
-also stay disabled in phase 1.
+stay disabled.
 
 Primary sources:
 
@@ -112,12 +109,12 @@ Primary sources:
 
 ## Recommendation
 
-Use **Dockview v7 behind a WeftCut-owned workspace adapter**, subject to a small
-throwaway compatibility spike before implementation. Keep FlexLayout as the
-fallback if the spike shows that Dockview's imperative model or drag handling
-cannot be isolated cleanly.
+Use **Dockview v7 behind a WeftCut-owned workspace adapter**. The adapter keeps
+Dockview's imperative model and serialized form behind an application-owned
+boundary; FlexLayout remains the documented alternative if a future Dockview
+change can no longer be isolated there.
 
-The spike should prove all of the following:
+The integration must preserve all of the following:
 
 1. React 19 StrictMode mounts each panel without duplicate registration or
    leaked subscriptions.
@@ -129,7 +126,7 @@ The spike should prove all of the following:
    the playback engine during an ordinary dock move.
 6. Keyboard tab/group navigation remains usable after WeftCut theme overrides.
 
-Do not expose Dockview's floating or popout commands in phase 1. Do not let
+Do not expose Dockview's floating or popout commands. Do not let
 library JSON become WeftCut's durable public schema directly: wrap it in a
 versioned workspace record so a future library migration can be handled at one
 boundary.

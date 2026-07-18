@@ -24,9 +24,8 @@ import {
 } from "./mediaDrag";
 import {
   clearLayerSelection,
-  selectedLayerId,
-  selectedLayerIds,
-  setSelectedLayerId,
+  setLayerSelection,
+  useSelectionStore,
 } from "../state/selectionStore";
 
 const ipcMocks = vi.hoisted(() => ({
@@ -116,6 +115,7 @@ const tinyVideoLayer: LayerSummary = {
     y: staticNum(0),
     scale_x: staticNum(1),
     scale_y: staticNum(1),
+    rotation_deg: staticNum(0),
     opacity: staticNum(1),
     speed: 1,
     flip_h: false,
@@ -176,7 +176,8 @@ function renderTimeline(overrides: {
   onMutated?: () => Promise<void>;
 }) {
   const onSeek = overrides.onSeek ?? vi.fn();
-  setSelectedLayerId(overrides.selectedLayerId ?? null);
+  const selectedLayerId = overrides.selectedLayerId ?? null;
+  setLayerSelection(selectedLayerId, selectedLayerId ? [selectedLayerId] : []);
   return render(
     <Timeline
       tracks={overrides.tracks ?? [track]}
@@ -226,8 +227,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 200 });
     fireEvent.click(ruler);
     expect(onSeek).toHaveBeenCalled();
-    expect(selectedLayerId()).toBe(layer.id);
-    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
   });
 
   it("clicking empty lane background deselects and does NOT seek", () => {
@@ -238,8 +239,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 200 });
     fireEvent.click(lane);
     expect(onSeek).not.toHaveBeenCalled();
-    expect(selectedLayerId()).toBeNull();
-    expect(selectedLayerIds().size).toBe(0);
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
   });
 
   it("clicking a clip selects it without seeking", () => {
@@ -249,8 +250,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerDown(block, { button: 0, clientX: 50 });
     fireEvent.pointerUp(window, { clientX: 50 });
     fireEvent.click(block);
-    expect(selectedLayerId()).toBe(layer.id);
-    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
     expect(onSeek).not.toHaveBeenCalled();
   });
 
@@ -261,8 +262,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerDown(preview, { button: 0, clientX: 50 });
     fireEvent.pointerUp(window, { clientX: 50 });
     fireEvent.click(preview);
-    expect(selectedLayerId()).toBe(layer.id);
-    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
     expect(onSeek).not.toHaveBeenCalled();
   });
 
@@ -276,18 +277,18 @@ describe("Timeline seek/selection coupling", () => {
 
     fireEvent.pointerDown(first, { button: 0, clientX: 40 });
     fireEvent.pointerUp(window, { clientX: 40 });
-    expect(selectedLayerId()).toBe(layer.id);
-    expect(Array.from(selectedLayerIds())).toEqual([layer.id, groupedLayer.id]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id, groupedLayer.id]);
 
     fireEvent.pointerDown(second, { button: 0, clientX: 200, altKey: true });
     fireEvent.pointerUp(window, { clientX: 200, altKey: true });
-    expect(selectedLayerId()).toBe(groupedLayer.id);
-    expect(Array.from(selectedLayerIds())).toEqual([groupedLayer.id]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe(groupedLayer.id);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([groupedLayer.id]);
 
     fireEvent.pointerDown(first, { button: 0, clientX: 40, shiftKey: true });
     fireEvent.pointerUp(window, { clientX: 40, shiftKey: true });
-    expect(selectedLayerId()).toBe(layer.id);
-    expect(new Set(selectedLayerIds())).toEqual(
+    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(new Set(useSelectionStore.getState().selectedLayerIds)).toEqual(
       new Set([layer.id, groupedLayer.id]),
     );
   });
@@ -356,8 +357,8 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 300 });
     // pointerdown seeks once; the drag-scrub pointermove seeks again.
     expect(onSeek.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(selectedLayerId()).toBe(layer.id);
-    expect(Array.from(selectedLayerIds())).toEqual([layer.id]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
   });
 
   it("pins the ruler and playhead head during vertical timeline scrolling", () => {

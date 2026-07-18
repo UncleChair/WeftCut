@@ -201,105 +201,6 @@
   padding: 0;
 }
 
-/* ============================================================
-   Right panel (see `docs/data-model.md`)
-   A/B-roll context occupies a bounded region above three persistent tool
-   workspaces. Inactive tab panels stay mounted so draft fields retain state.
-   ============================================================ */
-.right-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  padding-right: 4px;
-  overflow: hidden;
-}
-
-.right-panel-tabs {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.right-panel-tab-list {
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  background: var(--surface-sunken);
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.right-panel-tab {
-  position: relative;
-  min-width: 0;
-  min-height: 45px;
-  padding: 6px 3px 5px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  border: 0;
-  border-right: 1px solid var(--border-soft);
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--muted-foreground);
-  font: inherit;
-  cursor: pointer;
-}
-
-.right-panel-tab:last-child {
-  border-right: 0;
-}
-
-.right-panel-tab:hover {
-  background: var(--secondary);
-  color: var(--foreground);
-}
-
-.right-panel-tab.is-active {
-  border-bottom-color: var(--selection);
-  background: var(--card);
-  color: var(--foreground);
-}
-
-.right-panel-tab:focus-visible {
-  z-index: 1;
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-
-.right-panel-tab-icon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 17px;
-}
-
-.right-panel-tab-label {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-tight);
-}
-
-.right-panel-tab-panel {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  /* Prevent portaled-control anchors and hint bubbles from creating a second
-     horizontal scroll axis in the narrow inspector column. */
-  overflow-x: hidden;
-}
-
-.right-panel-tab-panel[hidden] {
-  display: none;
-}
-
 .right-panel-peek {
   flex: 0 0 auto;
   min-height: 0;
@@ -495,7 +396,7 @@
   align-items: center;
   gap: 10px;
   padding-top: 10px;
-  border-top: 1px solid var(--border, hsl(0 0% 100% / 0.08));
+  border-top: 1px solid var(--border);
 }
 
 .mixer-master-label {
@@ -504,7 +405,7 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--muted-foreground, hsl(0 0% 100% / 0.55));
+  color: var(--muted-foreground);
 }
 
 .mixer-master-bars {
@@ -524,7 +425,7 @@
 .mixer-meter-label {
   flex: 0 0 30px;
   font-size: 9px;
-  color: var(--muted-foreground, hsl(0 0% 100% / 0.55));
+  color: var(--muted-foreground);
 }
 
 .mixer-meter-track {
@@ -532,7 +433,7 @@
   height: 6px;
   min-width: 0;
   border-radius: 3px;
-  background: var(--secondary, hsl(0 0% 100% / 0.06));
+  background: var(--secondary);
   overflow: hidden;
 }
 
@@ -541,10 +442,10 @@
   border-radius: 3px;
   background: linear-gradient(
     90deg,
-    hsl(150 60% 45%) 0%,
-    hsl(80 70% 50%) 70%,
-    hsl(45 90% 55%) 88%,
-    hsl(0 80% 55%) 100%
+    var(--success) 0%,
+    var(--success) 65%,
+    var(--warning) 88%,
+    var(--destructive) 100%
   );
   transition: width 90ms linear;
 }
@@ -554,7 +455,7 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-size: var(--font-size-micro);
-  color: var(--muted-foreground, hsl(0 0% 100% / 0.7));
+  color: var(--muted-foreground);
 }
 
 .property-panel {
@@ -562,20 +463,6 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-/* The fixed RightPanel temporarily composes the now-independent Attribute and
-   Effect surfaces in the exact place the old monolithic PropertyPanel used.
-   The stack owns the former outer padding so the extraction adds no spacing. */
-.right-panel-property-stack {
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.right-panel-property-stack > .property-panel {
-  padding: 0;
 }
 
 .property-panel h3 {

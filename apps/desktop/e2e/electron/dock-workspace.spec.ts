@@ -75,7 +75,7 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     expect(ratio(geometry.preview.width, geometry.workspace.width)).toBeCloseTo(0.53, 1);
     expect(ratio(geometry.attribute.width, geometry.workspace.width)).toBeCloseTo(0.25, 1);
 
-    // Single groups expose only the zero-height six-dot overlay. The context
+    // Single groups expose only the compact drag-handle overlay. The context
     // group has three visible labels in its compact 28px tab strip.
     for (const label of ["Media Pool", "Preview", "Timeline"]) {
       await expect(
@@ -194,7 +194,7 @@ test("hidden Preview keeps clock resources alive while presentation sleeps", asy
     );
     await page
       .getByTitle("Move Effect")
-      .locator(".weft-dock-six-dot")
+      .locator(".weft-dock-grip")
       .dragTo(page.locator('[data-panel-kind="preview"]'), {
         targetPosition: { x: 240, y: 140 },
       });

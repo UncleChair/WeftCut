@@ -95,27 +95,8 @@ export function retainLayerSelection(validLayerIds: Iterable<string>): void {
   commitSelection(retainedPrimary, retained);
 }
 
-/// Compatibility entry point for existing single-Layer surfaces. This is a
-/// replacement selection, never a primary-only mutation.
-export function setSelectedLayerId(id: string | null): void {
-  if (id === null) clearLayerSelection();
-  else commitSelection(id, [id]);
-}
-
-export function selectedLayerId(): string | null {
-  return useSelectionStore.getState().primaryLayerId;
-}
-
-export function selectedLayerIds(): ReadonlySet<string> {
-  return useSelectionStore.getState().selectedLayerIds;
-}
-
 export const usePrimaryLayerId = (): string | null =>
   useSelectionStore((state) => state.primaryLayerId);
 
 export const useSelectedLayerIds = (): ReadonlySet<string> =>
   useSelectionStore((state) => state.selectedLayerIds);
-
-/// Compatibility hook while existing contextual components still call their
-/// primary prop `selectedLayerId`.
-export const useSelectedLayerId = usePrimaryLayerId;

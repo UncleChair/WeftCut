@@ -5,8 +5,8 @@
 // so the change is audible before it is committed. Release commits one
 // `setRoleGain` and clears the override; Escape clears it without recording.
 // Never enters React state or undo, and export never sees it. Mirrors the
-// per-effect color-pick overrides in effectOverrides.ts. Role Mixer decisions:
-// `.scratch/nle-dockable-workspace/spec.md`.
+// per-effect color-pick overrides in effectOverrides.ts; the recorded-gain and
+// audition semantics are documented in `docs/audio.md`.
 
 import type { AudioRole } from "../../ipc";
 

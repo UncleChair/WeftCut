@@ -11,10 +11,13 @@ import {
 } from "react";
 import {
   DockviewReact,
+  type DockviewMessages,
   type DockviewReadyEvent,
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
 } from "dockview-react";
+import { GripVerticalIcon, XIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import "dockview-react/dist/styles/dockview.css";
 
 import { Timeline } from "../timeline/Timeline";
@@ -34,14 +37,15 @@ import {
 import { type ProxyState } from "../panels/mediaReadiness";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
+import { jumpToTimeUs } from "../state/navigation";
 import { Menu, MenuItem } from "../menu/Menu";
 import {
-  DOCK_COMPONENT_ID,
-  DOCK_TAB_COMPONENT_ID,
   DockWorkspaceAdapter,
   type DockWorkspaceController,
 } from "./dockWorkspaceAdapter";
 import {
+  DOCK_COMPONENT_ID,
+  DOCK_TAB_COMPONENT_ID,
   PANEL_KINDS,
   PANEL_REGISTRY,
   isPanelKind,
@@ -170,6 +174,7 @@ function PreviewDockPanel() {
 
 function TimelineDockPanel() {
   const contracts = useContracts();
+  const runtime = useDockPanelRuntime();
   const summary = contracts.summary;
   return (
     <section className="timeline">
@@ -186,6 +191,7 @@ function TimelineDockPanel() {
         importing={contracts.importingMediaIds}
         proxyState={contracts.proxyState}
         previewDecodable={contracts.previewDecodableMediaIds}
+        visible={runtime.isVisible}
         onExitBlade={contracts.onExitBlade}
         onSeek={contracts.onSeek}
         onMutated={contracts.onMutated}
@@ -196,7 +202,8 @@ function TimelineDockPanel() {
 
 function AttributeDockPanel() {
   const contracts = useContracts();
-  const currentTimeUs = usePlayheadTimeUsThrottled();
+  const runtime = useDockPanelRuntime();
+  const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
   const summary = contracts.summary;
   return (
     <div className="weft-dock-panel-scroll">
@@ -214,7 +221,8 @@ function AttributeDockPanel() {
 
 function EffectDockPanel() {
   const contracts = useContracts();
-  const currentTimeUs = usePlayheadTimeUsThrottled();
+  const runtime = useDockPanelRuntime();
+  const currentTimeUs = usePlayheadTimeUsThrottled(100, runtime.isVisible);
   return (
     <div className="weft-dock-panel-scroll">
       <EffectPanel
@@ -239,7 +247,7 @@ function CaptionDockPanel() {
           // reveal it in Timeline — synchronizing caption navigation with
           // timeline context (mirrors Nearby's explicit Go To).
           contracts.onSelectLayer(layerId);
-          contracts.onSeek(startUs);
+          jumpToTimeUs(startUs);
           contracts.onRevealTrack(trackId, layerId);
         }}
       />
@@ -249,15 +257,17 @@ function CaptionDockPanel() {
 
 function RoleMixerDockPanel() {
   const contracts = useContracts();
+  const runtime = useDockPanelRuntime();
   return (
     <div className="weft-dock-panel-scroll">
-      <RoleMixerPanel onMutated={contracts.onMutated} />
+      <RoleMixerPanel onMutated={contracts.onMutated} visible={runtime.isVisible} />
     </div>
   );
 }
 
 function NearbyDockPanel() {
   const contracts = useContracts();
+  const runtime = useDockPanelRuntime();
   const summary = contracts.summary;
   return (
     <div className="weft-dock-panel-scroll">
@@ -266,6 +276,7 @@ function NearbyDockPanel() {
         selectedLayerId={contracts.selectedLayerId}
         fpsNum={summary?.composition.fps_num ?? 30}
         fpsDen={summary?.composition.fps_den ?? 1}
+        visible={runtime.isVisible}
         onPick={(layerId, trackId) => {
           // Reveal without seeking: the near-playhead window stays put.
           contracts.onSelectLayer(layerId);
@@ -274,7 +285,7 @@ function NearbyDockPanel() {
         onGoTo={(layerId, trackId, startUs) => {
           // Explicit navigation: seek the playhead and scroll into view.
           contracts.onSelectLayer(layerId);
-          contracts.onSeek(startUs);
+          jumpToTimeUs(startUs);
           contracts.onRevealTrack(trackId, layerId);
         }}
         onRename={async (layerId, nextLabel) => {
@@ -327,14 +338,15 @@ export function WeftCutPanelRenderer({
 export function WeftCutDockTab({
   api,
 }: IDockviewPanelHeaderProps<DockPanelParams>) {
+  const { t } = useTranslation();
   const kind = isPanelKind(api.id) ? api.id : null;
-  const title = kind ? PANEL_REGISTRY[kind].title : (api.title ?? api.id);
+  const title = kind ? t(PANEL_REGISTRY[kind].titleKey) : (api.title ?? api.id);
   const chrome = useWorkspaceChrome();
   const multiple = api.group.panels.length > 1;
   return (
     <div
       className="weft-dock-tab"
-      title={`Move ${title}`}
+      title={t("dock_workspace.move_panel", { title })}
       onPointerEnter={() => chrome.setHoveredPanel(kind)}
       onPointerLeave={() => chrome.setHoveredPanel(null)}
       onDoubleClick={(event) => {
@@ -344,21 +356,16 @@ export function WeftCutDockTab({
         chrome.toggleMaximize(kind);
       }}
     >
-      <span className="weft-dock-six-dot" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-        <i />
-        <i />
-        <i />
+      <span className="weft-dock-grip" aria-hidden="true">
+        <GripVerticalIcon size={14} />
       </span>
       <span className="weft-dock-tab-label">{title}</span>
       {kind && multiple ? (
         <button
           type="button"
           className="weft-dock-tab-close"
-          aria-label={`Close ${title}`}
-          title={`Close ${title}`}
+          aria-label={t("dock_workspace.close_panel", { title })}
+          title={t("dock_workspace.close_panel", { title })}
           draggable={false}
           onMouseDown={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
@@ -369,7 +376,7 @@ export function WeftCutDockTab({
             chrome.closePanel(kind);
           }}
         >
-          ×
+          <XIcon size={12} aria-hidden="true" />
         </button>
       ) : null}
     </div>
@@ -378,21 +385,26 @@ export function WeftCutDockTab({
 
 export function EmptyWorkspaceRecovery() {
   const chrome = useWorkspaceChrome();
+  const { t } = useTranslation();
   return (
-    <div className="weft-dock-empty" role="region" aria-label="Empty workspace">
-      <p>All Panels are closed.</p>
+    <div
+      className="weft-dock-empty"
+      role="region"
+      aria-label={t("dock_workspace.empty_label")}
+    >
+      <p>{t("dock_workspace.all_closed")}</p>
       <div className="weft-dock-empty-actions">
-        <Menu label="Open Panel">
+        <Menu label={t("dock_workspace.open_panel")}>
           {PANEL_KINDS.map((kind) => (
             <MenuItem
               key={kind}
-              label={PANEL_REGISTRY[kind].title}
+              label={t(PANEL_REGISTRY[kind].titleKey)}
               onSelect={() => chrome.openPanel(kind)}
             />
           ))}
         </Menu>
         <button type="button" onClick={() => chrome.resetWorkspace()}>
-          Reset Workspace
+          {t("dock_workspace.reset")}
         </button>
       </div>
     </div>
@@ -405,13 +417,40 @@ const DOCK_TAB_COMPONENTS = { [DOCK_TAB_COMPONENT_ID]: WeftCutDockTab };
 interface DockWorkspaceProps {
   contracts: DockPanelContracts;
   onControllerReady?: (controller: DockWorkspaceController | null) => void;
+  onResetWorkspace?: () => void;
 }
 
 export function DockWorkspace({
   contracts,
   onControllerReady,
+  onResetWorkspace,
 }: DockWorkspaceProps) {
+  const { t, i18n } = useTranslation();
   const adapterRef = useRef<DockWorkspaceAdapter | null>(null);
+  const messages = useMemo<Partial<DockviewMessages>>(
+    () => ({
+      panelOpened: (title) => t("dock_workspace.announce.opened", { title }),
+      panelClosed: (title) => t("dock_workspace.announce.closed", { title }),
+      groupMaximized: (title) => t("dock_workspace.announce.maximized", { title }),
+      groupRestored: (title) => t("dock_workspace.announce.restored", { title }),
+      movePickTarget: (source, target, current, total) =>
+        t("dock_workspace.announce.pick_target", { source, target, current, total }),
+      movePickEdge: (position, target) =>
+        t("dock_workspace.announce.pick_edge", {
+          position: t(`dock_workspace.position.${position}`),
+          target,
+        }),
+      moveCommitted: (source, target, position) =>
+        t("dock_workspace.announce.committed", {
+          source,
+          target,
+          position: t(`dock_workspace.position.${position}`),
+        }),
+      moveCancelled: () => t("dock_workspace.announce.cancelled"),
+      moveNotAllowed: () => t("dock_workspace.announce.not_allowed"),
+    }),
+    [t],
+  );
 
   const chrome = useMemo<WorkspaceChromeCommands>(
     () => ({
@@ -419,9 +458,12 @@ export function DockWorkspace({
       setHoveredPanel: (kind) => adapterRef.current?.setHoveredPanel(kind),
       toggleMaximize: (kind) => adapterRef.current?.toggleMaximize(kind),
       openPanel: (kind) => adapterRef.current?.openPanel(kind),
-      resetWorkspace: () => adapterRef.current?.resetWorkspace(),
+      resetWorkspace: () => {
+        if (onResetWorkspace) onResetWorkspace();
+        else adapterRef.current?.resetWorkspace();
+      },
     }),
-    [],
+    [onResetWorkspace],
   );
 
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
@@ -435,6 +477,10 @@ export function DockWorkspace({
     onControllerReady?.(adapter);
   }, [onControllerReady]);
 
+  useEffect(() => {
+    adapterRef.current?.refreshPanelTitles();
+  }, [i18n.resolvedLanguage]);
+
   useEffect(
     () => () => {
       adapterRef.current?.dispose();
@@ -447,7 +493,10 @@ export function DockWorkspace({
   return (
     <ContractsContext.Provider value={contracts}>
       <WorkspaceChromeContext.Provider value={chrome}>
-        <section className="dock-workspace" aria-label="Editing workspace">
+        <section
+          className="dock-workspace"
+          aria-label={t("dock_workspace.editing_label")}
+        >
           <DockviewReact
             className="weft-dockview"
             components={DOCK_COMPONENTS}
@@ -456,9 +505,10 @@ export function DockWorkspace({
             onReady={onReady}
             disableFloatingGroups
             dndStrategy="html5"
-            keyboardNavigation={false}
+            keyboardNavigation
             noPanelsOverlay="watermark"
-            announcements={false}
+            announcements
+            messages={messages}
           />
         </section>
       </WorkspaceChromeContext.Provider>

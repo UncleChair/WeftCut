@@ -63,11 +63,12 @@ export function DevMenu({
     });
   },
 }: DevMenuProps) {
+  const { t } = useTranslation();
   if (!enabled) return null;
   return (
-    <Menu label="Dev">
+    <Menu label={t("dev.menu")}>
       <MenuItem
-        label="Performance Monitor"
+        label={t("dev.performance_monitor")}
         onSelect={onOpenPerformanceMonitor}
       />
     </Menu>

@@ -229,6 +229,18 @@ describe("RoleMixerPanel — Role Gain audition", () => {
     expect(clearRoleGainOverride).not.toHaveBeenCalled();
     expect(setRoleGain).not.toHaveBeenCalled();
   });
+
+  it("clears live audition overrides when the panel is closed", () => {
+    const view = render(
+      <RoleMixerPanel onMutated={vi.fn().mockResolvedValue(undefined)} />,
+    );
+    fireEvent.change(faderFor("Dialogue"), { target: { value: "-6" } });
+    clearRoleGainOverride.mockClear();
+
+    view.unmount();
+
+    expect(clearRoleGainOverride).toHaveBeenCalledWith("dialogue");
+  });
 });
 
 describe("RoleMixerPanel — master meter", () => {

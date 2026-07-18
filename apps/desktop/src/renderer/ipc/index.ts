@@ -135,6 +135,7 @@ export interface MotifView {
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
   scale_y: AnimTrack<number>;
+  rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   /// Window offset (µs) into the Motif's intrinsic content. Width = layer
   /// width; src_out is derived. 0 = content frame 0.
@@ -154,6 +155,7 @@ export interface VideoClipView {
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
   scale_y: AnimTrack<number>;
+  rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   speed: number;
   flip_h: boolean;
@@ -169,6 +171,7 @@ export interface ImageOverlayView {
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
   scale_y: AnimTrack<number>;
+  rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   fade_in_us: number;
   fade_out_us: number;
@@ -186,6 +189,9 @@ export interface TextView {
   color: AnimTrack<Rgba>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;
+  scale_x: AnimTrack<number>;
+  scale_y: AnimTrack<number>;
+  rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   outline: { color: Rgba; width: number } | null;
   shadow: { color: Rgba; offset_x: number; offset_y: number; blur: number } | null;

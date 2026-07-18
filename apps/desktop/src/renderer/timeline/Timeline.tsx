@@ -120,6 +120,7 @@ interface TimelineProps {
   /// Media ids whose original can be used as a session preview bridge while
   /// optimization is still running.
   previewDecodable: ReadonlySet<string>;
+  visible?: boolean;
   onExitBlade: () => void;
   onSeek: (tUs: number) => void;
   onMutated: () => Promise<void>;
@@ -139,6 +140,7 @@ export function Timeline({
   importing,
   proxyState,
   previewDecodable,
+  visible = true,
   onExitBlade,
   onSeek,
   onMutated,
@@ -665,6 +667,7 @@ export function Timeline({
                   track={track}
                   fpsNum={fpsNum}
                   fpsDen={fpsDen}
+                  visible={visible}
                   onCommitParamTrack={onCommitParamTrack}
                 />
               )}
@@ -743,7 +746,7 @@ export function Timeline({
               />
             )}
           </div>
-          <TimelinePlayhead pxPerSec={pxPerSec} />
+          <TimelinePlayhead pxPerSec={pxPerSec} visible={visible} />
         </div>
       </div>
     </div>
@@ -771,15 +774,16 @@ export function Timeline({
 /// re-rendered the whole Timeline (and formerly the whole App) per frame.
 /// Here the subscription mutates `style.left` on the ref'd node directly —
 /// zero React commits while playing.
-function TimelinePlayhead({ pxPerSec }: { pxPerSec: number }) {
+function TimelinePlayhead({ pxPerSec, visible }: { pxPerSec: number; visible: boolean }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
+    if (!visible) return;
     const apply = (tUs: number) => {
       if (ref.current) ref.current.style.left = `${(tUs / 1_000_000) * pxPerSec}px`;
     };
     apply(playheadTimeUs());
     return usePlayheadStore.subscribe((s) => apply(s.timeUs));
-  }, [pxPerSec]);
+  }, [pxPerSec, visible]);
   return (
     <div
       ref={ref}

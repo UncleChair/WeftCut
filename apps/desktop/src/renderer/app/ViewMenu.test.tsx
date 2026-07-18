@@ -5,10 +5,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(cleanup);
 
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-i18next")>()),
   useTranslation: () => ({
-    t: (_key: string, options?: { defaultValue?: string }) =>
-      options?.defaultValue ?? _key,
+    t: (key: string, options?: { defaultValue?: string }) =>
+      options?.defaultValue ??
+      ({
+        "dock_workspace.panels.media": "Media Pool",
+        "dock_workspace.panels.preview": "Preview",
+        "dock_workspace.panels.timeline": "Timeline",
+        "dock_workspace.panels.attribute": "Attribute",
+        "dock_workspace.panels.caption": "Caption",
+        "dock_workspace.panels.role-mixer": "Role Mixer",
+        "dock_workspace.panels.effect": "Effect",
+        "dock_workspace.panels.nearby": "Nearby",
+      } as Record<string, string>)[key] ??
+      key,
   }),
 }));
 

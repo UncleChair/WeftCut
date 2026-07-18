@@ -40,17 +40,19 @@ export function KeyframeLaneHeaders({
   track,
   fpsNum,
   fpsDen,
+  visible,
   onCommitParamTrack,
 }: {
   track: TrackSummary;
   fpsNum: number;
   fpsDen: number;
+  visible: boolean;
   onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
 }) {
   const { t } = useTranslation();
   // Panel-rate playhead subscription (tier 3, playheadStore.ts): navigator
   // arrows + value readouts follow playback without per-frame re-renders.
-  const currentTimeUs = usePlayheadTimeUsThrottled();
+  const currentTimeUs = usePlayheadTimeUsThrottled(100, visible);
   const props = trackKeyframeProperties(track);
   const layerIds = useMemo(() => new Set(track.layers.map((l) => l.id)), [track.layers]);
   const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);

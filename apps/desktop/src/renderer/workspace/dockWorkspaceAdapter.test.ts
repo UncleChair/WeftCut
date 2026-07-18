@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { type DockviewApi } from "dockview-react";
 
 import {
-  DOCK_COMPONENT_ID,
-  DOCK_TAB_COMPONENT_ID,
   DockWorkspaceAdapter,
   isBusinessDockDrag,
 } from "./dockWorkspaceAdapter";
 import {
+  DOCK_COMPONENT_ID,
+  DOCK_TAB_COMPONENT_ID,
   EDITING_OPEN_PANEL_KINDS,
   PANEL_KINDS,
   PANEL_REGISTRY,
@@ -506,6 +506,8 @@ describe("DockWorkspaceAdapter", () => {
     expect(Object.keys((snapshot.dockview as { panels: object }).panels).sort()).toEqual(
       [...EDITING_OPEN_PANEL_KINDS].sort(),
     );
+    expect(snapshot.dockview).not.toHaveProperty("activeGroup");
+    expect(snapshot.dockview).not.toHaveProperty("grid.maximizedNode");
   });
 
   it("serializes an all-closed workspace as the intentionally empty state, keeping closed placements", () => {

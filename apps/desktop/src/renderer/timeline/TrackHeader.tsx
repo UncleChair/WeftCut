@@ -96,9 +96,8 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
           {track.enabled ? <Eye size={11} aria-hidden /> : <EyeOff size={11} aria-hidden />}
         </FlagButton>
       )}
-      {/* Mute / Solo moved off the track header onto audio roles (see the
-          Mixer panel). The header now only carries eye + lock; per-role
-          M/S live in MixerPanel, driven by `update_role_flags`. */}
+      {/* Mute / Solo belong to audio roles in the Role Mixer. The track header
+          carries visibility and lock; per-role M/S use `update_role_flags`. */}
       <FlagButton
         active={track.locked}
         activeClass="bg-secondary text-foreground"

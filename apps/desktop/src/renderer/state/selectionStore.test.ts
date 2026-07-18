@@ -3,25 +3,22 @@ import {
   clearLayerSelection,
   extendLayerSelection,
   retainLayerSelection,
-  selectedLayerId,
-  selectedLayerIds,
   setLayerSelection,
-  setSelectedLayerId,
   useSelectionStore,
 } from "./selectionStore";
 
 beforeEach(clearLayerSelection);
 
 describe("selectionStore", () => {
-  it("treats the compatibility single-select write as a complete replacement", () => {
+  it("treats a single-select write as a complete replacement", () => {
     setLayerSelection("layer-1", ["layer-1", "layer-2"]);
-    setSelectedLayerId("layer-3");
+    setLayerSelection("layer-3", ["layer-3"]);
 
-    expect(selectedLayerId()).toBe("layer-3");
-    expect(Array.from(selectedLayerIds())).toEqual(["layer-3"]);
-    setSelectedLayerId(null);
-    expect(selectedLayerId()).toBeNull();
-    expect(selectedLayerIds().size).toBe(0);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-3");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["layer-3"]);
+    clearLayerSelection();
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
   });
 
   it("sets a complete range and its primary atomically", () => {
@@ -42,8 +39,8 @@ describe("selectionStore", () => {
     setLayerSelection("layer-1", ["layer-1"]);
     extendLayerSelection("layer-3", ["layer-2", "layer-3"]);
 
-    expect(selectedLayerId()).toBe("layer-3");
-    expect(Array.from(selectedLayerIds())).toEqual([
+    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-3");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([
       "layer-1",
       "layer-2",
       "layer-3",
@@ -52,15 +49,15 @@ describe("selectionStore", () => {
 
   it("normalizes every write to the primary/set invariants", () => {
     setLayerSelection("primary", ["sibling"]);
-    expect(selectedLayerIds().has("primary")).toBe(true);
+    expect(useSelectionStore.getState().selectedLayerIds.has("primary")).toBe(true);
 
     setLayerSelection(null, ["survivor"]);
-    expect(selectedLayerId()).toBe("survivor");
-    expect(selectedLayerIds().has("survivor")).toBe(true);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("survivor");
+    expect(useSelectionStore.getState().selectedLayerIds.has("survivor")).toBe(true);
 
     clearLayerSelection();
-    expect(selectedLayerId()).toBeNull();
-    expect(selectedLayerIds().size).toBe(0);
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
   });
 
   it("does not notify subscribers when primary and set membership are unchanged", () => {
@@ -78,11 +75,11 @@ describe("selectionStore", () => {
     setLayerSelection("layer-1", ["layer-1", "layer-2", "layer-3"]);
     retainLayerSelection(["layer-2", "layer-3"]);
 
-    expect(selectedLayerId()).toBe("layer-2");
-    expect(Array.from(selectedLayerIds())).toEqual(["layer-2", "layer-3"]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-2");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["layer-2", "layer-3"]);
 
     retainLayerSelection([]);
-    expect(selectedLayerId()).toBeNull();
-    expect(selectedLayerIds().size).toBe(0);
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
   });
 });

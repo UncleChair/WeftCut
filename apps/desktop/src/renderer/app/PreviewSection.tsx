@@ -93,6 +93,7 @@ export function PreviewSection({
           <PlayheadTimecode
             fpsNum={summary?.composition.fps_num ?? 30}
             fpsDen={summary?.composition.fps_den ?? 1}
+            visible={visible}
             editHint={t("transport.timecode_edit_hint")}
             onActivate={() => setTcEditUs(playheadTimeUs())}
           />

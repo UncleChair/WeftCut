@@ -110,6 +110,7 @@ export class ImageOverlaySprite implements StageableSprite {
     if (this.disposed) return;
     this.sprite.position.set(view.x, view.y);
     this.sprite.scale.set(view.scale_x, view.scale_y);
+    this.sprite.angle = view.rotation_deg;
     let alpha = view.opacity;
     if (view.fade_in_us > 0 && tInLayerUs < view.fade_in_us) {
       alpha *= Math.max(0, tInLayerUs / view.fade_in_us);

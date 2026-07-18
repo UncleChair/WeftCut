@@ -30,9 +30,12 @@ interface FakeStore {
 }
 
 // The renderer talks to main over IPC; each wrapper delegates to the fake store.
-const holder = vi.hoisted(() => ({ store: null as FakeStore | null }));
+const holder = vi.hoisted(() => ({
+  store: null as FakeStore | null,
+  getWorkspace: null as (() => Promise<WorkspaceDocument>) | null,
+}));
 vi.mock("../ipc", () => ({
-  workspaceGet: async () => holder.store!.get(),
+  workspaceGet: () => holder.getWorkspace?.() ?? Promise.resolve(holder.store!.get()),
   workspaceSetCurrent: async (current: unknown) => holder.store!.setCurrent(current),
   workspaceSetActive: async (id: string) => holder.store!.setActive(id),
   workspaceSaveBaseline: async () => holder.store!.saveBaseline(),
@@ -78,14 +81,22 @@ function firstView(layout: WeftCutLayout): string | null {
 
 function fakeController() {
   let liveKind: string | null = "preview";
-  let listener: (() => void) | null = null;
-  const calls = { restore: [] as WeftCutLayout[], reset: 0, serialized: 0 };
+  const listeners = new Set<() => void>();
+  const calls = {
+    restore: [] as WeftCutLayout[],
+    reset: 0,
+    serialized: 0,
+    subscribe: 0,
+    unsubscribe: 0,
+  };
   const controller: DockWorkspaceController = {
     getSnapshot: () => EMPTY_DOCK_WORKSPACE_SNAPSHOT,
     subscribe: (l) => {
-      listener = l;
+      calls.subscribe++;
+      listeners.add(l);
       return () => {
-        listener = null;
+        calls.unsubscribe++;
+        listeners.delete(l);
       };
     },
     openPanel: () => {},
@@ -117,7 +128,9 @@ function fakeController() {
     setLiveKind: (k: string | null) => {
       liveKind = k;
     },
-    fireLayoutChange: () => listener?.(),
+    fireLayoutChange: () => {
+      for (const listener of listeners) listener();
+    },
   };
 }
 
@@ -170,6 +183,46 @@ function seedStore(): FakeStore {
 describe("useWorkspacePersistence", () => {
   beforeEach(() => {
     holder.store = seedStore();
+    holder.getWorkspace = null;
+  });
+
+  it("subscribes once when StrictMode replays an in-flight restore", async () => {
+    let resolveGet!: (doc: WorkspaceDocument) => void;
+    const pending = new Promise<WorkspaceDocument>((resolve) => {
+      resolveGet = resolve;
+    });
+    holder.getWorkspace = vi.fn(() => pending);
+    const fake = fakeController();
+    renderHook(() => useWorkspacePersistence(fake.controller), {
+      reactStrictMode: true,
+    });
+    await waitFor(() => expect(holder.getWorkspace).toHaveBeenCalledTimes(2));
+    resolveGet(holder.store!.get());
+
+    await waitFor(() => expect(fake.calls.subscribe).toBe(1));
+    expect(fake.calls.unsubscribe).toBe(0);
+  });
+
+  it("repairs a corrupt active profile with the built-in layout", async () => {
+    holder.store!.setCurrent({ version: 1, empty: false, dockview: { grid: {} } });
+    const fake = fakeController();
+
+    renderHook(() => useWorkspacePersistence(fake.controller));
+
+    await waitFor(() => expect(fake.calls.reset).toBe(1));
+    await waitFor(() =>
+      expect(holder.store!.get().profiles[0]?.current).toEqual(leaf("preview")),
+    );
+  });
+
+  it("leaves the already-mounted built-in baseline intact for a pristine profile", async () => {
+    const fake = fakeController();
+
+    renderHook(() => useWorkspacePersistence(fake.controller));
+
+    await waitFor(() => expect(fake.calls.subscribe).toBe(1));
+    expect(fake.calls.reset).toBe(0);
+    expect(holder.store!.get().profiles[0]?.current).toBeNull();
   });
 
   it("restores the active profile's current layout on mount", async () => {
@@ -291,5 +344,24 @@ describe("useWorkspacePersistence", () => {
     await waitFor(() =>
       expect(holder.store!.get().profiles[0]?.current).toEqual(leaf("caption")),
     );
+  });
+
+  it("contains serialization failures raised by the autosave listener", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fake = fakeController();
+    const { result } = renderHook(() => useWorkspacePersistence(fake.controller));
+    await waitFor(() => expect(result.current).not.toBeNull());
+    await waitFor(() => expect(fake.calls.subscribe).toBe(1));
+
+    fake.controller.serialize = () => {
+      throw new Error("invalid live layout");
+    };
+
+    expect(() => act(() => fake.fireLayoutChange())).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(
+      "[dock-workspace] persist failed:",
+      expect.objectContaining({ message: "invalid live layout" }),
+    );
+    warn.mockRestore();
   });
 });

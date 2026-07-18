@@ -8,18 +8,17 @@ import {
   DOCK_COMPONENT_ID,
   DOCK_TAB_COMPONENT_ID,
   PANEL_REGISTRY,
+  panelTitle,
   type PanelKind,
 } from "./panelRegistry";
 import {
   WEFTCUT_LAYOUT_VERSION,
+  normalizeLayout,
   type PanelPlacement,
   type PanelPlacements,
   type WeftCutLayout,
 } from "./workspaceLayout";
 
-// Re-exported for existing importers (DockWorkspace, tests) that reach for these
-// through the adapter; the canonical home is now panelRegistry (see the note there).
-export { DOCK_COMPONENT_ID, DOCK_TAB_COMPONENT_ID };
 export const WEFTCUT_MEDIA_MIME_PREFIX = "application/x-weftcut-";
 
 export interface DockViewport {
@@ -281,6 +280,12 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     this.emitChange();
   }
 
+  refreshPanelTitles(): void {
+    for (const panel of this.api.panels) {
+      if (isPanelId(panel.id)) panel.api.setTitle(panelTitle(panel.id));
+    }
+  }
+
   resetWorkspace(): void {
     if (this.api.hasMaximizedGroup()) this.api.exitMaximizedGroup();
     this.api.clear();
@@ -297,16 +302,16 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     if (this.api.totalPanels === 0) {
       return { version: WEFTCUT_LAYOUT_VERSION, empty: true, dockview: null, placements };
     }
-    // Dockview only ever holds known singleton Panels here, so toJSON is already
-    // canonical; the read path (normalizeLayout) is where corruption is repaired.
-    // Maximize is a runtime overlay, not grid geometry, so it never lands in the
-    // serialized tree and is never re-applied on restore.
-    return {
+    const normalized = normalizeLayout({
       version: WEFTCUT_LAYOUT_VERSION,
       empty: false,
       dockview: this.api.toJSON(),
       placements,
-    };
+    });
+    if (!normalized) {
+      throw new Error("Dockview produced an invalid live layout");
+    }
+    return normalized;
   }
 
   restore(layout: WeftCutLayout): boolean {
@@ -438,7 +443,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     const params: DockPanelParams = { kind };
     return this.api.addPanel({
       id: kind,
-      title: definition.title,
+      title: panelTitle(kind),
       component: DOCK_COMPONENT_ID,
       tabComponent: DOCK_TAB_COMPONENT_ID,
       renderer: "always",

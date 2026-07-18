@@ -1,19 +1,8 @@
-// WeftCut layout snapshot schema + the validation/normalization the renderer owns
-// for the app-level Workspace document (src/shared/workspace.ts). The main-process
-// store keeps the `current` / `saved` slots opaque; every rule about what a valid
-// Dock arrangement looks like lives here, next to the adapter that produces and
-// consumes it.
-//
-// Two jobs:
-//   1. normalizeLayout — turn an untrusted, possibly-corrupt persisted value into
-//      a canonical WeftCutLayout, or null when it is unrecoverable. Unknown Panel
-//      kinds are dropped, a Panel kind appearing more than once is reduced to its
-//      first placement, empty groups collapse, and an intentionally empty layout
-//      is preserved as a distinct, valid state.
-//   2. resolveWorkspaceLayout — turn a Workspace profile's opaque layout slots
-//      ({ current, saved }) into the ordered list of restore candidates (current,
-//      then saved). The built-in Editing baseline is the implicit final fallback
-//      the caller applies when this list is empty or every candidate fails.
+// Renderer-owned schema and validation for opaque Workspace layout slots.
+// Canonical snapshots contain only known singleton Panels and durable geometry;
+// transient focus/maximize state is excluded, while an intentionally empty
+// Workspace remains distinct from missing or corrupt data. Main never interprets
+// this shape; the persistence hook owns fallback selection and repair.
 
 import type { SerializedDockview } from "dockview-react";
 
@@ -22,6 +11,7 @@ import {
   DOCK_TAB_COMPONENT_ID,
   PANEL_REGISTRY,
   isPanelKind,
+  panelTitle,
   type PanelKind,
 } from "./panelRegistry";
 
@@ -93,7 +83,7 @@ function synthesizePanel(kind: PanelKind) {
     id: kind,
     contentComponent: DOCK_COMPONENT_ID,
     tabComponent: DOCK_TAB_COMPONENT_ID,
-    title: definition.title,
+    title: panelTitle(kind),
     renderer: "always" as const,
     params: { kind },
     minimumWidth: definition.minimumWidth,
@@ -183,13 +173,9 @@ function normalizeDockview(raw: unknown): SerializedDockview | null {
   const orientation = grid.orientation === "VERTICAL" ? "VERTICAL" : "HORIZONTAL";
   const width = sizeOf(grid.width) ?? 1_000;
   const height = sizeOf(grid.height) ?? 720;
-  const activeGroup =
-    typeof raw.activeGroup === "string" ? raw.activeGroup : undefined;
-
   const normalized = {
     grid: { root, orientation, width, height },
     panels,
-    ...(activeGroup ? { activeGroup } : {}),
   };
   return normalized as unknown as SerializedDockview;
 }

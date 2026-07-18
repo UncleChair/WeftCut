@@ -3,15 +3,10 @@ import { BrowserWindow, shell } from 'electron'
 import { secondaryWindowConfig, type SecondaryWinOpts } from './windowConfig.js'
 import { broadcastEvent } from './broadcast.js'
 import { isPageZoomShortcut, matchDevKeyAction } from './inputPolicy.js'
+import { WIN_CLOSED_EVENT, WIN_OPENED_EVENT } from '../shared/windowEvents.js'
 
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
-
-// Broadcast labelled secondary-window lifecycle to every renderer. Consumers
-// use this to start work only while their independent window exists and to
-// reconcile every close path — caption button, OS, or renderer crash.
-export const WIN_OPENED_EVENT = 'weftcut://win-opened'
-export const WIN_CLOSED_EVENT = 'weftcut://win-closed'
 
 // Lock down navigation + window creation on a window. The renderer only ever
 // loads local content (the dev server in dev, file:// in prod), so: deny every

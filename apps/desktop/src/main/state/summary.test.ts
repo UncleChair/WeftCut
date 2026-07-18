@@ -83,6 +83,7 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
     expect([v.font_family, v.font_size_px, v.weight, v.italic]).toEqual(['Liberation Sans', 54, 700, true])
     expect([v.anchor_x, v.anchor_y]).toEqual([0.5, 1.0])
     expect(v.align).toBe('Center')
+    expect([v.scale_x, v.scale_y, v.rotation_deg]).toEqual([stat(1), stat(1), stat(0)])
     expect(v.outline).not.toBeNull()
     expect(v.shadow).not.toBeNull()
   })

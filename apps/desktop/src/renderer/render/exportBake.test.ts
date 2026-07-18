@@ -60,6 +60,7 @@ function motifLayer(
     y: stat(0),
     scale_x: stat(1),
     scale_y: stat(1),
+    rotation_deg: stat(0),
     opacity: stat(1),
     src_in_us: 0,
     props: {},

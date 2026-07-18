@@ -16,10 +16,9 @@ import { registerTransport } from "./playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
 import {
-  selectedLayerId,
-  selectedLayerIds,
+  clearLayerSelection,
   setLayerSelection,
-  setSelectedLayerId,
+  useSelectionStore,
 } from "./selectionStore";
 import type { ProjectSummary } from "../ipc";
 
@@ -56,6 +55,7 @@ function fixtureSummary(): ProjectSummary {
               src_in_us: 0, src_out_us: 2_000_000,
               x: { mode: "Static", value: 0 }, y: { mode: "Static", value: 0 },
               scale_x: { mode: "Static", value: 1 }, scale_y: { mode: "Static", value: 1 },
+              rotation_deg: { mode: "Static", value: 0 },
               opacity: { mode: "Static", value: 1 },
               speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
             },
@@ -82,7 +82,7 @@ function fixtureSummary(): ProjectSummary {
 
 beforeEach(() => {
   useProjectStore.getState().apply(fixtureSummary());
-  setSelectedLayerId(null);
+  clearLayerSelection();
   setPlayheadTimeUs(0);
   vi.clearAllMocks();
 });
@@ -112,8 +112,8 @@ describe("jumpToLayer", () => {
     const unScroll = registerScrollToTime(scroll);
     expect(jumpToLayer("l1")).toBe(true);
     expect(reveal).toHaveBeenCalledWith("t1", "l1");
-    expect(selectedLayerId()).toBe("l1");
-    expect(Array.from(selectedLayerIds())).toEqual(["l1"]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1"]);
     expect(playheadTimeUs()).toBe(2_000_000);
     expect(scroll).toHaveBeenCalledWith(2_000_000);
     unReveal();
@@ -122,12 +122,12 @@ describe("jumpToLayer", () => {
 
   it("falls back to plain selection when no reveal handle is registered", () => {
     expect(jumpToLayer("l1")).toBe(true);
-    expect(selectedLayerId()).toBe("l1");
+    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
   });
 
   it("returns false for a stale layer id and changes nothing", () => {
     expect(jumpToLayer("ghost")).toBe(false);
-    expect(selectedLayerId()).toBeNull();
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
     expect(playheadTimeUs()).toBe(0);
   });
 });
@@ -135,12 +135,12 @@ describe("jumpToLayer", () => {
 describe("selectLayer / selectLayers", () => {
   it("selects one Layer or an exact complete set", () => {
     expect(selectLayer("l1")).toBe(true);
-    expect(selectedLayerId()).toBe("l1");
-    expect(Array.from(selectedLayerIds())).toEqual(["l1"]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1"]);
 
     expect(selectLayers(["l1", "l2"], "l2")).toBe(true);
-    expect(selectedLayerId()).toBe("l2");
-    expect(Array.from(selectedLayerIds())).toEqual(["l1", "l2"]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("l2");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1", "l2"]);
   });
 
   it("rejects a stale Layer or invalid primary without a partial update", () => {
@@ -148,16 +148,16 @@ describe("selectLayer / selectLayers", () => {
 
     expect(selectLayers(["l2", "ghost"], "l2")).toBe(false);
     expect(selectLayers(["l1"], "l2")).toBe(false);
-    expect(selectedLayerId()).toBe("l1");
-    expect(Array.from(selectedLayerIds())).toEqual(["l1", "l2"]);
+    expect(useSelectionStore.getState().primaryLayerId).toBe("l1");
+    expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual(["l1", "l2"]);
   });
 
   it("clears the complete selection when the Project session resets", () => {
     setLayerSelection("l2", ["l1", "l2"]);
     useProjectStore.getState().apply(null);
 
-    expect(selectedLayerId()).toBeNull();
-    expect(selectedLayerIds().size).toBe(0);
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
   });
 });
 

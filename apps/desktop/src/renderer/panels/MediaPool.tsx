@@ -106,8 +106,8 @@ function MediaDragPreview() {
 
 /// The media-pool column doubles as the drop target for Explorer file
 /// drags. HTML5 drag events fire because the OS-level drop interception is
-/// off (the legacy `dragDropEnabled: false` rationale, load-bearing for the
-/// timeline's internal DnD); under Electron the dropped Files' real
+/// off so the timeline's internal HTML5 drag-and-drop remains available;
+/// under Electron the dropped Files' real
 /// filesystem paths are surfaced through the main-process drop handler.
 /// Internal media-item drags carry a custom MIME type, not "Files", and are
 /// ignored here.

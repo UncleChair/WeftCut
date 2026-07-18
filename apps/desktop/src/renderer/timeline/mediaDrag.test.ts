@@ -55,6 +55,7 @@ function visualLayer(
       y: staticNum(0),
       scale_x: staticNum(1),
       scale_y: staticNum(1),
+      rotation_deg: staticNum(0),
       opacity: staticNum(1),
       speed: 1,
       flip_h: false,

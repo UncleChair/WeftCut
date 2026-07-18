@@ -16,16 +16,21 @@ describe("resolveView", () => {
   it("static tracks resolve to their value at any time", () => {
     const raw: VideoClipView = {
       media_id: "m", media_label: "m", src_in_us: 0, src_out_us: 1,
-      x: stat(10), y: stat(20), scale_x: stat(1), scale_y: stat(2), opacity: stat(0.5),
+      x: stat(10), y: stat(20), scale_x: stat(1), scale_y: stat(2),
+      rotation_deg: stat(15), opacity: stat(0.5),
       speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
     };
     const r = resolveVideoClipView(raw, 123_456);
-    expect(r).toMatchObject({ x: 10, y: 20, scale_x: 1, scale_y: 2, opacity: 0.5, speed: 1 });
+    expect(r).toMatchObject({
+      x: 10, y: 20, scale_x: 1, scale_y: 2,
+      rotation_deg: 15, opacity: 0.5, speed: 1,
+    });
   });
   it("keyframed numeric tracks resolve time-aware (value_at semantics)", () => {
     const raw: VideoClipView = {
       media_id: "m", media_label: "m", src_in_us: 0, src_out_us: 1,
-      x: ramp, y: stat(0), scale_x: stat(1), scale_y: stat(1), opacity: ramp,
+      x: ramp, y: stat(0), scale_x: stat(1), scale_y: stat(1),
+      rotation_deg: stat(0), opacity: ramp,
       speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
     };
     expect(resolveVideoClipView(raw, 500_000).x).toBeCloseTo(0.5, 9);
@@ -37,7 +42,8 @@ describe("resolveView", () => {
       weight: 400, italic: false, align: "Left",
       anchor_x: 0, anchor_y: 0,
       color: { mode: "Static", value: white },
-      x: stat(0), y: stat(0), opacity: stat(1),
+      x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1),
+      rotation_deg: stat(0), opacity: stat(1),
       outline: null, shadow: null,
     };
     expect(resolveTextView(raw, 0).color).toEqual(white);
@@ -79,6 +85,9 @@ describe("resolveView", () => {
         color: { mode: "Static", value: { r: 255, g: 255, b: 255, a: 255 } },
         x: { mode: "Static", value: 100 },
         y: { mode: "Static", value: 200 },
+        scale_x: { mode: "Static", value: 1 },
+        scale_y: { mode: "Static", value: 1 },
+        rotation_deg: { mode: "Static", value: 0 },
         opacity: { mode: "Static", value: 1 },
         outline: { color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 },
         shadow: { color: { r: 0, g: 0, b: 0, a: 255 }, offset_x: 2, offset_y: 2, blur: 2 },

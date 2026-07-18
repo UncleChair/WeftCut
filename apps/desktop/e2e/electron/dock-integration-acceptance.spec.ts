@@ -16,10 +16,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Caption Panel spec seeds from (see caption-corpus.spec.ts).
 const SRT_PATH = path.resolve(__dirname, "../fixtures/subtitles/overlapping.srt");
 
-// Ticket 16 — cross-Panel Electron integration acceptance. Where the earlier
-// tickets each proved one Panel or one workspace command in isolation, this file
-// exercises the finished Dock Workspace as one editor workflow and hardens the
-// integration seams: focus, maximize, empty recovery, edge splits, Preview
+// Cross-Panel Electron integration acceptance. This file exercises the Dock
+// Workspace as one editor workflow and protects the integration seams: focus,
+// maximize, empty recovery, edge splits, Preview
 // resource continuity across the dock op matrix, and the invariant that layout
 // mutations never touch the Project or its undo history.
 //
@@ -71,7 +70,7 @@ const panelKinds = async (page: Page): Promise<string[]> =>
     .sort();
 
 /// The tab labels currently visible in a compact multi-Panel tab strip. A
-/// single-Panel group shows none (its header is the zero-height six-dot overlay).
+/// single-Panel group shows none (its header is a compact drag-handle overlay).
 const visibleTabLabels = async (page: Page): Promise<string[]> =>
   page
     .locator(".weft-dock-tab-label")

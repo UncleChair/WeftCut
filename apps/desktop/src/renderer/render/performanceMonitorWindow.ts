@@ -3,9 +3,14 @@
 // operation outside the dashboard component lets the Dev menu reopen/focus the
 // monitor without mounting any telemetry UI in the editor.
 
+import {
+  WIN_CLOSED_EVENT,
+  WIN_OPENED_EVENT,
+} from "../../shared/windowEvents";
+
 export const PERF_MONITOR_WINDOW_LABEL = "perf-hud";
-export const PERF_MONITOR_WINDOW_OPENED_EVENT = "weftcut://win-opened";
-export const PERF_MONITOR_WINDOW_CLOSED_EVENT = "weftcut://win-closed";
+export const PERF_MONITOR_WINDOW_OPENED_EVENT = WIN_OPENED_EVENT;
+export const PERF_MONITOR_WINDOW_CLOSED_EVENT = WIN_CLOSED_EVENT;
 
 const PERF_MONITOR_WINDOW_OPTIONS = {
   url: "/?perfHud=1",
