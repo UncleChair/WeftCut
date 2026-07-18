@@ -321,7 +321,7 @@
   border-radius: var(--radius-control);
   font-size: var(--font-size-body);
   cursor: pointer;
-  transition: border-color 120ms, color 120ms;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .startup-locale-toggle .globe-icon {
@@ -646,7 +646,7 @@
   padding: 2px 8px;
   border-radius: var(--radius-control);
   opacity: 0;
-  transition: opacity 120ms ease, color 120ms, background 120ms;
+  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
 
 .startup-recent-remove:focus-visible {
@@ -665,7 +665,7 @@
 
 .startup-recent-remove:hover {
   color: var(--color-red-300);
-  background: rgba(248, 113, 113, 0.12);
+  background: color-mix(in srgb, var(--destructive) 12%, transparent);
 }
 
 .startup-recent-toggle {
@@ -677,7 +677,7 @@
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  transition: color 120ms;
+  transition: color var(--transition-fast);
 }
 
 

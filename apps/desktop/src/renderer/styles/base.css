@@ -31,7 +31,7 @@
 *::-webkit-scrollbar-thumb {
   background-color: var(--accent);
   border-radius: var(--radius-control);
-  transition: background-color 180ms ease;
+  transition: background-color var(--transition-base);
 }
 
 *::-webkit-scrollbar-thumb:hover {

@@ -238,7 +238,10 @@
     --keyframe: #facc15;
 
     /* Motion — two speeds, shared easing, so hover/focus transitions stop
-       ranging across 80/100/120/160/180ms with mixed easings. */
+       ranging across 80/100/120/160/180ms with mixed easings. Continuous
+       data-driven transitions (meter/progress width updates) deliberately
+       stay Nms linear literals, and choreographed keyframe animations keep
+       their own timing. */
     --transition-fast: 90ms ease-out;
     --transition-base: 150ms ease-out;
 

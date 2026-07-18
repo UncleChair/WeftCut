@@ -98,7 +98,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .app-switch[data-checked] {
@@ -124,7 +124,7 @@
   height: 10px;
   border-radius: 50%;
   background: var(--muted-foreground);
-  transition: left 120ms ease, background 120ms ease;
+  transition: left var(--transition-fast), background var(--transition-fast);
 }
 
 .app-switch-thumb[data-checked] {

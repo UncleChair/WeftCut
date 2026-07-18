@@ -171,7 +171,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .preview-transport button:hover:not(:disabled) {
