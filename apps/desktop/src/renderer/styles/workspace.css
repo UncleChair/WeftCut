@@ -81,6 +81,8 @@
   display: flex;
   align-items: center;
   gap: 7px;
+  /* The whole tab is the dock drag source. */
+  cursor: grab;
 }
 
 .weft-dock-grip {
@@ -120,48 +122,11 @@
   background: var(--muted);
 }
 
-/* The native Dockview tab remains the only dock drag source. A single-tab
-   header overlays the Panel first row and contributes zero content height;
-   Dockview removes .dv-single-tab as soon as a second Panel joins the group,
-   returning this same header to normal 28px flow without remounting content. */
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab {
-  position: absolute;
-  z-index: 20;
-  top: 5px;
-  right: 8px;
-  width: 18px;
-  height: 18px;
-  overflow: visible;
-  background: transparent;
-}
-
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-scrollable,
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-tabs-container,
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-tab,
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .weft-dock-tab {
-  width: 18px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0;
-  margin: 0;
-  overflow: visible;
-}
-
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .weft-dock-tab {
-  justify-content: center;
-  color: var(--muted-foreground);
-  cursor: grab;
-}
-
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .weft-dock-tab-label,
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-void-container,
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-right-actions-container,
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-left-actions-container,
-.weft-dockview .dv-tabs-and-actions-container.dv-single-tab .dv-pre-actions-container {
-  display: none;
-}
-
-.weft-dockview .dv-tabs-and-actions-container:not(.dv-single-tab) .dv-tab {
+/* Every group keeps its 28px tab header — single-Panel groups included — so
+   the drag handle, Panel title, and close affordance stay in one fixed place
+   regardless of group state. The native Dockview tab remains the only dock
+   drag source. */
+.weft-dockview .dv-tabs-and-actions-container .dv-tab {
   height: 28px;
   padding: 0 8px;
 }

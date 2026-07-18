@@ -75,14 +75,16 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     expect(ratio(geometry.preview.width, geometry.workspace.width)).toBeCloseTo(0.53, 1);
     expect(ratio(geometry.attribute.width, geometry.workspace.width)).toBeCloseTo(0.25, 1);
 
-    // Single groups expose only the compact drag-handle overlay. The context
-    // group has three visible labels in its compact 28px tab strip.
-    for (const label of ["Media Pool", "Preview", "Timeline"]) {
-      await expect(
-        page.locator(".weft-dock-tab-label", { hasText: label }),
-      ).toBeHidden();
-    }
-    for (const label of ["Attribute", "Effect", "Nearby"]) {
+    // Every group keeps its 28px tab strip with a visible title — single-Panel
+    // groups included.
+    for (const label of [
+      "Media Pool",
+      "Preview",
+      "Timeline",
+      "Attribute",
+      "Effect",
+      "Nearby",
+    ]) {
       await expect(
         page.locator(".weft-dock-tab-label", { hasText: label }),
       ).toBeVisible();
@@ -336,7 +338,14 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     // The card gesture never touched the Dock Tree.
     const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "timeline"];
     expect(await panelKinds()).toEqual(defaultPanelSet);
-    expect(await visibleTabLabels()).toEqual(["Attribute", "Effect", "Nearby"]);
+    expect(await visibleTabLabels()).toEqual([
+      "Media Pool",
+      "Preview",
+      "Attribute",
+      "Effect",
+      "Nearby",
+      "Timeline",
+    ]);
 
     // The converse isolation: docking the Effect Panel tab must not reorder
     // the chain. Drop the Effect tab onto Preview's group center.
@@ -348,8 +357,10 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     await expect.poll(async () => (await visibleTabLabels()).sort()).toEqual([
       "Attribute",
       "Effect",
+      "Media Pool",
       "Nearby",
       "Preview",
+      "Timeline",
     ]);
     expect(await panelKinds()).toEqual(defaultPanelSet);
     expect(await effectOrder()).toEqual(reordered);

@@ -69,8 +69,9 @@ const panelKinds = async (page: Page): Promise<string[]> =>
     .filter((k): k is string => k !== null)
     .sort();
 
-/// The tab labels currently visible in a compact multi-Panel tab strip. A
-/// single-Panel group shows none (its header is a compact drag-handle overlay).
+/// The tab labels currently visible across the workspace. Every group keeps
+/// its tab header (single-Panel groups included), so this lists every open
+/// Panel's tab, in DOM order.
 const visibleTabLabels = async (page: Page): Promise<string[]> =>
   page
     .locator(".weft-dock-tab-label")
@@ -227,8 +228,13 @@ test("dragging a tab past another reorders it within the multi-Panel group", asy
     await setupEditor(page, "dock-tabreorder");
 
     // The contextual group tabs Attribute, Effect, Nearby in that DOM order.
+    // Single-Panel groups show their tabs too, so scope reorder checks to the
+    // contextual strip.
+    const CONTEXT_TABS = ["Attribute", "Effect", "Nearby"];
+    const contextual = (labels: string[]) =>
+      labels.filter((l) => CONTEXT_TABS.includes(l));
     const before = await visibleTabLabels(page);
-    expect(before).toEqual(["Attribute", "Effect", "Nearby"]);
+    expect(contextual(before)).toEqual(CONTEXT_TABS);
 
     // Drag the Attribute tab onto the Nearby tab. Dropping on a tab (not a
     // content region) reorders within the group rather than restacking: Attribute
@@ -237,7 +243,9 @@ test("dragging a tab past another reorders it within the multi-Panel group", asy
     await page
       .getByTitle("Move Attribute")
       .dragTo(page.getByTitle("Move Nearby"));
-    await expect.poll(async () => (await visibleTabLabels(page))[0]).not.toBe("Attribute");
+    await expect
+      .poll(async () => contextual(await visibleTabLabels(page))[0])
+      .not.toBe("Attribute");
     expect((await visibleTabLabels(page)).slice().sort()).toEqual(before.slice().sort());
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
   } finally {
@@ -251,12 +259,16 @@ test("an edge drop splits a Panel into its own group beside the target", async (
     await setupEditor(page, "dock-split");
 
     // Nearby starts tabbed with Attribute and Effect in the contextual group, so
-    // only the active contextual tab is visible; Nearby's content is hidden.
+    // only the active contextual tab's content is visible; Nearby's content is
+    // hidden. Every group's tab (single-Panel included) shows its label.
     expect(await panelVisible(page, "nearby")).toBe(false);
     expect((await visibleTabLabels(page)).sort()).toEqual([
       "Attribute",
       "Effect",
+      "Media Pool",
       "Nearby",
+      "Preview",
+      "Timeline",
     ]);
 
     // Drag Nearby's tab to the LEFT edge of Timeline. An edge drop must create a
@@ -274,10 +286,18 @@ test("an edge drop splits a Panel into its own group beside the target", async (
     expect(await panelVisible(page, "timeline")).toBe(true);
     // Still the six built-in Panels open, just re-split into a new group.
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
-    // Nearby left the contextual strip; Attribute and Effect remain tabbed there.
+    // Nearby left the contextual strip for its own group; its tab stays visible
+    // there (single-Panel groups show their header), so all six tabs remain.
     await expect
       .poll(async () => (await visibleTabLabels(page)).filter((l) => l !== "").sort())
-      .toEqual(["Attribute", "Effect"]);
+      .toEqual([
+        "Attribute",
+        "Effect",
+        "Media Pool",
+        "Nearby",
+        "Preview",
+        "Timeline",
+      ]);
     // Nearby now sits to the left of Timeline.
     const nearby = await rect(page, '[data-panel-kind="nearby"]');
     const timelineAfter = await rect(page, '[data-panel-kind="timeline"]');
