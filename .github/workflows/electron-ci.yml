@@ -155,17 +155,17 @@ jobs:
         run: VITE_WEFTCUT_E2E=1 npm run build
 
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
-      # Skipped on Linux — napi's Node-API symbols can't resolve in a standalone test binary
-      # there (Windows uses an import lib, macOS dynamic_lookup; Linux's loader fails at
-      # startup). The 587 tests are platform-independent and run on Windows + macOS; Linux
-      # still verifies the addon compiles (napi:build) and the cross-OS capture (e2e).
+      # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would
+      # otherwise leave unresolved `napi_*` symbols in a standalone `cargo test`
+      # binary (fatal on Linux, whose loader resolves imports at startup); the
+      # `test-noop` feature — NAPI-RS's official Cargo-test mode — stubs those
+      # wrappers so the domain logic links and runs identically on every runner.
+      # This replaced the old Linux skip + macOS `-undefined dynamic_lookup` link
+      # hack. test-noop is TEST-ONLY and must never enter napi:build's feature set.
+      # See docs/notes/napi-rs-linux-testing.md.
       - name: Rust tests
-        if: runner.os != 'Linux'
         shell: bash
         run: |
-          case "$RUNNER_OS" in
-            macOS) export RUSTFLAGS="-C link-arg=-Wl,-undefined,dynamic_lookup" ;;
-          esac
           # weftcut-eval is the shared-math leaf; the snap cross-language golden
           # lives here now (it moved off the napi crate). Pure Rust, no napi
           # linkage, so it tests standalone. (Its wasm build is gated separately
@@ -173,9 +173,11 @@ jobs:
           cargo test -p weftcut-eval --manifest-path native/Cargo.toml
           # Feature union must match napi:build (the real crate features are
           # jobs/export/mcp/cloud — motifs migrated to TS and is NOT a Cargo
-          # feature). export+cloud both pull in jobs, so this compiles every
-          # #[cfg(feature)] module. Keep in lockstep with the napi:build script.
-          cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud
+          # feature) PLUS test-noop for standalone-binary symbol resolution.
+          # export+cloud both pull in jobs, so this compiles every
+          # #[cfg(feature)] module. Keep the jobs/export/mcp/cloud set in lockstep
+          # with the napi:build script; test-noop is test-only (never in the addon).
+          cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud,test-noop
           if [ "$RUNNER_OS" = "Windows" ]; then
             # Component crate: no cargo features (union rule is per-addon).
             FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win" \

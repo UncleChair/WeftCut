@@ -103,6 +103,17 @@ export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_c
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
 
+# test-noop: NAPI-RS's official Cargo-test compilation mode (TEST-ONLY, never in
+# `napi:build`). A `cargo test` binary is a standalone executable, not a
+# Node/Electron host, so the `#[napi]` exports' direct `napi_*` imports have no
+# provider — fatal on Linux, whose loader resolves imports at startup. Enabling
+# `napi/noop` + `napi-derive/noop` stubs those wrappers to no-ops so the domain
+# logic under them links and runs identically on all three runners, replacing the
+# old Linux skip + macOS `-undefined dynamic_lookup` link hack. Exported wrappers
+# vanish under noop, so this also produces expected `dead_code` warnings.
+# See docs/notes/napi-rs-linux-testing.md.
+test-noop = ["napi/noop", "napi-derive/noop"]
+
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 # (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).
 [profile.dev]
