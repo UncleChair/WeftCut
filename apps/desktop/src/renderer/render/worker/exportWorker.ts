@@ -404,6 +404,17 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           sourceColor: req.project.mediaColor[g.mediaId],
           sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
           ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
+          // The WebCodecs export lane composites each decoded VideoFrame via a
+          // 2D-canvas `drawImage` (VideoClipSprite.bindFromSnapshot). A
+          // HARDWARE-decoded VideoFrame is GPU-backed and, on some GPU/driver
+          // stacks (observed: Linux + real GPU, in a Worker), that drawImage is
+          // a silent no-op — the canvas stays transparent and every exported
+          // frame is black, with no decoder error to trip the HW→SW fallback.
+          // Software decode yields CPU-backed frames that drawImage reliably.
+          // Export is offline, so the SW-decode cost is acceptable for the
+          // robustness. (Native-routed lanes bind their own textures and are
+          // unaffected.)
+          ...(url && !nativeExport ? { preferSoftware: true } : {}),
           ...(nativeExport ? { nativeExport } : {}),
         });
         await handle.decodeRange(g.srcAUs, g.srcBUs);
