@@ -73,6 +73,12 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
     (id) => (window as unknown as { __weftcutTest: { revealLayer(a: { layerId: string }): void } }).__weftcutTest.revealLayer({ layerId: id }),
     layerId,
   )
+  // Bring the Effect tab forward: the pristine baseline docks it inactive behind
+  // Attribute (workspaceLayout.ts contextual group, activeView "attribute"), which
+  // leaves effect-colorpick-0 rendered but visibility:hidden. Mirrors
+  // effects-smoke.spec.ts — both used to pass only because a pre-isolation leaked
+  // shared-userData layout had this tab active.
+  await page.locator('.weft-dock-tab-label', { hasText: 'Effect' }).click()
   const pickBtn = page.getByTestId('effect-colorpick-0')
   await pickBtn.waitFor({ state: 'visible', timeout: 15_000 })
   await pickBtn.click()

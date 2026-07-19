@@ -75,6 +75,14 @@ test('a real DOM file-drop on the media pool imports via wireFileDrop', async ()
       canvas: { width: 1280, height: 720, fpsNum: 30, fpsDen: 1 },
     })
 
+    // The launch splash is a full-window overlay (data-drag-region) that owns a
+    // ~2.5 s intro before it exits and unmounts. Playwright's locator actions
+    // auto-wait for actionability, but Input.dispatchDragEvent below is a raw
+    // coordinate dispatch with NO such retry — fired during the intro it lands on
+    // the splash, not the media pool, and the preload's closest('.media-pool')
+    // guard then discards the drop. Wait the splash out before dropping.
+    await page.locator('.splash-screen').waitFor({ state: 'detached', timeout: 15_000 })
+
     // The drop targets the media pool; resolve its viewport-center coordinates.
     await page.waitForSelector('.media-pool')
     const box = await page.locator('.media-pool').boundingBox()
