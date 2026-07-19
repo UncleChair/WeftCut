@@ -1,0 +1,8 @@
+# Commits that `git blame` should skip (pure formatting / mechanical rewrites,
+# no logic change). One full 40-char commit hash per line; `#` starts a comment.
+#
+# Enable locally (per clone, not automatic):
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# One-time `cargo fmt --all` reformat of apps/desktop/native (no logic change).
+4dba2cd7750520665435bff1fabe48d92db0bc3e
