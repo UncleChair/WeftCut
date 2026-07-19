@@ -414,14 +414,28 @@ test.describe('multi-codec export smoke (Electron)', () => {
       )
       expect(existsSync(OUTPUT), 'ProRes output file must exist').toBe(true)
 
-      // Codec shape: ProRes 422, 10-bit 4:2:2, explicit limited range (the
-      // sink tags every intermediate/delivery codec with the bt709/limited
-      // 4-tuple; ProRes further requires the pix_fmt to actually be 10-bit).
-      const st = probeVideoStream(OUTPUT, 'codec_name,profile,pix_fmt,color_range')
+      // Codec shape: ProRes 422, 10-bit 4:2:2, bt709 color tags. The sink passes
+      // the full bt709/limited 4-tuple (-colorspace/-color_primaries/-color_trc/
+      // -color_range tv) for every codec, and ProRes must be 10-bit.
+      //
+      // color_range caveat (ffmpeg ProRes limitation, NOT a sink bug): ffmpeg's
+      // ProRes encoders (prores / prores_aw / prores_ks, n7.1.x) write the
+      // primaries/transfer/matrix into the MOV 'colr' atom but do NOT emit a range
+      // flag for ProRes — every variant probes color_range "unknown", while DNxHR /
+      // HEVC / H.264 from the IDENTICAL sink args carry "tv". ProRes is limited-range
+      // by convention, so an unset flag is the expected deliverable. Assert the tags
+      // ffmpeg does write, and tolerate an unset range for ProRes only.
+      const st = probeVideoStream(
+        OUTPUT,
+        'codec_name,profile,pix_fmt,color_space,color_transfer,color_primaries,color_range',
+      )
       console.log('[e2e] ProRes output stream:', JSON.stringify(st))
       expect(st.codec_name).toBe('prores')
       expect(st.pix_fmt).toBe('yuv422p10le')
-      expect(st.color_range).toBe('tv')
+      expect(st.color_space).toBe('bt709')
+      expect(st.color_transfer).toBe('bt709')
+      expect(st.color_primaries).toBe('bt709')
+      expect(['tv', 'unknown']).toContain(st.color_range)
 
       const SSIM_FLOOR = 0.6
       const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
