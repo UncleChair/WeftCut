@@ -29,7 +29,14 @@ napi-build = "2"
 weftcut-eval = { path = "eval", features = ["serde"] }
 
 # napi-rs: WeftCut's domain core is exposed to Electron as a native addon.
-napi = { version = "3", default-features = false, features = ["napi6", "tokio_rt"] }
+# `dyn-symbols` is a NAPI-RS v3 DEFAULT: the addon resolves the host's `napi_*`
+# entry points via dynamic lookup at load time rather than baking them in as hard
+# import records. It was dropped when defaults were switched off (2026-06-17)
+# without recording that direct symbol linking was intentional; restoring it
+# realigns the production addon with upstream guidance. It is a production
+# symbol-resolution policy, NOT a test shim — see the `test-noop` feature below
+# and docs/notes/napi-rs-linux-testing.md.
+napi = { version = "3", default-features = false, features = ["napi6", "tokio_rt", "dyn-symbols"] }
 napi-derive = "3"
 
 # Async + serialization
