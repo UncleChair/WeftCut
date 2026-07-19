@@ -33,10 +33,12 @@ pub async fn agent_session_get(
 
 // ---- Logs ---------------------------------------------------------------
 
-pub async fn log_list(
-    backend: &Backend,
-) -> Result<Vec<crate::logs::LogEntry>, String> {
-    Ok(backend.log_slot.current().map(|b| b.list()).unwrap_or_default())
+pub async fn log_list(backend: &Backend) -> Result<Vec<crate::logs::LogEntry>, String> {
+    Ok(backend
+        .log_slot
+        .current()
+        .map(|b| b.list())
+        .unwrap_or_default())
 }
 
 pub async fn log_clear(backend: &Backend) -> Result<(), String> {
@@ -46,10 +48,7 @@ pub async fn log_clear(backend: &Backend) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn log_emit(
-    backend: &Backend,
-    input: crate::logs::LogEntryInput,
-) -> Result<(), String> {
+pub async fn log_emit(backend: &Backend, input: crate::logs::LogEntryInput) -> Result<(), String> {
     backend.log_slot.emit(input);
     Ok(())
 }

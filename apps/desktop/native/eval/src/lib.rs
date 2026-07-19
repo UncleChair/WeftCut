@@ -152,7 +152,9 @@ pub trait Interpolate: Copy {
 }
 impl Interpolate for f64 {
     #[inline]
-    fn lerp(a: f64, b: f64, u: f64) -> f64 { a + (b - a) * u }
+    fn lerp(a: f64, b: f64, u: f64) -> f64 {
+        a + (b - a) * u
+    }
 }
 
 // ===========================================================================
@@ -300,7 +302,11 @@ impl Interpolate for Rgba8 {
 /// Default type param `T = f64` so existing `Kf`, `[Kf; N]`, `Vec<Kf>` sites
 /// keep meaning `Kf<f64>` without any edits.
 #[derive(Clone, Copy, Debug)]
-pub struct Kf<T = f64> { pub t_us: i64, pub value: T, pub interp: Interpolation }
+pub struct Kf<T = f64> {
+    pub t_us: i64,
+    pub value: T,
+    pub interp: Interpolation,
+}
 
 /// `f64::abs` is std-only; the wasm (no_std) build needs a core-only abs.
 #[inline]
@@ -536,20 +542,40 @@ mod tests {
     #[test]
     fn pan_law_golden_matches_fixture() {
         #[derive(serde::Deserialize)]
-        struct Coeff { name: String, pan: f64, channels: i32, expect: [f32; 4] }
+        struct Coeff {
+            name: String,
+            pan: f64,
+            channels: i32,
+            expect: [f32; 4],
+        }
         #[derive(serde::Deserialize)]
-        struct Apply { name: String, pan: f64, channels: i32, r#in: [f32; 2], expect: [f32; 2] }
+        struct Apply {
+            name: String,
+            pan: f64,
+            channels: i32,
+            r#in: [f32; 2],
+            expect: [f32; 2],
+        }
         #[derive(serde::Deserialize)]
-        struct Fixture { coeff_cases: Vec<Coeff>, apply_cases: Vec<Apply> }
+        struct Fixture {
+            coeff_cases: Vec<Coeff>,
+            apply_cases: Vec<Apply>,
+        }
 
         let f: Fixture = serde_json::from_str(include_str!(
             "../../../src/renderer/render/audio/panLawGolden.fixture.json"
-        )).expect("pan law fixture parses");
+        ))
+        .expect("pan law fixture parses");
         for c in &f.coeff_cases {
             let got = pan_coeffs(c.pan, c.channels);
             for i in 0..4 {
-                assert!((got[i] - c.expect[i]).abs() < 1e-5,
-                    "coeff `{}` idx {i}: got {}, expect {}", c.name, got[i], c.expect[i]);
+                assert!(
+                    (got[i] - c.expect[i]).abs() < 1e-5,
+                    "coeff `{}` idx {i}: got {}, expect {}",
+                    c.name,
+                    got[i],
+                    c.expect[i]
+                );
             }
         }
         for a in &f.apply_cases {
@@ -557,8 +583,13 @@ mod tests {
             let (l, r) = (a.r#in[0], a.r#in[1]);
             let out = [ka * l + kb * r, kc * l + kd * r];
             for i in 0..2 {
-                assert!((out[i] - a.expect[i]).abs() < 1e-5,
-                    "apply `{}` ch {i}: got {}, expect {}", a.name, out[i], a.expect[i]);
+                assert!(
+                    (out[i] - a.expect[i]).abs() < 1e-5,
+                    "apply `{}` ch {i}: got {}, expect {}",
+                    a.name,
+                    out[i],
+                    a.expect[i]
+                );
             }
         }
     }
@@ -696,12 +727,32 @@ mod tests {
     fn rgba8_lerp_endpoints_return_inputs() {
         let pairs = [
             (
-                Rgba8 { r: 255, g: 0, b: 0, a: 255 },
-                Rgba8 { r: 0, g: 255, b: 0, a: 255 },
+                Rgba8 {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+                Rgba8 {
+                    r: 0,
+                    g: 255,
+                    b: 0,
+                    a: 255,
+                },
             ),
             (
-                Rgba8 { r: 12, g: 34, b: 56, a: 200 },
-                Rgba8 { r: 200, g: 100, b: 50, a: 80 },
+                Rgba8 {
+                    r: 12,
+                    g: 34,
+                    b: 56,
+                    a: 200,
+                },
+                Rgba8 {
+                    r: 200,
+                    g: 100,
+                    b: 50,
+                    a: 80,
+                },
             ),
         ];
         for (a, b) in pairs {
@@ -715,8 +766,18 @@ mod tests {
         // OkLab (perceptual) interpolation of opaque red → green keeps luminance
         // up: both channels exceed the naive sRGB midpoint of 127/128. (A naive
         // per-channel sRGB lerp would yield r≈g≈127.)
-        let red = Rgba8 { r: 255, g: 0, b: 0, a: 255 };
-        let green = Rgba8 { r: 0, g: 255, b: 0, a: 255 };
+        let red = Rgba8 {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        let green = Rgba8 {
+            r: 0,
+            g: 255,
+            b: 0,
+            a: 255,
+        };
         let mid = Rgba8::lerp(red, green, 0.5);
         assert!(mid.r > 128, "r={} should exceed naive sRGB midpoint", mid.r);
         assert!(mid.g > 128, "g={} should exceed naive sRGB midpoint", mid.g);
@@ -727,8 +788,18 @@ mod tests {
     fn rgba8_lerp_fade_to_transparent_keeps_hue() {
         // Premultiplied alpha: opaque red → transparent black at the midpoint
         // stays clearly red (no black-halo darkening), with alpha ~128.
-        let red = Rgba8 { r: 255, g: 0, b: 0, a: 255 };
-        let clear = Rgba8 { r: 0, g: 0, b: 0, a: 0 };
+        let red = Rgba8 {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        let clear = Rgba8 {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
         let mid = Rgba8::lerp(red, clear, 0.5);
         assert!(
             mid.r > 100 && mid.g < 40 && mid.b < 40,
@@ -745,8 +816,18 @@ mod tests {
     fn rgba8_lerp_equal_alpha_gray_midpoint_is_between() {
         // Equal opaque alpha reduces to a plain OkLab lerp; the gray midpoint
         // sits between the two endpoints and stays neutral (r≈g≈b).
-        let dark = Rgba8 { r: 64, g: 64, b: 64, a: 255 };
-        let light = Rgba8 { r: 192, g: 192, b: 192, a: 255 };
+        let dark = Rgba8 {
+            r: 64,
+            g: 64,
+            b: 64,
+            a: 255,
+        };
+        let light = Rgba8 {
+            r: 192,
+            g: 192,
+            b: 192,
+            a: 255,
+        };
         let mid = Rgba8::lerp(dark, light, 0.5);
         assert!(mid.r > 64 && mid.r < 192, "r={} between endpoints", mid.r);
         let max = mid.r.max(mid.g).max(mid.b);

@@ -30,10 +30,10 @@ pub use catalog::dispatch_tool;
 // synthesize_speech hybrid: napi_backend's `synthesize_speech_compute`
 // calls the TTS compute half + needs the args type. Re-exported here (the `tools`
 // mod is private) — same precedent as `dispatch_tool` above; not a public widening.
-#[cfg(feature = "cloud")]
-pub(crate) use tools::{SynthesizeSpeechArgs, synthesize_speech_audio};
 pub(crate) use prompts::{catalog as list_prompts, expand as get_prompt};
 pub(crate) use resources::read_resource;
+#[cfg(feature = "cloud")]
+pub(crate) use tools::{synthesize_speech_audio, SynthesizeSpeechArgs};
 
 // The `mcp:change` notification is emitted by the TS host (the TS actor's
 // `mcpCall` notifies via `mcpNotify`) post-4b; the Rust `ChangeEventSummary`

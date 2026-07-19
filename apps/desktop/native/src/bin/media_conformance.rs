@@ -59,9 +59,24 @@ fn extract_frame_png_ex(
     let status = Command::new(ffmpeg_path())
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(mp4)
-        .args(["-vf", &vf, "-frames:v", "1", "-vsync", "0", "-pix_fmt", pix, "-f", "image2", "-c:v", "png"])
+        .args([
+            "-vf",
+            &vf,
+            "-frames:v",
+            "1",
+            "-vsync",
+            "0",
+            "-pix_fmt",
+            pix,
+            "-f",
+            "image2",
+            "-c:v",
+            "png",
+        ])
         .arg(&tmp)
-        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
         .output()
         .context("spawn ffmpeg")?;
     if !status.status.success() {
@@ -81,8 +96,10 @@ fn extract_frame_png_ex(
 
 fn decode_rgb16(png: &[u8]) -> Result<image::ImageBuffer<image::Rgb<u16>, Vec<u16>>> {
     Ok(ImageReader::new(Cursor::new(png))
-        .with_guessed_format().context("guess png")?
-        .decode().context("decode png")?
+        .with_guessed_format()
+        .context("guess png")?
+        .decode()
+        .context("decode png")?
         .to_rgb16())
 }
 
@@ -152,7 +169,10 @@ fn channel_error(a: &[Rgb16], b: &[Rgb16]) -> ChannelError {
             }
         }
     }
-    ChannelError { mean: [sum[0] / n, sum[1] / n, sum[2] / n], max }
+    ChannelError {
+        mean: [sum[0] / n, sum[1] / n, sum[2] / n],
+        max,
+    }
 }
 
 /// Average the center inset of a patch rect from a 16-bit image, returning one
@@ -201,13 +221,14 @@ fn ssim_pngs(a_png: &[u8], b_png: &[u8]) -> Result<f64> {
     if a.dimensions() != b.dimensions() {
         anyhow::bail!(
             "dims disagree: {}x{} vs {}x{}",
-            a.width(), a.height(), b.width(), b.height()
+            a.width(),
+            a.height(),
+            b.width(),
+            b.height()
         );
     }
-    let r = image_compare::rgb_similarity_structure(
-        &image_compare::Algorithm::MSSIMSimple, &a, &b,
-    )
-    .context("ssim")?;
+    let r = image_compare::rgb_similarity_structure(&image_compare::Algorithm::MSSIMSimple, &a, &b)
+        .context("ssim")?;
     Ok(r.score)
 }
 
@@ -237,12 +258,7 @@ fn psnr_pngs(a_png: &[u8], b_png: &[u8]) -> Result<f64> {
 /// frame best-matches `out_png` (highest SSIM) and that score. This is the
 /// alignment primitive: a correctly-aligned output frame best-matches its OWN
 /// source index, because the burned-in counter makes neighbors distinct.
-fn best_match_index(
-    out_png: &[u8],
-    source: &Path,
-    center: u64,
-    window: u64,
-) -> Result<(u64, f64)> {
+fn best_match_index(out_png: &[u8], source: &Path, center: u64, window: u64) -> Result<(u64, f64)> {
     let lo = center.saturating_sub(window);
     let hi = center + window;
     let mut best = (center, f64::MIN);
@@ -364,7 +380,14 @@ fn analyze_audio(pcm: &[f32]) -> AudioReport {
         && (drift_slope - 1.0).abs() <= AUDIO_DRIFT_SLOPE_TOL
         && offset_ms.abs() <= AUDIO_OFFSET_TOL_MS;
 
-    AudioReport { duration_s, seconds: secs, drift_slope, offset_ms, samples, pass }
+    AudioReport {
+        duration_s,
+        seconds: secs,
+        drift_slope,
+        offset_ms,
+        samples,
+        pass,
+    }
 }
 
 /// Scan windows (100 ms, 25 ms hop); dominant candidate per window gives a step
@@ -449,7 +472,11 @@ struct EnvelopeReport {
 }
 
 fn db(v: f64) -> f64 {
-    if v <= 0.0 { f64::NEG_INFINITY } else { 20.0 * v.log10() }
+    if v <= 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        20.0 * v.log10()
+    }
 }
 
 /// RMS of the 100 ms window centered at `t_s`.
@@ -502,10 +529,15 @@ fn analyze_audio_envelope(
     let peak_dbfs = db(peak);
     let peak_ceiling_pass = peak_max_dbfs.map(|max| peak_dbfs <= max);
 
-    let pass = !points.is_empty()
-        && points.iter().all(|p| p.pass)
-        && peak_ceiling_pass.unwrap_or(true);
-    EnvelopeReport { ref_rms_dbfs: ref_db, peak_dbfs, peak_ceiling_pass, points, pass }
+    let pass =
+        !points.is_empty() && points.iter().all(|p| p.pass) && peak_ceiling_pass.unwrap_or(true);
+    EnvelopeReport {
+        ref_rms_dbfs: ref_db,
+        peak_dbfs,
+        peak_ceiling_pass,
+        points,
+        pass,
+    }
 }
 
 /// Decode STEREO f32 PCM at 48 kHz (interleaved L R L R …).
@@ -602,7 +634,10 @@ struct BandingStats {
 /// plateaus. Dither breaks plateaus up (distinct recovers, but with noise).
 fn banding_stats(row: &[u16]) -> BandingStats {
     if row.is_empty() {
-        return BandingStats { distinct_levels: 0, max_plateau: 0 };
+        return BandingStats {
+            distinct_levels: 0,
+            max_plateau: 0,
+        };
     }
     let mut distinct = std::collections::BTreeSet::new();
     let mut max_plateau = 1usize;
@@ -617,7 +652,10 @@ fn banding_stats(row: &[u16]) -> BandingStats {
             run = 1;
         }
     }
-    BandingStats { distinct_levels: distinct.len(), max_plateau }
+    BandingStats {
+        distinct_levels: distinct.len(),
+        max_plateau,
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -634,8 +672,19 @@ struct GradientReport {
 /// Decode one frame as 16-bit RGB under a forced matrix, sample the mid-row, and
 /// report per-channel banding (distinct levels + max plateau). Used by the axis-B
 /// proxy probe to compare a 10-bit source ramp against its 8-bit proxy.
-fn analyze_gradient(file: &Path, sample: u64, in_matrix: &str, in_range: &str) -> Result<GradientReport> {
-    let img = decode_rgb16(&extract_frame_png_ex(file, sample, Some(in_matrix), Some(in_range), true)?)?;
+fn analyze_gradient(
+    file: &Path,
+    sample: u64,
+    in_matrix: &str,
+    in_range: &str,
+) -> Result<GradientReport> {
+    let img = decode_rgb16(&extract_frame_png_ex(
+        file,
+        sample,
+        Some(in_matrix),
+        Some(in_range),
+        true,
+    )?)?;
     let y = img.height() / 2;
     let mut rows: [Vec<u16>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     for x in 0..img.width() {
@@ -644,7 +693,11 @@ fn analyze_gradient(file: &Path, sample: u64, in_matrix: &str, in_range: &str) -
             rows[c].push(px.0[c]);
         }
     }
-    let banding = [banding_stats(&rows[0]), banding_stats(&rows[1]), banding_stats(&rows[2])];
+    let banding = [
+        banding_stats(&rows[0]),
+        banding_stats(&rows[1]),
+        banding_stats(&rows[2]),
+    ];
     let x0 = img.get_pixel(0, y);
     let mid = img.get_pixel(img.width() / 2, y);
     Ok(GradientReport {
@@ -798,7 +851,13 @@ fn analyze_color(
     // Output: decode by its own embedded tag (None ⇒ no forced scale).
     let out_img = decode_rgb16(&extract_frame_png_ex(output, sample, None, None, false)?)?;
     // Source: decode under the forced reference matrix/range (incomplete tags).
-    let src_img = decode_rgb16(&extract_frame_png_ex(source, sample, Some(in_matrix), Some(in_range), false)?)?;
+    let src_img = decode_rgb16(&extract_frame_png_ex(
+        source,
+        sample,
+        Some(in_matrix),
+        Some(in_range),
+        false,
+    )?)?;
     let mut patches = Vec::with_capacity(manifest.patches.len());
     let mut worst = 0u16;
     for p in &manifest.patches {
@@ -807,7 +866,11 @@ fn analyze_color(
         // *257 matches image::to_rgb16's 8->16 byte-replication so authored
         // aligns with how output/source were upscaled (gate uses app_error,
         // which compares output vs source — both via to_rgb16 — so it is exact).
-        debug_assert!(p.rgb.iter().all(|&v| v <= 255), "manifest rgb must be 8-bit (0..=255), got {:?}", p.rgb);
+        debug_assert!(
+            p.rgb.iter().all(|&v| v <= 255),
+            "manifest rgb must be 8-bit (0..=255), got {:?}",
+            p.rgb
+        );
         let authored = Rgb16([p.rgb[0] * 257, p.rgb[1] * 257, p.rgb[2] * 257]);
         let app = channel_error(&[o], &[s]);
         let total = channel_error(&[o], &[authored]);
@@ -900,9 +963,16 @@ fn main() -> std::process::ExitCode {
         return match analyze_self(Path::new(&output), &samples, ssim_max) {
             Ok(r) => {
                 println!("{}", serde_json::to_string_pretty(&r).unwrap());
-                if r.pass { std::process::ExitCode::SUCCESS } else { std::process::ExitCode::from(1) }
+                if r.pass {
+                    std::process::ExitCode::SUCCESS
+                } else {
+                    std::process::ExitCode::from(1)
+                }
             }
-            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+            Err(e) => {
+                eprintln!("media_conformance: {e:#}");
+                std::process::ExitCode::from(3)
+            }
         };
     }
     // Envelope + pan modes need only --output; handle before the
@@ -923,9 +993,16 @@ fn main() -> std::process::ExitCode {
             Ok(pcm) => {
                 let report = analyze_audio_envelope(&pcm, &expects, peak_max);
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
-                if report.pass { std::process::ExitCode::SUCCESS } else { std::process::ExitCode::from(1) }
+                if report.pass {
+                    std::process::ExitCode::SUCCESS
+                } else {
+                    std::process::ExitCode::from(1)
+                }
             }
-            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+            Err(e) => {
+                eprintln!("media_conformance: {e:#}");
+                std::process::ExitCode::from(3)
+            }
         };
     }
     if audio_pan {
@@ -937,9 +1014,16 @@ fn main() -> std::process::ExitCode {
             Ok(stereo) => {
                 let report = analyze_audio_pan(&stereo, expect_lr_db);
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
-                if report.pass { std::process::ExitCode::SUCCESS } else { std::process::ExitCode::from(1) }
+                if report.pass {
+                    std::process::ExitCode::SUCCESS
+                } else {
+                    std::process::ExitCode::from(1)
+                }
             }
-            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+            Err(e) => {
+                eprintln!("media_conformance: {e:#}");
+                std::process::ExitCode::from(3)
+            }
         };
     }
     let (Some(output), Some(source)) = (output, source) else {
@@ -952,8 +1036,14 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         };
         return match analyze_gradient(Path::new(&output), sample, &im, &ir) {
-            Ok(r) => { println!("{}", serde_json::to_string_pretty(&r).unwrap()); std::process::ExitCode::SUCCESS }
-            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+            Ok(r) => {
+                println!("{}", serde_json::to_string_pretty(&r).unwrap());
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("media_conformance: {e:#}");
+                std::process::ExitCode::from(3)
+            }
         };
     }
     if color {
@@ -964,13 +1054,32 @@ fn main() -> std::process::ExitCode {
         let manifest: Manifest = match std::fs::read_to_string(&mp) {
             Ok(s) => match serde_json::from_str(&s) {
                 Ok(m) => m,
-                Err(e) => { eprintln!("media_conformance: manifest parse: {e:#}"); return std::process::ExitCode::from(3); }
+                Err(e) => {
+                    eprintln!("media_conformance: manifest parse: {e:#}");
+                    return std::process::ExitCode::from(3);
+                }
             },
-            Err(e) => { eprintln!("media_conformance: manifest read: {e:#}"); return std::process::ExitCode::from(3); }
+            Err(e) => {
+                eprintln!("media_conformance: manifest read: {e:#}");
+                return std::process::ExitCode::from(3);
+            }
         };
-        return match analyze_color(Path::new(&output), Path::new(&source), &manifest, sample, &im, &ir) {
-            Ok(r) => { println!("{}", serde_json::to_string_pretty(&r).unwrap()); std::process::ExitCode::SUCCESS }
-            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+        return match analyze_color(
+            Path::new(&output),
+            Path::new(&source),
+            &manifest,
+            sample,
+            &im,
+            &ir,
+        ) {
+            Ok(r) => {
+                println!("{}", serde_json::to_string_pretty(&r).unwrap());
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("media_conformance: {e:#}");
+                std::process::ExitCode::from(3)
+            }
         };
     }
     if audio {
@@ -993,7 +1102,13 @@ fn main() -> std::process::ExitCode {
         eprintln!("media_conformance: --samples N1,N2,... is required");
         return std::process::ExitCode::from(2);
     }
-    match analyze(Path::new(&output), Path::new(&source), &samples, window, ssim_min) {
+    match analyze(
+        Path::new(&output),
+        Path::new(&source),
+        &samples,
+        window,
+        ssim_min,
+    ) {
         Ok(report) => {
             println!("{}", serde_json::to_string_pretty(&report).unwrap());
             if report.pass {
@@ -1030,9 +1145,18 @@ mod tests {
     fn envelope_fade_in_deltas_match_analytic() {
         let pcm = fade_in_sine();
         let expects = vec![
-            EnvelopeExpect { t_s: 0.25, expect_rms_db_delta: -12.04 }, // gain 0.25
-            EnvelopeExpect { t_s: 0.50, expect_rms_db_delta: -6.02 },  // gain 0.5
-            EnvelopeExpect { t_s: 1.50, expect_rms_db_delta: 0.0 },    // unity
+            EnvelopeExpect {
+                t_s: 0.25,
+                expect_rms_db_delta: -12.04,
+            }, // gain 0.25
+            EnvelopeExpect {
+                t_s: 0.50,
+                expect_rms_db_delta: -6.02,
+            }, // gain 0.5
+            EnvelopeExpect {
+                t_s: 1.50,
+                expect_rms_db_delta: 0.0,
+            }, // unity
         ];
         let r = analyze_audio_envelope(&pcm, &expects, None);
         assert!(
@@ -1045,7 +1169,10 @@ mod tests {
     #[test]
     fn envelope_rejects_wrong_expectation() {
         let pcm = fade_in_sine();
-        let expects = vec![EnvelopeExpect { t_s: 0.25, expect_rms_db_delta: 0.0 }];
+        let expects = vec![EnvelopeExpect {
+            t_s: 0.25,
+            expect_rms_db_delta: 0.0,
+        }];
         let r = analyze_audio_envelope(&pcm, &expects, None);
         assert!(!r.pass, "−12 dB window asserted as unity must fail");
     }
@@ -1053,7 +1180,10 @@ mod tests {
     #[test]
     fn envelope_peak_ceiling() {
         let pcm = fade_in_sine(); // peak 0.8 ≈ −1.94 dBFS
-        let expects = vec![EnvelopeExpect { t_s: 1.5, expect_rms_db_delta: 0.0 }];
+        let expects = vec![EnvelopeExpect {
+            t_s: 1.5,
+            expect_rms_db_delta: 0.0,
+        }];
         let ok = analyze_audio_envelope(&pcm, &expects, Some(-0.9));
         assert_eq!(ok.peak_ceiling_pass, Some(true));
         assert!(ok.pass);
@@ -1101,7 +1231,9 @@ mod tests {
         for i in 0..total {
             let t = i as f64 / sr;
             let seg = ((i.saturating_sub(offset_samples)) as f64 / sr).floor() as usize;
-            if seg >= secs { continue; }
+            if seg >= secs {
+                continue;
+            }
             let f = audio_expected_freq(seg);
             pcm[i] = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
         }
@@ -1112,9 +1244,20 @@ mod tests {
     fn analyze_audio_clean_signal_passes() {
         let r = analyze_audio(&synth_pcm(10, 0));
         assert_eq!(r.samples.len(), 10);
-        assert!(r.samples.iter().all(|s| s.aligned), "all seconds must align: {r:?}");
-        assert!((r.drift_slope - 1.0).abs() < 0.01, "slope {} not ~1", r.drift_slope);
-        assert!(r.offset_ms.abs() < 30.0, "offset {}ms too large", r.offset_ms);
+        assert!(
+            r.samples.iter().all(|s| s.aligned),
+            "all seconds must align: {r:?}"
+        );
+        assert!(
+            (r.drift_slope - 1.0).abs() < 0.01,
+            "slope {} not ~1",
+            r.drift_slope
+        );
+        assert!(
+            r.offset_ms.abs() < 30.0,
+            "offset {}ms too large",
+            r.offset_ms
+        );
         assert!(r.samples.iter().all(|s| s.snr_db > 15.0), "snr floor");
         assert!(r.pass);
     }
@@ -1128,7 +1271,10 @@ mod tests {
             pcm[i] = (2.0 * std::f64::consts::PI * audio_expected_freq(6) * t).sin() as f32 * 0.8;
         }
         let r = analyze_audio(&pcm);
-        assert!(!r.samples[5].aligned, "second 5 should be flagged misaligned");
+        assert!(
+            !r.samples[5].aligned,
+            "second 5 should be flagged misaligned"
+        );
         assert!(!r.pass);
     }
 
@@ -1144,7 +1290,9 @@ mod tests {
         for i in 0..total {
             let t = i as f64 / sr;
             let seg = (i as f64 / (sr * stretch)).floor() as usize;
-            if seg >= secs { continue; }
+            if seg >= secs {
+                continue;
+            }
             let f = audio_expected_freq(seg);
             pcm[i] = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
         }
@@ -1168,7 +1316,10 @@ mod tests {
             "expected slope ~1.02 from a 2% time-stretch, got {} (1.0 would mean the synthesis didn't stretch the boundaries)",
             r.drift_slope
         );
-        assert!(!r.pass, "2% drift exceeds AUDIO_DRIFT_SLOPE_TOL, report must fail");
+        assert!(
+            !r.pass,
+            "2% drift exceeds AUDIO_DRIFT_SLOPE_TOL, report must fail"
+        );
     }
 
     // Uses the committed tiny clip; extracting the same index from the same

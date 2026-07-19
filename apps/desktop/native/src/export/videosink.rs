@@ -18,13 +18,12 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use super::encoder_registry::{
-    Acceleration, BitDepth, BitrateMode, DnxhrProfile, EncodeUnavailable,
-    EncoderIntent, EncoderPlan, EncoderRegistry, OutputContainer,
-    ProresProfile, RateControl, Speed, VideoCodec,
-};
 #[cfg(test)]
 use super::encoder_registry::SelectedAcceleration;
+use super::encoder_registry::{
+    Acceleration, BitDepth, BitrateMode, DnxhrProfile, EncodeUnavailable, EncoderIntent,
+    EncoderPlan, EncoderRegistry, OutputContainer, ProresProfile, RateControl, Speed, VideoCodec,
+};
 
 #[derive(Default)]
 pub struct VideoSinkState(pub Mutex<Option<ActiveSink>>);
@@ -149,14 +148,22 @@ fn encoder_intent(args: &VideoSinkStartArgs) -> Result<EncoderIntent, EncodeUnav
             Some(quality) => RateControl::ConstantQuality { quality },
             None => RateControl::Bitrate {
                 target_bps: args.bitrate,
-                mode: if args.cbr { BitrateMode::Constant } else { BitrateMode::Variable },
+                mode: if args.cbr {
+                    BitrateMode::Constant
+                } else {
+                    BitrateMode::Variable
+                },
             },
         },
     };
     Ok(EncoderIntent {
         codec,
         bit_depth,
-        acceleration: if args.software { Acceleration::Software } else { Acceleration::Automatic },
+        acceleration: if args.software {
+            Acceleration::Software
+        } else {
+            Acceleration::Automatic
+        },
         rate_control,
         speed: Speed::parse(args.preset.as_deref())?,
         gop_frames: args.gop,
@@ -173,12 +180,20 @@ pub(crate) fn sink_cmd_args(
 ) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let mut a: Vec<OsString> = vec![
-        "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
-        "-f".into(), "rawvideo".into(),
-        "-pix_fmt".into(), OsString::from(&args.pix_fmt),
-        "-video_size".into(), format!("{}x{}", args.width, args.height).into(),
-        "-framerate".into(), format!("{}/{}", args.fps_num, args.fps_den).into(),
-        "-i".into(), "-".into(),
+        "-y".into(),
+        "-hide_banner".into(),
+        "-loglevel".into(),
+        "error".into(),
+        "-f".into(),
+        "rawvideo".into(),
+        "-pix_fmt".into(),
+        OsString::from(&args.pix_fmt),
+        "-video_size".into(),
+        format!("{}x{}", args.width, args.height).into(),
+        "-framerate".into(),
+        format!("{}/{}", args.fps_num, args.fps_den).into(),
+        "-i".into(),
+        "-".into(),
         // Tag the FRAMES (rawvideo carries no colour metadata) so every encoder
         // family emits the full bt709/limited 4-tuple (export_10bit gate).
         "-vf".into(),
@@ -203,7 +218,10 @@ pub async fn export_video_sink_start(
 
     if !args.output_path.is_empty() {
         let intent = encoder_intent(&args).map_err(|error| error.to_string())?;
-        let plan = registry.resolve(intent).await.map_err(|error| error.to_string())?;
+        let plan = registry
+            .resolve(intent)
+            .await
+            .map_err(|error| error.to_string())?;
         info!(
             encoder = plan.encoder_name,
             codec = ?plan.codec,
@@ -264,7 +282,10 @@ pub async fn export_video_sink_start(
         return Err("video sink already active".into());
     }
     *guard = Some(ActiveSink { shared });
-    info!("video sink started (ipc, output={})", !args.output_path.is_empty());
+    info!(
+        "video sink started (ipc, output={})",
+        !args.output_path.is_empty()
+    );
     Ok(())
 }
 
@@ -295,7 +316,9 @@ pub async fn video_sink_write(
         shared
             .write_ns
             .fetch_add(w0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        shared.ipc_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
+        shared
+            .ipc_bytes
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
         shared.ipc_frames.fetch_add(1, Ordering::Relaxed);
         Ok(())
     })
@@ -312,13 +335,15 @@ pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStat
     };
     drop(shared.stdin.lock().unwrap().take());
     let shared_for_wait = shared.clone();
-    let status = tokio::task::spawn_blocking(move || -> Result<Option<std::process::ExitStatus>, String> {
-        let child = shared_for_wait.child.lock().unwrap().take();
-        match child {
-            Some(mut c) => c.wait().map(Some).map_err(|e| format!("ffmpeg wait: {e}")),
-            None => Ok(None),
-        }
-    })
+    let status = tokio::task::spawn_blocking(
+        move || -> Result<Option<std::process::ExitStatus>, String> {
+            let child = shared_for_wait.child.lock().unwrap().take();
+            match child {
+                Some(mut c) => c.wait().map(Some).map_err(|e| format!("ffmpeg wait: {e}")),
+                None => Ok(None),
+            }
+        },
+    )
     .await
     .map_err(|e| format!("finish join: {e}"))??;
     if let Some(st) = status {
@@ -333,7 +358,11 @@ pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStat
     let copy_ms = shared.copy_ns.load(Ordering::Relaxed) / 1_000_000;
     let write_ms = shared.write_ns.load(Ordering::Relaxed) / 1_000_000;
     let mb = bytes / 1_048_576;
-    let write_mbps = if write_ms > 0 { mb * 1000 / write_ms } else { 0 };
+    let write_mbps = if write_ms > 0 {
+        mb * 1000 / write_ms
+    } else {
+        0
+    };
     info!(
         "video sink finished: {frames} frames, {mb} MB; copy {copy_ms} ms, write {write_ms} ms ({write_mbps} MB/s stdin)"
     );
@@ -379,7 +408,10 @@ mod tests {
         let shared = dummy_shared();
         let state = Mutex::new(Some(ActiveSink { shared }));
         reclaim_stale_sink(&state);
-        assert!(state.lock().unwrap().is_none(), "orphaned sink must be reclaimed");
+        assert!(
+            state.lock().unwrap().is_none(),
+            "orphaned sink must be reclaimed"
+        );
     }
 
     #[test]
@@ -391,21 +423,39 @@ mod tests {
 
     fn args_10bit() -> VideoSinkStartArgs {
         VideoSinkStartArgs {
-            width: 1920, height: 1080, fps_num: 30, fps_den: 1,
-            codec: "hevc".into(), bitrate: 8_000_000, cbr: false, gop: 30,
-            software: true, output_path: "C:/tmp/out.mp4".into(),
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            codec: "hevc".into(),
+            bitrate: 8_000_000,
+            cbr: false,
+            gop: 30,
+            software: true,
+            output_path: "C:/tmp/out.mp4".into(),
             pix_fmt: "yuv420p10le".into(),
-            crf: None, preset: None, profile: None,
+            crf: None,
+            preset: None,
+            profile: None,
         }
     }
 
     fn args_8bit(codec: &str) -> VideoSinkStartArgs {
         VideoSinkStartArgs {
-            width: 1920, height: 1080, fps_num: 30, fps_den: 1,
-            codec: codec.into(), bitrate: 8_000_000, cbr: false, gop: 30,
-            software: true, output_path: "C:/tmp/out.mp4".into(),
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            codec: codec.into(),
+            bitrate: 8_000_000,
+            cbr: false,
+            gop: 30,
+            software: true,
+            output_path: "C:/tmp/out.mp4".into(),
             pix_fmt: "yuv420p".into(),
-            crf: None, preset: None, profile: None,
+            crf: None,
+            preset: None,
+            profile: None,
         }
     }
 
@@ -418,7 +468,10 @@ mod tests {
         assert_eq!(intent.codec, VideoCodec::Hevc);
         assert_eq!(intent.bit_depth, BitDepth::Ten);
         assert_eq!(intent.acceleration, Acceleration::Software);
-        assert_eq!(intent.rate_control, RateControl::ConstantQuality { quality: 22 });
+        assert_eq!(
+            intent.rate_control,
+            RateControl::ConstantQuality { quality: 22 }
+        );
         assert_eq!(intent.speed, Speed::Slow);
         assert_eq!(intent.container, OutputContainer::Mp4);
     }
@@ -426,10 +479,12 @@ mod tests {
     #[test]
     fn tenbit_pix_fmt_still_defaults_and_gates() {
         // serde default keeps old TS callers valid.
-        let v: VideoSinkStartArgs =
-            serde_json::from_str(r#"{"width":64,"height":64,"fpsNum":30,"fpsDen":1,
+        let v: VideoSinkStartArgs = serde_json::from_str(
+            r#"{"width":64,"height":64,"fpsNum":30,"fpsDen":1,
               "codec":"hevc","bitrate":0,"cbr":false,"gop":30,"software":true,
-              "outputPath":""}"#).unwrap();
+              "outputPath":""}"#,
+        )
+        .unwrap();
         assert_eq!(v.pix_fmt, "yuv420p10le");
     }
 
@@ -442,7 +497,10 @@ mod tests {
         let err = export_video_sink_start(&state, &registry, args_8bit("vp9"))
             .await
             .unwrap_err();
-        assert!(err.contains("invalid encoder intent codec"), "unexpected error: {err}");
+        assert!(
+            err.contains("invalid encoder intent codec"),
+            "unexpected error: {err}"
+        );
         assert!(state.0.lock().unwrap().is_none(), "no sink left active");
     }
 
@@ -456,23 +514,38 @@ mod tests {
             encoder_name: "libx265",
             acceleration: SelectedAcceleration::Software,
             ffmpeg_args: vec![
-                "-c:v".into(), "libx265".into(),
-                "-profile:v".into(), "main10".into(),
-                "-color_range".into(), "tv".into(),
-                "-tag:v".into(), "hvc1".into(),
+                "-c:v".into(),
+                "libx265".into(),
+                "-profile:v".into(),
+                "main10".into(),
+                "-color_range".into(),
+                "tv".into(),
+                "-tag:v".into(),
+                "hvc1".into(),
             ],
         };
         let argv = sink_cmd_args(&args_10bit(), &plan);
-        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let s: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         // rawvideo input header
         assert!(s.windows(2).any(|w| w[0] == "-f" && w[1] == "rawvideo"));
-        assert!(s.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "yuv420p10le"));
-        assert!(s.windows(2).any(|w| w[0] == "-video_size" && w[1] == "1920x1080"));
+        assert!(s
+            .windows(2)
+            .any(|w| w[0] == "-pix_fmt" && w[1] == "yuv420p10le"));
+        assert!(s
+            .windows(2)
+            .any(|w| w[0] == "-video_size" && w[1] == "1920x1080"));
         assert!(s.windows(2).any(|w| w[0] == "-framerate" && w[1] == "30/1"));
         // frame tagging vf + encoder + 10-bit profile + color tags + hvc1 + output
-        assert!(s.iter().any(|a| a.starts_with("setparams=colorspace=bt709")));
+        assert!(s
+            .iter()
+            .any(|a| a.starts_with("setparams=colorspace=bt709")));
         assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "libx265"));
-        assert!(s.windows(2).any(|w| w[0] == "-profile:v" && w[1] == "main10"));
+        assert!(s
+            .windows(2)
+            .any(|w| w[0] == "-profile:v" && w[1] == "main10"));
         assert!(s.windows(2).any(|w| w[0] == "-color_range" && w[1] == "tv"));
         assert!(s.windows(2).any(|w| w[0] == "-tag:v" && w[1] == "hvc1"));
         assert_eq!(s.last().unwrap(), "C:/tmp/out.mp4");
@@ -514,7 +587,9 @@ mod tests {
 
         let frame = vec![7u8; 64 * 64 * 3];
         for _ in 0..5 {
-            video_sink_write(&state, frame.clone(), 0).await.expect("write");
+            video_sink_write(&state, frame.clone(), 0)
+                .await
+                .expect("write");
         }
 
         let stats = export_video_sink_finish(&state).await.expect("finish");

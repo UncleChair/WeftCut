@@ -280,7 +280,12 @@ impl NativeDecode {
             registry.set_poke_sink(Box::new(move |poke| {
                 use crate::preview_gpu::PreviewGpuPoke;
                 match poke {
-                    PreviewGpuPoke::FrameReady { stream_id, slot, pts_us, dur_us } => {
+                    PreviewGpuPoke::FrameReady {
+                        stream_id,
+                        slot,
+                        pts_us,
+                        dur_us,
+                    } => {
                         sink_events.emit(
                             "previewGpu:frameReady",
                             serde_json::json!({
@@ -292,7 +297,10 @@ impl NativeDecode {
                         );
                     }
                     PreviewGpuPoke::Eof { stream_id } => {
-                        sink_events.emit("previewGpu:eof", serde_json::json!({ "streamId": stream_id }));
+                        sink_events.emit(
+                            "previewGpu:eof",
+                            serde_json::json!({ "streamId": stream_id }),
+                        );
                     }
                     PreviewGpuPoke::Error { stream_id, message } => {
                         sink_events.emit(
@@ -370,7 +378,10 @@ impl NativeDecode {
                         frame: None,
                         message: None,
                     },
-                    ExportPoke::Error { session_id, message } => ExportSwMsg {
+                    ExportPoke::Error {
+                        session_id,
+                        message,
+                    } => ExportSwMsg {
                         session_id,
                         kind: "error".into(),
                         frame: None,
@@ -423,7 +434,9 @@ impl NativeDecode {
             slots: info
                 .slot_handles
                 .into_iter()
-                .map(|h| PreviewGpuSlot { handle: Buffer::from(h.to_le_bytes().to_vec()) })
+                .map(|h| PreviewGpuSlot {
+                    handle: Buffer::from(h.to_le_bytes().to_vec()),
+                })
                 .collect(),
         })
     }
@@ -432,7 +445,11 @@ impl NativeDecode {
     /// ergonomic `i64` param binding) carrying source microseconds; cast down
     /// to the `i64` the registry expects.
     #[napi]
-    pub fn preview_gpu_request_frame_at(&self, stream_id: String, target_us: f64) -> napi::Result<()> {
+    pub fn preview_gpu_request_frame_at(
+        &self,
+        stream_id: String,
+        target_us: f64,
+    ) -> napi::Result<()> {
         self.preview_gpu
             .request_frame_at(&stream_id, target_us as i64)
             .map_err(napi::Error::from_reason)
@@ -442,13 +459,17 @@ impl NativeDecode {
     /// cross-process reference to the shared texture.
     #[napi]
     pub fn preview_gpu_consume_ack(&self, stream_id: String, slot: u32) -> napi::Result<()> {
-        self.preview_gpu.consume_ack(&stream_id, slot).map_err(napi::Error::from_reason)
+        self.preview_gpu
+            .consume_ack(&stream_id, slot)
+            .map_err(napi::Error::from_reason)
     }
 
     /// Tear down a session: signals its decode thread to close and joins it.
     #[napi]
     pub fn preview_gpu_close(&self, stream_id: String) -> napi::Result<()> {
-        self.preview_gpu.close(&stream_id).map_err(napi::Error::from_reason)
+        self.preview_gpu
+            .close(&stream_id)
+            .map_err(napi::Error::from_reason)
     }
 
     /// One-frame HW decode probe: does d3d11va yield a decodable D3D11
@@ -461,16 +482,29 @@ impl NativeDecode {
     /// for API symmetry with the SW probe / design doc) — this synchronous
     /// primitive has no internal deadline machinery to wire it to.
     #[napi]
-    pub fn preview_gpu_probe(&self, path: String, _timeout_ms: u32) -> napi::Result<PreviewGpuProbeResult> {
+    pub fn preview_gpu_probe(
+        &self,
+        path: String,
+        _timeout_ms: u32,
+    ) -> napi::Result<PreviewGpuProbeResult> {
         match crate::preview_gpu::decoder::decode_first_d3d11_frame(&path) {
-            Ok(_frame) => Ok(PreviewGpuProbeResult { ok: true, reason: None }),
-            Err(e) => Ok(PreviewGpuProbeResult { ok: false, reason: Some(e) }),
+            Ok(_frame) => Ok(PreviewGpuProbeResult {
+                ok: true,
+                reason: None,
+            }),
+            Err(e) => Ok(PreviewGpuProbeResult {
+                ok: false,
+                reason: Some(e),
+            }),
         }
     }
 
     /// Drain + return this session's per-frame timing samples (coord-RTT + decode/copy).
     #[napi]
-    pub fn preview_gpu_take_timings(&self, stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
+    pub fn preview_gpu_take_timings(
+        &self,
+        stream_id: String,
+    ) -> napi::Result<PreviewGpuTimingReport> {
         let rep = self
             .preview_gpu
             .take_timings(&stream_id)
@@ -526,7 +560,11 @@ impl NativeDecode {
     }
 
     #[napi]
-    pub fn preview_gpu_request_frame_at(&self, _stream_id: String, _target_us: f64) -> napi::Result<()> {
+    pub fn preview_gpu_request_frame_at(
+        &self,
+        _stream_id: String,
+        _target_us: f64,
+    ) -> napi::Result<()> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 
@@ -541,7 +579,10 @@ impl NativeDecode {
     }
 
     #[napi]
-    pub fn preview_gpu_take_timings(&self, _stream_id: String) -> napi::Result<PreviewGpuTimingReport> {
+    pub fn preview_gpu_take_timings(
+        &self,
+        _stream_id: String,
+    ) -> napi::Result<PreviewGpuTimingReport> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 
@@ -550,8 +591,15 @@ impl NativeDecode {
     /// (`decodeCap:probeHw`) treats capability probes as verdicts, never
     /// errors, so main can cache/branch on `ok` uniformly across platforms.
     #[napi]
-    pub fn preview_gpu_probe(&self, _path: String, _timeout_ms: u32) -> napi::Result<PreviewGpuProbeResult> {
-        Ok(PreviewGpuProbeResult { ok: false, reason: Some("preview-gpu not built".into()) })
+    pub fn preview_gpu_probe(
+        &self,
+        _path: String,
+        _timeout_ms: u32,
+    ) -> napi::Result<PreviewGpuProbeResult> {
+        Ok(PreviewGpuProbeResult {
+            ok: false,
+            reason: Some("preview-gpu not built".into()),
+        })
     }
 }
 
@@ -587,7 +635,9 @@ impl NativeDecode {
         let accel = match lane.as_deref() {
             None | Some("software") => DecodeAccel::Software,
             Some("nvdec") => DecodeAccel::Nvdec,
-            Some("vaapi") => DecodeAccel::Vaapi { device: device.unwrap_or_default() },
+            Some("vaapi") => DecodeAccel::Vaapi {
+                device: device.unwrap_or_default(),
+            },
             // Unknown lane: fall back to software rather than error — the resolver
             // only opens lanes it has already probed, so this is defensive.
             Some(_) => DecodeAccel::Software,
@@ -611,7 +661,11 @@ impl NativeDecode {
     /// the `i64` the registry expects. Fire-and-forget: frames arrive via the
     /// registered callback.
     #[napi]
-    pub fn preview_sw_request_frame_at(&self, stream_id: String, target_us: f64) -> napi::Result<()> {
+    pub fn preview_sw_request_frame_at(
+        &self,
+        stream_id: String,
+        target_us: f64,
+    ) -> napi::Result<()> {
         self.preview_sw
             .request_frame_at(&stream_id, target_us as i64)
             .map_err(napi::Error::from_reason)
@@ -623,7 +677,10 @@ impl NativeDecode {
     /// its callback is removed. Returns the close result either way.
     #[napi]
     pub fn preview_sw_close(&self, stream_id: String) -> napi::Result<()> {
-        let r = self.preview_sw.close(&stream_id).map_err(napi::Error::from_reason);
+        let r = self
+            .preview_sw
+            .close(&stream_id)
+            .map_err(napi::Error::from_reason);
         self.preview_sw_sinks.lock().unwrap().remove(&stream_id);
         r
     }
@@ -697,7 +754,9 @@ impl NativeDecode {
         use crate::preview_sw::decoder::DecodeAccel;
         let accel = match lane.as_str() {
             "nvdec" => DecodeAccel::Nvdec,
-            "vaapi" => DecodeAccel::Vaapi { device: device.unwrap_or_default() },
+            "vaapi" => DecodeAccel::Vaapi {
+                device: device.unwrap_or_default(),
+            },
             other => {
                 return Ok(PreviewGpuProbeResult {
                     ok: false,
@@ -706,8 +765,14 @@ impl NativeDecode {
             }
         };
         match crate::preview_sw::decoder::probe_hw_first_frame(&path, accel) {
-            Ok(()) => Ok(PreviewGpuProbeResult { ok: true, reason: None }),
-            Err(e) => Ok(PreviewGpuProbeResult { ok: false, reason: Some(e) }),
+            Ok(()) => Ok(PreviewGpuProbeResult {
+                ok: true,
+                reason: None,
+            }),
+            Err(e) => Ok(PreviewGpuProbeResult {
+                ok: false,
+                reason: Some(e),
+            }),
         }
     }
 }
@@ -742,7 +807,10 @@ impl NativeDecode {
             .lock()
             .unwrap()
             .insert(session_id.clone(), on_msg);
-        match self.export_sw.open(&session_id, &path, &out_format, credit_window) {
+        match self
+            .export_sw
+            .open(&session_id, &path, &out_format, credit_window)
+        {
             Ok(info) => Ok(ExportSwOpenInfoJs {
                 width: info.width,
                 height: info.height,
@@ -792,7 +860,10 @@ impl NativeDecode {
     /// so no frame can arrive after its callback is removed.
     #[napi]
     pub fn export_sw_close(&self, session_id: String) -> napi::Result<()> {
-        let r = self.export_sw.close(&session_id).map_err(napi::Error::from_reason);
+        let r = self
+            .export_sw
+            .close(&session_id)
+            .map_err(napi::Error::from_reason);
         self.export_sw_sinks.lock().unwrap().remove(&session_id);
         r
     }

@@ -16,9 +16,24 @@ pub struct Rgba {
 }
 
 impl Rgba {
-    pub const BLACK: Self = Self { r: 0, g: 0, b: 0, a: 255 };
-    pub const WHITE: Self = Self { r: 255, g: 255, b: 255, a: 255 };
-    pub const TRANSPARENT: Self = Self { r: 0, g: 0, b: 0, a: 0 };
+    pub const BLACK: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const WHITE: Self = Self {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    pub const TRANSPARENT: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    };
 
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
@@ -29,12 +44,22 @@ impl Rgba {
     /// crate); `Rgba` stays the serde/schemars storage type. Plain methods, not
     /// `From`, to avoid the orphan rule (the leaf type is foreign here).
     pub fn to_eval(self) -> weftcut_eval::Rgba8 {
-        weftcut_eval::Rgba8 { r: self.r, g: self.g, b: self.b, a: self.a }
+        weftcut_eval::Rgba8 {
+            r: self.r,
+            g: self.g,
+            b: self.b,
+            a: self.a,
+        }
     }
 
     /// Inverse of `to_eval` — rewrap an interpolated leaf color as storage `Rgba`.
     pub fn from_eval(c: weftcut_eval::Rgba8) -> Self {
-        Self { r: c.r, g: c.g, b: c.b, a: c.a }
+        Self {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            a: c.a,
+        }
     }
 }
 

@@ -15,9 +15,7 @@ use crate::cloud::http::{
     bearer_auth, retry_delay_for_status, shared_client, MAX_RETRY_ATTEMPTS, RETRY_TOTAL_BUDGET,
 };
 use crate::cloud::keys::Provider;
-use crate::cloud::synthesizer::{
-    AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer,
-};
+use crate::cloud::synthesizer::{AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer};
 use crate::cloud::transcriber::{TranscribeRequest, TranscribeResponse, Transcriber};
 
 /// OpenAI's documented Whisper upload cap. Surfacing this as a structured
@@ -42,10 +40,7 @@ impl OpenAiWhisper {
 
 #[async_trait]
 impl Transcriber for OpenAiWhisper {
-    async fn transcribe(
-        &self,
-        req: TranscribeRequest,
-    ) -> Result<TranscribeResponse, CloudError> {
+    async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResponse, CloudError> {
         let bytes = fs::read(&req.audio_path).await?;
         let size = bytes.len() as u64;
         if size > WHISPER_MAX_UPLOAD_BYTES {
@@ -90,9 +85,7 @@ impl Transcriber for OpenAiWhisper {
             if status.is_success() {
                 break response;
             }
-            if let Some(delay) =
-                next_retry_delay(status, &response, attempt, started)
-            {
+            if let Some(delay) = next_retry_delay(status, &response, attempt, started) {
                 tracing::warn!(
                     target: "weftcut::cloud",
                     "OpenAI Whisper {status} (attempt {attempt}); retrying in {delay:?}",
@@ -145,8 +138,7 @@ pub const TTS_MAX_INPUT_CHARS: usize = 4096;
 /// Voices documented in the OpenAI tts-1 docs. The provider checks the list
 /// before sending so the agent gets a clean rejection rather than a 400 from
 /// the API.
-pub const TTS_VOICES: &[&str] =
-    &["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+pub const TTS_VOICES: &[&str] = &["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
 
 /// OpenAI tts-1 client. Carries the API key resolved from the in-memory cache
 /// at construction time.
@@ -172,10 +164,7 @@ struct TtsBody<'a> {
 
 #[async_trait]
 impl Synthesizer for OpenAiTts {
-    async fn synthesize(
-        &self,
-        req: SynthesizeRequest,
-    ) -> Result<SynthesizeResponse, CloudError> {
+    async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResponse, CloudError> {
         if req.text.is_empty() {
             return Err(CloudError::Provider {
                 provider: Provider::OpenAi,
@@ -188,7 +177,10 @@ impl Synthesizer for OpenAiTts {
                 cap: TTS_MAX_INPUT_CHARS as u64,
             });
         }
-        if !TTS_VOICES.iter().any(|v| v.eq_ignore_ascii_case(&req.voice)) {
+        if !TTS_VOICES
+            .iter()
+            .any(|v| v.eq_ignore_ascii_case(&req.voice))
+        {
             return Err(CloudError::Provider {
                 provider: Provider::OpenAi,
                 message: format!(
@@ -202,9 +194,7 @@ impl Synthesizer for OpenAiTts {
             if !(0.25..=4.0).contains(&s) {
                 return Err(CloudError::Provider {
                     provider: Provider::OpenAi,
-                    message: format!(
-                        "speed {s} outside tts-1 range [0.25, 4.0]",
-                    ),
+                    message: format!("speed {s} outside tts-1 range [0.25, 4.0]",),
                 });
             }
         }
@@ -230,9 +220,7 @@ impl Synthesizer for OpenAiTts {
             if status.is_success() {
                 break response;
             }
-            if let Some(delay) =
-                next_retry_delay(status, &response, attempt, started)
-            {
+            if let Some(delay) = next_retry_delay(status, &response, attempt, started) {
                 tracing::warn!(
                     target: "weftcut::cloud",
                     "OpenAI tts-1 {status} (attempt {attempt}); retrying in {delay:?}",
@@ -388,18 +376,17 @@ mod tests {
             "{\"error\":{\"message\":\"Invalid Authentication\"}}".into(),
         );
         match err {
-            CloudError::InvalidKey { provider: Provider::OpenAi } => {}
+            CloudError::InvalidKey {
+                provider: Provider::OpenAi,
+            } => {}
             other => panic!("expected InvalidKey, got {other:?}"),
         }
     }
 
     #[test]
     fn maps_429_to_rate_limited_with_retry_after() {
-        let err = map_status_to_cloud_error(
-            StatusCode::TOO_MANY_REQUESTS,
-            Some(20),
-            "rate limit".into(),
-        );
+        let err =
+            map_status_to_cloud_error(StatusCode::TOO_MANY_REQUESTS, Some(20), "rate limit".into());
         match err {
             CloudError::RateLimited {
                 provider: Provider::OpenAi,
@@ -411,11 +398,7 @@ mod tests {
 
     #[test]
     fn maps_413_to_payload_too_large() {
-        let err = map_status_to_cloud_error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            None,
-            "too big".into(),
-        );
+        let err = map_status_to_cloud_error(StatusCode::PAYLOAD_TOO_LARGE, None, "too big".into());
         match err {
             CloudError::PayloadTooLarge { cap, .. } => {
                 assert_eq!(cap, WHISPER_MAX_UPLOAD_BYTES);
@@ -426,13 +409,13 @@ mod tests {
 
     #[test]
     fn maps_500_to_provider_error_with_body() {
-        let err = map_status_to_cloud_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            None,
-            "kaboom".into(),
-        );
+        let err =
+            map_status_to_cloud_error(StatusCode::INTERNAL_SERVER_ERROR, None, "kaboom".into());
         match err {
-            CloudError::Provider { provider: Provider::OpenAi, message } => {
+            CloudError::Provider {
+                provider: Provider::OpenAi,
+                message,
+            } => {
                 assert!(message.contains("500"), "missing status: {message}");
                 assert!(message.contains("kaboom"), "missing body: {message}");
             }

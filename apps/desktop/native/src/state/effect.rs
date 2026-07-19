@@ -40,7 +40,12 @@ mod tests {
     fn effect_serde_roundtrip_static_param() {
         let mut params = std::collections::BTreeMap::new();
         params.insert("strength".to_string(), Animated::Static(8.0));
-        let e = Effect { id: crate::state::ids::new_id(), kind: "blur".into(), enabled: true, params };
+        let e = Effect {
+            id: crate::state::ids::new_id(),
+            kind: "blur".into(),
+            enabled: true,
+            params,
+        };
         let json = serde_json::to_string(&e).unwrap();
         let back: Effect = serde_json::from_str(&json).unwrap();
         assert_eq!(back.kind, "blur");

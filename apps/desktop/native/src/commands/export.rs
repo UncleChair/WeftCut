@@ -74,11 +74,7 @@ pub async fn ensure_export_audio_conform(
         let Some(item) = project.media_pool.get(id).cloned() else {
             continue;
         };
-        crate::jobs::enqueue_conform(
-            backend.events.clone(),
-            backend.cache.clone(),
-            item,
-        );
+        crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), item);
     }
     Ok(waiting.iter().map(|u| u.to_string()).collect())
 }

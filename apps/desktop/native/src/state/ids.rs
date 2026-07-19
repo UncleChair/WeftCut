@@ -33,9 +33,15 @@ pub mod det {
     use super::{AtomicBool, AtomicU64, Ordering};
     pub(super) static ENABLED: AtomicBool = AtomicBool::new(false);
     pub(super) static COUNTER: AtomicU64 = AtomicU64::new(0);
-    pub fn enable() { ENABLED.store(true, Ordering::Relaxed); }
-    pub fn disable() { ENABLED.store(false, Ordering::Relaxed); }
-    pub fn reset() { COUNTER.store(0, Ordering::Relaxed); }
+    pub fn enable() {
+        ENABLED.store(true, Ordering::Relaxed);
+    }
+    pub fn disable() {
+        ENABLED.store(false, Ordering::Relaxed);
+    }
+    pub fn reset() {
+        COUNTER.store(0, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]

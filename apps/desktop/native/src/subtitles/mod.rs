@@ -10,7 +10,11 @@ pub mod srt;
 pub mod vtt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SubFormat { Srt, Vtt, Ass }
+pub enum SubFormat {
+    Srt,
+    Vtt,
+    Ass,
+}
 
 impl SubFormat {
     /// Parse a format tag string ("srt", "ass", "vtt", case-insensitive).
@@ -21,7 +25,9 @@ impl SubFormat {
             "srt" => Ok(SubFormat::Srt),
             "ass" => Ok(SubFormat::Ass),
             "vtt" => Ok(SubFormat::Vtt),
-            other => Err(format!("unknown subtitle format '{other}' — expected 'srt', 'ass', or 'vtt'")),
+            other => Err(format!(
+                "unknown subtitle format '{other}' — expected 'srt', 'ass', or 'vtt'"
+            )),
         }
     }
 }
@@ -61,15 +67,25 @@ pub struct ParsedSubtitles {
 /// Sniff format from a body when the caller doesn't know it.
 pub fn sniff(body: &str) -> SubFormat {
     let t = body.trim_start_matches('\u{feff}').trim_start();
-    if t.starts_with("WEBVTT") { SubFormat::Vtt }
-    else if t.starts_with('[') { SubFormat::Ass }
-    else { SubFormat::Srt }
+    if t.starts_with("WEBVTT") {
+        SubFormat::Vtt
+    } else if t.starts_with('[') {
+        SubFormat::Ass
+    } else {
+        SubFormat::Srt
+    }
 }
 
 pub fn parse(body: &str, format: SubFormat) -> ParsedSubtitles {
     match format {
-        SubFormat::Srt => ParsedSubtitles { cues: srt::parse(body), simplified: false },
-        SubFormat::Vtt => ParsedSubtitles { cues: vtt::parse(body), simplified: false },
+        SubFormat::Srt => ParsedSubtitles {
+            cues: srt::parse(body),
+            simplified: false,
+        },
+        SubFormat::Vtt => ParsedSubtitles {
+            cues: vtt::parse(body),
+            simplified: false,
+        },
         SubFormat::Ass => ass::parse(body),
     }
 }

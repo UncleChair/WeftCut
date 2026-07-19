@@ -27,7 +27,9 @@ impl TsfnEventSink {
 impl EventSink for TsfnEventSink {
     fn emit(&self, event: &str, payload: Value) {
         let msg = serde_json::json!({ "event": event, "payload": payload }).to_string();
-        let _ = self.tsfn.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
+        let _ = self
+            .tsfn
+            .call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
     }
 }
 
@@ -42,13 +44,20 @@ impl VecEventSink {
         Self::default()
     }
     pub fn names(&self) -> Vec<String> {
-        self.events.lock().unwrap().iter().map(|(n, _)| n.clone()).collect()
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect()
     }
 }
 
 impl EventSink for VecEventSink {
     fn emit(&self, event: &str, payload: Value) {
-        self.events.lock().unwrap().push((event.to_string(), payload));
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.to_string(), payload));
     }
 }
-

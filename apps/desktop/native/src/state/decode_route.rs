@@ -103,16 +103,17 @@ mod tests {
     fn golden() -> Golden {
         // Same relative-path convention the roleGate/snapFrame Rust golden
         // tests use to read their TS-colocated fixtures.
-        let raw = include_str!(
-            "../../../src/renderer/render/decodeRouteWireGolden.fixture.json"
-        );
+        let raw = include_str!("../../../src/renderer/render/decodeRouteWireGolden.fixture.json");
         serde_json::from_str(raw).unwrap()
     }
 
     #[test]
     fn wire_tags_match_golden() {
         let g = golden();
-        assert_eq!(g.tags, vec!["bypass", "direct-export", "native-sw", "proxied"]);
+        assert_eq!(
+            g.tags,
+            vec!["bypass", "direct-export", "native-sw", "proxied"]
+        );
         let bypass = serde_json::to_value(DecodeRoute::Bypass).unwrap();
         assert_eq!(bypass, g.samples["bypass"]);
         let de = serde_json::to_value(DecodeRoute::DirectExport { quick_proxy: None }).unwrap();
@@ -137,8 +138,15 @@ mod tests {
     fn route_correct_promotes_direct_export_carrying_quick() {
         let q = Some(PathBuf::from("q.mp4"));
         assert_eq!(
-            DecodeRoute::DirectExport { quick_proxy: q.clone() }.route_corrected(),
-            DecodeRoute::Proxied { quick_proxy: q, full_proxy: None, format_version: 0 }
+            DecodeRoute::DirectExport {
+                quick_proxy: q.clone()
+            }
+            .route_corrected(),
+            DecodeRoute::Proxied {
+                quick_proxy: q,
+                full_proxy: None,
+                format_version: 0
+            }
         );
         assert_eq!(DecodeRoute::Bypass.route_corrected(), DecodeRoute::Bypass);
     }

@@ -6,14 +6,14 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
+use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::state::{MediaItem, MediaKind};
 
 pub const MAGIC: &[u8; 8] = b"VPEAKS\0\0";
@@ -124,8 +124,12 @@ pub async fn write_peaks(
     let mut f = tokio::fs::File::create(path)
         .await
         .with_context(|| format!("create {}", path.display()))?;
-    f.write_all(&buf).await.with_context(|| format!("write {}", path.display()))?;
-    f.flush().await.with_context(|| format!("flush {}", path.display()))?;
+    f.write_all(&buf)
+        .await
+        .with_context(|| format!("write {}", path.display()))?;
+    f.flush()
+        .await
+        .with_context(|| format!("flush {}", path.display()))?;
     Ok(())
 }
 
@@ -164,7 +168,11 @@ pub fn read_header(path: &std::path::Path) -> Result<PeaksHeader> {
     if levels.is_empty() {
         anyhow::bail!("peaks file has no levels");
     }
-    Ok(PeaksHeader { sample_rate, channels, levels })
+    Ok(PeaksHeader {
+        sample_rate,
+        channels,
+        levels,
+    })
 }
 
 /// One channel's min/max/rms windows for one LOD level.
@@ -193,7 +201,10 @@ pub fn read_range(
         .get(level_idx)
         .ok_or_else(|| anyhow!("level {level_idx} out of range"))?;
     if channel >= header.channels as usize {
-        anyhow::bail!("channel {channel} out of range (file has {} channels)", header.channels);
+        anyhow::bail!(
+            "channel {channel} out of range (file has {} channels)",
+            header.channels
+        );
     }
     let ch = channel;
     let start = start_peak.min(level.peak_count);
@@ -218,7 +229,8 @@ pub fn read_range(
     let seek_to = channel_start + (start as u64) * 6;
 
     let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    f.seek(SeekFrom::Start(seek_to)).context("seek peaks range")?;
+    f.seek(SeekFrom::Start(seek_to))
+        .context("seek peaks range")?;
     let mut bytes = vec![0u8; n * 6];
     f.read_exact(&mut bytes).context("read peaks range")?;
     let mut min = Vec::with_capacity(n);
@@ -262,13 +274,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
 
     let mut child = Command::new(ffmpeg_path())
         .no_console_window()
-        .args([
-            "-hide_banner",
-            "-nostats",
-            "-loglevel",
-            "error",
-            "-i",
-        ])
+        .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([
             "-vn",
@@ -364,9 +370,19 @@ async fn compute_finest_level(
             *frames_in_window += 1;
             if *frames_in_window >= frames_per_peak {
                 for c in 0..channels {
-                    mins[c].push(quantize(if cur_min[c] == f32::MAX { 0.0 } else { cur_min[c] }));
-                    maxs[c].push(quantize(if cur_max[c] == f32::MIN { 0.0 } else { cur_max[c] }));
-                    rmss[c].push(quantize_rms((cur_sq[c] / frames_per_peak as f64).sqrt() as f32));
+                    mins[c].push(quantize(if cur_min[c] == f32::MAX {
+                        0.0
+                    } else {
+                        cur_min[c]
+                    }));
+                    maxs[c].push(quantize(if cur_max[c] == f32::MIN {
+                        0.0
+                    } else {
+                        cur_max[c]
+                    }));
+                    rmss[c].push(quantize_rms(
+                        (cur_sq[c] / frames_per_peak as f64).sqrt() as f32
+                    ));
                     cur_min[c] = f32::MAX;
                     cur_max[c] = f32::MIN;
                     cur_sq[c] = 0.0;
@@ -433,13 +449,29 @@ async fn compute_finest_level(
     // not `frames_per_peak`, since it never reached a full window.
     if frames_in_window > 0 {
         for c in 0..channels {
-            mins[c].push(quantize(if cur_min[c] == f32::MAX { 0.0 } else { cur_min[c] }));
-            maxs[c].push(quantize(if cur_max[c] == f32::MIN { 0.0 } else { cur_max[c] }));
-            rmss[c].push(quantize_rms((cur_sq[c] / frames_in_window as f64).sqrt() as f32));
+            mins[c].push(quantize(if cur_min[c] == f32::MAX {
+                0.0
+            } else {
+                cur_min[c]
+            }));
+            maxs[c].push(quantize(if cur_max[c] == f32::MIN {
+                0.0
+            } else {
+                cur_max[c]
+            }));
+            rmss[c].push(quantize_rms(
+                (cur_sq[c] / frames_in_window as f64).sqrt() as f32
+            ));
         }
     }
     let peak_count = mins[0].len() as u32;
-    Ok(LevelData { channels: channels as u32, peak_count, mins, maxs, rmss })
+    Ok(LevelData {
+        channels: channels as u32,
+        peak_count,
+        mins,
+        maxs,
+        rmss,
+    })
 }
 
 /// Halve resolution by pairwise min/max. An odd trailing window is paired
@@ -500,7 +532,16 @@ fn build_pyramid(finest: LevelData) -> Vec<(u32, LevelData)> {
         }
         let peak_count = mins[0].len() as u32;
         frames_per_peak = frames_per_peak.saturating_mul(2);
-        out.push((frames_per_peak, LevelData { channels: channels as u32, peak_count, mins, maxs, rmss }));
+        out.push((
+            frames_per_peak,
+            LevelData {
+                channels: channels as u32,
+                peak_count,
+                mins,
+                maxs,
+                rmss,
+            },
+        ));
     }
     out
 }
@@ -549,7 +590,7 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{AudioStreamMeta, DecodeRoute, MediaKind, MediaMetadata, new_id};
+    use crate::state::{new_id, AudioStreamMeta, DecodeRoute, MediaKind, MediaMetadata};
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")
@@ -563,11 +604,18 @@ mod tests {
     async fn make_test_audio(dest: &std::path::Path) -> Result<()> {
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "sine=frequency=1000:duration=1",
-                "-ac", "1",
-                "-ar", "44100",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=1000:duration=1",
+                "-ac",
+                "1",
+                "-ar",
+                "44100",
             ])
             .arg(dest)
             .status()
@@ -636,17 +684,28 @@ mod tests {
         // Constant 1 kHz sine: every finest window has a full cycle, so max ≈ const,
         // well above the noise floor and below clipping.
         let range = read_range(&path, 0, 0, 0, header.levels[0].peak_count).expect("range");
-        let peak = range.max.iter().map(|v| dequantize(*v)).fold(0.0_f32, f32::max);
+        let peak = range
+            .max
+            .iter()
+            .map(|v| dequantize(*v))
+            .fold(0.0_f32, f32::max);
         assert!(peak > 0.05, "peak {peak} too low — pipeline likely broken");
         assert!(peak <= 1.01, "peak {peak} clipped");
 
         // Constant-amplitude sine: per-window RMS should converge on peak/sqrt(2)
         // once averaged across the whole clip (individual windows wobble with
         // cycle-boundary phase).
-        let avg_rms = range.rms.iter().map(|v| dequantize_rms(*v) as f64).sum::<f64>()
+        let avg_rms = range
+            .rms
+            .iter()
+            .map(|v| dequantize_rms(*v) as f64)
+            .sum::<f64>()
             / range.rms.len() as f64;
         let ratio = avg_rms / peak as f64;
-        assert!((ratio - 0.707).abs() < 0.05, "rms/peak ratio {ratio} not close to 1/sqrt(2)");
+        assert!(
+            (ratio - 0.707).abs() < 0.05,
+            "rms/peak ratio {ratio} not close to 1/sqrt(2)"
+        );
     }
 
     #[tokio::test]
@@ -705,10 +764,12 @@ mod tests {
             (BASE_FRAMES_PER_PEAK, fine),
             (BASE_FRAMES_PER_PEAK * 2, coarse),
         ];
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        rt.block_on(async {
-            write_peaks(&path, 2, &levels).await
-        }).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async { write_peaks(&path, 2, &levels).await })
+            .unwrap();
 
         let header = read_header(&path).expect("header");
         assert_eq!(header.channels, 2);
@@ -722,14 +783,20 @@ mod tests {
         // along so callers don't need a second header read; rms round-trips
         // alongside min/max.
         let range = read_range(&path, 0, 1, 1, 2).expect("range");
-        assert_eq!(range.peaks_per_second, SAMPLE_RATE as f64 / BASE_FRAMES_PER_PEAK as f64);
+        assert_eq!(
+            range.peaks_per_second,
+            SAMPLE_RATE as f64 / BASE_FRAMES_PER_PEAK as f64
+        );
         assert_eq!(range.min, vec![-20, -30]);
         assert_eq!(range.max, vec![20, 30]);
         assert_eq!(range.rms, vec![2, 3]);
 
         // Coarse level reports its own pps.
         let range = read_range(&path, 1, 0, 0, 2).expect("coarse range");
-        assert_eq!(range.peaks_per_second, SAMPLE_RATE as f64 / (BASE_FRAMES_PER_PEAK * 2) as f64);
+        assert_eq!(
+            range.peaks_per_second,
+            SAMPLE_RATE as f64 / (BASE_FRAMES_PER_PEAK * 2) as f64
+        );
         assert_eq!(range.rms, vec![150, 350]);
 
         // Clamp past the end.
@@ -740,7 +807,10 @@ mod tests {
         // Fully past-end start_peak -> empty result (start clamps to peak_count,
         // n = 0) but pps is still reported.
         let range = read_range(&path, 0, 0, 10, 5).expect("past-end start");
-        assert_eq!(range.peaks_per_second, SAMPLE_RATE as f64 / BASE_FRAMES_PER_PEAK as f64);
+        assert_eq!(
+            range.peaks_per_second,
+            SAMPLE_RATE as f64 / BASE_FRAMES_PER_PEAK as f64
+        );
         assert!(range.min.is_empty() && range.max.is_empty() && range.rms.is_empty());
 
         // Out-of-range channel is an error, not a silent clamp.
@@ -780,10 +850,20 @@ mod tests {
         mins[500] = quantize(-0.9);
         maxs[10] = quantize(0.4);
         let rmss = vec![vec![0u16; 1000]];
-        let finest = LevelData { channels: 1, peak_count: 1000, mins: vec![mins], maxs: vec![maxs], rmss };
+        let finest = LevelData {
+            channels: 1,
+            peak_count: 1000,
+            mins: vec![mins],
+            maxs: vec![maxs],
+            rmss,
+        };
         let pyramid = build_pyramid(finest);
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        rt.block_on(async { write_peaks(&path, 1, &pyramid).await }).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async { write_peaks(&path, 1, &pyramid).await })
+            .unwrap();
 
         let peaks_file = read_peaks_file(&path).expect("compat read");
         assert_eq!(peaks_file.sample_rate, SAMPLE_RATE);
@@ -791,7 +871,10 @@ mod tests {
         // The selected exact level is 22050/176 = 125.284... peaks/sec.
         assert_eq!(peaks_file.peaks.len(), 125);
         let big = peaks_file.peaks.iter().cloned().fold(0.0_f32, f32::max);
-        assert!((big - 0.9).abs() < 0.05, "max-abs lost the negative excursion: {big}");
+        assert!(
+            (big - 0.9).abs() < 0.05,
+            "max-abs lost the negative excursion: {big}"
+        );
     }
 
     #[test]

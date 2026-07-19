@@ -78,18 +78,14 @@ pub enum ValidationError {
         layer: LayerId,
     },
 
-    #[error(
-        "transition {transition} from_layer {from} and to_layer {to} are on different tracks"
-    )]
+    #[error("transition {transition} from_layer {from} and to_layer {to} are on different tracks")]
     TransitionCrossTrack {
         transition: TransitionId,
         from: LayerId,
         to: LayerId,
     },
 
-    #[error(
-        "transition {transition} duration {duration}us must equal layer overlap {overlap}us"
-    )]
+    #[error("transition {transition} duration {duration}us must equal layer overlap {overlap}us")]
     TransitionDurationMismatch {
         transition: TransitionId,
         duration: TimeUs,
@@ -125,7 +121,6 @@ pub enum ValidationError {
 
     #[error("group {group} has fewer than 2 members — should have been auto-dissolved")]
     GroupBelowMinSize { group: GroupId, members: usize },
-
 }
 
 /// A full export master that landed on disk, plus the encoder format version
@@ -247,9 +242,7 @@ pub enum CommandError {
     },
     #[error("group {group} not found")]
     GroupNotFound { group: GroupId },
-    #[error(
-        "layer {layer} is already in group {existing} — pass reassign=true to move it"
-    )]
+    #[error("layer {layer} is already in group {existing} — pass reassign=true to move it")]
     LayerAlreadyGrouped { layer: LayerId, existing: GroupId },
     #[error("groups_create needs at least 2 distinct layers, got {got}")]
     GroupCreateNeedsTwoLayers { got: usize },

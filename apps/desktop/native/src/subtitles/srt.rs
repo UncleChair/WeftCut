@@ -9,14 +9,32 @@ pub fn parse(body: &str) -> Vec<Cue> {
     for block in normalized.split("\n\n") {
         let mut lines = block.lines().filter(|l| !l.trim().is_empty());
         // Optional numeric index line; skip if present.
-        let first = match lines.next() { Some(l) => l, None => continue };
-        let time_line = if first.contains("-->") { first } else {
-            match lines.next() { Some(l) => l, None => continue }
+        let first = match lines.next() {
+            Some(l) => l,
+            None => continue,
         };
-        let (start_us, end_us) = match parse_time_range(time_line) { Some(t) => t, None => continue };
+        let time_line = if first.contains("-->") {
+            first
+        } else {
+            match lines.next() {
+                Some(l) => l,
+                None => continue,
+            }
+        };
+        let (start_us, end_us) = match parse_time_range(time_line) {
+            Some(t) => t,
+            None => continue,
+        };
         let text = lines.collect::<Vec<_>>().join("\n");
-        if text.is_empty() { continue; }
-        cues.push(Cue { start_us, end_us, text, style: CueStyle::default() });
+        if text.is_empty() {
+            continue;
+        }
+        cues.push(Cue {
+            start_us,
+            end_us,
+            text,
+            style: CueStyle::default(),
+        });
     }
     cues
 }
@@ -37,9 +55,13 @@ fn parse_ts(s: &str) -> Option<i64> {
     let h: i64 = p.next()?.parse().ok()?;
     let m: i64 = p.next()?.parse().ok()?;
     let sec: i64 = p.next()?.parse().ok()?;
-    if p.next().is_some() { return None; }
+    if p.next().is_some() {
+        return None;
+    }
     let ms: i64 = ms.parse().ok()?;
-    if !(0..1000).contains(&ms) || !(0..60).contains(&sec) || !(0..60).contains(&m) || h < 0 { return None; }
+    if !(0..1000).contains(&ms) || !(0..60).contains(&sec) || !(0..60).contains(&m) || h < 0 {
+        return None;
+    }
     Some(((h * 3600 + m * 60 + sec) * 1000 + ms) * 1000)
 }
 

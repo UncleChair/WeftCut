@@ -16,7 +16,7 @@ use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
+use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 
 /// Time-grid base spacing. Twin: renderer FilmstripTileProducer.ts
 /// `FILMSTRIP_BASE_SPACING_US` / `spacingUs` — both sides pin the same
@@ -34,7 +34,10 @@ pub fn spacing_us(lod: u32) -> i64 {
 }
 
 pub fn validate_lod(lod: u32) -> Result<()> {
-    anyhow::ensure!(lod <= FILMSTRIP_MAX_LOD, "lod {lod} out of range 0..={FILMSTRIP_MAX_LOD}");
+    anyhow::ensure!(
+        lod <= FILMSTRIP_MAX_LOD,
+        "lod {lod} out of range 0..={FILMSTRIP_MAX_LOD}"
+    );
     Ok(())
 }
 
@@ -117,11 +120,18 @@ pub async fn extract_tile(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         discard_temp(&dest);
-        anyhow::bail!("ffmpeg exited with {} for filmstrip tile: {}", output.status, stderr.trim());
+        anyhow::bail!(
+            "ffmpeg exited with {} for filmstrip tile: {}",
+            output.status,
+            stderr.trim()
+        );
     }
     if !cached_ok(&tmp) {
         discard_temp(&dest);
-        anyhow::bail!("ffmpeg returned success but tile is missing or zero bytes at {}", tmp.display());
+        anyhow::bail!(
+            "ffmpeg returned success but tile is missing or zero bytes at {}",
+            tmp.display()
+        );
     }
     promote_temp(&dest)?;
     cache.notify_write();
@@ -145,13 +155,22 @@ mod tests {
     async fn make_test_video(dest: &std::path::Path) -> Result<()> {
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "testsrc=duration=2:size=640x360:rate=30",
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-t", "2",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=2:size=640x360:rate=30",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-t",
+                "2",
             ])
             .arg(dest)
             .status()
@@ -185,18 +204,34 @@ mod tests {
         make_test_video(&video).await.expect("test fixture");
 
         // lod=2 -> spacing_us(2) = 1_000_000; index=1 -> t = 1_000_000 us.
-        let p1 = extract_tile(&cache, &video, crate::cache::FilmstripSrc::Orig, "filmstrip-test", Some(2_000_000), 2, 1)
-            .await
-            .expect("first extract");
+        let p1 = extract_tile(
+            &cache,
+            &video,
+            crate::cache::FilmstripSrc::Orig,
+            "filmstrip-test",
+            Some(2_000_000),
+            2,
+            1,
+        )
+        .await
+        .expect("first extract");
         assert!(cached_ok(&p1));
         let len_before = tokio::fs::metadata(&p1).await.unwrap().len();
 
         // Second call should hit the disk cache (path returned without
         // re-running ffmpeg). We can't directly observe "didn't run ffmpeg"
         // but we can observe the file is unchanged.
-        let p2 = extract_tile(&cache, &video, crate::cache::FilmstripSrc::Orig, "filmstrip-test", Some(2_000_000), 2, 1)
-            .await
-            .expect("cached extract");
+        let p2 = extract_tile(
+            &cache,
+            &video,
+            crate::cache::FilmstripSrc::Orig,
+            "filmstrip-test",
+            Some(2_000_000),
+            2,
+            1,
+        )
+        .await
+        .expect("cached extract");
         assert_eq!(p1, p2);
         let len_after = tokio::fs::metadata(&p2).await.unwrap().len();
         assert_eq!(len_before, len_after);
@@ -218,9 +253,17 @@ mod tests {
         // spacing_us(3) = 2_000_000; index=1 -> raw t = 2_000_000 us, which is
         // >= the 2s fixture's duration. With duration_us = Some(2_000_000) the
         // request must clamp into the source instead of erroring.
-        let p = extract_tile(&cache, &video, crate::cache::FilmstripSrc::Orig, "filmstrip-tail-test", Some(2_000_000), 3, 1)
-            .await
-            .expect("clamped extract");
+        let p = extract_tile(
+            &cache,
+            &video,
+            crate::cache::FilmstripSrc::Orig,
+            "filmstrip-tail-test",
+            Some(2_000_000),
+            3,
+            1,
+        )
+        .await
+        .expect("clamped extract");
         assert!(cached_ok(&p));
     }
 
@@ -240,15 +283,30 @@ mod tests {
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         std::fs::write(&dest, b"jpg").unwrap();
         let f = std::fs::File::options().write(true).open(&dest).unwrap();
-        f.set_times(std::fs::FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(2 * 3600))).unwrap();
+        f.set_times(
+            std::fs::FileTimes::new()
+                .set_modified(SystemTime::now() - Duration::from_secs(2 * 3600)),
+        )
+        .unwrap();
         drop(f);
 
         // Hit path returns before any ffmpeg concern: src may not exist.
-        let p = extract_tile(&cache, Path::new("missing.mp4"), crate::cache::FilmstripSrc::Orig, "h", None, 2, 1)
-            .await
-            .expect("cache hit");
+        let p = extract_tile(
+            &cache,
+            Path::new("missing.mp4"),
+            crate::cache::FilmstripSrc::Orig,
+            "h",
+            None,
+            2,
+            1,
+        )
+        .await
+        .expect("cache hit");
         assert_eq!(p, dest);
         let m = std::fs::metadata(&dest).unwrap().modified().unwrap();
-        assert!(m > SystemTime::now() - Duration::from_secs(60), "hit must touch the LRU clock");
+        assert!(
+            m > SystemTime::now() - Duration::from_secs(60),
+            "hit must touch the LRU clock"
+        );
     }
 }

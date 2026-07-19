@@ -132,12 +132,18 @@ pub fn initial_decode_route(kind: MediaKind) -> DecodeRoute {
 pub fn route_needs_decision(route: &DecodeRoute) -> bool {
     match route {
         DecodeRoute::Bypass => false,
-        DecodeRoute::Proxied { full_proxy: Some(p), .. } => !p.is_file(),
+        DecodeRoute::Proxied {
+            full_proxy: Some(p),
+            ..
+        } => !p.is_file(),
         // A persisted native-sw with its full master already on disk is "ready"
         // and only re-fans decorations on re-open. Without this it would fall to
         // `_ => true` and re-run the decision, resetting the paths (transient
         // blank preview). Mirrors the Proxied arm.
-        DecodeRoute::NativeSw { full_proxy: Some(p), .. } => !p.is_file(),
+        DecodeRoute::NativeSw {
+            full_proxy: Some(p),
+            ..
+        } => !p.is_file(),
         _ => true,
     }
 }
@@ -156,7 +162,9 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
         // ordinary FullProxy/Proxy pair.
         (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => ProxyJob::QuickThenFull,
         (ExportSource::Original, PreviewSource::NativeFfmpeg) => {
-            unreachable!("NativeFfmpeg preview implies FullProxy export (decide() always pairs them)")
+            unreachable!(
+                "NativeFfmpeg preview implies FullProxy export (decide() always pairs them)"
+            )
         }
     }
 }
@@ -330,7 +338,10 @@ mod tests {
 
     #[test]
     fn long_gop_friendly_h264_previews_from_proxy() {
-        assert_eq!(decide(&video(|_| {}), Some(6.0)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+        assert_eq!(
+            decide(&video(|_| {}), Some(6.0)),
+            EXPORT_ORIGINAL_PREVIEW_PROXY
+        );
     }
 
     #[test]
@@ -417,7 +428,11 @@ mod tests {
                 m.metadata.video.as_mut().unwrap().codec = codec.into();
             });
             let r = decide(&item, Some(0.0));
-            assert_eq!(r.preview, PreviewSource::NativeFfmpeg, "preview for {codec}");
+            assert_eq!(
+                r.preview,
+                PreviewSource::NativeFfmpeg,
+                "preview for {codec}"
+            );
             assert_eq!(r.export, ExportSource::FullProxy, "export for {codec}");
         }
     }
@@ -518,14 +533,18 @@ mod tests {
         // default means spawn_proxy_decision never runs and a non-WebCodecs source
         // (qtrle/ProRes/MJPEG) is stuck decoding an undecodable original forever
         // (no proxy ever built). The fresh-video route must trigger the decision.
-        assert!(route_needs_decision(&initial_decode_route(MediaKind::Video)));
+        assert!(route_needs_decision(&initial_decode_route(
+            MediaKind::Video
+        )));
     }
 
     #[test]
     fn fresh_non_video_import_needs_no_decision() {
         // Audio/image have no proxy concept; their fresh route is Bypass (and the
         // decision gate isn't consulted for them in enqueue_for_media anyway).
-        assert!(!route_needs_decision(&initial_decode_route(MediaKind::Audio)));
+        assert!(!route_needs_decision(&initial_decode_route(
+            MediaKind::Audio
+        )));
         assert_eq!(initial_decode_route(MediaKind::Audio), DecodeRoute::Bypass);
     }
 

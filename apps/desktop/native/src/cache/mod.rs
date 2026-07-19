@@ -109,7 +109,9 @@ impl CacheLayout {
     }
 
     fn schedule_sweep(&self, delay: std::time::Duration) {
-        let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
         if !self.sweeper.try_schedule() {
             return;
         }
@@ -122,7 +124,11 @@ impl CacheLayout {
             layout.sweeper.finish();
             let l2 = layout.clone();
             let report = tokio::task::spawn_blocking(move || {
-                disk_lru::sweep(&l2, disk_lru::DISK_CACHE_BUDGET_BYTES, std::time::SystemTime::now())
+                disk_lru::sweep(
+                    &l2,
+                    disk_lru::DISK_CACHE_BUDGET_BYTES,
+                    std::time::SystemTime::now(),
+                )
             })
             .await
             .unwrap_or_default();
@@ -291,8 +297,7 @@ impl CacheLayout {
             self.transcribe_audio_dir(),
             self.voiceover_dir(),
         ] {
-            fs::create_dir_all(&p)
-                .with_context(|| format!("create cache dir {}", p.display()))?;
+            fs::create_dir_all(&p).with_context(|| format!("create cache dir {}", p.display()))?;
         }
         Ok(())
     }
@@ -320,7 +325,10 @@ pub fn touch_if_stale(path: &Path) {
     let now = SystemTime::now();
     let Ok(meta) = fs::metadata(path) else { return };
     let stale = match meta.modified() {
-        Ok(m) => now.duration_since(m).map(|age| age > TOUCH_THROTTLE).unwrap_or(true),
+        Ok(m) => now
+            .duration_since(m)
+            .map(|age| age > TOUCH_THROTTLE)
+            .unwrap_or(true),
         Err(_) => true,
     };
     if !stale {
@@ -365,7 +373,8 @@ mod tests {
 
     fn set_mtime(path: &Path, when: SystemTime) {
         let f = fs::File::options().write(true).open(path).unwrap();
-        f.set_times(fs::FileTimes::new().set_modified(when)).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(when))
+            .unwrap();
     }
 
     #[test]
@@ -406,7 +415,12 @@ mod tests {
         );
         assert_eq!(
             layout.filmstrip_tile("abc", FilmstripSrc::Quick, 3, 7),
-            tmp.path().join("filmstrip").join("abc").join("quick").join("3").join("000007.jpg"),
+            tmp.path()
+                .join("filmstrip")
+                .join("abc")
+                .join("quick")
+                .join("3")
+                .join("000007.jpg"),
         );
     }
 
@@ -529,12 +543,18 @@ mod tests {
         set_mtime(&path, now - Duration::from_secs(30 * 60));
         touch_if_stale(&path);
         let m = fs::metadata(&path).unwrap().modified().unwrap();
-        assert!(m < now - Duration::from_secs(29 * 60), "fresh mtime rewritten");
+        assert!(
+            m < now - Duration::from_secs(29 * 60),
+            "fresh mtime rewritten"
+        );
 
         // 2 h old: stale, must be refreshed to ~now.
         set_mtime(&path, now - Duration::from_secs(2 * 3600));
         touch_if_stale(&path);
         let m = fs::metadata(&path).unwrap().modified().unwrap();
-        assert!(m > now - Duration::from_secs(60), "stale mtime not refreshed");
+        assert!(
+            m > now - Duration::from_secs(60),
+            "stale mtime not refreshed"
+        );
     }
 }

@@ -26,10 +26,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
-use anyhow::{Context, Result};
-use serde::Serialize;
 use crate::events::EventSink;
 use crate::logs::LogBusSlot;
+use anyhow::{Context, Result};
+use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
@@ -108,12 +108,7 @@ impl ImportQueue {
 
     /// Push a copy job. Spawns the worker on first enqueue; subsequent
     /// enqueues just append.
-    pub fn enqueue(
-        &self,
-        media_id: MediaId,
-        source: PathBuf,
-        workspace_root: PathBuf,
-    ) {
+    pub fn enqueue(&self, media_id: MediaId, source: PathBuf, workspace_root: PathBuf) {
         let need_worker = {
             let mut guard = self.inner.lock().expect("import queue poisoned");
             guard.pending.push_back(PendingImport {
@@ -147,11 +142,7 @@ impl ImportQueue {
     pub fn cancel(&self, media_id: MediaId) -> bool {
         let mut guard = self.inner.lock().expect("import queue poisoned");
         // Pending case: just drop it.
-        if let Some(pos) = guard
-            .pending
-            .iter()
-            .position(|j| j.media_id == media_id)
-        {
+        if let Some(pos) = guard.pending.iter().position(|j| j.media_id == media_id) {
             guard.pending.remove(pos);
             for entry in guard.history.iter_mut() {
                 if entry.media_id == media_id.to_string()
@@ -185,8 +176,10 @@ impl ImportQueue {
 
     fn emit_queue(&self) {
         let snapshot = self.list();
-        self.events
-            .emit(events::QUEUE, serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null));
+        self.events.emit(
+            events::QUEUE,
+            serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null),
+        );
     }
 
     async fn worker_loop(self) {
@@ -240,12 +233,8 @@ impl ImportQueue {
             });
             self.emit_queue();
 
-            let outcome = copy_to_workspace(
-                &next.source,
-                &next.workspace_root,
-                cancel.clone(),
-            )
-            .await;
+            let outcome =
+                copy_to_workspace(&next.source, &next.workspace_root, cancel.clone()).await;
 
             match outcome {
                 Ok(Some(copy)) => {
@@ -267,9 +256,12 @@ impl ImportQueue {
                     .await
                     {
                         warn!("import: actor update failed: {e}");
-                        self.finalize(media_id, ImportStatus::Failed {
-                            detail: e.to_string(),
-                        });
+                        self.finalize(
+                            media_id,
+                            ImportStatus::Failed {
+                                detail: e.to_string(),
+                            },
+                        );
                         self.events.emit(
                             events::ERROR,
                             serde_json::json!({
@@ -325,9 +317,12 @@ impl ImportQueue {
                 }
                 Err(e) => {
                     warn!("import: copy failed: {e:#}");
-                    self.finalize(media_id, ImportStatus::Failed {
-                        detail: format!("{e:#}"),
-                    });
+                    self.finalize(
+                        media_id,
+                        ImportStatus::Failed {
+                            detail: format!("{e:#}"),
+                        },
+                    );
                     self.events.emit(
                         events::ERROR,
                         serde_json::json!({

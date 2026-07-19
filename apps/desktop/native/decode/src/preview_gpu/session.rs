@@ -33,8 +33,8 @@ use windows::core::{Interface, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Graphics::Direct3D11::{
     ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX,
-    D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_TEXTURE2D_DESC,
-    D3D11_USAGE_DEFAULT,
+    D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
@@ -232,7 +232,13 @@ impl TimingAccum {
 
 fn summarize(samples: &[u64]) -> TimingSummary {
     if samples.is_empty() {
-        return TimingSummary { count: 0, mean_ms: 0.0, p50_ms: 0.0, p95_ms: 0.0, max_ms: 0.0 };
+        return TimingSummary {
+            count: 0,
+            mean_ms: 0.0,
+            p50_ms: 0.0,
+            p95_ms: 0.0,
+            max_ms: 0.0,
+        };
     }
     let mut sorted = samples.to_vec();
     sorted.sort_unstable();
@@ -792,8 +798,8 @@ fn init_session(
 
         // Raw D3D11 only shares an NT-handle texture when NTHANDLE + KEYEDMUTEX
         // are set together. Shared textures reject initial data; fill via copy.
-        let nt_km =
-            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
+        let nt_km = (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0
+            | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
         let desc = D3D11_TEXTURE2D_DESC {
             Width: width,
             Height: height,
@@ -976,7 +982,17 @@ impl PreviewGpuRegistry {
 
         let join = thread::Builder::new()
             .name(format!("preview-gpu-{sid}"))
-            .spawn(move || session_thread(sid, path_owned, pool_size, cmd_rx, init_tx, poke, timing_thread))
+            .spawn(move || {
+                session_thread(
+                    sid,
+                    path_owned,
+                    pool_size,
+                    cmd_rx,
+                    init_tx,
+                    poke,
+                    timing_thread,
+                )
+            })
             .map_err(|e| format!("spawn preview-gpu session thread failed: {e}"))?;
 
         // Block until the thread reports open success/failure. COM pointers never
@@ -1089,11 +1105,27 @@ mod timing_tests {
         }
         let r = a.drain();
         assert_eq!(r.coord_rtt.count, 5);
-        assert!((r.coord_rtt.mean_ms - 30.0).abs() < 1e-6, "mean {}", r.coord_rtt.mean_ms);
-        assert!((r.coord_rtt.p50_ms - 30.0).abs() < 1e-6, "p50 {}", r.coord_rtt.p50_ms);
+        assert!(
+            (r.coord_rtt.mean_ms - 30.0).abs() < 1e-6,
+            "mean {}",
+            r.coord_rtt.mean_ms
+        );
+        assert!(
+            (r.coord_rtt.p50_ms - 30.0).abs() < 1e-6,
+            "p50 {}",
+            r.coord_rtt.p50_ms
+        );
         // linear interp: idx = 0.95*(5-1) = 3.8 -> 40 + (50-40)*0.8 = 48
-        assert!((r.coord_rtt.p95_ms - 48.0).abs() < 1e-6, "p95 {}", r.coord_rtt.p95_ms);
-        assert!((r.coord_rtt.max_ms - 50.0).abs() < 1e-6, "max {}", r.coord_rtt.max_ms);
+        assert!(
+            (r.coord_rtt.p95_ms - 48.0).abs() < 1e-6,
+            "p95 {}",
+            r.coord_rtt.p95_ms
+        );
+        assert!(
+            (r.coord_rtt.max_ms - 50.0).abs() < 1e-6,
+            "max {}",
+            r.coord_rtt.max_ms
+        );
     }
 
     #[test]
@@ -1154,8 +1186,16 @@ mod timing_tests {
         }
         let r = a.drain();
         assert_eq!(r.ack_to_emit.count, 3);
-        assert!((r.ack_to_emit.mean_ms - 24.0).abs() < 1e-6, "mean {}", r.ack_to_emit.mean_ms);
-        assert!((r.ack_to_emit.p50_ms - 24.0).abs() < 1e-6, "p50 {}", r.ack_to_emit.p50_ms);
+        assert!(
+            (r.ack_to_emit.mean_ms - 24.0).abs() < 1e-6,
+            "mean {}",
+            r.ack_to_emit.mean_ms
+        );
+        assert!(
+            (r.ack_to_emit.p50_ms - 24.0).abs() < 1e-6,
+            "p50 {}",
+            r.ack_to_emit.p50_ms
+        );
         assert_eq!(r.lookahead_gated_skips, 5);
     }
 

@@ -235,11 +235,12 @@ unsafe fn attach_hw_device(
     let dev_ptr = device.as_ref().map(|c| c.as_ptr()).unwrap_or(ptr::null());
 
     let mut hw_ctx: *mut ffs::AVBufferRef = ptr::null_mut();
-    let ret = unsafe {
-        ffs::av_hwdevice_ctx_create(&mut hw_ctx, hw_type, dev_ptr, ptr::null_mut(), 0)
-    };
+    let ret =
+        unsafe { ffs::av_hwdevice_ctx_create(&mut hw_ctx, hw_type, dev_ptr, ptr::null_mut(), 0) };
     if ret < 0 || hw_ctx.is_null() {
-        return Err(format!("av_hwdevice_ctx_create({accel:?}) failed (ret={ret})"));
+        return Err(format!(
+            "av_hwdevice_ctx_create({accel:?}) failed (ret={ret})"
+        ));
     }
     unsafe {
         let raw = codec_ctx.as_mut_ptr();
@@ -779,7 +780,10 @@ mod tests {
 
     #[test]
     fn decodes_first_prores_frame_to_i420p10() {
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
         let mut s = SwVideoStream::open_with_format(p, SwOutFormat::I420p10).expect("open");
         let f = s.next_frame().expect("decode").expect("some frame");
         assert_eq!(f.format, SwOutFormat::I420p10);
@@ -789,7 +793,10 @@ mod tests {
 
     #[test]
     fn decodes_first_prores_frame_to_nv12() {
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
         let mut s = SwVideoStream::open(p).expect("open");
         let f = s.next_frame().expect("decode").expect("some frame");
         assert_eq!(f.width, 320);
@@ -800,11 +807,20 @@ mod tests {
 
     #[test]
     fn probe_identity_reports_prores_codec_and_pix_fmt_then_decodes() {
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
         let mut s = SwVideoStream::open(p).expect("open");
         let (codec, pix_fmt, width, height) = s.probe_identity();
-        assert!(!codec.is_empty() && codec != "unknown", "codec name missing: {codec}");
-        assert!(!pix_fmt.is_empty() && pix_fmt != "unknown", "pix_fmt name missing: {pix_fmt}");
+        assert!(
+            !codec.is_empty() && codec != "unknown",
+            "codec name missing: {codec}"
+        );
+        assert!(
+            !pix_fmt.is_empty() && pix_fmt != "unknown",
+            "pix_fmt name missing: {pix_fmt}"
+        );
         assert_eq!(width, 320);
         assert_eq!(height, 240);
         // The probe reads identity without disturbing the packet pump: a
@@ -824,9 +840,16 @@ mod tests {
     fn threaded_decode_still_yields_correct_first_frame() {
         // Threading must not change decode output: identical assertions to the
         // single-threaded decode test, plus the effective thread_count is set.
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
         let mut s = SwVideoStream::open(p).expect("open");
-        assert!(s.thread_count >= 1, "thread_count not set (got {})", s.thread_count);
+        assert!(
+            s.thread_count >= 1,
+            "thread_count not set (got {})",
+            s.thread_count
+        );
         let f = s.next_frame().expect("decode").expect("some frame");
         assert_eq!(f.width, 320);
         assert_eq!(f.height, 240);
@@ -839,7 +862,10 @@ mod tests {
         assert_eq!(super::thread_type_for(Id::PRORES), super::FF_THREAD_SLICE);
         assert_eq!(super::thread_type_for(Id::DNXHD), super::FF_THREAD_SLICE);
         for id in [Id::MPEG2VIDEO, Id::VC1, Id::WMV3] {
-            assert_eq!(super::thread_type_for(id), super::FF_THREAD_FRAME | super::FF_THREAD_SLICE);
+            assert_eq!(
+                super::thread_type_for(id),
+                super::FF_THREAD_FRAME | super::FF_THREAD_SLICE
+            );
         }
     }
 
@@ -851,7 +877,12 @@ mod tests {
         assert!(is_hw_pix_format(Pixel::VAAPI));
         assert!(is_hw_pix_format(Pixel::D3D11));
         // CPU formats must NOT be treated as hw surfaces (they skip the transfer).
-        for f in [Pixel::NV12, Pixel::YUV420P, Pixel::YUV422P10LE, Pixel::YUV420P10LE] {
+        for f in [
+            Pixel::NV12,
+            Pixel::YUV420P,
+            Pixel::YUV422P10LE,
+            Pixel::YUV420P10LE,
+        ] {
             assert!(!is_hw_pix_format(f), "{f:?} wrongly flagged hw");
         }
     }
@@ -861,7 +892,10 @@ mod tests {
         // The hw probe is meaningless for the software lane — it must error
         // rather than "succeed" (there is no hw surface to confirm).
         use super::{probe_hw_first_frame, DecodeAccel};
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
         assert!(probe_hw_first_frame(p, DecodeAccel::Software).is_err());
     }
 
@@ -873,8 +907,16 @@ mod tests {
         // verified at the conformance seam, not here — crate tests stay
         // hardware-independent.)
         use super::{probe_hw_first_frame, DecodeAccel};
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
-        let r = probe_hw_first_frame(p, DecodeAccel::Vaapi { device: "/dev/dri/renderD999".into() });
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        let r = probe_hw_first_frame(
+            p,
+            DecodeAccel::Vaapi {
+                device: "/dev/dri/renderD999".into(),
+            },
+        );
         assert!(r.is_err(), "absent vaapi node should Err, got {r:?}");
     }
 }

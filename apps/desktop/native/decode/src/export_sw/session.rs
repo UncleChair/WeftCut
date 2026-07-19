@@ -131,7 +131,10 @@ struct CreditWindow {
 impl CreditWindow {
     fn new(window: u32) -> Self {
         Self {
-            lock: Mutex::new(CreditInner { credits: window.max(1) as i64, closed: false }),
+            lock: Mutex::new(CreditInner {
+                credits: window.max(1) as i64,
+                closed: false,
+            }),
             cv: Condvar::new(),
         }
     }
@@ -206,7 +209,10 @@ struct RangeState {
 
 impl RangeState {
     fn new() -> Self {
-        Self { covered_through_us: i64::MIN, ..Default::default() }
+        Self {
+            covered_through_us: i64::MIN,
+            ..Default::default()
+        }
     }
 }
 
@@ -267,7 +273,12 @@ fn serve_range(
     // Forward past a drained stream, or fully behind what we've already emitted:
     // nothing to decode, the range is trivially satisfied.
     if forward && (state.ended || b < state.covered_through_us) {
-        emit(sink, ExportPoke::RangeEnd { session_id: session_id.to_string() });
+        emit(
+            sink,
+            ExportPoke::RangeEnd {
+                session_id: session_id.to_string(),
+            },
+        );
         return;
     }
 
@@ -286,7 +297,13 @@ fn serve_range(
                 state.covered_through_us = i64::MIN;
             }
             Err(e) => {
-                emit(sink, ExportPoke::Error { session_id: session_id.to_string(), message: e });
+                emit(
+                    sink,
+                    ExportPoke::Error {
+                        session_id: session_id.to_string(),
+                        message: e,
+                    },
+                );
                 return;
             }
         }
@@ -303,15 +320,28 @@ fn serve_range(
                     // been drained + delivered above. Signal end-of-stream, then
                     // close the range.
                     state.ended = true;
-                    emit(sink, ExportPoke::Ended { session_id: session_id.to_string() });
-                    emit(sink, ExportPoke::RangeEnd { session_id: session_id.to_string() });
+                    emit(
+                        sink,
+                        ExportPoke::Ended {
+                            session_id: session_id.to_string(),
+                        },
+                    );
+                    emit(
+                        sink,
+                        ExportPoke::RangeEnd {
+                            session_id: session_id.to_string(),
+                        },
+                    );
                     return;
                 }
                 Err(e) => {
-                    emit(sink, ExportPoke::Error {
-                        session_id: session_id.to_string(),
-                        message: e,
-                    });
+                    emit(
+                        sink,
+                        ExportPoke::Error {
+                            session_id: session_id.to_string(),
+                            message: e,
+                        },
+                    );
                     return;
                 }
             },
@@ -323,7 +353,12 @@ fn serve_range(
         // the inclusive range and must be delivered.)
         if frame.pts_us > b {
             state.pending = Some(frame);
-            emit(sink, ExportPoke::RangeEnd { session_id: session_id.to_string() });
+            emit(
+                sink,
+                ExportPoke::RangeEnd {
+                    session_id: session_id.to_string(),
+                },
+            );
             return;
         }
 
@@ -342,7 +377,13 @@ fn serve_range(
         if frame.pts_us > state.covered_through_us {
             state.covered_through_us = frame.pts_us;
         }
-        emit(sink, ExportPoke::Frame { session_id: session_id.to_string(), frame });
+        emit(
+            sink,
+            ExportPoke::Frame {
+                session_id: session_id.to_string(),
+                frame,
+            },
+        );
     }
 }
 
@@ -447,7 +488,15 @@ impl ExportSwRegistry {
         let join = thread::Builder::new()
             .name(format!("export-sw-{sid}"))
             .spawn(move || {
-                session_thread(sid, path_owned, fmt, credit_for_thread, cmd_rx, init_tx, sink)
+                session_thread(
+                    sid,
+                    path_owned,
+                    fmt,
+                    credit_for_thread,
+                    cmd_rx,
+                    init_tx,
+                    sink,
+                )
             })
             .map_err(|e| format!("spawn export-sw session thread failed: {e}"))?;
 
@@ -455,7 +504,11 @@ impl ExportSwRegistry {
             Ok(Ok(info)) => {
                 sessions.insert(
                     session_id.to_string(),
-                    Session { tx: cmd_tx, credit, join: Some(join) },
+                    Session {
+                        tx: cmd_tx,
+                        credit,
+                        join: Some(join),
+                    },
                 );
                 Ok(info)
             }
@@ -465,7 +518,9 @@ impl ExportSwRegistry {
             }
             Err(_) => {
                 let _ = join.join();
-                Err(format!("export-sw session '{session_id}' thread exited before init"))
+                Err(format!(
+                    "export-sw session '{session_id}' thread exited before init"
+                ))
             }
         }
     }
@@ -526,7 +581,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    const PRORES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+    const PRORES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/tiny_prores.mov"
+    );
     const MPEG2: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
 
     /// Collects every poke a registry emits, tagged, so tests can assert the
@@ -590,7 +648,9 @@ mod tests {
     #[test]
     fn open_returns_dimensions_color_and_start_pts() {
         let (reg, _got) = registry_with_collector();
-        let info = reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).expect("open");
+        let info = reg
+            .open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .expect("open");
         assert_eq!((info.width, info.height), (320, 240));
         // ProRes fixture is color_range=tv; matrix/primaries/transfer unspecified.
         assert_eq!(info.color.range.as_deref(), Some("tv"));
@@ -601,10 +661,16 @@ mod tests {
     #[test]
     fn open_accepts_i420p10_and_rejects_garbage_loudly() {
         let (reg, _got) = registry_with_collector();
-        let err = reg.open("s", PRORES, "RGBA64", DEFAULT_CREDIT_WINDOW).unwrap_err();
-        assert!(err.contains("RGBA64"), "error should name the format: {err}");
+        let err = reg
+            .open("s", PRORES, "RGBA64", DEFAULT_CREDIT_WINDOW)
+            .unwrap_err();
+        assert!(
+            err.contains("RGBA64"),
+            "error should name the format: {err}"
+        );
         // 10-bit is a first-class lane output.
-        reg.open("s", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW).expect("I420P10 opens");
+        reg.open("s", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW)
+            .expect("I420P10 opens");
         reg.close("s").unwrap();
     }
 
@@ -615,14 +681,23 @@ mod tests {
         // caps every u16 sample at 255, while even 10-bit limited-range BLACK
         // is 256 (and white ~940).
         let (reg, got) = registry_with_collector();
-        let info = reg.open("p", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW).unwrap();
+        let info = reg
+            .open("p", PRORES, "I420P10", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         assert_eq!((info.width, info.height), (320, 240)); // even dims → w*h*3 bytes
         run_range(&reg, "p", 0, 300_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert!(!c.datas.is_empty(), "no frames delivered");
-        assert!(c.formats.iter().all(|&f| f == SwOutFormat::I420p10), "poke-level format tag");
-        assert_eq!(c.colors[0].range.as_deref(), Some("tv"), "color tags still carried");
+        assert!(
+            c.formats.iter().all(|&f| f == SwOutFormat::I420p10),
+            "poke-level format tag"
+        );
+        assert_eq!(
+            c.colors[0].range.as_deref(),
+            Some("tv"),
+            "color tags still carried"
+        );
         let y_bytes = 320 * 240 * 2;
         let mut luma_above_8bit = false;
         for d in &c.datas {
@@ -635,7 +710,10 @@ mod tests {
                 }
             }
         }
-        assert!(luma_above_8bit, "no luma sample above 255 — output looks 8-bit-quantized");
+        assert!(
+            luma_above_8bit,
+            "no luma sample above 255 — output looks 8-bit-quantized"
+        );
         drop(c);
         reg.close("p").unwrap();
     }
@@ -646,13 +724,18 @@ mod tests {
         // (swscale 8→10 upconvert) so a mixed-depth timeline needs no
         // per-source format branch downstream.
         let (reg, got) = registry_with_collector();
-        let info = reg.open("m", MPEG2, "I420P10", DEFAULT_CREDIT_WINDOW).unwrap();
+        let info = reg
+            .open("m", MPEG2, "I420P10", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         assert_eq!((info.width, info.height), (320, 240));
         run_range(&reg, "m", 0, 200_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         assert!(!c.datas.is_empty(), "no frames delivered");
-        assert!(c.formats.iter().all(|&f| f == SwOutFormat::I420p10), "poke-level format tag");
+        assert!(
+            c.formats.iter().all(|&f| f == SwOutFormat::I420p10),
+            "poke-level format tag"
+        );
         for d in &c.datas {
             assert_eq!(d.len(), 320 * 240 * 3, "tightly-packed I420P10 length");
             let mut max = 0u16;
@@ -663,7 +746,10 @@ mod tests {
             }
             // 8-bit values scale x4 into the 10-bit range — an all-zero (or
             // still-8-bit) buffer must not pass.
-            assert!(max > 255, "upconvert produced no sample above the 8-bit ceiling (max {max})");
+            assert!(
+                max > 255,
+                "upconvert produced no sample above the 8-bit ceiling (max {max})"
+            );
         }
         drop(c);
         reg.close("m").unwrap();
@@ -676,7 +762,8 @@ mod tests {
         // 250_000, 375_000, and 500_000 (starts at b, inclusive). Not 0 (ends at
         // 125_000 <= a) nor 625_000 (starts past b).
         let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         run_range(&reg, "p", 200_000, 500_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
@@ -689,7 +776,8 @@ mod tests {
     #[test]
     fn frames_carry_color_tags() {
         let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         run_range(&reg, "p", 0, 200_000, &got);
         let c = got.lock().unwrap();
         assert!(!c.colors.is_empty());
@@ -703,7 +791,8 @@ mod tests {
         // Two contiguous forward ranges over ProRes must partition the frames with
         // no repeats and no gaps: [0,300_000] then [300_001,700_000].
         let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         run_range(&reg, "p", 0, 300_000, &got);
         run_range(&reg, "p", 300_001, 700_000, &got);
         let c = got.lock().unwrap();
@@ -721,7 +810,8 @@ mod tests {
     #[test]
     fn backward_range_reseeks_and_reemits() {
         let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         run_range(&reg, "p", 500_000, 875_000, &got);
         let after_fwd = got.lock().unwrap().pts.clone();
         assert_eq!(after_fwd, vec![500_000, 625_000, 750_000, 875_000]);
@@ -741,7 +831,8 @@ mod tests {
         // high-water mark (875k), short-circuits as "already covered", and
         // delivers nothing — though [300k, 400k] was never covered by any range.
         let (reg, got) = registry_with_collector();
-        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        reg.open("p", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         run_range(&reg, "p", 500_000, 875_000, &got); // high-water → 875k
         run_range(&reg, "p", 0, 200_000, &got); // backward jump: coverage resets
         let before = got.lock().unwrap().pts.len();
@@ -765,9 +856,17 @@ mod tests {
         run_range(&reg, "m", 0, 600_000, &got);
         let c = got.lock().unwrap();
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
-        assert!(c.pts.len() >= 18, "expected dense coverage, got {}", c.pts.len());
+        assert!(
+            c.pts.len() >= 18,
+            "expected dense coverage, got {}",
+            c.pts.len()
+        );
         // Presentation order (the B-frame reorder guarantee).
-        assert!(c.pts.windows(2).all(|w| w[0] < w[1]), "not monotonic: {:?}", c.pts);
+        assert!(
+            c.pts.windows(2).all(|w| w[0] < w[1]),
+            "not monotonic: {:?}",
+            c.pts
+        );
         // First delivered frame is at/near source t=0 (start_pts subtracted).
         assert!(c.pts[0] >= 0 && c.pts[0] < 40_000, "first pts {}", c.pts[0]);
         // Every delivered frame intersects [0, 600_000] (b inclusive).
@@ -785,7 +884,8 @@ mod tests {
         // in that window (same set, same presentation order) — a dropped, doubled,
         // or mis-timed frame from a botched seek would diverge.
         let (reg, got) = registry_with_collector();
-        reg.open("full", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        reg.open("full", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         run_range(&reg, "full", 0, 10_000_000, &got);
         let all: Vec<(i64, i64)> = {
             let c = got.lock().unwrap();
@@ -803,7 +903,8 @@ mod tests {
         assert!(expected.len() >= 10, "mid-stream window unexpectedly small");
 
         let (reg2, got2) = registry_with_collector();
-        reg2.open("mid", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW).unwrap();
+        reg2.open("mid", MPEG2, "NV12", DEFAULT_CREDIT_WINDOW)
+            .unwrap();
         run_range(&reg2, "mid", a, b, &got2);
         let delivered = {
             let c = got2.lock().unwrap();
@@ -826,7 +927,10 @@ mod tests {
         let before = {
             let c = got.lock().unwrap();
             assert!(c.pts.windows(2).all(|w| w[0] < w[1]), "late not monotonic");
-            assert!(c.pts.iter().all(|&p| p + 33_333 > 1_400_000 && p <= 1_700_000));
+            assert!(c
+                .pts
+                .iter()
+                .all(|&p| p + 33_333 > 1_400_000 && p <= 1_700_000));
             c.pts.len()
         };
         run_range(&reg, "g", 400_000, 700_000, &got);
@@ -834,12 +938,19 @@ mod tests {
         assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
         let early = &c.pts[before..];
         assert!(!early.is_empty(), "backward range delivered nothing");
-        assert!(early.windows(2).all(|w| w[0] < w[1]), "backward not monotonic: {early:?}");
+        assert!(
+            early.windows(2).all(|w| w[0] < w[1]),
+            "backward not monotonic: {early:?}"
+        );
         assert!(
             early.iter().all(|&p| p + 33_333 > 400_000 && p <= 700_000),
             "backward frames out of range: {early:?}"
         );
-        assert!(early[0] < 450_000, "first backward frame not near a=400k: {}", early[0]);
+        assert!(
+            early[0] < 450_000,
+            "first backward frame not near a=400k: {}",
+            early[0]
+        );
         drop(c);
         reg.close("g").unwrap();
     }

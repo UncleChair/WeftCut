@@ -73,7 +73,7 @@ async fn mix_and_encode(
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
 ) -> Result<bool> {
-    use crate::audio::mix::{MIX_BLOCK_FRAMES, mix_block, plan_for_project};
+    use crate::audio::mix::{mix_block, plan_for_project, MIX_BLOCK_FRAMES};
 
     if !ffmpeg_is_installed() {
         anyhow::bail!(
@@ -186,11 +186,19 @@ async fn mix_and_encode(
     let status = child.wait().await.context("await ffmpeg")?;
     let stderr_tail = stderr_task.await.unwrap_or_default();
     if !status.success() {
-        warn!("ffmpeg exited with {}\nstderr tail:\n{}", status, stderr_tail);
+        warn!(
+            "ffmpeg exited with {}\nstderr tail:\n{}",
+            status, stderr_tail
+        );
         anyhow::bail!(
             "ffmpeg exited {}. Tail:\n{}",
             status,
-            stderr_tail.lines().rev().take(8).collect::<Vec<_>>().join("\n")
+            stderr_tail
+                .lines()
+                .rev()
+                .take(8)
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
     info!("audio mix+encode complete → {}", output.display());
@@ -200,11 +208,7 @@ async fn mix_and_encode(
 /// Build the ffmpeg argv for `mux_to_file`. Extracted out of the async
 /// fn so the omit-`-i audio`-when-missing decision is unit-testable
 /// without shelling out to ffmpeg.
-fn mux_args(
-    video_path: &Path,
-    audio_path: &Path,
-    output: &Path,
-) -> Vec<std::ffi::OsString> {
+fn mux_args(video_path: &Path, audio_path: &Path, output: &Path) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let mut args: Vec<OsString> = vec![
         "-y".into(),
@@ -228,11 +232,7 @@ fn mux_args(
 /// `audio_path` doesn't exist the audio input is omitted — taken on
 /// projects with no audio layers, where `export_audio_only` returns
 /// without producing anything.
-pub async fn mux_to_file(
-    video_path: &Path,
-    audio_path: &Path,
-    output: &Path,
-) -> Result<()> {
+pub async fn mux_to_file(video_path: &Path, audio_path: &Path, output: &Path) -> Result<()> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg is not installed");
     }
@@ -277,7 +277,12 @@ pub async fn mux_to_file(
         anyhow::bail!(
             "ffmpeg mux exited {}. Tail:\n{}",
             status,
-            stderr_tail.lines().rev().take(8).collect::<Vec<_>>().join("\n")
+            stderr_tail
+                .lines()
+                .rev()
+                .take(8)
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
     Ok(())
@@ -290,11 +295,17 @@ mod tests {
     #[test]
     fn audio_encode_args_aac_and_opus() {
         let aac = super::audio_encode_args("aac", 192_000);
-        let a: Vec<String> = aac.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        let a: Vec<String> = aac
+            .iter()
+            .map(|x| x.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(a, vec!["-c:a", "aac", "-b:a", "192000"]);
 
         let opus = super::audio_encode_args("opus", 128_000);
-        let o: Vec<String> = opus.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        let o: Vec<String> = opus
+            .iter()
+            .map(|x| x.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(o, vec!["-c:a", "libopus", "-b:a", "128000"]);
     }
     use tempfile::TempDir;
@@ -423,7 +434,10 @@ mod tests {
         let produced = super::mix_and_encode(&p, &out, &spec, None)
             .await
             .expect("mix_and_encode");
-        assert!(produced, "two audio layers in range -> should produce a file");
+        assert!(
+            produced,
+            "two audio layers in range -> should produce a file"
+        );
         assert!(out.is_file() && std::fs::metadata(&out).unwrap().len() > 0);
 
         // Decode back to f32 and inspect the middle 50% (skips AAC priming

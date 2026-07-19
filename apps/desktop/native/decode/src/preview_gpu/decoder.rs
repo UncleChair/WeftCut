@@ -135,7 +135,10 @@ fn frame_to_nv12(
         frame
     };
 
-    eprintln!("[poc-native] decoded frame format={:?} -> nv12", sw.format());
+    eprintln!(
+        "[poc-native] decoded frame format={:?} -> nv12",
+        sw.format()
+    );
 
     if sw.format() == Pixel::NV12 {
         Ok(extract_nv12_planes(sw))
@@ -223,7 +226,9 @@ pub fn decode_first_d3d11_frame(path: &str) -> Result<D3d11Frame, String> {
             0,
         );
         if ret < 0 || hw_ctx.is_null() {
-            return Err(format!("av_hwdevice_ctx_create(d3d11va) failed (ret={ret})"));
+            return Err(format!(
+                "av_hwdevice_ctx_create(d3d11va) failed (ret={ret})"
+            ));
         }
         let raw = codec_ctx.as_mut_ptr();
         (*raw).hw_device_ctx = ffs::av_buffer_ref(hw_ctx);
@@ -380,7 +385,10 @@ impl VideoStream {
             .best(Type::Video)
             .ok_or_else(|| "no video stream".to_string())?;
         let stream_index = stream.index();
-        let time_base = (stream.time_base().numerator(), stream.time_base().denominator());
+        let time_base = (
+            stream.time_base().numerator(),
+            stream.time_base().denominator(),
+        );
         // `start_time()` is the container's first-packet PTS in stream time_base
         // units (AV_NOPTS_VALUE if unknown); convert to source-normalized us so
         // `pts_to_source_us` reports t=0 at the visible start. Fall back to 0.
@@ -405,7 +413,9 @@ impl VideoStream {
                 0,
             );
             if ret < 0 || hw_ctx.is_null() {
-                return Err(format!("av_hwdevice_ctx_create(d3d11va) failed (ret={ret})"));
+                return Err(format!(
+                    "av_hwdevice_ctx_create(d3d11va) failed (ret={ret})"
+                ));
             }
             let raw = codec_ctx.as_mut_ptr();
             (*raw).hw_device_ctx = ffs::av_buffer_ref(hw_ctx);
@@ -515,14 +525,17 @@ impl VideoStream {
     /// arm forward decode. AVSEEK_FLAG_BACKWARD lands on a key packet <= target.
     pub fn seek(&mut self, target_us: i64) -> Result<(), String> {
         let (num, den) = (self.time_base.0 as i128, self.time_base.1 as i128);
-        let ts = ((target_us as i128 + self.start_pts_us as i128) * den
-            / (num * 1_000_000)) as i64;
+        let ts = ((target_us as i128 + self.start_pts_us as i128) * den / (num * 1_000_000)) as i64;
         unsafe {
             let ret = ffs::av_seek_frame(
-                self.ictx.as_mut_ptr(), self.stream_index as i32, ts,
+                self.ictx.as_mut_ptr(),
+                self.stream_index as i32,
+                ts,
                 ffs::AVSEEK_FLAG_BACKWARD,
             );
-            if ret < 0 { return Err(format!("av_seek_frame failed (ret={ret})")); }
+            if ret < 0 {
+                return Err(format!("av_seek_frame failed (ret={ret})"));
+            }
             // Flush decoder buffers so post-seek receive_frame doesn't return
             // pre-seek frames (avcodec_flush_buffers on the raw context).
             ffs::avcodec_flush_buffers(self.decoder.as_mut_ptr());

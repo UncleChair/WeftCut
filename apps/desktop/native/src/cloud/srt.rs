@@ -65,7 +65,11 @@ fn try_shift_cue_line(line: &str, offset_us: i64) -> Option<String> {
 
 fn shift_us(base_us: i64, offset_us: i64) -> i64 {
     let v = base_us.saturating_add(offset_us);
-    if v < 0 { 0 } else { v }
+    if v < 0 {
+        0
+    } else {
+        v
+    }
 }
 
 fn parse_srt_timestamp(s: &str) -> Option<i64> {

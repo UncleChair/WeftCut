@@ -93,7 +93,11 @@ pub fn sample_gain(
     // re-materialize the Kf slice on every 10 ms step. `static_v` short-circuits
     // the Static case (empty kfs ⇒ eval_f64 would return the default, not v).
     let kfs = gain_db.eval_kfs();
-    let static_v = if let Animated::Static(v) = gain_db { Some(*v) } else { None };
+    let static_v = if let Animated::Static(v) = gain_db {
+        Some(*v)
+    } else {
+        None
+    };
     let base = |t: i64| -> f64 {
         match static_v {
             Some(v) => v,
@@ -104,8 +108,7 @@ pub fn sample_gain(
     let mut k = 0i64;
     loop {
         let t = (k * ENVELOPE_STEP_US).min(span_us);
-        let g = db_to_linear(base(t))
-            * fade_multiplier(t, span_us, fade_in_us, fade_out_us) as f32;
+        let g = db_to_linear(base(t)) * fade_multiplier(t, span_us, fade_in_us, fade_out_us) as f32;
         values.push(g);
         if t >= span_us {
             break;
@@ -297,9 +300,8 @@ mod tests {
     fn keyframed_gain_samples_the_engine_curve() {
         // -20 dB → 0 dB linear over 1 s: midpoint is -10 dB in dB-space,
         // sampled then linearized.
-        let track = Animated::Keyframed(
-            vec![kf(0, -20.0), kf(1_000_000, 0.0)].into_iter().collect(),
-        );
+        let track =
+            Animated::Keyframed(vec![kf(0, -20.0), kf(1_000_000, 0.0)].into_iter().collect());
         let e = sample_gain(&track, 0, 0, 1_000_000);
         assert!(!e.is_constant());
         assert!((e.eval(500_000) - db_to_linear(-10.0)).abs() < 2e-3);
@@ -343,7 +345,12 @@ mod tests {
         .expect("fixture parses as Animated<f64> wire shape");
         assert!(!fixture.cases.is_empty());
         for case in &fixture.cases {
-            let e = sample_gain(&case.gain_db, case.fade_in_us, case.fade_out_us, case.span_us);
+            let e = sample_gain(
+                &case.gain_db,
+                case.fade_in_us,
+                case.fade_out_us,
+                case.span_us,
+            );
             for s in &case.samples {
                 let got = e.eval(s.t_us) as f64;
                 assert!(
@@ -357,27 +364,53 @@ mod tests {
         }
 
         #[derive(serde::Deserialize)]
-        struct PanSample { t_us: i64, expect: f64 }
+        struct PanSample {
+            t_us: i64,
+            expect: f64,
+        }
         #[derive(serde::Deserialize)]
-        struct PanCase { name: String, pan: Animated<f64>, span_us: i64, samples: Vec<PanSample> }
+        struct PanCase {
+            name: String,
+            pan: Animated<f64>,
+            span_us: i64,
+            samples: Vec<PanSample>,
+        }
         #[derive(serde::Deserialize)]
-        struct CoeffSample { t_us: i64, expect: [f32; 4] }
+        struct CoeffSample {
+            t_us: i64,
+            expect: [f32; 4],
+        }
         #[derive(serde::Deserialize)]
-        struct CoeffCase { name: String, pan: Animated<f64>, channels: i32, span_us: i64, samples: Vec<CoeffSample> }
+        struct CoeffCase {
+            name: String,
+            pan: Animated<f64>,
+            channels: i32,
+            span_us: i64,
+            samples: Vec<CoeffSample>,
+        }
         #[derive(serde::Deserialize)]
         struct Fixture2 {
-            #[serde(default)] pan_cases: Vec<PanCase>,
-            #[serde(default)] pan_coeff_env_cases: Vec<CoeffCase>,
+            #[serde(default)]
+            pan_cases: Vec<PanCase>,
+            #[serde(default)]
+            pan_coeff_env_cases: Vec<CoeffCase>,
         }
 
         let fx2: Fixture2 = serde_json::from_str(include_str!(
             "../../../src/renderer/render/audio/audioEnvelopeGolden.fixture.json"
-        )).unwrap();
+        ))
+        .unwrap();
         for c in &fx2.pan_cases {
             let e = sample_pan(&c.pan, c.span_us);
             for s in &c.samples {
-                assert!((e.eval(s.t_us) as f64 - s.expect).abs() < 1e-5,
-                    "pan `{}` t={}: got {}, expect {}", c.name, s.t_us, e.eval(s.t_us), s.expect);
+                assert!(
+                    (e.eval(s.t_us) as f64 - s.expect).abs() < 1e-5,
+                    "pan `{}` t={}: got {}, expect {}",
+                    c.name,
+                    s.t_us,
+                    e.eval(s.t_us),
+                    s.expect
+                );
             }
         }
         for c in &fx2.pan_coeff_env_cases {
@@ -385,8 +418,14 @@ mod tests {
             for s in &c.samples {
                 let got = pan_coeffs_at(&e, c.channels, s.t_us);
                 for i in 0..4 {
-                    assert!((got[i] - s.expect[i]).abs() < 1e-5,
-                        "coeff-env `{}` t={} idx{i}: got {}, expect {}", c.name, s.t_us, got[i], s.expect[i]);
+                    assert!(
+                        (got[i] - s.expect[i]).abs() < 1e-5,
+                        "coeff-env `{}` t={} idx{i}: got {}, expect {}",
+                        c.name,
+                        s.t_us,
+                        got[i],
+                        s.expect[i]
+                    );
                 }
             }
         }

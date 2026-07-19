@@ -56,7 +56,11 @@ pub struct RoleMixSettings {
 
 impl Default for RoleMixSettings {
     fn default() -> Self {
-        Self { gain_db: 0.0, muted: false, solo: false }
+        Self {
+            gain_db: 0.0,
+            muted: false,
+            solo: false,
+        }
     }
 }
 
@@ -80,7 +84,10 @@ mod tests {
 
     #[test]
     fn role_serializes_kebab() {
-        assert_eq!(serde_json::to_string(&AudioRole::Voiceover).unwrap(), "\"voiceover\"");
+        assert_eq!(
+            serde_json::to_string(&AudioRole::Voiceover).unwrap(),
+            "\"voiceover\""
+        );
         assert_eq!(
             serde_json::from_str::<AudioRole>("\"sfx\"").unwrap(),
             AudioRole::Sfx

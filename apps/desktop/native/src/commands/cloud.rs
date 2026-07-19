@@ -45,7 +45,15 @@ pub async fn settings_test_provider(
 ) -> Result<cloud::ConnectionTestInfo, String> {
     let p = parse_provider(&provider)?;
     // Clone the key out and drop the lock before the await.
-    let key = b.cloud_keys.lock().expect("cloud_keys poisoned").get(p.as_str()).cloned();
-    let key = key.ok_or_else(|| format!("{}", cloud::errors::CloudError::MissingKey { provider: p }))?;
-    cloud::test_connection(p, &key).await.map_err(|e| format!("{e}"))
+    let key = b
+        .cloud_keys
+        .lock()
+        .expect("cloud_keys poisoned")
+        .get(p.as_str())
+        .cloned();
+    let key =
+        key.ok_or_else(|| format!("{}", cloud::errors::CloudError::MissingKey { provider: p }))?;
+    cloud::test_connection(p, &key)
+        .await
+        .map_err(|e| format!("{e}"))
 }

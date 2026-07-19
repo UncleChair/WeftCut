@@ -24,4 +24,3 @@ pub use bus::{LogBus, LogBusSlot};
 pub use bus::EVENT_LOG_ENTRY;
 pub use entry::{LogCategory, LogEntry, LogEntryInput, LogLevel, LogSource, OpState};
 pub use tracing_layer::LogBusLayer;
-

@@ -116,10 +116,7 @@ impl<T: Clone> Animated<T> {
     /// `Err(())` for an empty `Keyframed` track (a keyframed property must hold
     /// at least one key — the caller turns this into a `CommandError`).
     /// `Static` is unchanged and always `Ok`.
-    pub fn normalize_keyframes(
-        &mut self,
-        snap: impl Fn(TimeUs) -> TimeUs,
-    ) -> Result<(), ()> {
+    pub fn normalize_keyframes(&mut self, snap: impl Fn(TimeUs) -> TimeUs) -> Result<(), ()> {
         if let Animated::Keyframed(kfs) = self {
             if kfs.is_empty() {
                 return Err(());
@@ -312,7 +309,12 @@ mod tests {
     use crate::state::ids::new_id;
 
     fn kf(t_us: TimeUs, value: f64, interp: Interpolation) -> Keyframe<f64> {
-        Keyframe { id: new_id(), t_us, value, interp }
+        Keyframe {
+            id: new_id(),
+            t_us,
+            value,
+            interp,
+        }
     }
 
     fn keyframed(kfs: Vec<Keyframe<f64>>) -> Animated<f64> {
@@ -413,7 +415,12 @@ mod tests {
     // ---- Animated<Rgba>::value_at structural shape (exact OkLab values not pinned here) ----
 
     fn color_kf(t_us: TimeUs, value: Rgba, interp: Interpolation) -> Keyframe<Rgba> {
-        Keyframe { id: new_id(), t_us, value, interp }
+        Keyframe {
+            id: new_id(),
+            t_us,
+            value,
+            interp,
+        }
     }
 
     #[test]
@@ -520,7 +527,9 @@ mod tests {
             kf(3_000_000, 1.0, Interpolation::Linear),
         ]);
         a.shift_keyframes(-1_000_000);
-        let Animated::Keyframed(kfs) = &a else { panic!("keyframed") };
+        let Animated::Keyframed(kfs) = &a else {
+            panic!("keyframed")
+        };
         assert_eq!(kfs[0].t_us, 0);
         assert_eq!(kfs[1].t_us, 2_000_000);
     }
@@ -540,7 +549,9 @@ mod tests {
             kf(5_000_000, 2.0, Interpolation::Linear),
         ]);
         a.retain_keyframes(|t| t <= 2_000_000);
-        let Animated::Keyframed(kfs) = &a else { panic!("keyframed") };
+        let Animated::Keyframed(kfs) = &a else {
+            panic!("keyframed")
+        };
         assert_eq!(kfs.len(), 2);
         assert_eq!(kfs[1].t_us, 2_000_000);
     }
@@ -576,8 +587,11 @@ mod tests {
             kf(900_000, 1.0, Interpolation::Linear),
             kf(1_100_000, 2.0, Interpolation::Linear),
         ]);
-        a.normalize_keyframes(snap).expect("non-empty keyframed normalizes");
-        let Animated::Keyframed(kfs) = &a else { panic!("keyframed") };
+        a.normalize_keyframes(snap)
+            .expect("non-empty keyframed normalizes");
+        let Animated::Keyframed(kfs) = &a else {
+            panic!("keyframed")
+        };
         assert_eq!(kfs.len(), 2, "900k & 1100k collapse to one at 1_000_000");
         assert_eq!(kfs[0].t_us, 1_000_000);
         assert_eq!(kfs[0].value, 2.0, "last-write-wins among same-frame keys");
@@ -662,22 +676,34 @@ mod tests {
                 assert!(
                     (got.r as i32 - s.expect.r as i32).abs() <= 1,
                     "case `{}` t_us={}: r got={}, expect={}",
-                    case.name, s.t_us, got.r, s.expect.r
+                    case.name,
+                    s.t_us,
+                    got.r,
+                    s.expect.r
                 );
                 assert!(
                     (got.g as i32 - s.expect.g as i32).abs() <= 1,
                     "case `{}` t_us={}: g got={}, expect={}",
-                    case.name, s.t_us, got.g, s.expect.g
+                    case.name,
+                    s.t_us,
+                    got.g,
+                    s.expect.g
                 );
                 assert!(
                     (got.b as i32 - s.expect.b as i32).abs() <= 1,
                     "case `{}` t_us={}: b got={}, expect={}",
-                    case.name, s.t_us, got.b, s.expect.b
+                    case.name,
+                    s.t_us,
+                    got.b,
+                    s.expect.b
                 );
                 assert!(
                     (got.a as i32 - s.expect.a as i32).abs() <= 1,
                     "case `{}` t_us={}: a got={}, expect={}",
-                    case.name, s.t_us, got.a, s.expect.a
+                    case.name,
+                    s.t_us,
+                    got.a,
+                    s.expect.a
                 );
             }
         }

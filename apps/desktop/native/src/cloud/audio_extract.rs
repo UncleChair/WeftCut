@@ -27,7 +27,7 @@ use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
+use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::jobs;
 
 /// Whisper (and Deepgram/AssemblyAI) input rate. 16 kHz mono is the smallest
@@ -51,9 +51,7 @@ pub async fn extract_audio_window(
         anyhow::bail!("audio window in_us must be non-negative (got {in_us})");
     }
     if out_us <= in_us {
-        anyhow::bail!(
-            "audio window must have positive duration (in_us={in_us}, out_us={out_us})"
-        );
+        anyhow::bail!("audio window must have positive duration (in_us={in_us}, out_us={out_us})");
     }
 
     let hash = window_hash(source_hash, in_us, out_us);
@@ -84,13 +82,19 @@ pub async fn extract_audio_window(
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(source)
         .args([
-            "-ss", &in_s,
-            "-t", &dur_s,
+            "-ss",
+            &in_s,
+            "-t",
+            &dur_s,
             "-vn",
-            "-ac", "1",
-            "-ar", &SAMPLE_RATE_HZ.to_string(),
-            "-c:a", "pcm_s16le",
-            "-f", "wav",
+            "-ac",
+            "1",
+            "-ar",
+            &SAMPLE_RATE_HZ.to_string(),
+            "-c:a",
+            "pcm_s16le",
+            "-f",
+            "wav",
         ])
         .arg(&tmp)
         .stdin(Stdio::null())
@@ -153,11 +157,18 @@ mod tests {
     async fn make_test_source(dest: &Path, duration_s: u32) -> Result<()> {
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", &format!("sine=frequency=1000:duration={duration_s}"),
-                "-ac", "2",
-                "-ar", "44100",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("sine=frequency=1000:duration={duration_s}"),
+                "-ac",
+                "2",
+                "-ar",
+                "44100",
             ])
             .arg(dest)
             .status()
@@ -179,8 +190,7 @@ mod tests {
         anyhow::ensure!(&bytes[8..12] == b"WAVE", "not WAVE");
         anyhow::ensure!(&bytes[12..16] == b"fmt ", "first chunk not fmt ");
         let channels = u16::from_le_bytes([bytes[22], bytes[23]]);
-        let sample_rate =
-            u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
+        let sample_rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
         let bits_per_sample = u16::from_le_bytes([bytes[34], bytes[35]]);
         Ok((channels, sample_rate, bits_per_sample))
     }
@@ -202,15 +212,9 @@ mod tests {
         let source = tmp.path().join("src.wav");
         make_test_source(&source, 5).await.expect("test fixture");
 
-        let path = extract_audio_window(
-            &cache,
-            &source,
-            "src-hash-stable",
-            1_000_000,
-            3_000_000,
-        )
-        .await
-        .expect("audio extract");
+        let path = extract_audio_window(&cache, &source, "src-hash-stable", 1_000_000, 3_000_000)
+            .await
+            .expect("audio extract");
         assert!(cached_ok(&path), "wav not written");
         assert!(
             path.starts_with(cache.transcribe_audio_dir()),
@@ -218,8 +222,7 @@ mod tests {
             path.display(),
         );
 
-        let (channels, sample_rate, bits) =
-            parse_wav_format(&path).expect("parse wav header");
+        let (channels, sample_rate, bits) = parse_wav_format(&path).expect("parse wav header");
         assert_eq!(channels, 1, "must be mono for Whisper input");
         assert_eq!(sample_rate, SAMPLE_RATE_HZ, "must be 16 kHz");
         assert_eq!(bits, 16, "must be 16-bit PCM");
@@ -233,15 +236,9 @@ mod tests {
         );
 
         // Second call hits the content-addressed cache.
-        let path2 = extract_audio_window(
-            &cache,
-            &source,
-            "src-hash-stable",
-            1_000_000,
-            3_000_000,
-        )
-        .await
-        .expect("audio extract second call");
+        let path2 = extract_audio_window(&cache, &source, "src-hash-stable", 1_000_000, 3_000_000)
+            .await
+            .expect("audio extract second call");
         assert_eq!(path, path2);
     }
 
@@ -283,15 +280,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let cache = CacheLayout::new(tmp.path().to_path_buf());
         cache.ensure_dirs().unwrap();
-        let err = extract_audio_window(
-            &cache,
-            &tmp.path().join("any.wav"),
-            "x",
-            -1,
-            1_000_000,
-        )
-        .await
-        .expect_err("negative in_us");
+        let err = extract_audio_window(&cache, &tmp.path().join("any.wav"), "x", -1, 1_000_000)
+            .await
+            .expect_err("negative in_us");
         assert!(
             format!("{err:#}").contains("non-negative"),
             "unexpected error: {err:#}",

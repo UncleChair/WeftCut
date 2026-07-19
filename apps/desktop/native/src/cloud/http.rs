@@ -107,7 +107,10 @@ mod tests {
     fn shared_client_is_a_singleton() {
         let a = shared_client();
         let b = shared_client();
-        assert!(std::ptr::eq(a, b), "shared_client must return the same instance");
+        assert!(
+            std::ptr::eq(a, b),
+            "shared_client must return the same instance"
+        );
     }
 
     #[test]
@@ -153,10 +156,8 @@ mod tests {
 
     #[test]
     fn retry_delay_for_429_falls_back_to_exponential_without_header() {
-        let d0 = retry_delay_for_status(StatusCode::TOO_MANY_REQUESTS, None, 0)
-            .expect("retry");
-        let d1 = retry_delay_for_status(StatusCode::TOO_MANY_REQUESTS, None, 1)
-            .expect("retry");
+        let d0 = retry_delay_for_status(StatusCode::TOO_MANY_REQUESTS, None, 0).expect("retry");
+        let d1 = retry_delay_for_status(StatusCode::TOO_MANY_REQUESTS, None, 1).expect("retry");
         assert!(d1 > d0, "exponential should grow: {d0:?} -> {d1:?}");
     }
 
@@ -178,10 +179,8 @@ mod tests {
     fn retry_delay_caps_exponential_at_attempt_4() {
         // attempt=5 should not produce a larger delay than attempt=4 — the
         // shift saturates at 4 so we never enter pathological wait territory.
-        let d4 = retry_delay_for_status(StatusCode::SERVICE_UNAVAILABLE, None, 4)
-            .expect("retry");
-        let d5 = retry_delay_for_status(StatusCode::SERVICE_UNAVAILABLE, None, 5)
-            .expect("retry");
+        let d4 = retry_delay_for_status(StatusCode::SERVICE_UNAVAILABLE, None, 4).expect("retry");
+        let d5 = retry_delay_for_status(StatusCode::SERVICE_UNAVAILABLE, None, 5).expect("retry");
         assert_eq!(d4, d5);
     }
 }

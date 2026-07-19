@@ -9,13 +9,13 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{CacheLayout, cached_ok};
+use crate::cache::{cached_ok, CacheLayout};
 use crate::state::MediaItem;
 
 const THUMB_COUNT: usize = 10;
@@ -71,14 +71,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // filter's output isn't second-guessed.
     let status = Command::new(ffmpeg_path())
         .no_console_window()
-        .args([
-            "-y",
-            "-hide_banner",
-            "-nostats",
-            "-loglevel",
-            "error",
-            "-i",
-        ])
+        .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([
             "-an",
@@ -132,9 +125,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let _ = tokio::fs::remove_dir_all(&dest_dir).await;
     tokio::fs::rename(&tmp_dir, &dest_dir)
         .await
-        .with_context(|| {
-            format!("promote {} -> {}", tmp_dir.display(), dest_dir.display())
-        })?;
+        .with_context(|| format!("promote {} -> {}", tmp_dir.display(), dest_dir.display()))?;
 
     cache.notify_write();
     Ok(dest_dir)
@@ -151,7 +142,7 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{DecodeRoute, MediaKind, MediaMetadata, new_id};
+    use crate::state::{new_id, DecodeRoute, MediaKind, MediaMetadata};
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")
@@ -166,13 +157,22 @@ mod tests {
     async fn make_test_video(dest: &std::path::Path) -> Result<()> {
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "testsrc=duration=1:size=320x180:rate=10",
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-t", "1",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=320x180:rate=10",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-t",
+                "1",
             ])
             .arg(dest)
             .status()

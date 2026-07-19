@@ -139,16 +139,18 @@ pub(crate) fn expand(
         other => Err(McpToolError::invalid_params(
             format!(
                 "unknown prompt '{other}'; available: cut-silences{}",
-                if cfg!(feature = "cloud") { ", auto-caption, voiceover" } else { "" }
+                if cfg!(feature = "cloud") {
+                    ", auto-caption, voiceover"
+                } else {
+                    ""
+                }
             ),
             None,
         )),
     }
 }
 
-fn expand_cut_silences(
-    args: Option<&Map<String, Value>>,
-) -> Result<PromptResult, McpToolError> {
+fn expand_cut_silences(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let layer_id = require_str(args, "layer_id")?;
     let threshold = optional_str(args, "threshold_amp");
     let min_silence = optional_str(args, "min_silence_us");
@@ -175,9 +177,7 @@ Steps:
 Defaults if the agent leaves args off: threshold_amp ≈ 0.02 (-34 dBFS), min_silence_us 500ms — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
     );
     Ok(PromptResult {
-        description: Some(
-            "Cut silent regions out of a clip using waveform analysis.".into(),
-        ),
+        description: Some("Cut silent regions out of a clip using waveform analysis.".into()),
         messages: vec![PromptMessage {
             role: PromptRole::User,
             content: ContentBlock::Text { text },
@@ -186,9 +186,7 @@ Defaults if the agent leaves args off: threshold_amp ≈ 0.02 (-34 dBFS), min_si
 }
 
 #[cfg(feature = "cloud")]
-fn expand_auto_caption(
-    args: Option<&Map<String, Value>>,
-) -> Result<PromptResult, McpToolError> {
+fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let layer_id = require_str(args, "layer_id")?;
     let language = optional_str(args, "language");
     let language_clause = match language {
@@ -206,9 +204,7 @@ Steps:
 If `transcribe_clip` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → API keys. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — Whisper's per-request cap is ~13 minutes of mono 16 kHz audio."
     );
     Ok(PromptResult {
-        description: Some(
-            "Auto-caption a clip via cloud Whisper + apply_subtitles.".into(),
-        ),
+        description: Some("Auto-caption a clip via cloud Whisper + apply_subtitles.".into()),
         messages: vec![PromptMessage {
             role: PromptRole::User,
             content: ContentBlock::Text { text },
@@ -217,9 +213,7 @@ If `transcribe_clip` errors with `MissingKey` or `InvalidKey`, tell the user to 
 }
 
 #[cfg(feature = "cloud")]
-fn expand_voiceover(
-    args: Option<&Map<String, Value>>,
-) -> Result<PromptResult, McpToolError> {
+fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let script = require_str(args, "script")?;
     let voice = optional_str(args, "voice");
     let speed = optional_str(args, "speed");
@@ -258,9 +252,7 @@ If the script exceeds 4096 characters, split it at paragraph boundaries and synt
 If `synthesize_speech` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → API keys."
     );
     Ok(PromptResult {
-        description: Some(
-            "Generate cloud TTS and attach it as an Audio layer.".into(),
-        ),
+        description: Some("Generate cloud TTS and attach it as an Audio layer.".into()),
         messages: vec![PromptMessage {
             role: PromptRole::User,
             content: ContentBlock::Text { text },
@@ -268,15 +260,9 @@ If `synthesize_speech` errors with `MissingKey` or `InvalidKey`, tell the user t
     })
 }
 
-fn require_str(
-    args: Option<&Map<String, Value>>,
-    key: &str,
-) -> Result<String, McpToolError> {
+fn require_str(args: Option<&Map<String, Value>>, key: &str) -> Result<String, McpToolError> {
     optional_str(args, key).ok_or_else(|| {
-        McpToolError::invalid_params(
-            format!("required prompt argument '{key}' missing"),
-            None,
-        )
+        McpToolError::invalid_params(format!("required prompt argument '{key}' missing"), None)
     })
 }
 
@@ -310,7 +296,11 @@ mod tests {
         let cs = cat.iter().find(|p| p.name == NAME_CUT_SILENCES).unwrap();
         let layer = cs.arguments.iter().find(|a| a.name == "layer_id").unwrap();
         assert!(layer.required);
-        let threshold = cs.arguments.iter().find(|a| a.name == "threshold_amp").unwrap();
+        let threshold = cs
+            .arguments
+            .iter()
+            .find(|a| a.name == "threshold_amp")
+            .unwrap();
         assert!(!threshold.required);
     }
 

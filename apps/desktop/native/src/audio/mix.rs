@@ -11,10 +11,10 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::audio::conform_reader::ConformReader;
-use crate::audio::envelope::{Envelope, pan_coeffs_at, sample_gain, sample_pan};
-use crate::state::Project;
+use crate::audio::envelope::{pan_coeffs_at, sample_gain, sample_pan, Envelope};
 use crate::state::audio_role::RoleMixSettings;
 use crate::state::layer::{AudioParams, Layer, LayerParams};
+use crate::state::Project;
 
 pub const MIX_SAMPLE_RATE: i64 = 48_000;
 pub const MIX_BLOCK_FRAMES: usize = 65_536;
@@ -171,7 +171,12 @@ pub fn plan_for_project(
             .ok_or_else(|| PlanError::ConformMissing(label.clone()))?;
         let span_us = p.src_out_us - p.src_in_us;
         let role_gain = role_gain_linear(&project.role_mix(p.role));
-        let mut gain = sample_gain(&p.gain_db, p.fade_in_us as i64, p.fade_out_us as i64, span_us);
+        let mut gain = sample_gain(
+            &p.gain_db,
+            p.fade_in_us as i64,
+            p.fade_out_us as i64,
+            span_us,
+        );
         gain.scale(role_gain);
         layers.push(MixLayer {
             label,
@@ -266,22 +271,17 @@ pub fn mix_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::conform_reader::{ConformReader, write_vconf};
+    use crate::audio::conform_reader::{write_vconf, ConformReader};
     use crate::state::animated::Animated;
     use crate::state::audio_role::{AudioRole, RoleMixSettings};
-    use crate::state::layer::{AudioParams, Layer, LayerParams};
     use crate::state::decode_route::DecodeRoute;
+    use crate::state::layer::{AudioParams, Layer, LayerParams};
     use crate::state::media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
     use crate::state::track::Track;
     use tempfile::TempDir;
 
-    fn flat_mono_conform(
-        dir: &std::path::Path,
-        name: &str,
-        value: f32,
-        frames: usize,
-    ) -> PathBuf {
+    fn flat_mono_conform(dir: &std::path::Path, name: &str, value: f32, frames: usize) -> PathBuf {
         let p = dir.join(name);
         write_vconf(&p, 1, &vec![value; frames]);
         p
@@ -382,59 +382,59 @@ mod tests {
         let media_id_a = uuid::Uuid::new_v4();
         let media_id_b = uuid::Uuid::new_v4();
 
-        let make_media =
-            |id: uuid::Uuid, conform: std::path::PathBuf| -> MediaItem {
-                MediaItem {
-                    id,
-                    label: None,
-                    path_abs: conform.clone(),
-                    path_rel: None,
-                    kind: MediaKind::Audio,
-                    metadata: MediaMetadata {
-                        duration_us: Some(1_000_000),
-                        video: None,
-                        audio: Some(AudioStreamMeta {
-                            sample_rate: 48_000,
-                            channels: 1,
-                            codec: "pcm_f32le".into(),
-                            start_pts_us: None,
-                        }),
-                        ..Default::default()
-                    },
-                    decode_route: DecodeRoute::Bypass,
-                    waveform_path: None,
-                    conform_path: Some(conform),
-                    thumbnails_dir: None,
-                    file_hash_blake3: "0000000000000000".into(),
-                    file_size: 1,
-                    file_mtime: 0,
-                    imported_at: now,
-                }
-            };
-
-        let make_audio_layer = |media_id: uuid::Uuid, role: crate::state::audio_role::AudioRole| -> Layer {
-            Layer {
-                id: uuid::Uuid::new_v4(),
+        let make_media = |id: uuid::Uuid, conform: std::path::PathBuf| -> MediaItem {
+            MediaItem {
+                id,
                 label: None,
-                t_start_us: 0,
-                t_end_us: 1_000_000,
-                enabled: true,
-                locked: false,
-                metadata: imbl::HashMap::new(),
-                params: LayerParams::Audio(AudioParams {
-                    media: media_id,
-                    src_in_us: 0,
-                    src_out_us: 1_000_000,
-                    gain_db: Animated::Static(0.0),
-                    pan: Animated::Static(0.0),
-                    fade_in_us: 0,
-                    fade_out_us: 0,
-                    mute: false,
-                    role,
-                }),
-                effects: vec![],
+                path_abs: conform.clone(),
+                path_rel: None,
+                kind: MediaKind::Audio,
+                metadata: MediaMetadata {
+                    duration_us: Some(1_000_000),
+                    video: None,
+                    audio: Some(AudioStreamMeta {
+                        sample_rate: 48_000,
+                        channels: 1,
+                        codec: "pcm_f32le".into(),
+                        start_pts_us: None,
+                    }),
+                    ..Default::default()
+                },
+                decode_route: DecodeRoute::Bypass,
+                waveform_path: None,
+                conform_path: Some(conform),
+                thumbnails_dir: None,
+                file_hash_blake3: "0000000000000000".into(),
+                file_size: 1,
+                file_mtime: 0,
+                imported_at: now,
             }
         };
+
+        let make_audio_layer =
+            |media_id: uuid::Uuid, role: crate::state::audio_role::AudioRole| -> Layer {
+                Layer {
+                    id: uuid::Uuid::new_v4(),
+                    label: None,
+                    t_start_us: 0,
+                    t_end_us: 1_000_000,
+                    enabled: true,
+                    locked: false,
+                    metadata: imbl::HashMap::new(),
+                    params: LayerParams::Audio(AudioParams {
+                        media: media_id,
+                        src_in_us: 0,
+                        src_out_us: 1_000_000,
+                        gain_db: Animated::Static(0.0),
+                        pan: Animated::Static(0.0),
+                        fade_in_us: 0,
+                        fade_out_us: 0,
+                        mute: false,
+                        role,
+                    }),
+                    effects: vec![],
+                }
+            };
 
         let track_a = Track {
             id: uuid::Uuid::new_v4(),
@@ -447,7 +447,10 @@ mod tests {
             role: None,
             transient: false,
             height_px: 64,
-            layers: imbl::vector![make_audio_layer(media_id_a, crate::state::audio_role::AudioRole::Dialogue)],
+            layers: imbl::vector![make_audio_layer(
+                media_id_a,
+                crate::state::audio_role::AudioRole::Dialogue
+            )],
         };
         let track_b = Track {
             id: uuid::Uuid::new_v4(),
@@ -460,7 +463,10 @@ mod tests {
             role: None,
             transient: false,
             height_px: 64,
-            layers: imbl::vector![make_audio_layer(media_id_b, crate::state::audio_role::AudioRole::Music)],
+            layers: imbl::vector![make_audio_layer(
+                media_id_b,
+                crate::state::audio_role::AudioRole::Music
+            )],
         };
 
         let mut media_pool = imbl::HashMap::new();
@@ -503,9 +509,21 @@ mod tests {
     fn muted_role_is_skipped() {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
-        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: true, solo: false });
+        set_role(
+            &mut project,
+            AudioRole::Dialogue,
+            RoleMixSettings {
+                gain_db: 0.0,
+                muted: true,
+                solo: false,
+            },
+        );
         let plan = plan_for_project(&project, None).unwrap();
-        assert_eq!(plan.layers.len(), 1, "Dialogue role muted ⇒ only Music plays");
+        assert_eq!(
+            plan.layers.len(),
+            1,
+            "Dialogue role muted ⇒ only Music plays"
+        );
         assert_eq!(plan.layers[0].conform_path, tmp.path().join("b.conform"));
     }
 
@@ -513,7 +531,15 @@ mod tests {
     fn solo_silences_non_solo_roles() {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
-        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: false, solo: true });
+        set_role(
+            &mut project,
+            AudioRole::Dialogue,
+            RoleMixSettings {
+                gain_db: 0.0,
+                muted: false,
+                solo: true,
+            },
+        );
         let plan = plan_for_project(&project, None).unwrap();
         assert_eq!(plan.layers.len(), 1, "only soloed Dialogue plays");
         assert_eq!(plan.layers[0].conform_path, tmp.path().join("a.conform"));
@@ -523,9 +549,21 @@ mod tests {
     fn role_mute_wins_over_solo() {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
-        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: true, solo: true });
+        set_role(
+            &mut project,
+            AudioRole::Dialogue,
+            RoleMixSettings {
+                gain_db: 0.0,
+                muted: true,
+                solo: true,
+            },
+        );
         let plan = plan_for_project(&project, None).unwrap();
-        assert_eq!(plan.layers.len(), 0, "mute wins; Music silenced by the solo set");
+        assert_eq!(
+            plan.layers.len(),
+            0,
+            "mute wins; Music silenced by the solo set"
+        );
     }
 
     #[test]
@@ -533,11 +571,30 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
         // +6.0206 dB ≈ ×2 on Dialogue only.
-        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 6.0206, muted: false, solo: false });
+        set_role(
+            &mut project,
+            AudioRole::Dialogue,
+            RoleMixSettings {
+                gain_db: 6.0206,
+                muted: false,
+                solo: false,
+            },
+        );
         let plan = plan_for_project(&project, None).unwrap();
-        let dialogue = plan.layers.iter().find(|l| l.conform_path == tmp.path().join("a.conform")).unwrap();
-        assert!((dialogue.gain.eval(0) - 2.0).abs() < 1e-2, "Dialogue folded ×2");
-        let music = plan.layers.iter().find(|l| l.conform_path == tmp.path().join("b.conform")).unwrap();
+        let dialogue = plan
+            .layers
+            .iter()
+            .find(|l| l.conform_path == tmp.path().join("a.conform"))
+            .unwrap();
+        assert!(
+            (dialogue.gain.eval(0) - 2.0).abs() < 1e-2,
+            "Dialogue folded ×2"
+        );
+        let music = plan
+            .layers
+            .iter()
+            .find(|l| l.conform_path == tmp.path().join("b.conform"))
+            .unwrap();
         assert!((music.gain.eval(0) - 1.0).abs() < 1e-3, "Music unchanged");
     }
 
@@ -590,15 +647,39 @@ mod tests {
         project.tracks[1].layers[0].t_start_us = 0;
         project.tracks[1].layers[0].t_end_us = 1_000_000;
         // Muted role (track B carries the Music role).
-        set_role(&mut project, AudioRole::Music, RoleMixSettings { gain_db: 0.0, muted: true, solo: false });
+        set_role(
+            &mut project,
+            AudioRole::Music,
+            RoleMixSettings {
+                gain_db: 0.0,
+                muted: true,
+                solo: false,
+            },
+        );
         assert!(conform_waiting_media(&project, None).is_empty());
-        set_role(&mut project, AudioRole::Music, RoleMixSettings { gain_db: 0.0, muted: false, solo: false });
+        set_role(
+            &mut project,
+            AudioRole::Music,
+            RoleMixSettings {
+                gain_db: 0.0,
+                muted: false,
+                solo: false,
+            },
+        );
         // Locked layer.
         project.tracks[1].layers[0].locked = true;
         assert!(conform_waiting_media(&project, None).is_empty());
         project.tracks[1].layers[0].locked = false;
         // Solo'd out by the Dialogue role (track A).
-        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: false, solo: true });
+        set_role(
+            &mut project,
+            AudioRole::Dialogue,
+            RoleMixSettings {
+                gain_db: 0.0,
+                muted: false,
+                solo: true,
+            },
+        );
         assert!(conform_waiting_media(&project, None).is_empty());
     }
 
@@ -745,7 +826,11 @@ mod tests {
                 .map(|r| {
                     (
                         r.role,
-                        RoleMixSettings { gain_db: r.gain_db, muted: r.muted, solo: r.solo },
+                        RoleMixSettings {
+                            gain_db: r.gain_db,
+                            muted: r.muted,
+                            solo: r.solo,
+                        },
                     )
                 })
                 .collect();

@@ -25,7 +25,10 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
     TextParams {
         content: cue.text.clone(),
         font: FontSpec {
-            family: s.font_family.clone().unwrap_or_else(|| DEFAULT_CAPTION_FONT.to_string()),
+            family: s
+                .font_family
+                .clone()
+                .unwrap_or_else(|| DEFAULT_CAPTION_FONT.to_string()),
             size_px: size,
             weight: if s.bold { 700 } else { 400 },
             italic: s.italic,
@@ -87,7 +90,12 @@ mod tests {
     use crate::subtitles::{Cue, CueStyle};
 
     fn cue(style: CueStyle) -> Cue {
-        Cue { start_us: 0, end_us: 1, text: "hi".into(), style }
+        Cue {
+            start_us: 0,
+            end_us: 1,
+            text: "hi".into(),
+            style,
+        }
     }
 
     #[test]

@@ -41,7 +41,10 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::cache::CacheLayout;
-use crate::state::{CommandError, DecodeRoute, FullProxyLanded, MediaDerivativesPatch, MediaId, MediaItem, MediaKind};
+use crate::state::{
+    CommandError, DecodeRoute, FullProxyLanded, MediaDerivativesPatch, MediaId, MediaItem,
+    MediaKind,
+};
 
 /// Emit a completed job's derivative patch as `media:derivatives {media_id,
 /// patch}` for the TS state actor (the sole writer, applied by Electron main)
@@ -212,11 +215,7 @@ struct JobError {
 /// decision). Used by the export decode-failure recovery (`ensure_full_proxy`
 /// command) when a DirectExport original turns out to be undecodable on this
 /// machine. Returns immediately; the job runs on tokio::spawn.
-pub fn enqueue_full_proxy(
-    events: Arc<dyn EventSink>,
-    cache: CacheLayout,
-    media: MediaItem,
-) {
+pub fn enqueue_full_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     spawn_proxy(events, cache, media);
 }
 
@@ -236,11 +235,7 @@ pub fn enqueue_quick_proxy(
 
 /// Look at a freshly imported `MediaItem` and fan out the appropriate
 /// background jobs. Returns immediately; jobs run on tokio::spawn.
-pub fn enqueue_for_media(
-    events: Arc<dyn EventSink>,
-    cache: CacheLayout,
-    media: MediaItem,
-) {
+pub fn enqueue_for_media(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     match media.kind {
         MediaKind::Video => {
             // Already-decided sources whose proxy (if any) is on disk only need
@@ -267,11 +262,7 @@ pub fn enqueue_for_media(
     }
 }
 
-fn spawn_decorations(
-    events: Arc<dyn EventSink>,
-    cache: CacheLayout,
-    media: MediaItem,
-) {
+fn spawn_decorations(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     if matches!(media.kind, MediaKind::Video) {
         spawn_thumbnails(events.clone(), cache.clone(), media.clone());
     }
@@ -283,19 +274,11 @@ fn spawn_decorations(
 
 /// Enqueue ONLY the conform job (export readiness gate / pre-conform-era
 /// backfill via the `ensure_conform` command). Returns immediately.
-pub fn enqueue_conform(
-    events: Arc<dyn EventSink>,
-    cache: CacheLayout,
-    media: MediaItem,
-) {
+pub fn enqueue_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     spawn_conform(events, cache, media);
 }
 
-fn spawn_conform(
-    events: Arc<dyn EventSink>,
-    cache: CacheLayout,
-    media: MediaItem,
-) {
+fn spawn_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     if !try_begin_conform(media.id) {
         // Already conforming — that job's complete/error event serves this
         // caller's wait too.
@@ -368,11 +351,7 @@ fn spawn_conform(
     });
 }
 
-fn spawn_proxy_decision(
-    events: Arc<dyn EventSink>,
-    cache: CacheLayout,
-    media: MediaItem,
-) {
+fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
         // Probe the source's keyframe interval (on a blocking worker — it
@@ -392,7 +371,10 @@ fn spawn_proxy_decision(
         // per-branch bypass / export-uses-original flag commits), then spawn the
         // jobs the route implies.
         let initial = DecodeRoute::from_proxy_route(route);
-        let patch = MediaDerivativesPatch { set_route: Some(initial), ..Default::default() };
+        let patch = MediaDerivativesPatch {
+            set_route: Some(initial),
+            ..Default::default()
+        };
         if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
             warn!("route decision commit failed for {media_id}: {e}");
         }
@@ -607,11 +589,7 @@ fn spawn_quick_proxy(
     });
 }
 
-fn spawn_proxy(
-    events: Arc<dyn EventSink>,
-    cache: CacheLayout,
-    media: MediaItem,
-) {
+fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
@@ -757,7 +735,10 @@ fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaIt
 }
 
 fn emit<T: Serialize>(events: &Arc<dyn EventSink>, event: &str, payload: &T) {
-    events.emit(event, serde_json::to_value(payload).unwrap_or(serde_json::Value::Null));
+    events.emit(
+        event,
+        serde_json::to_value(payload).unwrap_or(serde_json::Value::Null),
+    );
 }
 
 #[cfg(test)]
@@ -796,31 +777,55 @@ mod tests {
         use serde_json::json;
 
         // absent: outer None → key omitted entirely.
-        let p = MediaDerivativesPatch { conform_path: Some("c.bin".into()), ..Default::default() };
+        let p = MediaDerivativesPatch {
+            conform_path: Some("c.bin".into()),
+            ..Default::default()
+        };
         let v = serde_json::to_value(&p).unwrap();
-        assert!(v.get("full_proxy_landed").is_none(), "absent full_proxy_landed must be omitted");
+        assert!(
+            v.get("full_proxy_landed").is_none(),
+            "absent full_proxy_landed must be omitted"
+        );
         assert_eq!(v.get("conform_path").unwrap(), &json!("c.bin"));
 
         // clear: Some(None) → null.
-        let p = MediaDerivativesPatch { full_proxy_landed: Some(None), ..Default::default() };
+        let p = MediaDerivativesPatch {
+            full_proxy_landed: Some(None),
+            ..Default::default()
+        };
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(v.get("full_proxy_landed").unwrap(), &serde_json::Value::Null);
+        assert_eq!(
+            v.get("full_proxy_landed").unwrap(),
+            &serde_json::Value::Null
+        );
 
         // set: a quick proxy landed → Some(Some(path)) → string.
-        let p = MediaDerivativesPatch { quick_proxy_landed: Some(Some("q.mp4".into())), ..Default::default() };
+        let p = MediaDerivativesPatch {
+            quick_proxy_landed: Some(Some("q.mp4".into())),
+            ..Default::default()
+        };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v.get("quick_proxy_landed").unwrap(), &json!("q.mp4"));
 
         // a full proxy landed → Some(Some(FullProxyLanded)) → self-describing object.
         let p = MediaDerivativesPatch {
-            full_proxy_landed: Some(Some(FullProxyLanded { path: "full.mp4".into(), format_version: 7 })),
+            full_proxy_landed: Some(Some(FullProxyLanded {
+                path: "full.mp4".into(),
+                format_version: 7,
+            })),
             ..Default::default()
         };
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(v.get("full_proxy_landed").unwrap(), &json!({ "path": "full.mp4", "format_version": 7 }));
+        assert_eq!(
+            v.get("full_proxy_landed").unwrap(),
+            &json!({ "path": "full.mp4", "format_version": 7 })
+        );
 
         // set_route: an authoritative route replacement serializes the variant.
-        let p = MediaDerivativesPatch { set_route: Some(DecodeRoute::Bypass), ..Default::default() };
+        let p = MediaDerivativesPatch {
+            set_route: Some(DecodeRoute::Bypass),
+            ..Default::default()
+        };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v.get("set_route").unwrap(), &json!({ "route": "bypass" }));
     }
@@ -837,16 +842,33 @@ mod tests {
         let events: Arc<dyn crate::events::EventSink> = sink.clone();
         let media_id = uuid::Uuid::now_v7();
 
-        let patch = MediaDerivativesPatch { full_proxy_landed: Some(None), conform_path: Some("c.bin".into()), ..Default::default() };
-        commit_media_derivatives(&events, media_id, patch).await.unwrap();
+        let patch = MediaDerivativesPatch {
+            full_proxy_landed: Some(None),
+            conform_path: Some("c.bin".into()),
+            ..Default::default()
+        };
+        commit_media_derivatives(&events, media_id, patch)
+            .await
+            .unwrap();
 
         let recorded = sink.events.lock().unwrap().clone();
-        let (name, payload) = recorded.iter().find(|(n, _)| n == "media:derivatives")
+        let (name, payload) = recorded
+            .iter()
+            .find(|(n, _)| n == "media:derivatives")
             .expect("a media:derivatives event must be emitted");
         assert_eq!(name, "media:derivatives");
-        assert_eq!(payload.get("media_id").unwrap(), &serde_json::json!(media_id.to_string()));
+        assert_eq!(
+            payload.get("media_id").unwrap(),
+            &serde_json::json!(media_id.to_string())
+        );
         let patch_v = payload.get("patch").unwrap();
-        assert_eq!(patch_v.get("full_proxy_landed").unwrap(), &serde_json::Value::Null); // cleared
-        assert_eq!(patch_v.get("conform_path").unwrap(), &serde_json::json!("c.bin"));
+        assert_eq!(
+            patch_v.get("full_proxy_landed").unwrap(),
+            &serde_json::Value::Null
+        ); // cleared
+        assert_eq!(
+            patch_v.get("conform_path").unwrap(),
+            &serde_json::json!("c.bin")
+        );
     }
 }

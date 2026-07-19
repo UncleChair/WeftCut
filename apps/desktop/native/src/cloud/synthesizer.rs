@@ -56,10 +56,7 @@ pub struct SynthesizeResponse {
 
 #[async_trait]
 pub trait Synthesizer: Send + Sync {
-    async fn synthesize(
-        &self,
-        req: SynthesizeRequest,
-    ) -> Result<SynthesizeResponse, CloudError>;
+    async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResponse, CloudError>;
 }
 
 #[cfg(test)]

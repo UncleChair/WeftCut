@@ -173,24 +173,15 @@ async fn read_media_resource(
 ) -> Result<ResourceResult, McpToolError> {
     // tail = "{id}/thumbnail" | "{id}/frame/{t_us}" | "{id}/waveform"
     let (id_part, sub) = tail.split_once('/').ok_or_else(|| {
-        McpToolError::resource_not_found(
-            format!("media URI missing sub-path: {uri}"),
-            None,
-        )
+        McpToolError::resource_not_found(format!("media URI missing sub-path: {uri}"), None)
     })?;
     let media_id: MediaId = Uuid::parse_str(id_part).map_err(|_| {
-        McpToolError::resource_not_found(
-            format!("media URI has invalid UUID: {id_part}"),
-            None,
-        )
+        McpToolError::resource_not_found(format!("media URI has invalid UUID: {id_part}"), None)
     })?;
     // The MediaItem is resolved by the TS host (the sole state owner) and injected
     // in the request. `None` → the id was absent from the project state.
     let media = media.ok_or_else(|| {
-        McpToolError::resource_not_found(
-            format!("media {media_id} not found"),
-            None,
-        )
+        McpToolError::resource_not_found(format!("media {media_id} not found"), None)
     })?;
 
     if sub == "thumbnail" {
@@ -199,10 +190,7 @@ async fn read_media_resource(
         serve_waveform(b, uri, &media).await
     } else if let Some(t_str) = sub.strip_prefix("frame/") {
         let t_us: i64 = t_str.parse().map_err(|_| {
-            McpToolError::invalid_params(
-                format!("frame URI t_us not an integer: {t_str}"),
-                None,
-            )
+            McpToolError::invalid_params(format!("frame URI t_us not an integer: {t_str}"), None)
         })?;
         serve_frame(b, uri, &media, t_us).await
     } else {
@@ -257,9 +245,9 @@ async fn serve_frame(
     media: &MediaItem,
     t_us: i64,
 ) -> Result<ResourceResult, McpToolError> {
-    let path = jobs::extract_frame(&b.cache, media, t_us).await.map_err(
-        |e| McpToolError::internal_error(format!("frame extract: {e:#}"), None),
-    )?;
+    let path = jobs::extract_frame(&b.cache, media, t_us)
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("frame extract: {e:#}"), None))?;
     blob_response(uri, &path, IMAGE_JPEG).await
 }
 
@@ -290,9 +278,9 @@ async fn blob_response(
     mime: &str,
 ) -> Result<ResourceResult, McpToolError> {
     use base64::Engine;
-    let bytes = tokio::fs::read(path).await.map_err(|e| {
-        McpToolError::internal_error(format!("read {}: {e}", path.display()), None)
-    })?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("read {}: {e}", path.display()), None))?;
     let blob = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(ResourceResult {
         contents: vec![ResourceContent::Blob {
@@ -391,7 +379,11 @@ mod stateless_tests {
         };
         let body: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(body["kind"], "audio_mix_plan");
-        assert_eq!(body["layers"].as_array().unwrap().len(), 0, "blank project has no audio layers");
+        assert_eq!(
+            body["layers"].as_array().unwrap().len(),
+            0,
+            "blank project has no audio layers"
+        );
     }
 
     /// composition://meter reads live Rust state and needs no injected slice — an
@@ -413,10 +405,13 @@ mod stateless_tests {
     #[tokio::test]
     async fn project_views_are_not_served_by_rust() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
-        let err = read_resource(&b, "project://current", "{}").await.unwrap_err();
+        let err = read_resource(&b, "project://current", "{}")
+            .await
+            .unwrap_err();
         assert!(
             err.message.contains("TS-served") || err.message.contains("unknown"),
-            "project://current must report it is TS-served; got: {}", err.message
+            "project://current must report it is TS-served; got: {}",
+            err.message
         );
     }
 
@@ -442,7 +437,8 @@ mod stateless_tests {
         let err = read_resource(&b, &uri, &state).await.unwrap_err();
         assert!(
             err.message.contains("not generated yet"),
-            "media:// must read the injected item (cache empty → not generated yet); got: {}", err.message
+            "media:// must read the injected item (cache empty → not generated yet); got: {}",
+            err.message
         );
     }
 
@@ -464,7 +460,8 @@ mod stateless_tests {
             - crate::cache::TOUCH_THROTTLE
             - std::time::Duration::from_secs(60);
         let f = std::fs::File::options().write(true).open(&path).unwrap();
-        f.set_times(std::fs::FileTimes::new().set_modified(stale)).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(stale))
+            .unwrap();
 
         let item = serde_json::json!({
             "id": id, "label": null, "path_abs": "/nonexistent", "path_rel": null,

@@ -24,16 +24,32 @@ pub struct McpToolError {
 
 impl McpToolError {
     pub fn invalid_params(msg: impl Into<String>, data: Option<Value>) -> Self {
-        Self { code: McpErrorCode::InvalidParams, message: msg.into(), data }
+        Self {
+            code: McpErrorCode::InvalidParams,
+            message: msg.into(),
+            data,
+        }
     }
     pub fn invalid_request(msg: impl Into<String>, data: Option<Value>) -> Self {
-        Self { code: McpErrorCode::InvalidRequest, message: msg.into(), data }
+        Self {
+            code: McpErrorCode::InvalidRequest,
+            message: msg.into(),
+            data,
+        }
     }
     pub fn internal_error(msg: impl Into<String>, data: Option<Value>) -> Self {
-        Self { code: McpErrorCode::Internal, message: msg.into(), data }
+        Self {
+            code: McpErrorCode::Internal,
+            message: msg.into(),
+            data,
+        }
     }
     pub fn resource_not_found(msg: impl Into<String>, data: Option<Value>) -> Self {
-        Self { code: McpErrorCode::NotFound, message: msg.into(), data }
+        Self {
+            code: McpErrorCode::NotFound,
+            message: msg.into(),
+            data,
+        }
     }
 }
 
@@ -59,7 +75,9 @@ impl From<String> for McpToolError {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Image {
         data: String,
         #[serde(rename = "mimeType")]
@@ -80,7 +98,10 @@ fn is_false(b: &bool) -> bool {
 
 impl ToolResult {
     pub fn text(s: impl Into<String>) -> Self {
-        Self { content: vec![ContentBlock::Text { text: s.into() }], is_error: false }
+        Self {
+            content: vec![ContentBlock::Text { text: s.into() }],
+            is_error: false,
+        }
     }
     pub fn json<T: Serialize>(v: &T) -> Result<Self, McpToolError> {
         let s = serde_json::to_string(v)
@@ -88,7 +109,10 @@ impl ToolResult {
         Ok(Self::text(s))
     }
     pub fn empty() -> Self {
-        Self { content: vec![], is_error: false }
+        Self {
+            content: vec![],
+            is_error: false,
+        }
     }
 }
 
@@ -191,7 +215,10 @@ mod tests {
     #[test]
     fn tool_result_text_shape() {
         let v = serde_json::to_value(ToolResult::text("pong")).unwrap();
-        assert_eq!(v, serde_json::json!({ "content": [{ "type": "text", "text": "pong" }] }));
+        assert_eq!(
+            v,
+            serde_json::json!({ "content": [{ "type": "text", "text": "pong" }] })
+        );
     }
 
     #[test]
@@ -230,8 +257,14 @@ mod tests {
 
     #[test]
     fn prompt_message_shape() {
-        let m = PromptMessage { role: PromptRole::User, content: ContentBlock::Text { text: "hi".into() } };
+        let m = PromptMessage {
+            role: PromptRole::User,
+            content: ContentBlock::Text { text: "hi".into() },
+        };
         let v = serde_json::to_value(m).unwrap();
-        assert_eq!(v, serde_json::json!({ "role": "user", "content": { "type": "text", "text": "hi" } }));
+        assert_eq!(
+            v,
+            serde_json::json!({ "role": "user", "content": { "type": "text", "text": "hi" } })
+        );
     }
 }

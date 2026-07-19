@@ -24,8 +24,10 @@ pub fn parse(body: &str) -> ParsedSubtitles {
             continue;
         }
         if let Some(rest) = l.strip_prefix("Format:") {
-            let cols: Vec<String> =
-                rest.split(',').map(|s| s.trim().to_ascii_lowercase()).collect();
+            let cols: Vec<String> = rest
+                .split(',')
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect();
             if section == "styles" {
                 style_fmt = cols;
             } else if section == "events" {
@@ -51,14 +53,21 @@ pub fn parse(body: &str) -> ParsedSubtitles {
 
 fn parse_style_row(rest: &str, fmt: &[String]) -> (String, CueStyle) {
     let vals: Vec<&str> = rest.splitn(fmt.len(), ',').map(|s| s.trim()).collect();
-    let get = |key: &str| fmt.iter().position(|c| c == key).and_then(|i| vals.get(i)).copied();
+    let get = |key: &str| {
+        fmt.iter()
+            .position(|c| c == key)
+            .and_then(|i| vals.get(i))
+            .copied()
+    };
     let mut st = CueStyle::default();
     let name = get("name").unwrap_or("Default").to_string();
     st.font_family = get("fontname").map(|s| s.to_string());
     st.size_px = get("fontsize").and_then(|s| s.parse().ok());
     st.primary = get("primarycolour").and_then(parse_ass_color);
     st.bold = get("bold").map(|s| s == "-1" || s == "1").unwrap_or(false);
-    st.italic = get("italic").map(|s| s == "-1" || s == "1").unwrap_or(false);
+    st.italic = get("italic")
+        .map(|s| s == "-1" || s == "1")
+        .unwrap_or(false);
     st.outline_px = get("outline").and_then(|s| s.parse().ok());
     st.shadow_px = get("shadow").and_then(|s| s.parse().ok());
     st.align = get("alignment").and_then(|s| s.parse().ok());
@@ -73,16 +82,29 @@ fn parse_dialogue(
 ) -> Option<Cue> {
     let n = fmt.len().max(1);
     let vals: Vec<&str> = rest.splitn(n, ',').map(|s| s.trim()).collect();
-    let col = |key: &str| fmt.iter().position(|c| c == key).and_then(|i| vals.get(i)).copied();
+    let col = |key: &str| {
+        fmt.iter()
+            .position(|c| c == key)
+            .and_then(|i| vals.get(i))
+            .copied()
+    };
     let start_us = parse_ass_ts(col("start")?)?;
     let end_us = parse_ass_ts(col("end")?)?;
-    let mut style = col("style").and_then(|n| styles.get(n)).cloned().unwrap_or_default();
+    let mut style = col("style")
+        .and_then(|n| styles.get(n))
+        .cloned()
+        .unwrap_or_default();
     let raw = col("text")?;
     let text = apply_overrides(raw, &mut style, simplified);
     if text.is_empty() {
         return None;
     }
-    Some(Cue { start_us, end_us, text, style })
+    Some(Cue {
+        start_us,
+        end_us,
+        text,
+        style,
+    })
 }
 
 /// Strip `{...}` override blocks. Map the supported overrides into `style`;
@@ -105,8 +127,7 @@ fn apply_overrides(raw: &str, style: &mut CueStyle, simplified: &mut bool) -> St
             } else if let Some(v) = t.strip_prefix("pos(") {
                 style.pos = parse_pos(v.trim_end_matches(')'));
             } else if t.starts_with("c&") || t.starts_with("1c&") {
-                style.primary =
-                    parse_ass_color(t.trim_start_matches("1c").trim_start_matches('c'));
+                style.primary = parse_ass_color(t.trim_start_matches("1c").trim_start_matches('c'));
             } else if t == "b1" || t == "b-1" {
                 style.bold = true;
             } else if t == "b0" {
@@ -128,7 +149,10 @@ fn apply_overrides(raw: &str, style: &mut CueStyle, simplified: &mut bool) -> St
         rest = &after[close + 1..];
     }
     out.push_str(rest);
-    out.replace("\\N", "\n").replace("\\n", "\n").trim().to_string()
+    out.replace("\\N", "\n")
+        .replace("\\n", "\n")
+        .trim()
+        .to_string()
 }
 
 fn parse_pos(s: &str) -> Option<(f64, f64)> {
@@ -138,7 +162,11 @@ fn parse_pos(s: &str) -> Option<(f64, f64)> {
 
 /// ASS colour `&HAABBGGRR` (alpha optional) → Rgba.
 fn parse_ass_color(s: &str) -> Option<Rgba> {
-    let hex = s.trim().trim_start_matches("&H").trim_start_matches("&h").trim_end_matches('&');
+    let hex = s
+        .trim()
+        .trim_start_matches("&H")
+        .trim_start_matches("&h")
+        .trim_end_matches('&');
     let v = u32::from_str_radix(hex, 16).ok()?;
     Some(Rgba {
         r: (v & 0xFF) as u8,

@@ -38,8 +38,5 @@ pub struct TranscribeResponse {
 
 #[async_trait]
 pub trait Transcriber: Send + Sync {
-    async fn transcribe(
-        &self,
-        req: TranscribeRequest,
-    ) -> Result<TranscribeResponse, CloudError>;
+    async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResponse, CloudError>;
 }

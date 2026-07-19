@@ -16,7 +16,7 @@ use ffmpeg_sidecar::command::ffmpeg_is_installed;
 #[cfg(test)]
 use tokio::process::Command;
 
-use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
+use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::jobs::hwaccel;
 use crate::state::MediaItem;
 
@@ -171,7 +171,7 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{DecodeRoute, MediaKind, MediaMetadata, VideoStreamMeta, new_id};
+    use crate::state::{new_id, DecodeRoute, MediaKind, MediaMetadata, VideoStreamMeta};
 
     fn video_with_color(
         matrix: Option<&str>,
@@ -204,7 +204,11 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
+            decode_route: DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -272,13 +276,22 @@ mod tests {
         // libx264's default -g 250 (1 keyframe for the whole clip).
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "testsrc=duration=6:size=640x360:rate=30",
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-t", "6",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=6:size=640x360:rate=30",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-t",
+                "6",
             ])
             .arg(dest)
             .status()
@@ -314,7 +327,11 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
+            decode_route: DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -328,9 +345,7 @@ mod tests {
         assert!(cached_ok(&proxy_path), "proxy file missing or empty");
         // Sanity check it's actually a real mp4 — re-probe with ffprobe.
         let out = Command::new("ffprobe")
-            .args([
-                "-v", "quiet", "-print_format", "json", "-show_format",
-            ])
+            .args(["-v", "quiet", "-print_format", "json", "-show_format"])
             .arg(&proxy_path)
             .output()
             .await
@@ -345,10 +360,14 @@ mod tests {
         // while still cleanly rejecting the old 1 s-GOP behavior.
         let kf = Command::new("ffprobe")
             .args([
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "frame=pict_type",
-                "-of", "csv=p=0",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "frame=pict_type",
+                "-of",
+                "csv=p=0",
             ])
             .arg(&proxy_path)
             .output()
@@ -399,16 +418,28 @@ mod tests {
         let video = tmp.path().join("source_601full.mp4");
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "testsrc=duration=1:size=640x360:rate=30",
-                "-vf", "format=rgb24,scale=out_color_matrix=smpte170m:out_range=pc,format=yuv420p",
-                "-colorspace", "smpte170m",
-                "-color_primaries", "smpte170m",
-                "-color_trc", "smpte170m",
-                "-color_range", "pc",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=640x360:rate=30",
+                "-vf",
+                "format=rgb24,scale=out_color_matrix=smpte170m:out_range=pc,format=yuv420p",
+                "-colorspace",
+                "smpte170m",
+                "-color_primaries",
+                "smpte170m",
+                "-color_trc",
+                "smpte170m",
+                "-color_range",
+                "pc",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
             ])
             .arg(&video)
             .status()
@@ -428,7 +459,11 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
+            decode_route: DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -455,10 +490,14 @@ mod tests {
         // 1. ffprobe sees the asserted tags on the proxy stream.
         let out = Command::new("ffprobe")
             .args([
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=color_space,color_range",
-                "-of", "csv=p=0",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=color_space,color_range",
+                "-of",
+                "csv=p=0",
             ])
             .arg(&proxy_path)
             .output()
@@ -489,7 +528,9 @@ mod tests {
 
         let hash = "preexist";
         let dest = cache.proxy(hash);
-        tokio::fs::create_dir_all(dest.parent().unwrap()).await.unwrap();
+        tokio::fs::create_dir_all(dest.parent().unwrap())
+            .await
+            .unwrap();
         tokio::fs::write(&dest, b"already here").await.unwrap();
 
         let media = MediaItem {
@@ -504,7 +545,11 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
+            decode_route: DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -525,7 +570,16 @@ mod tests {
             .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi"])
             .arg("-i")
             .arg(format!("testsrc=duration=1:size={size}:rate=30"))
-            .args(["-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-t", "1"])
+            .args([
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-t",
+                "1",
+            ])
             .arg(dest)
             .status()
             .await?;
@@ -559,7 +613,11 @@ mod tests {
                 audio: None,
                 ..Default::default()
             },
-            decode_route: DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
+            decode_route: DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
@@ -572,16 +630,26 @@ mod tests {
         let proxy_path = run(&cache, &media).await.expect("proxy run");
         let out = Command::new("ffprobe")
             .args([
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=height",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=height",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
             ])
             .arg(&proxy_path)
             .output()
             .await
             .expect("ffprobe height");
-        let height: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0);
-        assert_eq!(height, 1440, "master must preserve 1440p source res, not cap to 1080");
+        let height: u32 = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        assert_eq!(
+            height, 1440,
+            "master must preserve 1440p source res, not cap to 1080"
+        );
     }
 }

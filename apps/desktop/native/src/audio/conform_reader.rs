@@ -7,7 +7,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::jobs::conform::{ConformHeader, read_header};
+use crate::jobs::conform::{read_header, ConformHeader};
 
 pub struct ConformReader {
     file: File,

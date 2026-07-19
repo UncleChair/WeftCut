@@ -54,7 +54,10 @@ impl AgentSessionSlot {
     /// Current session, if any. Cloned out — never hand back a borrow
     /// to the locked value or callers can deadlock on the next `begin`.
     pub fn current(&self) -> Option<AgentSession> {
-        self.inner.read().expect("agent_session slot poisoned").clone()
+        self.inner
+            .read()
+            .expect("agent_session slot poisoned")
+            .clone()
     }
 
     /// Replace (or install) the session. Returns the previous value so
@@ -69,7 +72,10 @@ impl AgentSessionSlot {
     /// caller can log "session ended" with attribution. Idempotent —
     /// `end()` while already empty returns `None`.
     pub fn end(&self) -> Option<AgentSession> {
-        self.inner.write().expect("agent_session slot poisoned").take()
+        self.inner
+            .write()
+            .expect("agent_session slot poisoned")
+            .take()
     }
 }
 
@@ -82,7 +88,10 @@ pub fn begin_and_emit(
     session: AgentSession,
 ) -> Option<AgentSession> {
     let prior = slot.begin(session.clone());
-    events.emit(EVENT_AGENT_SESSION_CHANGED, serde_json::to_value(Some(session)).unwrap_or(serde_json::Value::Null));
+    events.emit(
+        EVENT_AGENT_SESSION_CHANGED,
+        serde_json::to_value(Some(session)).unwrap_or(serde_json::Value::Null),
+    );
     prior
 }
 
@@ -108,7 +117,9 @@ mod tests {
 
     impl CaptureSink {
         fn new() -> Self {
-            Self { events: Mutex::new(Vec::new()) }
+            Self {
+                events: Mutex::new(Vec::new()),
+            }
         }
 
         fn drained(&self) -> Vec<(String, serde_json::Value)> {
@@ -118,7 +129,10 @@ mod tests {
 
     impl EventSink for CaptureSink {
         fn emit(&self, event: &str, payload: serde_json::Value) {
-            self.events.lock().unwrap().push((event.to_owned(), payload));
+            self.events
+                .lock()
+                .unwrap()
+                .push((event.to_owned(), payload));
         }
     }
 
@@ -140,7 +154,10 @@ mod tests {
         assert_eq!(events.len(), 1);
         let (name, payload) = &events[0];
         assert_eq!(name, EVENT_AGENT_SESSION_CHANGED);
-        assert!(!payload.is_null(), "payload should be non-null for an active session");
+        assert!(
+            !payload.is_null(),
+            "payload should be non-null for an active session"
+        );
     }
 
     #[test]
@@ -162,7 +179,10 @@ mod tests {
         assert_eq!(events.len(), 1);
         let (name, payload) = &events[0];
         assert_eq!(name, EVENT_AGENT_SESSION_CHANGED);
-        assert!(payload.is_null(), "payload should be null after session ends");
+        assert!(
+            payload.is_null(),
+            "payload should be null after session ends"
+        );
     }
 
     // ---------- slot unit tests ----------

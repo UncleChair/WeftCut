@@ -22,6 +22,8 @@ impl TsfnEventSink {
 impl EventSink for TsfnEventSink {
     fn emit(&self, event: &str, payload: Value) {
         let msg = serde_json::json!({ "event": event, "payload": payload }).to_string();
-        let _ = self.tsfn.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
+        let _ = self
+            .tsfn
+            .call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
     }
 }

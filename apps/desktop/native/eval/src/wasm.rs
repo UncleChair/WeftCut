@@ -183,7 +183,12 @@ pub extern "C" fn eval_rgba_packed(t_us: f64, default_packed: i32) -> i32 {
         };
         let mut buf: [Kf<Rgba8>; MAXKF] = [Kf {
             t_us: 0,
-            value: Rgba8 { r: 0, g: 0, b: 0, a: 0 },
+            value: Rgba8 {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            },
             interp: Interpolation::Linear,
         }; MAXKF];
         for i in 0..n {
@@ -195,10 +200,8 @@ pub extern "C" fn eval_rgba_packed(t_us: f64, default_packed: i32) -> i32 {
         }
         let def = unpack(default_packed as u32);
         let out = crate::eval::<Rgba8>(&buf[..n], t_us as i64, def);
-        (((out.r as u32) << 24)
-            | ((out.g as u32) << 16)
-            | ((out.b as u32) << 8)
-            | (out.a as u32)) as i32
+        (((out.r as u32) << 24) | ((out.g as u32) << 16) | ((out.b as u32) << 8) | (out.a as u32))
+            as i32
     }
 }
 
@@ -227,7 +230,12 @@ pub extern "C" fn pan_coeff(pan: f64, channels: i32, idx: i32) -> f32 {
 /// as f64 µs (frame/grid-aligned integers, lossless `as i64`).
 #[no_mangle]
 pub extern "C" fn fade_mul(t_us: f64, span_us: f64, fade_in_us: f64, fade_out_us: f64) -> f64 {
-    fade_multiplier_impl(t_us as i64, span_us as i64, fade_in_us as i64, fade_out_us as i64)
+    fade_multiplier_impl(
+        t_us as i64,
+        span_us as i64,
+        fade_in_us as i64,
+        fade_out_us as i64,
+    )
 }
 
 /// Liveness probe for the loader.

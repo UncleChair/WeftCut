@@ -173,7 +173,9 @@ mod tests {
         let input = LogEntryInput {
             level: LogLevel::Warn,
             category: LogCategory::Mcp,
-            source: LogSource::Agent { client: "claude-desktop".into() },
+            source: LogSource::Agent {
+                client: "claude-desktop".into(),
+            },
             message: "MCP tool call failed".into(),
             i18n_key: Some("log.mcp.failed".into()),
             i18n_args: Some(serde_json::json!({ "tool": "add_layer" })),
@@ -195,14 +197,29 @@ mod tests {
         // "Agent · {{client}}". The shape MUST be {"kind":"Agent","client":"x"}
         // — NOT the adjacently-tagged {"kind":"Agent","client":{"client":"x"}},
         // which renders as "[object Object]" in the status bar.
-        let v = serde_json::to_value(LogSource::Agent { client: "jobs".into() }).expect("ser");
+        let v = serde_json::to_value(LogSource::Agent {
+            client: "jobs".into(),
+        })
+        .expect("ser");
         assert_eq!(v["kind"], "Agent");
-        assert_eq!(v["client"], "jobs", "client must be a flat string, got {}", v["client"]);
+        assert_eq!(
+            v["client"], "jobs",
+            "client must be a flat string, got {}",
+            v["client"]
+        );
         // Unit variants stay tag-only.
-        assert_eq!(serde_json::to_value(LogSource::System).expect("ser")["kind"], "System");
+        assert_eq!(
+            serde_json::to_value(LogSource::System).expect("ser")["kind"],
+            "System"
+        );
         // Round-trips back.
         let back: LogSource = serde_json::from_value(v).expect("de");
-        assert_eq!(back, LogSource::Agent { client: "jobs".into() });
+        assert_eq!(
+            back,
+            LogSource::Agent {
+                client: "jobs".into()
+            }
+        );
     }
 
     #[test]

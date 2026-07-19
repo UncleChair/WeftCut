@@ -13,12 +13,12 @@ pub mod animated;
 pub mod audio_role;
 pub mod color;
 pub mod command;
+pub mod composition;
 pub mod decode_route;
 pub mod effect;
-pub mod keyframe_edits;
-pub mod composition;
 pub mod group;
 pub mod ids;
+pub mod keyframe_edits;
 pub mod layer;
 pub mod marker;
 pub mod media;
@@ -35,26 +35,26 @@ pub use command::{CommandError, FullProxyLanded, MediaDerivativesPatch, Validati
 pub use decode_route::DecodeRoute;
 
 pub use animated::{Animated, Interpolation, Keyframe};
+pub use audio_role::{AudioRole, RoleFlagsPatch, RoleMixSettings};
 pub use color::{ColorSpace, Rgba};
-pub use effect::{Effect, EffectPatch};
 pub use composition::Composition;
-pub use group::{Group, index_groups};
+pub use effect::{Effect, EffectPatch};
+pub use group::{index_groups, Group};
 pub use ids::{
-    CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
-    TransitionId, new_id,
+    new_id, CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
+    TransitionId,
 };
 pub use layer::{
-    AudioParams, ColorParams, FontSpec, ImageOverlayParams, Layer, LayerParams, Outline, Shadow,
-    MotifParams, TextAlign, TextAnimPreset, TextBackend, TextParams, VideoClipParams,
+    AudioParams, ColorParams, FontSpec, ImageOverlayParams, Layer, LayerParams, MotifParams,
+    Outline, Shadow, TextAlign, TextAnimPreset, TextBackend, TextParams, VideoClipParams,
 };
 pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
 pub use project::{
-    Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch, SCHEMA_VERSION,
-    TrackFlagsPatch,
+    Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch, TrackFlagsPatch,
+    SCHEMA_VERSION,
 };
-pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC, snap_frame_ceil, snap_frame_floor};
-pub use audio_role::{AudioRole, RoleFlagsPatch, RoleMixSettings};
+pub use time::{snap_frame_ceil, snap_frame_floor, Rational, TimeUs, US_PER_MS, US_PER_SEC};
 pub use track::{Track, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};
 pub use transition::{Transition, TransitionKind};

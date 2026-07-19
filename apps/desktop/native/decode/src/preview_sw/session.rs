@@ -153,11 +153,22 @@ fn serve_request(stream: &mut SwVideoStream, target_us: i64, sink: &FrameSink, s
                 break f; // landed at/before target (or can't/needn't retry further)
             }
             Ok(None) => {
-                emit(sink, SwFramePoke::Eof { stream_id: stream_id.to_string() });
+                emit(
+                    sink,
+                    SwFramePoke::Eof {
+                        stream_id: stream_id.to_string(),
+                    },
+                );
                 return;
             }
             Err(e) => {
-                emit(sink, SwFramePoke::Error { stream_id: stream_id.to_string(), message: e });
+                emit(
+                    sink,
+                    SwFramePoke::Error {
+                        stream_id: stream_id.to_string(),
+                        message: e,
+                    },
+                );
                 return;
             }
         }
@@ -176,11 +187,22 @@ fn serve_request(stream: &mut SwVideoStream, target_us: i64, sink: &FrameSink, s
             None => match stream.next_frame() {
                 Ok(Some(f)) => f,
                 Ok(None) => {
-                    emit(sink, SwFramePoke::Eof { stream_id: stream_id.to_string() });
+                    emit(
+                        sink,
+                        SwFramePoke::Eof {
+                            stream_id: stream_id.to_string(),
+                        },
+                    );
                     break;
                 }
                 Err(e) => {
-                    emit(sink, SwFramePoke::Error { stream_id: stream_id.to_string(), message: e });
+                    emit(
+                        sink,
+                        SwFramePoke::Error {
+                            stream_id: stream_id.to_string(),
+                            message: e,
+                        },
+                    );
                     break;
                 }
             },
@@ -401,7 +423,10 @@ mod tests {
                 g2.lock().unwrap().push((frame.width, frame.pts_us));
             }
         }));
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_prores.mov");
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
         let info = reg.open("s1".into(), p.into()).expect("open");
         assert_eq!(info.width, 320);
         let _ = reg.request_frame_at("s1".into(), 0);
@@ -413,7 +438,11 @@ mod tests {
         // frame at/after container start, so >= 0). Do NOT assert color tags:
         // the synthetic testsrc fixture may leave them unspecified (None valid).
         assert_eq!(frames[0].0, 320, "frame width");
-        assert!(frames[0].1 >= 0, "expected pts_us >= 0, got {}", frames[0].1);
+        assert!(
+            frames[0].1 >= 0,
+            "expected pts_us >= 0, got {}",
+            frames[0].1
+        );
     }
 
     #[test]
@@ -443,6 +472,10 @@ mod tests {
             "first delivered pts {} should cover target 800_000, not the keyframe (~500_000)",
             pts[0]
         );
-        assert!(pts[0] <= 900_000, "first delivered pts {} overshot the target", pts[0]);
+        assert!(
+            pts[0] <= 900_000,
+            "first delivered pts {} overshot the target",
+            pts[0]
+        );
     }
 }

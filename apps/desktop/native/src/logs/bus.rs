@@ -93,7 +93,8 @@ impl LogBus {
             loop {
                 match bridge_rx.recv().await {
                     Ok(entry) => {
-                        let payload = serde_json::to_value(&entry).unwrap_or(serde_json::Value::Null);
+                        let payload =
+                            serde_json::to_value(&entry).unwrap_or(serde_json::Value::Null);
                         events_for_bridge.emit(EVENT_LOG_ENTRY, payload);
                     }
                     Err(RecvError::Lagged(_)) => continue,

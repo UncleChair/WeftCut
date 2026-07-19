@@ -90,8 +90,10 @@ impl tracing::field::Visit for MessageVisitor {
         if name == "message" {
             self.message = Some(value.to_string());
         } else {
-            self.fields
-                .insert(name.to_string(), serde_json::Value::String(value.to_string()));
+            self.fields.insert(
+                name.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
         }
     }
 }

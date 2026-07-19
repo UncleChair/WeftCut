@@ -134,7 +134,12 @@ fn collect_waveforms(dir: &Path, now: SystemTime, report: &mut SweepReport, unit
 /// units. Anything under `{hash}/` that is not a known provenance tag dir is
 /// the pre-provenance layout (or a stray file) — unreachable by the current
 /// key scheme — and is deleted unconditionally.
-fn collect_filmstrip(root: &Path, now: SystemTime, report: &mut SweepReport, units: &mut Vec<Unit>) {
+fn collect_filmstrip(
+    root: &Path,
+    now: SystemTime,
+    report: &mut SweepReport,
+    units: &mut Vec<Unit>,
+) {
     for hash_entry in read_dir_entries(root) {
         let hash_path = hash_entry.path();
         if !hash_path.is_dir() {
@@ -161,7 +166,9 @@ fn collect_filmstrip(root: &Path, now: SystemTime, report: &mut SweepReport, uni
             }
             for lod_entry in read_dir_entries(&tag_path) {
                 for tile_entry in read_dir_entries(&lod_entry.path()) {
-                    let Ok(meta) = tile_entry.metadata() else { continue };
+                    let Ok(meta) = tile_entry.metadata() else {
+                        continue;
+                    };
                     if !meta.is_file() {
                         continue;
                     }
@@ -181,7 +188,12 @@ fn collect_filmstrip(root: &Path, now: SystemTime, report: &mut SweepReport, uni
 /// `thumbnails/{hash}/` is ONE unit (the 10-poster set), keyed on the max
 /// file mtime inside — the poster read's touch refreshes the whole set.
 /// `{hash}.tmp/` dirs from interrupted jobs follow the aged-.tmp rule.
-fn collect_thumbnails(root: &Path, now: SystemTime, report: &mut SweepReport, units: &mut Vec<Unit>) {
+fn collect_thumbnails(
+    root: &Path,
+    now: SystemTime,
+    report: &mut SweepReport,
+    units: &mut Vec<Unit>,
+) {
     for entry in read_dir_entries(root) {
         let path = entry.path();
         if !path.is_dir() {
@@ -196,7 +208,12 @@ fn collect_thumbnails(root: &Path, now: SystemTime, report: &mut SweepReport, un
             }
             continue;
         }
-        units.push(Unit { path, bytes, mtime, is_dir: true });
+        units.push(Unit {
+            path,
+            bytes,
+            mtime,
+            is_dir: true,
+        });
     }
 }
 
@@ -285,7 +302,8 @@ mod tests {
 
     fn set_mtime(path: &Path, when: SystemTime) {
         let f = fs::File::options().write(true).open(path).unwrap();
-        f.set_times(fs::FileTimes::new().set_modified(when)).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(when))
+            .unwrap();
     }
 
     fn hours_ago(now: SystemTime, h: u64) -> SystemTime {
@@ -293,7 +311,14 @@ mod tests {
     }
 
     /// Write a filmstrip tile of `bytes` zeros and stamp its mtime.
-    fn put_tile(layout: &CacheLayout, hash: &str, lod: u32, index: u32, bytes: usize, mtime: SystemTime) -> PathBuf {
+    fn put_tile(
+        layout: &CacheLayout,
+        hash: &str,
+        lod: u32,
+        index: u32,
+        bytes: usize,
+        mtime: SystemTime,
+    ) -> PathBuf {
         let p = layout.filmstrip_tile(hash, FilmstripSrc::Quick, lod, index);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(&p, vec![0u8; bytes]).unwrap();
@@ -383,7 +408,10 @@ mod tests {
         fs::write(&fresh_tmp, b"mid-write").unwrap();
         sweep(&l, u64::MAX, now);
         assert!(!aged.exists(), "interrupted-job leftover");
-        assert!(fresh_tmp.exists(), "mid-write temp is protected by the age floor");
+        assert!(
+            fresh_tmp.exists(),
+            "mid-write temp is protected by the age floor"
+        );
     }
 
     #[test]
@@ -396,7 +424,10 @@ mod tests {
         fs::write(old.join("000001.jpg"), b"old-layout").unwrap();
         let tagged = put_tile(&l, "h", 3, 1, 10, now);
         sweep(&l, u64::MAX, now);
-        assert!(!old.exists(), "pre-provenance layout is unreachable by the key scheme");
+        assert!(
+            !old.exists(),
+            "pre-provenance layout is unreachable by the key scheme"
+        );
         assert!(tagged.exists());
     }
 

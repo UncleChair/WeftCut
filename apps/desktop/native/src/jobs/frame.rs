@@ -15,18 +15,14 @@ use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
+use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::state::{MediaItem, MediaKind, TimeUs};
 
 const FRAME_WIDTH: u32 = 640;
 
 /// Extract a single frame at `t_us` and return the cached JPG path. Hits the
 /// disk cache when the same `(hash, t_us)` was requested before.
-pub async fn extract(
-    cache: &CacheLayout,
-    media: &MediaItem,
-    t_us: TimeUs,
-) -> Result<PathBuf> {
+pub async fn extract(cache: &CacheLayout, media: &MediaItem, t_us: TimeUs) -> Result<PathBuf> {
     if !matches!(media.kind, MediaKind::Video | MediaKind::Image) {
         anyhow::bail!("frame extract only valid for Video / Image media");
     }
@@ -118,7 +114,7 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{DecodeRoute, MediaKind, MediaMetadata, new_id};
+    use crate::state::{new_id, DecodeRoute, MediaKind, MediaMetadata};
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")
@@ -131,13 +127,22 @@ mod tests {
     async fn make_test_video(dest: &std::path::Path) -> Result<()> {
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "testsrc=duration=2:size=640x360:rate=30",
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-t", "2",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=2:size=640x360:rate=30",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-t",
+                "2",
             ])
             .arg(dest)
             .status()
@@ -183,14 +188,18 @@ mod tests {
             imported_at: Utc::now(),
         };
 
-        let p1 = extract(&cache, &media, 1_000_000).await.expect("first extract");
+        let p1 = extract(&cache, &media, 1_000_000)
+            .await
+            .expect("first extract");
         assert!(cached_ok(&p1));
         let len_before = tokio::fs::metadata(&p1).await.unwrap().len();
 
         // Second call should hit the disk cache (path returned without
         // re-running ffmpeg). We can't directly observe "didn't run ffmpeg"
         // but we can observe the file is unchanged.
-        let p2 = extract(&cache, &media, 1_000_000).await.expect("cached extract");
+        let p2 = extract(&cache, &media, 1_000_000)
+            .await
+            .expect("cached extract");
         assert_eq!(p1, p2);
         let len_after = tokio::fs::metadata(&p2).await.unwrap().len();
         assert_eq!(len_before, len_after);

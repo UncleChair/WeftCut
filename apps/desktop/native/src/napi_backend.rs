@@ -5,9 +5,9 @@
 //! state slice it needs as an argument (stateless-compute-service).
 
 use std::path::PathBuf;
-use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
@@ -93,7 +93,11 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
 #[napi]
 impl Backend {
     #[napi(constructor)]
-    pub fn new(app_config_dir: String, app_cache_dir: String, on_event: ThreadsafeFunction<String>) -> Self {
+    pub fn new(
+        app_config_dir: String,
+        app_cache_dir: String,
+        on_event: ThreadsafeFunction<String>,
+    ) -> Self {
         let events: Arc<dyn EventSink> = Arc::new(TsfnEventSink::new(on_event));
         build_backend(events, app_config_dir, app_cache_dir)
     }
@@ -120,7 +124,9 @@ impl Backend {
 
     #[napi]
     pub async fn invoke(&self, cmd: String, args_json: String) -> napi::Result<String> {
-        self.dispatch(&cmd, &args_json).await.map_err(Error::from_reason)
+        self.dispatch(&cmd, &args_json)
+            .await
+            .map_err(Error::from_reason)
     }
 
     /// Push a decrypted cloud API key into the in-memory cache. Called by
@@ -128,13 +134,19 @@ impl Backend {
     /// (key material stays off the renderer).
     #[napi]
     pub fn set_cloud_key(&self, provider: String, key: String) {
-        self.cloud_keys.lock().expect("cloud_keys poisoned").insert(provider, key);
+        self.cloud_keys
+            .lock()
+            .expect("cloud_keys poisoned")
+            .insert(provider, key);
     }
 
     /// Remove a cloud API key from the cache (key cleared in Settings).
     #[napi]
     pub fn clear_cloud_key(&self, provider: String) {
-        self.cloud_keys.lock().expect("cloud_keys poisoned").remove(&provider);
+        self.cloud_keys
+            .lock()
+            .expect("cloud_keys poisoned")
+            .remove(&provider);
     }
 
     /// Re-point cache + workspace, end any in-flight agent session, and rotate
@@ -182,8 +194,11 @@ impl Backend {
             // drops it (the seam emits `media:derivatives`, which Electron main
             // applies) and the enqueue below re-decides instead of seeing a stale
             // file as "ready". We're in an async napi → tokio runtime is present.
-            if let crate::state::DecodeRoute::Proxied { full_proxy: Some(path), format_version, .. } =
-                &item.decode_route
+            if let crate::state::DecodeRoute::Proxied {
+                full_proxy: Some(path),
+                format_version,
+                ..
+            } = &item.decode_route
             {
                 if *format_version < PROXY_FORMAT_VERSION {
                     let _ = std::fs::remove_file(path); // best-effort; logged-only in prod
@@ -191,7 +206,8 @@ impl Backend {
                         full_proxy_landed: Some(None),
                         ..Default::default()
                     };
-                    let _ = crate::jobs::commit_media_derivatives(&self.events, item.id, patch).await;
+                    let _ =
+                        crate::jobs::commit_media_derivatives(&self.events, item.id, patch).await;
                 }
             }
             crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), item);
@@ -209,10 +225,11 @@ impl Backend {
     #[cfg(feature = "jobs")]
     pub async fn probe_media(&self, path: String) -> napi::Result<String> {
         let buf = std::path::PathBuf::from(&path);
-        let item = tokio::task::spawn_blocking(move || crate::commands::media::probe_media_item(buf))
-            .await
-            .map_err(|e| Error::from_reason(format!("probe join: {e}")))?
-            .map_err(Error::from_reason)?;
+        let item =
+            tokio::task::spawn_blocking(move || crate::commands::media::probe_media_item(buf))
+                .await
+                .map_err(|e| Error::from_reason(format!("probe join: {e}")))?
+                .map_err(Error::from_reason)?;
         serde_json::to_string(&item).map_err(|e| Error::from_reason(e.to_string()))
     }
 
@@ -241,14 +258,17 @@ impl Backend {
     /// { cues, comp_w, comp_h, label })`. `format` is one of "srt"/"ass"/"vtt"
     /// (case-insensitive) or null to auto-sniff.
     #[napi]
-    pub async fn parse_subtitles(&self, body: String, format: Option<String>) -> napi::Result<String> {
+    pub async fn parse_subtitles(
+        &self,
+        body: String,
+        format: Option<String>,
+    ) -> napi::Result<String> {
         let fmt = format
             .map(|f| crate::subtitles::SubFormat::from_str(&f))
             .transpose()
             .map_err(Error::from_reason)?;
         let (cues, simplified) =
-            crate::subtitles::parse_subtitle_cues(&body, fmt)
-                .map_err(Error::from_reason)?;
+            crate::subtitles::parse_subtitle_cues(&body, fmt).map_err(Error::from_reason)?;
         serde_json::to_string(&serde_json::json!({ "cues": cues, "simplified": simplified }))
             .map_err(|e| Error::from_reason(e.to_string()))
     }
@@ -261,10 +281,18 @@ impl Backend {
     /// applies it), so no actor handle is threaded through.
     #[napi]
     #[cfg(feature = "jobs")]
-    pub async fn enqueue_workspace_copy(&self, media_id: String, source_path: String) -> napi::Result<()> {
-        let id = uuid::Uuid::parse_str(&media_id).map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
-        let Some(ws) = self.workspace.current() else { return Ok(()); };
-        self.import_queue.enqueue(id, std::path::PathBuf::from(source_path), ws);
+    pub async fn enqueue_workspace_copy(
+        &self,
+        media_id: String,
+        source_path: String,
+    ) -> napi::Result<()> {
+        let id = uuid::Uuid::parse_str(&media_id)
+            .map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
+        let Some(ws) = self.workspace.current() else {
+            return Ok(());
+        };
+        self.import_queue
+            .enqueue(id, std::path::PathBuf::from(source_path), ws);
         Ok(())
     }
 
@@ -327,10 +355,9 @@ impl Backend {
     pub async fn synthesize_speech_compute(&self, args_json: String) -> napi::Result<String> {
         let args: crate::mcp::SynthesizeSpeechArgs =
             serde_json::from_str(&args_json).map_err(|e| Error::from_reason(e.to_string()))?;
-        let (media_item, cached) =
-            crate::mcp::synthesize_speech_audio(self, &args)
-                .await
-                .map_err(|e| Error::from_reason(e.message))?;
+        let (media_item, cached) = crate::mcp::synthesize_speech_audio(self, &args)
+            .await
+            .map_err(|e| Error::from_reason(e.message))?;
         let duration_us = media_item.metadata.duration_us.unwrap_or(0);
         serde_json::to_string(&serde_json::json!({
             "media_item": media_item,
@@ -351,15 +378,23 @@ impl Backend {
 
     #[napi]
     pub async fn mcp_call_tool(&self, name: String, args_json: String) -> napi::Result<String> {
-        Ok(crate::mcp::reply(crate::mcp::dispatch_tool(self, &name, &args_json).await))
+        Ok(crate::mcp::reply(
+            crate::mcp::dispatch_tool(self, &name, &args_json).await,
+        ))
     }
 
     #[napi]
-    pub async fn mcp_read_resource(&self, uri: String, state_json: Option<String>) -> napi::Result<String> {
+    pub async fn mcp_read_resource(
+        &self,
+        uri: String,
+        state_json: Option<String>,
+    ) -> napi::Result<String> {
         // The TS MCP host injects the { project } / { media } slice the Rust
         // compute resources need; empty for stateless reads (meter).
         let state = state_json.as_deref().unwrap_or("{}");
-        Ok(crate::mcp::reply(crate::mcp::read_resource(self, &uri, state).await))
+        Ok(crate::mcp::reply(
+            crate::mcp::read_resource(self, &uri, state).await,
+        ))
     }
 
     #[napi]
@@ -369,8 +404,12 @@ impl Backend {
 
     #[napi]
     pub async fn mcp_get_prompt(&self, name: String, args_json: String) -> napi::Result<String> {
-        let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
-        Ok(crate::mcp::reply(crate::mcp::get_prompt(&name, args.as_object())))
+        let args: serde_json::Value =
+            serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
+        Ok(crate::mcp::reply(crate::mcp::get_prompt(
+            &name,
+            args.as_object(),
+        )))
     }
 }
 
@@ -396,8 +435,7 @@ impl Backend {
     pub fn new_for_test(events: Arc<dyn EventSink>) -> Self {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let base = std::env::temp_dir()
-            .join(format!("weftcut-test-{}-{}", std::process::id(), n));
+        let base = std::env::temp_dir().join(format!("weftcut-test-{}-{}", std::process::id(), n));
         let config_dir = base.join("config").to_string_lossy().to_string();
         let cache_dir = base.join("cache").to_string_lossy().to_string();
         build_backend(events, config_dir, cache_dir)
@@ -421,78 +459,106 @@ impl Backend {
             "log_list" => ser(crate::commands::prefs::log_list(self).await),
             "log_clear" => ser(crate::commands::prefs::log_clear(self).await),
             "log_emit" => {
-                let a: crate::commands::prefs::LogEmitArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::prefs::LogEmitArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::prefs::log_emit(self, a.input).await)
             }
             "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
             #[cfg(feature = "jobs")]
             "import_cancel" => {
-                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::MediaIdArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::import_cancel(self, a.media_id).await)
             }
             #[cfg(feature = "jobs")]
             "import_queue_list" => ser(crate::commands::media::import_queue_list(self).await),
             #[cfg(feature = "jobs")]
             "get_media_thumbnail" => {
-                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::MediaItemArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::get_media_thumbnail(a.item).await)
             }
             #[cfg(feature = "jobs")]
             "get_waveform_peaks" => {
-                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::MediaItemArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::get_waveform_peaks(a.item).await)
             }
             #[cfg(feature = "jobs")]
             "get_waveform_levels" => {
-                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::MediaItemArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::get_waveform_levels(a.item).await)
             }
             #[cfg(feature = "jobs")]
             "get_waveform_tile" => {
-                let a: crate::commands::media::WaveformTileArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::media::WaveformTileArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::get_waveform_tile(a).await)
             }
             #[cfg(feature = "jobs")]
             "get_filmstrip_tile" => {
-                let a: crate::commands::media::FilmstripTileArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::media::FilmstripTileArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::get_filmstrip_tile(self, a).await)
             }
             #[cfg(feature = "jobs")]
             "ensure_full_proxy" => {
-                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::MediaItemArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::ensure_full_proxy(self, a.item).await)
             }
             #[cfg(feature = "jobs")]
             "generate_quick_proxy" => {
-                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::MediaItemArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::generate_quick_proxy(self, a.item).await)
             }
             #[cfg(feature = "jobs")]
             "ensure_conform" => {
-                let a: crate::commands::MediaItemArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let a: crate::commands::MediaItemArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::ensure_conform(self, a.item).await)
             }
             #[cfg(feature = "jobs")]
             "report_audio_meter" => {
                 #[derive(serde::Deserialize)]
-                struct A { report: crate::commands::media::AudioMeterReport }
+                struct A {
+                    report: crate::commands::media::AudioMeterReport,
+                }
                 let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::report_audio_meter(self, a.report).await)
             }
             #[cfg(feature = "export")]
             "export_project_audio_only" => {
-                let a: crate::commands::ExportAudioOnlyArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::export::export_project_audio_only(a.project, a.output_path, a.audio, a.start_us, a.end_us).await)
+                let a: crate::commands::ExportAudioOnlyArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::export::export_project_audio_only(
+                    a.project,
+                    a.output_path,
+                    a.audio,
+                    a.start_us,
+                    a.end_us,
+                )
+                .await)
             }
             #[cfg(feature = "export")]
             "mux_export" => {
-                let a: crate::commands::MuxExportArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::export::mux_export(a.video_path, a.audio_path, a.output_path).await)
+                let a: crate::commands::MuxExportArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(
+                    crate::commands::export::mux_export(a.video_path, a.audio_path, a.output_path)
+                        .await,
+                )
             }
             #[cfg(feature = "export")]
             "ensure_export_audio_conform" => {
-                let a: crate::commands::ExportConformArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::export::ensure_export_audio_conform(self, a.project, a.start_us, a.end_us).await)
+                let a: crate::commands::ExportConformArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::export::ensure_export_audio_conform(
+                    self, a.project, a.start_us, a.end_us,
+                )
+                .await)
             }
             #[cfg(feature = "export")]
             "export_video_sink_start" => {
@@ -505,7 +571,8 @@ impl Backend {
                     &self.video_sink,
                     &self.encoder_registry,
                     a.args,
-                ).await)
+                )
+                .await)
             }
             #[cfg(feature = "export")]
             "export_video_sink_finish" => {
@@ -531,7 +598,9 @@ impl Backend {
 }
 
 /// Serialize a typed command result into the dispatcher's JSON-string contract.
-pub(crate) fn ser<T: Serialize>(r: std::result::Result<T, String>) -> std::result::Result<String, String> {
+pub(crate) fn ser<T: Serialize>(
+    r: std::result::Result<T, String>,
+) -> std::result::Result<String, String> {
     r.and_then(|v| serde_json::to_string(&v).map_err(|e| e.to_string()))
 }
 
@@ -561,7 +630,10 @@ mod tests {
         b.init().await.unwrap();
         // No `item` field → serde deserialize fails.
         let err = b.dispatch("get_waveform_peaks", "{}").await.unwrap_err();
-        assert!(err.contains("item") || err.contains("missing"), "expected a parse error, got: {err}");
+        assert!(
+            err.contains("item") || err.contains("missing"),
+            "expected a parse error, got: {err}"
+        );
     }
 
     #[cfg(feature = "jobs")]
@@ -611,7 +683,8 @@ mod tests {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
         let p = crate::state::Project::new_blank("test");
-        let args = serde_json::json!({ "project": p, "startUs": 0, "endUs": 1_000_000 }).to_string();
+        let args =
+            serde_json::json!({ "project": p, "startUs": 0, "endUs": 1_000_000 }).to_string();
         let out = b
             .dispatch("ensure_export_audio_conform", &args)
             .await
@@ -635,7 +708,10 @@ mod tests {
             }
         })
         .to_string();
-        let reply = b.dispatch("export_video_sink_start", &start_args).await.unwrap();
+        let reply = b
+            .dispatch("export_video_sink_start", &start_args)
+            .await
+            .unwrap();
         assert_eq!(reply, "null", "IPC start returns unit/null, got {reply}");
         let cancel = b.dispatch("export_video_sink_cancel", "{}").await.unwrap();
         assert_eq!(cancel, "null", "cancel returns unit/null");
@@ -651,11 +727,18 @@ mod tests {
         let cat = b.mcp_catalog().await.unwrap();
         assert!(cat.contains("\"ping\""));
         assert!(cat.contains("\"apply_subtitles\""));
-        assert!(!cat.contains("\"add_track\""), "add_track must not be in the Rust-native catalog");
+        assert!(
+            !cat.contains("\"add_track\""),
+            "add_track must not be in the Rust-native catalog"
+        );
         // every tool advertises an object inputSchema
         let v: serde_json::Value = serde_json::from_str(&cat).unwrap();
         for t in v["tools"].as_array().unwrap() {
-            assert!(t["inputSchema"].is_object(), "tool {} has no inputSchema", t["name"]);
+            assert!(
+                t["inputSchema"].is_object(),
+                "tool {} has no inputSchema",
+                t["name"]
+            );
         }
     }
 
@@ -674,7 +757,9 @@ mod tests {
                         assert!(sub.is_object(), "tool '{tool}': property '{k}' schema is {sub}, not an object — MCP SDK rejects boolean schemas");
                     }
                 }
-                for sub in obj.values() { check(sub, tool); }
+                for sub in obj.values() {
+                    check(sub, tool);
+                }
             }
         }
         for t in cat["tools"].as_array().unwrap() {
@@ -688,16 +773,32 @@ mod tests {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
         // Unconfigured: openai present in the list, configured=false.
-        let out = b.dispatch("settings_get_api_key_status", "{}").await.unwrap();
+        let out = b
+            .dispatch("settings_get_api_key_status", "{}")
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let openai = v.as_array().unwrap().iter().find(|e| e["provider"] == "openai").unwrap();
+        let openai = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["provider"] == "openai")
+            .unwrap();
         assert_eq!(openai["configured"], false);
         assert!(openai["label"].as_str().unwrap().contains("OpenAI"));
         // After a push: configured=true.
         b.set_cloud_key("openai".into(), "sk-x".into());
-        let out = b.dispatch("settings_get_api_key_status", "{}").await.unwrap();
+        let out = b
+            .dispatch("settings_get_api_key_status", "{}")
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let openai = v.as_array().unwrap().iter().find(|e| e["provider"] == "openai").unwrap();
+        let openai = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["provider"] == "openai")
+            .unwrap();
         assert_eq!(openai["configured"], true);
     }
 
@@ -710,7 +811,10 @@ mod tests {
             .dispatch("settings_test_provider", r#"{"provider":"openai"}"#)
             .await
             .unwrap_err();
-        assert!(err.contains("Settings"), "missing-key error should hint Settings, got: {err}");
+        assert!(
+            err.contains("Settings"),
+            "missing-key error should hint Settings, got: {err}"
+        );
     }
 
     #[cfg(feature = "mcp")]
@@ -718,8 +822,12 @@ mod tests {
     async fn mcp_call_tool_unknown_is_not_found() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
-        let reply: serde_json::Value =
-            serde_json::from_str(&b.mcp_call_tool("no_such_tool".into(), "{}".into()).await.unwrap()).unwrap();
+        let reply: serde_json::Value = serde_json::from_str(
+            &b.mcp_call_tool("no_such_tool".into(), "{}".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["error"]["code"], "not_found");
     }
@@ -731,7 +839,11 @@ mod tests {
         assert!(!b.cloud_keys.lock().unwrap().contains_key("openai"));
         b.set_cloud_key("openai".into(), "sk-abc".into());
         assert_eq!(
-            b.cloud_keys.lock().unwrap().get("openai").map(String::as_str),
+            b.cloud_keys
+                .lock()
+                .unwrap()
+                .get("openai")
+                .map(String::as_str),
             Some("sk-abc"),
         );
         b.clear_cloud_key("openai".into());
@@ -750,7 +862,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let proj = dir.path().join("p.vproj");
         std::fs::create_dir_all(&proj).unwrap();
-        b.commit_workspace(proj.to_string_lossy().to_string()).await.unwrap();
+        b.commit_workspace(proj.to_string_lossy().to_string())
+            .await
+            .unwrap();
         // LogCategory::System serializes as {"kind":"System"} (adjacently-tagged, unit variant).
         // LogSource::User serializes as {"kind":"User"} (internally-tagged, unit variant).
         // LogLevel::Info serializes as "info" (rename_all = "lowercase").
@@ -780,9 +894,12 @@ mod tests {
         // No injected layer → "layer not found" (resolves from args.layer ==
         // None). A mirror-backed regression would say "read-mirror not set".
         let reply: serde_json::Value = serde_json::from_str(
-            &b.mcp_call_tool("transcribe_clip".into(), r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into())
-                .await
-                .unwrap(),
+            &b.mcp_call_tool(
+                "transcribe_clip".into(),
+                r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into(),
+            )
+            .await
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(reply["ok"], false);
@@ -833,9 +950,15 @@ mod tests {
         let f = dir.join("clip.bin");
         std::fs::write(&f, b"hello weftcut").unwrap();
 
-        let got = b.hash_media_source(f.to_string_lossy().to_string()).await.unwrap();
+        let got = b
+            .hash_media_source(f.to_string_lossy().to_string())
+            .await
+            .unwrap();
         let want = blake3::hash(b"hello weftcut").to_hex().to_string();
-        assert_eq!(got, want, "hash_media_source must return the blake3 hex of the file bytes");
+        assert_eq!(
+            got, want,
+            "hash_media_source must return the blake3 hex of the file bytes"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -857,7 +980,9 @@ mod tests {
         let ws_json = backend.dispatch("workspace_dir", "{}").await.unwrap();
         let ws_str: Option<String> = serde_json::from_str(&ws_json)
             .expect("workspace_dir must deserialize to Option<String>");
-        let ws_path = std::path::PathBuf::from(ws_str.expect("workspace must be Some after commit_workspace"));
+        let ws_path = std::path::PathBuf::from(
+            ws_str.expect("workspace must be Some after commit_workspace"),
+        );
         assert_eq!(
             ws_path.canonicalize().unwrap_or(ws_path.clone()),
             dir.canonicalize().unwrap_or(dir.clone()),
@@ -865,7 +990,10 @@ mod tests {
         );
 
         // cache.set_workspace creates <dir>/Cache synchronously.
-        assert!(dir.join("Cache").exists(), "cache dir not created by commit_workspace");
+        assert!(
+            dir.join("Cache").exists(),
+            "cache dir not created by commit_workspace"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -914,11 +1042,14 @@ mod tests {
             "commands/export.rs: export channels must NOT read the mirror — they take a `project` arg"
         );
         for name in ["export_project_audio_only", "ensure_export_audio_conform"] {
-            let start = export.find(&format!("fn {name}"))
+            let start = export
+                .find(&format!("fn {name}"))
                 .unwrap_or_else(|| panic!("{name} must exist in commands/export.rs"));
             let body = &export[start..(start + 600).min(export.len())];
-            assert!(!body.contains("snapshot_for_read"),
-                "{name}: must NOT read the mirror — it takes a `project` arg");
+            assert!(
+                !body.contains("snapshot_for_read"),
+                "{name}: must NOT read the mirror — it takes a `project` arg"
+            );
         }
 
         // detect_silences / transcribe_clip never read a mirror — the TS MCP
@@ -955,22 +1086,34 @@ mod tests {
             );
         }
         assert!(
-            !jobs_import.contains("migrate_hash_artifacts") && !jobs_import.contains("pending_hash_for"),
+            !jobs_import.contains("migrate_hash_artifacts")
+                && !jobs_import.contains("pending_hash_for"),
             "jobs/import.rs: the pending-hash / migrate machinery must not exist"
         );
 
         // Single-media channels never read a mirror — the TS host passes the
         // resolved MediaItem.
-        for name in ["get_media_thumbnail", "get_waveform_peaks", "ensure_full_proxy", "ensure_conform", "get_filmstrip_tile", "generate_quick_proxy"] {
-            let start = media.find(&format!("fn {name}"))
+        for name in [
+            "get_media_thumbnail",
+            "get_waveform_peaks",
+            "ensure_full_proxy",
+            "ensure_conform",
+            "get_filmstrip_tile",
+            "generate_quick_proxy",
+        ] {
+            let start = media
+                .find(&format!("fn {name}"))
                 .unwrap_or_else(|| panic!("{name} must exist in commands/media.rs"));
             let body = &media[start..(start + 600).min(media.len())];
-            assert!(!body.contains("snapshot_for_read"),
-                "{name}: must NOT read the mirror — it takes a MediaItem arg");
+            assert!(
+                !body.contains("snapshot_for_read"),
+                "{name}: must NOT read the mirror — it takes a MediaItem arg"
+            );
         }
 
         // `ensure_full_proxy` routes its derivative write through the seam.
-        let efp_start = media.find("fn ensure_full_proxy")
+        let efp_start = media
+            .find("fn ensure_full_proxy")
             .expect("ensure_full_proxy must exist in commands/media.rs");
         let efp_tail = &media[efp_start..];
         let efp_body = match efp_tail.find("\npub async fn ") {

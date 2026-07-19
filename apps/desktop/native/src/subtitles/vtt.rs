@@ -7,16 +7,29 @@ pub fn parse(body: &str) -> Vec<Cue> {
     let normalized = body.replace("\r\n", "\n").replace('\r', "\n");
     for block in normalized.split("\n\n") {
         let lines: Vec<&str> = block.lines().filter(|l| !l.trim().is_empty()).collect();
-        if lines.is_empty() || lines[0].trim_start().starts_with("WEBVTT") { continue; }
+        if lines.is_empty() || lines[0].trim_start().starts_with("WEBVTT") {
+            continue;
+        }
         // An optional cue identifier line may precede the time line.
-        let (time_idx, time_line) = match lines.iter().enumerate().find(|(_, l)| l.contains("-->")) {
+        let (time_idx, time_line) = match lines.iter().enumerate().find(|(_, l)| l.contains("-->"))
+        {
             Some((i, l)) => (i, *l),
             None => continue,
         };
-        let (start_us, end_us) = match parse_time_range(time_line) { Some(t) => t, None => continue };
+        let (start_us, end_us) = match parse_time_range(time_line) {
+            Some(t) => t,
+            None => continue,
+        };
         let text = lines[time_idx + 1..].join("\n");
-        if text.is_empty() { continue; }
-        cues.push(Cue { start_us, end_us, text, style: CueStyle::default() });
+        if text.is_empty() {
+            continue;
+        }
+        cues.push(Cue {
+            start_us,
+            end_us,
+            text,
+            style: CueStyle::default(),
+        });
     }
     cues
 }
@@ -90,7 +103,8 @@ mod tests {
 
     #[test]
     fn skips_vtt_cues_with_empty_text() {
-        let body = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n\n\n00:00:03.000 --> 00:00:04.000\nPresent\n";
+        let body =
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n\n\n00:00:03.000 --> 00:00:04.000\nPresent\n";
         let cues = parse(body);
         assert_eq!(cues.len(), 1);
         assert_eq!(cues[0].text, "Present");

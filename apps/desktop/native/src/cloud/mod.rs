@@ -88,7 +88,10 @@ pub struct ConnectionTestInfo {
 /// Verify a provider's configured key works. Dispatches to the right
 /// provider-side smoke check (OpenAI's `/v1/models` listing today). Returns
 /// `CloudError::InvalidKey` / network errors per the shared mapping.
-pub async fn test_connection(p: self::keys::Provider, key: &str) -> Result<ConnectionTestInfo, CloudError> {
+pub async fn test_connection(
+    p: self::keys::Provider,
+    key: &str,
+) -> Result<ConnectionTestInfo, CloudError> {
     match p {
         self::keys::Provider::OpenAi => {
             let info = providers::openai::test_connection(key).await?;

@@ -12,7 +12,7 @@
 //! `feedback_engine_source_drift`, `feedback_snap_math_drift`).
 
 use crate::state::animated::{Animated, Interpolation, Keyframe};
-use crate::state::ids::{KeyframeId, new_id};
+use crate::state::ids::{new_id, KeyframeId};
 
 const DEFAULT_INTERP: Interpolation = Interpolation::Linear;
 
@@ -89,7 +89,10 @@ pub fn retime(track: &Animated<f64>, id: KeyframeId, new_t_us: i64) -> Animated<
         .iter()
         .map(|k| {
             if k.id == id {
-                Keyframe { t_us: new_t_us, ..k.clone() }
+                Keyframe {
+                    t_us: new_t_us,
+                    ..k.clone()
+                }
             } else {
                 k.clone()
             }
@@ -106,7 +109,16 @@ pub fn set_interp(track: &Animated<f64>, id: KeyframeId, interp: Interpolation) 
     };
     Animated::Keyframed(
         kfs.iter()
-            .map(|k| if k.id == id { Keyframe { interp, ..k.clone() } } else { k.clone() })
+            .map(|k| {
+                if k.id == id {
+                    Keyframe {
+                        interp,
+                        ..k.clone()
+                    }
+                } else {
+                    k.clone()
+                }
+            })
             .collect(),
     )
 }
@@ -123,7 +135,13 @@ fn interp_to_coeffs(interp: Interpolation) -> [f64; 4] {
 }
 
 fn clamp01(v: f64) -> f64 {
-    if v < 0.0 { 0.0 } else if v > 1.0 { 1.0 } else { v }
+    if v < 0.0 {
+        0.0
+    } else if v > 1.0 {
+        1.0
+    } else {
+        v
+    }
 }
 
 /// Monotone-clamped tangent (value per microsecond) at interior key `i`; 0 at a
@@ -165,7 +183,10 @@ pub fn smooth_one(track: &Animated<f64>, id: KeyframeId) -> Animated<f64> {
         } else {
             let [_, _, x2, y2] = interp_to_coeffs(keys[i].interp);
             let y1 = clamp01((m * dt) / (3.0 * dv));
-            out[i].interp = Interpolation::Bezier { p1: (1.0 / 3.0, y1), p2: (x2, y2) };
+            out[i].interp = Interpolation::Bezier {
+                p1: (1.0 / 3.0, y1),
+                p2: (x2, y2),
+            };
         }
     }
 
@@ -177,7 +198,10 @@ pub fn smooth_one(track: &Animated<f64>, id: KeyframeId) -> Animated<f64> {
         } else {
             let [x1, y1, _, _] = interp_to_coeffs(out[i - 1].interp);
             let y2 = clamp01(1.0 - (m * dt) / (3.0 * dv));
-            out[i - 1].interp = Interpolation::Bezier { p1: (x1, y1), p2: (2.0 / 3.0, y2) };
+            out[i - 1].interp = Interpolation::Bezier {
+                p1: (x1, y1),
+                p2: (2.0 / 3.0, y2),
+            };
         }
     }
 
@@ -202,7 +226,12 @@ mod tests {
     use super::*;
 
     fn kf(id: u128, t_us: i64, value: f64, interp: Interpolation) -> Keyframe<f64> {
-        Keyframe { id: uuid::Uuid::from_u128(id), t_us, value, interp }
+        Keyframe {
+            id: uuid::Uuid::from_u128(id),
+            t_us,
+            value,
+            interp,
+        }
     }
     fn keyframed(kfs: Vec<Keyframe<f64>>) -> Animated<f64> {
         Animated::Keyframed(kfs.into_iter().collect())
@@ -217,7 +246,9 @@ mod tests {
     #[test]
     fn upsert_lifts_static() {
         let out = upsert(&Animated::Static(0.5), 1_000_000, 0.9, None);
-        let Animated::Keyframed(kfs) = &out else { panic!("lifted") };
+        let Animated::Keyframed(kfs) = &out else {
+            panic!("lifted")
+        };
         assert_eq!(kfs.len(), 1);
         assert_eq!(kfs[0].t_us, 1_000_000);
         assert!((kfs[0].value - 0.9).abs() < 1e-9);
@@ -230,9 +261,14 @@ mod tests {
         let id_before = ids(&tr);
         let out = upsert(&tr, 0, 0.7, None);
         assert_eq!(ids(&out), id_before, "id preserved on in-place update");
-        let Animated::Keyframed(kfs) = &out else { panic!() };
+        let Animated::Keyframed(kfs) = &out else {
+            panic!()
+        };
         assert!((kfs[0].value - 0.7).abs() < 1e-9);
-        assert!(matches!(kfs[0].interp, Interpolation::EaseIn), "interp preserved when None");
+        assert!(
+            matches!(kfs[0].interp, Interpolation::EaseIn),
+            "interp preserved when None"
+        );
     }
 
     #[test]
@@ -242,10 +278,15 @@ mod tests {
             kf(2, 2_000_000, 1.0, Interpolation::Linear),
         ]);
         let out = upsert(&tr, 1_000_000, 0.5, None);
-        let Animated::Keyframed(kfs) = &out else { panic!() };
+        let Animated::Keyframed(kfs) = &out else {
+            panic!()
+        };
         assert_eq!(kfs.len(), 3);
         assert_eq!(kfs[1].t_us, 1_000_000);
-        assert!(matches!(kfs[1].interp, Interpolation::EaseIn), "inherits preceding key interp");
+        assert!(
+            matches!(kfs[1].interp, Interpolation::EaseIn),
+            "inherits preceding key interp"
+        );
     }
 
     #[test]
@@ -262,9 +303,17 @@ mod tests {
             kf(2, 2_000_000, 1.0, Interpolation::Linear),
         ]);
         let out = retime(&tr, uuid::Uuid::from_u128(1), 3_000_000);
-        let Animated::Keyframed(kfs) = &out else { panic!() };
-        assert_eq!(kfs.iter().map(|k| k.t_us).collect::<Vec<_>>(), vec![2_000_000, 3_000_000]);
-        assert!((kfs[1].value - 0.0).abs() < 1e-9, "moved key keeps its value");
+        let Animated::Keyframed(kfs) = &out else {
+            panic!()
+        };
+        assert_eq!(
+            kfs.iter().map(|k| k.t_us).collect::<Vec<_>>(),
+            vec![2_000_000, 3_000_000]
+        );
+        assert!(
+            (kfs[1].value - 0.0).abs() < 1e-9,
+            "moved key keeps its value"
+        );
     }
 
     #[test]
@@ -282,7 +331,9 @@ mod tests {
             acc
         };
         let all = smooth_all(&tr);
-        let (Animated::Keyframed(a), Animated::Keyframed(b)) = (&all, &folded) else { panic!() };
+        let (Animated::Keyframed(a), Animated::Keyframed(b)) = (&all, &folded) else {
+            panic!()
+        };
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(x.interp, y.interp);
         }
@@ -355,7 +406,11 @@ mod tests {
                     assert_eq!(g.len(), w.len(), "case `{}` key count", c.name);
                     for (gk, wk) in g.iter().zip(w.iter()) {
                         assert_eq!(gk.t_us, wk.t_us, "case `{}` t_us", c.name);
-                        assert!((gk.value - wk.value).abs() < 1e-9, "case `{}` value", c.name);
+                        assert!(
+                            (gk.value - wk.value).abs() < 1e-9,
+                            "case `{}` value",
+                            c.name
+                        );
                         assert!(interp_eq(gk.interp, wk.interp), "case `{}` interp", c.name);
                     }
                 }

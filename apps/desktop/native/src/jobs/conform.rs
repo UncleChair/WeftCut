@@ -24,7 +24,7 @@ use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
+use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::state::{MediaItem, MediaKind};
 
 pub const MAGIC: &[u8; 8] = b"VCONF\0\0\0";
@@ -48,8 +48,7 @@ impl ConformHeader {
 
 pub fn read_header(path: &Path) -> Result<ConformHeader> {
     use std::io::Read;
-    let mut f = std::fs::File::open(path)
-        .with_context(|| format!("open {}", path.display()))?;
+    let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut head = [0u8; HEADER_LEN as usize];
     f.read_exact(&mut head)
         .with_context(|| format!("read header of {}", path.display()))?;
@@ -66,7 +65,12 @@ pub fn read_header(path: &Path) -> Result<ConformHeader> {
         anyhow::bail!("conform channels {channels} out of range");
     }
     let frame_count = u64::from_le_bytes(head[20..28].try_into().unwrap());
-    Ok(ConformHeader { version, sample_rate, channels, frame_count })
+    Ok(ConformHeader {
+        version,
+        sample_rate,
+        channels,
+        frame_count,
+    })
 }
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
@@ -196,7 +200,7 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{AudioStreamMeta, DecodeRoute, MediaKind, MediaMetadata, new_id};
+    use crate::state::{new_id, AudioStreamMeta, DecodeRoute, MediaKind, MediaMetadata};
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")
@@ -211,11 +215,18 @@ mod tests {
     async fn make_test_audio(dest: &std::path::Path) -> Result<()> {
         let status = Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi",
-                "-i", "sine=frequency=1000:duration=1",
-                "-ac", "1",
-                "-ar", "44100",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=1000:duration=1",
+                "-ac",
+                "1",
+                "-ar",
+                "44100",
             ])
             .arg(dest)
             .status()
@@ -322,7 +333,11 @@ mod tests {
         ];
         for (name, extra, lossless) in cases {
             let src = tmp.path().join(name);
-            let rate = if *name == "tone.opus" { "48000" } else { "44100" };
+            let rate = if *name == "tone.opus" {
+                "48000"
+            } else {
+                "44100"
+            };
             let status = Command::new("ffmpeg")
                 .args(["-y", "-hide_banner", "-loglevel", "error"])
                 .args(["-f", "lavfi", "-i", "sine=frequency=1000:duration=1"])
@@ -345,14 +360,22 @@ mod tests {
             let h = read_header(&path).expect("header");
             assert_eq!(h.sample_rate, CONFORM_SAMPLE_RATE, "{name}");
             assert_eq!(h.channels, 1, "{name}: mono stays mono");
-            let range = if *lossless { 47_900..=48_100 } else { 46_000..=50_500 };
+            let range = if *lossless {
+                47_900..=48_100
+            } else {
+                46_000..=50_500
+            };
             assert!(
                 range.contains(&(h.frame_count as i64)),
                 "{name}: expected ~48000 frames, got {}",
                 h.frame_count
             );
             let len = std::fs::metadata(&path).unwrap().len();
-            assert_eq!(len, h.byte_offset_of_frame(h.frame_count), "{name}: body length");
+            assert_eq!(
+                len,
+                h.byte_offset_of_frame(h.frame_count),
+                "{name}: body length"
+            );
             let bytes = std::fs::read(&path).unwrap();
             let mut max = 0.0_f32;
             for c in bytes[HEADER_LEN as usize..].chunks_exact(4) {

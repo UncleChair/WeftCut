@@ -254,9 +254,7 @@ pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" | "mpg" | "mpeg" | "m2v" => {
-            MediaKind::Video
-        }
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" | "mpg" | "mpeg" | "m2v" => MediaKind::Video,
         "wav" | "mp3" | "flac" | "aac" | "ogg" | "m4a" | "opus" => MediaKind::Audio,
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "avif" | "apng" => {
             MediaKind::Image
@@ -325,7 +323,9 @@ fn duration_seconds_to_us(s: &str) -> Option<i64> {
     // PTS and a packet-derived one agree, and a float product landing at
     // `x.9999…` doesn't silently lose a whole µs. `round` is half-away-from-zero,
     // which is also the faithful choice for negative starts (priming/edit lists).
-    s.parse::<f64>().ok().map(|v| (v * 1_000_000.0).round() as i64)
+    s.parse::<f64>()
+        .ok()
+        .map(|v| (v * 1_000_000.0).round() as i64)
 }
 
 fn max_opt(a: Option<i64>, b: i64) -> Option<i64> {

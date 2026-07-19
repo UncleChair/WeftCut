@@ -366,17 +366,33 @@ pub(crate) fn parse_effect_param_key(key: &str) -> Option<(crate::state::ids::Ef
 /// Layer-level read resolver: effect-param paths look in `layer.effects`,
 /// everything else delegates to the params-level resolver. Same key vocabulary
 /// plus `effects[<id>].params[<key>]`.
-pub(crate) fn resolve_animated_f64_on_layer<'a>(layer: &'a Layer, key: &str) -> Option<&'a Animated<f64>> {
+pub(crate) fn resolve_animated_f64_on_layer<'a>(
+    layer: &'a Layer,
+    key: &str,
+) -> Option<&'a Animated<f64>> {
     if let Some((effect_id, param)) = parse_effect_param_key(key) {
-        return layer.effects.iter().find(|e| e.id == effect_id)?.params.get(&param);
+        return layer
+            .effects
+            .iter()
+            .find(|e| e.id == effect_id)?
+            .params
+            .get(&param);
     }
     resolve_animated_f64(&layer.params, key)
 }
 
 /// Layer-level write resolver (mutable sibling of `resolve_animated_f64_on_layer`).
-pub(crate) fn resolve_animated_f64_mut_on_layer<'a>(layer: &'a mut Layer, key: &str) -> Option<&'a mut Animated<f64>> {
+pub(crate) fn resolve_animated_f64_mut_on_layer<'a>(
+    layer: &'a mut Layer,
+    key: &str,
+) -> Option<&'a mut Animated<f64>> {
     if let Some((effect_id, param)) = parse_effect_param_key(key) {
-        return layer.effects.iter_mut().find(|e| e.id == effect_id)?.params.get_mut(&param);
+        return layer
+            .effects
+            .iter_mut()
+            .find(|e| e.id == effect_id)?
+            .params
+            .get_mut(&param);
     }
     resolve_animated_f64_mut(&mut layer.params, key)
 }
@@ -431,7 +447,9 @@ mod kf_fields_tests {
         if let Some(track) = resolve_animated_f64_mut(&mut p, "opacity") {
             *track = Animated::Static(0.25);
         }
-        let LayerParams::VideoClip(v) = &p else { panic!() };
+        let LayerParams::VideoClip(v) = &p else {
+            panic!()
+        };
         assert!(matches!(v.opacity, Animated::Static(x) if (x - 0.25).abs() < 1e-9));
     }
 
@@ -453,7 +471,10 @@ mod kf_fields_tests {
     fn immutable_resolver_matches_mut_keys() {
         let p = videoclip();
         for key in ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity"] {
-            assert!(resolve_animated_f64(&p, key).is_some(), "videoclip ref should resolve {key}");
+            assert!(
+                resolve_animated_f64(&p, key).is_some(),
+                "videoclip ref should resolve {key}"
+            );
         }
         assert!(resolve_animated_f64(&p, "gain_db").is_none());
         assert!(resolve_animated_f64(&p, "bogus").is_none());

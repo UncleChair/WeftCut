@@ -122,9 +122,10 @@ pub(super) async fn detect_silences(
     args: DetectSilencesArgs,
 ) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let layer = args.layer.as_ref().ok_or_else(|| {
-        McpToolError::invalid_params(format!("layer {layer_id} not found"), None)
-    })?;
+    let layer = args
+        .layer
+        .as_ref()
+        .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
 
     let media_id = match &layer.params {
         LayerParams::VideoClip(p) => p.media,
@@ -350,8 +351,7 @@ mod tests {
     #[test]
     fn detect_silences_returns_empty_for_loud_track() {
         let peaks = flat_peaks(500, 0.5);
-        let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 5_000_000, 0, 100, 1);
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 5_000_000, 0, 100, 1);
         assert!(regions.is_empty());
     }
 
@@ -364,8 +364,7 @@ mod tests {
         for i in 50..150 {
             peaks[i] = 0.001;
         }
-        let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 50 * US_PER_PEAK);
         assert_eq!(regions[0].t_end_us, 150 * US_PER_PEAK);
@@ -386,13 +385,11 @@ mod tests {
         for i in 160..190 {
             peaks[i] = 0.0;
         }
-        let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert!(regions.is_empty(), "expected no regions, got {regions:?}");
 
         // With min_silence_us=200_000 (200ms) all three should be returned.
-        let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 200_000, 0, 2_000_000, 0, 100, 1);
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 200_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 3);
     }
 
@@ -405,8 +402,7 @@ mod tests {
         for i in 100..200 {
             peaks[i] = 0.0;
         }
-        let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 100 * US_PER_PEAK);
         assert_eq!(regions[0].t_end_us, 200 * US_PER_PEAK);
@@ -421,16 +417,8 @@ mod tests {
         for i in 50..150 {
             peaks[i] = 0.0;
         }
-        let regions = detect_silences_in_peaks(
-            &peaks,
-            0.02,
-            500_000,
-            0,
-            2_000_000,
-            5_000_000,
-            100,
-            1,
-        );
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 5_000_000, 100, 1);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 5_500_000);
         assert_eq!(regions[0].t_end_us, 6_500_000);
@@ -445,14 +433,10 @@ mod tests {
         // anchored at t=0.
         let peaks = flat_peaks(200, 0.0);
         let regions = detect_silences_in_peaks(
-            &peaks,
-            0.02,
-            100_000,
-            300_000,   // src_in_us
+            &peaks, 0.02, 100_000, 300_000,   // src_in_us
             1_700_000, // src_out_us
             0,         // layer_t_start_us
-            100,
-            1,
+            100, 1,
         );
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].t_start_us, 0);
@@ -464,14 +448,12 @@ mod tests {
     fn detect_silences_threshold_is_strict_below() {
         // Peaks exactly at threshold should NOT count as silence.
         let peaks = flat_peaks(200, 0.02);
-        let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0, 100, 1);
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0, 100, 1);
         assert!(regions.is_empty());
 
         // Just below threshold → silence.
         let peaks = flat_peaks(200, 0.019);
-        let regions =
-            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0, 100, 1);
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0, 100, 1);
         assert_eq!(regions.len(), 1);
     }
 
@@ -482,16 +464,7 @@ mod tests {
         for peak in &mut peaks[783..790] {
             *peak = 0.0;
         }
-        let regions = detect_silences_in_peaks(
-            &peaks,
-            0.02,
-            1,
-            0,
-            200_000_000,
-            0,
-            22_050,
-            2_816,
-        );
+        let regions = detect_silences_in_peaks(&peaks, 0.02, 1, 0, 200_000_000, 0, 22_050, 2_816);
         assert_eq!(regions.len(), 1);
         assert_eq!(
             regions[0].t_start_us,
@@ -587,9 +560,8 @@ fn resolve_clip_audio_source(
 ) -> Result<ResolvedClipAudio, McpToolError> {
     use crate::state::{AudioParams, VideoClipParams};
 
-    let layer = layer.ok_or_else(|| {
-        McpToolError::invalid_params(format!("layer {layer_id} not found"), None)
-    })?;
+    let layer = layer
+        .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
 
     let (media_id, src_in_us, src_out_us) = match &layer.params {
         LayerParams::VideoClip(VideoClipParams {
@@ -610,9 +582,12 @@ fn resolve_clip_audio_source(
             }
             (*media, *src_in_us, *src_out_us)
         }
-        LayerParams::Audio(AudioParams { media, src_in_us, src_out_us, .. }) => {
-            (*media, *src_in_us, *src_out_us)
-        }
+        LayerParams::Audio(AudioParams {
+            media,
+            src_in_us,
+            src_out_us,
+            ..
+        }) => (*media, *src_in_us, *src_out_us),
         _ => {
             return Err(McpToolError::invalid_params(
                 format!(
@@ -633,9 +608,7 @@ fn resolve_clip_audio_source(
     })?;
     if media.metadata.audio.is_none() {
         return Err(McpToolError::invalid_params(
-            format!(
-                "media {media_id} has no audio stream — transcription needs audio",
-            ),
+            format!("media {media_id} has no audio stream — transcription needs audio",),
             None,
         ));
     }
@@ -686,10 +659,7 @@ fn resolve_clip_audio_source(
 /// `<dest>.tmp → promote_temp` pattern from the jobs module so an interrupted
 /// write never leaves a zero-byte file that `cached_ok` would happily skip.
 #[cfg(feature = "cloud")]
-async fn write_voiceover_atomic(
-    dest: &std::path::Path,
-    bytes: &[u8],
-) -> Result<(), anyhow::Error> {
+async fn write_voiceover_atomic(dest: &std::path::Path, bytes: &[u8]) -> Result<(), anyhow::Error> {
     use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path};
     use anyhow::Context;
     if let Some(parent) = dest.parent() {
@@ -718,9 +688,7 @@ fn map_cloud_error(e: cloud::CloudError) -> McpToolError {
     use cloud::CloudError as E;
     let message = e.to_string();
     match e {
-        E::MissingKey { .. } | E::InvalidKey { .. } => {
-            McpToolError::invalid_request(message, None)
-        }
+        E::MissingKey { .. } | E::InvalidKey { .. } => McpToolError::invalid_request(message, None),
         E::PayloadTooLarge { .. } => McpToolError::invalid_params(message, None),
         E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
             McpToolError::internal_error(message, None)
@@ -739,7 +707,9 @@ pub(super) async fn transcribe_clip(
     b.log_slot.emit(crate::logs::LogEntryInput {
         level: crate::logs::LogLevel::Info,
         category: crate::logs::LogCategory::Mcp,
-        source: crate::logs::LogSource::Agent { client: "mcp".into() },
+        source: crate::logs::LogSource::Agent {
+            client: "mcp".into(),
+        },
         message: "MCP: transcribe_clip started".into(),
         op_id: Some(log_op_id),
         op_state: Some(crate::logs::OpState::Started),
@@ -751,7 +721,9 @@ pub(super) async fn transcribe_clip(
         Ok(_) => b.log_slot.emit(crate::logs::LogEntryInput {
             level: crate::logs::LogLevel::Info,
             category: crate::logs::LogCategory::Mcp,
-            source: crate::logs::LogSource::Agent { client: "mcp".into() },
+            source: crate::logs::LogSource::Agent {
+                client: "mcp".into(),
+            },
             message: "MCP: transcribe_clip done".into(),
             op_id: Some(log_op_id),
             op_state: Some(crate::logs::OpState::Ok),
@@ -760,7 +732,9 @@ pub(super) async fn transcribe_clip(
         Err(e) => b.log_slot.emit(crate::logs::LogEntryInput {
             level: crate::logs::LogLevel::Error,
             category: crate::logs::LogCategory::Mcp,
-            source: crate::logs::LogSource::Agent { client: "mcp".into() },
+            source: crate::logs::LogSource::Agent {
+                client: "mcp".into(),
+            },
             message: format!("MCP: transcribe_clip failed: {e}"),
             op_id: Some(log_op_id),
             op_state: Some(crate::logs::OpState::Err),
@@ -828,8 +802,8 @@ pub(crate) async fn synthesize_speech_audio(
     args: &SynthesizeSpeechArgs,
 ) -> Result<(crate::state::MediaItem, bool), McpToolError> {
     use crate::cache::cached_ok;
-    use crate::state::{DecodeRoute, MediaItem, MediaKind, new_id};
     use crate::io::probe;
+    use crate::state::{new_id, DecodeRoute, MediaItem, MediaKind};
 
     if args.text.trim().is_empty() {
         return Err(McpToolError::invalid_params("text is empty", None));
@@ -846,11 +820,7 @@ pub(crate) async fn synthesize_speech_audio(
         )
     })?;
 
-    let cache_key = cloud::providers::openai::tts_cache_key(
-        &args.text,
-        &args.voice,
-        args.speed,
-    );
+    let cache_key = cloud::providers::openai::tts_cache_key(&args.text, &args.voice, args.speed);
     // Cache extension hardcoded "mp3": the only TTS provider pins
     // `response_format=mp3`. The `debug_assert!` below trips in dev the first time
     // a provider returns a different format — fix the extension-from-response here.
@@ -873,9 +843,7 @@ pub(crate) async fn synthesize_speech_audio(
         );
         write_voiceover_atomic(&dest, &resp.audio)
             .await
-            .map_err(|e| {
-                McpToolError::internal_error(format!("write voiceover: {e:#}"), None)
-            })?;
+            .map_err(|e| McpToolError::internal_error(format!("write voiceover: {e:#}"), None))?;
     }
 
     // Probe the (now-existing) file on a blocking thread to get duration.
@@ -892,8 +860,7 @@ pub(crate) async fn synthesize_speech_audio(
                     .to_string(),
             );
         }
-        let stat = std::fs::metadata(&probe_path)
-            .map_err(|e| format!("stat voiceover: {e}"))?;
+        let stat = std::fs::metadata(&probe_path).map_err(|e| format!("stat voiceover: {e}"))?;
         Ok(MediaItem {
             id: new_id(),
             label: Some(format!("voiceover-{}", &cache_key_clone[..8])),
@@ -910,9 +877,7 @@ pub(crate) async fn synthesize_speech_audio(
             file_mtime: stat
                 .modified()
                 .ok()
-                .and_then(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH).ok()
-                })
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
             imported_at: Utc::now(),

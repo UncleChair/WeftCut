@@ -18,7 +18,8 @@ use crate::state::{self, MediaItem, MediaKind};
 /// internally. The `probe_media` napi reuses this exact body.
 pub fn probe_media_item(source_buf: PathBuf) -> Result<MediaItem, String> {
     let media_id = uuid::Uuid::new_v4();
-    let (file_size, file_mtime) = io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
+    let (file_size, file_mtime) =
+        io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
     let metadata = io::probe::probe_metadata(&source_buf);
     let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
     // NFC-normalized: a macOS-origin NFD label renders identically but breaks
@@ -90,21 +91,30 @@ pub struct AudioMeterState(
 );
 
 pub async fn get_media_thumbnail(item: MediaItem) -> Result<String, String> {
-    let dir = item.thumbnails_dir.clone().ok_or_else(|| "not_ready".to_string())?;
+    let dir = item
+        .thumbnails_dir
+        .clone()
+        .ok_or_else(|| "not_ready".to_string())?;
     let path = dir.join("004.jpg");
     crate::cache::touch_if_stale(&path);
-    let bytes = tokio::fs::read(&path).await.map_err(|e| format!("read thumbnail: {e}"))?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("read thumbnail: {e}"))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:image/jpeg;base64,{b64}"))
 }
 
 pub async fn get_waveform_peaks(item: MediaItem) -> Result<WaveformPeaks, String> {
-    let path = item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    let path = item
+        .waveform_path
+        .clone()
+        .ok_or_else(|| "not_ready".to_string())?;
     crate::cache::touch_if_stale(&path);
-    let peaks_file = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
-        .await
-        .map_err(|e| format!("join error: {e}"))?
-        .map_err(|e| format!("read peaks: {e:#}"))?;
+    let peaks_file =
+        tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
+            .await
+            .map_err(|e| format!("join error: {e}"))?
+            .map_err(|e| format!("read peaks: {e:#}"))?;
     Ok(WaveformPeaks {
         peaks: peaks_file.peaks,
         peaks_per_second: peaks_file.sample_rate as f64 / peaks_file.frames_per_peak as f64,
@@ -151,7 +161,10 @@ pub struct WaveformTileArgs {
 }
 
 pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, String> {
-    let path = item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    let path = item
+        .waveform_path
+        .clone()
+        .ok_or_else(|| "not_ready".to_string())?;
     crate::cache::touch_if_stale(&path);
     let header = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_header(&path))
         .await
@@ -173,22 +186,50 @@ pub async fn get_waveform_levels(item: MediaItem) -> Result<WaveformLevels, Stri
 }
 
 pub async fn get_waveform_tile(args: WaveformTileArgs) -> Result<WaveformTile, String> {
-    let path = args.item.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    let path = args
+        .item
+        .waveform_path
+        .clone()
+        .ok_or_else(|| "not_ready".to_string())?;
     crate::cache::touch_if_stale(&path);
-    let WaveformTileArgs { level, channel, start_peak, count, .. } = args;
+    let WaveformTileArgs {
+        level,
+        channel,
+        start_peak,
+        count,
+        ..
+    } = args;
     // The range read parses the header anyway, so it hands back the level's pps
     // (the renderer needs it to map peaks→time) — one file open per tile.
     let range = tokio::task::spawn_blocking(move || {
-        crate::jobs::waveform::read_range(&path, level as usize, channel as usize, start_peak, count)
+        crate::jobs::waveform::read_range(
+            &path,
+            level as usize,
+            channel as usize,
+            start_peak,
+            count,
+        )
     })
     .await
     .map_err(|e| format!("join error: {e}"))?
     .map_err(|e| format!("read tile: {e:#}"))?;
     Ok(WaveformTile {
         peaks_per_second: range.peaks_per_second,
-        min: range.min.iter().map(|v| crate::jobs::waveform::dequantize(*v)).collect(),
-        max: range.max.iter().map(|v| crate::jobs::waveform::dequantize(*v)).collect(),
-        rms: range.rms.iter().map(|v| crate::jobs::waveform::dequantize_rms(*v)).collect(),
+        min: range
+            .min
+            .iter()
+            .map(|v| crate::jobs::waveform::dequantize(*v))
+            .collect(),
+        max: range
+            .max
+            .iter()
+            .map(|v| crate::jobs::waveform::dequantize(*v))
+            .collect(),
+        rms: range
+            .rms
+            .iter()
+            .map(|v| crate::jobs::waveform::dequantize_rms(*v))
+            .collect(),
     })
 }
 
@@ -216,7 +257,9 @@ pub struct FilmstripTileArgs {
 /// direct routes extract from the original. Preference mirrors the renderer's
 /// resolveDecode preview path (quick proxy first, then the full master).
 #[cfg(feature = "jobs")]
-pub fn filmstrip_decode_source(item: &MediaItem) -> Result<(PathBuf, crate::cache::FilmstripSrc), String> {
+pub fn filmstrip_decode_source(
+    item: &MediaItem,
+) -> Result<(PathBuf, crate::cache::FilmstripSrc), String> {
     use crate::cache::FilmstripSrc;
     if !matches!(item.kind, MediaKind::Video) {
         return Err("filmstrip tiles only valid for Video media".to_string());
@@ -227,50 +270,76 @@ pub fn filmstrip_decode_source(item: &MediaItem) -> Result<(PathBuf, crate::cach
         // immediately — do NOT wait on the proxy the way `Proxied` does.
         state::DecodeRoute::Bypass
         | state::DecodeRoute::DirectExport { .. }
-        | state::DecodeRoute::NativeSw { .. } => {
-            Ok((item.path_abs.clone(), FilmstripSrc::Orig))
-        }
-        state::DecodeRoute::Proxied { quick_proxy, full_proxy, .. } => {
-            [(quick_proxy, FilmstripSrc::Quick), (full_proxy, FilmstripSrc::Full)]
-                .into_iter()
-                .filter_map(|(p, tag)| p.as_ref().map(|p| (p, tag)))
-                .find(|(p, _)| crate::cache::cached_ok(p))
-                .map(|(p, tag)| (p.clone(), tag))
-                .ok_or_else(|| "not_ready".to_string())
-        }
+        | state::DecodeRoute::NativeSw { .. } => Ok((item.path_abs.clone(), FilmstripSrc::Orig)),
+        state::DecodeRoute::Proxied {
+            quick_proxy,
+            full_proxy,
+            ..
+        } => [
+            (quick_proxy, FilmstripSrc::Quick),
+            (full_proxy, FilmstripSrc::Full),
+        ]
+        .into_iter()
+        .filter_map(|(p, tag)| p.as_ref().map(|p| (p, tag)))
+        .find(|(p, _)| crate::cache::cached_ok(p))
+        .map(|(p, tag)| (p.clone(), tag))
+        .ok_or_else(|| "not_ready".to_string()),
     }
 }
 
 #[cfg(feature = "jobs")]
-pub async fn get_filmstrip_tile(backend: &Backend, args: FilmstripTileArgs) -> Result<FilmstripTile, String> {
+pub async fn get_filmstrip_tile(
+    backend: &Backend,
+    args: FilmstripTileArgs,
+) -> Result<FilmstripTile, String> {
     use crate::jobs::filmstrip;
     let (src, src_tag) = filmstrip_decode_source(&args.item)?;
     filmstrip::validate_lod(args.lod).map_err(|e| format!("{e:#}"))?;
     let duration_us = args.item.metadata.duration_us;
     let hash = args.item.file_hash_blake3.clone();
-    let path = filmstrip::extract_tile(&backend.cache, &src, src_tag, &hash, duration_us, args.lod, args.index)
-        .await
-        .map_err(|e| format!("extract filmstrip tile: {e:#}"))?;
+    let path = filmstrip::extract_tile(
+        &backend.cache,
+        &src,
+        src_tag,
+        &hash,
+        duration_us,
+        args.lod,
+        args.index,
+    )
+    .await
+    .map_err(|e| format!("extract filmstrip tile: {e:#}"))?;
     let (width_px, height_px) = match args.item.metadata.video.as_ref() {
         Some(v) if v.height > 0 => {
-            let w = (v.width as u64 * filmstrip::FILMSTRIP_TILE_HEIGHT as u64 / v.height as u64) as u32;
+            let w =
+                (v.width as u64 * filmstrip::FILMSTRIP_TILE_HEIGHT as u64 / v.height as u64) as u32;
             (w & !1, filmstrip::FILMSTRIP_TILE_HEIGHT)
         }
         _ => (0, filmstrip::FILMSTRIP_TILE_HEIGHT),
     };
-    Ok(FilmstripTile { path, width_px, height_px })
+    Ok(FilmstripTile {
+        path,
+        width_px,
+        height_px,
+    })
 }
 
 pub async fn ensure_full_proxy(backend: &Backend, item: MediaItem) -> Result<(), String> {
     let id = item.id;
-    if matches!(item.decode_route, state::DecodeRoute::Proxied { full_proxy: Some(ref p), .. } if p.is_file()) {
+    if matches!(item.decode_route, state::DecodeRoute::Proxied { full_proxy: Some(ref p), .. } if p.is_file())
+    {
         return Ok(());
     }
     let corrected = item.decode_route.clone().route_corrected();
     crate::jobs::commit_media_derivatives(
-        &backend.events, id,
-        state::MediaDerivativesPatch { set_route: Some(corrected), ..Default::default() },
-    ).await.map_err(|e| format!("route-correct {id}: {e}"))?;
+        &backend.events,
+        id,
+        state::MediaDerivativesPatch {
+            set_route: Some(corrected),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|e| format!("route-correct {id}: {e}"))?;
     crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), item);
     Ok(())
 }
@@ -305,17 +374,21 @@ pub async fn ensure_conform(backend: &Backend, item: MediaItem) -> Result<(), St
 }
 
 pub async fn report_audio_meter(backend: &Backend, report: AudioMeterReport) -> Result<(), String> {
-    *backend.audio_meter.0.lock().map_err(|_| "meter lock poisoned".to_string())? =
+    *backend
+        .audio_meter
+        .0
+        .lock()
+        .map_err(|_| "meter lock poisoned".to_string())? =
         Some((std::time::Instant::now(), report));
     Ok(())
 }
 
 #[cfg(test)]
 mod mirror_tests {
-    use std::sync::Arc;
-    use chrono::Utc;
-    use crate::state::{DecodeRoute, MediaItem, MediaKind, MediaMetadata};
     use super::filmstrip_decode_source;
+    use crate::state::{DecodeRoute, MediaItem, MediaKind, MediaMetadata};
+    use chrono::Utc;
+    use std::sync::Arc;
 
     fn mirror_only_item(id: uuid::Uuid) -> MediaItem {
         MediaItem {
@@ -342,13 +415,17 @@ mod mirror_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_media_thumbnail_uses_passed_item() {
         let sink = Arc::new(crate::events::VecEventSink::new());
-        let b = crate::napi_backend::Backend::new_for_test(sink as Arc<dyn crate::events::EventSink>);
+        let b =
+            crate::napi_backend::Backend::new_for_test(sink as Arc<dyn crate::events::EventSink>);
         b.init().await.unwrap();
         let id = uuid::Uuid::now_v7();
         let item = mirror_only_item(id); // thumbnails_dir: None
         let args = serde_json::json!({ "item": item }).to_string();
         let err = b.dispatch("get_media_thumbnail", &args).await.unwrap_err();
-        assert_eq!(err, "not_ready", "expected not_ready from passed item, got: {err}");
+        assert_eq!(
+            err, "not_ready",
+            "expected not_ready from passed item, got: {err}"
+        );
     }
 
     /// `ensure_full_proxy` routes the derivative write through the seam
@@ -358,7 +435,9 @@ mod mirror_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ensure_full_proxy_routes_through_seam() {
         let sink = Arc::new(crate::events::VecEventSink::new());
-        let b = crate::napi_backend::Backend::new_for_test(sink.clone() as Arc<dyn crate::events::EventSink>);
+        let b = crate::napi_backend::Backend::new_for_test(
+            sink.clone() as Arc<dyn crate::events::EventSink>
+        );
         b.init().await.unwrap();
         let id = uuid::Uuid::now_v7();
         let item = mirror_only_item(id);
@@ -379,8 +458,8 @@ mod mirror_tests {
     #[cfg(feature = "jobs")]
     #[tokio::test]
     async fn get_waveform_tile_dequantizes_rms() {
-        use crate::jobs::waveform::{LevelData, write_peaks};
         use super::{get_waveform_tile, WaveformTileArgs};
+        use crate::jobs::waveform::{write_peaks, LevelData};
 
         let tmp = tempfile::TempDir::new().unwrap();
         let peaks_path = tmp.path().join("test.v4.peaks");
@@ -482,7 +561,11 @@ mod mirror_tests {
         let item = filmstrip_test_item(
             std::path::PathBuf::from("orig.mp4"),
             MediaKind::Video,
-            DecodeRoute::Proxied { quick_proxy: None, full_proxy: None, format_version: 0 },
+            DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
         );
         assert_eq!(filmstrip_decode_source(&item).unwrap_err(), "not_ready");
 
@@ -497,7 +580,10 @@ mod mirror_tests {
                 format_version: 0,
             },
         );
-        assert_eq!(filmstrip_decode_source(&item).unwrap(), (quick.clone(), crate::cache::FilmstripSrc::Quick));
+        assert_eq!(
+            filmstrip_decode_source(&item).unwrap(),
+            (quick.clone(), crate::cache::FilmstripSrc::Quick)
+        );
 
         // Only the full proxy has landed -> use it.
         std::fs::write(&full, b"x").unwrap();
@@ -510,7 +596,10 @@ mod mirror_tests {
                 format_version: 0,
             },
         );
-        assert_eq!(filmstrip_decode_source(&item).unwrap(), (full.clone(), crate::cache::FilmstripSrc::Full));
+        assert_eq!(
+            filmstrip_decode_source(&item).unwrap(),
+            (full.clone(), crate::cache::FilmstripSrc::Full)
+        );
 
         // quick_proxy path is stale (file missing on disk) and there is no
         // full proxy -> not_ready, not a fallback to the original.
@@ -536,6 +625,9 @@ mod mirror_tests {
             DecodeRoute::Bypass,
         );
         let err = filmstrip_decode_source(&item).unwrap_err();
-        assert!(err.contains("filmstrip"), "expected 'filmstrip' in error, got: {err}");
+        assert!(
+            err.contains("filmstrip"),
+            "expected 'filmstrip' in error, got: {err}"
+        );
     }
 }

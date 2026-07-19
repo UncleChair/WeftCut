@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::audio_role::{AudioRole, RoleMixSettings};
 use super::composition::Composition;
 use super::group::Group;
-use super::ids::{MediaId, new_id};
+use super::ids::{new_id, MediaId};
 use super::marker::Marker;
 use super::media::MediaItem;
 use super::track::{Track, TrackRole};
@@ -216,7 +216,11 @@ mod role_tests {
         let mut p = Project::new_blank("t");
         p.audio_roles.insert(
             AudioRole::Dialogue,
-            RoleMixSettings { gain_db: 6.0, muted: false, solo: true },
+            RoleMixSettings {
+                gain_db: 6.0,
+                muted: false,
+                solo: true,
+            },
         );
         let m = p.role_mix(AudioRole::Dialogue);
         assert_eq!(m.gain_db, 6.0);

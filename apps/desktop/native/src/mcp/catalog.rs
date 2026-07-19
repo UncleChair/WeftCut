@@ -7,9 +7,9 @@
 //! The ~47 TS-executed mutations are served by the TS actor's `MCP_TOOLS` table
 //! and routed by `routeMcpTool`; their Rust handlers are deleted.
 
-use crate::napi_backend::Backend;
 use super::wire::{McpCatalog, McpToolError, PromptDef, ResourceDef, ToolDef, ToolResult};
 use super::{prompts, resources, tools};
+use crate::napi_backend::Backend;
 
 macro_rules! tool_table {
     ( $( $(#[$meta:meta])* $name:literal => ($desc:expr, $args:ty, $handler:path) ),* $(,)? ) => {
@@ -143,11 +143,24 @@ mod tests {
     fn injected_slice_fields_are_not_advertised() {
         let cat = catalog();
         for name in ["detect_silences", "transcribe_clip"] {
-            let tool = cat.tools.iter().find(|t| t.name == name)
+            let tool = cat
+                .tools
+                .iter()
+                .find(|t| t.name == name)
                 .unwrap_or_else(|| panic!("{name} must be advertised"));
-            if let Some(props) = tool.input_schema.get("properties").and_then(|p| p.as_object()) {
-                assert!(!props.contains_key("layer"), "{name}: `layer` must not be advertised (schemars skip)");
-                assert!(!props.contains_key("media"), "{name}: `media` must not be advertised (schemars skip)");
+            if let Some(props) = tool
+                .input_schema
+                .get("properties")
+                .and_then(|p| p.as_object())
+            {
+                assert!(
+                    !props.contains_key("layer"),
+                    "{name}: `layer` must not be advertised (schemars skip)"
+                );
+                assert!(
+                    !props.contains_key("media"),
+                    "{name}: `media` must not be advertised (schemars skip)"
+                );
             }
         }
     }
@@ -160,7 +173,11 @@ mod tests {
         assert!(cat.tools.iter().any(|t| t.name == "synthesize_speech"));
         // every advertised tool must dispatch — schema is an object.
         for t in &cat.tools {
-            assert!(t.input_schema.is_object(), "{} schema not an object", t.name);
+            assert!(
+                t.input_schema.is_object(),
+                "{} schema not an object",
+                t.name
+            );
         }
     }
 
@@ -174,8 +191,11 @@ mod tests {
         b.init().await.unwrap();
         let args = serde_json::json!({
             "body": "1\n00:00:01,000 --> 00:00:02,000\nHi\n", "t_end_us": 2_000_000
-        }).to_string();
-        let err = dispatch_tool(&b, "apply_subtitles", &args).await.unwrap_err();
+        })
+        .to_string();
+        let err = dispatch_tool(&b, "apply_subtitles", &args)
+            .await
+            .unwrap_err();
         assert!(
             err.message.contains("host process"),
             "apply_subtitles Rust handler must be a host stub, got: {}",

@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{TrackId, new_id};
+use super::ids::{new_id, TrackId};
 use super::layer::Layer;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
