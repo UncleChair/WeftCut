@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { MotifFrameCache, hashCacheKey, type Closeable } from "./frameCache";
 
 /// Stand-in for the browser `ImageBitmap`. The L0 store treats values
@@ -231,6 +231,36 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("capacity returns the cap", () => { expect(new MotifFrameCache(7).capacity()).toBe(7); });
+});
+
+describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
+  // The export Compositor runs in a Worker (worker/exportWorker.ts) where
+  // `window` is undefined and the `window.api` IPC bridge is absent, so the
+  // whole L2 disk layer is unreachable. Each op must degrade to a clean no-op
+  // there instead of throwing `ReferenceError: window is not defined`
+  // (regression: `hydrateBakedIndexAndGc` swallowed that but logged a scary
+  // warning on every export setProject).
+  const realWindow = (globalThis as Record<string, unknown>).window;
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).window = realWindow;
+  });
+
+  test("listBakedHashes resolves to an empty set when window is undefined", async () => {
+    delete (globalThis as Record<string, unknown>).window;
+    await expect(new MotifFrameCache().listBakedHashes()).resolves.toEqual(new Set());
+  });
+
+  test("gcUnreferenced does not throw when window is undefined", async () => {
+    delete (globalThis as Record<string, unknown>).window;
+    await expect(new MotifFrameCache().gcUnreferenced(["k"])).resolves.toBeUndefined();
+  });
+
+  test("readPng / hasPng return the empty result when window is undefined", async () => {
+    delete (globalThis as Record<string, unknown>).window;
+    const c = new MotifFrameCache();
+    await expect(c.readPng("k", 0)).resolves.toBeNull();
+    await expect(c.hasPng("k", 0)).resolves.toBe(false);
+  });
 });
 
 describe("hashCacheKey", () => {

@@ -285,8 +285,19 @@ export class MotifFrameCache {
   }
 }
 
-/// `<workspace>/Cache/raster`, or null when no project is open.
+/// `<workspace>/Cache/raster`, or null when no project is open — or when the
+/// L2 bridge is unreachable off the main renderer thread.
+///
+/// Every L2 disk op funnels through here, and reaching the workspace root goes
+/// `workspaceDir()` → `invoke()` → `window.api.backend` — the main-process IPC
+/// bridge. The export Compositor runs in a Worker (`worker/exportWorker.ts`),
+/// where `window` is undefined and no such bridge exists, so the whole L2 layer
+/// is unreachable there. Return null (every caller no-ops on a null root)
+/// instead of letting the bare `window` reference throw
+/// `ReferenceError: window is not defined` — which `hydrateBakedIndexAndGc`
+/// swallowed but logged as a scary warning on every export setProject.
 async function rasterRootDir(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
   const { workspaceDir } = await import("../../ipc");
   const ws = await workspaceDir();
   if (!ws) return null;
