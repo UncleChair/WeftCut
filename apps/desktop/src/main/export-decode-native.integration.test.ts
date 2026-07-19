@@ -6,10 +6,11 @@
 // internal EOS flush, and the in-band ordering of control signals (frames and
 // rangeEnd/ended/error share one per-session channel).
 //
-// Component-gated: the addon is Windows-only today and needs its ffmpeg-lgpl
-// DLLs + a `napi:build:decode`. When it can't load (other platforms, or not yet
-// built) the whole suite SKIPS — matching the conformance-harness discipline in
-// the spec (CI runs pure-function tests everywhere; native gates are local-only).
+// Component-gated: the addon builds on Windows + Linux (each needs its
+// ffmpeg-lgpl libs + a `napi:build:decode`); macOS has no LGPL asset yet. When
+// it can't load (unsupported platform, or not yet built) the whole suite SKIPS
+// — matching the conformance-harness discipline in the spec (CI runs
+// pure-function tests everywhere; native gates are local-only).
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,14 +24,18 @@ const DLL_DIR = path.join(APP, 'resources', 'ffmpeg-lgpl', 'win', 'bin')
 const PRORES = path.join(DECODE, 'tests', 'fixtures', 'tiny_prores.mov')
 const MPEG2 = path.join(DECODE, 'tests', 'fixtures', 'tiny_mpeg2.mpg')
 
-// Load the built addon the way main does: prepend the DLL dir to PATH (Windows
-// dlopen resolves the ffmpeg family via PATH) before requiring. Any failure —
-// wrong platform, missing DLLs, addon not built — degrades to `mod = null` and
-// the suite skips.
+// Load the built addon the way main does. On Windows, dlopen resolves the
+// ffmpeg family via PATH, so prepend the co-located DLL dir first. On Linux the
+// addon carries a baked RPATH=$ORIGIN to its co-located libav*.so, so it loads
+// with no loader-path shim. macOS has no ffmpeg-lgpl asset yet — skip. Any
+// failure — wrong platform, missing libs, addon not built — degrades to
+// `mod = null` and the suite skips.
 function tryLoadAddon(): typeof import('@weftcut/native-decode') | null {
-  if (process.platform !== 'win32') return null
+  if (process.platform !== 'win32' && process.platform !== 'linux') return null
   try {
-    process.env.PATH = `${DLL_DIR}${path.delimiter}${process.env.PATH ?? ''}`
+    if (process.platform === 'win32') {
+      process.env.PATH = `${DLL_DIR}${path.delimiter}${process.env.PATH ?? ''}`
+    }
     const require_ = createRequire(import.meta.url)
     return require_(path.join(DECODE, 'index.js')) as typeof import('@weftcut/native-decode')
   } catch {
