@@ -20,7 +20,12 @@ crate-type = ["cdylib"]
 napi-build = "2"
 
 [dependencies]
-napi = { version = "3", default-features = false, features = ["napi6"] }
+# `dyn-symbols` is a NAPI-RS v3 DEFAULT (see @weftcut/core's Cargo.toml): the
+# component addon resolves the host's `napi_*` entry points via dynamic lookup at
+# load time instead of baking them in as hard import records. Same production
+# symbol-resolution policy as the core addon — keep the two in lockstep.
+# See docs/notes/napi-rs-linux-testing.md.
+napi = { version = "3", default-features = false, features = ["napi6", "dyn-symbols"] }
 napi-derive = "3"
 serde_json = "1"
 tracing = "0.1"
