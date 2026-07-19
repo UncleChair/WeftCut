@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use super::decoder::{DecodeAccel, SwFrame, SwOutFormat, SwVideoStream};
+use crate::recover::{panic_message, LockExt};
 
 /// How many frames a single `request_frame_at` emits, starting at the frame that
 /// covers the seek target. A "handful" pre-buffers a little playback smoothness
@@ -105,7 +106,7 @@ struct Session {
 /// call so concurrent sessions serialise (the addon's sink is a non-blocking event
 /// enqueue, so this can't deadlock or stall).
 fn emit(sink: &FrameSink, poke: SwFramePoke) {
-    let guard = sink.lock().unwrap();
+    let guard = sink.lock_recover();
     if let Some(f) = guard.as_ref() {
         f(poke);
     }
@@ -265,7 +266,29 @@ fn session_thread(
     while let Ok(msg) = rx.recv() {
         match msg {
             SwSessionMsg::RequestFrameAt(target_us) => {
-                serve_request(&mut stream, target_us, &sink, &stream_id);
+                // A panic in the ffmpeg decode path must not silently kill this
+                // thread and leave the renderer waiting forever on frames that
+                // never arrive. Catch it, surface it as a normal `Error` poke (so
+                // JS tears the session down / retries), then stop: the stream's
+                // libav state is suspect after an unwind, so we never touch it
+                // again — which is exactly what makes the `AssertUnwindSafe`
+                // (needed for the `&mut stream` capture) sound here.
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    serve_request(&mut stream, target_us, &sink, &stream_id);
+                }));
+                if let Err(payload) = outcome {
+                    emit(
+                        &sink,
+                        SwFramePoke::Error {
+                            stream_id: stream_id.clone(),
+                            message: format!(
+                                "preview-sw decode panicked: {}",
+                                panic_message(&*payload)
+                            ),
+                        },
+                    );
+                    break;
+                }
             }
             SwSessionMsg::Close => break,
         }
@@ -298,7 +321,7 @@ impl PreviewSwRegistry {
     /// before any `open`; sessions share the same cell, so a later set is seen by
     /// already-running threads too.
     pub fn set_frame_sink(&self, sink: Box<dyn Fn(SwFramePoke) + Send>) {
-        *self.sink.lock().unwrap() = Some(sink);
+        *self.sink.lock_recover() = Some(sink);
     }
 
     /// Open `path` for software preview: spawn its decode thread and hand back the
@@ -323,7 +346,7 @@ impl PreviewSwRegistry {
         path: &str,
         accel: DecodeAccel,
     ) -> Result<PreviewSwOpenInfo, String> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_recover();
         if sessions.contains_key(stream_id) {
             return Err(format!("preview-sw session '{stream_id}' is already open"));
         }
@@ -368,7 +391,7 @@ impl PreviewSwRegistry {
     /// Ask a session to decode toward `target_us`. Fire-and-forget: the thread
     /// seeks + decodes the burst and pokes each frame out through the sink.
     pub fn request_frame_at(&self, stream_id: &str, target_us: i64) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(stream_id)
             .ok_or_else(|| format!("no preview-sw session '{stream_id}'"))?;
@@ -387,7 +410,7 @@ impl PreviewSwRegistry {
         // Remove from the map (releasing the sessions lock) before joining, so a
         // slow teardown doesn't block registry ops on other sessions.
         let mut session = {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock_recover();
             sessions.remove(stream_id)
         };
         match session.as_mut() {
@@ -477,5 +500,47 @@ mod tests {
             "first delivered pts {} overshot the target",
             pts[0]
         );
+    }
+
+    #[test]
+    fn decode_panic_surfaces_as_error_poke_and_leaves_registry_usable() {
+        // A panic on the session thread's decode path must NOT silently kill the
+        // thread (renderer waits forever) and must NOT cascade. The sink panics on
+        // its FIRST call — simulating a panic in the emit/routing path while the
+        // shared sink lock is held, which poisons that lock. This exercises both
+        // fixes at once: `serve_request`'s `catch_unwind` turns the panic into an
+        // `Error` poke, and the recovery `emit` only reaches the sink because
+        // `lock_recover` recovers the poisoned lock instead of re-panicking.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let calls2 = calls.clone();
+        let errors2 = errors.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("boom in preview-sw sink");
+            }
+            if let SwFramePoke::Error { message, .. } = poke {
+                errors2.lock().unwrap().push(message);
+            }
+        }));
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        reg.open("s1".into(), p.into()).expect("open");
+        let _ = reg.request_frame_at("s1".into(), 0);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let errs = errors.lock().unwrap();
+        assert!(
+            errs.iter().any(|m| m.contains("panicked")),
+            "expected a decode-panic Error poke, got: {errs:?}"
+        );
+        drop(errs);
+        // The poisoned sink lock did not cascade: the registry still tears down
+        // cleanly (join reaps the thread that broke out after the caught panic).
+        reg.close("s1".into())
+            .expect("registry usable after a caught decode panic");
     }
 }

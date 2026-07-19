@@ -6,6 +6,7 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
 use crate::events::{EventSink, TsfnEventSink};
+use crate::recover::LockExt;
 
 // ── wire structs ────────────────────────────────────────────────────────────
 
@@ -326,7 +327,7 @@ impl NativeDecode {
                 use crate::preview_sw::SwFramePoke;
                 match poke {
                     SwFramePoke::Frame { stream_id, frame } => {
-                        if let Some(tsfn) = sinks_for_cb.lock().unwrap().get(&stream_id) {
+                        if let Some(tsfn) = sinks_for_cb.lock_recover().get(&stream_id) {
                             let _ = tsfn.call(
                                 Ok(sw_frame_to_napi(&stream_id, frame)),
                                 ThreadsafeFunctionCallMode::NonBlocking,
@@ -388,7 +389,7 @@ impl NativeDecode {
                         message: Some(message),
                     },
                 };
-                if let Some(tsfn) = sinks_for_cb.lock().unwrap().get(&msg.session_id) {
+                if let Some(tsfn) = sinks_for_cb.lock_recover().get(&msg.session_id) {
                     let _ = tsfn.call(Ok(msg), ThreadsafeFunctionCallMode::NonBlocking);
                 }
             }));
@@ -643,8 +644,7 @@ impl NativeDecode {
             Some(_) => DecodeAccel::Software,
         };
         self.preview_sw_sinks
-            .lock()
-            .unwrap()
+            .lock_recover()
             .insert(stream_id.clone(), on_frame);
         let info = self
             .preview_sw
@@ -681,7 +681,7 @@ impl NativeDecode {
             .preview_sw
             .close(&stream_id)
             .map_err(napi::Error::from_reason);
-        self.preview_sw_sinks.lock().unwrap().remove(&stream_id);
+        self.preview_sw_sinks.lock_recover().remove(&stream_id);
         r
     }
 
@@ -804,8 +804,7 @@ impl NativeDecode {
         on_msg: ThreadsafeFunction<ExportSwMsg>,
     ) -> napi::Result<ExportSwOpenInfoJs> {
         self.export_sw_sinks
-            .lock()
-            .unwrap()
+            .lock_recover()
             .insert(session_id.clone(), on_msg);
         match self
             .export_sw
@@ -823,7 +822,7 @@ impl NativeDecode {
             Err(e) => {
                 // Open failed — drop the callback we optimistically registered so
                 // a failed session never leaves a dangling sink entry.
-                self.export_sw_sinks.lock().unwrap().remove(&session_id);
+                self.export_sw_sinks.lock_recover().remove(&session_id);
                 Err(napi::Error::from_reason(e))
             }
         }
@@ -864,7 +863,7 @@ impl NativeDecode {
             .export_sw
             .close(&session_id)
             .map_err(napi::Error::from_reason);
-        self.export_sw_sinks.lock().unwrap().remove(&session_id);
+        self.export_sw_sinks.lock_recover().remove(&session_id);
         r
     }
 }

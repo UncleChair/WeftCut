@@ -19,6 +19,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crate::preview_sw::decoder::{SwColorTags, SwFrame, SwOutFormat, SwVideoStream};
+use crate::recover::{panic_message, LockExt};
 
 /// Default credits (frames in flight) when a caller does not specify one. The
 /// spec's ~4–8 window: bounds a 4K 10-bit export's main-process frame memory to
@@ -106,7 +107,7 @@ pub enum ExportPoke {
 type ExportSink = Arc<Mutex<Option<Box<dyn Fn(ExportPoke) + Send>>>>;
 
 fn emit(sink: &ExportSink, poke: ExportPoke) {
-    let guard = sink.lock().unwrap();
+    let guard = sink.lock_recover();
     if let Some(f) = guard.as_ref() {
         f(poke);
     }
@@ -143,9 +144,9 @@ impl CreditWindow {
     /// window was closed while waiting (or already) — the caller must abandon the
     /// range rather than emit.
     fn acquire(&self) -> bool {
-        let mut st = self.lock.lock().unwrap();
+        let mut st = self.lock.lock_recover();
         while st.credits <= 0 && !st.closed {
-            st = self.cv.wait(st).unwrap();
+            st = self.cv.wait(st).unwrap_or_else(|p| p.into_inner());
         }
         if st.closed {
             return false;
@@ -156,7 +157,7 @@ impl CreditWindow {
 
     /// Return `n` consumed credits, waking a parked producer.
     fn release(&self, n: u32) {
-        let mut st = self.lock.lock().unwrap();
+        let mut st = self.lock.lock_recover();
         st.credits += n as i64;
         drop(st);
         self.cv.notify_all();
@@ -164,7 +165,7 @@ impl CreditWindow {
 
     /// Mark closed and wake any parked producer so it can exit.
     fn close(&self) {
-        let mut st = self.lock.lock().unwrap();
+        let mut st = self.lock.lock_recover();
         st.closed = true;
         drop(st);
         self.cv.notify_all();
@@ -420,7 +421,29 @@ fn session_thread(
     while let Ok(msg) = rx.recv() {
         match msg {
             ExportMsg::DecodeRange(a, b) => {
-                serve_range(&mut stream, &mut state, &credit, &sink, &session_id, a, b)
+                // A panic in the ffmpeg decode path must not silently kill this
+                // thread and strand the export Worker on frames that never arrive.
+                // Catch it, surface it in-band as an `Error` message (so JS fails
+                // the range / tears the session down), then stop: the stream's
+                // libav state is suspect after an unwind, so we never touch it or
+                // `state` again — which is what makes the `AssertUnwindSafe`
+                // (needed for the `&mut stream` / `&mut state` captures) sound.
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    serve_range(&mut stream, &mut state, &credit, &sink, &session_id, a, b)
+                }));
+                if let Err(payload) = outcome {
+                    emit(
+                        &sink,
+                        ExportPoke::Error {
+                            session_id: session_id.clone(),
+                            message: format!(
+                                "export-sw decode panicked: {}",
+                                panic_message(&*payload)
+                            ),
+                        },
+                    );
+                    break;
+                }
             }
             ExportMsg::Close => break,
         }
@@ -454,7 +477,7 @@ impl ExportSwRegistry {
     /// Install the sink every session emits pokes through. Set once before any
     /// `open`; sessions share the same cell.
     pub fn set_sink(&self, sink: Box<dyn Fn(ExportPoke) + Send>) {
-        *self.sink.lock().unwrap() = Some(sink);
+        *self.sink.lock_recover() = Some(sink);
     }
 
     /// Open `path` for export decode into `out_format`, with a credit window of
@@ -472,7 +495,7 @@ impl ExportSwRegistry {
         // must fail at open, before any thread or decoder work.
         let fmt = ExportOutFormat::parse(out_format)?;
 
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_recover();
         if sessions.contains_key(session_id) {
             return Err(format!("export-sw session '{session_id}' is already open"));
         }
@@ -528,7 +551,7 @@ impl ExportSwRegistry {
     /// Ask a session to decode `[a_us, b_us]`. Fire-and-forget: the thread seeks/
     /// decodes and pokes frames + a `RangeEnd` (or `Ended`) out through the sink.
     pub fn decode_range(&self, session_id: &str, a_us: i64, b_us: i64) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(session_id)
             .ok_or_else(|| format!("no export-sw session '{session_id}'"))?;
@@ -542,7 +565,7 @@ impl ExportSwRegistry {
     /// exhausted window. Reaches the credit window directly (not via the command
     /// channel) so it works even while the thread is mid-range.
     pub fn return_credit(&self, session_id: &str, n: u32) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(session_id)
             .ok_or_else(|| format!("no export-sw session '{session_id}'"))?;
@@ -556,7 +579,7 @@ impl ExportSwRegistry {
     /// once closed) before the thread sees `Close`.
     pub fn close(&self, session_id: &str) -> Result<(), String> {
         let mut session = {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock_recover();
             sessions.remove(session_id)
         };
         match session.as_mut() {
@@ -1016,5 +1039,40 @@ mod tests {
         // If close hangs, the test harness will time out; a clean return is the
         // assertion.
         reg.close("p").unwrap();
+    }
+
+    #[test]
+    fn decode_panic_surfaces_as_error_poke_and_leaves_registry_usable() {
+        // Mirror of the preview-sw panic test for the export lane. The sink panics
+        // on its FIRST call (poisoning the shared sink lock); `serve_range`'s
+        // `catch_unwind` must turn that into an in-band `Error` message, and the
+        // recovery `emit` must succeed via `lock_recover` on the poisoned lock —
+        // otherwise the export Worker strands on frames that never arrive.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let calls2 = calls.clone();
+        let errors2 = errors.clone();
+        let reg = ExportSwRegistry::new();
+        reg.set_sink(Box::new(move |poke| {
+            if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("boom in export-sw sink");
+            }
+            if let ExportPoke::Error { message, .. } = poke {
+                errors2.lock().unwrap().push(message);
+            }
+        }));
+        reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .expect("open");
+        reg.decode_range("s", 0, 875_000).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        let errs = errors.lock().unwrap();
+        assert!(
+            errs.iter().any(|m| m.contains("panicked")),
+            "expected a decode-panic Error poke, got: {errs:?}"
+        );
+        drop(errs);
+        reg.close("s")
+            .expect("registry usable after a caught decode panic");
     }
 }
