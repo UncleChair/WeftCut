@@ -96,12 +96,26 @@ export async function probeSourceDecodable(
       keyPacket = await opened.packetSink.getFirstPacket();
     }
     const keyChunk = keyPacket ? keyPacket.toEncodedVideoChunk() : null;
-    return await raceFirstDecode({
-      config,
-      keyChunk,
-      makeDecoder: (handlers) => new VideoDecoder(handlers),
-      deadlineMs,
-    });
+    const attempt = (cfg: VideoDecoderConfig): Promise<boolean> =>
+      raceFirstDecode({
+        config: cfg,
+        keyChunk,
+        makeDecoder: (handlers) => new VideoDecoder(handlers),
+        deadlineMs,
+      });
+    // First try mediabunny's native config (no `hardwareAcceleration` →
+    // Chromium's default, usually hardware). If that fails, retry forcing
+    // software before judging the source undecodable: on some machines a codec's
+    // HARDWARE decode errors outright while software decodes fine (observed:
+    // 8-bit AV1 on an Intel iGPU + NVIDIA stack — the hardware decoder fires
+    // "Decoding error" and produces no frame; `prefer-software` decodes cleanly).
+    // The real preview/export lanes already recover from exactly this — the
+    // source pool downgrades prefer-hardware→prefer-software on a decode error
+    // (SourceDecoderPool), and the export lane forces software. Matching that
+    // here keeps the probe's verdict aligned with what the pipeline can actually
+    // decode, instead of route-correcting a WebCodecs-decodable source to a proxy.
+    if (await attempt(config)) return true;
+    return await attempt({ ...config, hardwareAcceleration: "prefer-software" });
   } catch {
     return false;
   } finally {
