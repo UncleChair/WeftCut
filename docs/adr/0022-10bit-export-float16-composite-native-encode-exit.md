@@ -54,7 +54,7 @@ only — H.264 stays 8-bit):
   matrix + 10-bit quantization and writes `yuv420p10le` planes; the buffer
   streams over a one-shot loopback WebSocket to a Rust sink
   (`export/videosink.rs`) that pipes `ffmpeg -f rawvideo` into the probed
-  Main10 encoder (`hwencoder.rs`). Raw-invoke IPC is the fallback
+  Main10 encoder (`encoder_registry.rs`). Raw-invoke IPC is the fallback
   transport.
 
 **The working space stays display-referred, gamma-encoded BT.709.** The

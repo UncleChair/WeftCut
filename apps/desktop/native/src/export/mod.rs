@@ -7,8 +7,8 @@
 //! encode is the renderer's Pixi/WebCodecs worker or the native-encode video
 //! sink (`videosink`); ffmpeg here never composites or re-encodes frames.
 
-mod hwencoder;
-pub use hwencoder::{HwEncoderCache, TargetCodec};
+mod encoder_registry;
+pub(crate) use encoder_registry::EncoderRegistry;
 pub mod videosink;
 
 use std::path::Path;
@@ -283,22 +283,6 @@ pub async fn mux_to_file(
     Ok(())
 }
 
-/// HEVC in MP4/MOV needs the `hvc1` fourcc tag; ffmpeg defaults to `hev1`
-/// which Apple/Premiere/Chromium/Electron won't play. MKV uses no such tag, and other
-/// codecs (H.264 `avc1`, AV1 `av01`) already get correct defaults.
-pub(crate) fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::OsString> {
-    let ext = output
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if matches!(codec, TargetCodec::Hevc) && (ext == "mp4" || ext == "mov") {
-        vec!["-tag:v".into(), "hvc1".into()]
-    } else {
-        Vec::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::mux_args;
@@ -314,18 +298,6 @@ mod tests {
         assert_eq!(o, vec!["-c:a", "libopus", "-b:a", "128000"]);
     }
     use tempfile::TempDir;
-
-    #[test]
-    fn hvc1_tag_only_for_hevc_in_mp4_mov() {
-        use super::hvc1_tag_args;
-        use super::TargetCodec;
-        use std::path::Path;
-        assert_eq!(hvc1_tag_args(TargetCodec::Hevc, Path::new("o.mp4")).len(), 2);
-        assert_eq!(hvc1_tag_args(TargetCodec::Hevc, Path::new("o.mov")).len(), 2);
-        assert!(hvc1_tag_args(TargetCodec::Hevc, Path::new("o.mkv")).is_empty());
-        assert!(hvc1_tag_args(TargetCodec::Av1, Path::new("o.mp4")).is_empty());
-        assert!(hvc1_tag_args(TargetCodec::H264, Path::new("o.mov")).is_empty());
-    }
 
     /// End-to-end over the Rust mixer + ffmpeg encode tail: two overlapping
     /// flat mono conform layers (0.3 + 0.2) mix to (0.5·cos(π/4)) per

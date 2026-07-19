@@ -453,12 +453,13 @@ as the degenerate `mix()` case if it is ever built.
   cap derives from resolution — a per-ring byte target clamped to entry
   floor/ceiling bounds 4K at ~500 MB; a cross-ring global budget remains a
   known limitation if it ever matters.)
-- **FFmpeg encoder registry / capability resolver.** Keep export intent
-  library-agnostic (`codec`, bit depth, acceleration, rate control, speed) and
-  let one resolver own the known encoder adapters, real one-frame capability
-  probes, per-encoder argument mapping, and cached selection. It returns a
-  complete `EncoderPlan` or a structured `EncodeUnavailable`; removal of one
-  library skips that adapter instead of falling back to an assumed name. Fold
-  the current selection in `export/hwencoder.rs` and argument mapping in
-  `export/videosink.rs` into this module, and pin/hash each bundled ffmpeg build
-  with a required encode-capability matrix checked during packaging.
+- **FFmpeg encoder registry / capability resolver — runtime resolver shipped;
+  distribution gate remains.** `export/encoder_registry.rs` now accepts
+  library-agnostic intent (`codec`, bit depth, acceleration, rate control,
+  speed), owns the known adapters, real one-frame probes, per-encoder argument
+  mapping, and process-lifetime selection cache, and returns a complete
+  `EncoderPlan` or structured `EncodeUnavailable` attempts. `videosink.rs`
+  consumes the plan without naming or remapping an encoder; removal of a
+  library skips that adapter and never falls back to an assumed name. What
+  remains is the supply-chain half: pin/hash each bundled ffmpeg build and
+  check a required encode-capability matrix during packaging.

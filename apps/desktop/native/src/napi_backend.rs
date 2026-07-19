@@ -33,7 +33,7 @@ pub struct Backend {
     #[cfg(feature = "export")]
     pub(crate) video_sink: crate::export::videosink::VideoSinkState,
     #[cfg(feature = "export")]
-    pub(crate) hw_encoder: crate::export::HwEncoderCache,
+    pub(crate) encoder_registry: crate::export::EncoderRegistry,
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
@@ -82,7 +82,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         #[cfg(feature = "export")]
         video_sink: crate::export::videosink::VideoSinkState::default(),
         #[cfg(feature = "export")]
-        hw_encoder: crate::export::HwEncoderCache::default(),
+        encoder_registry: crate::export::EncoderRegistry::default(),
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
@@ -501,7 +501,11 @@ impl Backend {
                     args: crate::export::videosink::VideoSinkStartArgs,
                 }
                 let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::export::videosink::export_video_sink_start(&self.video_sink, &self.hw_encoder, a.args).await)
+                ser(crate::export::videosink::export_video_sink_start(
+                    &self.video_sink,
+                    &self.encoder_registry,
+                    a.args,
+                ).await)
             }
             #[cfg(feature = "export")]
             "export_video_sink_finish" => {

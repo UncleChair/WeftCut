@@ -7,6 +7,7 @@
 //! ffmpeg directly. See docs/export-ipc-transport.md.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Child, ChildStdin};
 
 use crate::process::NoConsoleWindow;
@@ -16,6 +17,14 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
+
+use super::encoder_registry::{
+    Acceleration, BitDepth, BitrateMode, DnxhrProfile, EncodeUnavailable,
+    EncoderIntent, EncoderPlan, EncoderRegistry, OutputContainer,
+    ProresProfile, RateControl, Speed, VideoCodec,
+};
+#[cfg(test)]
+use super::encoder_registry::SelectedAcceleration;
 
 #[derive(Default)]
 pub struct VideoSinkState(pub Mutex<Option<ActiveSink>>);
@@ -60,7 +69,7 @@ pub struct VideoSinkStartArgs {
     pub height: u32,
     pub fps_num: u32,
     pub fps_den: u32,
-    /// "h264" | "hevc" | "av1".
+    /// "h264" | "hevc" | "av1" | "prores" | "dnxhr".
     pub codec: String,
     pub bitrate: u64,
     pub cbr: bool,
@@ -124,13 +133,43 @@ fn reclaim_stale_sink(state: &Mutex<Option<ActiveSink>>) {
     }
 }
 
-/// The full ffmpeg argv (minus program name) for one sink run. Pure — unit
-/// tests lock the shape without spawning. `encoder` is already resolved
-/// (HW-probed or software).
+/// Translate the IPC wire shape into the typed, library-agnostic intent at the
+/// encoder-registry seam. The registry validates cross-field invariants.
+fn encoder_intent(args: &VideoSinkStartArgs) -> Result<EncoderIntent, EncodeUnavailable> {
+    let codec = VideoCodec::parse(&args.codec)?;
+    let bit_depth = BitDepth::from_raw_pixel_format(&args.pix_fmt)?;
+    let rate_control = match codec {
+        VideoCodec::Prores => {
+            RateControl::ProresProfile(ProresProfile::parse(args.profile.as_deref())?)
+        }
+        VideoCodec::Dnxhr => {
+            RateControl::DnxhrProfile(DnxhrProfile::parse(args.profile.as_deref())?)
+        }
+        VideoCodec::H264 | VideoCodec::Hevc | VideoCodec::Av1 => match args.crf {
+            Some(quality) => RateControl::ConstantQuality { quality },
+            None => RateControl::Bitrate {
+                target_bps: args.bitrate,
+                mode: if args.cbr { BitrateMode::Constant } else { BitrateMode::Variable },
+            },
+        },
+    };
+    Ok(EncoderIntent {
+        codec,
+        bit_depth,
+        acceleration: if args.software { Acceleration::Software } else { Acceleration::Automatic },
+        rate_control,
+        speed: Speed::parse(args.preset.as_deref())?,
+        gop_frames: args.gop,
+        container: OutputContainer::from_path(Path::new(&args.output_path))?,
+    })
+}
+
+/// The full ffmpeg argv (minus program name) for one sink run. The sink owns
+/// raw-frame input and process lifecycle; every output-side encoder argument
+/// comes from the already probed `EncoderPlan`.
 pub(crate) fn sink_cmd_args(
     args: &VideoSinkStartArgs,
-    codec: Option<super::hwencoder::TargetCodec>,
-    encoder: &str,
+    plan: &EncoderPlan,
 ) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let mut a: Vec<OsString> = vec![
@@ -145,107 +184,14 @@ pub(crate) fn sink_cmd_args(
         "-vf".into(),
         "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv".into(),
     ];
-    a.push("-c:v".into());
-    a.push(encoder.into());
-    match args.codec.as_str() {
-        // Intra, quality-fixed families: profile IS the rate control; no -b:v,
-        // no GOP pinning (every frame is a keyframe).
-        "prores" => {
-            let p = match args.profile.as_deref() {
-                Some("proxy") => "0",
-                Some("lt") => "1",
-                Some("hq") => "3",
-                _ => "2", // "422"
-            };
-            a.extend::<Vec<OsString>>(vec![
-                "-profile:v".into(), p.into(),
-                "-vendor".into(), "apl0".into(),
-                "-pix_fmt".into(), "yuv422p10le".into(),
-            ]);
-        }
-        "dnxhr" => {
-            let p = match args.profile.as_deref() {
-                Some("lb") => "dnxhr_lb",
-                Some("hq") => "dnxhr_hq",
-                _ => "dnxhr_sq",
-            };
-            a.extend::<Vec<OsString>>(vec![
-                "-profile:v".into(), p.into(),
-                "-pix_fmt".into(), "yuv422p".into(),
-            ]);
-        }
-        _ => {
-            // Delivery codecs: CRF (quality mode) XOR bitrate, pinned GOP,
-            // speed preset for software encoders.
-            match args.crf {
-                Some(crf) => {
-                    a.push("-crf".into());
-                    a.push(crf.to_string().into());
-                }
-                None => {
-                    a.push("-b:v".into());
-                    a.push(args.bitrate.to_string().into());
-                    if args.cbr {
-                        a.extend::<Vec<OsString>>(vec![
-                            "-maxrate".into(), args.bitrate.to_string().into(),
-                            "-minrate".into(), args.bitrate.to_string().into(),
-                            "-bufsize".into(), (args.bitrate * 2).to_string().into(),
-                        ]);
-                    }
-                }
-            }
-            let g = args.gop.max(1).to_string();
-            a.extend::<Vec<OsString>>(vec![
-                "-g".into(), g.clone().into(), "-keyint_min".into(), g.into(),
-            ]);
-            let preset = args.preset.as_deref().unwrap_or("medium");
-            match encoder {
-                "libsvtav1" => {
-                    let p = match preset { "fast" => "10", "slow" => "6", _ => "8" };
-                    a.extend::<Vec<OsString>>(vec!["-preset".into(), p.into()]);
-                }
-                "libaom-av1" => {
-                    // -crf alone is constrained-quality against libaom's default
-                    // bitrate; -b:v 0 makes it true CQ. libaom takes -cpu-used
-                    // (0–8, higher = faster), not -preset; its default 1 is far
-                    // too slow for delivery encodes.
-                    if args.crf.is_some() {
-                        a.extend::<Vec<OsString>>(vec!["-b:v".into(), "0".into()]);
-                    }
-                    let p = match preset { "fast" => "8", "slow" => "4", _ => "6" };
-                    a.extend::<Vec<OsString>>(vec![
-                        "-cpu-used".into(), p.into(), "-row-mt".into(), "1".into(),
-                    ]);
-                }
-                "libx265" | "libx264" => {
-                    a.extend::<Vec<OsString>>(vec![
-                        "-preset".into(), preset.into(),
-                        "-sc_threshold".into(), "0".into(),
-                    ]);
-                }
-                _ => {} // HW encoders: defaults
-            }
-            if args.pix_fmt.ends_with("10le") {
-                a.extend(super::hwencoder::tenbit_encode_args(encoder));
-            } else {
-                a.extend(super::hwencoder::eightbit_encode_args(encoder));
-            }
-        }
-    }
-    a.extend::<Vec<OsString>>(vec![
-        "-colorspace".into(), "bt709".into(), "-color_primaries".into(), "bt709".into(),
-        "-color_trc".into(), "bt709".into(), "-color_range".into(), "tv".into(),
-    ]);
-    if let Some(c) = codec {
-        a.extend(super::hvc1_tag_args(c, std::path::Path::new(&args.output_path)));
-    }
+    a.extend(plan.ffmpeg_args.iter().cloned());
     a.push(OsString::from(&args.output_path));
     a
 }
 
 pub async fn export_video_sink_start(
     state: &VideoSinkState,
-    hw: &super::hwencoder::HwEncoderCache,
+    registry: &EncoderRegistry,
     args: VideoSinkStartArgs,
 ) -> Result<(), String> {
     // An active sink here is always stale (single-export invariant); reclaim it.
@@ -256,52 +202,18 @@ pub async fn export_video_sink_start(
     let mut stderr_temp: Option<std::process::ChildStderr> = None;
 
     if !args.output_path.is_empty() {
-        if !matches!(
-            args.pix_fmt.as_str(),
-            "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le"
-        ) {
-            return Err(format!("unsupported sink pix_fmt {}", args.pix_fmt));
-        }
-        let (codec_enum, encoder): (Option<super::hwencoder::TargetCodec>, String) =
-            match args.codec.as_str() {
-                "prores" => (None, "prores_ks".to_string()),
-                "dnxhr" => (None, "dnxhd".to_string()),
-                other => {
-                    let c = super::hwencoder::TargetCodec::parse(other)
-                        .ok_or_else(|| format!("unknown codec {other}"))?;
-                    // The sink encodes h264/hevc/av1 only — parseable-but-unsupported
-                    // codecs (vp9) must be rejected up front, not silently routed to
-                    // libvpx-vp9.
-                    if !matches!(
-                        c,
-                        super::hwencoder::TargetCodec::H264
-                            | super::hwencoder::TargetCodec::Hevc
-                            | super::hwencoder::TargetCodec::Av1
-                    ) {
-                        return Err(format!("video sink supports h264/hevc/av1, got {other}"));
-                    }
-                    let ten_bit = args.pix_fmt.ends_with("10le");
-                    if ten_bit
-                        && !matches!(
-                            c,
-                            super::hwencoder::TargetCodec::Hevc | super::hwencoder::TargetCodec::Av1
-                        )
-                    {
-                        return Err(format!("10-bit export supports hevc/av1, got {other}"));
-                    }
-                    let e = if args.software {
-                        hw.software_for(c, ten_bit).await.as_ref().clone()
-                    } else if ten_bit {
-                        hw.encoder_for_10bit(c).await.as_ref().clone()
-                    } else {
-                        hw.encoder_for(c).await.as_ref().clone()
-                    };
-                    (Some(c), e)
-                }
-            };
+        let intent = encoder_intent(&args).map_err(|error| error.to_string())?;
+        let plan = registry.resolve(intent).await.map_err(|error| error.to_string())?;
+        info!(
+            encoder = plan.encoder_name,
+            codec = ?plan.codec,
+            bit_depth = ?plan.bit_depth,
+            acceleration = ?plan.acceleration,
+            "video sink resolved encoder plan"
+        );
         let mut cmd = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path());
         cmd.no_console_window();
-        for arg in sink_cmd_args(&args, codec_enum, &encoder) {
+        for arg in sink_cmd_args(&args, &plan) {
             cmd.arg(arg);
         }
         cmd.stdin(std::process::Stdio::piped())
@@ -498,90 +410,17 @@ mod tests {
     }
 
     #[test]
-    fn sink_cmd_args_8bit_h264_shape() {
-        let argv = sink_cmd_args(&args_8bit("h264"), Some(super::super::TargetCodec::H264), "libx264");
-        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        // input is 8-bit rawvideo; output pix_fmt is yuv420p; NO main10 profile.
-        let pf: Vec<usize> = s.iter().enumerate()
-            .filter(|(_, a)| *a == "-pix_fmt").map(|(i, _)| i).collect();
-        assert_eq!(pf.len(), 2, "input + output pix_fmt: {s:?}");
-        assert_eq!(s[pf[0] + 1], "yuv420p");
-        assert_eq!(s[pf[1] + 1], "yuv420p");
-        assert!(!s.iter().any(|a| a == "main10"));
-        // color tags apply at 8-bit too (the point of the native exit).
-        assert!(s.windows(2).any(|w| w[0] == "-color_range" && w[1] == "tv"));
-        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "libx264"));
-    }
-
-    #[test]
-    fn sink_args_quality_mode_uses_crf_not_bitrate() {
-        let mut a = args_8bit("h264");
-        a.crf = Some(18);
-        a.preset = Some("slow".into());
-        let argv = sink_cmd_args(&a, Some(super::super::TargetCodec::H264), "libx264");
-        let s: Vec<String> = argv.iter().map(|x| x.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-crf" && w[1] == "18"));
-        assert!(!s.iter().any(|x| x == "-b:v"));
-        assert!(s.windows(2).any(|w| w[0] == "-preset" && w[1] == "slow"));
-    }
-
-    #[test]
-    fn sink_args_svtav1_preset_mapping() {
-        let mut a = args_8bit("av1");
-        a.crf = Some(30);
-        a.preset = Some("fast".into());
-        let argv = sink_cmd_args(&a, Some(super::super::TargetCodec::Av1), "libsvtav1");
-        let s: Vec<String> = argv.iter().map(|x| x.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-crf" && w[1] == "30"));
-        assert!(s.windows(2).any(|w| w[0] == "-preset" && w[1] == "10")); // fast→10, medium→8, slow→6
-    }
-
-    // libaom fallback shape (sidecar has no libsvtav1): true CQ needs `-b:v 0`
-    // alongside -crf, the speed preset maps to -cpu-used (libaom rejects
-    // -preset), and 10-bit rides the default planar pix_fmt arm.
-    #[test]
-    fn sink_args_libaom_av1_quality_10bit_shape() {
-        let mut a = args_8bit("av1");
-        a.pix_fmt = "yuv420p10le".into();
-        a.crf = Some(30);
-        a.preset = Some("medium".into());
-        let argv = sink_cmd_args(&a, Some(super::super::TargetCodec::Av1), "libaom-av1");
-        let s: Vec<String> = argv.iter().map(|x| x.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-crf" && w[1] == "30"));
-        assert!(s.windows(2).any(|w| w[0] == "-b:v" && w[1] == "0"));
-        assert!(s.windows(2).any(|w| w[0] == "-cpu-used" && w[1] == "6"));
-        assert!(s.windows(2).any(|w| w[0] == "-row-mt" && w[1] == "1"));
-        let pf: Vec<usize> = (0..s.len()).filter(|&i| s[i] == "-pix_fmt").collect();
-        assert_eq!(s[pf[1] + 1], "yuv420p10le");
-        assert!(!s.iter().any(|x| x == "-preset"));
-    }
-
-    #[test]
-    fn sink_args_prores_profile() {
-        let mut a = args_8bit("prores");
-        a.pix_fmt = "yuv422p10le".into();
-        a.profile = Some("hq".into());
-        a.output_path = "C:/tmp/out.mov".into();
-        let argv = sink_cmd_args(&a, None, "prores_ks");
-        let s: Vec<String> = argv.iter().map(|x| x.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "prores_ks"));
-        assert!(s.windows(2).any(|w| w[0] == "-profile:v" && w[1] == "3")); // proxy0 lt1 std2 hq3
-        assert!(s.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "yuv422p10le"));
-        assert!(s.windows(2).any(|w| w[0] == "-vendor" && w[1] == "apl0"));
-        assert!(!s.iter().any(|x| x == "-b:v" || x == "-g")); // intra, quality-fixed
-    }
-
-    #[test]
-    fn sink_args_dnxhr_profile() {
-        let mut a = args_8bit("dnxhr");
-        a.pix_fmt = "yuv422p".into();
-        a.profile = Some("sq".into());
-        a.output_path = "C:/tmp/out.mov".into();
-        let argv = sink_cmd_args(&a, None, "dnxhd");
-        let s: Vec<String> = argv.iter().map(|x| x.to_string_lossy().into_owned()).collect();
-        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "dnxhd"));
-        assert!(s.windows(2).any(|w| w[0] == "-profile:v" && w[1] == "dnxhr_sq"));
-        assert!(s.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "yuv422p"));
+    fn wire_args_become_library_agnostic_intent() {
+        let mut args = args_10bit();
+        args.crf = Some(22);
+        args.preset = Some("slow".into());
+        let intent = encoder_intent(&args).unwrap();
+        assert_eq!(intent.codec, VideoCodec::Hevc);
+        assert_eq!(intent.bit_depth, BitDepth::Ten);
+        assert_eq!(intent.acceleration, Acceleration::Software);
+        assert_eq!(intent.rate_control, RateControl::ConstantQuality { quality: 22 });
+        assert_eq!(intent.speed, Speed::Slow);
+        assert_eq!(intent.container, OutputContainer::Mp4);
     }
 
     #[test]
@@ -594,23 +433,36 @@ mod tests {
         assert_eq!(v.pix_fmt, "yuv420p10le");
     }
 
-    // The sink encodes h264/hevc/av1 only — parseable-but-unsupported codecs
-    // (vp9) must be rejected up front, not silently routed to libvpx-vp9.
+    // Unknown codecs are rejected while translating the wire request, before
+    // any adapter name can be guessed or any probe can run.
     #[tokio::test]
     async fn start_rejects_vp9_at_8bit() {
         let state = VideoSinkState::default();
-        let hw = super::super::hwencoder::HwEncoderCache::default();
-        let err = export_video_sink_start(&state, &hw, args_8bit("vp9"))
+        let registry = EncoderRegistry::default();
+        let err = export_video_sink_start(&state, &registry, args_8bit("vp9"))
             .await
             .unwrap_err();
-        assert!(err.contains("h264/hevc/av1"), "unexpected error: {err}");
+        assert!(err.contains("invalid encoder intent codec"), "unexpected error: {err}");
         assert!(state.0.lock().unwrap().is_none(), "no sink left active");
     }
 
-    // Locks the exact argv the inline builder produced before extraction.
+    // The sink contributes only the rawvideo input half and output path. The
+    // registry plan is appended verbatim, with no sink-side reinterpretation.
     #[test]
-    fn sink_cmd_args_matches_legacy_10bit_shape() {
-        let argv = sink_cmd_args(&args_10bit(), Some(super::super::TargetCodec::Hevc), "libx265");
+    fn sink_cmd_args_joins_raw_input_to_the_resolved_plan() {
+        let plan = EncoderPlan {
+            codec: VideoCodec::Hevc,
+            bit_depth: BitDepth::Ten,
+            encoder_name: "libx265",
+            acceleration: SelectedAcceleration::Software,
+            ffmpeg_args: vec![
+                "-c:v".into(), "libx265".into(),
+                "-profile:v".into(), "main10".into(),
+                "-color_range".into(), "tv".into(),
+                "-tag:v".into(), "hvc1".into(),
+            ],
+        };
+        let argv = sink_cmd_args(&args_10bit(), &plan);
         let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         // rawvideo input header
         assert!(s.windows(2).any(|w| w[0] == "-f" && w[1] == "rawvideo"));
@@ -636,10 +488,10 @@ mod tests {
     #[tokio::test]
     async fn ipc_write_counts_and_finish_reaps() {
         let state = VideoSinkState::default();
-        let hw = super::super::hwencoder::HwEncoderCache::default();
+        let registry = EncoderRegistry::default();
         export_video_sink_start(
             &state,
-            &hw,
+            &registry,
             VideoSinkStartArgs {
                 width: 64,
                 height: 64,

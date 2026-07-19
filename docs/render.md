@@ -544,13 +544,16 @@ for yuv420p/yuv422p/yuv422p10le, or the parity-gated `PackYuv420p10` for
 yuv420p10le — writes the target's rawvideo bytes, which stream over the export
 `chunk`/`chunk-ack` IPC loop into a native `ffmpeg` sink (`export/videosink.rs`);
 see [`export-ipc-transport.md`](export-ipc-transport.md) for the transport.
-The sink owns every encoder argument: bitrate with optional CBR bounds, or CRF
-quality mode (software encoders only); the speed preset; GOP; a hardware
-encoder chosen from `hwencoder.rs`'s probe cache unless `hwAccel` is pinned to
-software; and — the property this exit can assert that WebCodecs can't —
-explicit `bt709`/`limited` color tags written onto the frames (`setparams`)
-*and* onto the output stream, so the file's declared color always matches what
-was encoded, independent of container or player.
+The sink owns rawvideo input and the ffmpeg child lifecycle; it consumes one
+complete `EncoderPlan` from `export/encoder_registry.rs`. The registry accepts
+library-agnostic intent (codec, bit depth, acceleration, rate control, speed),
+selects only adapters that pass a real one-frame probe, caches that selection,
+and owns every output-side argument: bitrate with optional CBR bounds or CRF
+quality mode, speed, GOP, per-library pixel format/profile mapping, container
+tags, and the output-stream `bt709`/`limited` color tuple. The sink adds the
+matching frame-side `setparams` filter. A removed or unusable encoder library
+therefore yields structured `EncodeUnavailable` attempts; it is never replaced
+by an assumed ffmpeg encoder name.
 
 10-bit delivery (HEVC Main10 or AV1 10-bit, via the bit-depth selector) and
 ProRes (always 10-bit) composite through an `rgba16float` render target instead
