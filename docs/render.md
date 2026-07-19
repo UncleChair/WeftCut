@@ -563,9 +563,13 @@ decode through a CPU-plane lane forced to software — for AV1 this is a
 correctness requirement, since the hardware decoder "succeeds" but emits opaque
 frames that can't `copyTo`. `TenBitIngest` uploads the extracted planes as RG8
 textures and unpacks them into the f16 target via a GLSL pass; a reorder-margin
-+ ring-high-water pair (`TENBIT_REORDER_MARGIN`, sized from resolution) keeps
++ ring-high-water pair (`REORDER_MARGIN`, sized from resolution) keeps
 the decoder fed ahead of the serialized copy chain without deadlocking, and
-each simultaneous 10-bit source carries its own ring. This lane ships
+each simultaneous 10-bit source carries its own ring. The same reorder-margin
+lead-in now applies to every export decode lane: software decoders hold the
+trailing frames of a fed window until more input arrives (Chromium's macOS
+prefer-software H.264 decoder withholds 2, 4 with B-frames), which otherwise
+wedged each short-GOP chunk's final frame against `waitForPts`. This lane ships
 **experimental**: the export-settings UI labels it and confirms the export
 click, since the on-screen preview stays 8-bit/SDR (no HDR/wide-gamut preview
 on the web platform) and the path runs below realtime — especially at 4K —

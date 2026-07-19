@@ -19,10 +19,15 @@ import type { NativeNv12Frame } from "./nv12Frame";
 import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
 import { frameToSourceUs, packetToSourceUs, sourceToContainerUs } from "./ptsOffset";
 
-/// SW 10-bit decoders hold a reorder tail internally and the chunked model
-/// never mid-flushes, so feed a bounded lead-in past the stop key to push the
-/// tail out; H.264's max DPB is 16.
-const TENBIT_REORDER_MARGIN = 16;
+/// SW decoders hold a reorder/pipelining tail internally and the chunked
+/// model never mid-flushes, so feed a bounded lead-in past the stop key to
+/// push the tail out; H.264's max DPB is 16. First added for the SW 10-bit
+/// lane; generalized to every lane after Chromium's macOS prefer-software
+/// H.264 decoder was observed withholding the last 2 frames of a fed window
+/// (4 with B-frames) until more input or a flush arrives — wedging each
+/// short-GOP chunk's final frame against `waitForPts` (the macOS Lite-export
+/// freeze: 61 packets fed, 59 emitted, queue 0, no error).
+const REORDER_MARGIN = 16;
 
 /// 10-bit ring cap, derived from coded frame size: a byte target / frame bytes,
 /// clamped to [MIN, MAX]. The MIN floor is the deadlock guard — output is
@@ -528,7 +533,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
             // decoders don't stall on held frames the way HW decoders do (no
             // pool slots), so this gate bounds the RING entry count, not the
             // decoder. The un-copied frames backlogged in the chain are bounded
-            // by the dispatch window (chunk/GOP + TENBIT_REORDER_MARGIN), which
+            // by the dispatch window (chunk/GOP + REORDER_MARGIN), which
             // for long-GOP 4K sources can be large — see the known-limitation
             // note on TENBIT_RING_TARGET_BYTES.
             await this.ring.waitBelowTenBitHighWater();
@@ -632,10 +637,12 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// cursor when the range moves forward of the dispatch frontier), then
   /// dispatches in DECODE order through the first key packet strictly after
   /// `bUs` (inclusive) — so every frame with presentation PTS ≤ bUs, incl.
-  /// open-GOP B-frames referencing the next key, is fed. No flush (the
-  /// worker awaits each frame via `ring.waitForPts`; flushing would deadlock
-  /// against the held VideoFrame pool slots). Awaiting `getNextPacket`
-  /// faults in uncached bytes natively — no pre-fault needed.
+  /// open-GOP B-frames referencing the next key, is fed — plus a bounded
+  /// REORDER_MARGIN lead-in past the stop key to push out the decoder's
+  /// withheld tail. No flush (the worker awaits each frame via
+  /// `ring.waitForPts`; flushing would deadlock against the held VideoFrame
+  /// pool slots). Awaiting `getNextPacket` faults in uncached bytes natively
+  /// — no pre-fault needed.
   async decodeRange(aUs: number, bUs: number): Promise<void> {
     if (!this.config || !this.decoder) await this.ensureReady();
     if (!this.config || !this.decoder) return;
@@ -725,18 +732,21 @@ export class ExportSourceHandle implements ExportDecodeSession {
       pkt = await packetSink.getNextPacket(pkt);
       if (this._disposed) return;
     }
-    if (this.tenBitLane) {
-      let extra = 0;
-      while (pkt && extra < TENBIT_REORDER_MARGIN) {
-        this.decoder.decode(pkt.toEncodedVideoChunk());
-        this.cursor = pkt;
-        this.lastDispatchedPtsUs = this.toSourcePtsUs(pkt);
-        dispatched++;
-        this.dispatchedTotal++;
-        extra++;
-        pkt = await packetSink.getNextPacket(pkt);
-        if (this._disposed) return;
-      }
+    // Lead-in past the stop key, on every lane: push the decoder's withheld
+    // reorder/pipelining tail out with real input (a mid-stream flush is the
+    // deadlock landmine — see the header). A zero-delay decoder just sees a
+    // few extra frames the ring already tolerates, and the next range
+    // continues from the cursor, so nothing is ever fed twice.
+    let extra = 0;
+    while (pkt && extra < REORDER_MARGIN) {
+      this.decoder.decode(pkt.toEncodedVideoChunk());
+      this.cursor = pkt;
+      this.lastDispatchedPtsUs = this.toSourcePtsUs(pkt);
+      dispatched++;
+      this.dispatchedTotal++;
+      extra++;
+      pkt = await packetSink.getNextPacket(pkt);
+      if (this._disposed) return;
     }
     if (stopKeyPtsUs !== null) {
       this.coveredThroughUs = Math.max(this.coveredThroughUs, stopKeyPtsUs);

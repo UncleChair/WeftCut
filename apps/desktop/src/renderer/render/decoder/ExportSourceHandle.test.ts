@@ -235,12 +235,13 @@ describe("ExportSourceHandle EOS tail", () => {
     sink = makeSink(packets);
     const h = makeHandle();
 
-    // Chunk 1 [0..0.4s): stop-after-key dispatches through key@1.0 — the
-    // frontier overshoots to 1.0s while coverage is only "everything ≤ 1.0s".
+    // Chunk 1 [0..0.4s): stop-after-key dispatches through key@1.0, then the
+    // reorder margin adds 16 lead-in packets — coverage is still only
+    // "everything ≤ 1.0s" even though dispatch ran ahead to 1.32s.
     await h.decodeRange(0, 400_000);
     const dec = FakeVideoDecoder.instances[0]!;
     const fedAfterChunk1 = dec.decoded.length;
-    expect(fedAfterChunk1).toBe(51); // key@0 + 49 deltas + key@1.0
+    expect(fedAfterChunk1).toBe(51 + 16); // key@0 + 49 deltas + key@1.0 + 16 margin
 
     // Chunk 2 [0.4s..0.8s): fully covered by chunk 1's dispatch. Nothing to
     // feed — and CRUCIALLY no re-seek back to key@0 (the corruption source).
@@ -275,71 +276,64 @@ describe("ExportSourceHandle EOS tail", () => {
   });
 });
 
-// TenBitFrame reorder-margin: a SW 10-bit decoder holds trailing B-frames in its
-// reorder tail internally (never emits them without seeing the next GOP key or a
-// flush). The margin feeds up to TENBIT_REORDER_MARGIN extra packets past the
-// stop key so those trailing frames drain without an explicit mid-export flush.
-describe("ExportSourceHandle tenBitLane reorder margin", () => {
-  it("dispatches a reorder margin past the stop key when tenBitLane is true", async () => {
+// Reorder margin: a SW decoder holds the trailing frames of a fed window in
+// its reorder/pipelining tail internally (never emits them without more input
+// or a flush). The margin feeds up to REORDER_MARGIN extra packets past the
+// stop key so those trailing frames drain without an explicit mid-export
+// flush. It applies to EVERY lane, not just tenBitLane — Chromium's macOS
+// prefer-software H.264 decoder withholds the last 2 frames of a fed window
+// (4 with B-frames), which wedged each short-GOP chunk's final `waitForPts`
+// (the macOS Lite-export freeze).
+describe("ExportSourceHandle reorder margin", () => {
+  it("dispatches a reorder margin past the stop key on the default lane", async () => {
     // Two GOPs. key@0 + 9 deltas, key@0.333 + 13 more deltas (24 total).
-    // Range ends at 300_000 µs (before the second key), so the normal dispatch
-    // exits at the stop key (key@0.333). With tenBitLane the margin keeps going.
+    // Range ends at 300_000 µs (before the second key), so the stop-after-key
+    // dispatch exits at the stop key (key@0.333) — then the margin keeps going.
     const packets: FakePacket[] = [pkt(0, "key")];
     for (let i = 1; i <= 9; i++) packets.push(pkt(i * 0.02, "delta")); // 0.02..0.18s
     packets.push(pkt(0.333, "key")); // stop key for a 300_000 µs bUs
     for (let i = 1; i <= 13; i++) packets.push(pkt(0.333 + i * 0.02, "delta")); // 13 more
     sink = makeSink(packets);
 
-    // Baseline: no tenBitLane — dispatch stops right at the stop key.
-    const hBase = makeHandle();
-    await hBase.decodeRange(0, 300_000);
-    const decBase = FakeVideoDecoder.instances[0]!;
-    const dispatchedBase = decBase.decoded.length;
-    // Should have dispatched key@0 + 9 deltas + key@0.333 = 11 packets.
-    expect(dispatchedBase).toBe(11);
+    const h = makeHandle();
+    await h.decodeRange(0, 300_000);
+    const dec = FakeVideoDecoder.instances[0]!;
 
-    // Reset instances for the next handle.
-    FakeVideoDecoder.instances = [];
-
-    // With tenBitLane: same range, but the margin adds more packets past the key.
-    const hTenBit = makeHandle({ tenBitLane: true });
-    await hTenBit.decodeRange(0, 300_000);
-    const decTenBit = FakeVideoDecoder.instances[0]!;
-    const dispatchedTenBit = decTenBit.decoded.length;
-
-    // The margin adds up to min(16, remaining=13) = 13 more packets.
-    // So total = 11 (base) + 13 (margin) = 24 — all packets in the stream.
-    expect(dispatchedTenBit).toBeGreaterThan(dispatchedBase);
-    // Margin is capped at 16; remaining is 13, so margin = 13.
-    expect(dispatchedTenBit).toBe(dispatchedBase + 13);
+    // key@0 + 9 deltas + key@0.333 = 11 through the stop key, then the margin
+    // adds min(16, remaining=13) = 13 more — all 24 packets in the stream.
+    expect(dec.decoded.length).toBe(11 + 13);
   });
 
-  // I3: the 16-packet cap is enforced even when more than 16 packets remain
+  it("dispatches the same margin on the tenBitLane", async () => {
+    const packets: FakePacket[] = [pkt(0, "key")];
+    for (let i = 1; i <= 9; i++) packets.push(pkt(i * 0.02, "delta"));
+    packets.push(pkt(0.333, "key"));
+    for (let i = 1; i <= 13; i++) packets.push(pkt(0.333 + i * 0.02, "delta"));
+    sink = makeSink(packets);
+
+    const h = makeHandle({ tenBitLane: true });
+    await h.decodeRange(0, 300_000);
+    const dec = FakeVideoDecoder.instances[0]!;
+    expect(dec.decoded.length).toBe(11 + 13);
+  });
+
+  // The 16-packet cap is enforced even when more than 16 packets remain
   // after the stop key. Ensures the margin never grows unbounded on long-GOP
   // sources (e.g. a stream with a 250-packet GOP and the stop key near the start).
   it("caps the reorder margin at exactly 16 packets when more than 16 remain after the stop key", async () => {
     // key@0 + 9 deltas = 10 packets, then key@0.333 (stop key for 300_000µs bUs),
-    // then 20 more deltas — 17 remain after the stop key (above the cap of 16).
+    // then 20 more deltas — 20 remain after the stop key (above the cap of 16).
     const packets: FakePacket[] = [pkt(0, "key")];
     for (let i = 1; i <= 9; i++) packets.push(pkt(i * 0.02, "delta")); // 0.02..0.18s
     packets.push(pkt(0.333, "key")); // stop key
     for (let i = 1; i <= 20; i++) packets.push(pkt(0.333 + i * 0.02, "delta")); // 20 more
     sink = makeSink(packets);
 
-    // Baseline (no tenBitLane): key@0 + 9 deltas + key@0.333 = 11 packets.
-    const hBase = makeHandle();
-    await hBase.decodeRange(0, 300_000);
-    const decBase = FakeVideoDecoder.instances[0]!;
-    const dispatchedBase = decBase.decoded.length;
-    expect(dispatchedBase).toBe(11);
-
-    FakeVideoDecoder.instances = [];
-
-    // tenBitLane: margin must be exactly 16 (not 17 or more).
-    const hTenBit = makeHandle({ tenBitLane: true });
-    await hTenBit.decodeRange(0, 300_000);
-    const decTenBit = FakeVideoDecoder.instances[0]!;
-    expect(decTenBit.decoded.length).toBe(dispatchedBase + 16);
+    const h = makeHandle();
+    await h.decodeRange(0, 300_000);
+    const dec = FakeVideoDecoder.instances[0]!;
+    // 11 through the stop key + exactly 16 margin (not 17 or more).
+    expect(dec.decoded.length).toBe(11 + 16);
   });
 });
 
