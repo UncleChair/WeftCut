@@ -128,32 +128,35 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
     // injected audio layer. A blank project would have NO audio layer → an empty
     // list.
     //
-    // TIMING: import kicks a one-shot background conform job. On a machine with
-    // ffmpeg present it finishes fast (the fixture is a 10 s tone), so the conform
-    // cache can become valid mid-test — which would (correctly) drop the media from
-    // the waiting list and collapse it to [], exactly like a blank project. That is
-    // a race, not a product bug. Delete the cache and re-ask until the gate lists
-    // the media: each iteration removes the cache so the gate must re-report our
-    // injected layer as waiting; if the still-running conform rewrites it before the
-    // gate reads, the next iteration retries. The one-shot job settles in well under
-    // a second, so this converges immediately; on a runner where conform never
-    // completes the cache is simply absent and the first ask already lists it. A
-    // blank project never lists the media (referenced by no audible layer), so the
-    // discriminating power is preserved.
+    // TIMING: import kicks a one-shot background conform job. When it finishes it
+    // writes the cache AND stamps media.conform_path (conform_path is set on
+    // COMPLETION, not eagerly — jobs/mod.rs). A valid cache would (correctly) drop
+    // the media from the waiting list, collapsing it to [] exactly like a blank
+    // project. That is a race, not a product bug. Delete the cache and re-ask until
+    // the gate lists the media, RE-READING media.conform_path each iteration: on a
+    // busy machine the conform finishes late, so conform_path is still unset right
+    // after placement and only appears once the job completes — capturing it once
+    // up front would miss it and never delete the eventual cache (the bug this
+    // replaces). While conform is still running the media is waiting anyway (no
+    // valid cache); once it completes, the re-read finds conform_path and the delete
+    // forces the gate to re-report the media as waiting. A blank project never lists
+    // the media (referenced by no audible layer), so the discriminating power holds.
     //
     // We deliberately do NOT call export_project_audio_only here: it throws when
     // the conform cache is absent ("...has no conform cache yet..."), which is
     // correct product behavior but not deterministic to assert in the e2e. The
     // full export (conform→mix→ffmpeg) is covered by audio.spec.ts.
-    const conformPath = afterPlace.media.find((m) => m.id === mediaId)?.conform_path
     await expect
       .poll(
         async () => {
-          if (conformPath) fs.rmSync(conformPath, { force: true })
+          const media = (await invoke<Summary>(page, 'project_summary')).media.find(
+            (m) => m.id === mediaId,
+          )
+          if (media?.conform_path) fs.rmSync(media.conform_path, { force: true })
           const waiting = await invoke<string[]>(page, 'ensure_export_audio_conform', {})
           return waiting.includes(mediaId)
         },
-        { timeout: 20_000, intervals: [150, 300, 600] },
+        { timeout: 30_000, intervals: [150, 300, 600] },
       )
       .toBe(true)
   } finally {
