@@ -92,7 +92,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const samplerRef = useRef<PreviewSampler | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
   const unsubRoleOverridesRef = useRef<(() => void) | null>(null);
-  const [status, setStatus] = useState<string>("Initializing PixiJS…");
+  const [initializing, setInitializing] = useState(true);
   // On-screen media the Compositor can't decode with any engine — fed ONLY
   // by `Compositor.onUnsupported` (membership-change snapshots, never
   // per-frame; see that field's contract). This component must NEVER clear
@@ -469,7 +469,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       compositor.setAnchorTime(0);
       compositor.compositeFrame(0);
-      setStatus("");
+      setInitializing(false);
     },
     [onTimeUpdate, onPausedChange, previewDecodableOf],
   );
@@ -596,25 +596,19 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         onInit={handleInit}
         className="pixi-preview-canvas"
       />
-      {status && (
+      {initializing && (
         <div
           style={{
             position: "absolute",
-            top: 4,
-            left: 4,
-            padding: "2px 6px",
-            font: "12px ui-monospace, monospace",
-            color: "#9ca3af",
-            background: "rgba(0,0,0,0.6)",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             pointerEvents: "none",
-            borderRadius: 3,
-            maxWidth: "90%",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
           }}
-          data-testid="pixi-preview-status"
+          data-testid="pixi-preview-initializing"
         >
-          {status}
+          <div className="preview-spinner" />
         </div>
       )}
       {(import.meta.env.DEV || import.meta.env.VITE_WEFTCUT_E2E === "1") && (
