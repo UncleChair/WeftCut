@@ -1,12 +1,12 @@
 import { test, expect, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze, analyzeGradientRow } from '../lib/analyze.mjs'
 import {
   launchApp,
+  tmpDir,
   newProject,
   waitForHook,
   driveExport,
@@ -42,13 +42,6 @@ const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
 // 10 s audio-only tones — placed at t=1s it outlasts the 10 s video by 1 s,
 // extending the composition grid past the video track's end (EOS-tail shape).
 const TONES = path.resolve(MEDIA_DIR, 'test_tones_10s.wav')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-native-wedges-proj')
-const OUT_BASELINE = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-baseline.mp4')
-const OUT_STACKED = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-stacked.mp4')
-const OUT_OFFSET = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-offset.mp4')
-const OUT_BACKWARD = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-backward.mp4')
-const OUT_EOS = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-eostail.mp4')
-const OUT_AV1 = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-av1.mp4')
 // These gates detect wedges (hang / wrong frame / dup tail), not codec
 // fidelity: the wedge signal is `aligned`/`best_match_index`. The ProRes
 // master carries far more detail than a default-bitrate H.264/AV1 re-encode
@@ -91,7 +84,7 @@ interface NativePerf {
 
 async function bootProject(page: Page, prefix: string): Promise<void> {
   await newProject(page, {
-    parentFolder: PROJECT_PARENT,
+    parentFolder: tmpDir('weftcut-e2e-nw-proj-'),
     name: prefix + Date.now(),
     canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
   })
@@ -194,15 +187,11 @@ test.describe('native export decode wedge gates (Electron)', () => {
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native sessions`)
   test.skip(!existsSync(PRORES), `ProRes fixture not found at ${PRORES} (set WEFTCUT_TEST_MEDIA / npm run fixtures)`)
 
-  test.beforeAll(() => {
-    mkdirSync(PROJECT_PARENT, { recursive: true })
-  })
-
   // Gate (a): the plain single-clip shape — proves the native session decodes
   // the whole file frame-exact before the wedge shapes stack on top.
   test('baseline: a single native ProRes clip exports clean (dispatch reference)', async () => {
     test.setTimeout(420_000)
-    rmSync(OUT_BASELINE, { force: true })
+    const OUT_BASELINE = path.join(tmpDir('weftcut-e2e-nw-out-'), 'baseline.mp4')
     const { app, page } = await launchApp()
     try {
       await bootProject(page, 'e2e-nw-base-')
@@ -229,6 +218,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
   // regression: same-phase clips must share ONE native session.
   test('two stacked same-source clips export without wedging or extra native decode', async () => {
     test.setTimeout(420_000)
+    const OUT_STACKED = path.join(tmpDir('weftcut-e2e-nw-out-'), 'stacked.mp4')
     const { app, page } = await launchApp()
     try {
       await bootProject(page, 'e2e-nw-stack-')
@@ -257,6 +247,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
   // so output frame 200 must best-match source frame 140.
   test('a 2s-offset same-source overlap exports with both clips on their own frames', async () => {
     test.setTimeout(420_000)
+    const OUT_OFFSET = path.join(tmpDir('weftcut-e2e-nw-out-'), 'offset.mp4')
     const { app, page } = await launchApp()
     try {
       await bootProject(page, 'e2e-nw-offset-')
@@ -281,6 +272,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
   // time must deliver the head frames, not stale tail frames.
   test('a backward clip-reuse jump re-seeks and delivers the earlier source frames', async () => {
     test.setTimeout(420_000)
+    const OUT_BACKWARD = path.join(tmpDir('weftcut-e2e-nw-out-'), 'backward.mp4')
     const { app, page } = await launchApp()
     try {
       await bootProject(page, 'e2e-nw-backward-')
@@ -333,6 +325,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
   test('EOS tail past the video content completes with the exact tail frame count', async () => {
     test.skip(!existsSync(TONES), `tones fixture not found at ${TONES} (set WEFTCUT_TEST_MEDIA / npm run fixtures)`)
     test.setTimeout(420_000)
+    const OUT_EOS = path.join(tmpDir('weftcut-e2e-nw-out-'), 'eostail.mp4')
     const { app, page } = await launchApp()
     try {
       await bootProject(page, 'e2e-nw-eostail-')
@@ -365,7 +358,7 @@ test.describe('native export decode wedge gates (Electron)', () => {
   // gate proves the full app under sustained backpressure.
   test('slow-consumer credit stall: AV1 software encode completes without deadlock', async () => {
     test.setTimeout(600_000)
-    rmSync(OUT_AV1, { force: true })
+    const OUT_AV1 = path.join(tmpDir('weftcut-e2e-nw-out-'), 'av1.mp4')
     const { app, page } = await launchApp()
     try {
       await bootProject(page, 'e2e-nw-av1-')
@@ -415,8 +408,6 @@ test.describe('native export decode wedge gates (Electron)', () => {
 
 // 1 s static 10-bit ramp — H.264 Hi10P, the primary 10-bit source shape.
 const GRADIENT10 = path.resolve(MEDIA_DIR, 'test_1080p_gradient10_h264.mp4')
-const OUT_RAMP_HEVC = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-ramp10-hevc.mp4')
-const OUT_RAMP_AV1 = path.resolve(os.tmpdir(), 'weftcut-e2e-nw-ramp10-av1.mp4')
 
 // >600 of 1023 distinct levels: clean lane measures ~880, an 8-bit-banded
 // lane caps at <=256 — the gate separates by >2x in both directions.
@@ -505,10 +496,6 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native sessions`)
   test.skip(!existsSync(GRADIENT10), `10-bit ramp fixture not found at ${GRADIENT10} (set WEFTCUT_TEST_MEDIA / npm run fixtures)`)
 
-  test.beforeAll(() => {
-    mkdirSync(PROJECT_PARENT, { recursive: true })
-  })
-
   // Boot a fresh project and export the ramp clip via the REAL exportClip path
   // with the pinned-native 10-bit `settings`; assert the native route actually
   // engaged before returning. Codec-shape + ramp analysis run after the app
@@ -553,6 +540,7 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
   // anywhere between the ffmpeg session and the encoder.
   test('10-bit ramp through the native route to HEVC Main10 keeps its step count', async () => {
     test.setTimeout(420_000)
+    const OUT_RAMP_HEVC = path.join(tmpDir('weftcut-e2e-nw-out-'), 'ramp10-hevc.mp4')
     await exportRampNative('e2e-nw-ramp10-hevc-', OUT_RAMP_HEVC, RAMP10_HEVC_SETTINGS, 400_000)
     const st = probeVideoStream(OUT_RAMP_HEVC, 'codec_name,profile,pix_fmt')
     console.log('[e2e] HEVC-10 ramp output stream:', JSON.stringify(st))
@@ -577,6 +565,7 @@ test.describe('native export 10-bit ramp precision gates (Electron)', () => {
     // libsvtav1 (8/10-bit) — so the software-encoder probe picks it and this
     // gate runs on Linux too, alongside Windows.
     test.setTimeout(420_000)
+    const OUT_RAMP_AV1 = path.join(tmpDir('weftcut-e2e-nw-out-'), 'ramp10-av1.mp4')
     await exportRampNative('e2e-nw-ramp10-av1-', OUT_RAMP_AV1, RAMP10_AV1_SETTINGS, 400_000)
     const st = probeVideoStream(OUT_RAMP_AV1, 'codec_name,pix_fmt')
     console.log('[e2e] AV1-10 ramp output stream:', JSON.stringify(st))

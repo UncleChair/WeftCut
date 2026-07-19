@@ -33,7 +33,7 @@ const POSITIVE = [
   { id: 'lower-third', t: 1.0, w: 1280, h: 320 },
 ]
 
-test('capture fixed motif frames for cross-OS comparison', async () => {
+test('capture fixed motif frames for cross-OS comparison @serial', async () => {
   test.setTimeout(120_000)
 
   const outDir = path.join(__dirname, '../../determinism-artifacts', process.platform)

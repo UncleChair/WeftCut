@@ -1,19 +1,13 @@
-import { test, expect, _electron as electron } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const MAIN = path.resolve(__dirname, '../../out/main/index.js')
+import { launchApp, tmpDir } from './helpers/driver'
 
 test('fs:writeFile honors append vs truncate through the bridge', async () => {
-  const tmp = path.join(os.tmpdir(), `wc-fs-${process.pid}.bin`)
-  fs.rmSync(tmp, { force: true })
+  const tmp = path.join(tmpDir('wc-fs-'), 'probe.bin')
 
-  const app = await electron.launch({ args: [MAIN] })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  const { app, page } = await launchApp()
 
   // Truncate-write [1,2,3], then append [4,5] — through the named fs API.
   await page.evaluate(async (p) => {
@@ -32,16 +26,14 @@ test('fs:writeFile honors append vs truncate through the bridge', async () => {
 })
 
 test('fs:* denies paths outside the allowed roots', async () => {
-  // A home-dir path that is OUTSIDE temp + userData (userData lives under home,
-  // but home itself is its parent, not a descendant) and outside any workspace
-  // (none is open in this launch). Writable if the guard were absent, so a
-  // created file would prove a bypass.
+  // A home-dir path that is OUTSIDE temp + userData (the isolated userData
+  // profile lives under os.tmpdir(), so home is outside both roots) and
+  // outside any workspace (none is open in this launch). Writable if the
+  // guard were absent, so a created file would prove a bypass.
   const escape = path.join(os.homedir(), `wc-guard-escape-${process.pid}.bin`)
   fs.rmSync(escape, { force: true })
 
-  const app = await electron.launch({ args: [MAIN] })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  const { app, page } = await launchApp()
 
   const outcome = await page.evaluate(async (p) => {
     try {

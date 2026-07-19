@@ -9,21 +9,95 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /// output is apps/desktop/out/main/index.js → three levels up.
 export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 
-/// Launch over a brand-new, empty userData dir so the app boots the pristine
-/// built-in Editing baseline instead of restoring whatever a previous spec (or
-/// a previous run) autosaved to the shared default userData. Any spec that opens
-/// a normally-closed Panel, moves Panels, or otherwise mutates the Dock Tree must
-/// use this — the app-level Workspace document persists layout across launches, so
-/// bare `launchApp()` would leak that layout into every other default-userData
-/// spec. (A spec that must relaunch over the SAME userData mints its own dir and
-/// passes it to `launchApp` twice, as dock-workspace's restart test does.)
-export async function launchFreshApp(
-  prefix = 'weftcut-e2e-',
-): Promise<{ app: ElectronApplication; page: Page }> {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
-  return launchApp({ userDataDir })
+/// Temp-dir lifecycle & default userData isolation.
+///
+/// Bare `launchApp()` mints a fresh, empty userData dir (mkdtemp under
+/// os.tmpdir()) for EVERY launch and registers the app below; the driver
+/// removes the dir once the app's close() resolves, and a process-exit sweep
+/// kills + cleans up whatever a spec forgot to close. Specs are therefore
+/// isolated from each other and from the developer's real WeftCut profile —
+/// layout mutations and autosaves can no longer leak through the OS-default
+/// userData, and the suite is safe to run with parallel workers.
+///
+/// A spec that must relaunch over the SAME userData (app-level state such as
+/// <userData>/workspaces.json surviving a restart) mints its own dir —
+/// `tmpDir('weftcut-e2e-')` — and passes it as `opts.userDataDir` on both
+/// launches. Caller-provided dirs are never removed by close(); tmpDir's own
+/// exit sweep still reaps them.
+///
+/// Set WEFTCUT_E2E_KEEP_TMP=1 to skip ALL dir removal (surviving apps are
+/// still killed) when debugging export outputs locally.
+const keepTmp = () => process.env.WEFTCUT_E2E_KEEP_TMP === '1'
+
+/// Live apps → the userData dir the driver minted for them (null when the
+/// caller passed their own — then the driver still kills on exit but never
+/// removes the dir).
+const liveApps = new Map<ElectronApplication, string | null>()
+/// Every dir minted by tmpDir(), swept at process exit.
+const mintedTmpDirs = new Set<string>()
+
+function removeDir(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // Best effort — a dying process may still hold a file inside.
+  }
 }
 
+/// Mint a fresh temp dir under os.tmpdir() with `prefix`, registered for
+/// removal at process exit. Specs use this for project-parent dirs and export
+/// outputs they don't otherwise manage.
+export function tmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  mintedTmpDirs.add(dir)
+  return dir
+}
+
+/// Wrap an app's close(): once the original close settles, remove the
+/// userData dir the driver minted for it and unregister. Idempotent — every
+/// call after the first returns the same promise, so double close is safe.
+function wrapClose(app: ElectronApplication): () => Promise<void> {
+  const original = app.close.bind(app)
+  let closing: Promise<void> | null = null
+  return () => {
+    closing ??= (async () => {
+      try {
+        await original()
+      } finally {
+        // finally: a rejected close means the process already died — the dir
+        // is still safe (and still ours) to remove.
+        const dir = liveApps.get(app) ?? null
+        liveApps.delete(app)
+        if (dir && !keepTmp()) removeDir(dir)
+      }
+    })()
+    return closing
+  }
+}
+
+/// Best-effort sweep when the Playwright worker exits: kill any app a spec
+/// forgot to close, then remove every dir the driver minted. 'exit' handlers
+/// must be synchronous, so this is kill() + rmSync, not an awaited close().
+process.on('exit', () => {
+  for (const [app, dir] of liveApps) {
+    try {
+      app.process()?.kill()
+    } catch {
+      // Already gone.
+    }
+    if (dir && !keepTmp()) removeDir(dir)
+  }
+  if (!keepTmp()) for (const dir of mintedTmpDirs) removeDir(dir)
+})
+
+/// Launch the built app over an isolated userData dir. With no
+/// `opts.userDataDir` (the default — what almost every spec wants) the driver
+/// mints a fresh empty dir for this launch and removes it on close, so bare
+/// `launchApp()` boots the pristine built-in Editing baseline, never touches
+/// the developer's real profile or another spec's state, and is safe under
+/// parallel workers. Pass an explicit `opts.userDataDir` only for a
+/// same-userData relaunch: mint the dir with `tmpDir` and hand it to both
+/// launches (see the lifecycle comment above).
 export async function launchApp(
   opts: { userDataDir?: string; locale?: string; env?: Record<string, string> } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
@@ -35,11 +109,23 @@ export async function launchApp(
   // Chromium derives navigator.language from the process locale despite
   // --lang, so set both inputs for deterministic accessible names.
   const args = [`--lang=${locale}`]
-  if (opts.userDataDir) args.push(`--user-data-dir=${opts.userDataDir}`)
+  // Default isolation: with no caller-provided userDataDir, mint a fresh one
+  // for this launch (registered below; removed on close / at process exit).
+  // A spec that relaunches over the SAME userData passes its own dir, which
+  // the driver never removes.
+  let mintedUserDataDir: string | null = null
+  if (opts.userDataDir) {
+    args.push(`--user-data-dir=${opts.userDataDir}`)
+  } else {
+    mintedUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-e2e-'))
+    args.push(`--user-data-dir=${mintedUserDataDir}`)
+  }
   args.push(MAIN)
   const app = await electron.launch({
-    // A fixed `--user-data-dir` lets a spec relaunch over the same userData so
-    // app-level state (e.g. <userData>/workspaces.json) survives a restart.
+    // `--user-data-dir` is always passed: the caller's fixed dir (a spec that
+    // relaunches over the SAME userData, so app-level state such as
+    // <userData>/workspaces.json survives a restart) or the per-launch dir
+    // minted above.
     args,
     // The elevated-run notice is a modal dialog; suppress it so it can't block the
     // (often elevated) e2e/CI Electron process. `env` replaces process.env, so
@@ -56,9 +142,18 @@ export async function launchApp(
       ...(opts.env ?? {}),
     } as Record<string, string>,
   })
-  const page = await app.firstWindow({ timeout: 60_000 })
-  await page.waitForLoadState('domcontentloaded')
-  return { app, page }
+  liveApps.set(app, mintedUserDataDir)
+  app.close = wrapClose(app)
+  try {
+    const page = await app.firstWindow({ timeout: 60_000 })
+    await page.waitForLoadState('domcontentloaded')
+    return { app, page }
+  } catch (e) {
+    // Boot failed before the caller got a page: close via the wrapper so the
+    // half-launched process and the minted userData dir don't leak.
+    await app.close().catch(() => {})
+    throw e
+  }
 }
 
 /// Wait until window.__weftcutTest[name] is a function (the hook surface mounts

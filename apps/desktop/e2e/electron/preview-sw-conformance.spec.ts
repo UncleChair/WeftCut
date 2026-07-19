@@ -1,10 +1,9 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
 // Runtime verification for the native software-decode ProRes preview
 // (Task 13 retarget: the collapsed engine model, ADR 0030). This is the ONE
@@ -26,8 +25,6 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } fr
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-sw-proj')
-const OUT_DIR = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-sw')
 
 // Composition + probe target. 500 ms @30 fps = source frame 15; the clip is
 // placed 1:1 at t=0 (src_in_us=0), so composition-time 500 ms maps to source
@@ -65,8 +62,8 @@ function parseSsimAll(stderr: string): number | null {
 test('preview-sw: Compositor uses the ffmpeg engine\'s software lane for the NativeSw-routed ProRes clip + SSIM (Task 8b runtime proof)', async () => {
   test.skip(!existsSync(PRORES), `ProRes fixture not found at ${PRORES} (set WEFTCUT_TEST_MEDIA)`)
   test.setTimeout(240_000)
-  mkdirSync(PROJECT_PARENT, { recursive: true })
-  mkdirSync(OUT_DIR, { recursive: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-proj-')
+  const OUT_DIR = tmpDir('weftcut-e2e-preview-sw-')
 
   const { app, page } = await launchApp()
   // Surface renderer console noise (warnings are findings per the task).
@@ -247,10 +244,10 @@ test('preview-sw: Compositor uses the ffmpeg engine\'s software lane for the Nat
   }
 })
 
-test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3)', async () => {
+test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3) @serial', async () => {
   test.skip(!existsSync(PRORES_4K), `4K ProRes bench fixture not found at ${PRORES_4K} (generate via e2e/scripts/gen-decode-bench-fixtures.mjs)`)
   test.setTimeout(240_000)
-  mkdirSync(PROJECT_PARENT, { recursive: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-proj-')
 
   const { app, page } = await launchApp()
   let toggledOn = false

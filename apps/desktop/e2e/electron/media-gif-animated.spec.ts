@@ -1,10 +1,9 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -15,7 +14,6 @@ const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../
 const GIF = path.resolve(MEDIA_DIR, 'test_1080p_10fps.gif')
 const FFPROBE = process.env.FFPROBE || 'ffprobe'
 const FFMPEG = process.env.FFMPEG || 'ffmpeg'
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-gif-proj')
 
 interface MediaEntry {
   id: string
@@ -32,14 +30,11 @@ interface LayerEntry {
 test.describe('animated gif is a looping Image (Electron)', () => {
   test.skip(!existsSync(GIF), `gif fixture not found at ${GIF} (run: cd apps/desktop/e2e && npm run fixtures)`)
 
-  test.beforeAll(() => {
-    mkdirSync(PROJECT_PARENT, { recursive: true })
-  })
-
   test('multi-frame gif classifies Image, has no proxy, and defaults to one native loop', async () => {
     test.setTimeout(120000)
     const { app, page } = await launchApp()
     try {
+      const PROJECT_PARENT = tmpDir('weftcut-e2e-gif-proj-')
       await newProject(page, {
         parentFolder: PROJECT_PARENT,
         name: 'e2e-gif-' + Date.now(),
@@ -76,6 +71,7 @@ test.describe('animated gif is a looping Image (Electron)', () => {
     test.setTimeout(120000)
     const { app, page } = await launchApp()
     try {
+      const PROJECT_PARENT = tmpDir('weftcut-e2e-gif-proj-')
       await newProject(page, {
         parentFolder: PROJECT_PARENT,
         name: 'e2e-gif-anim-' + Date.now(),
@@ -125,6 +121,7 @@ test.describe('animated gif is a looping Image (Electron)', () => {
     test.setTimeout(180000)
     const { app, page } = await launchApp()
     try {
+      const PROJECT_PARENT = tmpDir('weftcut-e2e-gif-proj-')
       await newProject(page, {
         parentFolder: PROJECT_PARENT,
         name: 'e2e-gif-export-' + Date.now(),

@@ -1,24 +1,19 @@
 import { test, expect } from '@playwright/test'
-import { existsSync, mkdirSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURE = path.resolve(__dirname, '../fixtures/media/test_chart_320x240.png')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-image-preview')
 
 test.describe('still image media preview', () => {
   test.skip(!existsSync(FIXTURE), `image fixture not found at ${FIXTURE} (run: cd apps/desktop/e2e && npm run fixtures)`)
 
-  test.beforeAll(() => {
-    mkdirSync(PROJECT_PARENT, { recursive: true })
-  })
-
   test('shows an imported image thumbnail and composites it in the live preview', async () => {
     const { app, page } = await launchApp()
     try {
+      const PROJECT_PARENT = tmpDir('weftcut-e2e-image-preview-')
       await newProject(page, {
         parentFolder: PROJECT_PARENT,
         name: 'e2e-image-preview-' + Date.now(),

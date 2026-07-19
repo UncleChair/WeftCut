@@ -1,21 +1,16 @@
-import { test, expect, _electron as electron } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
-import os from 'node:os'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+import { launchApp, tmpDir } from './helpers/driver'
 
 test('weftcut-media:// serves a local file with Range', async () => {
   // A 256-byte file of known content.
-  const tmp = path.join(os.tmpdir(), `wc-proto-${process.pid}.bin`)
+  const tmp = path.join(tmpDir('wc-proto-'), 'payload.bin')
   const buf = Buffer.alloc(256)
   for (let i = 0; i < 256; i++) buf[i] = i
   fs.writeFileSync(tmp, buf)
 
-  const app = await electron.launch({ args: [path.resolve(__dirname, '../../out/main/index.js')] })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  const { app, page } = await launchApp()
 
   const url = `weftcut-media://localhost/${encodeURIComponent(tmp)}`
   const result = await page.evaluate(async (u) => {
@@ -33,5 +28,4 @@ test('weftcut-media:// serves a local file with Range', async () => {
   expect(result.bytes).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
 
   await app.close()
-  fs.rmSync(tmp, { force: true })
 })

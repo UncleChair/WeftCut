@@ -1,8 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { invokeCmd, launchApp, launchFreshApp, newProject, waitForHook } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 
 // Role Gain audition — renders the REAL preview Role-gain fold
 // (`auditionedRoleGainLinear` → GainNode) in an OfflineAudioContext and checks
@@ -68,11 +65,12 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
   let workspace: string
 
   test.beforeAll(async () => {
-    // Fresh userData: this block reopens the normally-closed Role Mixer Panel,
-    // which the app autosaves — a shared userData would leak it into the
-    // dock-workspace baseline specs that assert the default six-Panel set.
-    ;({ app, page } = await launchFreshApp('weftcut-mixer-data-'))
-    workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-mixer-'))
+    // This block reopens the normally-closed Role Mixer Panel, which the app
+    // autosaves — the bare launchApp()'s per-launch throwaway userData keeps
+    // that layout mutation from leaking into the dock-workspace baseline specs
+    // that assert the default six-Panel set.
+    ;({ app, page } = await launchApp())
+    workspace = tmpDir('weftcut-mixer-')
     await newProject(page, {
       parentFolder: workspace,
       name: 'role-mixer',
@@ -86,7 +84,6 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
   })
   test.afterAll(async () => {
     await app?.close()
-    fs.rmSync(workspace, { recursive: true, force: true })
   })
 
   const panel = () => page.locator('[data-panel-kind="role-mixer"]')

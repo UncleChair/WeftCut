@@ -1,13 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   invokeCmd,
-  launchFreshApp,
+  launchApp,
   newProject,
+  tmpDir,
   waitForHook,
 } from "./helpers/driver";
 
@@ -22,7 +22,7 @@ const SRT_PATH = path.resolve(__dirname, "../fixtures/subtitles/overlapping.srt"
 // resource continuity across the dock op matrix, and the invariant that layout
 // mutations never touch the Project or its undo history.
 //
-// Every test launches over a fresh, empty userData (launchFreshApp) so it boots
+// Every test launches over a fresh, empty userData (bare launchApp()) so it boots
 // the pristine built-in Editing baseline; the app-level Workspace document
 // otherwise persists layout across launches and would leak between specs.
 //
@@ -121,13 +121,13 @@ const viewMenuTrigger = (page: Page) => page.locator(".menu-trigger").nth(2);
 const CLOSE_ACTIVE = /Close Active Panel|关闭活动面板/;
 
 async function setupEditor(page: Page, name: string): Promise<void> {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), `weftcut-${name}-proj-`));
+  const parent = tmpDir(`weftcut-${name}-proj-`);
   await newProject(page, { parentFolder: parent, name, canvas: CANVAS });
   await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
 }
 
 test("focus cycles Panels in both directions and maximize/restore leaves the Dock Tree unchanged", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-focus-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-focus");
 
@@ -181,7 +181,7 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
 });
 
 test("closing every Panel shows the recovery view, and Open Panel + Reset restore the workspace", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-empty-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-empty");
 
@@ -223,7 +223,7 @@ test("closing every Panel shows the recovery view, and Open Panel + Reset restor
 });
 
 test("Reset Workspace atomically replaces a populated arrangement", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-reset-populated-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-reset-populated");
 
@@ -256,7 +256,7 @@ test("Reset Workspace atomically replaces a populated arrangement", async () => 
 });
 
 test("dragging a tab past another reorders it within the multi-Panel group", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-tabreorder-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-tabreorder");
 
@@ -287,7 +287,7 @@ test("dragging a tab past another reorders it within the multi-Panel group", asy
 });
 
 test("an edge drop splits a Panel into its own group beside the target", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-split-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-split");
 
@@ -341,7 +341,7 @@ test("an edge drop splits a Panel into its own group beside the target", async (
 });
 
 test("Preview keeps its resource identity through maximize, restore, and a dock move", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-preview-matrix-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-preview-matrix");
     await invokeCmd(page, "add_color_layer", { tStartUs: 0, durationUs: 3_000_000 });
@@ -396,7 +396,7 @@ test("Preview keeps its resource identity through maximize, restore, and a dock 
 });
 
 test("Workspace mutations never change Project undo depth, and a business edit adds exactly one entry", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-undo-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-undo");
 
@@ -457,7 +457,7 @@ test("Workspace mutations never change Project undo depth, and a business edit a
 });
 
 test("selection and business Panels keep working after a Panel move and a Workspace switch", async () => {
-  const { app, page } = await launchFreshApp("weftcut-dock-xpanel-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-xpanel");
 
@@ -561,7 +561,7 @@ test("selection and business Panels keep working after a Panel move and a Worksp
 
 test("Caption cue navigation still selects and seeks after the Caption Panel moves", async () => {
   test.skip(!fs.existsSync(SRT_PATH), `subtitle fixture missing: ${SRT_PATH}`);
-  const { app, page } = await launchFreshApp("weftcut-dock-caption-move-");
+  const { app, page } = await launchApp();
   try {
     await setupEditor(page, "dock-caption-move");
 

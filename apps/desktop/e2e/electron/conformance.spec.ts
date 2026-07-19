@@ -1,23 +1,20 @@
 import { test, expect } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 // analyze() shells `cargo run --bin media_conformance` — engine-agnostic; reused as-is.
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport } from './helpers/driver'
+import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps.mp4')
-const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-electron-out.mp4')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-electron-proj')
 
 test('H.264 import -> export stays frame-aligned with low loss (Electron)', async () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
   test.setTimeout(220000)
-  mkdirSync(PROJECT_PARENT, { recursive: true })
-  rmSync(OUTPUT, { force: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-proj-')
+  const OUTPUT = path.join(tmpDir('weftcut-e2e-out-'), 'out.mp4')
 
   const { app, page } = await launchApp()
   try {

@@ -1,10 +1,9 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
 // Phase-2 Plan A conformance for the non-ProRes blind-spot families that CAN be
 // synthesized: DNxHR (intra) and MPEG-2 (long-GOP). ProRes stays proven in
@@ -18,8 +17,6 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } fr
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BENCH_DIR = path.resolve(__dirname, '../fixtures/decode-bench')
-const OUT_DIR = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-sw-families')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-sw-families-proj')
 const CANVAS = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
 const SSIM_FLOOR = 0.98
 
@@ -44,8 +41,8 @@ interface FamilyCase {
 async function runFamilyConformance(c: FamilyCase) {
   test.skip(!existsSync(c.fixture), `${c.label} fixture not found at ${c.fixture} — run gen-decode-bench-fixtures.mjs`)
   test.setTimeout(240_000)
-  mkdirSync(PROJECT_PARENT, { recursive: true })
-  mkdirSync(OUT_DIR, { recursive: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-families-proj-')
+  const OUT_DIR = tmpDir('weftcut-e2e-preview-sw-families-')
 
   const { app, page } = await launchApp()
   let toggledOn = false

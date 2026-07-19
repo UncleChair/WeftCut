@@ -1,13 +1,11 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, driveExport, waitForHook } from './helpers/driver'
+import { launchApp, newProject, driveExport, waitForHook, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-export-repeat-proj')
 
 // REGRESSION GATE for the export-Worker dropped-ready wedge (runExport.ts
 // `workerReady` latch). Two back-to-back clip exports in ONE app session, a
@@ -57,7 +55,6 @@ test.describe('repeat export in one session (Electron)', () => {
       !CLIPS.every((c) => existsSync(sourceFor(c))),
       'media fixtures not present (run `npm run fixtures`)',
     )
-    mkdirSync(PROJECT_PARENT, { recursive: true })
     ;({ app, page } = await launchApp())
     await waitForHook(page, 'newProjectAndEnter')
     await installSlowFontFetch(page, 500)
@@ -68,10 +65,10 @@ test.describe('repeat export in one session (Electron)', () => {
 
   test('two back-to-back clip exports both complete', async () => {
     test.setTimeout(240000)
+    const PROJECT_PARENT = tmpDir('weftcut-e2e-export-repeat-proj-')
     for (const [i, clip] of CLIPS.entries()) {
       const n = i + 1
-      const out = path.resolve(os.tmpdir(), `weftcut-e2e-export-repeat-${n}.mp4`)
-      rmSync(out, { force: true })
+      const out = path.join(tmpDir('weftcut-e2e-export-repeat-out-'), `export-repeat-${n}.mp4`)
       await newProject(page, {
         parentFolder: PROJECT_PARENT,
         name: `e2e-export-repeat-${n}-` + Date.now(),

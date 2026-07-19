@@ -101,7 +101,7 @@ async function runHwFallbackProbe(page: Page, count: number): Promise<HwFallback
   )) as HwFallbackProbeResult
 }
 
-test.describe('ffmpeg engine hardware lane preview presents frames in order (Electron)', () => {
+test.describe('ffmpeg engine hardware lane preview presents frames in order (Electron) @serial', () => {
   test.skip(
     process.env.WEFTCUT_DECODE_E2E !== '1',
     'ffmpeg hardware-lane order guard is local-only (needs the native-decode component + a GPU that d3d11va-decodes HEVC); set WEFTCUT_DECODE_E2E=1 to run',

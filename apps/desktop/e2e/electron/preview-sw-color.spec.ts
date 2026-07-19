@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
 // Saturated-chart color gate for the native software-decode PREVIEW lane
 // (policy ADR 0032). The preview twin of export-prores-fidelity's Gate A: a
@@ -34,7 +33,6 @@ const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../
 const CHART_709 = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const CHART_601 = path.resolve(MEDIA_DIR, 'test_1080p_color_601ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-sw-color-proj')
 
 const CANVAS = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000 // mid-chart; the chart is static, any decoded frame shows it
@@ -74,7 +72,7 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
   test.skip(!existsSync(fixture), `${label} chart fixture not found at ${fixture} (npm run fixtures)`)
   test.skip(!existsSync(MANIFEST), `color manifest not found at ${MANIFEST} (npm run fixtures)`)
   test.setTimeout(240_000)
-  mkdirSync(PROJECT_PARENT, { recursive: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-color-proj-')
   const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as {
     width: number
     height: number

@@ -1,9 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-// ESM-safe __dirname (package.json has "type": "module").
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+import { test, expect } from '@playwright/test'
+import { launchApp } from './helpers/driver'
 
 // Regression guard for the show-race bug: the main window was created with
 // `show: false` and `win.show()` was only called from a `ready-to-show`
@@ -12,10 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // `_electron` and `capturePage` both operate on hidden windows, so no other
 // gate exercises actual window visibility. This one does.
 test('main window becomes visible after launch', async () => {
-  const app = await electron.launch({
-    args: [path.resolve(__dirname, '../../out/main/index.js')],
-  })
-  await app.firstWindow()
+  const { app } = await launchApp()
 
   // show() may lag first paint; poll the main process for up to ~5s.
   let visible = false

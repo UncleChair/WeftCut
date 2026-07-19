@@ -14,14 +14,11 @@
 // we swallow and retry per the documented e2e gotcha.
 
 import { test, expect } from '@playwright/test'
-import os from 'node:os'
-import path from 'node:path'
-import { launchApp, newProject, waitForHook } from './helpers/driver'
-
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-proj')
+import { launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
 
 test('motif live preview: accent pixels reach the Pixi compositor via CDP', async () => {
   test.setTimeout(120_000)
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-proj-')
 
   const { app, page } = await launchApp()
   try {

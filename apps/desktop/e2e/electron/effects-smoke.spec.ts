@@ -1,10 +1,8 @@
 import { test, expect } from '@playwright/test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import os from 'node:os'
-import fs from 'node:fs'
 import path from 'node:path'
-import { launchApp, newProject, invokeCmd, summary, driveExport } from './helpers/driver'
+import { launchApp, newProject, invokeCmd, summary, driveExport, tmpDir } from './helpers/driver'
 
 interface McpInfo {
   url: string
@@ -78,7 +76,7 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
 
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-effects-smoke-'))
+  const parent = tmpDir('weftcut-effects-smoke-')
   await newProject(page, {
     parentFolder: parent,
     name: 'effects-smoke',
@@ -192,7 +190,7 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
   test.setTimeout(180_000)
   const { app, page } = await launchApp()
 
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-motif-effects-'))
+  const parent = tmpDir('weftcut-motif-effects-')
   await newProject(page, {
     parentFolder: parent,
     name: 'motif-effects',
@@ -297,7 +295,7 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
 
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-effects-ui-'))
+  const parent = tmpDir('weftcut-effects-ui-')
   await newProject(page, {
     parentFolder: parent,
     name: 'effects-ui',
@@ -326,6 +324,10 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
 
   // Select the layer so the inspector renders its EffectsSection.
   await page.evaluate((id) => (window as any).__weftcutTest.revealLayer({ layerId: id }), layerId)
+  // Bring the Effect tab forward: the pristine baseline docks it inactive behind
+  // Attribute, which leaves effect-add rendered but hidden. (This test used to
+  // pass only because a leaked shared-userData layout had the tab active.)
+  await page.locator('.weft-dock-tab-label', { hasText: 'Effect' }).click()
   // Wait for the panel to render before clicking Add (guards the selection→render race).
   await page.getByTestId('effect-add').waitFor({ state: 'visible' })
 
@@ -405,7 +407,7 @@ test('effects: chromakey keys out a green color layer; viewMatte previews the ma
   )
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-chromakey-smoke-'))
+  const parent = tmpDir('weftcut-chromakey-smoke-')
   await newProject(page, {
     parentFolder: parent,
     name: 'chromakey-smoke',

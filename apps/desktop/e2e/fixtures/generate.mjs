@@ -1,8 +1,9 @@
 // Deterministic media-fixture producer. This is intentionally dependency-free:
 // Node writes the small source charts/manifests and ffmpeg produces the media.
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 
@@ -165,15 +166,38 @@ function encodeChartPng(width, height, patches) {
   ])
 }
 
+/// Rename a uniquely-named temp sibling into place. POSIX rename is atomic, and
+/// on Windows it also works for an absent dest — but Windows refuses to replace
+/// a dest another process holds open. A dest that exists by then was published
+/// through this same rename, so it is already complete and the redundant temp
+/// can simply be dropped.
+function renameIntoPlace(tempPath, destPath) {
+  try {
+    renameSync(tempPath, destPath)
+  } catch (error) {
+    if (!existsSync(destPath)) throw error
+  } finally {
+    rmSync(tempPath, { force: true })
+  }
+}
+
+/// Write via a unique temp sibling + rename, so a racing (or crashing)
+/// generator can never leave a torn file at the final path.
+function writeFileAtomic(destPath, data) {
+  const tempPath = `${destPath}.tmp-${process.pid}-${randomUUID()}`
+  writeFileSync(tempPath, data)
+  renameIntoPlace(tempPath, destPath)
+}
+
 function writeChartPng(outputDir, name, width, height) {
   const patches = colorPatches(width, height)
-  writeFileSync(path.join(outputDir, name), encodeChartPng(width, height, patches))
+  writeFileAtomic(path.join(outputDir, name), encodeChartPng(width, height, patches))
   return patches
 }
 
 function writeManifest(outputDir, name, width, height, patches) {
   const manifest = { width, height, patches }
-  writeFileSync(path.join(outputDir, name), `${JSON.stringify(manifest, null, 2)}\n`)
+  writeFileAtomic(path.join(outputDir, name), `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
 function writeColorChart(outputDir, width, height) {
@@ -197,6 +221,21 @@ export function runFfmpeg(args, { cwd = process.cwd(), spawn = spawnSync } = {})
   if (result.status !== 0) {
     const suffix = result.signal ? `, signal ${result.signal}` : ''
     throw new Error(`ffmpeg failed (exit ${result.status ?? 'unknown'}${suffix})`)
+  }
+}
+
+/// Wrap `run` so every recipe publishes its output atomically: the output file
+/// (always the last ffmpeg argument) is redirected to a unique temp sibling and
+/// renamed into place only after a successful run. Parallel generators then
+/// never see a torn media file at the final name; a crash just leaks the
+/// uniquely-named temp next to it, which is harmless.
+function atomicOutputs(run, outputDir) {
+  return (args, options = {}) => {
+    const cwd = options.cwd ?? outputDir
+    const output = args.at(-1)
+    const temp = `${output}.tmp-${process.pid}-${randomUUID()}`
+    run([...args.slice(0, -1), temp], options)
+    renameIntoPlace(path.join(cwd, temp), path.join(cwd, output))
   }
 }
 
@@ -279,7 +318,8 @@ function generateAudioTones(entry, outputDir, run) {
   const args = ['-y', '-hide_banner', '-loglevel', 'error']
   const concatInputs = appendToneInputs(args, seconds)
   const withCover = format === 'mp3'
-  const cover = 'tones_cover_tmp.png'
+  // Unique per process: a racing generator's cleanup must not delete our input.
+  const cover = `tones_cover_${process.pid}_${randomUUID()}.png`
 
   if (withCover) {
     writeChartPng(outputDir, cover, 320, 240)
@@ -627,13 +667,14 @@ export function generateFixture(entry, {
   fontOptions,
 } = {}) {
   mkdirSync(outputDir, { recursive: true })
+  const atomicRun = atomicOutputs(run, outputDir)
 
-  if (entry.imageset) return generateImageSet(outputDir, run)
-  if (entry.audiotones) return generateAudioTones(entry, outputDir, run)
-  if (entry.audioTiming) return generateAudioTiming(entry, outputDir, run)
-  if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, run)
-  if (entry.color) return generateColor(entry, outputDir, run)
-  if (entry.colorProres) return generateColorProres(entry, outputDir, run)
+  if (entry.imageset) return generateImageSet(outputDir, atomicRun)
+  if (entry.audiotones) return generateAudioTones(entry, outputDir, atomicRun)
+  if (entry.audioTiming) return generateAudioTiming(entry, outputDir, atomicRun)
+  if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, atomicRun)
+  if (entry.color) return generateColor(entry, outputDir, atomicRun)
+  if (entry.colorProres) return generateColorProres(entry, outputDir, atomicRun)
   if (
     entry.gradient
     || entry.gradientH264
@@ -641,9 +682,9 @@ export function generateFixture(entry, {
     || entry.gradientAv1
     || entry.gradientH2644k
   ) {
-    return generateGradient(entry, outputDir, run)
+    return generateGradient(entry, outputDir, atomicRun)
   }
-  return generateVideo(entry, outputDir, run, fontOptions)
+  return generateVideo(entry, outputDir, atomicRun, fontOptions)
 }
 
 const VALUE_FLAGS = new Map([

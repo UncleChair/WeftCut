@@ -1,14 +1,11 @@
 import { expect, test } from "@playwright/test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import {
   invokeCmd,
   launchApp,
-  launchFreshApp,
   newProject,
   summary,
+  tmpDir,
 } from "./helpers/driver";
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
@@ -30,9 +27,9 @@ interface WorkspaceDocument {
 test("built-in Editing workspace docks every default Panel at NLE proportions", async () => {
   // Fresh userData: the built-in baseline assertions require the pristine
   // Editing layout, not whatever a previous default-userData spec autosaved.
-  const { app, page } = await launchFreshApp("weftcut-dock-proportions-");
+  const { app, page } = await launchApp();
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-"));
+    const parent = tmpDir("weftcut-dock-");
     await newProject(page, {
       parentFolder: parent,
       name: "dock-workspace",
@@ -102,9 +99,9 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
 test("closing Preview destroys its resources and reopening creates a new instance", async () => {
   // Fresh userData: this test reopens Preview into its remembered spot, which
   // requires the pristine built-in layout rather than a leaked prior arrangement.
-  const { app, page } = await launchFreshApp("weftcut-dock-life-");
+  const { app, page } = await launchApp();
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-life-"));
+    const parent = tmpDir("weftcut-dock-life-");
     await newProject(page, {
       parentFolder: parent,
       name: "dock-preview-lifecycle",
@@ -162,9 +159,9 @@ test("closing Preview destroys its resources and reopening creates a new instanc
 test("hidden Preview keeps clock resources alive while presentation sleeps", async () => {
   // Fresh userData: the test drags the Effect tab onto Preview from the known
   // built-in positions; a leaked layout would move those drag targets.
-  const { app, page } = await launchFreshApp("weftcut-dock-hide-");
+  const { app, page } = await launchApp();
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-hide-"));
+    const parent = tmpDir("weftcut-dock-hide-");
     await newProject(page, {
       parentFolder: parent,
       name: "dock-preview-hidden",
@@ -263,10 +260,10 @@ test("hidden Preview keeps clock resources alive while presentation sleeps", asy
 test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tabs never reorder Effects", async () => {
   // Own userData dir: the test moves Panels, and the autosaved current layout
   // must neither read from nor pollute the shared default userData.
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-fx-data-"));
+  const userDataDir = tmpDir("weftcut-dock-fx-data-");
   const { app, page } = await launchApp({ userDataDir });
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-dock-fx-"));
+    const parent = tmpDir("weftcut-dock-fx-");
     await newProject(page, {
       parentFolder: parent,
       name: "dock-effect-reorder",
@@ -372,10 +369,10 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
 test("View menu creates a custom Workspace from the current arrangement and switches without a save prompt", async () => {
   // Own userData dir: this test mutates the app-level Workspace document, so it
   // must not read from or pollute the shared default userData.
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-ws-ui-data-"));
+  const userDataDir = tmpDir("weftcut-ws-ui-data-");
   const { app, page } = await launchApp({ userDataDir });
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-ws-ui-"));
+    const parent = tmpDir("weftcut-ws-ui-");
     await newProject(page, {
       parentFolder: parent,
       name: "workspace-ui",
@@ -427,7 +424,7 @@ test("View menu creates a custom Workspace from the current arrangement and swit
 });
 
 test("named Workspaces, active selection, and baselines survive a restart", async () => {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-ws-restart-"));
+  const userDataDir = tmpDir("weftcut-ws-restart-");
   const layout = (kind: string) => ({
     version: 1,
     empty: false,
@@ -447,7 +444,7 @@ test("named Workspaces, active selection, and baselines survive a restart", asyn
   const first = await launchApp({ userDataDir });
   let cutId: string;
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "weftcut-ws-r1-"));
+    const parent = tmpDir("weftcut-ws-r1-");
     await newProject(first.page, {
       parentFolder: parent,
       name: "workspace-restart",

@@ -1,13 +1,8 @@
-import { test, expect, _electron as electron } from '@playwright/test'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+import { test, expect } from '@playwright/test'
+import { launchApp } from './helpers/driver'
 
 test('path:join and path:tempDir round-trip through the bridge', async () => {
-  const app = await electron.launch({ args: [path.resolve(__dirname, '../../out/main/index.js')] })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  const { app, page } = await launchApp()
 
   const joined = await page.evaluate(() =>
     (window as any).api.path.join(['a', 'b', 'c.txt']),

@@ -1,11 +1,10 @@
 import { test, expect, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport } from './helpers/driver'
+import { launchApp, tmpDir, newProject, driveExport } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -15,8 +14,6 @@ const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps.mp4')
 // 10-bit H.264 gradient ramp source — proves >256 luma levels survive the
 // f16/WebGL2 + yuv420p10le pack + native IPC video sink + ffmpeg HEVC Main10 chain.
 const SOURCE_10BIT = path.resolve(MEDIA_DIR, 'test_1080p_gradient10_h264.mp4')
-
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-codecs-proj')
 
 // Repo root (e2e/electron → apps/desktop → repo root = 3 levels up from __dirname).
 const REPO = path.resolve(__dirname, '..', '..', '..', '..')
@@ -157,7 +154,6 @@ function probeVideoStream(file: string, entries: string): Record<string, string>
 // Tests
 // ---------------------------------------------------------------------------
 test.describe('multi-codec export smoke (Electron)', () => {
-  test.beforeAll(() => mkdirSync(PROJECT_PARENT, { recursive: true }))
 
   // -------------------------------------------------------------------------
   // AV1, pinned `encoderEngine:'webcodecs'` (WebCodecs sw encode → ffmpeg
@@ -174,13 +170,12 @@ test.describe('multi-codec export smoke (Electron)', () => {
   test('AV1 export produces an aligned file (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(300000)
-    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-av1.mp4')
-    rmSync(OUTPUT, { force: true })
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'av1.mp4')
 
     const { app, page } = await launchApp()
     try {
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-codecs-proj-'),
         name: 'e2e-av1-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
@@ -223,13 +218,12 @@ test.describe('multi-codec export smoke (Electron)', () => {
   test('HEVC export produces an aligned file (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(300000)
-    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-hevc.mp4')
-    rmSync(OUTPUT, { force: true })
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'hevc.mp4')
 
     const { app, page } = await launchApp()
     try {
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-codecs-proj-'),
         name: 'e2e-hevc-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
@@ -287,13 +281,12 @@ test.describe('multi-codec export smoke (Electron)', () => {
       `10-bit source not found at ${SOURCE_10BIT} (set WEFTCUT_TEST_MEDIA or run generate-fixtures.mjs)`,
     )
     test.setTimeout(600000)
-    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-10bit.mp4')
-    rmSync(OUTPUT, { force: true })
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), '10bit.mp4')
 
     const { app, page } = await launchApp()
     try {
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-codecs-proj-'),
         name: 'e2e-10bit-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
@@ -350,13 +343,12 @@ test.describe('multi-codec export smoke (Electron)', () => {
   test('pinned-native H.264 export is conformant with explicit color tags (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(300000)
-    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-native-h264.mp4')
-    rmSync(OUTPUT, { force: true })
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'native-h264.mp4')
 
     const { app, page } = await launchApp()
     try {
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-codecs-proj-'),
         name: 'e2e-native-h264-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
@@ -405,13 +397,12 @@ test.describe('multi-codec export smoke (Electron)', () => {
   test('ProRes 422 export lands in MOV with 10-bit 4:2:2 (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(600000)
-    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-prores.mov')
-    rmSync(OUTPUT, { force: true })
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'prores.mov')
 
     const { app, page } = await launchApp()
     try {
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-codecs-proj-'),
         name: 'e2e-prores-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
@@ -452,13 +443,12 @@ test.describe('multi-codec export smoke (Electron)', () => {
   test('DNxHR SQ export lands in MOV as 8-bit 4:2:2 (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(300000)
-    const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-dnxhr.mov')
-    rmSync(OUTPUT, { force: true })
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'dnxhr.mov')
 
     const { app, page } = await launchApp()
     try {
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-codecs-proj-'),
         name: 'e2e-dnxhr-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })

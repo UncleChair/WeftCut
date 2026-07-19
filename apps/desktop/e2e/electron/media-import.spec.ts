@@ -1,7 +1,8 @@
-import { test, expect, _electron as electron } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { launchApp } from './helpers/driver'
 
 // ESM-safe __dirname equivalent (package.json has "type": "module")
 const __filename = fileURLToPath(import.meta.url)
@@ -15,9 +16,7 @@ const FIXTURE = path.resolve(__dirname, '../../e2e/fixtures/media/test_chart_320
 test('import_media adds media to the pool and registers job events', async () => {
   test.skip(!fs.existsSync(FIXTURE), `fixture missing: ${FIXTURE} (run: cd apps/desktop/e2e && npm run fixtures)`)
 
-  const app = await electron.launch({ args: [path.resolve(__dirname, '../../out/main/index.js')] })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  const { app, page } = await launchApp()
 
   // Subscribe to media:job_* events BEFORE importing so we catch the burst.
   await page.evaluate(() => {

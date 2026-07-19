@@ -1,11 +1,10 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, waitForHook, driveExport, importAndPlaceMedia } from './helpers/driver'
+import { launchApp, newProject, waitForHook, driveExport, importAndPlaceMedia, tmpDir } from './helpers/driver'
 
 // Runtime smoke for the export-range + audio-settings feature, end-to-end
 // through the real renderer + real ffmpeg mux. Reuses the per-second
@@ -15,8 +14,6 @@ import { launchApp, newProject, waitForHook, driveExport, importAndPlaceMedia } 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const fixture = (name: string) => path.resolve(MEDIA_DIR, name)
-const tmpOut = (name: string) => path.resolve(os.tmpdir(), name)
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-range-audio-proj')
 
 // The 30fps tone-marker fixture (shared with audio.spec.ts). Output fps follows
 // the 30fps composition, so source second k -> tone F_k = 400 + 120k.
@@ -123,24 +120,25 @@ test.describe('export range + audio settings (Electron)', () => {
 
   test.beforeAll(async () => {
     test.skip(!existsSync(SOURCE), `tone source not found at ${SOURCE} (run \`npm run fixtures\`)`)
-    mkdirSync(PROJECT_PARENT, { recursive: true })
     ;({ app, page } = await launchApp())
   })
   test.afterAll(async () => {
     await app?.close()
   })
 
-  /// Boot a fresh 30fps project at `<PROJECT_PARENT>/<namePrefix><now>/` and
-  /// wait for the editor hooks to mount. Returns the project directory.
+  /// Boot a fresh 30fps project under its own throwaway parent dir
+  /// (`<tmpDir>/<namePrefix><now>/`) and wait for the editor hooks to mount.
+  /// Returns the project directory.
   async function bootProject(namePrefix: string): Promise<string> {
     const name = namePrefix + Date.now()
+    const parent = tmpDir('weftcut-e2e-range-audio-proj-')
     await newProject(page, {
-      parentFolder: PROJECT_PARENT,
+      parentFolder: parent,
       name,
       canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
     })
     await waitForHook(page, 'exportClip')
-    return path.join(PROJECT_PARENT, name)
+    return path.join(parent, name)
   }
 
   /// Boot a fresh project, drive exportClip, and return `{ perf }` — the
@@ -173,8 +171,7 @@ test.describe('export range + audio settings (Electron)', () => {
     // Window [1s, 3s): 2 s at 30fps = 60 output frames. Audio output-second 0
     // should carry the source's 1 s tone (520 Hz), second 1 the 2 s tone
     // (640 Hz) — proving the audio was trimmed to the In point and rebased to 0.
-    const output = tmpOut('weftcut-e2e-range.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-range-'), 'range.mp4')
 
     const { perf } = await bootAndExport({ output, range: { startUs: 1_000_000, endUs: 3_000_000 } })
 
@@ -191,8 +188,7 @@ test.describe('export range + audio settings (Electron)', () => {
     test.setTimeout(240000)
     // Whole-clip export to MKV with Opus: exercises libopus encode -> .mka ->
     // stream-copy into .mkv end to end.
-    const output = tmpOut('weftcut-e2e-opus.mkv')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-opus-'), 'opus.mkv')
 
     await bootAndExport({ output, settings: { container: 'mkv', audio: { codec: 'opus' } } })
 
@@ -206,8 +202,7 @@ test.describe('export range + audio settings (Electron)', () => {
 
   test('mute export produces a video file with no audio track', async () => {
     test.setTimeout(240000)
-    const output = tmpOut('weftcut-e2e-mute.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-mute-'), 'mute.mp4')
 
     await bootAndExport({ output, settings: { audio: { include: false } } })
 
@@ -221,8 +216,7 @@ test.describe('export range + audio settings (Electron)', () => {
     // Whole-clip export with a 2 s keyframe interval. The WebCodecs path forces
     // a keyframe every round(fps×2) frames, so ffprobe should see keyframes
     // ~2 s apart — clearly not the 1 s default.
-    const output = tmpOut('weftcut-e2e-gop.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-gop-'), 'gop.mp4')
 
     await bootAndExport({ output, settings: { keyframeIntervalSec: 2 } })
 
@@ -246,8 +240,7 @@ test.describe('export range + audio settings (Electron)', () => {
     const WAV = fixture('test_tones_10s.wav')
     const MP3 = fixture('test_tones_10s.mp3')
     test.skip(!existsSync(WAV) || !existsSync(MP3), `tone fixtures not found under ${MEDIA_DIR}`)
-    const output = tmpOut('weftcut-e2e-range-conform.m4a')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-range-conform-'), 'range-conform.m4a')
 
     const projDir = await bootProject('e2e-range-conform-')
     // Documented cache layout (docs/audio.md): Cache/audio/{hash}.conform.
@@ -316,8 +309,7 @@ test.describe('export range + audio settings (Electron)', () => {
     // hwAccel:"software" forces the WebCodecs prefer-software H.264 path. Assert
     // it works in the real renderer and stays frame-aligned + faithful (SSIM).
     test.skip(!existsSync(VIDEO_SOURCE), `video source not found at ${VIDEO_SOURCE}`)
-    const output = tmpOut('weftcut-e2e-sw.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-sw-'), 'sw.mp4')
 
     await bootAndExport({ output, source: VIDEO_SOURCE, settings: { hwAccel: 'software' } })
 

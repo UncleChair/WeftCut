@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, invokeCmd, waitForHook } from './helpers/driver'
+import { launchApp, newProject, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
@@ -13,7 +12,7 @@ const MEDIA_PATH = path.resolve(__dirname, '../../fixtures/media/tiny.mp4')
 test('palette jumps the playhead to a caption found by content', async () => {
   const { app, page } = await launchApp()
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-palette-'))
+    const parent = tmpDir('weftcut-palette-')
     await newProject(page, { parentFolder: parent, name: 'palette', canvas: CANVAS })
     await invokeCmd(page, 'add_text_layer', {
       tStartUs: 2_000_000,
@@ -46,9 +45,14 @@ test('media search reopens and reveals the singleton Media Pool Panel', async ()
   test.skip(!fs.existsSync(MEDIA_PATH), `media fixture missing: ${MEDIA_PATH}`)
   test.setTimeout(60_000)
 
+  // Fresh userData: a reused profile's persisted locale in app_settings.json
+  // would beat the launch-time --lang and render the View menu in a non-English
+  // language, sinking the text filters below.
+  // This spec also closes a dock Panel, which must not leak into the shared
+  // profile's autosaved layout.
   const { app, page } = await launchApp()
   try {
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-palette-'))
+    const parent = tmpDir('weftcut-palette-')
     await newProject(page, { parentFolder: parent, name: 'palette-media', canvas: CANVAS })
 
     const mediaId = await invokeCmd<string>(page, 'import_media', { path: MEDIA_PATH })

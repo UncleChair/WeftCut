@@ -12,16 +12,16 @@
 //      add a layer → confirm red accent pixels on the live compositor →
 //      overwrite with green on disk → compositor turns green with no UI action.
 //
-// userData path: obtained from the running app via `app.evaluate()` — the
-// dev build uses `%APPDATA%\Electron`, NOT `%APPDATA%\@weftcut\desktop`.
+// userData path: minted per test via tmpDir() and handed to launchApp as an
+// explicit userDataDir — user motifs live under <userData>/motifs of that
+// isolated profile, never the developer's real one.
 
-import { test, expect, _electron as electron } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import type { ElectronApplication } from '@playwright/test'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, waitForHook, MAIN } from './helpers/driver'
+import { launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -157,15 +157,11 @@ test('motif authoring: write_motif_draft → install → list → delete', async
 test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', async () => {
   test.setTimeout(120_000)
   const STALE_ID = 'e2e-stale-' + Date.now()
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-stale-proj')
-  mkdirSync(PROJECT_PARENT, { recursive: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-stale-proj-')
+  // Isolated userData profile: user motifs are written under <userData>/motifs.
+  const userData = tmpDir('weftcut-e2e-stale-userdata-')
 
-  const appHandle = await electron.launch({ args: [MAIN] })
-  const page = await appHandle.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-
-  // Get the actual userData path from the running app.
-  const userData = await appHandle.evaluate(({ app: electronApp }) => electronApp.getPath('userData'))
+  const { app: appHandle, page } = await launchApp({ userDataDir: userData })
   const motifsRoot = path.join(userData, 'motifs')
   console.log('[stale] motifsRoot:', motifsRoot)
 
@@ -265,17 +261,13 @@ test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', as
 test('motif file-watch: disk-placed Motif renders; external rewrite hot-reloads', async () => {
   test.setTimeout(180_000)
   const WATCH_ID = 'e2e-watch-' + Date.now()
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-watch-proj')
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-watch-proj-')
   const RED = '#e02424'
   const GREEN = '#1ea64a'
-  mkdirSync(PROJECT_PARENT, { recursive: true })
+  // Isolated userData profile: user motifs are written under <userData>/motifs.
+  const userData = tmpDir('weftcut-e2e-watch-userdata-')
 
-  const appHandle = await electron.launch({ args: [MAIN] })
-  const page = await appHandle.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-
-  // Get the actual userData path from the running app.
-  const userData = await appHandle.evaluate(({ app: electronApp }) => electronApp.getPath('userData'))
+  const { app: appHandle, page } = await launchApp({ userDataDir: userData })
   const motifsRoot = path.join(userData, 'motifs')
   console.log('[watch] motifsRoot:', motifsRoot)
 

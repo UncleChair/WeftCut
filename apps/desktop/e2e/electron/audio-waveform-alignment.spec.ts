@@ -1,6 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { closeSync, existsSync, mkdirSync, openSync, readSync } from 'node:fs'
-import os from 'node:os'
+import { closeSync, existsSync, openSync, readSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -8,6 +7,7 @@ import {
   launchApp,
   newProject,
   summary,
+  tmpDir,
   type ProjectSummary,
 } from './helpers/driver'
 
@@ -92,14 +92,11 @@ function conformRmsAt(file: string, timeS: number, windowMs = 80): number {
 test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
-  const projectParent = path.resolve(os.tmpdir(), 'weftcut-e2e-waveform-align-proj')
-
   test.beforeAll(async () => {
     test.skip(
       !CASES.every((c) => existsSync(fixture(c.file))) || !existsSync(fixture(LONG_FIXTURE)),
       'audio timing fixtures not present (run `npm run fixtures`)',
     )
-    mkdirSync(projectParent, { recursive: true })
     ;({ app, page } = await launchApp())
   })
 
@@ -111,7 +108,7 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
     test(`${c.name}: known sound times agree after both background jobs load`, async () => {
       test.setTimeout(120_000)
       await newProject(page, {
-        parentFolder: projectParent,
+        parentFolder: tmpDir('weftcut-e2e-waveform-align-proj-'),
         name: `e2e-waveform-align-${c.startPtsUs}-${Date.now()}`,
         canvas: { width: 320, height: 180, fpsNum: 30, fpsDen: 1 },
       })
@@ -152,7 +149,7 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
   test('125 s sparse markers stay aligned across coarse waveform LODs', async () => {
     test.setTimeout(180_000)
     await newProject(page, {
-      parentFolder: projectParent,
+      parentFolder: tmpDir('weftcut-e2e-waveform-align-proj-'),
       name: `e2e-waveform-align-long-${Date.now()}`,
       canvas: { width: 320, height: 180, fpsNum: 30, fpsDen: 1 },
     })

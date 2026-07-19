@@ -1,16 +1,13 @@
 import { test, expect } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport } from './helpers/driver'
+import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps_eostail.mp4')
-const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-eostail-out.mp4')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-eostail-proj')
 
 // Final GOP spans chunks + 11s audio overhang vs 10s video — the EOS-tail
 // deadlock class. The export must COMPLETE (the deadlock pinned the counter),
@@ -18,8 +15,8 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-eostail-proj')
 test('EOS-tail export completes and keeps the drained tail frame-aligned (Electron)', async () => {
   test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
   test.setTimeout(220000)
-  mkdirSync(PROJECT_PARENT, { recursive: true })
-  rmSync(OUTPUT, { force: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-eostail-proj-')
+  const OUTPUT = path.join(tmpDir('weftcut-e2e-eostail-out-'), 'weftcut-e2e-eostail-out.mp4')
 
   const { app, page } = await launchApp()
   try {

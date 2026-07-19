@@ -1,6 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze, analyzeAudioEnvelope, analyzeAudioPan } from '../lib/analyze.mjs'
@@ -12,12 +11,12 @@ import {
   summary,
   importAndPlaceMedia,
   placeMediaLayer,
+  tmpDir,
 } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const fixture = (name: string) => path.resolve(MEDIA_DIR, name)
-const tmpOut = (name: string) => path.resolve(os.tmpdir(), name)
 
 // The 30fps tone-marker fixture (per-second tones F_k = 400 + 120k Hz), shared
 // by the envelope + role suites.
@@ -40,14 +39,11 @@ const CASES = FPS.flatMap((fps) => CONTAINERS.map((container) => ({ fps, contain
 test.describe('audio conformance matrix (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-audio-proj')
-
   test.beforeAll(async () => {
     test.skip(
       !CASES.some((c) => existsSync(fixture(`test_1080p_${c.fps}fps_audio.mp4`))),
       'audio matrix fixtures not present (run `npm run fixtures`)',
     )
-    mkdirSync(PROJECT_PARENT, { recursive: true })
     ;({ app, page } = await launchApp())
   })
   test.afterAll(async () => {
@@ -56,15 +52,16 @@ test.describe('audio conformance matrix (Electron)', () => {
 
   for (const c of CASES) {
     const source = fixture(`test_1080p_${c.fps}fps_audio.mp4`)
-    const output = tmpOut(`weftcut-e2e-audio-${c.fps}-${c.container}.${c.container}`)
-
     test(`${c.fps}fps source -> ${c.container} export stays aligned + synced + faithful`, async () => {
       test.skip(!existsSync(source), `audio source not found at ${source}`)
       test.setTimeout(240000)
-      rmSync(output, { force: true })
+      const output = path.join(
+        tmpDir('weftcut-e2e-audio-out-'),
+        `audio-${c.fps}-${c.container}.${c.container}`,
+      )
 
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-audio-proj-'),
         name: 'e2e-audio-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
@@ -107,14 +104,11 @@ const FORMATS = ['wav', 'mp3', 'flac', 'm4a', 'ogg']
 test.describe('audio-only format matrix (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-audiofmt-proj')
-
   test.beforeAll(async () => {
     test.skip(
       !FORMATS.some((fmt) => existsSync(fixture(`test_tones_10s.${fmt}`))),
       'audio-only format fixtures not present (run `npm run fixtures`)',
     )
-    mkdirSync(PROJECT_PARENT, { recursive: true })
     ;({ app, page } = await launchApp())
   })
   test.afterAll(async () => {
@@ -123,15 +117,13 @@ test.describe('audio-only format matrix (Electron)', () => {
 
   for (const fmt of FORMATS) {
     const source = fixture(`test_tones_10s.${fmt}`)
-    const output = tmpOut(`weftcut-e2e-audiofmt-${fmt}.m4a`)
-
     test(`${fmt} source -> audio export stays aligned + faithful`, async () => {
       test.skip(!existsSync(source), `audio source not found at ${source}`)
       test.setTimeout(220000)
-      rmSync(output, { force: true })
+      const output = path.join(tmpDir('weftcut-e2e-audiofmt-out-'), `${fmt}.m4a`)
 
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-audiofmt-proj-'),
         name: `e2e-audiofmt-${fmt}-` + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
@@ -171,11 +163,8 @@ test.describe('audio-only format matrix (Electron)', () => {
 test.describe('audio envelope conformance (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-audio-env-proj')
-
   test.beforeAll(async () => {
     test.skip(!existsSync(SOURCE), `tone source not found at ${SOURCE} (run \`npm run fixtures\`)`)
-    mkdirSync(PROJECT_PARENT, { recursive: true })
     ;({ app, page } = await launchApp())
   })
   test.afterAll(async () => {
@@ -189,7 +178,7 @@ test.describe('audio envelope conformance (Electron)', () => {
     settings?: Record<string, unknown>
   }) {
     await newProject(page, {
-      parentFolder: PROJECT_PARENT,
+      parentFolder: tmpDir('weftcut-e2e-audio-env-proj-'),
       name: 'e2e-audio-env-' + Date.now(),
       canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
     })
@@ -207,8 +196,7 @@ test.describe('audio envelope conformance (Electron)', () => {
     // 1 s linear fade-in: window RMS deltas vs the loudest window are
     // 20·log10(t) — −12.04 dB at 0.25 s, −6.02 at 0.5 s, −2.50 at 0.75 s, 0 in
     // the body. ±1.5 dB bound absorbs AAC + the −1 dB limiter ceiling.
-    const output = tmpOut('weftcut-e2e-fadein.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-audio-env-out-'), 'fadein.mp4')
     await bootAndExport({ output, audioPatches: [{ fade_in_us: 1_000_000 }] })
 
     const report = analyzeAudioEnvelope({
@@ -229,8 +217,7 @@ test.describe('audio envelope conformance (Electron)', () => {
     // −6 dB static gain + 1 s fade-out on a 10 s clip: the loudest window is the
     // body (uniform gain is delta-independent); the tail ramps down −6.02 dB at
     // 9.5 s, −12.04 dB at 9.75 s.
-    const output = tmpOut('weftcut-e2e-fadeout.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-audio-env-out-'), 'fadeout.mp4')
     await bootAndExport({ output, audioPatches: [{ gain_db: -6, fade_out_us: 1_000_000 }] })
 
     const report = analyzeAudioEnvelope({
@@ -249,8 +236,7 @@ test.describe('audio envelope conformance (Electron)', () => {
     test.setTimeout(220000)
     // The same clip stacked twice (0 dB + −6 dB). The summed peak must never
     // exceed the alimiter ceiling (−1 dB ≈ −0.9 dBFS with codec slop).
-    const output = tmpOut('weftcut-e2e-overlap.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-audio-env-out-'), 'overlap.mp4')
     await bootAndExport({ output, audioPatches: [{}, { gain_db: -6 }] })
 
     const report = analyzeAudioEnvelope({
@@ -266,8 +252,7 @@ test.describe('audio envelope conformance (Electron)', () => {
   test('pan -0.8 lands the equal-power L/R energy ratio', async () => {
     test.setTimeout(220000)
     // Equal-power law for pan = −0.8: L−R = 20·log10(cot(0.05π)) ≈ +16.0 dB.
-    const output = tmpOut('weftcut-e2e-pan.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-audio-env-out-'), 'pan.mp4')
     await bootAndExport({ output, audioPatches: [{ pan: -0.8 }] })
 
     const report = analyzeAudioPan({ output, expectLrDb: 16.0 })
@@ -300,11 +285,8 @@ const DIALOGUE_ONLY_LR_DB =
 test.describe('audio role mixing conformance (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-audio-roles-proj')
-
   test.beforeAll(async () => {
     test.skip(!existsSync(SOURCE), `tone source not found at ${SOURCE} (run \`npm run fixtures\`)`)
-    mkdirSync(PROJECT_PARENT, { recursive: true })
     ;({ app, page } = await launchApp())
   })
   test.afterAll(async () => {
@@ -332,11 +314,10 @@ test.describe('audio role mixing conformance (Electron)', () => {
 
   test('muting the music role drops the music layer while dialogue remains', async () => {
     test.setTimeout(300000)
-    const output = tmpOut('weftcut-e2e-role-mute.mp4')
-    rmSync(output, { force: true })
+    const output = path.join(tmpDir('weftcut-e2e-role-out-'), 'role-mute.mp4')
 
     await newProject(page, {
-      parentFolder: PROJECT_PARENT,
+      parentFolder: tmpDir('weftcut-e2e-audio-roles-proj-'),
       name: 'e2e-audio-roles-' + Date.now(),
       canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
     })
@@ -359,8 +340,7 @@ test.describe('audio role mixing conformance (Electron)', () => {
     })
 
     // Sanity: both roles audible ⇒ symmetric stereo field (L−R ≈ 0 dB).
-    const baselineOut = tmpOut('weftcut-e2e-role-baseline.mp4')
-    rmSync(baselineOut, { force: true })
+    const baselineOut = path.join(tmpDir('weftcut-e2e-role-out-'), 'role-baseline.mp4')
     let r = await driveExport(page, { outputAbsPath: baselineOut }, { hook: 'exportTimeline' })
     if (!r.done.ok) throw new Error(`baseline export failed: ${r.done.error}`)
     const baseline = analyzeAudioPan({ output: baselineOut, expectLrDb: 0.0 })
@@ -400,8 +380,9 @@ test.describe('audio role mixing conformance (Electron)', () => {
     // −12 dB. Role gain folds uniformly into the layer's gain envelope, so the
     // file's absolute sample peak scales by the same factor: −12 dB ⇒ ×0.251.
     const ROLE_GAIN_DB = -12
-    const out0 = tmpOut('weftcut-e2e-role-gain-0.mp4')
-    const outDown = tmpOut('weftcut-e2e-role-gain-down.mp4')
+    const outDir = tmpDir('weftcut-e2e-role-gain-out-')
+    const out0 = path.join(outDir, 'role-gain-0.mp4')
+    const outDown = path.join(outDir, 'role-gain-down.mp4')
     // A trivial always-true expectation just to populate a report; we read
     // peak_dbfs (the loudest window vs itself is 0 dB by construction).
     const expects = [{ t_s: 5.0, expect_rms_db_delta: 0.0 }]
@@ -409,9 +390,8 @@ test.describe('audio role mixing conformance (Electron)', () => {
     /// Boot a fresh single-dialogue-layer project, set the role gain, export,
     /// and return the file's absolute peak dBFS.
     const exportAtRoleGain = async (output: string, gainDb: number): Promise<number> => {
-      rmSync(output, { force: true })
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-audio-roles-proj-'),
         name: 'e2e-audio-rolegain-' + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })

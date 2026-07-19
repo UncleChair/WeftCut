@@ -1,8 +1,8 @@
-import { test, expect, _electron as electron, type Page } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
-import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { launchApp, tmpDir } from './helpers/driver'
 
 // Native-compute gate. The write hybrids (import_media, apply_subtitles,
 // install_motif, acknowledge_motif_staleness, synthesize_speech) route
@@ -30,7 +30,6 @@ import { fileURLToPath } from 'node:url'
 // conform cache is absent, which is not deterministic to assert synchronously.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const MAIN = path.resolve(__dirname, '../../out/main/index.js')
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 
 // A small audio fixture (pure audio, no video stream). Exists in the committed
@@ -60,19 +59,11 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
   // that prunes fixtures — the full conformance suite guards this more tightly).
   test.skip(!fs.existsSync(AUDIO_FIXTURE), `audio fixture not found at ${AUDIO_FIXTURE}`)
 
-  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-native-compute-'))
+  const ws = tmpDir('wc-native-compute-')
 
-  const app = await electron.launch({
-    args: [MAIN],
-    env: {
-      ...process.env,
-      WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1',
-    } as Record<string, string>,
-  })
+  const { app, page } = await launchApp()
 
   try {
-    const page = await app.firstWindow({ timeout: 60_000 })
-    await page.waitForLoadState('domcontentloaded')
     // Production bridge available on the startup screen — no editor/test hooks.
     await page.waitForFunction(() => !!(window as any).api?.backend?.invoke, undefined, {
       timeout: 30_000,
@@ -147,6 +138,5 @@ test('TS actor native-compute: import_media hybrid + audio layer visible in TS-a
     expect(waiting).toContain(mediaId)
   } finally {
     await app.close()
-    fs.rmSync(ws, { recursive: true, force: true })
   }
 })

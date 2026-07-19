@@ -10,19 +10,15 @@
 // and returns the settled state.
 
 import { test, expect } from '@playwright/test'
-import { existsSync, rmSync, mkdirSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 // analyzeSelf runs `cargo run --bin media_conformance -- --self-ssim ...`
 // and returns { pass, pairs: [{ a, b, ssim, differ }] }.
 import { analyzeSelf } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport } from './helpers/driver'
+import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-motif-out.mp4')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-motif-proj')
 
 test('motif export: countdown animates in output (frames differ across seconds)', async () => {
   test.skip(
@@ -30,7 +26,8 @@ test('motif export: countdown animates in output (frames differ across seconds)'
     'WebCodecs H.264 encode needs a GPU not available on headless CI runners; motif export is verified locally',
   )
   test.setTimeout(300_000)
-  mkdirSync(PROJECT_PARENT, { recursive: true })
+  const OUTPUT = path.join(tmpDir('weftcut-e2e-motif-out-'), 'motif-out.mp4')
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-motif-proj-')
   rmSync(OUTPUT, { force: true })
 
   const { app, page } = await launchApp()

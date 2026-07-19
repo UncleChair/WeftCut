@@ -1,9 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
-import os from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject } from './helpers/driver'
+import { launchApp, newProject, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -11,8 +10,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // gate runs in CI without a side-channel media directory.
 const FALLBACK = path.resolve(__dirname, '../../e2e/fixtures/media/test_1080p_30fps.mp4')
 const MEDIA_PATH = process.env['WEFTCUT_TEST_MEDIA'] ?? FALLBACK
-
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-dragdrop-proj')
 
 const mediaCount = async (page: Page): Promise<number> => {
   const s = await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))
@@ -26,7 +23,7 @@ test('media:dropped imports the file via the external-drop pipeline', async () =
   test.skip(!fs.existsSync(MEDIA_PATH), `media fixture missing: ${MEDIA_PATH}`)
   test.setTimeout(60_000)
 
-  fs.mkdirSync(PROJECT_PARENT, { recursive: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-dragdrop-proj-')
 
   const { app, page } = await launchApp()
   try {
@@ -68,7 +65,7 @@ test('a real DOM file-drop on the media pool imports via wireFileDrop', async ()
   test.skip(!fs.existsSync(MEDIA_PATH), `media fixture missing: ${MEDIA_PATH}`)
   test.setTimeout(60_000)
 
-  fs.mkdirSync(PROJECT_PARENT, { recursive: true })
+  const PROJECT_PARENT = tmpDir('weftcut-e2e-dragdrop-proj-')
 
   const { app, page } = await launchApp()
   try {

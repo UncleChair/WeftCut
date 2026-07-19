@@ -1,14 +1,6 @@
-import { test, expect, _electron as electron } from '@playwright/test'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { test, expect } from '@playwright/test'
 
-import { invokeCmd, newProject } from './helpers/driver'
-
-// ESM-safe __dirname equivalent (package.json has "type": "module")
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
 
 interface PerfTelemetryProbe {
   active: boolean
@@ -21,11 +13,10 @@ interface PerfTelemetryProbe {
   broadcasts: number
 }
 
-test('the on-demand Dev Performance Monitor is singleton and sleeps on close', async () => {
-  const projectParent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-perf-monitor-'))
-  const app = await electron.launch({ args: [path.resolve(__dirname, '../../out/main/index.js')] })
+test('the on-demand Dev Performance Monitor is singleton and sleeps on close @serial', async () => {
+  const projectParent = tmpDir('weftcut-perf-monitor-')
+  const { app, page: main } = await launchApp()
   try {
-    const main = await app.firstWindow()
     await newProject(main, {
       parentFolder: projectParent,
       name: 'PerfMonitor',
@@ -125,6 +116,5 @@ test('the on-demand Dev Performance Monitor is singleton and sleeps on close', a
     expect(app.windows()[0]!.url()).not.toContain('perfHud=1')
   } finally {
     await app.close()
-    fs.rmSync(projectParent, { recursive: true, force: true })
   }
 })

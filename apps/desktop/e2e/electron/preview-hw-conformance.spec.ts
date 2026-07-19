@@ -1,10 +1,9 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
 
 // Runtime verification for the Standard (ffmpeg) engine's Linux copy-back
 // HARDWARE decode lane — the sibling of preview-sw-conformance.spec.ts, but for
@@ -42,8 +41,6 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd } from './helpers
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const H264 = path.resolve(MEDIA_DIR, 'test_1080p_h264.mp4')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-hw-proj')
-const OUT_DIR = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-hw')
 
 // Composition + probe target. 500 ms @30 fps = source frame 15; the clip is
 // placed 1:1 at t=0, so composition-time 500 ms maps to source frame 15 exactly.
@@ -68,11 +65,11 @@ function parseSsimAll(stderr: string): number | null {
 }
 
 for (const lane of ['nvdec', 'vaapi'] as const) {
-  test(`preview-hw: ffmpeg engine decodes interframe H.264 on the ${lane} copy-back lane + SSIM (issue #5 Block C3)`, async () => {
+  test(`preview-hw: ffmpeg engine decodes interframe H.264 on the ${lane} copy-back lane + SSIM (issue #5 Block C3) @serial`, async () => {
     test.skip(!existsSync(H264), `H.264 fixture not found at ${H264} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(240_000)
-    mkdirSync(PROJECT_PARENT, { recursive: true })
-    mkdirSync(OUT_DIR, { recursive: true })
+    const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-hw-proj-')
+    const OUT_DIR = tmpDir('weftcut-e2e-preview-hw-')
 
     // Force the resolver to only consider THIS hardware lane (+ software
     // fallback). On a box that doesn't advertise the lane, the resolver finds no

@@ -1,17 +1,15 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 // analyzeColor() shells `cargo run --bin media_conformance` — engine-agnostic; reused as-is.
 import { analyzeColor } from '../lib/analyze.mjs'
-import { launchApp, newProject, driveExport } from './helpers/driver'
+import { launchApp, newProject, driveExport, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
 const BASELINE_PATH = path.resolve(MEDIA_DIR, '..', 'color_baseline.json')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-color-proj')
 
 // Axis-A color conformance gate. Per encoding, export 1:1 and measure app-only
 // color loss under a PERCEPTUAL metric: the analyzer decodes the OUTPUT by its
@@ -55,7 +53,6 @@ test.describe('color round-trip conformance (Electron)', () => {
       !BASELINE || !Object.keys(DECODE).some((enc) => existsSync(sourceFor(enc))),
       'color fixtures or baseline not present (run `npm run fixtures`; baseline is committed)',
     )
-    mkdirSync(PROJECT_PARENT, { recursive: true })
     ;({ app, page } = await launchApp())
   })
 
@@ -65,16 +62,14 @@ test.describe('color round-trip conformance (Electron)', () => {
 
   for (const enc of Object.keys(DECODE)) {
     const source = sourceFor(enc)
-    const output = path.resolve(os.tmpdir(), `weftcut-e2e-color-${enc}.mp4`)
-
     test(`${enc} color round-trip`, async () => {
       test.skip(!existsSync(source), `color source fixture not found at ${source}`)
       test.skip(!BASELINE?.[enc], `baseline not recorded for ${enc} in ${BASELINE_PATH}`)
       test.setTimeout(240000)
-      rmSync(output, { force: true })
+      const output = path.join(tmpDir('weftcut-e2e-color-out-'), `color-${enc}.mp4`)
 
       await newProject(page, {
-        parentFolder: PROJECT_PARENT,
+        parentFolder: tmpDir('weftcut-e2e-color-proj-'),
         name: `e2e-color-${enc}-` + Date.now(),
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })

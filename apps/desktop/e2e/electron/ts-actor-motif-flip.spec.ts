@@ -1,8 +1,5 @@
 import { test, expect, _electron as electron, type Page } from '@playwright/test'
-import path from 'node:path'
-import fs from 'node:fs'
-import os from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { launchApp, MAIN, tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -11,9 +8,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 // Motif layer lands. The shared TS motif catalog (src/shared/motifs/catalog.ts)
 // resolves the built-in `countdown` on the main side. (Motif rendering/export is
 // independently covered by motif-preview/motif-export/motif-capture specs.)
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const MAIN = path.resolve(__dirname, '../../out/main/index.js')
 
 interface Summary {
   tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string; motif_id?: string } }> }>
@@ -34,14 +28,9 @@ function parseConnect(line: string): { url: string; token: string } | null {
 }
 
 test('TS actor: renderer add_motif (no track) lands a Motif layer + undo/redo', async () => {
-  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-motif-flip-'))
-  const app = await electron.launch({
-    args: [MAIN],
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
-  })
+  const ws = tmpDir('wc-motif-flip-')
+  const { app, page } = await launchApp()
   try {
-    const page = await app.firstWindow({ timeout: 60_000 })
-    await page.waitForLoadState('domcontentloaded')
     await page.waitForFunction(() => !!(window as any).api?.backend?.invoke, undefined, { timeout: 30_000 })
 
     await invoke(page, 'project_new_workspace', { parentFolder: ws, name: 'motif', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
@@ -64,15 +53,19 @@ test('TS actor: renderer add_motif (no track) lands a Motif layer + undo/redo', 
     expect(motifLayers(await invoke<Summary>(page, 'project_summary')).length).toBe(1)
   } finally {
     await app.close()
-    fs.rmSync(ws, { recursive: true, force: true })
   }
 })
 
 test('TS actor: MCP add_motif returns the layer id + the summary reflects a Motif layer', async () => {
-  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-motif-mcp-'))
+  const ws = tmpDir('wc-motif-mcp-')
+  // Raw electron.launch (not launchApp): the stdout listener for the
+  // `[mcp] connect:` log line must attach synchronously right after launch,
+  // before firstWindow resolves — launchApp awaits firstWindow internally and
+  // the listener misses the line. Still boot over an isolated userData.
+  const userDataDir = tmpDir('wc-motif-mcp-userdata-')
   let connect: { url: string; token: string } | null = null
   const app = await electron.launch({
-    args: [MAIN],
+    args: [`--user-data-dir=${userDataDir}`, MAIN],
     env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })
@@ -108,6 +101,5 @@ test('TS actor: MCP add_motif returns the layer id + the summary reflects a Moti
     }
   } finally {
     await app.close()
-    fs.rmSync(ws, { recursive: true, force: true })
   }
 })

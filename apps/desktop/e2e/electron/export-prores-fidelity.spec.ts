@@ -1,7 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze, analyzeColor } from '../lib/analyze.mjs'
@@ -11,6 +10,7 @@ import {
   waitForHook,
   driveExport,
   importAndPlaceMedia,
+  tmpDir,
 } from './helpers/driver'
 
 // ProRes fidelity gates on the export decode engine
@@ -36,10 +36,6 @@ const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
 // --color-prores) — same chart + manifest as the axis-A 709ltd fixture.
 const CHART_PRORES = path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_prores.mov')
 const MANIFEST = path.resolve(MEDIA_DIR, 'color_manifest.json')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-prores-fidelity-proj')
-const OUT_COLOR = path.resolve(os.tmpdir(), 'weftcut-e2e-pf-color.mp4')
-const OUT_NATIVE = path.resolve(os.tmpdir(), 'weftcut-e2e-pf-native.mp4')
-const OUT_PROXY = path.resolve(os.tmpdir(), 'weftcut-e2e-pf-proxy.mp4')
 
 // Component presence (same level-0 probe as export-native-wedges.spec.ts):
 // without the built addon the app cannot open native sessions, so the gates
@@ -79,7 +75,7 @@ interface NativePerf {
 
 async function bootProject(page: Page, prefix: string): Promise<void> {
   await newProject(page, {
-    parentFolder: PROJECT_PARENT,
+    parentFolder: tmpDir('weftcut-e2e-pf-proj-'),
     name: prefix + Date.now(),
     canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
   })
@@ -167,10 +163,6 @@ test.describe('export ProRes fidelity gates (Electron)', () => {
   test.skip(!COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native sessions`)
   test.skip(!existsSync(PRORES), `ProRes fixture not found at ${PRORES} (set WEFTCUT_TEST_MEDIA / npm run fixtures)`)
 
-  test.beforeAll(() => {
-    mkdirSync(PROJECT_PARENT, { recursive: true })
-  })
-
   // Gate A: the color half — the chart's colors and its
   // bt709/limited interpretation must survive native decode → composite →
   // default (native-sink) H.264 encode. nativeHandles guards against a silent
@@ -180,6 +172,7 @@ test.describe('export ProRes fidelity gates (Electron)', () => {
     test.skip(!existsSync(MANIFEST), `color manifest not found at ${MANIFEST} (npm run fixtures)`)
     test.setTimeout(420_000)
     const { app, page } = await launchApp()
+    const OUT_COLOR = path.join(tmpDir('weftcut-e2e-pf-color-'), 'color.mp4')
     try {
       await bootProject(page, 'e2e-pf-color-')
       await importAndPlaceMedia(page, { mediaAbsPath: CHART_PRORES, tStartUs: 0 })
@@ -240,6 +233,8 @@ test.describe('export ProRes fidelity gates (Electron)', () => {
     // gates and the whole test roughly the sum of both legs.
     test.setTimeout(900_000)
     const { app, page } = await launchApp()
+    const OUT_NATIVE = path.join(tmpDir('weftcut-e2e-pf-native-'), 'native.mp4')
+    const OUT_PROXY = path.join(tmpDir('weftcut-e2e-pf-proxy-'), 'proxy.mp4')
     try {
       await bootProject(page, 'e2e-pf-diff-')
       await importAndPlaceMedia(page, { mediaAbsPath: PRORES, tStartUs: 0 })

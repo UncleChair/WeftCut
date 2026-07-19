@@ -1,5 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test'
-import { MAIN } from './helpers/driver'
+import { test, expect } from '@playwright/test'
+import { launchApp } from './helpers/driver'
 
 // When the OS keyring is unavailable (headless Linux CI,
 // minimal containers), safeStorage falls back to plaintext and main emits a
@@ -8,16 +8,10 @@ import { MAIN } from './helpers/driver'
 // of keyring availability, AND the plaintext-keys warning reaches the UI via a
 // pulled app notice (api.app.notices).
 test('app boots + degrades gracefully regardless of safeStorage keyring availability', async () => {
-  const app = await electron.launch({
-    args: [MAIN],
-    // Suppress the elevated-run modal so it can't interfere when this (often
-    // elevated) test drives the renderer below.
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
-  })
-  // firstWindow resolves only after main's whenReady → backend.init → the
-  // safeStorage keyring check → createWindow. So a resolved window proves the
-  // no-keyring path did NOT hard-fail boot.
-  const page = await app.firstWindow({ timeout: 60_000 })
+  // launchApp awaits firstWindow, which resolves only after main's whenReady →
+  // backend.init → the safeStorage keyring check → createWindow. So a resolved
+  // window proves the no-keyring path did NOT hard-fail boot.
+  const { app, page } = await launchApp()
   expect(page).toBeTruthy()
 
   const available = await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable())

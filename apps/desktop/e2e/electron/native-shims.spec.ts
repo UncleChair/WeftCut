@@ -1,9 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const MAIN = path.resolve(__dirname, '../../out/main/index.js')
+import { test, expect } from '@playwright/test'
+import { launchApp } from './helpers/driver'
 
 // The shell / notification / cross-window-emit capabilities are handled natively
 // in the Electron main process (no Rust round-trip). Before this they detoured
@@ -12,12 +8,7 @@ const MAIN = path.resolve(__dirname, '../../out/main/index.js')
 // snapshots) silently did nothing.
 
 test('emit() broadcasts an event across windows to a listen() subscriber', async () => {
-  const app = await electron.launch({
-    args: [MAIN],
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
-  })
-  const main = await app.firstWindow()
-  await main.waitForLoadState('domcontentloaded')
+  const { app, page: main } = await launchApp()
 
   // Open a real second window and arm a subscriber there.
   await main.evaluate(() => (window as any).api.win.create('emit-probe', { url: '/?perfHud=1' }))
@@ -41,12 +32,7 @@ test('emit() broadcasts an event across windows to a listen() subscriber', async
 })
 
 test('shell:open and notification:send are wired (no missing-handler error)', async () => {
-  const app = await electron.launch({
-    args: [MAIN],
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
-  })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  const { app, page } = await launchApp()
 
   // notification:send always resolves (no-ops where unsupported) — proves the
   // channel exists. An unregistered channel would reject "No handler registered".
@@ -77,12 +63,7 @@ test('shell:open and notification:send are wired (no missing-handler error)', as
 })
 
 test('metrics.get() returns a live process-tree snapshot from app.getAppMetrics()', async () => {
-  const app = await electron.launch({
-    args: [MAIN],
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
-  })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  const { app, page } = await launchApp()
 
   const stats = (await page.evaluate(() => (window as any).api.metrics.get())) as {
     cpu_percent: number; rss_bytes: number; process_count: number; logical_cores: number

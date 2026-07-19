@@ -3,10 +3,7 @@
 // batched write → ONE undo reverts all three. Blue (not green) because the
 // chroma defaults ARE green — a green pick would assert nothing.
 import { test, expect } from '@playwright/test'
-import os from 'node:os'
-import fs from 'node:fs'
-import path from 'node:path'
-import { launchApp, newProject, invokeCmd, summary, waitForHook } from './helpers/driver'
+import { launchApp, newProject, invokeCmd, summary, tmpDir, waitForHook } from './helpers/driver'
 
 interface ParamTrack { mode: string; value?: number }
 interface LayerLite { id: string; effects?: Array<{ id: string; params: Record<string, ParamTrack> }> }
@@ -55,7 +52,7 @@ test('colorpick: chromakey eyedropper picks canvas blue; one undo reverts', asyn
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
 
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-colorpick-'))
+  const parent = tmpDir('weftcut-colorpick-')
   await newProject(page, {
     parentFolder: parent,
     name: 'colorpick',

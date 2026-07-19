@@ -1,20 +1,10 @@
-import { test, expect, _electron as electron } from '@playwright/test'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-// ESM-safe __dirname equivalent (package.json has "type": "module")
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+import { test, expect } from '@playwright/test'
+import { launchApp } from './helpers/driver'
 
 test('boots, creates a project, add_track round-trips through the bridge', async () => {
-  // Launch the built Electron app directly via its main entry point.
-  // electron-vite build emits out/main/index.js; the built renderer is in
-  // out/renderer/ (loaded as a local file by the main process at runtime).
-  const app = await electron.launch({
-    args: [path.resolve(__dirname, '../../out/main/index.js')],
-  })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
+  // Launch the built app through the shared driver (isolated throwaway
+  // userData; launchApp awaits firstWindow + domcontentloaded).
+  const { app, page } = await launchApp()
 
   // Capture baseline track_count (blank project boots with 2 reserved A/B-roll
   // tracks; do NOT hardcode a literal count here).

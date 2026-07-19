@@ -1,8 +1,8 @@
 import { test, expect, _electron as electron } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
-import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { tmpDir } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -19,10 +19,15 @@ function parseConnect(line: string): { url: string; token: string } | null {
 }
 
 test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects', async () => {
-  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-mcp-flip-'))
+  const ws = tmpDir('wc-mcp-flip-')
+  // Raw electron.launch (not launchApp): the stdout listener for the
+  // `[mcp] connect:` log line must attach synchronously right after launch,
+  // before firstWindow resolves — launchApp awaits firstWindow internally and
+  // the listener could miss the line. Still boot over an isolated userData.
+  const userDataDir = tmpDir('wc-mcp-flip-userdata-')
   let connect: { url: string; token: string } | null = null
   const app = await electron.launch({
-    args: [MAIN],
+    args: [`--user-data-dir=${userDataDir}`, MAIN],
     env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
   })
   app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })

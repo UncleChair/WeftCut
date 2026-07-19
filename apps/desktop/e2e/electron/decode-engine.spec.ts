@@ -1,9 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
-import os from 'node:os'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
 
 // Decode-engine resolution runtime proof (Task 13 retarget of the old
 // D2/tier-resolution spec). The 4-tier `EngineTier` model (`resolveEngineTier`:
@@ -26,13 +25,13 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, waitForHook } fr
 // when the ffmpeg build on PATH lacks an encoder (CI's fetched static build is
 // lean — electron-ci.yml's `fetch-ffmpeg` step).
 
-const OUT_DIR = path.resolve(os.tmpdir(), 'weftcut-e2e-decode-engine')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-decode-engine-proj')
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
-const PRORES_FIXTURE = path.join(OUT_DIR, 'prores-tier3.mov')
+// Fixture paths are assigned in beforeAll under a fresh tmpDir (unique per
+// run, auto-swept at worker exit).
+let PRORES_FIXTURE: string
 // 8-bit H.264 yuv420p — d3d11va-decodable, so the HW capability probe passes
 // on a real GPU box. Drives the auto+H.264 cell's hardware-lane resolution.
-const H264_FIXTURE = path.join(OUT_DIR, 'h264-tier1.mp4')
+let H264_FIXTURE: string
 // 8-bit AV1 yuv420p — NOT HW-eligible (`hwEligibleCodec` is 8-bit
 // h264/hevc/vp9 only, and the app's d3d11va HW probe declines AV1 anyway) but
 // IS WebCodecs-decodable (browser AV1/dav1d) AND ffmpeg-decodable (dav1d SW).
@@ -40,7 +39,7 @@ const H264_FIXTURE = path.join(OUT_DIR, 'h264-tier1.mp4')
 // fine on Lite) and the pinned-ffmpeg pin-override cell (Standard still wins
 // even though Lite could have handled it, landing on the software lane since
 // AV1 isn't HW-eligible).
-const AV1_FIXTURE = path.join(OUT_DIR, 'av1-tier3.mp4')
+let AV1_FIXTURE: string
 // Mid-clip seek target (the 4 s fixtures run 0..4_000_000 us) — forces a real
 // composite/`ensureClip` pass without landing exactly on frame 0.
 const SEEK_US = 1_000_000
@@ -56,8 +55,9 @@ function encoderAvailable(ffmpeg: string, encoder: string): boolean {
   return r.status === 0 && r.stdout.includes(encoder)
 }
 
-/// Idempotent lavfi-synthesized fixture (mirrors gen-decode-bench-fixtures.mjs'
-/// skip-if-exists idiom) — repeat local runs don't re-encode.
+/// lavfi-synthesized fixture (skip-if-exists mirrors gen-decode-bench-fixtures.mjs).
+/// The fixture dir is a fresh tmpDir per run, so repeat runs re-encode into
+/// their own dir rather than sharing one.
 function genFixture(ffmpeg: string, out: string, codecArgs: string[]): void {
   if (existsSync(out)) return
   const r = spawnSync(ffmpeg, [
@@ -174,8 +174,10 @@ test.describe('decode-engine resolution (Electron)', () => {
   test.beforeAll(() => {
     ffmpeg = ffmpegBin()
     test.skip(ffmpeg === null, 'ffmpeg not on PATH (set FFMPEG) — decode-engine fixtures need it')
-    mkdirSync(OUT_DIR, { recursive: true })
-    mkdirSync(PROJECT_PARENT, { recursive: true })
+    const outDir = tmpDir('weftcut-e2e-decode-engine-')
+    PRORES_FIXTURE = path.join(outDir, 'prores-tier3.mov')
+    H264_FIXTURE = path.join(outDir, 'h264-tier1.mp4')
+    AV1_FIXTURE = path.join(outDir, 'av1-tier3.mp4')
 
     test.skip(!encoderAvailable(ffmpeg!, 'prores_ks'), 'ffmpeg build has no prores_ks encoder — ProRes fixture unavailable (lean CI build)')
     genFixture(ffmpeg!, PRORES_FIXTURE, ['-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le'])
@@ -198,7 +200,8 @@ test.describe('decode-engine resolution (Electron)', () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
     try {
-      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'h264-auto-' + Date.now(), canvas: CANVAS })
+      const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
+      await newProject(page, { parentFolder: projectParent, name: 'h264-auto', canvas: CANVAS })
       const after = (await invokeCmd(page, 'app_settings_set', {
         patch: { decode_engine: 'auto' },
       })) as { decode_engine: string }
@@ -234,7 +237,8 @@ test.describe('decode-engine resolution (Electron)', () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
     try {
-      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'prores-auto-' + Date.now(), canvas: CANVAS })
+      const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
+      await newProject(page, { parentFolder: projectParent, name: 'prores-auto', canvas: CANVAS })
       const after = (await invokeCmd(page, 'app_settings_set', {
         patch: { decode_engine: 'auto' },
       })) as { decode_engine: string }
@@ -286,7 +290,8 @@ test.describe('decode-engine resolution (Electron)', () => {
     const { app, page } = await launchApp()
     let toggledOn = false
     try {
-      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'av1-webcodecs-' + Date.now(), canvas: CANVAS })
+      const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
+      await newProject(page, { parentFolder: projectParent, name: 'av1-webcodecs', canvas: CANVAS })
       const after = (await invokeCmd(page, 'app_settings_set', {
         patch: { decode_engine: 'webcodecs' },
       })) as { decode_engine: string }
@@ -324,7 +329,8 @@ test.describe('decode-engine resolution (Electron)', () => {
     const { app, page } = await launchApp()
     let toggledOn = false
     try {
-      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'av1-ffmpeg-' + Date.now(), canvas: CANVAS })
+      const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
+      await newProject(page, { parentFolder: projectParent, name: 'av1-ffmpeg', canvas: CANVAS })
       const after = (await invokeCmd(page, 'app_settings_set', {
         patch: { decode_engine: 'ffmpeg' },
       })) as { decode_engine: string }
@@ -369,7 +375,8 @@ test.describe('decode-engine resolution (Electron)', () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
     try {
-      await newProject(page, { parentFolder: PROJECT_PARENT, name: 'proxy-toggle-' + Date.now(), canvas: CANVAS })
+      const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
+      await newProject(page, { parentFolder: projectParent, name: 'proxy-toggle', canvas: CANVAS })
       const { layerId, mediaId } = await importAndPlaceMedia(page, { mediaAbsPath: H264_FIXTURE })
 
       // Build the quick proxy on demand, then wait until it lands in the route.
