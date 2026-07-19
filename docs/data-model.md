@@ -696,6 +696,92 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 
 `Backups/` rolls every 50 commits or 5 minutes (whichever first), retains the 20 most recent. `project_save_as` is gone in favor of the auto-save subscriber; Cmd-S is a force-flush hook reserved for future UI. The save model is "the folder is the truth" — closing the app loses nothing.
 
+## App-level storage: the data root
+
+Everything above is **per-project** — it lives inside the workspace folder and
+travels with it. Orthogonal to that is **app-level** storage: state and large
+assets that belong to the installation, not to any one project. This splits in
+two, by whether the user should be able to relocate it.
+
+**Small config/state + secrets stay in `<userData>/`** (Electron's per-user app
+data dir), each an atomically-written JSON owned by the TS main process:
+`app_settings.json`, `keybindings.json`, `workspaces.json`, `recents.json`,
+`decode_capability.json`, and the secrets `cloud_keys.json` / `mcp_auth.json`
+(plus the OS keyring). These are tiny and their location is fixed — the data
+root's own path has to live somewhere the resolver can read before anything
+else, so it cannot itself live under the data root (bootstrap chicken-and-egg).
+
+**Large, app-managed, relocatable content lives under a single user-configurable
+DATA ROOT**, default `<userData>/data/`, with a fixed internal layout WeftCut
+owns:
+
+```
+<dataRoot>/            default: <userData>/data  (any absolute path via setting)
+├── motifs/            user-authored Motifs (see motifs.md) — user content, not regenerable
+├── cache/             the backend's app-level (cross-project) cache — regenerable
+└── downloads/         reserved for future downloaded assets (e.g. a runtime ffmpeg)
+```
+
+`<dataRoot>/cache/` is the **app-level** backend cache (the second argument to
+the `Backend` constructor). Do not confuse it with the per-project
+`<workspace>/Cache/` above — that one holds a project's proxies/thumbnails/
+waveforms and is deleted with the project; this one is global to the install and
+regenerable. Nesting it here also retires a long-standing collision: it used to
+be `<userData>/Cache`, the exact path Chromium uses for its own disk cache
+(`<sessionData>/Cache`, and `sessionData` defaults to `userData`). Chromium's
+cache is deliberately left where it is; the collision is gone simply because the
+backend cache moved under the data root.
+
+A single seam, `apps/desktop/src/main/dataRoot.ts` (`resolveDataRoot`), resolves
+the root **once, early at boot** — before the `Backend`, the `UserMotifStore`,
+and the fs guard are constructed — from a `data_root` field in
+`app_settings.json`, and exposes `{ dataRoot, motifsDir, cacheDir, downloadsDir }`.
+Every consumer takes its path from the seam; nothing string-joins `userData` for
+these buckets. The resolved root is also admitted to the renderer's `fs:*` guard
+allow-list (`isAllowed`, alongside `temp` / `userData` / the active workspace),
+since it can live outside `userData`.
+
+Resolution rules:
+
+- `data_root` unset/empty → default `<userData>/data`, created silently.
+- set + available (creatable **and** write-probed) → used as-is.
+- set + unavailable (unmounted drive, revoked permission, deleted path) → a
+  **blocking native dialog** (main window not up yet) offering **Re-set** (native
+  folder picker; the choice is persisted and used for this boot) or **Quit**.
+  Never a silent fallback — a user who deliberately placed data elsewhere makes a
+  conscious choice rather than landing in an empty default library.
+
+### Changing the data root
+
+Relocation is offered from Settings → "Data location" and is a first-class,
+verified migration (core: `apps/desktop/src/main/dataRootMigration.ts`, pure +
+fs-injected; IPC glue on the `dataRoot:*` channels). Semantics: **copy, preserve
+original, verify, roll back, prompt-to-delete-after-success.**
+
+1. The user picks a folder. If it is already a valid WeftCut data root
+   (`motifs/`+`cache/`+`downloads/` present), it is **adopted as-is** — no copy,
+   no merge. Otherwise the migration **copies** into it.
+2. Copy `motifs/` and `downloads/` (source read-only; originals untouched);
+   `cache/` is **not** copied — the new root gets an empty `cache/` that refills
+   naturally. Nested source/target picks are rejected (self-overwrite guard).
+3. **Verify** — Motifs by content hash (reusing `motif/contentHash`), downloads
+   by file count + size.
+4. **On failure → roll back** exactly what the run created at the new root; the
+   old root is never touched and `data_root` is left unchanged. No data loss.
+5. **On success** → write `data_root`, then relaunch (`app.relaunch()`) to apply
+   (the root is fixed early at boot; a live swap would rebuild too much).
+6. A userData-resident marker (`data-root-migration.json`, which survives the
+   switch) carries the old path across the relaunch. After the app comes back up
+   on the new root, Settings offers to delete the old copy — **only in copy mode**
+   (in adopt mode nothing was copied, so the old root is the user's separate prior
+   library, never proposed for deletion). Deletion is explicit-confirm-only and
+   never removes `userData` itself; "Keep" is a one-time dismiss that clears the
+   marker.
+
+"No migration" elsewhere in this repo refers to **legacy on-disk formats** (the
+project has no shipped users, so there is no upgrade-from-old-layout path); the
+data-root *change* flow above is fully migrated and reversible.
+
 ## Versioning
 
 `project.json` embeds a `schema_version: u32` field. `SCHEMA_VERSION`
