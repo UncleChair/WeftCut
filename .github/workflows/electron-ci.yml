@@ -111,27 +111,27 @@ jobs:
             echo "$PWD/resources/ffmpeg/mac" >> "$GITHUB_PATH"
           fi
 
-      # ── @weftcut/native-decode (Windows + Linux; multi-platform adaptation) ──
-      # macOS is excluded until an LGPL-shared ffmpeg asset + a darwin branch land
-      # in fetch-ffmpeg-lgpl / napi-build-decode.
+      # ── @weftcut/native-decode (Windows + Linux + macOS) ───────────────────
+      # All three OSes fetch their LGPL-shared ffmpeg asset and build the addon;
+      # per-OS runtime resolution differs (see napi-build-decode.mjs).
       - name: Cache ffmpeg-lgpl
-        if: runner.os != 'macOS'
         uses: actions/cache@v5
         with:
           path: apps/desktop/resources/ffmpeg-lgpl
           key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
 
       - name: Fetch LGPL ffmpeg (native-decode)
-        if: runner.os != 'macOS'
         run: npm run fetch-ffmpeg-lgpl
 
       - name: Build native-decode addon
-        if: runner.os != 'macOS'
         run: npm run napi:build:decode
         # Windows ships LLVM at C:\Program Files\LLVM (the wrapper defaults
         # LIBCLANG_PATH there); Linux uses the apt libclang-dev above (clang-sys
         # auto-discovers) and the wrapper bakes RUNPATH=$ORIGIN + co-locates the
-        # libav*.so. Both default FFMPEG_DIR to the fetched ffmpeg-lgpl/<os>.
+        # libav*.so. macOS uses the Xcode toolchain's libclang (clang-sys finds
+        # it via xcode-select; GitHub runners ship full Xcode) and the wrapper
+        # bakes @loader_path + co-locates the libav*.dylib. All default
+        # FFMPEG_DIR to the fetched ffmpeg-lgpl/<os>.
 
       - name: Put LGPL DLLs on PATH (native-decode runtime)
         if: runner.os == 'Windows'
@@ -188,11 +188,12 @@ jobs:
           # Component crate (native-decode): the repo's only ffmpeg-next consumer.
           # It needs FFMPEG_DIR + libclang to build and the bundled libav*.so/DLL
           # on the loader path at run (Windows: DLLs already on PATH above; Linux:
-          # LD_LIBRARY_PATH below). Its test-noop is ONLY napi/noop, NOT
+          # LD_LIBRARY_PATH below; macOS: DYLD_FALLBACK_LIBRARY_PATH — SIP strips
+          # DYLD_* only for system-protected binaries, not user test binaries).
+          # Its test-noop is ONLY napi/noop, NOT
           # napi-derive/noop (see decode/Cargo.toml) — enough to resolve the
           # standalone binary's napi_* symbols while keeping the ToNapiValue
-          # derives its ThreadsafeFunction<ExportSwMsg> params require. macOS runs
-          # no decode tests until its ffmpeg-lgpl asset lands.
+          # derives its ThreadsafeFunction<ExportSwMsg> params require.
           if [ "$RUNNER_OS" = "Windows" ]; then
             FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win" \
             LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin" \
@@ -200,6 +201,10 @@ jobs:
           elif [ "$RUNNER_OS" = "Linux" ]; then
             FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
             LD_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/linux/lib" \
+            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/mac" \
+            DYLD_FALLBACK_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/mac/lib" \
             cargo test --manifest-path native/decode/Cargo.toml --features test-noop
           fi
 

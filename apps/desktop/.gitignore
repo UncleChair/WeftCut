@@ -5,6 +5,10 @@ native/index.d.ts
 native/decode/*.node
 native/decode/index.js
 native/decode/index.d.ts
+# Co-located LGPL shared libs (staged next to the .node by napi-build-decode.mjs)
+native/decode/*.so
+native/decode/*.so.*
+native/decode/*.dylib
 
 # Playwright-for-Electron e2e output (transient; S3b+)
 test-results/

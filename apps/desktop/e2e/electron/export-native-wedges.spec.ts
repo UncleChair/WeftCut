@@ -54,16 +54,21 @@ const OFFSET_FRAMES = 60
 
 // Component presence (level-0 probe, same signal the napi integration test
 // uses): without the built addon the app cannot open native sessions, so the
-// gates skip rather than fail. The Standard engine's software lane now ships on
-// Linux too (issue #5 block B), so the gate resolves the per-OS addon filename
-// and admits Windows + Linux; macOS stays out of scope (no LGPL supply chain).
-const DECODE_ADDON = path.resolve(
-  __dirname,
-  '../../native/decode',
-  process.platform === 'win32' ? 'index.win32-x64-msvc.node' : 'index.linux-x64-gnu.node',
-)
-const COMPONENT_PRESENT =
-  (process.platform === 'win32' || process.platform === 'linux') && existsSync(DECODE_ADDON)
+// gates skip rather than fail. The Standard engine's software lane ships on
+// all three desktop platforms (issue #5 block B; macOS's ffmpeg-lgpl libs are
+// built from source by fetch-ffmpeg-lgpl.mjs), so the gate resolves the
+// per-OS addon filename and admits Windows + Linux + macOS (arm64).
+const ADDON_FILE = (
+  {
+    win32: 'index.win32-x64-msvc.node',
+    linux: 'index.linux-x64-gnu.node',
+    darwin: 'index.darwin-arm64.node',
+  } as Partial<Record<NodeJS.Platform, string>>
+)[process.platform]
+const DECODE_ADDON = ADDON_FILE
+  ? path.resolve(__dirname, '../../native/decode', ADDON_FILE)
+  : null
+const COMPONENT_PRESENT = DECODE_ADDON !== null && existsSync(DECODE_ADDON)
 
 // Deliberately slow consumer for the credit-stall gate: WebCodecs software AV1
 // encode (same shape as export_codecs.spec.ts's AV1 cell) can't keep up with

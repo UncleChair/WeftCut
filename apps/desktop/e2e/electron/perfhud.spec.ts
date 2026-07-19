@@ -13,6 +13,10 @@ interface PerfTelemetryProbe {
   broadcasts: number
 }
 
+// WindowControls renders null on macOS, where the native traffic lights own
+// the window chrome; close the HUD through the window bridge there instead.
+const isDarwin = process.platform === 'darwin'
+
 test('the on-demand Dev Performance Monitor is singleton and sleeps on close @serial', async () => {
   const projectParent = tmpDir('weftcut-perf-monitor-')
   const { app, page: main } = await launchApp()
@@ -71,7 +75,9 @@ test('the on-demand Dev Performance Monitor is singleton and sleeps on close @se
     expect(frame!.dh).toBeLessThan(8)
 
     await expect(hudWin.locator('[data-testid="perf-hud-titlebar"]')).toBeVisible()
-    await expect(hudWin.locator('.window-control-close')).toBeVisible()
+    if (!isDarwin) {
+      await expect(hudWin.locator('.window-control-close')).toBeVisible()
+    }
     await expect(hudWin.locator('[data-testid="perf-hud-window"]')).toBeVisible()
     await expect.poll(
       () => main.evaluate(() => (window as any).__weftcutPerfTelemetry as PerfTelemetryProbe),
@@ -92,7 +98,11 @@ test('the on-demand Dev Performance Monitor is singleton and sleeps on close @se
     // The monitor's own close button closes only that window. The main bridge
     // must synchronously leave the active state and every counter must remain
     // still after more than both polling cadences.
-    await hudWin.locator('.window-control-close').click()
+    if (isDarwin) {
+      await main.evaluate(() => (window as any).api.win.act('perf-hud', 'close'))
+    } else {
+      await hudWin.locator('.window-control-close').click()
+    }
     await expect.poll(() => app.windows().length).toBe(1)
     await expect.poll(
       () => main.evaluate(() => (window as any).__weftcutPerfTelemetry as PerfTelemetryProbe),

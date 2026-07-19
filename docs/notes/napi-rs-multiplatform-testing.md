@@ -4,8 +4,8 @@ Verified 2026-07-19 on the WeftCut workspace and generalized to all three
 desktop targets. This note records why a native crate's Rust test binary behaves
 differently from the addon Electron loads, the `test-noop` test pattern (with the
 per-crate nuance both WeftCut addons hit), the production `dyn-symbols` policy,
-and the per-OS build/runtime specifics — including a macOS checklist, because the
-`@weftcut/native-decode` darwin path is not yet wired.
+and the per-OS build/runtime specifics — including the macOS decode wiring,
+which landed 2026-07-19 (SW lanes; checklist below).
 
 ## Two execution modes (the root cause)
 
@@ -83,54 +83,63 @@ per-OS; the **SW lanes (`preview_sw` / `export_sw`) build on every platform**.
 
 | | Windows | Linux | macOS |
 |--|---------|-------|-------|
-| HW lane | `d3d11va` (`#[cfg(windows)]`) | VAAPI copy-back (`#[cfg(target_os="linux")]`) | **none yet** — VideoToolbox = future |
-| `FFMPEG_DIR` | `resources/ffmpeg-lgpl/win` | `resources/ffmpeg-lgpl/linux` | *(no asset yet)* |
-| libclang | `C:\Program Files\LLVM\bin` (wrapper hard-sets) | `apt libclang-dev`; clang-sys auto-discovers | Xcode toolchain; usually auto via `xcrun` |
-| runtime lib resolution | DLLs prepended to PATH | `DT_RPATH=$ORIGIN` baked (`--disable-new-dtags`) + `.so` co-located | `@loader_path` (todo) |
-| test env | `FFMPEG_DIR` + `LIBCLANG_PATH`, DLLs on PATH | `FFMPEG_DIR` + `LD_LIBRARY_PATH=…/lib` | todo |
+| HW lane | `d3d11va` (`#[cfg(windows)]`) | VAAPI copy-back (`#[cfg(target_os="linux")]`) | **none yet** — VideoToolbox = future (the staged ffmpeg has VT compiled in; the crate has no `cfg(macos)` lane) |
+| `FFMPEG_DIR` | `resources/ffmpeg-lgpl/win` | `resources/ffmpeg-lgpl/linux` | `resources/ffmpeg-lgpl/mac` (built from source) |
+| libclang | `C:\Program Files\LLVM\bin` (wrapper hard-sets) | `apt libclang-dev`; clang-sys auto-discovers | Xcode CLT; auto via `xcrun` (verified — no `LIBCLANG_PATH`) |
+| runtime lib resolution | DLLs prepended to PATH | `DT_RPATH=$ORIGIN` baked (`--disable-new-dtags`) + `.so` co-located | `@loader_path` install names (rewritten at fetch) + `.dylib` co-located |
+| test env | `FFMPEG_DIR` + `LIBCLANG_PATH`, DLLs on PATH | `FFMPEG_DIR` + `LD_LIBRARY_PATH=…/lib` | `FFMPEG_DIR` + `DYLD_FALLBACK_LIBRARY_PATH=…/lib` |
 
 CI currently guards the decode build/test steps with `runner.os != 'macOS'`.
 
 ## macOS decode: checklist for the darwin device
 
-The realistic **initial** scope on macOS is the **SW lanes only** (`preview_sw` /
-`export_sw` compile everywhere); the HW VideoToolbox backend is a separate,
-larger effort — decode has no `cfg(target_os = "macos")` code today. Plumbing
-needed:
+The macOS scope is the **SW lanes only** (`preview_sw` / `export_sw` compile
+everywhere); the HW VideoToolbox backend is a separate, larger effort — decode
+still has no `cfg(target_os = "macos")` code. Items 1–5 and 8 **landed
+2026-07-19** (verified on macOS 26.5.2 arm64); 6–7 remain:
 
-1. **LGPL-shared ffmpeg asset.** BtbN publishes Windows/Linux only. Provide a
-   macOS ffmpeg 8.1 *shared* build (arm64 + x64, or universal) built LGPL-clean
-   (`--enable-shared`, no `--enable-gpl`/`--enable-nonfree`). `assertLgplBanner`
-   in `fetch-ffmpeg-lgpl.mjs` rejects a GPL/nonfree banner, so the source must
-   pass it.
-2. **OS_KEY maps.** Add `darwin: 'mac'` to the `{ win32, linux }` maps in both
-   `fetch-ffmpeg-lgpl.mjs` (`OS_KEY`, `BUILDS`) and `napi-build-decode.mjs`
-   (`osKey`).
-3. **rpath analog.** Linux bakes `$ORIGIN`; macOS uses `@loader_path`. Add a
-   darwin branch in `napi-build-decode.mjs`:
-   `RUSTFLAGS=-C link-arg=-Wl,-rpath,@loader_path`. Inspect the bundled dylibs'
-   install names with `otool -L`; if they carry absolute paths, rewrite them to
-   `@rpath/lib*.dylib` with `install_name_tool -id` / `-change`.
-4. **dylib co-location.** Mirror the Linux `.so` copy loop for `.dylib`,
-   preserving the SONAME symlink chain (`libX.dylib → libX.62.dylib`).
-5. **libclang.** macOS libclang ships with the Xcode / Command Line Tools
-   toolchain; clang-sys usually finds it via `xcrun`. If not, set `LIBCLANG_PATH`
-   to `$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib` or the
-   Homebrew `llvm` libdir.
-6. **CI.** Flip the four decode steps from `runner.os != 'macOS'` to include
-   `macos-latest`, and add a macOS branch to the Rust tests step. For the
-   `cargo test` binary use `DYLD_FALLBACK_LIBRARY_PATH=…/lib` (SIP strips
-   `DYLD_*` only for system/protected binaries, not user test binaries; the
-   packaged `.node` relies on baked `@loader_path`, so it needs no env).
-7. **Packaging.** Ship the `.dylib` beside the unpacked `.node` in
+1. **LGPL-shared ffmpeg asset — DONE, built from source.** No prebuilt
+   LGPL-shared macOS ffmpeg exists: BtbN publishes Windows/Linux only;
+   evermeet.cx / osxexperts.net / ffmpeg.martin-riedl.de are static AND GPL
+   (x264/x265); Homebrew's bottle is shared but `--enable-gpl`. So
+   `fetch-ffmpeg-lgpl.mjs` (`BUILDS.mac`) builds FFmpeg n8.1 from the pinned,
+   sha256-verified release tarball (`ffmpeg.org/releases/ffmpeg-8.1.tar.xz`),
+   configured `--enable-shared --disable-static --disable-debug --disable-doc
+   --disable-ffplay` — LGPL-clean by construction, with `assertLgplBanner`
+   re-verifying the banner captured from the freshly built exe. Single-arch:
+   an x64 asset needs the same recipe run on an Intel host (no universal build).
+2. **OS_KEY maps — DONE.** `darwin: 'mac'` in both `fetch-ffmpeg-lgpl.mjs`
+   (`OS_KEY`, `BUILDS`) and `napi-build-decode.mjs` (`osKey`).
+3. **rpath analog — DONE, and nothing had to be baked.** FFmpeg's dylibs carry
+   `<prefix>/lib/libfoo.NN.dylib` install names; `rewriteMacInstallNames`
+   (fetch-ffmpeg-lgpl.mjs) rewrites the id + every libav\* cross-reference to
+   `@loader_path/libfoo.NN.dylib` via `install_name_tool`, so the `.node`
+   records those names at link time and dyld resolves them from the `.node`'s
+   own directory at dlopen — no `RUSTFLAGS` rpath needed. (Names come from
+   `otool -L`, never guessed: the cross-references name the MAJOR-versioned
+   symlink while the real file is `libfoo.NN.x.y.dylib`, so a `-change` keyed
+   on the real file's name silently no-ops — the bug the first draft shipped.)
+4. **dylib co-location — DONE.** The Linux copy loop in napi-build-decode.mjs
+   now covers darwin (`*.dylib`), preserving the
+   `libfoo.dylib → libfoo.NN.dylib → libfoo.NN.x.y.dylib` chain.
+5. **libclang — DONE, zero config.** clang-sys finds the Xcode CLT libclang
+   via `xcrun`; no `LIBCLANG_PATH` needed.
+6. **CI — TODO.** Flip the four decode steps from `runner.os != 'macOS'` to
+   include `macos-latest`, and add a macOS branch to the Rust tests step. For
+   the `cargo test` binary use `DYLD_FALLBACK_LIBRARY_PATH=…/lib` (SIP strips
+   `DYLD_*` only for system/protected binaries, not user test binaries — the
+   test binary records `@loader_path/...` NEEDEDs that don't resolve from
+   target/debug/deps, and dyld's fallback dirs supply the leaf names). The
+   packaged `.node` relies on the `@loader_path` names + co-located dylibs, so
+   it needs no env.
+7. **Packaging — TODO.** Ship the `.dylib` beside the unpacked `.node` in
    `electron-builder.yml`, mirroring the Linux `.so` packaging.
-8. **Symbol collision.** Linux needed `RTLD_DEEPBIND` to defeat the
-   Chromium-vs-libffmpeg collision; macOS defaults to **two-level namespaces**, so
-   a flat-namespace clash is unlikely — but still smoke-test that the addon
-   dlopens cleanly (`otool -L` shows no stray undefined `napi_*`; a Node
-   `process.dlopen` returns the exports).
+8. **Symbol collision — DONE (smoke).** macOS's two-level namespaces avoid the
+   Linux flat-namespace Chromium-collision class; verified the addon dlopens
+   cleanly in plain Node — `require` returns the 3 exports and
+   `capabilities()` → `[ 'software' ]` (probes below).
 
-## Local probes (verified on Linux, 2026-07-19)
+## Local probes (verified on Linux + macOS, 2026-07-19)
 
 - Core, links + runs standalone:
   ```sh
@@ -150,6 +159,24 @@ needed:
   co-locates 25 `.so`; the `.node` loads via `$ORIGIN` with 3 exports.
 - Both addons build with `dyn-symbols` and load in Node with an export surface
   identical to the shipping `.node`.
+- macOS (26.5.2 arm64), decode full suite:
+  ```sh
+  FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/mac" \
+  DYLD_FALLBACK_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/mac/lib" \
+  cargo test --manifest-path native/decode/Cargo.toml --features test-noop
+  ```
+  → 28 passed, 0 failed (real ProRes decode, `export_sw` GOP ranges, credit
+  window).
+- macOS decode addon build: `npm run napi:build:decode` → clang-sys finds
+  libclang via `xcrun` (no `LIBCLANG_PATH`), co-locates 21 `.dylib` entries;
+  `otool -L index.darwin-arm64.node` shows all 7 libav\* NEEDED as
+  `@loader_path/...`, no build-tree paths.
+- macOS plain-Node load: `require('./native/decode')` → exports
+  `capabilities`, `versionInfo`, `NativeDecode`; `capabilities()` →
+  `[ 'software' ]`, `versionInfo()` → `avcodec=4070500` (= 62.28.100) — proof
+  the `@loader_path` wiring resolves the co-located dylibs with no env.
+- macOS integration suite: `npx vitest run
+  src/main/export-decode-native.integration.test.ts` → 17 passed.
 
 ## Upstream and community evidence
 
@@ -178,7 +205,14 @@ needed:
 - **Done** (branch `fix/native-linux-rust-tests`): `@weftcut/core` `test-noop` +
   Rust tests on all three OSes (macOS `dynamic_lookup` hack removed); core +
   decode `dyn-symbols` restored; decode built and tested on the Linux CI leg.
-- **TODO**: macOS decode (checklist above) — tracked separately, handled on a
-  macOS device. Longer term, keep the exported NAPI layer thin and continue
-  moving NAPI-free logic behind narrow Rust interfaces (as with `weftcut-eval`),
-  splitting at useful seams rather than wholesale.
+- **Done** (2026-07-19, macOS 26.5.2 arm64): macOS decode SW vertical —
+  from-source LGPL FFmpeg 8.1 staged (`resources/ffmpeg-lgpl/mac`,
+  sha256-pinned tarball), darwin branches in `fetch-ffmpeg-lgpl.mjs` +
+  `napi-build-decode.mjs`, `@loader_path` install-name rewrite at stage time,
+  addon built and loading self-contained in plain Node, 28 Rust + 17
+  integration tests passing, darwin admitted to the three gated test files
+  (napi integration + both export e2e gates).
+- **TODO**: macOS decode CI leg (checklist item 6) and electron-builder
+  packaging (item 7) — tracked separately. Longer term, keep the exported NAPI
+  layer thin and continue moving NAPI-free logic behind narrow Rust interfaces
+  (as with `weftcut-eval`), splitting at useful seams rather than wholesale.

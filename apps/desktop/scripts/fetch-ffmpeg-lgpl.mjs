@@ -1,14 +1,18 @@
-// Downloads a BtbN LGPL SHARED ffmpeg build (per-OS) into
-// resources/ffmpeg-lgpl/<os>/. This is the DISTRIBUTION decode runtime for
-// @weftcut/native-decode: the shared libs ship beside the addon; include/ + lib/
-// serve as FFMPEG_DIR for building the addon (CI + fresh dev machines).
+// Stages an LGPL SHARED ffmpeg build (per-OS) into resources/ffmpeg-lgpl/<os>/.
+// This is the DISTRIBUTION decode runtime for @weftcut/native-decode: the
+// shared libs ship beside the addon; include/ + lib/ serve as FFMPEG_DIR for
+// building the addon (CI + fresh dev machines).
+//   - Windows/Linux: downloaded from BtbN (see BUILDS).
+//   - macOS: built from the pinned FFmpeg source tarball (see BUILDS.mac).
 //
 // Per-OS runtime-library resolution (see docs/adr/0030 + docs/preview.md):
 //   - Windows: bin/*.dll, resolved at dlopen via a PATH prepend (main/native-decode.ts).
 //   - Linux:   lib/*.so*, resolved via the addon's RUNPATH ($ORIGIN) — the .so
 //     ship next to the .node, no runtime env mutation (ld.so fixes NEEDED libs
 //     at dlopen time, so an in-process LD_LIBRARY_PATH prepend is unreliable).
-//   - macOS: no BtbN LGPL-shared build exists; supply chain still unsettled.
+//   - macOS:   lib/*.dylib, resolved via @loader_path install names (rewritten
+//     here at stage time) — the .dylib ship next to the .node, no runtime env
+//     mutation and nothing to bake into the addon.
 //
 // LICENSING GATE (project_ffmpeg_licensing): the shipped libs must be LGPL.
 // Gyan's full_build-shared (the historical dev FFMPEG_DIR) is GPL and must
@@ -17,17 +21,18 @@
 // packaging step re-asserts from that manifest.
 import {
   existsSync, mkdirSync, rmSync, statSync, readFileSync, writeFileSync, cpSync,
-  copyFileSync, symlinkSync,
+  copyFileSync, symlinkSync, readdirSync, lstatSync,
 } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
-import { tmpdir } from 'node:os'
+import { cpus, tmpdir } from 'node:os'
 
-// n8.1 matches the crate pin ffmpeg-next = "8.1" (decode/Cargo.toml). Each
-// OS descriptor names its BtbN asset, the archive's top dir, the transient
-// banner exe, and which subdir holds the runtime shared libraries.
+// n8.1 matches the crate pin ffmpeg-next = "8.1" (decode/Cargo.toml). The
+// win/linux descriptors name the BtbN asset, the archive's top dir, the
+// transient banner exe, and which subdir holds the runtime shared libraries;
+// mac names its pinned source tarball instead (see below).
 const BUILDS = {
   win: {
     asset: 'ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip',
@@ -43,8 +48,28 @@ const BUILDS = {
     exes: ['ffmpeg', 'ffprobe', 'ffplay'],
     libDir: 'lib', // *.so* live in lib/ (resolved at runtime via the .node's RUNPATH)
   },
+  // No PREBUILT LGPL-shared macOS asset exists anywhere: BtbN publishes
+  // win/linux only; evermeet.cx / osxexperts.net / ffmpeg.martin-riedl.de are
+  // STATIC builds (and GPL — they link x264/x265); Homebrew's ffmpeg bottle is
+  // shared but --enable-gpl. So the mac leg builds FFmpeg n8.1 from the pinned
+  // release tarball: LGPL-clean by construction (--enable-shared, no
+  // --enable-gpl/--enable-nonfree), single-arch (host), zero non-system deps
+  // (configure autodetect picks up Apple frameworks only), so the staged
+  // dylibs are as self-contained as BtbN's. The hard sha256 pin is the
+  // integrity gate (ffmpeg.org publishes only a GPG .asc), mirroring the
+  // LIBVA .deb pins below.
+  mac: {
+    source: {
+      asset: 'ffmpeg-8.1.tar.xz',
+      inner: 'ffmpeg-8.1',
+      url: 'https://ffmpeg.org/releases/ffmpeg-8.1.tar.xz',
+      sha256: 'b072aed6871998cce9b36e7774033105ca29e33632be5b6347f3206898e0756a',
+    },
+    exes: [], // no bin/ is staged, so the cached-manifest heal is a no-op
+    libDir: 'lib', // *.dylib live in lib/ (resolved at runtime via @loader_path)
+  },
 }
-const OS_KEY = { win32: 'win', linux: 'linux' }[process.platform] ?? null
+const OS_KEY = { win32: 'win', linux: 'linux', darwin: 'mac' }[process.platform] ?? null
 
 // Bundled libva (Linux only) — the VAAPI copy-back fix (issue #5 Block C).
 // The BtbN LGPL ffmpeg is compiled against a bleeding-edge libva and so calls
@@ -208,18 +233,112 @@ function installLibva(dest) {
   }
 }
 
+/** sha256 of a file, hex — the pinned-tarball integrity gate for the mac leg. */
+function sha256Of(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
+/** Rewrite every real dylib in `libDir`: LC_ID_DYLIB and every libav*
+ * cross-reference go from the absolute --prefix install paths to
+ * `@loader_path/<name>`, so the staged tree is relocatable and a .node linked
+ * against it resolves its ffmpeg deps from its own directory at dlopen — the
+ * Mach-O analog of the Linux $ORIGIN RPATH, except nothing has to be baked
+ * into the addon (dyld expands @loader_path to the referring image's dir).
+ * Names come from `otool -L` (NOT guessed): FFmpeg's cross-references name the
+ * MAJOR-versioned symlink (libfoo.62.dylib), and the replacement is always
+ * SHORTER than the build prefix, so no -headerpad_max_install_names is
+ * needed. System refs (/usr/lib, /System/Library) are left untouched. */
+function rewriteMacInstallNames(libDir) {
+  const dylibs = readdirSync(libDir).filter(
+    (n) => n.endsWith('.dylib') && !lstatSync(join(libDir, n)).isSymbolicLink(),
+  )
+  if (dylibs.length === 0) throw new Error(`ffmpeg-lgpl(mac): no dylibs found in ${libDir}`)
+  for (const file of dylibs) {
+    const path = join(libDir, file)
+    const refs = execSync(`otool -L "${path}"`, { encoding: 'utf8' })
+      .split('\n')
+      .slice(1) // header line ("path:")
+      .map((l) => l.trim().replace(/\s+\(compatibility version.*$/, ''))
+      .filter((l) => l.startsWith(`${libDir}/`))
+    if (refs.length === 0) throw new Error(`ffmpeg-lgpl(mac): ${file} has no ${libDir} install names`)
+    // otool prints the dylib's own LC_ID_DYLIB first; the rest are NEEDED refs.
+    const args = [`-id "@loader_path/${basename(refs[0])}"`]
+    for (const ref of refs.slice(1)) args.push(`-change "${ref}" "@loader_path/${basename(ref)}"`)
+    execSync(`install_name_tool ${args.join(' ')} "${path}"`)
+  }
+  return dylibs
+}
+
+/** macOS leg (see BUILDS.mac): no prebuilt LGPL-shared asset exists, so build
+ * FFmpeg n8.1 from the pinned, sha256-verified release tarball and stage a
+ * BtbN-shaped tree (include/ + lib/ + LICENSE.txt + manifest.json). The
+ * `configuration:` banner is captured from the freshly INSTALLED exe — before
+ * the @loader_path rewrite, while its absolute-prefix NEEDED paths still
+ * resolve — so assertLgplBanner gates the real built artifact, not our claim. */
+function buildMacFromSource(cfg, dest, manifestPath) {
+  const { asset, inner, url, sha256 } = cfg.source
+  const archivePath = join(tmpdir(), asset)
+  const work = join(tmpdir(), `ffmpeg-lgpl-mac-${process.pid}`)
+  const src = join(work, inner)
+  const prefix = join(work, 'install')
+  rmSync(work, { recursive: true, force: true })
+  mkdirSync(work, { recursive: true })
+  try {
+    rmSync(archivePath, { force: true })
+    execSync(`curl -fL --progress-bar -o "${archivePath}" "${url}"`, { stdio: 'inherit' })
+    const got = sha256Of(archivePath)
+    if (got !== sha256) {
+      throw new Error(`ffmpeg-lgpl(mac): sha256 mismatch for ${asset}\n  expected ${sha256}\n  got      ${got}`)
+    }
+    execSync(`tar -xf "${archivePath}" -C "${work}"`, { stdio: 'inherit' })
+    // LGPL-clean by construction: --enable-shared without --enable-gpl /
+    // --enable-nonfree; x264/x265 (GPL) stay off. --disable-ffplay keeps the
+    // build independent of an SDL2 that may or may not be installed.
+    const configureArgs = [
+      `--prefix=${prefix}`,
+      '--enable-shared', '--disable-static',
+      '--disable-debug', '--disable-doc', '--disable-ffplay',
+    ]
+    execSync(`./configure ${configureArgs.join(' ')}`, { cwd: src, stdio: 'inherit' })
+    execSync(`make -j${cpus().length}`, { cwd: src, stdio: 'inherit' })
+    execSync('make install', { cwd: src, stdio: 'inherit' })
+    const versionOut = execSync(`"${join(prefix, 'bin', 'ffmpeg')}" -version`, { encoding: 'utf8' })
+    const configLine = versionOut.split(/\r?\n/).find((l) => l.startsWith('configuration:')) ?? ''
+    const configuration = configLine.replace(/^configuration:\s*/, '')
+    assertLgplBanner(configuration)
+    const dylibs = rewriteMacInstallNames(join(prefix, 'lib'))
+    mkdirSync(dest, { recursive: true })
+    // verbatimSymlinks: keep the libfoo.dylib -> libfoo.NN.dylib chain's
+    // RELATIVE targets as-is (same hazard as the win/linux extract above).
+    for (const part of ['include', 'lib']) {
+      cpSync(join(prefix, part), join(dest, part), { recursive: true, verbatimSymlinks: true })
+    }
+    copyFileSync(join(src, 'COPYING.LGPLv2.1'), join(dest, 'LICENSE.txt'))
+    writeFileSync(manifestPath, JSON.stringify({
+      os: OS_KEY, asset, url, sha256, configuration,
+      fetchedAt: new Date().toISOString(),
+    }, null, 2))
+    console.log(
+      `ffmpeg-lgpl installed: ${dest} (built from ${asset}; banner clean; ` +
+        `${dylibs.length} dylibs rewritten to @loader_path; sha256 ${sha256.slice(0, 12)}…)`,
+    )
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+    rmSync(archivePath, { force: true })
+  }
+}
+
 function main() {
   if (!OS_KEY) {
     console.log(
       `fetch-ffmpeg-lgpl: no LGPL-shared build for platform "${process.platform}" ` +
-        '(Windows + Linux supported; macOS supply chain unsettled); skipping.',
+        '(Windows/Linux download BtbN; macOS builds FFmpeg from source); skipping.',
     )
     return
   }
   const cfg = BUILDS[OS_KEY]
   const dest = destOf(OS_KEY)
   const manifestPath = join(dest, 'manifest.json')
-  const url = `${RELEASE}/${cfg.asset}`
 
   if (existsSync(manifestPath)) {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -234,7 +353,12 @@ function main() {
     console.log(`ffmpeg-lgpl already present (${m.asset}); banner clean.`)
     return
   }
+  if (OS_KEY === 'mac') {
+    buildMacFromSource(cfg, dest, manifestPath)
+    return
+  }
   mkdirSync(dest, { recursive: true })
+  const url = `${RELEASE}/${cfg.asset}`
   const archivePath = join(tmpdir(), cfg.asset)
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) { console.log(`Retry ${attempt}/${MAX_ATTEMPTS}...`); rmSync(archivePath, { force: true }) }

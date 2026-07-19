@@ -7,6 +7,10 @@
 //   - Linux: ld.so resolves the addon's NEEDED libav*.so at dlopen time from
 //     the ELF RUNPATH — an in-process LD_LIBRARY_PATH prepend is unreliable. So
 //     we bake RUNPATH=$ORIGIN into the .node and co-locate the *.so beside it.
+//   - macOS: dyld resolves the addon's NEEDED libav*.dylib via their
+//     @loader_path install names (rewritten at fetch time — see
+//     fetch-ffmpeg-lgpl.mjs rewriteMacInstallNames), so nothing is baked into
+//     the .node; we only co-locate the *.dylib beside it.
 import { existsSync, readFileSync, readdirSync, copyFileSync, lstatSync, symlinkSync, readlinkSync, rmSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,7 +20,7 @@ import { assertLgplBanner, lgplLibDir } from './fetch-ffmpeg-lgpl.mjs'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const root = join(HERE, '..') // apps/desktop
 const outDir = join(root, 'native', 'decode') // where napi drops the .node
-const osKey = { win32: 'win', linux: 'linux' }[process.platform] ?? null
+const osKey = { win32: 'win', linux: 'linux', darwin: 'mac' }[process.platform] ?? null
 
 const env = { ...process.env }
 if (!env.FFMPEG_DIR) {
@@ -57,23 +61,27 @@ execSync(
 )
 
 // Co-locate the runtime shared libraries next to the freshly built .node so
-// $ORIGIN resolution works in dev exactly as it will when packaged (where the
-// same *.so ship beside the unpacked .node — see electron-builder.yml). Windows
-// resolves *.dll via the PATH prepend instead, so this is Linux-only.
-if (process.platform === 'linux') {
-  const libDir = lgplLibDir('linux')
+// $ORIGIN (Linux) / @loader_path (macOS) resolution works in dev exactly as it
+// will when packaged (where the same shared libs ship beside the unpacked
+// .node — see electron-builder.yml). Windows resolves *.dll via the PATH
+// prepend instead, so this is Linux + macOS only.
+if (process.platform === 'linux' || process.platform === 'darwin') {
+  const libDir = lgplLibDir(osKey)
   if (!libDir || !existsSync(libDir)) {
     console.error('napi:build:decode — runtime lib dir missing; run `npm run fetch-ffmpeg-lgpl`.')
     process.exit(1)
   }
   let copied = 0
   for (const name of readdirSync(libDir)) {
-    if (!name.includes('.so')) continue // libav*.so / .so.NN / .so.NN.MM.PP
+    // Linux: libav*.so / .so.NN / .so.NN.MM.PP; macOS: lib*.dylib / lib*.NN.dylib
+    const isLib = process.platform === 'linux' ? name.includes('.so') : name.endsWith('.dylib')
+    if (!isLib) continue
     const src = join(libDir, name)
     const dst = join(outDir, name)
     rmSync(dst, { force: true })
-    // Preserve the SONAME symlink chain (libfoo.so -> .so.62 -> .so.62.x.y):
-    // the .node's DT_NEEDED names the middle link, so the chain must survive.
+    // Preserve the versioned symlink chain (libfoo.so -> .so.62 -> .so.62.x.y
+    // on Linux, libfoo.dylib -> libfoo.62.dylib on macOS): the .node's NEEDED
+    // entries name the versioned real file, so the chain must survive.
     // Re-anchor each link to its target's BASENAME — everything is co-located in
     // one dir, so a bare filename is the only correct (and relocatable) target.
     if (lstatSync(src).isSymbolicLink()) symlinkSync(basename(readlinkSync(src)), dst)

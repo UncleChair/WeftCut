@@ -237,9 +237,11 @@ v2 debt list:
   redundancy motive) — `auto` deliberately keeps them in-worker; revisit with
   profiling.
 
-The native-decode component ships on **Windows only** in v1; the macOS/Linux
-LGPL-ffmpeg DLL supply chain is unsettled, so on those platforms the Standard
-engine is simply unavailable (`auto` resolves to Lite) rather than broken.
+The native-decode component ships on **Windows, Linux, and macOS**; each
+platform stages its own LGPL-shared ffmpeg runtime (macOS builds ffmpeg 8.1
+from the pinned source tarball — see `fetch-ffmpeg-lgpl.mjs`). Where the
+runtime is absent, the Standard engine is simply unavailable (`auto` resolves
+to Lite) rather than broken.
 
 ### Zero-copy GPU frame upload — deprioritized, measure first
 

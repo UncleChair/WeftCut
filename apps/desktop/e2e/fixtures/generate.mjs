@@ -224,6 +224,30 @@ export function runFfmpeg(args, { cwd = process.cwd(), spawn = spawnSync } = {})
   }
 }
 
+/// Pick the AV1 encoder the ffmpeg on PATH actually ships. SVT-AV1 is the
+/// preferred 10-bit AV1 encoder, but lean sidecar builds may lack it (the
+/// macOS evermeet build has none) — fall back to libaom-av1 in
+/// constant-quality mode. Either produces the same AV1 10-bit ramp shape; the
+/// gates key on codec/depth, not the encoder. Probed once per process.
+let av1EncoderCache
+function pickAv1Encoder({ spawn = spawnSync } = {}) {
+  if (av1EncoderCache) return av1EncoderCache
+  const probe = spawn('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8' })
+  const encoders = probe.error ? '' : String(probe.stdout)
+  av1EncoderCache = /\blibsvtav1\b/.test(encoders)
+    ? {
+        codec: 'libsvtav1',
+        args: ['-preset', '6', '-crf', '18'],
+        description: '10-bit BT.709 gradient, AV1 10-bit SVT-AV1',
+      }
+    : {
+        codec: 'libaom-av1',
+        args: ['-crf', '18', '-b:v', '0', '-cpu-used', '4'],
+        description: '10-bit BT.709 gradient, AV1 10-bit (libaom-av1 fallback)',
+      }
+  return av1EncoderCache
+}
+
 /// Wrap `run` so every recipe publishes its output atomically: the output file
 /// (always the last ffmpeg argument) is redirected to a unique temp sibling and
 /// renamed into place only after a successful run. Parallel generators then
@@ -542,15 +566,16 @@ function generateGradient(entry, outputDir, run) {
       ? '4K 10-bit BT.709 gradient, H.264 High10'
       : '10-bit BT.709 gradient, H.264 High10'
   } else if (entry.gradientAv1) {
+    const av1 = pickAv1Encoder()
     args = gradientArgs({
       width: WIDTH,
       height: HEIGHT,
       duration: 1,
-      codec: 'libsvtav1',
+      codec: av1.codec,
       output,
-      beforePixelFormat: ['-preset', '6', '-crf', '18'],
+      beforePixelFormat: av1.args,
     })
-    description = '10-bit BT.709 gradient, AV1 10-bit SVT-AV1'
+    description = av1.description
   } else {
     const animatedFilter = "format=yuv420p10le,geq=lum='mod((X/(W-1))*1023+N*4,1024)':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
     args = gradientArgs({

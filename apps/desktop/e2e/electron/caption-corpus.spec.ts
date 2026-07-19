@@ -11,6 +11,8 @@ const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 // cue 3 [3,5] reuses lane 1. So it seeds TWO caption-role Tracks with three
 // cues — exactly the cross-Track corpus the Caption Panel must manage globally.
 const SRT_PATH = path.resolve(__dirname, "../fixtures/subtitles/overlapping.srt");
+// macOS select-all is Meta+a; Control+a does not select in native text fields.
+const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
 interface CaptionLayer {
   id: string;
@@ -96,7 +98,7 @@ test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one 
     // focus without hit-testing, then type + Enter to commit.
     const sizeInput = captionPanel.locator('.captions-style-section input[type="number"]');
     await sizeInput.focus();
-    await sizeInput.press("Control+a");
+    await sizeInput.press(`${MOD}+a`);
     await sizeInput.pressSequentially(String(newSize));
     await sizeInput.press("Enter");
     await expect

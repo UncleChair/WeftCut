@@ -164,9 +164,14 @@ if (plat === 'win32') {
   rmSync(tarPath, { force: true })
 
 } else if (plat === 'darwin') {
-  // evermeet.cx static build (universal / arm64+x86_64)
-  // ffmpeg and ffprobe are separate downloads on evermeet.
+  // evermeet.cx static build — x86_64 ONLY (no arm64/universal build is
+  // published); on Apple Silicon it runs under Rosetta 2. ffmpeg and ffprobe
+  // are separate downloads on evermeet.
   // Verified URL: https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip (302→200, ffprobe-8.1.2.zip)
+  // Skew vs the pinned 7.1.x win/linux builds: evermeet rolls the 8.x line —
+  // `-vsync` is deprecated there but still accepted (verified on 8.1.2; the
+  // preview conformance e2e relies on it) — and ships no libsvtav1 (AV1 export
+  // probes fall back to libaom-av1; encoder_registry.rs AV1_SOFTWARE).
   if (!existsSync(bin)) {
     const ffmpegUrl = 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip'
     const ffmpegZip = join(tmp, 'ffmpeg-mac.zip')

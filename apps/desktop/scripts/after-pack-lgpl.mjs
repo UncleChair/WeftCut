@@ -18,9 +18,8 @@ import { join } from 'node:path'
 import { assertLgplBanner } from './fetch-ffmpeg-lgpl.mjs'
 
 // Platforms that ship the co-located/PATH-loaded LGPL ffmpeg runtime for the
-// native-decode component. macOS has no LGPL-shared supply chain yet (the
-// component isn't shipped there), so there is nothing to re-assert.
-const LGPL_PLATFORMS = new Set(['linux', 'win32'])
+// native-decode component.
+const LGPL_PLATFORMS = new Set(['darwin', 'linux', 'win32'])
 
 export default function afterPack(context) {
   const platform = context.electronPlatformName
@@ -30,7 +29,8 @@ export default function afterPack(context) {
   }
 
   // extraResources lands the manifest at <resources>/native-decode/manifest.json
-  // on both Linux and Windows; getResourcesDir handles the per-OS layout.
+  // on every OS; getResourcesDir handles the per-OS layout (macOS nests it
+  // under <App>.app/Contents/Resources).
   const resourcesDir = context.packager.getResourcesDir(context.appOutDir)
   const manifestPath = join(resourcesDir, 'native-decode', 'manifest.json')
   if (!existsSync(manifestPath)) {
