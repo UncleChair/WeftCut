@@ -47,6 +47,22 @@ const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
 
 let backend: import('@weftcut/core').Backend | null = null
 let mainWindow: BrowserWindow | null = null
+
+/// Forward an `evt:*` event to the renderer, guarding against a native/backend
+/// callback firing during teardown. `mainWindow?.` only catches null — a window
+/// that has been DESTROYED (app closing) is still a non-null reference, and
+/// `.webContents.send()` on it (or even reading `.webContents`) throws
+/// "Object has been destroyed". For the async backend / native-decode event
+/// relays that throw is uncaught and surfaces as a main-process error dialog —
+/// especially visible in e2e, which launches and closes the app rapidly. No-op
+/// once the window (or its webContents) is gone.
+function emitToRenderer(event: string, payload: unknown): void {
+  const w = mainWindow
+  if (!w || w.isDestroyed()) return
+  const wc = w.webContents
+  if (wc.isDestroyed()) return
+  wc.send('evt:' + event, payload)
+}
 // The MCP host is started after `backend.init()`, but the `onEvent` closure
 // (which taps `mcp:change`) is constructed in the `new Backend(...)` call
 // BEFORE the host exists. Hold it module-scoped and set it right after
@@ -353,7 +369,7 @@ app.whenReady().then(async () => {
         }
         // tsHost not constructed yet (boot window) — fall through is defensive
       }
-      mainWindow?.webContents.send('evt:' + event, payload)
+      emitToRenderer(event, payload)
     },
   )
   await backend.init()
@@ -369,7 +385,7 @@ app.whenReady().then(async () => {
         const p = payload as { streamId: string; slot: number }
         recordFrameReadySent(p.streamId, p.slot, performance.now())
       }
-      mainWindow?.webContents.send('evt:' + event, payload)
+      emitToRenderer(event, payload)
     } catch (e) {
       console.warn('[main] native-decode event parse failed', e)
     }
@@ -523,7 +539,7 @@ app.whenReady().then(async () => {
   })
 
   tsHost = createTsActorHost({
-    send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
+    send: (event, payload) => emitToRenderer(event, payload),
     mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
     fileExists: (p) => fs.existsSync(p),
     fs: nodeFs,
@@ -555,7 +571,7 @@ app.whenReady().then(async () => {
   // AND emit motifs:changed (renderer resync → ?v= host buster).
   motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
     tsHost?.refreshMotifCatalog()
-    mainWindow?.webContents.send('evt:motifs:changed', {})
+    emitToRenderer('motifs:changed', {})
   })
 
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
@@ -798,7 +814,7 @@ app.whenReady().then(async () => {
   // existing listener already handles.
   ipcMain.handle('media:dropped', (_e, paths: string[]) => {
     if (Array.isArray(paths) && paths.length > 0) {
-      mainWindow?.webContents.send('evt:media:external-drop', paths)
+      emitToRenderer('media:external-drop', paths)
     }
   })
 
@@ -950,7 +966,7 @@ app.whenReady().then(async () => {
 
     const oldRoot = dataRoot.dataRoot
     const newRoot = path.resolve(picked[0])
-    const emit = (p: DataRootProgress): void => { mainWindow?.webContents.send('evt:dataRoot:progress', p) }
+    const emit = (p: DataRootProgress): void => { emitToRenderer('dataRoot:progress', p) }
 
     try {
       const plan = planMigration(oldRoot, newRoot, migrationFs, path.join) // throws on nested/same
