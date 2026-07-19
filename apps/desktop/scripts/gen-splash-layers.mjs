@@ -51,13 +51,16 @@
 //
 // Note on check 2: splitting the film into kept/removed pieces along an
 // anti-aliased cut edge cannot recombine exactly under source-over — kept
-// alpha (1-c) plus removed alpha c composites to 1-c(1-c), not 1. To make the
-// invariant exact, the filler masks are dilated 1 viewBox unit beyond the
-// true cut geometry (w-cutout stroke 24→26, wedges get stroke 2), so each
-// filler fully covers its cut edge's AA ramp with full film alpha. The
-// fillers are ~0.5px (at 1x) fatter than the geometric cut, which is
-// visually negligible and guarantees no background bleed at the seams when
-// all pieces are stacked.
+// alpha (1-c) plus removed alpha c composites to 1-c(1-c), not 1. The browser
+// makes this worse: each layer is downscaled from 1280px independently, so
+// abutting alpha ramps resample differently and show as faint seams tracing
+// the cut geometry. To kill the seams, the filler masks are dilated 4 viewBox
+// units beyond the true cut geometry (w-cutout stroke 24→32, wedges get
+// stroke 8), so each filler fully covers its cut edge's AA ramp with full
+// film alpha and the overlap (same color on same color) survives resampling.
+// The wedge filler's channel-side edge is NOT dilated — the cutout
+// subtraction keeps it at the true boundary, so no film-colored ghost
+// remains after the w-cut filler is erased (see layer 3 below).
 
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -98,6 +101,14 @@ const WEDGE_RIGHT = 'M540 125H490L386.652 327H540V125Z'
 const REVEAL_RECT = '<rect x="88" y="120" width="464" height="207"/>'
 const MIDDLE_RECT = '<rect x="100" y="147" width="440" height="142"/>'
 
+// Filler-mask-only variants, extended 4 units at the bottom. The true rects'
+// bottom edges coincide with true cut boundaries (reveal y=327, middle
+// y=289), so sharing them would clip the dilation to zero on exactly the
+// edges that face intact film and need the overlap most. Extending them only
+// widens the filler into film-colored (never-cut) territory — harmless.
+const FILLER_REVEAL_RECT = '<rect x="88" y="120" width="464" height="211"/>'
+const FILLER_MIDDLE_RECT = '<rect x="100" y="147" width="440" height="146"/>'
+
 // --- SVG document builders ---------------------------------------------------
 
 const svgDoc = (body) =>
@@ -133,17 +144,16 @@ const svgFilmFinal = svgDoc(SHARED_DEFS.replace('</defs>', CUT_MASK + '</defs>')
 // material is kept) because clipPath children ignore stroke per the SVG spec,
 // and the cutout's 24px stroke is part of its geometry — the mask rasterizes
 // the stroked shape exactly like the original mask does. The stroke is
-// widened 24→26 to dilate the filler 1 unit past the cut edge's AA ramp (see
-// header), which does not change how the layer reads on its own.
+// widened 24→32 to dilate the filler 4 units past the cut edge's AA ramp
+// (see header), which does not change how the layer reads on its own.
 const svgWCutFiller = svgDoc(
-  SHARED_DEFS.replace(
-    '</defs>',
+  `<defs><clipPath id="reveal">${FILLER_REVEAL_RECT}</clipPath>` +
     `<mask id="keep" maskUnits="userSpaceOnUse" x="0" y="0" width="${VW}" height="${VH}">` +
       `<g clip-path="url(#reveal)">` +
-      `<path d="${W_CUTOUT}" transform="translate(100 0)" fill="white" stroke="white" stroke-width="26"/>` +
+      `<path d="${W_CUTOUT}" transform="translate(100 0)" fill="white" stroke="white" stroke-width="32"/>` +
       `</g>` +
-      `</mask></defs>`,
-  ) + `<g mask="url(#keep)"><path d="${FILM_PATH}" fill="${FILM_COLOR}"/></g>`,
+      `</mask></defs>` +
+    `<g mask="url(#keep)"><path d="${FILM_PATH}" fill="${FILM_COLOR}"/></g>`,
 )
 
 // Layer 3: film ∧ wedges ∧ middle rect, MINUS the W cutout. The wedge shapes
@@ -151,23 +161,37 @@ const svgWCutFiller = svgDoc(
 // cut during the W-cut sweep, so it belongs solely to the w-cut filler.
 // Leaving it in both fillers made the wedge filler keep painting film color
 // over the swept region until the middle-open phase (the "ghost" pixels).
-// Hence the black subtraction of the cutout at its TRUE boundary (fill +
-// stroke 24, translate(100 0)) — not the dilated stroke-26 variant, which is
-// only used for the w-cut filler's own coverage. The wedges keep their 2-unit
-// white stroke: it dilates only their OUTER boundary against intact film (see
-// header), and where it reaches into the cutout band the black subtraction
-// wins anyway (black paints last).
+// Hence the black subtraction of the cutout (fill + stroke, translate(100 0)).
+// The subtraction boundary depends on which side of the middle rect the
+// material faces:
+// - Inside the rect the cutout's true stroke-24 boundary is used. There
+//   film-final is fully removed by the wedge cut, so the filler's (1-c) ramp
+//   recomposites exactly with the original's single ramp. Using the dilated
+//   boundary here would leave the cutout..cutout+4 band — which IS inside
+//   the true wedge cut — uncovered (transparent) after the w-cut sweep,
+//   re-introducing a background-colored ghost along the channel.
+// - Below the rect (the +4 seam-overlap strip), film-final is NOT removed by
+//   the wedge cut and carries the cutout's AA ramp itself, so the strip is
+//   trimmed by the dilated stroke-32 boundary to keep it off that ramp
+//   (otherwise both layers share the ramp and double-composite it — the
+//   ~1px speckle where the bite crosses y=289).
+// The wedges keep their 8-unit white stroke: it dilates only their OUTER
+// boundary against intact film (see header), and where it reaches into the
+// cutout band the black subtraction wins anyway (black paints last).
 const svgWedgeFiller = svgDoc(
-  SHARED_DEFS.replace(
-    '</defs>',
+  `<defs><clipPath id="middle">${FILLER_MIDDLE_RECT}</clipPath>` +
+    `<clipPath id="below-mid"><rect x="88" y="289" width="464" height="60"/></clipPath>` +
     `<mask id="keep" maskUnits="userSpaceOnUse" x="0" y="0" width="${VW}" height="${VH}">` +
       `<g clip-path="url(#middle)">` +
-      `<path d="${WEDGE_LEFT}" fill="white" stroke="white" stroke-width="2"/>` +
-      `<path d="${WEDGE_RIGHT}" fill="white" stroke="white" stroke-width="2"/>` +
+      `<path d="${WEDGE_LEFT}" fill="white" stroke="white" stroke-width="8"/>` +
+      `<path d="${WEDGE_RIGHT}" fill="white" stroke="white" stroke-width="8"/>` +
       `</g>` +
       `<path d="${W_CUTOUT}" transform="translate(100 0)" fill="black" stroke="black" stroke-width="24"/>` +
-      `</mask></defs>`,
-  ) + `<g mask="url(#keep)"><path d="${FILM_PATH}" fill="${FILM_COLOR}"/></g>`,
+      `<g clip-path="url(#below-mid)">` +
+      `<path d="${W_CUTOUT}" transform="translate(100 0)" fill="black" stroke="black" stroke-width="32"/>` +
+      `</g>` +
+      `</mask></defs>` +
+    `<g mask="url(#keep)"><path d="${FILM_PATH}" fill="${FILM_COLOR}"/></g>`,
 )
 
 // Layer 4: the blue W, as-is.
