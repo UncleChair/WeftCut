@@ -29,33 +29,54 @@ afterEach(() => {
 });
 
 describe("SplashScreen launch mark", () => {
-  it("uses the canonical icon cutout geometry through the full reveal", () => {
+  it("stacks the pre-rendered mark layers under the canonical pulse geometry", () => {
     const iconDocument = new DOMParser().parseFromString(iconSvg, "image/svg+xml");
-    const canonicalCutout = iconDocument.querySelector(
-      'mask path[fill="black"][stroke="black"]',
-    );
-    expect(canonicalCutout).not.toBeNull();
+    const canonicalW = iconDocument.querySelector('path[fill="#6696E6"]');
+    expect(canonicalW).not.toBeNull();
 
     const { container } = render(
       <SplashScreen {...READY_STATUS_PROPS} ready onComplete={() => {}} />,
     );
-    const splashCutout = container.querySelector("#splash-w-cutout-shape");
-    expect(splashCutout?.getAttribute("d")).toBe(
-      canonicalCutout?.getAttribute("d"),
+
+    const mark = container.querySelector(".splash-mark");
+    // Bottom → top: final film, wedge filler, W-cut filler.
+    const filmLayers = mark?.querySelectorAll(".splash-film-stack img");
+    expect(
+      [...(filmLayers ?? [])].map((img) => img.getAttribute("src")),
+    ).toEqual([
+      "./splash/film-final@2x.png",
+      "./splash/wedge-filler@2x.png",
+      "./splash/w-cut-filler@2x.png",
+    ]);
+
+    const wPaint = mark?.querySelector(".splash-w-paint img");
+    expect(wPaint?.getAttribute("src")).toBe("./splash/w-paint@2x.png");
+
+    // Paint order: film stack, painted W, then the pulse overlay.
+    expect(mark?.children[0]?.classList.contains("splash-film-stack")).toBe(
+      true,
+    );
+    expect(mark?.children[1]?.classList.contains("splash-w-paint")).toBe(true);
+    expect(mark?.children[2]?.classList.contains("splash-pulse-overlay")).toBe(
+      true,
     );
 
-    const cutoutUse = container.querySelector(
-      'mask g[clip-path="url(#splash-w-reveal)"] use[href="#splash-w-cutout-shape"]',
+    // #splash-w-shape is the icon's painted W translated +100 into the
+    // 640-wide mark frame; icon.svg serializes the same geometry at +0 with
+    // different rounding, so the twin check pins the mark's string directly.
+    const wShape = container.querySelector("#splash-w-shape");
+    expect(wShape?.getAttribute("d")).toBe(
+      "M300.117 167.417L251.477 239.378C249.409 242.438 244.851 242.276 243.004 239.078L195.331 156.5C192.652 151.859 187.7 149 182.34 149H110C104.478 149 100 153.477 100 159V183C100 188.523 104.478 193 110 193H157.306C162.684 193 167.65 195.879 170.322 200.545L224.679 295.455C227.352 300.121 232.318 303 237.696 303H254.024C259.011 303 263.672 300.522 266.461 296.387L320.001 217L373.541 296.387C376.329 300.522 380.99 303 385.977 303H402.306C407.683 303 412.649 300.121 415.322 295.455L469.679 200.545C472.352 195.879 477.318 193 482.696 193H530C535.523 193 540 188.523 540 183V159C540 153.477 535.523 149 530 149H457.661C452.302 149 447.35 151.859 444.671 156.5L396.997 239.078C395.151 242.276 390.593 242.438 388.525 239.378L339.885 167.417C330.368 153.337 309.634 153.337 300.117 167.417Z",
     );
-    expect(cutoutUse?.getAttribute("transform")).toBe("translate(100 0)");
+    expect(
+      container.querySelector('#splash-pulse-w-clip use[href="#splash-w-shape"]'),
+    ).not.toBeNull();
 
-    const reveal = container.querySelector("#splash-w-reveal rect");
-    expect(reveal?.getAttribute("y")).toBe("120");
-    expect(reveal?.getAttribute("height")).toBe("207");
-
-    const pulse = container.querySelector(
-      '.splash-logo-pulse-trace g[transform="translate(100 0)"]',
+    const pulseTrace = container.querySelector(".splash-logo-pulse-trace");
+    expect(pulseTrace?.getAttribute("clip-path")).toBe(
+      "url(#splash-pulse-w-clip)",
     );
+    const pulse = pulseTrace?.querySelector('g[transform="translate(100 0)"]');
     expect(
       pulse?.querySelectorAll(".logo-pulse-glow, .logo-pulse-core"),
     ).toHaveLength(2);
