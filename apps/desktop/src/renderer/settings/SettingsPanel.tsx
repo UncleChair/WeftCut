@@ -2,7 +2,17 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type ApiKeyStatus,
+  type DataRootCurrent,
+  type DataRootProgress,
   type KeybindingsMap,
+  DATA_ROOT_EVENTS,
+  dataRootCurrent,
+  dataRootDeleteOld,
+  dataRootDismissCleanup,
+  dataRootOpenFolder,
+  dataRootPendingCleanup,
+  dataRootPickAndMigrate,
+  dataRootRelaunch,
   fitCompositionToLayers,
   getProjectSettings,
   recentsGetReopenOnLaunch,
@@ -14,6 +24,7 @@ import {
   settingsTestProvider,
   updateProjectSettings,
 } from "../ipc";
+import { listen, type UnlistenFn } from "@/bridge/events";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
@@ -229,6 +240,14 @@ export function SettingsPanel({
                   </span>
                 </span>
               </label>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.data_location_heading")}</h3>
+              <p className="settings-blurb">
+                {t("settings.data_location_blurb")}
+              </p>
+              <DataLocationSection onError={setError} />
             </section>
 
             <section className="settings-section">
@@ -507,6 +526,267 @@ function PrebakeSection({ onError }: { onError: (msg: string) => void }) {
         <span className="settings-toggle-hint">{t("settings.prebake_motifs_hint")}</span>
       </span>
     </label>
+  );
+}
+
+/// Migration lifecycle for the "Change…" action. `running` holds the latest
+/// progress tick (null until the first arrives — ADOPT never emits one, so the
+/// bar stays indeterminate through an instant adopt). `success`/`error` are
+/// terminal: success offers the relaunch affordance, error shows the rollback
+/// message (the resolver already reverted; `data_root` is unchanged).
+type MigrateState =
+  | { kind: "idle" }
+  | { kind: "running"; progress: DataRootProgress | null }
+  | { kind: "success"; mode: "adopt" | "copy"; newPath: string }
+  | { kind: "error"; message: string };
+
+/// "Data location" section — shows the effective data root, drives the ticket-03
+/// copy/adopt migration (Change…), opens the folder, and — after a relaunch onto
+/// a new root — offers to delete the old copy. Exported for the component test.
+export function DataLocationSection({
+  onError,
+}: {
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [current, setCurrent] = useState<DataRootCurrent | null>(null);
+  const [migrate, setMigrate] = useState<MigrateState>({ kind: "idle" });
+  /// The old copy the user may delete post-relaunch; null while nothing pends.
+  const [pendingOld, setPendingOld] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  /// The live progress subscription for the in-flight migration only. Held in a
+  /// ref so the unmount cleanup can drop it even mid-copy.
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+
+  // Per-section fetch-on-mount (the general pane stays mounted and toggles via
+  // `hidden`, so this effect runs once). Also probes for a pending delete-old
+  // marker left by a completed relaunch onto a new root.
+  useEffect(() => {
+    dataRootCurrent()
+      .then(setCurrent)
+      .catch((e) => onError(String(e)));
+    dataRootPendingCleanup()
+      .then((p) => {
+        if (p) setPendingOld(p.oldPath);
+      })
+      .catch((e) => onError(String(e)));
+    return () => {
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+    };
+  }, [onError]);
+
+  const change = async () => {
+    onError("");
+    setMigrate({ kind: "running", progress: null });
+    try {
+      // Subscribe to copy progress for the duration of this migration only.
+      // Delivered out-of-band on `evt:dataRoot:progress` (see DATA_ROOT_EVENTS);
+      // ADOPT emits no copy ticks — just a final `done` — so the bar stays
+      // indeterminate until totalFiles is counted (never, for adopt).
+      unlistenRef.current = await listen<DataRootProgress>(
+        DATA_ROOT_EVENTS.progress,
+        (e) => {
+          setMigrate((s) =>
+            s.kind === "running"
+              ? { kind: "running", progress: e.payload }
+              : s,
+          );
+        },
+      );
+      const result = await dataRootPickAndMigrate();
+      if (result.ok) {
+        setMigrate({
+          kind: "success",
+          mode: result.mode,
+          newPath: result.newPath,
+        });
+      } else if ("cancelled" in result) {
+        // User dismissed the native picker — silently return to idle.
+        setMigrate({ kind: "idle" });
+      } else {
+        setMigrate({ kind: "error", message: result.error });
+      }
+    } catch (e) {
+      setMigrate({ kind: "error", message: String(e) });
+    } finally {
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+    }
+  };
+
+  const openFolder = async () => {
+    onError("");
+    try {
+      await dataRootOpenFolder();
+    } catch (e) {
+      onError(String(e));
+    }
+  };
+
+  const restart = async () => {
+    onError("");
+    try {
+      await dataRootRelaunch();
+    } catch (e) {
+      setMigrate({ kind: "error", message: String(e) });
+    }
+  };
+
+  const deleteOld = async () => {
+    setDeleteBusy(true);
+    onError("");
+    try {
+      await dataRootDeleteOld();
+      setPendingOld(null);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  /// Keep the old copy: dismiss the prompt AND clear the marker so it is a
+  /// one-time offer (no re-prompt next launch). Resolves every non-destructive
+  /// close path (the Keep button, Escape, backdrop, ✕). Non-destructive — the
+  /// old folder stays on disk for the user to remove manually.
+  const keepOld = () => {
+    setPendingOld(null);
+    void dataRootDismissCleanup().catch((e) => onError(String(e)));
+  };
+
+  const busy = migrate.kind === "running";
+  const prog = migrate.kind === "running" ? migrate.progress : null;
+  const percentKnown = prog !== null && prog.totalFiles > 0;
+  const percent = percentKnown
+    ? Math.round((prog.copiedFiles / prog.totalFiles) * 100)
+    : 0;
+
+  return (
+    <>
+      <div className="settings-key-row">
+        <div className="settings-data-location">
+          <div className="settings-key-header">
+            <span className="settings-key-label">
+              {t("settings.data_location_current_label")}
+            </span>
+            {current?.isFallback && (
+              <span className="settings-badge settings-badge-off">
+                {t("settings.data_location_fallback")}
+              </span>
+            )}
+          </div>
+
+          <p className="settings-data-path">{current ? current.path : "…"}</p>
+
+          <div className="settings-key-input-row">
+            <Button size="sm" onClick={() => void change()} disabled={busy}>
+              {t("settings.data_location_change")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void openFolder()}
+              disabled={busy || current === null}
+            >
+              {t("settings.data_location_open_folder")}
+            </Button>
+          </div>
+
+          {migrate.kind === "running" && (
+            <div className="settings-data-migrate" aria-live="polite">
+              <p className="settings-toggle-hint">
+                {prog
+                  ? t(`settings.data_location_phase_${prog.phase}`)
+                  : t("settings.data_location_working")}
+                {percentKnown &&
+                  ` — ${t("settings.data_location_progress_count", {
+                    copied: prog.copiedFiles,
+                    total: prog.totalFiles,
+                  })}`}
+              </p>
+              <div
+                className="progress-track"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                {...(percentKnown ? { "aria-valuenow": percent } : {})}
+              >
+                <div
+                  className="progress-fill"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {migrate.kind === "success" && (
+            <div className="settings-data-migrate">
+              <p className="settings-test-ok">
+                {migrate.mode === "adopt"
+                  ? t("settings.data_location_success_adopt", {
+                      path: migrate.newPath,
+                    })
+                  : t("settings.data_location_success_copy", {
+                      path: migrate.newPath,
+                    })}
+              </p>
+              <div className="settings-key-input-row">
+                <Button size="sm" onClick={() => void restart()}>
+                  {t("settings.data_location_restart")}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {migrate.kind === "error" && (
+            <p className="settings-test-err" role="alert">
+              {t("settings.data_location_error", { message: migrate.message })}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {pendingOld !== null && (
+        <AppDialog
+          title={t("settings.data_location_cleanup_title")}
+          onClose={keepOld}
+          closeLabel={t("settings.data_location_cleanup_keep")}
+          panelClassName="settings-panel"
+        >
+          <div className="settings-body">
+            <div className="settings-card">
+              <p className="settings-blurb">
+                {t("settings.data_location_cleanup_body", { path: pendingOld })}
+              </p>
+              <div className="export-actions">
+                {/* Non-destructive default: Keep is the primary, auto-focused
+                    action and is what the dialog's Escape / backdrop / ✕ close
+                    resolve to. Deletion is the clearly-labelled destructive
+                    secondary and only ever runs on this explicit click. */}
+                <Button
+                  size="lg"
+                  autoFocus
+                  onClick={keepOld}
+                  disabled={deleteBusy}
+                >
+                  {t("settings.data_location_cleanup_keep")}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="lg"
+                  onClick={() => void deleteOld()}
+                  disabled={deleteBusy}
+                >
+                  {deleteBusy
+                    ? t("settings.data_location_cleanup_deleting")
+                    : t("settings.data_location_cleanup_delete")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </AppDialog>
+      )}
+    </>
   );
 }
 

@@ -54,15 +54,28 @@ describe('isInside — Windows case-insensitivity', () => {
 describe('isAllowed', () => {
   const TEMP = path.resolve('/tmp/weft')
   const USER = path.resolve('/home/u/userData')
-  const roots = [TEMP, USER]
+  // The data root is user-relocatable and can live OUTSIDE userData; the backend
+  // media cache + user Motifs now live under it, so it is an admitted root.
+  const DATA = path.resolve('/mnt/media/weftcut-data')
+  const roots = [TEMP, USER, DATA]
 
   it('accepts a path under any root', () => {
     expect(isAllowed(path.join(TEMP, 'export.mp4'), roots)).toBe(true)
-    expect(isAllowed(path.join(USER, 'Cache', 'x'), roots)).toBe(true)
+    expect(isAllowed(path.join(USER, 'app_settings.json'), roots)).toBe(true)
+  })
+
+  it('accepts a path under the data root (backend cache + Motifs)', () => {
+    // The former <userData>/Cache role moved here to <dataRoot>/cache; user
+    // Motifs live at <dataRoot>/motifs.
+    expect(isAllowed(path.join(DATA, 'cache', 'x'), roots)).toBe(true)
+    expect(isAllowed(path.join(DATA, 'motifs', 'm', 'index.html'), roots)).toBe(true)
   })
 
   it('rejects a path under no root', () => {
     expect(isAllowed(path.resolve('/etc/shadow'), roots)).toBe(false)
+    // A sibling of the data root is NOT admitted — the data root admission does
+    // not leak to adjacent paths.
+    expect(isAllowed(path.join(path.dirname(DATA), 'other', 'x'), roots)).toBe(false)
   })
 
   it('rejects against an empty root list', () => {

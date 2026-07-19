@@ -1569,3 +1569,67 @@ export interface CaptionStylePatch {
 export async function restyleCaptions(patch: CaptionStylePatch): Promise<void> {
   return invoke<void>("restyle_captions", { patch });
 }
+
+// ============================================================
+// Data location (user-managed data root, ticket 03)
+// ============================================================
+//
+// Main-process actions (not backend/Rust commands) — thin wrappers over
+// window.api.dataRoot.* (see src/preload/index.ts). Types are single-sourced in
+// src/shared/data-root.ts and re-exported here for call sites. The copy
+// migration's progress arrives on the `dataRoot:progress` event
+// (DATA_ROOT_EVENTS.progress) — subscribe via the bridge event surface.
+
+import type {
+  DataRootCurrent,
+  DataRootMigrateResult,
+  DataRootPendingCleanup,
+} from "../../shared/data-root";
+export type {
+  DataRootCurrent,
+  DataRootMigrateResult,
+  DataRootPendingCleanup,
+  DataRootProgress,
+} from "../../shared/data-root";
+export { DATA_ROOT_EVENTS } from "../../shared/data-root";
+
+/// The effective data root this process runs on, plus whether it is a fallback.
+export async function dataRootCurrent(): Promise<DataRootCurrent> {
+  return window.api.dataRoot.current();
+}
+
+/// Native folder picker → plan → (copy+verify OR adopt), emitting progress on
+/// `dataRoot:progress`. On success writes `data_root` + a pending-delete marker
+/// and returns ready-to-relaunch; on failure rolls back and returns the error.
+/// Does NOT relaunch — call `dataRootRelaunch()` after showing success.
+export async function dataRootPickAndMigrate(): Promise<DataRootMigrateResult> {
+  return window.api.dataRoot.pickAndMigrate();
+}
+
+/// Relaunch the app onto the newly-written data root (app.relaunch + exit).
+export async function dataRootRelaunch(): Promise<void> {
+  return window.api.dataRoot.relaunch();
+}
+
+/// Open the effective data root in the OS file manager.
+export async function dataRootOpenFolder(): Promise<void> {
+  return window.api.dataRoot.openFolder();
+}
+
+/// After a successful relaunch onto a new root, the old copy awaiting deletion
+/// (null when there is nothing pending, or the reboot didn't land on the new root).
+export async function dataRootPendingCleanup(): Promise<DataRootPendingCleanup | null> {
+  return window.api.dataRoot.pendingCleanup();
+}
+
+/// Delete the old copy recorded by the pending-delete marker, then clear it.
+/// Only ever called on explicit user confirm — never auto-invoked.
+export async function dataRootDeleteOld(): Promise<void> {
+  return window.api.dataRoot.deleteOld();
+}
+
+/// Dismiss the delete-old prompt without deleting: keep the old copy on disk and
+/// clear the marker so the prompt is one-time (no re-prompt on next launch).
+export async function dataRootDismissCleanup(): Promise<void> {
+  return window.api.dataRoot.dismissCleanup();
+}

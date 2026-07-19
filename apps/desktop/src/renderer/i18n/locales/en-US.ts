@@ -649,6 +649,32 @@ const enUS = {
     decode_unsupported_switch: "Switch to Standard",
     decode_unsupported_body_no_component:
       "This clip's format isn't supported by the Lite engine, and the Standard engine isn't installed.",
+    data_location_heading: "Data location",
+    data_location_blurb:
+      "Where WeftCut keeps its large managed files — your Motifs, the media cache, and downloaded assets. Small settings and project files always stay in the app's config folder.",
+    data_location_current_label: "Current folder",
+    data_location_fallback:
+      "Fallback — the folder you chose was unavailable, so the default is in use.",
+    data_location_change: "Change…",
+    data_location_open_folder: "Open folder",
+    data_location_working: "Preparing…",
+    data_location_phase_copy: "Copying files…",
+    data_location_phase_verify: "Verifying…",
+    data_location_phase_done: "Finishing…",
+    data_location_progress_count: "{{copied}} / {{total}} files",
+    data_location_success_copy:
+      "Your data was copied to {{path}}. Restart WeftCut to start using the new location.",
+    data_location_success_adopt:
+      "WeftCut will use the existing data folder at {{path}}. Restart to apply.",
+    data_location_restart: "Restart to apply",
+    data_location_error:
+      "Couldn't change the data folder: {{message}} Your data was left unchanged.",
+    data_location_cleanup_title: "Delete old data copy?",
+    data_location_cleanup_body:
+      "WeftCut is now running on the new location. The previous copy at {{path}} is no longer used — delete it to free up space, or keep it as a backup.",
+    data_location_cleanup_keep: "Keep",
+    data_location_cleanup_delete: "Delete old copy",
+    data_location_cleanup_deleting: "Deleting…",
   },
   keybindings: {
     add: "+ Add",

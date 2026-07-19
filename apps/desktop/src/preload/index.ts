@@ -21,6 +21,11 @@ import type {
   WinCreateOpts,
   WinAction,
 } from '../shared/ipc'
+import type {
+  DataRootCurrent,
+  DataRootMigrateResult,
+  DataRootPendingCleanup,
+} from '../shared/data-root'
 
 type Listener = (payload: unknown) => void
 
@@ -250,6 +255,21 @@ const api: WeftcutApi = {
       ipcRenderer.invoke('decodeCap:probeSw', { path }) as Promise<DecodeCapabilityProbeResult>,
     probeHw: (path: string, classKey: string) =>
       ipcRenderer.invoke('decodeCap:probeHw', { path, classKey }) as Promise<DecodeHwProbeResult>,
+  },
+
+  // User-managed data location (ticket 03). Plain main-process actions; the copy
+  // migration's progress arrives out-of-band on `evt:dataRoot:progress` (subscribe
+  // via the generic `on()` above), not as a return value.
+  dataRoot: {
+    current: (): Promise<DataRootCurrent> => ipcRenderer.invoke('dataRoot:current') as Promise<DataRootCurrent>,
+    pickAndMigrate: (): Promise<DataRootMigrateResult> =>
+      ipcRenderer.invoke('dataRoot:pickAndMigrate') as Promise<DataRootMigrateResult>,
+    relaunch: (): Promise<void> => ipcRenderer.invoke('dataRoot:relaunch') as Promise<void>,
+    openFolder: (): Promise<void> => ipcRenderer.invoke('dataRoot:openFolder') as Promise<void>,
+    pendingCleanup: (): Promise<DataRootPendingCleanup | null> =>
+      ipcRenderer.invoke('dataRoot:pendingCleanup') as Promise<DataRootPendingCleanup | null>,
+    deleteOld: (): Promise<void> => ipcRenderer.invoke('dataRoot:deleteOld') as Promise<void>,
+    dismissCleanup: (): Promise<void> => ipcRenderer.invoke('dataRoot:dismissCleanup') as Promise<void>,
   },
 }
 

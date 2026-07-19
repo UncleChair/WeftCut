@@ -27,6 +27,12 @@ import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previe
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
 import { MAIN_WINDOW_MINIMUM_SIZE } from './mainWindowConfig.js'
+import {
+  planMigration, runCopy, verify, rollback,
+  writeMarker, readMarker, clearMarker, deleteOldCopy,
+  type MigrationFs,
+} from './dataRootMigration.js'
+import type { DataRootMigrateResult, DataRootProgress } from '../shared/data-root.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -246,10 +252,71 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Atomic-JSON fs adapter (temp+rename) shared by every TS-owned config store.
+  // Constructed here (ahead of its later consumers) because the app-settings
+  // store and the data-root resolver both need it BEFORE the Backend cache dir
+  // and UserMotifStore are built below.
+  const atomicFs = {
+    exists: (p: string) => fs.existsSync(p),
+    readFile: (p: string) => fs.readFileSync(p, 'utf8'),
+    writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
+    rename: (a: string, b: string) => fs.renameSync(a, b),
+    mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
+  }
+  // App-level prefs store — persists <userData>/app_settings.json. This is the
+  // SINGLE owner of app_settings.json (the resolver and every later consumer
+  // reuse this instance; no second parse anywhere).
+  const { createAppSettingsStore } = await import('./app-settings.js')
+  const appSettings = createAppSettingsStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'app_settings.json'), dir: app.getPath('userData') })
+
+  // Resolve the user-configurable data root BEFORE the Backend cache dir
+  // (`new Backend(...)` below) and UserMotifStore are constructed — both take
+  // their paths from it. Ticket 02 wires the consumers to `dataRoot.*`; ticket
+  // 01 only fixes the root + subdir layout and holds the paths in this scope. A
+  // configured-but-unavailable root surfaces a blocking native dialog here (no
+  // main window yet), so the sync Electron dialog/picker are used.
+  const { resolveDataRoot } = await import('./dataRoot.js')
+  const dataRoot = resolveDataRoot({
+    userDataDir: app.getPath('userData'),
+    settings: appSettings,
+    fs: {
+      mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
+      writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
+      rm: (p: string) => { fs.rmSync(p, { force: true }) },
+    },
+    join: path.join,
+    showUnavailableDialog: (unavailableRoot) => {
+      const zh = app.getLocale().toLowerCase().startsWith('zh')
+      const idx = dialog.showMessageBoxSync({
+        type: 'error',
+        noLink: true,
+        buttons: zh ? ['重新选择…', '退出'] : ['Re-set…', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+        title: zh ? '数据文件夹不可用' : 'Data folder unavailable',
+        message: zh ? 'WeftCut 无法访问已配置的数据文件夹' : "WeftCut can't reach its data folder",
+        detail: zh
+          ? `路径:\n${unavailableRoot}\n\n该磁盘可能未挂载、被删除或权限被撤销。请重新选择一个位置,或退出。`
+          : `Path:\n${unavailableRoot}\n\nThe drive may be unmounted, deleted, or its permission revoked. Choose a new location, or quit.`,
+      })
+      return idx === 0 ? 'reset' : 'quit'
+    },
+    pickDirectory: () => {
+      const zh = app.getLocale().toLowerCase().startsWith('zh')
+      const picked = dialog.showOpenDialogSync({
+        title: zh ? '选择数据文件夹' : 'Choose a data folder',
+        properties: ['openDirectory', 'createDirectory'],
+      })
+      return picked && picked.length > 0 ? picked[0] : null
+    },
+    exit: () => app.exit(0),
+  })
+  console.log(`[main] data root: ${dataRoot.dataRoot} (motifs=${dataRoot.motifsDir}, cache=${dataRoot.cacheDir}, downloads=${dataRoot.downloadsDir})`)
+
   // Construct + init the Backend before creating the window
   backend = new Backend(
     app.getPath('userData'),
-    path.join(app.getPath('userData'), 'Cache'),
+    dataRoot.cacheDir,
     (_err: Error | null, msg: string) => {
       if (!msg) return
       const { event, payload } = JSON.parse(msg)
@@ -332,7 +399,7 @@ app.whenReady().then(async () => {
   // Construct the motif store + resolve the built-in dir once at boot.
   // Both are passed to the protocol handler and the capture singleton so
   // captureMotifFrameB64 and registerMotifProtocol don't need the backend.
-  const motifStore = new UserMotifStore(path.join(app.getPath('userData'), 'motifs'))
+  const motifStore = new UserMotifStore(dataRoot.motifsDir)
   const motifBuiltinDir = builtinAssetDir()
   setMotifStore(motifStore)
 
@@ -418,18 +485,8 @@ app.whenReady().then(async () => {
   const { builtinMotifs } = await import('./motif/authoring.js')
   const motifBuiltins = builtinMotifs(motifBuiltinDir)
 
-  // Atomic-JSON fs adapter (temp+rename) shared by the TS-owned config stores.
-  // nodeFs above has no rename, hence a dedicated one.
-  const atomicFs = {
-    exists: (p: string) => fs.existsSync(p),
-    readFile: (p: string) => fs.readFileSync(p, 'utf8'),
-    writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
-    rename: (a: string, b: string) => fs.renameSync(a, b),
-    mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
-  }
-  // App-level prefs store — persists <userData>/app_settings.json.
-  const { createAppSettingsStore } = await import('./app-settings.js')
-  const appSettings = createAppSettingsStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'app_settings.json'), dir: app.getPath('userData') })
+  // (atomicFs + the app-settings store are constructed earlier — before the
+  // Backend — so the data-root resolver can read `data_root` at boot. Reused here.)
   // Per-workspace view state — resolves the workspace dir per call; no-op pre-workspace.
   const { createViewStateStore } = await import('./view-state.js')
   const viewState = createViewStateStore({ fs: atomicFs, join: path.join })
@@ -493,10 +550,10 @@ app.whenReady().then(async () => {
   tsHost.start()
   console.log('[main] TS state actor authoritative; MCP host starting')
 
-  // Motif file watch: on any disk change under <userData>/motifs/, refresh
+  // Motif file watch: on any disk change under <dataRoot>/motifs/, refresh
   // the actor catalog (so a disk-written Motif is placeable via add_motif)
   // AND emit motifs:changed (renderer resync → ?v= host buster).
-  motifWatcher = spawnMotifWatcher(motifStore.root(), () => {
+  motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
     tsHost?.refreshMotifCatalog()
     mainWindow?.webContents.send('evt:motifs:changed', {})
   })
@@ -809,7 +866,8 @@ app.whenReady().then(async () => {
   // `get_system_stats`, which only ever errored).
   ipcMain.handle('app:metrics', () => collectMetrics(app.getAppMetrics(), os.cpus().length))
 
-  const { dialog } = require('electron') as typeof import('electron')
+  // `dialog` comes from the top-level electron import (used by the boot-time
+  // data-root dialog above too); no local require needed.
   ipcMain.handle('dialog:open', async (_e, opts) => {
     const o = (opts ?? {}) as {
       title?: string
@@ -846,9 +904,128 @@ app.whenReady().then(async () => {
     return res.canceled || !res.filePath ? null : res.filePath
   })
 
+  // dataRoot:* — user-managed data location (ticket 03). The migration COPY runs
+  // here in main via node:fs directly (it does NOT pass through the fs:* guard),
+  // so the copy destination needs no guard admission; the resolved dataRoot is
+  // already an fsRoots() root (ticket 02). `migrationFs` is the node:fs adapter
+  // for the pure, fs-injected core (dataRootMigration.ts).
+  const migrationFs: MigrationFs = {
+    exists: (p) => fs.existsSync(p),
+    isDirectory: (p) => { try { return fs.statSync(p).isDirectory() } catch { return false } },
+    readDir: (p) => { try { return fs.readdirSync(p) } catch { return [] } },
+    readFileText: (p) => fs.readFileSync(p, 'utf8'),
+    fileSize: (p) => { try { return fs.statSync(p).size } catch { return 0 } },
+    mkdirp: (p) => { fs.mkdirSync(p, { recursive: true }) },
+    copyFile: (s, d) => { fs.copyFileSync(s, d) },
+    writeFile: (p, t) => { fs.writeFileSync(p, t, 'utf8') },
+    rm: (p) => { fs.rmSync(p, { recursive: true, force: true }) },
+  }
+  // The delete-old marker lives in userData (NOT under any data root, so it
+  // survives the root switch across the relaunch). The default data dir is the
+  // resolver's `<userData>/data` — used to decide whether deleteOld removes the
+  // whole old dir or just its buckets.
+  const migrationMarkerPath = path.join(app.getPath('userData'), 'data-root-migration.json')
+  const defaultDataDir = path.join(app.getPath('userData'), 'data')
+
+  // Effective root + whether it's a fallback (configured but not honored). The
+  // resolver never falls back silently today, so isFallback is effectively always
+  // false; derived by comparing the resolved root to the configured `data_root`.
+  ipcMain.handle('dataRoot:current', () => {
+    const configured = appSettings.get().data_root?.trim()
+    const isFallback = !!configured && path.resolve(configured) !== path.resolve(dataRoot.dataRoot)
+    return { path: dataRoot.dataRoot, isFallback }
+  })
+
+  // Pick a new folder → plan → (copy+verify OR adopt), emitting progress. On
+  // success: write data_root + the pending-delete marker, return ready-to-
+  // relaunch (does NOT relaunch — ticket 04 controls timing via dataRoot:relaunch).
+  // On failure: roll back the new root and return the error (data_root unchanged).
+  ipcMain.handle('dataRoot:pickAndMigrate', async (): Promise<DataRootMigrateResult> => {
+    const zh = app.getLocale().toLowerCase().startsWith('zh')
+    const picked = dialog.showOpenDialogSync(mainWindow!, {
+      title: zh ? '选择新的数据文件夹' : 'Choose a new data folder',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (!picked || picked.length === 0) return { ok: false, cancelled: true }
+
+    const oldRoot = dataRoot.dataRoot
+    const newRoot = path.resolve(picked[0])
+    const emit = (p: DataRootProgress): void => { mainWindow?.webContents.send('evt:dataRoot:progress', p) }
+
+    try {
+      const plan = planMigration(oldRoot, newRoot, migrationFs, path.join) // throws on nested/same
+      if (plan.mode === 'copy') {
+        const { createdPaths } = runCopy(oldRoot, newRoot, migrationFs, path.join, emit)
+        const result = verify(oldRoot, newRoot, migrationFs, path.join)
+        if (!result.ok) {
+          rollback(newRoot, migrationFs, createdPaths)
+          return { ok: false, error: `verify failed: ${result.mismatches.join('; ')}` }
+        }
+      }
+      // Success — repoint data_root. (Order: settings first so a crash before
+      // relaunch still boots onto the new root; the marker below is only a hint.)
+      appSettings.apply({ data_root: newRoot })
+      // Record the old copy for post-relaunch deletion ONLY in copy mode: there
+      // the new root is a verified COPY of the old, so the old is a redundant
+      // copy safe to offer for deletion. In ADOPT mode nothing was copied — the
+      // old root is the user's separate, previous library, NOT a copy — so we do
+      // NOT offer to delete it (that would be net data loss, not cleanup). They
+      // can remove it manually if they want.
+      if (plan.mode === 'copy') {
+        writeMarker(migrationMarkerPath, { oldPath: oldRoot, newPath: newRoot, status: 'pending-delete' }, migrationFs)
+      }
+      emit({ phase: 'done', copiedFiles: 0, totalFiles: 0 })
+      return { ok: true, mode: plan.mode, newPath: newRoot }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // Apply a completed migration: relaunch onto the newly-written data root.
+  // Separate channel so ticket 04 can show success first, then relaunch.
+  ipcMain.handle('dataRoot:relaunch', () => {
+    app.relaunch()
+    app.exit(0)
+  })
+
+  // Reveal the effective data root in the OS file manager.
+  ipcMain.handle('dataRoot:openFolder', async () => {
+    const err = await shell.openPath(dataRoot.dataRoot)
+    if (err) throw new Error(err)
+  })
+
+  // Post-relaunch: the old copy awaiting deletion — but ONLY when we actually
+  // rebooted onto the marker's newPath (i.e. the migration succeeded and this
+  // process is running on it). Otherwise the reboot didn't land on the new root
+  // and nothing should be offered for deletion.
+  ipcMain.handle('dataRoot:pendingCleanup', () => {
+    const marker = readMarker(migrationMarkerPath, migrationFs)
+    if (!marker) return null
+    if (path.resolve(marker.newPath) !== path.resolve(dataRoot.dataRoot)) return null
+    return { oldPath: marker.oldPath }
+  })
+
+  // Delete the old copy recorded by the marker, then clear it. NEVER auto-called
+  // — only on explicit user confirm from the UI. Idempotent (a crash mid-delete
+  // leaves the marker so this can be retried).
+  ipcMain.handle('dataRoot:deleteOld', () => {
+    const marker = readMarker(migrationMarkerPath, migrationFs)
+    if (!marker) return
+    deleteOldCopy(marker.oldPath, defaultDataDir, migrationFs, path.join)
+    clearMarker(migrationMarkerPath, migrationFs)
+  })
+
+  // Dismiss the delete-old prompt WITHOUT deleting: the user keeps the old copy
+  // on disk (to remove manually later). Clears the marker so this is a one-time
+  // prompt rather than a nag on every launch. Non-destructive.
+  ipcMain.handle('dataRoot:dismissCleanup', () => {
+    clearMarker(migrationMarkerPath, migrationFs)
+  })
+
   // fs:* — direct main-process filesystem access for the renderer (write/append/
   // read/remove/readDir). Confined to APP-MANAGED roots: the OS temp dir (export
-  // scratch), userData (incl. the backend Cache), and the active workspace. The
+  // scratch), userData (small config/state), the data root (backend cache +
+  // Motifs, possibly outside userData), and the active workspace. The
   // renderer is first-party (contextIsolation+sandbox, no remote content / no
   // <webview>) and the final export files + project saves go through Rust (not
   // this surface), so the whitelist breaks nothing — it just caps the blast
@@ -869,20 +1046,24 @@ app.whenReady().then(async () => {
     }
   }
   const fsRoots = (): string[] => {
-    const roots = [app.getPath('temp'), app.getPath('userData')]
+    // `dataRoot` is resolved earlier in this same whenReady closure (before the
+    // Backend/UserMotifStore), so it is in scope here. The backend media cache +
+    // user Motifs now live under it (possibly outside userData), so it must be
+    // an explicitly allowed root.
+    const roots = [app.getPath('temp'), app.getPath('userData'), dataRoot.dataRoot]
     if (cachedWorkspace) roots.push(cachedWorkspace)
     return roots
   }
   // Resolve `p` and assert it sits under an allowed root, else throw. Static
-  // roots (temp/userData) are checked first with no backend round-trip; only a
-  // miss re-queries the workspace (it may have just opened) and retries — so the
-  // hot path (export temp appends) never touches the backend.
+  // roots (temp/userData/dataRoot) are checked first with no backend round-trip;
+  // only a miss re-queries the workspace (it may have just opened) and retries —
+  // so the hot path (export temp appends) never touches the backend.
   const guardFsPath = async (p: string): Promise<string> => {
     const abs = path.resolve(p)
     if (isAllowed(abs, fsRoots())) return abs
     await refreshWorkspace()
     if (isAllowed(abs, fsRoots())) return abs
-    throw new Error(`fs access denied: ${abs} is outside the allowed roots (temp, userData, workspace)`)
+    throw new Error(`fs access denied: ${abs} is outside the allowed roots (temp, userData, data root, workspace)`)
   }
 
   ipcMain.handle(

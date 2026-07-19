@@ -230,6 +230,14 @@ export interface DecodeHwProbeResult {
   device: string | null
 }
 
+// Data-root migration IPC surface (ticket 03). Types single-sourced in
+// src/shared/data-root.ts (imported by main's handlers + renderer wrappers too).
+import type {
+  DataRootCurrent,
+  DataRootMigrateResult,
+  DataRootPendingCleanup,
+} from './data-root'
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -359,6 +367,21 @@ export interface WeftcutApi {
   decodeCap: {
     probeSw(path: string): Promise<DecodeCapabilityProbeResult>
     probeHw(path: string, classKey: string): Promise<DecodeHwProbeResult>
+  }
+  /// User-managed data location (ticket 03). Main-process actions (not backend
+  /// commands): report the effective root, pick+migrate to a new root
+  /// (copy/verify/rollback or adopt, progress on `evt:dataRoot:progress`),
+  /// relaunch onto it, open it in the file manager, and the post-relaunch
+  /// delete-the-old-copy flow. `relaunch` is separate from `pickAndMigrate` so
+  /// the UI controls timing (show success, then relaunch).
+  dataRoot: {
+    current(): Promise<DataRootCurrent>
+    pickAndMigrate(): Promise<DataRootMigrateResult>
+    relaunch(): Promise<void>
+    openFolder(): Promise<void>
+    pendingCleanup(): Promise<DataRootPendingCleanup | null>
+    deleteOld(): Promise<void>
+    dismissCleanup(): Promise<void>
   }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void

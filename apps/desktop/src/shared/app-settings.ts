@@ -25,6 +25,13 @@ export interface AppSettings {
   /// its component is present, else WebCodecs); `ffmpeg` (Standard) plays every
   /// format; `webcodecs` (Lite) is lightweight but supports fewer formats.
   decode_engine: "auto" | "ffmpeg" | "webcodecs";
+  /// Absolute path to the user-configurable data root that owns all large,
+  /// app-managed, relocatable content (motifs/, cache/, downloads/). Empty /
+  /// unset means "use the default" — the main-process resolver
+  /// (dataRoot.ts) substitutes `<userData>/data`. It CANNOT itself live under
+  /// the data root (bootstrap chicken-and-egg), so it stays in app_settings.json
+  /// under userData. Optional on disk: absent on every pre-existing file.
+  data_root?: string;
 }
 
 /// Patch shape — every field optional. The store merges into the current
@@ -39,6 +46,8 @@ export interface AppSettingsPatch {
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
+  /// New data-root path. An empty string clears it back to unset (→ default).
+  data_root?: string;
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
@@ -49,6 +58,9 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",
+  // Unset by default: the resolver substitutes `<userData>/data`. Left
+  // `undefined` so it is never serialized onto disk unless the user sets it.
+  data_root: undefined,
 };
 
 export const DELTA_WINDOW_MIN_US = 1_000_000;

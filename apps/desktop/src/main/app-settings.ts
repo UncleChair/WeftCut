@@ -61,6 +61,13 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         : parsed.decode_engine === 'ffmpeg' || parsed.decode_engine === 'webcodecs' || parsed.decode_engine === 'auto'
           ? parsed.decode_engine
           : d.decode_engine,
+      // Optional path; a non-string, empty, or whitespace-only value degrades to
+      // unset (undefined) so the resolver falls back to the default root. Kept
+      // out of the on-disk file when unset (JSON.stringify drops undefined).
+      data_root:
+        typeof parsed.data_root === 'string' && parsed.data_root.trim() !== ''
+          ? parsed.data_root
+          : d.data_root,
     }
   }
 
@@ -82,6 +89,9 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.prebake_motifs !== undefined) current.prebake_motifs = patch.prebake_motifs
       if (patch.preview_effects_enabled !== undefined) current.preview_effects_enabled = patch.preview_effects_enabled
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine
+      // Empty / whitespace-only clears the field back to unset (→ default root);
+      // any other value is stored verbatim. Storing undefined keeps it off disk.
+      if (patch.data_root !== undefined) current.data_root = patch.data_root.trim() === '' ? undefined : patch.data_root
       write(current)
       return current
     },

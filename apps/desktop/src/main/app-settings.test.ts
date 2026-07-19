@@ -100,4 +100,24 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "decode_engine": "auto" }' }).get().decode_engine).toBe('auto')
     expect(store({ [PATH]: '{ "decode_engine": "bogus" }' }).get().decode_engine).toBe('auto')
   })
+
+  it('data_root round-trips, and empty/missing/corrupt degrades to unset', () => {
+    // No file → unset (resolver substitutes the default).
+    expect(store().get().data_root).toBeUndefined()
+
+    const { fs, files } = memFs()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    // Set + read back through an independent reader (persisted, not in-memory).
+    expect(s.apply({ data_root: '/mnt/media/weft' }).data_root).toBe('/mnt/media/weft')
+    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().data_root).toBe('/mnt/media/weft')
+    expect(JSON.parse(files.get(PATH)!).data_root).toBe('/mnt/media/weft')
+
+    // Empty string clears it back to unset, and is not left on disk.
+    expect(s.apply({ data_root: '' }).data_root).toBeUndefined()
+    expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('data_root')
+
+    // Wrong-typed / whitespace-only on-disk values degrade to unset (no throw).
+    expect(store({ [PATH]: '{ "data_root": 123 }' }).get().data_root).toBeUndefined()
+    expect(store({ [PATH]: '{ "data_root": "   " }' }).get().data_root).toBeUndefined()
+  })
 })

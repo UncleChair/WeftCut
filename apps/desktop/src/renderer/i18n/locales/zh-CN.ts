@@ -632,6 +632,30 @@ const zhCN: Resources = {
     decode_unsupported_switch: "切换到标准",
     decode_unsupported_body_no_component:
       "轻量引擎不支持该片段的格式，且未安装标准引擎。",
+    data_location_heading: "数据位置",
+    data_location_blurb:
+      "WeftCut 存放大型托管文件的位置——你的 Motifs、媒体缓存以及下载的资源。小型设置和项目文件始终保留在应用的配置文件夹中。",
+    data_location_current_label: "当前文件夹",
+    data_location_fallback: "回退——你所选的文件夹不可用，已改用默认位置。",
+    data_location_change: "更改…",
+    data_location_open_folder: "打开文件夹",
+    data_location_working: "准备中…",
+    data_location_phase_copy: "正在复制文件…",
+    data_location_phase_verify: "正在校验…",
+    data_location_phase_done: "正在收尾…",
+    data_location_progress_count: "{{copied}} / {{total}} 个文件",
+    data_location_success_copy:
+      "数据已复制到 {{path}}。重启 WeftCut 即可开始使用新位置。",
+    data_location_success_adopt:
+      "WeftCut 将使用 {{path}} 处已有的数据文件夹。重启以生效。",
+    data_location_restart: "重启以生效",
+    data_location_error: "无法更改数据文件夹：{{message}} 数据保持不变。",
+    data_location_cleanup_title: "删除旧数据副本？",
+    data_location_cleanup_body:
+      "WeftCut 现已运行于新位置。{{path}} 处的旧副本已不再使用——可删除以释放空间，或保留作为备份。",
+    data_location_cleanup_keep: "保留",
+    data_location_cleanup_delete: "删除旧副本",
+    data_location_cleanup_deleting: "正在删除…",
   },
   keybindings: {
     add: "+ 添加",

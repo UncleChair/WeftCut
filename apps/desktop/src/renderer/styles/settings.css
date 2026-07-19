@@ -206,6 +206,38 @@
 
 
 
+/* --- Data-location section (Change… / Open folder + migration progress) --- */
+.settings-data-location {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-data-location .settings-key-header {
+  margin-bottom: 0;
+}
+
+.settings-data-path {
+  margin: 0;
+  padding: 6px 8px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: var(--font-size-caption);
+  color: var(--foreground);
+  word-break: break-all;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-control);
+}
+
+.settings-data-migrate {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-data-migrate .settings-toggle-hint {
+  margin-top: 0;
+}
+
 /* --- Settings toggle row (used by reopen-on-launch) --- */
 
 .settings-toggle-row {
