@@ -68,6 +68,15 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         typeof parsed.data_root === 'string' && parsed.data_root.trim() !== ''
           ? parsed.data_root
           : d.data_root,
+      // Optional locale code; a non-string / empty / whitespace-only value
+      // degrades to unset (→ the renderer auto-detects the OS language). NOT
+      // validated against the supported-locale set here — that list lives in
+      // the renderer's i18n layer and i18next self-guards unknown codes, so
+      // main stays decoupled from the UI locale set. Kept off disk when unset.
+      language:
+        typeof parsed.language === 'string' && parsed.language.trim() !== ''
+          ? parsed.language
+          : d.language,
     }
   }
 
@@ -92,6 +101,9 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       // Empty / whitespace-only clears the field back to unset (→ default root);
       // any other value is stored verbatim. Storing undefined keeps it off disk.
       if (patch.data_root !== undefined) current.data_root = patch.data_root.trim() === '' ? undefined : patch.data_root
+      // Empty / whitespace-only clears back to unset (→ auto-detect); any other
+      // value stored verbatim. Storing undefined keeps it off disk.
+      if (patch.language !== undefined) current.language = patch.language.trim() === '' ? undefined : patch.language
       write(current)
       return current
     },

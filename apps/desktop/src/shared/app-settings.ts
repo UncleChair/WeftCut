@@ -32,6 +32,15 @@ export interface AppSettings {
   /// the data root (bootstrap chicken-and-egg), so it stays in app_settings.json
   /// under userData. Optional on disk: absent on every pre-existing file.
   data_root?: string;
+  /// Persisted UI language as a locale code (e.g. "en-US", "zh-CN"). This is
+  /// the SINGLE source of truth since language moved off browser localStorage.
+  /// Optional: unset means "auto-detect from the OS on first launch" (i18next's
+  /// navigator detection), preserving the historical first-run behavior — set
+  /// only once the user explicitly picks one via the locale toggle. Valid values
+  /// are the renderer's SUPPORTED_LOCALES; an unknown code is tolerated (i18next
+  /// falls back), so main does not validate the set. Kept off disk when unset,
+  /// like data_root.
+  language?: string;
 }
 
 /// Patch shape — every field optional. The store merges into the current
@@ -48,6 +57,9 @@ export interface AppSettingsPatch {
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
   /// New data-root path. An empty string clears it back to unset (→ default).
   data_root?: string;
+  /// New UI language (a SUPPORTED_LOCALES code). An empty string clears it back
+  /// to unset (→ auto-detect on next launch).
+  language?: string;
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
@@ -61,6 +73,9 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // Unset by default: the resolver substitutes `<userData>/data`. Left
   // `undefined` so it is never serialized onto disk unless the user sets it.
   data_root: undefined,
+  // Unset by default: the renderer auto-detects the OS language on first launch.
+  // Left `undefined` so it stays off disk until the user explicitly picks one.
+  language: undefined,
 };
 
 export const DELTA_WINDOW_MIN_US = 1_000_000;

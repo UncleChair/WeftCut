@@ -14,6 +14,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
+import { setLocale } from "../settings/appSettingsStore";
 import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
 import { openPerformanceMonitor } from "../render/performanceMonitorWindow";
 import type {
@@ -113,7 +114,8 @@ export function AppMenuBar({
     const idx = SUPPORTED_LOCALES.indexOf(current);
     const next =
       SUPPORTED_LOCALES[(idx + 1) % SUPPORTED_LOCALES.length] ?? "en-US";
-    i18n.changeLanguage(next);
+    // Persists to app_settings.json AND switches i18next (see setLocale).
+    setLocale(next);
   }, [i18n]);
 
   return (

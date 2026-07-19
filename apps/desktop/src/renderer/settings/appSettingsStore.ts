@@ -1,10 +1,14 @@
 // App-level settings store (`docs/data-model.md`).
 //
-// Strict app-level scope: one value across every project. The Rust
-// backend owns persistence (`apps/desktop/native/src/app_settings.rs`);
+// Strict app-level scope: one value across every project. The Electron main
+// process owns persistence (`apps/desktop/src/main/app-settings.ts`);
 // this store mirrors the current value into React. Mutations go through
-// `appSettingsSet` IPC; the backend emits `app_settings:changed` which
+// `appSettingsSet` IPC; main emits `app_settings:changed` which
 // `wireAppSettingsStream` listens for and writes back into the store.
+//
+// This store also bridges the UI language ↔ i18next: `language` is now an
+// app-settings field (moved off browser localStorage), so `wireAppSettingsStream`
+// applies the persisted locale to i18next on boot and `setLocale` writes both.
 //
 // IMPORTANT (per `feedback_zustand_composite_selector`): consumers MUST
 // use the atomic selector hooks exported below. Never spread the whole
@@ -13,6 +17,8 @@
 
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { create } from "zustand";
+
+import i18n, { SUPPORTED_LOCALES, type Locale } from "../i18n";
 
 import {
   APP_SETTINGS_EVENTS,
@@ -68,6 +74,11 @@ export const usePrebakeMotifsEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.prebake_motifs);
 export const useDecodeEngine = (): AppSettings["decode_engine"] =>
   useAppSettingsStore((s) => s.settings.decode_engine);
+/// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset
+/// (the renderer auto-detects the OS language). i18next remains the live
+/// language source; this is the persisted user choice.
+export const useLanguage = (): string | undefined =>
+  useAppSettingsStore((s) => s.settings.language);
 export const useAppSettingsLoaded = (): boolean =>
   useAppSettingsStore((s) => s.loaded);
 
@@ -92,6 +103,49 @@ export async function toggleDisplayMode(): Promise<AppSettings> {
   return setAppSettings({ display_mode: next });
 }
 
+/// Change the UI language AND persist it to app_settings.json — the single
+/// source of truth since language moved off browser localStorage. i18next is
+/// updated synchronously so the UI switches immediately; the disk write is
+/// fire-and-forget (the `app_settings:changed` echo re-applies it — a no-op
+/// here, but the path that syncs the change to OTHER windows).
+export function setLocale(next: Locale): void {
+  void i18n.changeLanguage(next);
+  void setAppSettings({ language: next });
+}
+
+/// The old (pre-app_settings) localStorage cache key written by i18next's
+/// LanguageDetector. Read once to migrate the choice, then cleared.
+const LEGACY_LOCALE_STORAGE_KEY = "weftcut.locale";
+
+/// Apply a persisted locale to the i18next runtime. No-op when unset (→ leave
+/// the OS-detected default) or already active (avoids a redundant
+/// `languageChanged` churn on the `app_settings:changed` echo).
+function applyPersistedLocale(locale: string | undefined): void {
+  if (!locale || i18n.resolvedLanguage === locale) return;
+  void i18n.changeLanguage(locale);
+}
+
+/// One-time migration for users upgrading from the localStorage era: older
+/// builds cached the choice under `weftcut.locale`. When app_settings has no
+/// language yet, adopt that value (if it's a supported locale) into the store,
+/// then drop the stale key so this never runs again.
+function migrateLegacyLocale(): void {
+  let legacy: string | null = null;
+  try {
+    legacy = localStorage.getItem(LEGACY_LOCALE_STORAGE_KEY);
+  } catch {
+    return; // localStorage unavailable (e.g. tests) — nothing to migrate.
+  }
+  if (legacy && (SUPPORTED_LOCALES as readonly string[]).includes(legacy)) {
+    setLocale(legacy as Locale); // persist into app_settings + apply to i18next
+  }
+  try {
+    localStorage.removeItem(LEGACY_LOCALE_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 /// Wire-up: fetch the current settings, subscribe to backend changes.
 /// Returns an unlisten function — `App.tsx` calls this once on mount.
 export async function wireAppSettingsStream(): Promise<UnlistenFn> {
@@ -100,11 +154,17 @@ export async function wireAppSettingsStream(): Promise<UnlistenFn> {
   try {
     const initial = await appSettingsGet();
     useAppSettingsStore.getState().hydrate(initial);
+    // Language lives here now (moved off localStorage): apply the persisted
+    // choice to i18next, or migrate a legacy `weftcut.locale` on first upgrade.
+    if (initial.language) applyPersistedLocale(initial.language);
+    else migrateLegacyLocale();
   } catch (e) {
     // IPC unavailable during early boot or in tests; keep defaults.
     console.warn("appSettingsGet failed:", e);
   }
   return listen<AppSettings>(APP_SETTINGS_EVENTS.changed, (e) => {
     useAppSettingsStore.getState().hydrate(e.payload);
+    // Keep i18next in sync when the language changes (incl. from another window).
+    applyPersistedLocale(e.payload.language);
   });
 }

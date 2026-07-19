@@ -39,9 +39,14 @@ i18n
     nonExplicitSupportedLngs: true,
     load: "currentOnly",
     detection: {
-      order: ["localStorage", "navigator", "htmlTag"],
-      caches: ["localStorage"],
-      lookupLocalStorage: "weftcut.locale",
+      // Language now persists in app_settings.json (owned by the Electron main
+      // process), NOT browser localStorage. The detector only DETECTS the OS
+      // default for a genuine first launch (navigator → <html lang>); `caches:
+      // []` stops it writing anywhere, so it can't fight the persisted value the
+      // app applies once app_settings hydrates (see settings/appSettingsStore.ts,
+      // which also migrates the old `weftcut.locale` key on first upgrade).
+      order: ["navigator", "htmlTag"],
+      caches: [],
     },
     interpolation: {
       escapeValue: false, // React already escapes

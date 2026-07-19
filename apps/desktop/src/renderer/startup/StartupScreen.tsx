@@ -9,6 +9,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
+import { setLocale } from "../settings/appSettingsStore";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppSelect } from "../components/AppSelect";
@@ -62,7 +63,8 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
     const idx = SUPPORTED_LOCALES.indexOf(current);
     const next =
       SUPPORTED_LOCALES[(idx + 1) % SUPPORTED_LOCALES.length] ?? "en-US";
-    i18n.changeLanguage(next);
+    // Persists to app_settings.json AND switches i18next (see setLocale).
+    setLocale(next);
   }, [i18n]);
 
   const refreshRecents = useCallback(async () => {

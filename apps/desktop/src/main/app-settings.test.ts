@@ -120,4 +120,24 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "data_root": 123 }' }).get().data_root).toBeUndefined()
     expect(store({ [PATH]: '{ "data_root": "   " }' }).get().data_root).toBeUndefined()
   })
+
+  it('language round-trips, and empty/missing/corrupt degrades to unset', () => {
+    // No file → unset (the renderer auto-detects the OS language on first run).
+    expect(store().get().language).toBeUndefined()
+
+    const { fs, files } = memFs()
+    const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+    // Set + read back through an independent (persisted) reader.
+    expect(s.apply({ language: 'zh-CN' }).language).toBe('zh-CN')
+    expect(createAppSettingsStore({ fs, path: PATH, dir: DIR }).get().language).toBe('zh-CN')
+    expect(JSON.parse(files.get(PATH)!).language).toBe('zh-CN')
+
+    // Empty string clears it back to unset, and is not left on disk.
+    expect(s.apply({ language: '' }).language).toBeUndefined()
+    expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('language')
+
+    // Wrong-typed / whitespace-only on-disk values degrade to unset (no throw).
+    expect(store({ [PATH]: '{ "language": 5 }' }).get().language).toBeUndefined()
+    expect(store({ [PATH]: '{ "language": "   " }' }).get().language).toBeUndefined()
+  })
 })
