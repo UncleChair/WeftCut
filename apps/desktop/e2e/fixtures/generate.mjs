@@ -233,7 +233,11 @@ function atomicOutputs(run, outputDir) {
   return (args, options = {}) => {
     const cwd = options.cwd ?? outputDir
     const output = args.at(-1)
-    const temp = `${output}.tmp-${process.pid}-${randomUUID()}`
+    // Keep the original extension LAST: ffmpeg picks the output muxer from the
+    // filename extension, so the unique marker has to go before it (a bare
+    // `foo.mp4.tmp-…` suffix leaves ffmpeg unable to choose a format).
+    const ext = path.extname(output)
+    const temp = `${output.slice(0, output.length - ext.length)}.tmp-${process.pid}-${randomUUID()}${ext}`
     run([...args.slice(0, -1), temp], options)
     renameIntoPlace(path.join(cwd, temp), path.join(cwd, output))
   }
