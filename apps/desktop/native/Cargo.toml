@@ -35,7 +35,7 @@ weftcut-eval = { path = "eval", features = ["serde"] }
 # without recording that direct symbol linking was intentional; restoring it
 # realigns the production addon with upstream guidance. It is a production
 # symbol-resolution policy, NOT a test shim — see the `test-noop` feature below
-# and docs/notes/napi-rs-linux-testing.md.
+# and docs/notes/napi-rs-multiplatform-testing.md.
 napi = { version = "3", default-features = false, features = ["napi6", "tokio_rt", "dyn-symbols"] }
 napi-derive = "3"
 
@@ -118,7 +118,7 @@ mcp = []         # MCP server (S4)
 # logic under them links and runs identically on all three runners, replacing the
 # old Linux skip + macOS `-undefined dynamic_lookup` link hack. Exported wrappers
 # vanish under noop, so this also produces expected `dead_code` warnings.
-# See docs/notes/napi-rs-linux-testing.md.
+# See docs/notes/napi-rs-multiplatform-testing.md.
 test-noop = ["napi/noop", "napi-derive/noop"]
 
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.

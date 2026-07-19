@@ -169,7 +169,7 @@ jobs:
       # wrappers so the domain logic links and runs identically on every runner.
       # This replaced the old Linux skip + macOS `-undefined dynamic_lookup` link
       # hack. test-noop is TEST-ONLY and must never enter napi:build's feature set.
-      # See docs/notes/napi-rs-linux-testing.md.
+      # See docs/notes/napi-rs-multiplatform-testing.md.
       - name: Rust tests
         shell: bash
         run: |
