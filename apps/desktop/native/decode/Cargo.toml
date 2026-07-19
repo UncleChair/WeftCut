@@ -39,3 +39,20 @@ windows = { version = "0.58", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+[features]
+# test-noop: NAPI-RS's Cargo-test mode (TEST-ONLY, never in napi:build:decode).
+# It stubs the runtime napi_* symbols so decode's #[napi] exports don't leave
+# unresolved symbols in a standalone `cargo test` binary (fatal on Linux, whose
+# loader resolves imports at startup), letting the preview_sw / preview_gpu /
+# export_sw unit tests link and run on Linux (and macOS once its ffmpeg-lgpl
+# asset lands) as well as Windows.
+#
+# NOTE: unlike @weftcut/core this enables ONLY `napi/noop`, NOT
+# `napi-derive/noop`. decode holds `ThreadsafeFunction<ExportSwMsg>` /
+# `ThreadsafeFunction<String>` in non-test code; `napi-derive/noop` would delete
+# the derived `ToNapiValue` impl for the `#[napi(object)]` `ExportSwMsg` that the
+# ThreadsafeFunction bound requires, breaking compilation. Keeping napi-derive
+# active preserves those impls while napi/noop still fixes the linker symbols.
+# See docs/notes/napi-rs-linux-testing.md.
+test-noop = ["napi/noop"]

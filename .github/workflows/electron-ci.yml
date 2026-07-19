@@ -63,11 +63,13 @@ jobs:
         with:
           workspaces: apps/desktop/native
 
-      # xvfb is required on Linux so the Electron app can open a display for
-      # offscreen CDP capture (no real display on GitHub runners).
-      - name: Linux deps (xvfb)
+      # xvfb: the Electron app needs a display for offscreen CDP capture (no real
+      # display on GitHub runners). libclang-dev: native-decode's ffmpeg-next
+      # bindgen build needs libclang.so — clang-sys auto-discovers it on Linux
+      # (napi:build:decode only hard-sets LIBCLANG_PATH on Windows).
+      - name: Linux deps (xvfb, libclang)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb libclang-dev
 
       # npm ci at the workspace root: root package-lock.json covers all
       # workspaces including apps/desktop. Running at apps/desktop would fail
@@ -109,32 +111,37 @@ jobs:
             echo "$PWD/resources/ffmpeg/mac" >> "$GITHUB_PATH"
           fi
 
-      # ── @weftcut/native-decode (Windows only; v1 distribution scope) ──
+      # ── @weftcut/native-decode (Windows + Linux; multi-platform adaptation) ──
+      # macOS is excluded until an LGPL-shared ffmpeg asset + a darwin branch land
+      # in fetch-ffmpeg-lgpl / napi-build-decode.
       - name: Cache ffmpeg-lgpl
-        if: runner.os == 'Windows'
+        if: runner.os != 'macOS'
         uses: actions/cache@v5
         with:
           path: apps/desktop/resources/ffmpeg-lgpl
           key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
 
       - name: Fetch LGPL ffmpeg (native-decode)
-        if: runner.os == 'Windows'
+        if: runner.os != 'macOS'
         run: npm run fetch-ffmpeg-lgpl
 
       - name: Build native-decode addon
-        if: runner.os == 'Windows'
+        if: runner.os != 'macOS'
         run: npm run napi:build:decode
-        # windows-latest ships LLVM at C:\Program Files\LLVM; the wrapper
-        # defaults LIBCLANG_PATH there and FFMPEG_DIR to the fetched dir.
+        # Windows ships LLVM at C:\Program Files\LLVM (the wrapper defaults
+        # LIBCLANG_PATH there); Linux uses the apt libclang-dev above (clang-sys
+        # auto-discovers) and the wrapper bakes RUNPATH=$ORIGIN + co-locates the
+        # libav*.so. Both default FFMPEG_DIR to the fetched ffmpeg-lgpl/<os>.
 
       - name: Put LGPL DLLs on PATH (native-decode runtime)
         if: runner.os == 'Windows'
         shell: bash
         run: cygpath -w "$PWD/resources/ffmpeg-lgpl/win/bin" >> "$GITHUB_PATH"
 
-      # Typecheck + unit tests are OS-independent, so run once on the Windows
-      # leg — the only leg that builds BOTH addons (native-decode's generated
-      # index.d.ts is a typecheck input). Neither was gated by CI before — the
+      # Typecheck + unit tests are OS-independent, so run them once, on the
+      # Windows leg (it builds BOTH addons — native-decode's generated
+      # index.d.ts is a typecheck input; the Linux leg builds decode too now, but
+      # a single leg suffices). Neither was gated by CI before — the
       # esbuild build does no type-checking and vitest wasn't run at all — so
       # TS-type and unit regressions could slip through green. Placed after
       # both napi:build and napi:build:decode (needs their generated
@@ -178,11 +185,22 @@ jobs:
           # #[cfg(feature)] module. Keep the jobs/export/mcp/cloud set in lockstep
           # with the napi:build script; test-noop is test-only (never in the addon).
           cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud,test-noop
+          # Component crate (native-decode): the repo's only ffmpeg-next consumer.
+          # It needs FFMPEG_DIR + libclang to build and the bundled libav*.so/DLL
+          # on the loader path at run (Windows: DLLs already on PATH above; Linux:
+          # LD_LIBRARY_PATH below). Its test-noop is ONLY napi/noop, NOT
+          # napi-derive/noop (see decode/Cargo.toml) — enough to resolve the
+          # standalone binary's napi_* symbols while keeping the ToNapiValue
+          # derives its ThreadsafeFunction<ExportSwMsg> params require. macOS runs
+          # no decode tests until its ffmpeg-lgpl asset lands.
           if [ "$RUNNER_OS" = "Windows" ]; then
-            # Component crate: no cargo features (union rule is per-addon).
             FFMPEG_DIR="$(cygpath -m "$PWD")/resources/ffmpeg-lgpl/win" \
             LIBCLANG_PATH="C:\\Program Files\\LLVM\\bin" \
-            cargo test --manifest-path native/decode/Cargo.toml
+            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
+            LD_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/linux/lib" \
+            cargo test --manifest-path native/decode/Cargo.toml --features test-noop
           fi
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
