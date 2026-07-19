@@ -13,8 +13,9 @@
 //      overwrite with green on disk → compositor turns green with no UI action.
 //
 // userData path: minted per test via tmpDir() and handed to launchApp as an
-// explicit userDataDir — user motifs live under <userData>/motifs of that
-// isolated profile, never the developer's real one.
+// explicit userDataDir — user motifs live under the default data root of that
+// isolated profile (<userData>/data/motifs — src/main/dataRoot.ts), never the
+// developer's real one.
 
 import { test, expect } from '@playwright/test'
 import type { ElectronApplication } from '@playwright/test'
@@ -158,11 +159,12 @@ test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', as
   test.setTimeout(120_000)
   const STALE_ID = 'e2e-stale-' + Date.now()
   const PROJECT_PARENT = tmpDir('weftcut-e2e-stale-proj-')
-  // Isolated userData profile: user motifs are written under <userData>/motifs.
+  // Isolated userData profile: user motifs live under the default data root
+  // (<userData>/data/motifs — see src/main/dataRoot.ts), NOT <userData>/motifs.
   const userData = tmpDir('weftcut-e2e-stale-userdata-')
 
   const { app: appHandle, page } = await launchApp({ userDataDir: userData })
-  const motifsRoot = path.join(userData, 'motifs')
+  const motifsRoot = path.join(userData, 'data', 'motifs')
   console.log('[stale] motifsRoot:', motifsRoot)
 
   try {
@@ -264,11 +266,12 @@ test('motif file-watch: disk-placed Motif renders; external rewrite hot-reloads'
   const PROJECT_PARENT = tmpDir('weftcut-e2e-watch-proj-')
   const RED = '#e02424'
   const GREEN = '#1ea64a'
-  // Isolated userData profile: user motifs are written under <userData>/motifs.
+  // Isolated userData profile: user motifs live under the default data root
+  // (<userData>/data/motifs — see src/main/dataRoot.ts), NOT <userData>/motifs.
   const userData = tmpDir('weftcut-e2e-watch-userdata-')
 
   const { app: appHandle, page } = await launchApp({ userDataDir: userData })
-  const motifsRoot = path.join(userData, 'motifs')
+  const motifsRoot = path.join(userData, 'data', 'motifs')
   console.log('[watch] motifsRoot:', motifsRoot)
 
   try {
