@@ -646,7 +646,6 @@ the UI uses the same actor via backend commands.
 | `delete_layer(layer_id)` | |
 | `groups_create(layer_ids, label?, reassign?)` → `GroupId` | |
 | `groups_dissolve(group_id)` / `groups_add_members(group_id, layer_ids, reassign?)` / `groups_remove_members(group_id, layer_ids)` / `groups_rename(group_id, label?)` | |
-| `groups_list()` / `groups_get(group_id)` | |
 | `add_marker(t_us, label, color, end_t_us?)` → `MarkerId` | |
 | `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | |
 | `set_composition(patch)` | |

@@ -162,11 +162,11 @@ Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
 Valid `param_key`: VideoClip/Motif → `x, y, scale_x, scale_y, rotation_deg, opacity`; ImageOverlay/Text → `x, y, rotation_deg, opacity`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them.
 
 Groups (see [groups.md](groups.md)):
-- `groups_list` / `groups_get { group_id }`
 - `groups_create { layer_ids, label?, reassign? }` → `GroupId`
 - `groups_dissolve { group_id }`
 - `groups_add_members { group_id, layer_ids, reassign? }` / `groups_remove_members { group_id, layer_ids }`
 - `groups_rename { group_id, label? }`
+- Reads: there is no `groups_list`/`groups_get` tool — group membership is carried on the `project://current` resource as `groups: [{ id, label, layer_ids }]`.
 
 Markers + composition:
 - `add_marker { t_us, label, color, end_t_us? }` → `MarkerId`

@@ -1,10 +1,14 @@
-// One-shot generator for the committed Rust MCP catalog snapshot
+// Generator for the committed Rust MCP catalog snapshot
 // (`apps/desktop/fixtures/mcp/rust-catalog-snapshot.json`). This is a DATA
-// FIXTURE, not an oracle — it does NOT touch `fixtures/state-corpus/`. It is
-// the input to the loose faithfulness gate (mcp.catalog-faithfulness.test.ts)
-// and the structural bijection gate (mcp.catalog-bijection.test.ts), which
-// assert the TS single-source MCP table stays consistent with the live Rust
-// catalog. Regenerate (and re-commit) whenever the Rust `tool_table!` changes.
+// FIXTURE, not an oracle — it does NOT touch `fixtures/state-corpus/`. Post
+// state-migration the live `tool_table!` holds only the rust-native surface
+// (ping + clip-audio compute + the hybrid imports); the 47 mutation tools and
+// 6 motif defs are TS-owned. The fixture is the rust-native input to the
+// bijection gate (mcp.catalog-bijection.test.ts), which reconstructs the live
+// merged catalog (snapshot ∪ TS tables) and asserts it is a clean
+// catalog↔handler bijection. Regenerate (and re-commit) whenever the Rust
+// `tool_table!` changes; a stale fixture is the one drift this suite can't
+// catch on its own, so `git diff --exit-code` after regenerating is the guard.
 //
 // Run:  node apps/desktop/scripts/snapshot-mcp-catalog.mjs   (from repo root, or cwd=apps/desktop)
 //

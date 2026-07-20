@@ -1,6 +1,8 @@
 // apps/desktop/src/main/mcp/motifToolDefs.ts
 // TS-owned MCP tool defs + resource defs for the motif surface.
-// inputSchemas verbatim from fixtures/mcp/rust-catalog-snapshot.json.
+// inputSchemas were lifted from the Rust catalog at migration time and are now
+// TS-owned (the fixture snapshot no longer carries motif arms — do not expect a
+// regenerated rust-catalog-snapshot.json to contain them).
 // All 6 motif tool DEFS live here — the Rust catalog carries no motif arms.
 // preview_motif_draft's DEF is TS-sourced like the others, but
 // its EXECUTION still routes 'rust' (the CDP capture special-case in server.ts) —

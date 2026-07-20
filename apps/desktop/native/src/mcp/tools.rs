@@ -197,8 +197,8 @@ pub(super) async fn detect_silences(
 }
 
 // Layer-mutation tools (update_layer, update_layer_params, move_layer,
-// split_layer, delete_layer, trim_layer), group tools (groups_list, groups_get,
-// groups_create, groups_dissolve, groups_add_members, groups_remove_members,
+// split_layer, delete_layer, trim_layer), group mutation tools
+// (groups_create, groups_dissolve, groups_add_members, groups_remove_members,
 // groups_rename), duplicate_layer, keyframe tools (get_param_track, set_keyframe,
 // remove_keyframe, retime_keyframe, set_keyframe_easing, smooth_keyframes,
 // clear_keyframes, set_param_track), effect tools (add_effect, update_effect,

@@ -1,26 +1,40 @@
 // apps/desktop/src/main/state/__tests__/mcp.catalog-bijection.test.ts
-// Permanent catalog↔handler bijection gate (Phase 4a-i §2.7).
-// Four assertions: exact-union partition, advertised⇒handled, handled⇒advertised,
-// and schema↔validator consistency (required scalar enforcement by the parser).
-// REGEN-FREE: no oracle dependency; runs against the committed snapshot.
+// Permanent catalog↔handler bijection gate.
+//
+// Asserts the LIVE merged MCP catalog — mergeMcpCatalog(rust-native snapshot,
+// [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]), exactly what server.ts advertises via
+// ListTools — is a clean, disjoint union where every advertised tool routes to a
+// bucket that actually serves it, and every required scalar is enforced by its parser.
+//
+// The Rust snapshot is now the LIVE rust-native surface ONLY: ping, the clip-audio
+// compute tools (detect_silences, transcribe_clip), and the hybrid-import tools
+// (import_media, apply_subtitles, synthesize_speech). The 47 mutation tools and the
+// 6 motif defs are TS-owned — their Rust arms were deleted in the state migration, so
+// TS is their source of truth and there is nothing left to "be faithful to" (the old
+// faithfulness gate is gone). Because the snapshot == what the addon advertises,
+// snapshot ∪ TS tables == the exact runtime catalog, so these assertions describe what
+// actually ships. Rust-side schema drift is guarded by regenerating the fixture
+// (`node scripts/snapshot-mcp-catalog.mjs`) and diffing — not by this suite, which
+// stays REGEN-FREE (no napi-addon dependency at test time).
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { routeMcpTool, HYBRID_TOOLS } from '../../mcp/mutationTools'
 import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
+import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
 
-const rust = JSON.parse(readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')) as { tools: Array<{ name: string }> }
-const allRustNames = rust.tools.map((t) => t.name)
+const rust = JSON.parse(readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')) as {
+  tools: Array<{ name: string }>
+}
+const rustNames = new Set(rust.tools.map((t) => t.name))
 const tsNames = new Set(MCP_TOOL_DEFS.map((d) => d.name))
 const motifNames = new Set(MOTIF_TOOL_DEFS.map((d) => d.name))
-// Phase 4 derivation: the TS tables (MCP_TOOL_DEFS + MOTIF_TOOL_DEFS) are the source of
-// truth for any tool they list; mergeMcpCatalog dedups by NAME. So "Rust-native" = every
-// advertised Rust name that neither TS table claims. This is name-based, not route-based:
-// preview_motif_draft routes 'rust' for execution but its DEF is in motifNames, so it
-// belongs to the motif bucket here (and survives the Rust motif-arm deletion).
-const nativeNames = allRustNames.filter((n) => !tsNames.has(n) && !motifNames.has(n))
 
-// ── Assertion 4: structural-field exclusions ─────────────────────────────────
+// The catalog the MCP host actually advertises at runtime (server.ts ListTools).
+const merged = mergeMcpCatalog(rust.tools, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS])
+const mergedNames = merged.map((t) => t.name)
+
+// ── Assertion 6: structural-field exclusions ─────────────────────────────────
 // These (tool, field) pairs are excluded from the "omit a required field → throw"
 // probe because the field is either:
 //   (a) a structural object/array passed through to the actor mutation for
@@ -58,39 +72,57 @@ const STRUCTURAL_REQUIRED: Record<string, ReadonlySet<string>> = {
 }
 
 describe('MCP catalog↔handler bijection (permanent gate)', () => {
-  it('1. merged catalog (native ∪ TS table ∪ motif table) is an exact union — no dup, no drop', () => {
-    const merged = new Set([...nativeNames, ...tsNames, ...motifNames])
-    // No overlap among the three buckets.
-    expect(nativeNames.filter((n) => tsNames.has(n))).toEqual([])
-    expect(nativeNames.filter((n) => motifNames.has(n))).toEqual([])
+  it('1. the three ownership buckets are pairwise disjoint (no double source of truth)', () => {
+    // A name claimed by both the live Rust catalog and a TS table would be silently
+    // dropped by mergeMcpCatalog (dedup by name), hiding which engine truly owns it.
+    expect([...rustNames].filter((n) => tsNames.has(n))).toEqual([])
+    expect([...rustNames].filter((n) => motifNames.has(n))).toEqual([])
     expect([...tsNames].filter((n) => motifNames.has(n))).toEqual([])
-    // Exact union: merged equals the advertised Rust set (no drop, no extra).
-    // nativeNames excludes motif-routed names; motifNames covers them instead.
-    expect(merged).toEqual(new Set(allRustNames))
   })
 
-  it('2. every TS-table name routes to ts; every motif def routes to motif except preview (rust capture)', () => {
-    for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name)).toBe('ts')
+  it('2. the merged catalog is an exact, duplicate-free union of the three buckets', () => {
+    expect(new Set(mergedNames)).toEqual(new Set([...rustNames, ...tsNames, ...motifNames]))
+    // Disjoint (assertion 1) ⇒ nothing dropped, so the count is the plain sum.
+    expect(mergedNames.length).toBe(rustNames.size + tsNames.size + motifNames.size)
+    expect(new Set(mergedNames).size).toBe(mergedNames.length) // no duplicate names
+  })
+
+  it('3. every advertised tool routes to a bucket that actually serves it', () => {
+    for (const n of mergedNames) {
+      const r = routeMcpTool(n)
+      if (r === 'ts') expect(tsNames.has(n), n).toBe(true)
+      else if (r === 'hybrid') expect(HYBRID_TOOLS.has(n), n).toBe(true)
+      else if (r === 'motif') expect(motifNames.has(n), n).toBe(true)
+      else {
+        // route 'rust' = backend-dispatched (present in the live snapshot) OR
+        // preview_motif_draft, whose def is TS-sourced but whose execution is the
+        // CDP-capture special-case in server.ts rather than the backend catalog.
+        expect(
+          rustNames.has(n) || n === 'preview_motif_draft',
+          `${n} routes 'rust' but is neither in the live Rust snapshot nor the preview capture special-case`,
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('4. every TS def routes ts; every motif def routes motif except preview_motif_draft (rust capture)', () => {
+    for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name), d.name).toBe('ts')
     for (const d of MOTIF_TOOL_DEFS) {
       // preview_motif_draft is the one motif DEF whose EXECUTION is not the motif-store
       // route: it is served by the CDP-capture special-case in server.ts, so it routes
-      // 'rust'. Its def still lives in MOTIF_TOOL_DEFS so it survives the Phase 4 Task 3
-      // deletion of the Rust motif arms. The other 5 route to the 'motif' store path.
+      // 'rust'. Its def still lives in MOTIF_TOOL_DEFS. The others route to the motif store.
       if (d.name === 'preview_motif_draft') expect(routeMcpTool(d.name)).toBe('rust')
-      else expect(routeMcpTool(d.name)).toBe('motif')
+      else expect(routeMcpTool(d.name), d.name).toBe('motif')
     }
   })
 
-  it('3. every ts-routed name is in the TS table; every hybrid-routed name is in HYBRID_TOOLS; every motif-routed name in allRustNames is in motifNames', () => {
-    for (const n of allRustNames) {
-      const r = routeMcpTool(n)
-      if (r === 'ts') expect(tsNames.has(n)).toBe(true)
-      if (r === 'hybrid') expect(HYBRID_TOOLS.has(n)).toBe(true)
-      if (r === 'motif') expect(motifNames.has(n)).toBe(true)
-    }
+  it('5. every rust-native snapshot tool routes to rust or hybrid (never a TS engine)', () => {
+    // The snapshot is the surface the backend owns; none of it may be claimed by a TS
+    // engine. ping/detect_silences/transcribe_clip → 'rust'; the imports → 'hybrid'.
+    for (const n of rustNames) expect(['rust', 'hybrid'], n).toContain(routeMcpTool(n))
   })
 
-  it('4. schema↔validator consistency: every required scalar inputSchema field is enforced by the tool\'s parser', () => {
+  it("6. schema↔validator consistency: every required scalar inputSchema field is enforced by the tool's parser", () => {
     for (const d of MCP_TOOL_DEFS) {
       const required = ((d.inputSchema as { required?: string[] }).required) ?? []
       const parse = d.parseArgs ?? d.parseDedicated

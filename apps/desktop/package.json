@@ -29,6 +29,8 @@
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
     "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "napi:build:decode": "node scripts/napi-build-decode.mjs",
+    "mcp:catalog:snapshot": "node scripts/snapshot-mcp-catalog.mjs",
+    "mcp:catalog:check": "node scripts/snapshot-mcp-catalog.mjs && git diff --exit-code fixtures/mcp/rust-catalog-snapshot.json",
     "e2e": "playwright test -c playwright.config.ts",
     "ffmpeg:fetch": "node scripts/fetch-ffmpeg.mjs",
     "ffmpeg:fetch-lgpl": "node scripts/fetch-ffmpeg-lgpl.mjs",

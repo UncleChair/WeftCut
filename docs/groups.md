@@ -151,8 +151,6 @@ Mirror the actor 1:1:
 
 | Tool                       | Args                                                      |
 |----------------------------|-----------------------------------------------------------|
-| `groups_list`              | none                                                      |
-| `groups_get`               | `group_id: GroupId`                                       |
 | `groups_create`            | `layer_ids: [LayerId], label?, reassign?`                 |
 | `groups_dissolve`          | `group_id`                                                |
 | `groups_add_members`       | `group_id, layer_ids, reassign?`                          |
@@ -162,11 +160,12 @@ Mirror the actor 1:1:
 `move_layer`, `trim_layer`, `split_layer` accept an optional
 `escape_group?: bool` parameter (defaults `false`).
 
-Read paths: `Project.groups` is returned as-is in `get_project`. There
-is no per-`Layer` `group_id` field on the wire — agents call
-`groups_list` once and build their own index, mirroring how
-`transitions` are surfaced. The existing `project:changed` event
-covers group mutations.
+Read paths: `Project.groups` is surfaced as-is on the `project://current`
+resource (`groups: [{ id, label, layer_ids }]`) — there is no
+`groups_list`/`groups_get` tool, and no per-`Layer` `group_id` field on
+the wire. Agents read `project://current` once and build their own
+index, mirroring how `transitions` are surfaced. The existing
+`project:changed` event covers group mutations.
 
 ## Import auto-pair
 

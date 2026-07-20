@@ -28,8 +28,10 @@ describe('routeMcpTool', () => {
   it('preview_motif_draft stays rust (special-cased capture in server.ts)', () => {
     expect(routeMcpTool('preview_motif_draft')).toBe('rust')
   })
-  it('routes reads + native-read tools to rust', () => {
-    for (const t of ['groups_list', 'groups_get', 'ping', 'detect_silences', 'transcribe_clip'])
+  it('routes the live rust-native tools to rust', () => {
+    // groups_list / groups_get are gone: group reads now come from the project
+    // summary resource (project://current includes `groups`), not an MCP tool.
+    for (const t of ['ping', 'detect_silences', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
   it('single-writer invariant: every TS-adapter tool routes to ts, never rust', () => {
