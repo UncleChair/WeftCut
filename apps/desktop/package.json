@@ -10,6 +10,9 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "predev": "npm run build:wasm",

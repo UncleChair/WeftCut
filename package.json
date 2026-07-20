@@ -12,6 +12,6 @@
     "typecheck": "npm --workspace apps/desktop run typecheck"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }
