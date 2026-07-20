@@ -20,8 +20,9 @@ artifacts do not carry over**:
 
 The npm side is cheap: a fresh worktree's `npm install` re-links from the warm
 npm cache (no network re-download). The Rust side is the real cost — the first
-`npm run dev` (or `napi build`) in a new worktree cold-compiles the whole
-dependency tree. Because these worktrees are **persistent** (created once,
+`npm run bootstrap` (its `napi build`) in a new worktree cold-compiles the
+whole dependency tree. (`npm run dev` alone only builds the small eval-wasm
+leaf; the multi-GB `target/` is the addon build that `bootstrap` triggers.) Because these worktrees are **persistent** (created once,
 reused for many features), that cold compile is paid once and then the
 `target/` stays warm.
 
@@ -138,7 +139,7 @@ onto another port, pass it explicitly with `-Ports`.)
 ```powershell
 # add a third
 git worktree add ..\videtor-wt3 -b wt3 main
-cd ..\videtor-wt3 ; npm install
+cd ..\videtor-wt3 ; npm install ; npm run bootstrap
 
 # remove one (must be clean)
 git worktree remove ..\videtor-wt3
