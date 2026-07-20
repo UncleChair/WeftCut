@@ -94,8 +94,8 @@ scripts/             standalone color diagnostics (color-*.mjs) — invoke
                      cargo media_conformance / ffmpeg directly, not the suite;
                      decode-bench.mjs + gen-decode-bench-fixtures.mjs (the
                      decode-strategy benchmark, see ../../../docs/decode-bench.md)
-tools/               one-shot probes/experiments (color isolation, float16,
-                     10-bit GL parity, export-redundancy perf)
+effects-f16-parity/  float16 GL round-trip parity gate (index.html + run.mjs);
+                     run via `cd e2e && npm run gate:effects-f16-parity`
 ```
 
 Specs are separate from the colocated renderer **unit** tests
