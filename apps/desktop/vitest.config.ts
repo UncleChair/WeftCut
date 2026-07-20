@@ -13,7 +13,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Unit tests live under src/renderer (the app) and src/main (pure
   // main-process helpers, e.g. the fs:* path guard). The Playwright Electron
-  // specs in e2e/ use the Playwright runner (npm run e2e:electron) — keep
+  // specs in e2e/ use the Playwright runner (npm run e2e) — keep
   // Vitest from scooping up their *.spec.ts (they fail under Vitest; not Vitest
   // tests). Only add main-process tests for modules that DON'T import `electron`
   // (it can't load under Vitest).

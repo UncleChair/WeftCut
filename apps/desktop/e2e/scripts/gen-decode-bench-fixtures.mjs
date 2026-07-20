@@ -2,7 +2,7 @@
 // (docs/decode-bench.md §What it measures) with ffmpeg:
 // 60 s testsrc2, 30 fps, GOP 240, bt709/limited, no audio. Skips existing
 // outputs (delete a file or pass --force to regenerate). Requires ffmpeg +
-// ffprobe on PATH (`npm run fetch-ffmpeg` from apps/desktop).
+// ffprobe on PATH (`npm run ffmpeg:fetch` from apps/desktop).
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -65,7 +65,7 @@ const run = (cmd, args) => spawnSync(cmd, args, { encoding: "utf8" });
 
 function availableEncoders() {
   const r = run("ffmpeg", ["-hide_banner", "-encoders"]);
-  if (r.status !== 0) throw new Error("ffmpeg not on PATH — run `npm run fetch-ffmpeg` from apps/desktop");
+  if (r.status !== 0) throw new Error("ffmpeg not on PATH — run `npm run ffmpeg:fetch` from apps/desktop");
   return r.stdout;
 }
 

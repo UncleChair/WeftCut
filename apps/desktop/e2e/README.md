@@ -11,7 +11,7 @@ skip). From `apps/desktop` unless noted:
 
 ```bash
 npm run napi:build                         # build the @weftcut/core native addon
-npm run fetch-ffmpeg                        # ffmpeg on PATH (or use a system ffmpeg)
+npm run ffmpeg:fetch                        # ffmpeg on PATH (or use a system ffmpeg)
 ( cd e2e && npm run fixtures )              # generate test media (needs ffmpeg)
 VITE_WEFTCUT_E2E=1 npm run build            # MUST set the flag — see below
 ```
@@ -43,10 +43,10 @@ VITE_WEFTCUT_E2E=1 npm run build            # MUST set the flag — see below
 ### Run
 
 ```
-npm run e2e:electron        # the full Playwright suite (playwright.config.ts)
-npm run e2e:electron -- color-conformance.spec.ts        # one file
-npm run e2e:electron -- -g "role"                         # by title grep
-npm run e2e:electron -- --project=serial                  # only the @serial gates
+npm run e2e        # the full Playwright suite (playwright.config.ts)
+npm run e2e -- color-conformance.spec.ts        # one file
+npm run e2e -- -g "role"                         # by title grep
+npm run e2e -- --project=serial                  # only the @serial gates
 ```
 
 The Rust analyzer (`media_conformance`) used by the export/conformance specs,
@@ -162,7 +162,7 @@ which generates no fixtures.
 ### `fs-guard.spec.ts` — "fs:writeFile honors append vs truncate" (Windows, under load)
 
 **Symptom.** Occasionally fails inside the *full* suite run on Windows; passes
-deterministically when run in isolation (`npm run e2e:electron -- fs-guard.spec.ts`).
+deterministically when run in isolation (`npm run e2e -- fs-guard.spec.ts`).
 
 **Not a logic bug.** The write path is synchronous — `fs:writeFile` does
 `fs.appendFileSync`/`fs.writeFileSync` (`src/main/index.ts`), so the fd is closed

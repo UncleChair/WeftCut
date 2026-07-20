@@ -34,16 +34,19 @@ rustup target add wasm32-unknown-unknown
                  --add Microsoft.VisualStudio.Component.Windows11SDK.22621"
    ```
    ~6 GB. Required once. The first `napi build` (`cargo`) fails without it.
-3. **Node 20+** — `winget install -e --id OpenJS.NodeJS.LTS`.
+3. **Node 22+** — `winget install -e --id OpenJS.NodeJS.LTS`.
 
 Then from the repo root:
 ```powershell
-npm install
-npm run dev   # from repo root → apps/desktop electron-vite dev
+npm install     # JS deps only
+npm run bootstrap # fetch ffmpeg + compile the Rust napi addons (one-time)
+npm run dev     # build eval wasm → Vite (renderer) → Electron window
 ```
 
-`npm run dev` builds the napi addon as needed, starts Vite (renderer),
-and launches the Electron window.
+`npm install` installs JS dependencies but does **not** build the native
+addons. `npm run bootstrap` fetches ffmpeg and compiles the two napi addons
+(`@weftcut/core`, `@weftcut/native-decode`); `npm run dev` then builds the
+eval wasm, starts Vite, and launches the Electron window.
 
 ## macOS
 
@@ -52,8 +55,8 @@ and launches the Electron window.
    ```sh
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
-3. **Node 20+**: `brew install node`.
-4. `npm install && npm run dev`.
+3. **Node 22+**: `brew install node`.
+4. `npm install && npm run bootstrap && npm run dev`.
 
 ## Linux
 
@@ -68,8 +71,8 @@ and launches the Electron window.
    ```
    Electron supplies its own Chromium, so the old WebKitGTK / libsoup /
    appindicator system libraries are **no longer required**.
-3. **Node 20+** via your distro or nvm.
-4. `npm install && npm run dev`.
+3. **Node 22+** via your distro or nvm.
+4. `npm install && npm run bootstrap && npm run dev`.
 
 ## ffmpeg
 
@@ -96,10 +99,15 @@ webview runtime to provision.
 
 ## First-run flow
 
-After cloning, `npm install` is the only bootstrap step. The app icon is
-committed at `apps/desktop/build/icon.png` (generated from the canonical
-SVG — see below) and electron-builder consumes it directly when
-packaging.
+After cloning, run `npm install` (JS deps) then `npm run bootstrap` once.
+`bootstrap` fetches ffmpeg (both the runtime static build and the LGPL dev
+libs) and compiles the two Rust napi addons the renderer/main import
+(`@weftcut/core`, `@weftcut/native-decode`) — `npm install` alone does **not**
+build them, so `npm run dev` on a fresh clone fails without this step. Re-run
+`bootstrap` only after touching the Rust sources under `native/`; cargo's
+incremental build makes repeat runs cheap. The app icon is committed at
+`apps/desktop/build/icon.png` (generated from the canonical SVG — see below)
+and electron-builder consumes it directly when packaging.
 
 ## Icons & bundling for distribution
 

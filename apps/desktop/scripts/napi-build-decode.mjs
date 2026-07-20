@@ -31,7 +31,7 @@ if (!env.FFMPEG_DIR) {
   const lgplDir = join(root, 'resources', 'ffmpeg-lgpl', osKey)
   const manifest = join(lgplDir, 'manifest.json')
   if (!existsSync(manifest)) {
-    console.error('napi:build:decode — set FFMPEG_DIR or run `npm run fetch-ffmpeg-lgpl` first.')
+    console.error('napi:build:decode — set FFMPEG_DIR or run `npm run ffmpeg:fetch-lgpl` first.')
     process.exit(1)
   }
   assertLgplBanner(JSON.parse(readFileSync(manifest, 'utf8')).configuration)
@@ -68,7 +68,7 @@ execSync(
 if (process.platform === 'linux' || process.platform === 'darwin') {
   const libDir = lgplLibDir(osKey)
   if (!libDir || !existsSync(libDir)) {
-    console.error('napi:build:decode — runtime lib dir missing; run `npm run fetch-ffmpeg-lgpl`.')
+    console.error('napi:build:decode — runtime lib dir missing; run `npm run ffmpeg:fetch-lgpl`.')
     process.exit(1)
   }
   let copied = 0

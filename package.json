@@ -7,9 +7,14 @@
     "apps/*"
   ],
   "scripts": {
+    "bootstrap": "npm --workspace apps/desktop run bootstrap",
     "dev": "npm --workspace apps/desktop run dev",
     "build": "npm --workspace apps/desktop run build",
-    "typecheck": "npm --workspace apps/desktop run typecheck"
+    "typecheck": "npm --workspace apps/desktop run typecheck",
+    "test": "npm --workspace apps/desktop run test",
+    "e2e": "npm --workspace apps/desktop run e2e",
+    "package": "npm --workspace apps/desktop run package",
+    "knip": "npx --yes knip"
   },
   "engines": {
     "node": ">=22"

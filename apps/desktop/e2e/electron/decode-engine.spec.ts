@@ -23,7 +23,7 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, waitForH
 // decode-bench matrix (60 s @ 1080p, e2e/fixtures/decode-bench) so the whole
 // spec runs fast; generation self-skips like gen-decode-bench-fixtures.mjs
 // when the ffmpeg build on PATH lacks an encoder (CI's fetched static build is
-// lean — electron-ci.yml's `fetch-ffmpeg` step).
+// lean — electron-ci.yml's `ffmpeg:fetch` step).
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 // Fixture paths are assigned in beforeAll under a fresh tmpDir (unique per

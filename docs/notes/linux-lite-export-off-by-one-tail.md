@@ -84,7 +84,7 @@ territory of ADR 0012, not a decode-delay problem.
 
 ```bash
 cd apps/desktop
-npm run fetch-ffmpeg            # sidecar n7.1 on PATH for the specs
+npm run ffmpeg:fetch            # sidecar n7.1 on PATH for the specs
 VITE_WEFTCUT_E2E=1 npm run build
 # un-skip: drop the linux arm of the test.skip at export-prores-fidelity.spec.ts:238
 PATH="$PWD/resources/ffmpeg/linux:$PATH" WEFTCUT_DECODE_E2E=1 \

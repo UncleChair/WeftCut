@@ -82,7 +82,7 @@ jobs:
         run: npm run napi:build
 
       # Cache the fetched ffmpeg/ffprobe so repeat runs skip the CDN download —
-      # fetch-ffmpeg no-ops when the binaries already exist. Keyed on the OS and
+      # ffmpeg:fetch no-ops when the binaries already exist. Keyed on the OS and
       # the fetch script (which pins FFMPEG_VERSION), so a version/source change
       # busts the cache. (path is repo-root-relative; cache ignores the job's
       # working-directory default.)
@@ -96,11 +96,11 @@ jobs:
       # resources/ffmpeg/<os>/. This DRY script handles win/linux/mac and
       # exercises the Linux + macOS branches for the first time in CI.
       - name: Fetch ffmpeg
-        run: npm run fetch-ffmpeg
+        run: npm run ffmpeg:fetch
 
       - name: Put bundled ffmpeg on PATH
         # CI runners have no system ffmpeg; the Rust integration tests + the
-        # e2e app resolve "ffmpeg" via PATH. fetch-ffmpeg put it in resources/.
+        # e2e app resolve "ffmpeg" via PATH. ffmpeg:fetch put it in resources/.
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -121,7 +121,7 @@ jobs:
           key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
 
       - name: Fetch LGPL ffmpeg (native-decode)
-        run: npm run fetch-ffmpeg-lgpl
+        run: npm run ffmpeg:fetch-lgpl
 
       - name: Build native-decode addon
         run: npm run napi:build:decode
@@ -223,9 +223,9 @@ jobs:
           WEFTCUT_E2E_NO_EXPORT: '1'
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a npm run e2e:electron
+            xvfb-run -a npm run e2e
           else
-            npm run e2e:electron
+            npm run e2e
           fi
 
       # Upload determinism PNGs so the compare job can fetch all three OSes.

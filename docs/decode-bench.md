@@ -297,7 +297,7 @@ Windows):
 
 ```bash
 npm run napi:build                      # build @weftcut/core — close the dev app first, it locks the .node
-npm run fetch-ffmpeg                    # ffmpeg/ffprobe on PATH (or use a system ffmpeg)
+npm run ffmpeg:fetch                    # ffmpeg/ffprobe on PATH (or use a system ffmpeg)
 VITE_WEFTCUT_E2E=1 npm run build        # build WITH the window.__weftcutTest hook
 ```
 
@@ -315,7 +315,7 @@ needs the LGPL FFmpeg dev libs + libclang on the build environment
 fetched dir / standard LLVM install):
 
 ```bash
-npm run fetch-ffmpeg-lgpl                # fetch the LGPL FFmpeg dev libs into resources/ffmpeg-lgpl/win
+npm run ffmpeg:fetch-lgpl                # fetch the LGPL FFmpeg dev libs into resources/ffmpeg-lgpl/win
 npm run napi:build:decode                # build @weftcut/native-decode (component; no cargo features — union rule is per-addon)
 ```
 

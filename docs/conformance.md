@@ -178,7 +178,7 @@ instance.
 
 ```bash
 npm run napi:build                    # build the @weftcut/core native addon
-npm run fetch-ffmpeg                   # ffmpeg on PATH (or use a system ffmpeg)
+npm run ffmpeg:fetch                   # ffmpeg on PATH (or use a system ffmpeg)
 ( cd e2e && npm run fixtures )         # generate test media (needs ffmpeg)
 VITE_WEFTCUT_E2E=1 npm run build       # build WITH the E2E hook — see warning
 ```
@@ -192,9 +192,9 @@ VITE_WEFTCUT_E2E=1 npm run build       # build WITH the E2E hook — see warning
 Then, from `apps/desktop`:
 
 ```bash
-npm run e2e:electron                                   # full suite
-npm run e2e:electron -- color-conformance.spec.ts      # one file
-npm run e2e:electron -- -g "role"                      # by title grep
+npm run e2e                                            # full suite
+npm run e2e -- color-conformance.spec.ts               # one file
+npm run e2e -- -g "role"                               # by title grep
 ```
 
 Analyzer calls go through `lib/analyze.mjs`, which shells

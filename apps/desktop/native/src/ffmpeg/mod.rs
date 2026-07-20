@@ -28,7 +28,7 @@ pub async fn bootstrap() -> Result<BootstrapStatus> {
             // Windows/macOS keep the auto-download fallback.
             if cfg!(target_os = "linux") {
                 let msg = "ffmpeg not found. On Linux WeftCut ships a version-pinned \
-                     ffmpeg with the app; in a dev checkout run `npm run fetch-ffmpeg`, \
+                     ffmpeg with the app; in a dev checkout run `npm run ffmpeg:fetch`, \
                      or install your distro's package (e.g. `apt install ffmpeg`)."
                     .to_string();
                 warn!("{msg}");

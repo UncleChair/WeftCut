@@ -49,24 +49,32 @@ Prerequisites — see [docs/setup.md](docs/setup.md) for per-OS install commands
 
 - **Rust** (stable, via `rustup`; this repo declares its wasm target in `rust-toolchain.toml`)
 - **MSVC Build Tools** (Windows) / **Xcode CLT** (macOS) / build tools (Linux)
-- **Node 20+**
+- **Node 22+**
 
 Electron bundles its own Chromium, so there is no per-OS webview runtime to install.
 
 After installing prerequisites, from the repo root:
 
 ```sh
-npm install
-npm run dev
+npm install      # install JS deps (does NOT build the native addons)
+npm run bootstrap # fetch ffmpeg + compile the Rust napi addons (@weftcut/core, native-decode)
+npm run dev      # build the eval wasm, start Vite, and open the Electron window
 ```
 
-`npm run dev` builds the Rust core, starts Vite, and opens the Electron window.
-ffmpeg is auto-downloaded on first run via `ffmpeg-sidecar`; if that fails
-behind a SOCKS proxy, see the ffmpeg section in [setup.md](docs/setup.md).
+`npm run bootstrap` is a one-time step after cloning: it fetches ffmpeg and
+compiles the two Rust napi addons the app imports. Re-run it only after
+changing the Rust sources under `native/` (cargo makes repeat runs fast).
+`npm run dev` then builds the eval wasm (`predev`), starts Vite, and opens the
+Electron window. ffmpeg is also auto-downloaded on first run via
+`ffmpeg-sidecar`; if that fails behind a SOCKS proxy, see the ffmpeg section in
+[setup.md](docs/setup.md).
 
-Other root scripts: `npm run typecheck` (TypeScript project references),
-`npm run build` (release bundle — icon set and packaging notes in
-[setup.md](docs/setup.md)).
+Other root scripts (thin façades over the `apps/desktop` workspace):
+`npm run typecheck` (TypeScript project references), `npm test` (unit +
+component), `npm run e2e` (Playwright/Electron suite), `npm run build`
+(release bundle) and `npm run package` (installers — icon set and packaging
+notes in [setup.md](docs/setup.md)). Workspace-only scripts (`ffmpeg:fetch`,
+`napi:build`, `gen:icons`, …) run via `npm run <name> --workspace apps/desktop`.
 
 Project layout follows the [architecture doc](docs/architecture.md):
 
