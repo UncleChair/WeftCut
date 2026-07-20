@@ -18,8 +18,8 @@ established WeftCut decisions:
   what M/S acted on. WeftCut had adopted Final Cut's *visual* model
   (audio as a sub-lane under the picture) but bolted on Premiere's
   *control* model (per-track M/S); that seam was the confusion the
-  [2026-06-13 integration spec](../superpowers/specs/2026-06-13-audio-track-abroll-integration-design.md)
-  tried to paper over with conditional, audio-only header controls.
+  2026-06-13 integration spec (since retired) tried to paper over with
+  conditional, audio-only header controls.
 - Per-track mute/solo also gives no handle for the operations editors
   actually reach for — "duck **all** dialogue", "solo **the music**".
   Those cut across tracks; a per-track control cannot express them
@@ -105,5 +105,5 @@ is role and not track.
   model, the skip rules, and the fold.
 - [`data-model.md`](../data-model.md) — `AudioParams.role`,
   `Project.audio_roles`, and the retained-but-dead `Track` flags.
-- [2026-06-13 audio × A/B-roll integration spec](../superpowers/specs/2026-06-13-audio-track-abroll-integration-design.md)
-  — the conditional-header approach this ADR supersedes.
+- The 2026-06-13 audio × A/B-roll integration spec (since retired) — the
+  conditional-header approach this ADR supersedes.

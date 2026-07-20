@@ -14,9 +14,8 @@ HEVC software path (ADR 0014). Lifting 10-bit delivery therefore meant
 fixing two things at once — a wider composite and a different encoder —
 not just swapping the encoder.
 
-A round of probes (recorded in
-`docs/superpowers/specs/2026-06-12-float16-pipeline-exploration.md`)
-settled the shape:
+A round of probes (the 2026-06-12 float16 pipeline exploration, since
+retired) settled the shape:
 
 - **WebGL2 renders `rgba16float` render targets stock.** PixiJS's WebGPU
   backend hardcodes a `bgra8unorm` pipeline color target and would need
@@ -129,6 +128,6 @@ follow-ups in `docs/roadmap.md`.
 - ADR 0004 — WebCodecs buffer-pool discipline (the copy-then-close rule
   the CPU-plane lane satisfies).
 - `docs/render.md` — the evergreen description of both encode exits.
-- `docs/superpowers/specs/2026-06-12-float16-pipeline-exploration.md` —
-  the probe record and the HDR/`importExternalTexture` findings that seed
-  the deferred work.
+- The 2026-06-12 float16 pipeline exploration (since retired) — the probe
+  record and the HDR/`importExternalTexture` findings that seed the
+  deferred work.
