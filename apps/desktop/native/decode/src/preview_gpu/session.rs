@@ -24,6 +24,7 @@
 //! against Chromium's GPU read of the same texture.
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -40,6 +41,7 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC}
 use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
 
 use super::decoder::{StreamFrame, VideoStream};
+use crate::recover::{panic_message, LockExt};
 
 /// Cap on retained timing samples per metric. A 30s throughput window at native's
 /// ~44fps yields ~1300 samples — far under this; the cap is only a runaway backstop
@@ -688,6 +690,43 @@ enum CopyOutcome {
     AcquireFailed(String),
 }
 
+/// Releases a slot's keyed mutex (key 0) on scope exit. One is constructed only
+/// after `AcquireSync` has succeeded, so `ReleaseSync` MUST run on every path out
+/// of the copy region — normal return, an early `?`, or a panic unwinding through
+/// it. Without this, the session loop's `catch_unwind` (issue #6) would catch a
+/// mid-copy panic and drop the pool with a slot's mutex still held, wedging
+/// Chromium's next read of that shared surface. [`release`](Self::release) runs it
+/// explicitly so the happy path can still surface a `ReleaseSync` error; `Drop` is
+/// the unwind/early-return backstop, guarded against a double release.
+struct KeyedMutexRelease<'a> {
+    keyed_mutex: &'a IDXGIKeyedMutex,
+    released: bool,
+}
+
+impl KeyedMutexRelease<'_> {
+    fn release(&mut self) -> Result<(), String> {
+        if self.released {
+            return Ok(());
+        }
+        self.released = true;
+        // SAFETY: constructed only after a successful `AcquireSync(0)` on this
+        // thread; the `&IDXGIKeyedMutex` borrow keeps the COM object alive here.
+        unsafe { self.keyed_mutex.ReleaseSync(0) }
+            .map_err(|e| format!("ReleaseSync(slot) failed: {e}"))
+    }
+}
+
+impl Drop for KeyedMutexRelease<'_> {
+    fn drop(&mut self) {
+        if !self.released {
+            // Unwinding (or a return that skipped `release`): best-effort release so
+            // the slot's mutex is never left held. Any error is moot while unwinding.
+            // SAFETY: same contract as `release` — held mutex, live COM object.
+            let _ = unsafe { self.keyed_mutex.ReleaseSync(0) };
+        }
+    }
+}
+
 /// Copy the decoded GPU surface into a pool slot, bracketed by the slot's keyed
 /// mutex (our write vs. Chromium's read) and ffmpeg's device-context lock
 /// (decode thread vs. this copy). Lifted from the poc's in-place slot overwrite.
@@ -734,6 +773,14 @@ unsafe fn copy_frame_into_slot(
         )));
     }
 
+    // The slot's mutex is now held. Guard its release so it runs on EVERY exit
+    // from here on — including a panic unwinding through the copy — so a slot is
+    // never dropped with its mutex still held (see issue #6 / `KeyedMutexRelease`).
+    let mut release = KeyedMutexRelease {
+        keyed_mutex: &slot.keyed_mutex,
+        released: false,
+    };
+
     if let Some(lock) = stream.lock {
         lock(stream.lock_ctx);
     }
@@ -759,9 +806,9 @@ unsafe fn copy_frame_into_slot(
     if let Some(unlock) = stream.unlock {
         unlock(stream.lock_ctx);
     }
-    slot.keyed_mutex
-        .ReleaseSync(0)
-        .map_err(|e| format!("ReleaseSync(slot) failed: {e}"))?;
+    // Explicit release so a `ReleaseSync` failure surfaces here (the `Drop`
+    // backstop only fires on an unwind / skipped-`release` return).
+    release.release()?;
     Ok(CopyOutcome::Copied)
 }
 
@@ -769,7 +816,7 @@ unsafe fn copy_frame_into_slot(
 /// the call so concurrent sessions serialise (the addon's sink is a
 /// non-blocking event enqueue, so this can't deadlock or stall).
 fn emit(poke: &PokeSink, poke_val: PreviewGpuPoke) {
-    let guard = poke.lock().unwrap();
+    let guard = poke.lock_recover();
     if let Some(sink) = guard.as_ref() {
         sink(poke_val);
     }
@@ -912,10 +959,20 @@ fn session_thread(
                 _ => {}
             }
         }
-        match msg {
+        // A panic on the ffmpeg/GPU decode path (inside `on_request`/`pump`) must
+        // not silently kill this thread — the renderer would wait forever on frames
+        // that never arrive — nor cascade through the shared poke lock. Catch it,
+        // surface it as a normal `Error` poke (so JS tears the session down), then
+        // stop: after an unwind the stream's libav state (and any half-done GPU
+        // copy) is suspect, so we never touch `state` again — which is what makes
+        // the `AssertUnwindSafe` capture of `&mut state` sound here. Any slot caught
+        // mid-copy already had its keyed mutex released by `copy_frame_into_slot`'s
+        // `KeyedMutexRelease` guard, so the pool isn't left wedged.
+        let flow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
             Ok(SessionMsg::RequestFrameAt(t)) => {
                 state.on_request(t, &poke, &stream_id);
                 state.pump(&poke, &stream_id);
+                ControlFlow::Continue(())
             }
             Ok(SessionMsg::ConsumeAck(slot)) => {
                 state.record_ack(slot as usize);
@@ -923,12 +980,31 @@ fn session_thread(
                     *f = true;
                 }
                 state.pump(&poke, &stream_id);
+                ControlFlow::Continue(())
             }
-            Ok(SessionMsg::Close) => break,
+            Ok(SessionMsg::Close) => ControlFlow::Break(()),
             Err(RecvTimeoutError::Timeout) => {
                 state.pump(&poke, &stream_id);
+                ControlFlow::Continue(())
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => ControlFlow::Break(()),
+        }));
+        match flow {
+            Ok(ControlFlow::Continue(())) => {}
+            Ok(ControlFlow::Break(())) => break,
+            Err(payload) => {
+                emit(
+                    &poke,
+                    PreviewGpuPoke::Error {
+                        stream_id: stream_id.clone(),
+                        message: format!(
+                            "preview-gpu decode panicked: {}",
+                            panic_message(&*payload)
+                        ),
+                    },
+                );
+                break;
+            }
         }
     }
     // `state` drops here: closes each slot's NT handle, drops the VideoStream
@@ -960,13 +1036,13 @@ impl PreviewGpuRegistry {
     /// addon before any `open`; sessions share the same cell, so a later set
     /// is seen by already-running threads too.
     pub fn set_poke_sink(&self, sink: Box<dyn Fn(PreviewGpuPoke) + Send>) {
-        *self.poke.lock().unwrap() = Some(sink);
+        *self.poke.lock_recover() = Some(sink);
     }
 
     /// Open `path` for GPU preview: spawn its decode thread, build the pool, and
     /// hand back the slot NT handles + dimensions once the thread reports ready.
     pub fn open(&self, stream_id: &str, path: &str, pool_size: u32) -> Result<OpenInfo, String> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_recover();
         if sessions.contains_key(stream_id) {
             return Err(format!("preview-gpu session '{stream_id}' is already open"));
         }
@@ -1029,7 +1105,7 @@ impl PreviewGpuRegistry {
 
     /// Set the decode anchor for a session; the thread pumps lookahead toward it.
     pub fn request_frame_at(&self, stream_id: &str, target_us: i64) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(stream_id)
             .ok_or_else(|| format!("no preview-gpu session '{stream_id}'"))?;
@@ -1041,7 +1117,7 @@ impl PreviewGpuRegistry {
 
     /// Mark a slot free again (the renderer released its cross-process refs).
     pub fn consume_ack(&self, stream_id: &str, slot: u32) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(stream_id)
             .ok_or_else(|| format!("no preview-gpu session '{stream_id}'"))?;
@@ -1055,7 +1131,7 @@ impl PreviewGpuRegistry {
     /// Called once at the end of a bench window (before `close`), from the Node
     /// main thread via the addon.
     pub fn take_timings(&self, stream_id: &str) -> Result<TimingReport, String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(stream_id)
             .ok_or_else(|| format!("no preview-gpu session '{stream_id}'"))?;
@@ -1063,7 +1139,7 @@ impl PreviewGpuRegistry {
         // through `session` (and so `sessions`); dropping it here (end of this
         // statement) rather than in the tail expression keeps it from outliving
         // the `sessions` guard it's borrowed from.
-        let report = session.timing.lock().unwrap().drain();
+        let report = session.timing.lock_recover().drain();
         Ok(report)
     }
 
@@ -1073,7 +1149,7 @@ impl PreviewGpuRegistry {
         // Remove from the map (releasing the sessions lock) *before* joining, so
         // a slow teardown doesn't block registry ops on other sessions.
         let mut session = {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock_recover();
             sessions.remove(stream_id)
         };
         match session.as_mut() {
@@ -1217,5 +1293,62 @@ mod timing_tests {
             a.push_decode_copy(1_000_000);
         }
         assert_eq!(a.drain().decode_copy.count as usize, TIMING_SAMPLE_CAP);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn decode_panic_surfaces_as_error_poke_and_leaves_registry_usable() {
+        // Mirrors the SW/export lanes' panic test: a panic on the session thread's
+        // decode path must NOT silently kill the thread (renderer waits forever on
+        // frames that never arrive) and must NOT cascade through the shared poke
+        // lock. The sink panics on its FIRST call — simulating a panic in the
+        // emit/routing path while the poke lock is held, which poisons that lock.
+        // This exercises both fixes at once: the session loop's `catch_unwind` turns
+        // the panic into an `Error` poke, and the recovery `emit` only reaches the
+        // sink because `lock_recover` recovers the poisoned lock instead of
+        // re-panicking (revert either and this test fails).
+        //
+        // GPU-lane caveat: unlike the SW lane, `open` needs a real d3d11va device —
+        // it does NOT fall back to software (decoder.rs). On a host without one
+        // (e.g. a headless CI runner) `open` fails; the panic-resilience logic is
+        // host-independent, so we skip rather than fail. On a GPU host (dev boxes,
+        // GPU CI) this runs for real. The panic fires on whatever poke `pump` emits
+        // first — `FrameReady`, `Eof`, or a decode `Error` — so it validates the
+        // resilience path even when the fixture can't be hardware-decoded.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let calls2 = calls.clone();
+        let errors2 = errors.clone();
+        let reg = PreviewGpuRegistry::new();
+        reg.set_poke_sink(Box::new(move |poke| {
+            if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("boom in preview-gpu sink");
+            }
+            if let PreviewGpuPoke::Error { message, .. } = poke {
+                errors2.lock().unwrap().push(message);
+            }
+        }));
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
+        let Ok(_info) = reg.open("s1", p, 2) else {
+            eprintln!("skipping preview-gpu panic test: no d3d11va device on this host");
+            return;
+        };
+        reg.request_frame_at("s1", 0).expect("request_frame_at");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let errs = errors.lock().unwrap();
+        assert!(
+            errs.iter().any(|m| m.contains("panicked")),
+            "expected a decode-panic Error poke, got: {errs:?}"
+        );
+        drop(errs);
+        // The poisoned poke lock did not cascade: the registry still tears down
+        // cleanly (join reaps the thread that broke out after the caught panic).
+        reg.close("s1")
+            .expect("registry usable after a caught decode panic");
     }
 }
