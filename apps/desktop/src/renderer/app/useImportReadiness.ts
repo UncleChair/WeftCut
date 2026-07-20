@@ -15,7 +15,11 @@ import {
   type ProjectSummary,
 } from "../ipc";
 import { type ProxyState } from "../panels/mediaReadiness";
-import { probeSourceDecodable } from "../render/decoder/probeSourceDecodable";
+import {
+  classifyWebcodecsDecodability,
+  type WebcodecsDecodeVerdict,
+} from "../render/decoder/probeSourceDecodable";
+import { markWebcodecsUnusable } from "../render/decoder/webcodecsCapability";
 import {
   sourcesNeedingPreviewProbe,
   type ProbeState,
@@ -217,11 +221,22 @@ export function useImportReadiness(deps: {
       for (const m of candidates) {
         if (cancelled) return;
         memo.set(m.id, "pending");
-        let ok = false;
+        let verdict: WebcodecsDecodeVerdict = "unknown";
         try {
-          ok = await probeSourceDecodable(convertFileSrc(m.path));
+          verdict = await classifyWebcodecsDecodability(convertFileSrc(m.path));
         } catch {
-          ok = false;
+          verdict = "unknown";
+        }
+        const ok = verdict === "ok";
+        // DEFINITIVE WebCodecs-unsupported original (no codec mapping /
+        // isConfigSupported declines both lanes — NOT a transient stall): sticky-
+        // mark it so a pinned-Lite (webcodecs) resolve reaches
+        // status:"unsupported" (surfacing UnsupportedClipCard) instead of hanging
+        // on "pending" forever. Only "unsupported" is marked — a flaky/deadline
+        // "unknown" must never condemn a decodable source. Mirrors the ffmpeg/HW
+        // markers (ffmpegCapability.ts).
+        if (verdict === "unsupported") {
+          markWebcodecsUnusable(m.id, "webcodecs cannot decode original");
         }
         // Land the verdict even if the effect was cancelled mid-probe. A rapid
         // project:changed during a fast import (quick proxy lands in ~seconds)
@@ -229,8 +244,8 @@ export function useImportReadiness(deps: {
         // would strand memo at "pending" forever — the next run filters out
         // "pending" (and a proxied source leaves `sourcesNeedingPreviewProbe`),
         // so it's never re-probed and stays stuck on "checking", never bridged.
-        // `probeSourceDecodable` has no AbortSignal, so the await completes
-        // regardless; recording its result is safe + idempotent. (The loop-top
+        // `classifyWebcodecsDecodability` has no AbortSignal, so the await
+        // completes regardless; recording its result is safe + idempotent. (The loop-top
         // `if (cancelled) return` still stops STARTING new probes after cancel.)
         if (ok) {
           memo.set(m.id, "ok");
@@ -241,6 +256,12 @@ export function useImportReadiness(deps: {
           previewRef.current?.refreshSources();
         } else {
           memo.delete(m.id);
+          // A freshly-marked-unsupported original: nudge a re-composite now so
+          // the UnsupportedClipCard surfaces immediately when pinned to Lite,
+          // rather than staying blank/pending until the next seek. (The "ok"
+          // branch above nudges for the promote-to-original case; this nudges
+          // for the newly-unsupported case.)
+          if (verdict === "unsupported") previewRef.current?.refreshSources();
           // Only DirectExport sources need route-correction (they were
           // pointing export at an original this machine can't decode). A
           // full-proxy source that fails the probe already routes correctly;

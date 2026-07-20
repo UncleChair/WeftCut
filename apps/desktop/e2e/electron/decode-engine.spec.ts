@@ -406,37 +406,50 @@ test.describe('decode-engine resolution (Electron)', () => {
     }
   })
 
-  // Cell 5 — NEEDS_CONTEXT (Task 13, second half of the no-auto-proxy check):
-  // the brief asks for "pinned webcodecs (Lite) on a WebCodecs-unsupported
-  // original resolves status:'unsupported'". `resolveDecodeEngine`'s
-  // webcodecs×original switch (decodeEngine.ts) only reaches "unsupported"
-  // when `webcodecsCanDecodeOriginal === 'fail'`. The ONLY feed for that
-  // field is `PixiPreview.tsx`'s
-  // `(previewDecodableOf?.(mediaId) ?? false) ? 'ok' : 'untested'` — a
-  // two-value collapse sourced from `decodeProbeMemo`, whose `ProbeState`
-  // type (exportReadiness.ts) is ITSELF only `"ok" | "pending"` — there is no
-  // "confirmed failure" state anywhere in that memo (a failed probe just
-  // `.delete()`s the entry, indistinguishable from "never probed"; see
-  // `useImportReadiness.ts`'s sweep effect). So a genuinely WebCodecs-blind
-  // original (e.g. this file's own PRORES_FIXTURE) pinned to `webcodecs`
-  // resolves `status:"pending"` FOREVER in the real app today — never
-  // "unsupported". `UnsupportedClipCard` (whose own doc comment claims this
-  // is reachable "on the Lite/webcodecs engine") is consequently unreachable
-  // via this path in production as currently wired.
+  // Cell 5 — pinned webcodecs (Lite) + ProRes: the unsupported-original half of
+  // the Lite engine (complements Cell 3's happy path). ProRes has no WebCodecs
+  // decoder, so the import-time decodability sweep (`useImportReadiness` →
+  // `classifyWebcodecsDecodability`) returns a DEFINITIVE "unsupported" verdict
+  // and `markWebcodecsUnusable` sticks it; `PixiPreview.resolveSource` then
+  // feeds `webcodecsCanDecodeOriginal: "fail"`, so `resolveDecodeEngine`'s
+  // webcodecs×original branch resolves `status:"unsupported"`. The Compositor
+  // fires `onUnsupported`, surfacing the "Switch to Standard" UnsupportedClipCard
+  // instead of hanging on "pending" forever.
   //
-  // Exercising it here would need either (a) a new sticky
-  // "webcodecs-confirmed-unusable" marker analogous to `markHwUnusable`/
-  // `markFfmpegUnusable` (ffmpegCapability.ts), wired into
-  // `PixiPreview.resolveSource`'s `webcodecsCanDecodeOriginal` feed, or (b)
-  // some other product change to `ProbeState` — both out of scope for an e2e
-  // retarget (no production `src/` changes). Flagged NEEDS_CONTEXT in
-  // task-13-report.md.
-  //
-  // Manual repro: Settings → Decode engine → Lite; import a ProRes file;
-  // observe the preview stays blank/pending indefinitely instead of showing
-  // the "Switch to Standard" unsupported card.
-  test.skip(
-    'pinned webcodecs (Lite) + ProRes: WebCodecs-unsupported original reaches status:"unsupported" — BLOCKED, see comment above (NEEDS_CONTEXT)',
-    () => {},
-  )
+  // Assert on the card (`data-testid="unsupported-clip-card"`), not
+  // `activeClipProbe`: an unsupported resolve builds NO clip, so `activeClipProbe`
+  // stays null — the card is the observable surface of `status:"unsupported"`.
+  // The sweep marks async and nudges a re-composite, so a generous visibility
+  // timeout is enough (no manual re-seek loop needed).
+  test('pinned webcodecs (Lite) + ProRes: WebCodecs-unsupported original surfaces the UnsupportedClipCard', async () => {
+    test.setTimeout(180_000)
+    const { app, page } = await launchApp()
+    let toggledOn = false
+    try {
+      const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
+      await newProject(page, { parentFolder: projectParent, name: 'prores-webcodecs', canvas: CANVAS })
+      const after = (await invokeCmd(page, 'app_settings_set', {
+        patch: { decode_engine: 'webcodecs' },
+      })) as { decode_engine: string }
+      expect(after.decode_engine).toBe('webcodecs')
+      toggledOn = true
+
+      const { kind } = await importAndPlaceMedia(page, { mediaAbsPath: PRORES_FIXTURE })
+      expect(kind).toBe('Video')
+
+      await waitForPreviewBridge(page)
+      await seek(page, SEEK_US)
+      // The sweep's DEFINITIVE-unsupported verdict + sticky mark land async;
+      // once set, the nudged re-composite resolves status:"unsupported" and
+      // mounts the card.
+      await expect(page.locator('[data-testid="unsupported-clip-card"]')).toBeVisible({
+        timeout: 120_000,
+      })
+    } finally {
+      if (toggledOn) {
+        await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
+      }
+      await app.close()
+    }
+  })
 })

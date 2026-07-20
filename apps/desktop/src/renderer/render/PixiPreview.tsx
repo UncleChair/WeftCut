@@ -38,6 +38,7 @@ import { quickProxyPath } from "./decodeRoute";
 import { proxyIntent } from "../state/proxyPreferenceStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
+import { isWebcodecsUnusable } from "./decoder/webcodecsCapability";
 import { noteResolution } from "./decoder/decodeCapability";
 import { type MediaSummary, reportAudioMeter } from "../ipc";
 import {
@@ -200,8 +201,16 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           originalUrl: convertFileSrc(m.path),
           // Session probe memo (App's decodeProbeMemo via the prop) — read
           // live so a mid-session probe flip feeds the webcodecs×original
-          // branch on the next ensureClip.
-          webcodecsCanDecodeOriginal: (previewDecodableOf?.(mediaId) ?? false) ? "ok" : "untested",
+          // branch on the next ensureClip. A sticky "webcodecs-confirmed-
+          // unusable" mark (set by the import sweep on a DEFINITIVE
+          // unsupported-codec verdict, e.g. ProRes) wins as "fail" so a pinned-
+          // Lite decode resolves status:"unsupported" (UnsupportedClipCard)
+          // instead of hanging on "pending"; mirrors the `ffmpegUsable` feed.
+          webcodecsCanDecodeOriginal: isWebcodecsUnusable(mediaId)
+            ? "fail"
+            : (previewDecodableOf?.(mediaId) ?? false)
+              ? "ok"
+              : "untested",
           ffmpegUsable: !isFfmpegUnusable(mediaId),
         });
         noteResolution(mediaId, r);
