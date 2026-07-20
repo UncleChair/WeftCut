@@ -102,9 +102,14 @@ image-compare = "0.5"
 insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"
 
+# The four subsystem features were staged ON one at a time during S2–S4; the
+# shipping addon now enables all of them, always, so they ARE the default set.
+# `napi:build` (see apps/desktop/package.json) therefore passes NO `--features`
+# flag — it builds `default`, the single source of truth for the production
+# feature union. The only consumer that deviates is `cargo test`, which ADDS
+# `test-noop` (below) on top of the defaults; keep no second copy of this list.
 [features]
-default = []
-# Deferred subsystems — OFF in S2, each turned on in its own stage.
+default = ["jobs", "export", "mcp", "cloud"]
 jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
 export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_conform/io::probe
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem

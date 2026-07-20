@@ -27,7 +27,7 @@
     "test": "vitest run --exclude '**/*.browser.test.ts'",
     "pretest": "npm run build:wasm",
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
-    "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native --features jobs,export,mcp,cloud",
+    "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "napi:build:decode": "node scripts/napi-build-decode.mjs",
     "e2e": "playwright test -c playwright.config.ts",
     "ffmpeg:fetch": "node scripts/fetch-ffmpeg.mjs",

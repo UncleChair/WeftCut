@@ -143,8 +143,10 @@ still has no `cfg(target_os = "macos")` code. Items 1–5 and 8 **landed
 
 - Core, links + runs standalone:
   ```sh
+  # jobs/export/mcp/cloud are the crate `default` now; --features only ADDS
+  # test-noop (the standalone-binary symbol-resolution shim) on top.
   cargo test --manifest-path native/Cargo.toml --lib \
-    --features jobs,export,mcp,cloud,test-noop encoder_registry::tests
+    --features test-noop encoder_registry::tests
   ```
   → 9 passed, 0 failed (expected `dead_code` warnings from `napi-derive/noop`).
 - Decode, full suite:

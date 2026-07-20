@@ -178,13 +178,13 @@ jobs:
           # linkage, so it tests standalone. (Its wasm build is gated separately
           # via the Linux `npm test` TS goldens, which run the same fixtures.)
           cargo test -p weftcut-eval --manifest-path native/Cargo.toml
-          # Feature union must match napi:build (the real crate features are
-          # jobs/export/mcp/cloud — motifs migrated to TS and is NOT a Cargo
-          # feature) PLUS test-noop for standalone-binary symbol resolution.
-          # export+cloud both pull in jobs, so this compiles every
-          # #[cfg(feature)] module. Keep the jobs/export/mcp/cloud set in lockstep
-          # with the napi:build script; test-noop is test-only (never in the addon).
-          cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud,test-noop
+          # The production feature union is the crate `default` (jobs/export/mcp/
+          # cloud — see native/Cargo.toml; motifs migrated to TS and is NOT a Cargo
+          # feature). Features are additive, so `--features test-noop` = defaults +
+          # test-noop, compiling every #[cfg(feature)] module PLUS the standalone-
+          # binary symbol-resolution shim. No hand-kept feature list here — it
+          # tracks Cargo.toml's default automatically. test-noop is test-only.
+          cargo test --manifest-path native/Cargo.toml --lib --features test-noop
           # Component crate (native-decode): the repo's only ffmpeg-next consumer.
           # It needs FFMPEG_DIR + libclang to build and the bundled libav*.so/DLL
           # on the loader path at run (Windows: DLLs already on PATH above; Linux:
