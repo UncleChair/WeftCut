@@ -1,6 +1,5 @@
 // Native-SOFTWARE `DecodeTransport` — the per-frame NV12-over-IPC path
-// (transport recap: docs/superpowers/specs/
-// 2026-07-05-ffmpeg-sw-decode-blindspot-design.md).
+// (transport recap: why we ship bytes, not a shared texture — ADR 0029).
 // `window.api.previewSw.{open,requestFrameAt,close}` carry session commands
 // only. Decoded frames arrive as plain NV12 byte buffers
 // directly over the contextBridge (no shared texture, no MessagePort — a

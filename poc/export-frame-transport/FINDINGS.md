@@ -1,6 +1,7 @@
 # export-frame-transport spike — FINDINGS
 
-De-risks §7 of `docs/superpowers/specs/2026-07-05-ffmpeg-sw-decode-blindspot-design.md`:
+De-risks the raw-frame transport question (design since consolidated into
+`docs/export-ipc-transport.md`):
 *can `main`→`renderer`(→Web-Worker) raw-frame transport sustain export-viable throughput,
 or is Chromium IPC the wall?*
 
