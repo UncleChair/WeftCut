@@ -155,6 +155,30 @@ async function probeNow(page: Page, layerId: string): Promise<Probe> {
   )) as Probe
 }
 
+/// Wait for the UnsupportedClipCard, re-seeking each round to DRIVE our own
+/// composites rather than relying on a single async re-composite nudge landing.
+/// The import sweep marks a WebCodecs-blind original unusable asynchronously and
+/// nudges one `refreshSources()`; under load that lone nudge can be missed, and
+/// the card only surfaces on the next composite. Alternating two seek targets
+/// forces a fresh `compositeFrame` (→ `ensureClip` re-resolve) each round.
+async function waitForUnsupportedCard(
+  page: Page,
+  seekUs: number,
+  timeoutMs = 120_000,
+): Promise<void> {
+  const card = page.locator('[data-testid="unsupported-clip-card"]')
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await card.isVisible().catch(() => false)) return
+    if (Date.now() > deadline) break
+    await seek(page, seekUs)
+    await seek(page, seekUs + 100_000)
+    await page.waitForTimeout(400)
+  }
+  // Final assert so a genuine failure reports through Playwright's matcher.
+  await expect(card).toBeVisible({ timeout: 2_000 })
+}
+
 test.describe('decode-engine resolution (Electron)', () => {
   // The `encoderAvailable` probes below only defend a LOCAL machine whose
   // ffmpeg lacks an encoder — they do NOT gate CI. CI's fetched ffmpeg builds
@@ -438,17 +462,57 @@ test.describe('decode-engine resolution (Electron)', () => {
       expect(kind).toBe('Video')
 
       await waitForPreviewBridge(page)
-      await seek(page, SEEK_US)
       // The sweep's DEFINITIVE-unsupported verdict + sticky mark land async;
-      // once set, the nudged re-composite resolves status:"unsupported" and
-      // mounts the card.
-      await expect(page.locator('[data-testid="unsupported-clip-card"]')).toBeVisible({
-        timeout: 120_000,
-      })
+      // once set, a composite resolves status:"unsupported" and mounts the card.
+      // Poll with re-seeks rather than trusting the single async nudge — under
+      // load that nudge can be missed (see waitForUnsupportedCard).
+      await waitForUnsupportedCard(page, SEEK_US)
     } finally {
       if (toggledOn) {
         await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
       }
+      await app.close()
+    }
+  })
+
+  // Cell 5b — REGRESSION: switching Lite (webcodecs) onto a ProRes clip that is
+  // ALREADY BUILT under auto (ffmpeg) must surface the UnsupportedClipCard. This
+  // guards `Compositor.ensureClip`'s existing-clip branch, which used to act
+  // ONLY on an "ok" swap: a clip whose resolution flipped to "unsupported" was
+  // left on screen with no card (early `return existing`, never
+  // `unsupportedMedia.add`). That gap is the mechanism behind Cell 5's
+  // under-load flake — `app_settings_set` via the raw command propagates to the
+  // renderer store asynchronously, so a first composite can build an ffmpeg clip
+  // before the webcodecs pin lands; once the sticky WebCodecs-unusable mark then
+  // arrives, the stale ffmpeg clip needs reconciling. Deterministic here because
+  // we WAIT for the ffmpeg clip before switching.
+  test('switching Lite on a live ffmpeg ProRes clip surfaces the UnsupportedClipCard', async () => {
+    test.setTimeout(180_000)
+    const { app, page } = await launchApp()
+    try {
+      const projectParent = tmpDir('weftcut-e2e-decode-engine-proj-')
+      await newProject(page, { parentFolder: projectParent, name: 'prores-switch', canvas: CANVAS })
+      const after = (await invokeCmd(page, 'app_settings_set', {
+        patch: { decode_engine: 'auto' },
+      })) as { decode_engine: string }
+      expect(after.decode_engine).toBe('auto')
+
+      const { layerId, kind } = await importAndPlaceMedia(page, { mediaAbsPath: PRORES_FIXTURE })
+      expect(kind).toBe('Video')
+
+      await waitForPreviewBridge(page)
+      await seek(page, SEEK_US)
+      // Build the ffmpeg-on-original clip first — the "existing clip" the engine
+      // switch must reconcile.
+      const probe1 = await waitForBuiltKey(page, layerId, 'sw', 'ffmpeg:original:')
+      expect(probe1.builtFromKey!.startsWith('ffmpeg:original:')).toBe(true)
+
+      // Now pin Lite: webcodecs cannot decode ProRes, so the live clip must flip
+      // to unsupported and surface the card (not stay on the stale ffmpeg frame).
+      await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'webcodecs' } })
+      await waitForUnsupportedCard(page, SEEK_US, 90_000)
+    } finally {
+      await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
       await app.close()
     }
   })

@@ -1570,10 +1570,27 @@ export class Compositor {
       // failure), begin an overlap-swap; keep returning the existing clip so
       // the current frame stays on screen until the new handle holds the
       // visible frame (key semantics: `ResolvedRendererSource`). Only a fully
-      // resolved ("ok") result is swap-worthy; "pending"/"unsupported" leave
-      // the existing clip alone.
+      // resolved ("ok") result is swap-worthy; a still-"pending" re-resolve
+      // leaves the existing clip alone.
       if (this.mode === "preview") {
         const rs = this.resolveSource(layer.params.media_id);
+        if (rs?.status === "unsupported") {
+          // The resolved engine flipped to one that CANNOT decode this original
+          // (e.g. decode_engine → Lite/webcodecs on a ProRes clip already built
+          // under ffmpeg, once the sticky WebCodecs-unusable mark lands). Tear
+          // the stale clip down and record the media so `compositeFrame` fires
+          // `onUnsupported` and the UnsupportedClipCard surfaces — otherwise the
+          // clip would sit on screen forever with no card. Mirrors the fresh-
+          // acquire unsupported path (and the teardown in `setProject`).
+          this.abandonSwap(layer.id);
+          this.tenBitIngest?.release(layer.id);
+          this.nv12Ingest?.release(layer.id);
+          existing.sprite.dispose();
+          existing.effects.dispose();
+          this.clips.delete(layer.id);
+          this.unsupportedMedia.add(layer.params.media_id);
+          return null;
+        }
         if (rs?.status === "ok" && rs.key !== null && rs.key !== existing.builtFromKey) {
           this.beginSwap(existing, layer, rs);
         }
