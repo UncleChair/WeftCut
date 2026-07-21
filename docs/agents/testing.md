@@ -19,15 +19,26 @@ today — it's a standing guard for a pattern that would need a browser runner.
 
 ### Rust
 
-Three crates under `native/` (workspace root `weftcut`, members `eval` +
-`decode`). CI runs them from the repo root; the `test-noop` feature stubs the
-`napi_*` / ThreadsafeFunction symbols a standalone `cargo test` can't link:
+Three crates under `apps/desktop/native/` (workspace root `weftcut`, members
+`eval` + `decode`). Run from **`apps/desktop`** — both CI and the commands below
+resolve `native/Cargo.toml` and `resources/` relative to it, not the repo root.
+The `test-noop` feature stubs the `napi_*` / ThreadsafeFunction symbols a
+standalone `cargo test` can't link:
 
 ```bash
 cargo test -p weftcut-eval --manifest-path native/Cargo.toml           # eval crate (pure)
 cargo test --manifest-path native/Cargo.toml --lib --features test-noop # root napi crate
-cargo test --manifest-path native/decode/Cargo.toml --features test-noop # decode crate
+# decode crate — the repo's only ffmpeg-next consumer: needs FFMPEG_DIR to build
+# AND the bundled libav*.so on the loader path at run (its cargo-test binary has
+# no RPATH, unlike the .node addon, so LD_LIBRARY_PATH is required — omit it and
+# the binary links but fails at startup with `libavcodec.so.62: cannot open …`).
+FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
+  LD_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/linux/lib" \
+  cargo test --manifest-path native/decode/Cargo.toml --features test-noop
 ```
+
+(Windows/macOS swap the `ffmpeg-lgpl/<os>` dir + loader var — DLLs already on
+`PATH` on Windows, `DYLD_FALLBACK_LIBRARY_PATH` on macOS; see `electron-ci.yml`.)
 
 ## Why not one directory
 
