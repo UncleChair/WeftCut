@@ -63,6 +63,7 @@ import {
   type HwFallbackProbeArgs,
   type HwFallbackProbeResult,
 } from "../render/decoder/decodeBench";
+import { probeBothModes, type BothModesResult } from "../render/decoder/importProbe";
 import type { ActiveClipProbe } from "../render/Compositor";
 import {
   ensureWaveformWindow,
@@ -379,6 +380,15 @@ export interface E2EHook {
   /// `FfmpegSource`'s in-place HW→SW recovery instead of the forced path's
   /// hard fatal. Dev/e2e only. See decodeBench.ts's doc comment.
   decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Promise<HwFallbackProbeResult>;
+  /// issue #7 boundary #1 investigation: decode a clip's FIRST frame under
+  /// prefer-hardware AND prefer-software and, for each decode, try importing the
+  /// raw `VideoFrame` three ways — 2D `drawImage` (the export lane's current,
+  /// suspected-black path), `createImageBitmap` (the preview lane's path), and
+  /// WebGL `texImage2D` — reading pixels back as mean luma + lit coverage. Runs
+  /// BOTH on the renderer main thread and in a dedicated Worker (the export
+  /// bug's actual context) so the spec can localise the failure. A silently
+  /// black import reads meanLuma ≈ 0. Dev/e2e only.
+  importProbe(args: { sourcePath: string }): Promise<{ main: BothModesResult; worker: BothModesResult }>;
   /// Imperative read of the global playhead store (µs). Search-palette e2e
   /// uses this to prove a caption/clip jump (Enter on a result row) actually
   /// moved the playhead, without importing the bundled store module.
@@ -499,6 +509,38 @@ export function installDecodeBenchHooks(): void {
   hookSlot().decodeBenchOrderCheck = decodeBenchOrderCheck;
   hookSlot().decodeBenchBudgetProbe = decodeBenchBudgetProbe;
   hookSlot().decodeBenchHwFallbackProbe = decodeBenchHwFallbackProbe;
+
+  // issue #7 boundary #1 probe: run the frame-import comparison on the main
+  // thread AND in a dedicated Worker, returning both so the spec can localise a
+  // silently-black import path. Worker is spawned per call and torn down after.
+  hookSlot().importProbe = async ({ sourcePath }) => {
+    const assetUrl = convertFileSrc(sourcePath);
+    const main = await probeBothModes(assetUrl);
+    const worker = new Worker(
+      new URL("../render/decoder/importProbe.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    try {
+      const workerResult = await new Promise<BothModesResult>((resolve, reject) => {
+        const to = setTimeout(() => reject(new Error("importProbe worker timeout (60s)")), 60_000);
+        worker.onmessage = (
+          e: MessageEvent<{ ok: boolean; result?: BothModesResult; error?: string }>,
+        ) => {
+          clearTimeout(to);
+          if (e.data.ok && e.data.result) resolve(e.data.result);
+          else reject(new Error(e.data.error ?? "importProbe worker failed"));
+        };
+        worker.onerror = (ev) => {
+          clearTimeout(to);
+          reject(new Error(ev.message || "importProbe worker errored"));
+        };
+        worker.postMessage({ assetUrl });
+      });
+      return { main, worker: workerResult };
+    } finally {
+      worker.terminate();
+    }
+  };
 }
 
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,
