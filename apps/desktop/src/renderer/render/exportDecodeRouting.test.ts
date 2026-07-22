@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MediaSummary } from "../ipc";
 import {
+  hwExportDecodeAllowed,
   proxyWaitScope,
   resolveExportDecodeRouting,
   routingSourceCounts,
@@ -213,5 +214,17 @@ describe("routingSourceCounts", () => {
     const media = [audio, vid("v", "bypass")];
     const routing = resolveExportDecodeRouting(base({ media }));
     expect(routingSourceCounts(media, routing)).toEqual({ originals: 1, proxy: 0 });
+  });
+});
+
+// The 8-bit WebCodecs export lane's HW-decode ALLOWLIST: only platforms where
+// a GPU-backed VideoFrame is proven readable by JS import paths may drop the
+// prefer-software black-frame workaround. Windows is hardware-verified; macOS
+// is untested; Linux is the platform the workaround exists for.
+describe("hwExportDecodeAllowed", () => {
+  it("allows hardware decode on Windows only", () => {
+    expect(hwExportDecodeAllowed("windows")).toBe(true);
+    expect(hwExportDecodeAllowed("mac")).toBe(false);
+    expect(hwExportDecodeAllowed("linux")).toBe(false);
   });
 });

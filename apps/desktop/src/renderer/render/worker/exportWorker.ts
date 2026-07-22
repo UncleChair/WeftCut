@@ -405,16 +405,20 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           sourceStartPtsUs: req.project.mediaStartPtsUs[g.mediaId] ?? null,
           ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
           // The WebCodecs export lane composites each decoded VideoFrame via a
-          // 2D-canvas `drawImage` (VideoClipSprite.bindFromSnapshot). A
-          // HARDWARE-decoded VideoFrame is GPU-backed and, on some GPU/driver
-          // stacks (observed: Linux + real GPU, in a Worker), that drawImage is
-          // a silent no-op — the canvas stays transparent and every exported
-          // frame is black, with no decoder error to trip the HW→SW fallback.
-          // Software decode yields CPU-backed frames that drawImage reliably.
-          // Export is offline, so the SW-decode cost is acceptable for the
-          // robustness. (Native-routed lanes bind their own textures and are
-          // unaffected.)
-          ...(url && !nativeExport ? { preferSoftware: true } : {}),
+          // 2D-canvas `drawImage` (VideoClipSprite.bindFromSnapshot). On
+          // Linux/NVIDIA a HARDWARE-decoded VideoFrame is an opaque GPU handle
+          // NO JS import path can read — drawImage / createImageBitmap /
+          // texImage2D / copyTo all return zeros (importProbe.ts) — with no
+          // decoder error to trip the HW→SW fallback, so every exported frame
+          // goes silently black. The lane therefore pins prefer-software
+          // UNLESS the main thread's platform allowlist vouches that HW frames
+          // are readable here (`hwExportDecodeAllowed`; Windows verified,
+          // macOS untested ⇒ software). The error-driven downgrade in
+          // decoderFallback.ts stays as the net for HW combos that DO error.
+          // (Native-routed lanes bind their own textures and are unaffected.)
+          ...(url && !nativeExport && req.allowHwExportDecode !== true
+            ? { preferSoftware: true }
+            : {}),
           ...(nativeExport ? { nativeExport } : {}),
         });
         await handle.decodeRange(g.srcAUs, g.srcBUs);

@@ -438,7 +438,15 @@ and evicts consumed frames. A pipeline is one of two handles behind the same
 - the WebCodecs `ExportSourceHandle` — an in-worker `VideoDecoder` over the
   clip's export source (no mid-export `decoder.flush()` — see the EOS-tail
   notes in `ExportDecoderPool.ts`); eviction keeps the ~13-slot WebCodecs
-  buffer pool drained;
+  buffer pool drained. Its `hardwareAcceleration` is platform-gated
+  (`hwExportDecodeAllowed`, resolved on the main thread and riding the init
+  protocol as `allowHwExportDecode`): Windows decodes prefer-hardware —
+  hardware-verified faithful — while Linux and macOS pin prefer-software,
+  because on Linux/NVIDIA a hardware-decoded `VideoFrame` is an opaque GPU
+  handle every JS read path silently zeros (black frames, no decoder error to
+  trip the HW→SW fallback; macOS is simply unverified). The 10-bit lane pins
+  software separately as a correctness requirement, and the error-driven
+  HW→SW downgrade stays as the net for drivers that do error;
 - the native `NativeExportSourceHandle` — a relay client: `decodeRange`
   becomes an IPC command to a credit-windowed `export_sw` session in the
   native component, which decodes the **original** and streams NV12/I420P10

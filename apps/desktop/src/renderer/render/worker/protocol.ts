@@ -135,6 +135,14 @@ export type ExportRequest =
       /// chunk/ack channel to the ffmpeg video sink (no WebCodecs encoder).
       /// Absent ⇒ the WebCodecs EncoderSink/fMP4 path.
       nativeSink?: { pixFmt: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le" };
+      /// Platform verdict for the 8-bit WebCodecs decode lane, resolved ONCE
+      /// on the renderer main thread (the Worker has no OS signal of its own).
+      /// True ⇒ the lane may configure prefer-hardware; absent/false ⇒ it pins
+      /// prefer-software — the Linux/NVIDIA black-frame workaround. Policy +
+      /// rationale: `hwExportDecodeAllowed` (exportDecodeRouting.ts). The
+      /// 10-bit lane's preferSoftware pin is a separate correctness
+      /// requirement and ignores this flag.
+      allowHwExportDecode?: boolean;
       /// mediaIds whose ORIGINAL decodes 10-bit in the renderer; these acquire
       /// originalAssetUrls + tenBitLane + preferSoftware.
       tenBitMedia?: Record<string, boolean>;

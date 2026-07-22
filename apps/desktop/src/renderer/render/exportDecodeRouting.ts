@@ -7,8 +7,27 @@
 // the probe / full-proxy machinery. The table then rides the init protocol
 // into the export Worker and nothing re-resolves mid-run.
 import type { MediaSummary } from "../ipc";
+import type { RendererOS } from "../platform";
 import { resolveDecode } from "./decodeRoute";
 import type { ExportDecodeEngine } from "./exportSettings";
+
+/// May the 8-bit WebCodecs EXPORT decode lane configure prefer-hardware on
+/// this OS? The lane otherwise pins prefer-software as the black-frame
+/// workaround: on Linux/NVIDIA a HARDWARE-decoded VideoFrame is an opaque GPU
+/// handle NO JS import path can read (drawImage / createImageBitmap /
+/// texImage2D / copyTo all return zeros — importProbe.ts), with no decoder
+/// error to trip the HW→SW fallback, so every exported frame goes silently
+/// black. Windows is hardware-verified faithful (Chromium's ANGLE→D3D11
+/// backend composites GPU-backed frames correctly); macOS is untested on a
+/// real GPU, so it keeps software. Explicit ALLOWLIST, not a blocklist —
+/// unknown platforms take the safe software path. Resolved once on the
+/// renderer main thread at export start (the Worker has no OS signal) and
+/// rides the init protocol as `allowHwExportDecode`. The 10-bit lane's own
+/// preferSoftware pin is a separate correctness requirement (Hi10P has no HW
+/// path; AV1-10 HW emits opaque format=null frames) and ignores this verdict.
+export function hwExportDecodeAllowed(os: RendererOS): boolean {
+  return os === "windows";
+}
 
 /// CPU transport format for native-decoded frames crossing the relay. Follows
 /// the export's COMPOSITE bit depth (one export composites at one depth), not

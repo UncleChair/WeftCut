@@ -13,10 +13,11 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
+import { rendererOS } from "../../platform";
 import { resolveDecode } from "../decodeRoute";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
-import type { ExportDecodeRouting } from "../exportDecodeRouting";
+import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
 import { tenBitExportCapable } from "../exportSettings";
 import type {
   ExportEvent,
@@ -247,6 +248,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     canvas: offscreen,
     motifFrames,
     bitDepth: init.bitDepth ?? 8,
+    // Platform gate for the 8-bit WebCodecs decode lane (the Worker can't
+    // read the OS itself) — see hwExportDecodeAllowed for the allowlist.
+    allowHwExportDecode: hwExportDecodeAllowed(rendererOS),
     ...(init.nativeSinkPixFmt ? { nativeSink: { pixFmt: init.nativeSinkPixFmt } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
     // The routing table's native slice (see above); absent when nothing

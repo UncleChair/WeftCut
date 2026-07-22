@@ -8,3 +8,25 @@ export const isMac: boolean = (() => {
   const ua = (navigator as Navigator).userAgent || "";
   return /Mac|iPhone|iPad|iPod/.test(p) || /Macintosh/.test(ua);
 })();
+
+/// Coarse OS classification for platform-gated policies (e.g. the export
+/// HW-decode allowlist in exportDecodeRouting.ts). "linux" doubles as the
+/// verdict for anything unrecognized — every current policy treats unknown
+/// and Linux identically (take the conservative path).
+export type RendererOS = "windows" | "mac" | "linux";
+
+/// Pure classifier over the two navigator signals, split out so tests can
+/// exercise the matrix without a DOM.
+export function classifyOS(platform: string, userAgent: string): RendererOS {
+  if (/^Win/i.test(platform) || /Windows/.test(userAgent)) return "windows";
+  if (/Mac|iPhone|iPad|iPod/.test(platform) || /Macintosh/.test(userAgent)) return "mac";
+  return "linux";
+}
+
+export const rendererOS: RendererOS =
+  typeof navigator === "undefined"
+    ? "linux"
+    : classifyOS(
+        (navigator as Navigator).platform || "",
+        (navigator as Navigator).userAgent || "",
+      );
