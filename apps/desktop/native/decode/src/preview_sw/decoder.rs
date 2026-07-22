@@ -19,6 +19,8 @@ use ffmpeg_next::util::frame::video::Video as VideoFrame;
 use std::ffi::CString;
 use std::ptr;
 
+use crate::media_time::{source_us_to_ticks_floor, ticks_to_source_us, ticks_to_us};
+
 // FF_THREAD_FRAME (1) / FF_THREAD_SLICE (2) from libavcodec/avcodec.h. Literals,
 // not ffs:: symbols: ffmpeg-sys-next does not re-export these #define flags
 // uniformly across versions, and the values are ABI-stable across ffmpeg majors.
@@ -300,7 +302,7 @@ pub struct SwFrame {
     pub format: SwOutFormat,
     pub width: u32,
     pub height: u32,
-    /// Presentation time, source-normalized microseconds (`pts_to_source_us`).
+    /// Presentation time, source-normalized microseconds (`ticks_to_source_us`).
     pub pts_us: i64,
     /// Frame duration in microseconds (a delta, not a timestamp).
     pub dur_us: i64,
@@ -323,10 +325,10 @@ pub struct SwVideoStream {
     pub width: u32,
     pub height: u32,
     /// Video stream's `(numerator, denominator)`, captured at `open`. Needed by
-    /// `pts_to_source_us` and by `seek`'s target-us -> stream-timestamp math.
+    /// `ticks_to_source_us` and by `seek`'s target-us -> stream-timestamp math.
     pub time_base: (i32, i32),
     /// Container's first-packet PTS (source-normalized microseconds), so
-    /// `pts_to_source_us` reports source t=0 at the visible start rather than at
+    /// `ticks_to_source_us` reports source t=0 at the visible start rather than at
     /// the container's internal PTS origin.
     pub start_pts_us: i64,
     /// Stream color metadata, read once at `open` (stable for the whole stream).
@@ -357,15 +359,6 @@ impl Drop for SwVideoStream {
             }
         }
     }
-}
-
-/// PTS (in stream time_base units) -> source-normalized microseconds. Mirrors
-/// the renderer's `frameToSourceUs`: convert to us via time_base, then subtract
-/// the container's first-packet PTS so source t=0 is the visible start.
-pub fn pts_to_source_us(pts: i64, time_base: (i32, i32), start_pts_us: i64) -> i64 {
-    let (num, den) = (time_base.0 as i128, time_base.1 as i128);
-    let us = (pts as i128 * num * 1_000_000 / den) as i64;
-    us - start_pts_us
 }
 
 impl SwVideoStream {
@@ -408,11 +401,10 @@ impl SwVideoStream {
         );
         // `start_time()` is the container's first-packet PTS in stream time_base
         // units (AV_NOPTS_VALUE if unknown); convert to source-normalized us so
-        // `pts_to_source_us` reports t=0 at the visible start. Fall back to 0.
+        // `ticks_to_source_us` reports t=0 at the visible start. Fall back to 0.
         let start_time_raw = stream.start_time();
         let start_pts_us = if start_time_raw != ffs::AV_NOPTS_VALUE {
-            let (num, den) = (time_base.0 as i128, time_base.1 as i128);
-            (start_time_raw as i128 * num * 1_000_000 / den) as i64
+            ticks_to_us(start_time_raw, time_base)
         } else {
             0
         };
@@ -526,10 +518,9 @@ impl SwVideoStream {
                         (*p).best_effort_timestamp
                     };
                     let dur = (*p).duration;
-                    let (num, den) = (self.time_base.0 as i128, self.time_base.1 as i128);
-                    let dur_us = (dur as i128 * num * 1_000_000 / den) as i64;
+                    let dur_us = ticks_to_us(dur, self.time_base);
                     (
-                        pts_to_source_us(pts, self.time_base, self.start_pts_us),
+                        ticks_to_source_us(pts, self.time_base, self.start_pts_us),
                         dur_us,
                     )
                 };
@@ -596,8 +587,7 @@ impl SwVideoStream {
     /// forward decode. AVSEEK_FLAG_BACKWARD lands on a key packet <= target.
     /// ProRes is intra-frame, so a single decode after seek yields the target.
     pub fn seek(&mut self, target_us: i64) -> Result<(), String> {
-        let (num, den) = (self.time_base.0 as i128, self.time_base.1 as i128);
-        let ts = ((target_us as i128 + self.start_pts_us as i128) * den / (num * 1_000_000)) as i64;
+        let ts = source_us_to_ticks_floor(target_us, self.time_base, self.start_pts_us);
         unsafe {
             let ret = ffs::av_seek_frame(
                 self.ictx.as_mut_ptr(),

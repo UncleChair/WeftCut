@@ -105,9 +105,9 @@ export class SwTransport implements DecodeTransport {
       console.warn(`[weftcut/pixi] preview-sw ${this.streamId} frame wrap failed:`, e);
       return;
     }
-    // ptsUs is already source-normalized microseconds (Rust's
-    // `pts_to_source_us`, mirroring the renderer's `frameToSourceUs`) — no
-    // further offset needed before handing it to the caller.
+    // ptsUs is already source-normalized microseconds (Rust's shared
+    // `media_time::ticks_to_source_us`, matching DecodeClock's truncation
+    // contract) — no further offset needed before handing it to the caller.
     this.frameCb?.(frame, f.ptsUs, f.durUs);
   }
 

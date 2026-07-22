@@ -6,7 +6,7 @@
 // reset ACTION fetches a key packet).
 // See docs/render.md#byte-handling.
 
-import { packetToSourceUs, sourceToContainerUs } from "./ptsOffset";
+import { DecodeClock, type DecodeClockPacket } from "./decodeClock";
 
 /// Forward-seek threshold (µs). A target more than one lookahead window
 /// (≈1 s, matching FrameRing's DEFAULT_LOOKAHEAD_US) past the pump's
@@ -76,10 +76,9 @@ export interface PumpDecoder {
 
 /// Minimal view of a mediabunny `EncodedPacket`. `EncodedPacket` satisfies
 /// this structurally (it has `.timestamp` in seconds + `.toEncodedVideoChunk()`).
-export interface PumpPacket {
+export interface PumpPacket extends DecodeClockPacket {
   /// Presentation timestamp in **seconds** (mediabunny's unit).
   readonly timestamp: number;
-  toEncodedVideoChunk(): EncodedVideoChunk;
 }
 
 /// Minimal view of a mediabunny `EncodedPacketSink`. `EncodedPacketSink`
@@ -104,17 +103,17 @@ export interface PumpDeps {
   decoder: PumpDecoder;
   packetSink: PumpPacketSink;
   ring: PumpRing;
-  /// Container PTS (µs) that corresponds to source-time 0. Preview callers
-  /// speak normalized source time (`src_in_us` / layer-local), while mediabunny
-  /// packets and WebCodecs frames carry container PTS. Keeping the offset here
-  /// hides edit-list / trimmed-source starts from the Compositor and FrameRing.
-  sourceStartPtsUs?: number;
+  /// One clock per opened decode source. It owns the container↔source mapping
+  /// used by seek, packet dispatch, and decoder output; callers must not
+  /// reconstruct packet microseconds independently from floating-point seconds.
+  decodeClock?: DecodeClock;
   /// Optional diagnostic sink (EOS-flush failures, etc.).
   log?: (msg: string) => void;
 }
 
 export class PacketPump {
   private readonly deps: PumpDeps;
+  private readonly clock: DecodeClock;
   /// The last packet dispatched to the decoder. `null` means "not
   /// positioned" — the next pump pass cold-starts by seeking to a key.
   private cursor: PumpPacket | null = null;
@@ -163,6 +162,7 @@ export class PacketPump {
 
   constructor(deps: PumpDeps) {
     this.deps = deps;
+    this.clock = deps.decodeClock ?? DecodeClock.fromOrigin(0);
   }
 
   /// Update the anchor + target and kick the pump. Synchronous: the
@@ -242,9 +242,10 @@ export class PacketPump {
             this.deps.ring.flush();
           }
           if (this.deps.decoder.state === "configured") {
-            this.deps.decoder.decode(key.toEncodedVideoChunk());
+            const prepared = this.clock.prepare(key);
+            this.deps.decoder.decode(prepared.chunk);
             this.cursor = key;
-            this.lastDecodedPtsUs = this.toSourcePtsUs(key);
+            this.lastDecodedPtsUs = prepared.sourcePtsUs;
             this.flushedThisRun = false;
             this.seekResolvedForTargetUs = target;
           }
@@ -283,9 +284,10 @@ export class PacketPump {
             this.eosFlushOnce();
             break;
           }
-          this.deps.decoder.decode(next.toEncodedVideoChunk());
+          const prepared = this.clock.prepare(next);
+          this.deps.decoder.decode(prepared.chunk);
           this.cursor = next;
-          this.lastDecodedPtsUs = this.toSourcePtsUs(next);
+          this.lastDecodedPtsUs = prepared.sourcePtsUs;
         }
       } while (this.wakeRequested && !this._disposed);
     } finally {
@@ -310,10 +312,6 @@ export class PacketPump {
   }
 
   private toContainerPtsUs(sourceUs: number): number {
-    return sourceToContainerUs(sourceUs, this.deps.sourceStartPtsUs ?? 0);
-  }
-
-  private toSourcePtsUs(packet: PumpPacket): number {
-    return packetToSourceUs(packet.timestamp, this.deps.sourceStartPtsUs ?? 0);
+    return this.clock.containerUs(sourceUs);
   }
 }

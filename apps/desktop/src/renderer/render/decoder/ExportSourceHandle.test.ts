@@ -16,12 +16,19 @@ vi.mock("./mediaInput", () => ({ openMediaInput: vi.fn() }));
 
 interface FakePacket {
   timestamp: number; // seconds — mediabunny's EncodedPacket unit
+  microsecondTimestamp: number;
   type: "key" | "delta";
   toEncodedVideoChunk: () => EncodedVideoChunk;
 }
 
 function pkt(tSec: number, type: "key" | "delta"): FakePacket {
-  return { timestamp: tSec, type, toEncodedVideoChunk: () => ({}) as EncodedVideoChunk };
+  const timestampUs = Math.trunc(tSec * 1e6);
+  return {
+    timestamp: tSec,
+    microsecondTimestamp: timestampUs,
+    type,
+    toEncodedVideoChunk: () => ({ timestamp: timestampUs }) as EncodedVideoChunk,
+  };
 }
 
 function makeSink(packets: FakePacket[]) {
@@ -133,6 +140,21 @@ describe("ExportSourceHandle EOS tail", () => {
     await h.decodeRange(0, 20_000);
     const dec = FakeVideoDecoder.instances[0]!;
     dec.output(decodedFrame(startUs, 20_000));
+
+    expect(h.ring.firstPtsUs()).toBe(0);
+    expect(h.ring.frameAt(0)).not.toBeNull();
+  });
+
+  it("normalizes export output with the chunk timestamp when seconds round one microsecond higher", async () => {
+    // 2/30 s rounds to 66,667 µs but Mediabunny sends 66,666 in the chunk.
+    // The first output frame inherits that chunk timestamp and must still be
+    // source PTS 0, not -1 µs.
+    sink = makeSink([pkt(2 / 30, "key")]);
+    const h = makeHandle();
+
+    await h.decodeRange(0, 20_000);
+    const dec = FakeVideoDecoder.instances[0]!;
+    dec.output(decodedFrame(66_666, 33_333));
 
     expect(h.ring.firstPtsUs()).toBe(0);
     expect(h.ring.frameAt(0)).not.toBeNull();

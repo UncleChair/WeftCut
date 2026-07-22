@@ -136,6 +136,9 @@ export type PreviewDecodeSession = DecodeSession;
 export interface ExportDecodeSession extends DecodeSession {
   readonly ring: ExportFrameStore;
   decodeRange(aUs: number, bUs: number): Promise<void>;
+  /// Release entries older than the greatest presentation PTS at/below the
+  /// cutoff. The immediate lower neighbour is retained so a quantized PTS gap
+  /// can never force the compositor to select a future frame.
   evictBefore(cutoffUs: number): void;
   /// Cumulative decode-work counter — packets fed (WebCodecs) or frames
   /// received (native). Aggregated into the export `done` perf payload as the

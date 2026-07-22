@@ -290,10 +290,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   //
   // Frame TIMES + COUNT come from the exact rational fps (see frameGrid.ts): a
   // floored per-frame duration (`i * round(1e6/fps)`, `ceil(span/33333)`)
-  // compounds the rounding floor, drifts behind the source PTS grid, and makes
-  // `frameAt` duplicate a frame (301 frames for a 300-frame clip, output[N] =
-  // source[N-1]). `frameTimeUs`/`exportFrameCount` derive from one shared
-  // predicate so the grid and the count never disagree.
+  // compounds the rounding floor, drifts behind the exact composition grid,
+  // and makes `frameAt` duplicate a frame (301 frames for a 300-frame clip,
+  // output[N] = source[N-1]). `frameTimeUs`/`exportFrameCount` derive from one
+  // shared predicate so the grid and the count never disagree.
   const startUs = Math.max(0, req.startUs);
   const endUs = Math.min(req.project.durationUs, req.endUs);
   const frameTimeUs = (i: number): number =>

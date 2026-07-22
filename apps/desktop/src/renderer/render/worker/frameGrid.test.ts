@@ -2,17 +2,18 @@ import { describe, expect, it } from "vitest";
 import { exportFrameCount, frameTimeUs } from "./frameGrid";
 
 describe("frameTimeUs", () => {
-  // The grid must equal the source's PTS grid round(i*1e6/fps), NOT the
+  // The grid must equal the exact rational composition grid round(i*1e6/fps), NOT the
   // drift-prone i*round(1e6/fps). At 30 fps the two diverge from i=2 on.
-  it("matches the rational source PTS grid (no compounded floor)", () => {
+  it("matches the rational composition grid (no compounded floor)", () => {
     for (let i = 0; i < 30; i++) {
       expect(frameTimeUs(0, i, 30, 1)).toBe(Math.round((i * 1_000_000) / 30));
     }
   });
 
-  // Regression pin: the floored `i*33333` grid put frame 2 at 66666, which
-  // falls inside frame 1's [33333, 66667) interval → duplicate. The rational
-  // grid puts it at 66667, on frame 2's boundary.
+  // Regression pin: frame 2 is the first point where the floored `i*33333`
+  // approximation diverges from the exact composition grid. Whether that
+  // numeric difference changes source identity depends on the decoder's own
+  // quantization; the composition timestamp itself must remain exact-rational.
   it("places frame 2 at 66667us, not the drifted 66666us (30fps)", () => {
     expect(frameTimeUs(0, 2, 30, 1)).toBe(66667);
     expect(2 * Math.round(1_000_000 / 30)).toBe(66666); // the old, wrong value

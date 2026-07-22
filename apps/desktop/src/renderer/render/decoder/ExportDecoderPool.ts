@@ -13,11 +13,11 @@ import type { EncodedPacket } from "mediabunny";
 import type { DecoderPool, ExportDecodeSession, FrameStore, SourceHandleInit } from "./session";
 import { NativeExportSourceHandle } from "../worker/nativeExportSource";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
+import { DecodeClock } from "./decodeClock";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import type { NativeNv12Frame } from "./nv12Frame";
 import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
-import { frameToSourceUs, packetToSourceUs, sourceToContainerUs } from "./ptsOffset";
 
 /// SW decoders hold a reorder/pipelining tail internally and the chunked
 /// model never mid-flushes, so feed a bounded lead-in past the stop key to
@@ -72,12 +72,10 @@ export interface ExportColorDiag {
 
 export class ExportFrameStore implements FrameStore {
   private entries: RingEntry[] = [];
-  /// EOS drain lifecycle. `draining`: the end-of-stream flush was ISSUED —
-  /// frames may still arrive, but eviction pins the last held entry so a late
-  /// finalization always has a clamp target. `ended`: the flush COMPLETED — no
-  /// frame will ever arrive again; `isReadyFor` clamps any target while a
-  /// frame is held.
-  private draining = false;
+  /// EOS drain lifecycle. Once `ended`, no frame will ever arrive again and
+  /// `isReadyFor` may clamp any target while a frame is held. `evictBefore`
+  /// always retains the immediate lower PTS neighbour, so issuing the drain no
+  /// longer needs a separate pinning state.
   private ended = false;
   /// Pending `waitForPts` resolvers. On every `push` we resolve and
   /// remove the ones whose tUs is now covered. The Worker uses this
@@ -159,9 +157,8 @@ export class ExportFrameStore implements FrameStore {
     }
   }
 
-  /// Await a frame whose presentation interval contains `tUs`. If
-  /// already in the store, resolves synchronously; otherwise
-  /// resolves the next time `push()` delivers a covering frame.
+  /// Await until the greatest presentation PTS at/before `tUs` is final: an
+  /// exact PTS is held, a strictly later PTS proves ordering, or EOS completed.
   /// Producer→consumer sync point for the export Worker.
   waitForPts(tUs: number): Promise<void> {
     if (this.failure) return Promise.reject(new Error(this.failure));
@@ -179,22 +176,21 @@ export class ExportFrameStore implements FrameStore {
     return p;
   }
 
-  /// The end-of-stream `decoder.flush()` was issued. From now on `evictBefore`
-  /// keeps the last held entry: the consumer's per-frame cutoff can overrun the
-  /// final frame's interval (composition grid extending past the video track),
-  /// and an emptied ring would leave `finishEosDrain` nothing to clamp to.
+  /// The end-of-stream `decoder.flush()` was issued. Kept as an explicit phase
+  /// marker in the interface: frames may still arrive, so callers must not yet
+  /// activate the finalized EOS clamp. Lower-neighbour retention is already an
+  /// invariant of `evictBefore`, including during this phase.
   beginEosDrain(): void {
-    this.draining = true;
+    // Intentionally no state transition until every drain output has arrived.
   }
 
   /// The end-of-stream flush completed: every frame the source will ever
   /// produce has been pushed. Remaining wait targets are final — resolve them
-  /// (and all future ones) by clamping to the nearest held frame. Must NOT be
+  /// (and all future ones) by applying the store's PTS identity rule. Must NOT be
   /// called while the drain is still emitting: clamping early hands a stale
   /// frame to a waiter whose real frame is still on its way (silent dup-frame
   /// corruption across the export tail).
   finishEosDrain(): void {
-    this.draining = true;
     this.ended = true;
     if (this.waiters.length === 0) return;
     const stillWaiting: typeof this.waiters = [];
@@ -209,27 +205,29 @@ export class ExportFrameStore implements FrameStore {
   }
 
   /// A re-seek (backward clip-reuse jump / decoder rebuild) makes new frames
-  /// possible again — finalized clamping and tail-pinning must deactivate.
+  /// possible again, so finalized EOS clamping must deactivate.
   clearEosDrain(): void {
-    this.draining = false;
     this.ended = false;
   }
 
   /// Readiness gate for `waitForPts`. The source frame to display at `tUs`
-  /// is FINAL — and `frameAt(tUs)` will return it, clamping to the nearest
-  /// held frame — once either its interval is held, or a frame with a
-  /// strictly later PTS has been decoded. Decoder output is PTS-ordered, so
-  /// once any frame past `tUs` exists, no future frame can be a better match.
+  /// is FINAL once the exact PTS is held, a strictly later PTS has arrived, or
+  /// EOS has completed. Decoder output is presentation-ordered, so a later PTS
+  /// proves no future frame can become a better `greatest PTS <= target` match.
   ///
-  /// Gating on strict interval containment alone WEDGES the export: the
+  /// Duration containment is deliberately NOT a completion signal. Durations
+  /// are independently quantized and can overlap a later presentation PTS;
+  /// resolving from the older interval would silently select the wrong frame.
+  /// Conversely, gating on strict interval containment alone WEDGES export: the
   /// decoder's PTS grid (e.g. 0, 33333, 66666, 100000 … — irregular 33333/
   /// 33334 steps) drifts off the integer `i × frameDurUs` output grid (0,
   /// 33333, 66666, 99999 …). At a drift point the target (99999) lands in a
-  /// 1µs gap between two frames' [pts, pts+dur) intervals, and `evictBefore`
-  /// has already dropped the lower neighbour — so `containsPts` is false even
-  /// though later frames are present, and the wait never resolves.
+  /// 1µs gap between two frames' [pts, pts+dur) intervals. The old
+  /// duration-based eviction also dropped the lower neighbour, leaving
+  /// `containsPts` false even though later frames were present.
   private isReadyFor(tUs: number): boolean {
-    if (this.containsPts(tUs)) return true;
+    const atOrBefore = this.indexAtOrBefore(tUs);
+    if (atOrBefore >= 0 && this.entries[atOrBefore]!.ptsUs === tUs) return true;
     const last = this.lastPtsUs();
     if (last !== null && last > tUs) return true;
     // Source fully drained: no better frame can arrive — clamp to what's held.
@@ -238,21 +236,28 @@ export class ExportFrameStore implements FrameStore {
 
   frameAt(tUs: number): VideoFrame | TenBitFrame | NativeNv12Frame | null { // satisfies DecodedFrame | null
     if (this.entries.length === 0) return null;
-    const first = this.entries[0]!;
-    if (tUs < first.ptsUs) return first.frame;
-    const last = this.entries[this.entries.length - 1]!;
-    if (tUs >= last.ptsUs + (last.durationUs || 0)) return last.frame;
+    const index = this.indexAtOrBefore(tUs);
+    // A target before the first source PTS displays the opening frame. For all
+    // other targets, identity is solely the greatest presentation PTS <= tUs;
+    // independently-quantized duration must never redirect it to a neighbour.
+    return this.entries[index >= 0 ? index : 0]!.frame;
+  }
+
+  private indexAtOrBefore(tUs: number): number {
     let lo = 0;
     let hi = this.entries.length - 1;
+    let found = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
       const e = this.entries[mid]!;
-      const end = e.ptsUs + (e.durationUs || Number.POSITIVE_INFINITY);
-      if (e.ptsUs <= tUs && tUs < end) return e.frame;
-      if (e.ptsUs > tUs) hi = mid - 1;
-      else lo = mid + 1;
+      if (e.ptsUs <= tUs) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
     }
-    return this.entries[hi]?.frame ?? this.entries[0]!.frame;
+    return found;
   }
 
   lastPtsUs(): number | null {
@@ -279,21 +284,17 @@ export class ExportFrameStore implements FrameStore {
   }
 
   evictBefore(cutoffUs: number): void {
-    // During/after the EOS drain the last entry is pinned as the clamp target
-    // for grid-overhang waits (see `beginEosDrain`).
-    const stop = this.draining ? Math.max(0, this.entries.length - 1) : this.entries.length;
-    let n = 0;
-    while (n < stop) {
-      const e = this.entries[n]!;
-      if (e.ptsUs + (e.durationUs || 0) <= cutoffUs) {
-        e.frame.close();
-        n++;
-      } else {
-        break;
-      }
-    }
-    if (n > 0) {
-      this.entries.splice(0, n);
+    if (this.entries.length <= 1) return;
+
+    // Frame identity is the greatest presentation PTS <= target. Duration is
+    // quantized independently and can leave a 1 µs gap before the next PTS;
+    // evicting by `pts + duration <= cutoff` used to delete the only correct
+    // lower neighbour in that gap, forcing frameAt() to return the FUTURE
+    // frame. Keep the highest entry at/below cutoff plus everything above it.
+    const keepFrom = this.indexAtOrBefore(cutoffUs);
+    if (keepFrom > 0) {
+      for (let i = 0; i < keepFrom; i++) this.entries[i]!.frame.close();
+      this.entries.splice(0, keepFrom);
       this.notifyShrink();
     }
   }
@@ -301,7 +302,6 @@ export class ExportFrameStore implements FrameStore {
   flush(): void {
     for (const e of this.entries) e.frame.close();
     this.entries = [];
-    this.draining = false;
     this.ended = false;
     // Any caller still awaiting waitForPts is now in a state where
     // their wait will never resolve naturally. Don't resolve them —
@@ -366,7 +366,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
   /// `withDefaultColorSpace`; the target's own colr tag outranks per-field.
   private readonly sourceColor: VideoColorSpaceInit | undefined;
   private readonly knownStartPtsUs: number | null;
-  private sourceStartPtsUs = 0;
+  private clock = DecodeClock.fromOrigin(0);
   /// Copy >8-bit decoder output to CPU planes (TenBitFrame) instead of
   /// holding VideoFrames. Also activates the reorder-margin extension in
   /// `decodeRange` so SW decoders drain their reorder tail.
@@ -453,9 +453,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // Match preview: offset comes from the decode target's first packet, not
     // import-time metadata (re-encoded proxies start at PTS 0).
     const first = await this.opened.packetSink.getFirstPacket();
-    this.sourceStartPtsUs = first
-      ? Math.round(first.timestamp * 1e6)
-      : (this.knownStartPtsUs ?? 0);
+    this.clock = DecodeClock.fromFirstPacket(first, this.knownStartPtsUs ?? 0);
     // Untagged sources get a resolution-keyed default matrix so Chromium/Electron's
     // decode matches the rest of the toolchain (see colorSpaceDefault).
     // `sourceColor` carries the source's ffprobe tags as the middle-priority
@@ -467,7 +465,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
     console.log(
       `[weftcut/export] source ${this.mediaId} ready: codec=${config.codec} ` +
         `${config.codedWidth ?? "?"}x${config.codedHeight ?? "?"} ` +
-        `startPts=${this.sourceStartPtsUs}us`,
+        `startPts=${this.clock.containerUs(0)}us`,
     );
     // Diagnostic: log whether HW decode is actually available in Worker scope
     // (Chrome sometimes silently lands on software; software 1080p ≈ 2 fps).
@@ -538,7 +536,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
             // note on TENBIT_RING_TARGET_BYTES.
             await this.ring.waitBelowTenBitHighWater();
             const tb = await copyToTenBit(frame);
-            const ptsUs = frameToSourceUs(tb.timestamp, this.sourceStartPtsUs);
+            const ptsUs = this.clock.sourceUs(tb.timestamp);
             frame.close();
             if (this.decoder !== dec) return;
             this.ring.push(tb, ptsUs);
@@ -554,7 +552,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
           });
           return;
         }
-        this.ring.push(frame, frameToSourceUs(frame.timestamp, this.sourceStartPtsUs));
+        this.ring.push(frame, this.clock.sourceUs(frame.timestamp));
       },
       error: (e: unknown) => {
         if (this.decoder !== dec) return;
@@ -705,7 +703,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] ${this.mediaId} decodeRange pts=[${aUs}..${bUs}]us ` +
-        `(start=${pkt ? this.toSourcePtsUs(pkt) : "none"}us, ` +
+        `(start=${pkt ? this.clock.sourceUs(pkt.microsecondTimestamp) : "none"}us, ` +
         `frontier=${this.lastDispatchedPtsUs}us)`,
     );
 
@@ -716,11 +714,12 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // becomes an exact invariant — what `coveredThroughUs` claims.
     let stopKeyPtsUs: number | null = null;
     while (pkt) {
-      const ptsUs = this.toSourcePtsUs(pkt);
+      const ptsUs = this.clock.sourceUs(pkt.microsecondTimestamp);
       if (stopKeyPtsUs !== null && ptsUs >= stopKeyPtsUs) break;
-      this.decoder.decode(pkt.toEncodedVideoChunk());
+      const prepared = this.clock.prepare(pkt);
+      this.decoder.decode(prepared.chunk);
       this.cursor = pkt;
-      this.lastDispatchedPtsUs = ptsUs;
+      this.lastDispatchedPtsUs = prepared.sourcePtsUs;
       dispatched++;
       this.dispatchedTotal++;
       // Mark the first key strictly past bUs — that key begins the GOP after
@@ -739,9 +738,10 @@ export class ExportSourceHandle implements ExportDecodeSession {
     // continues from the cursor, so nothing is ever fed twice.
     let extra = 0;
     while (pkt && extra < REORDER_MARGIN) {
-      this.decoder.decode(pkt.toEncodedVideoChunk());
+      const prepared = this.clock.prepare(pkt);
+      this.decoder.decode(prepared.chunk);
       this.cursor = pkt;
-      this.lastDispatchedPtsUs = this.toSourcePtsUs(pkt);
+      this.lastDispatchedPtsUs = prepared.sourcePtsUs;
       dispatched++;
       this.dispatchedTotal++;
       extra++;
@@ -773,11 +773,7 @@ export class ExportSourceHandle implements ExportDecodeSession {
   }
 
   private toContainerPtsUs(sourceUs: number): number {
-    return sourceToContainerUs(sourceUs, this.sourceStartPtsUs);
-  }
-
-  private toSourcePtsUs(packet: EncodedPacket): number {
-    return packetToSourceUs(packet.timestamp, this.sourceStartPtsUs);
+    return this.clock.containerUs(sourceUs);
   }
 
   /// Drain the decoder's reorder buffer at true end-of-stream. The chunked

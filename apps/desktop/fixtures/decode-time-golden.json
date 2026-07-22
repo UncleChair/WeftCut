@@ -1,0 +1,65 @@
+{
+  "contract": "truncate container ticks toward zero to integer microseconds, then subtract the origin converted by the same rule",
+  "vectors": [
+    {
+      "name": "30fps-mp4-nonzero-origin",
+      "timeBaseNum": 1,
+      "timeBaseDen": 15360,
+      "originTicks": 1024,
+      "originUs": 66666,
+      "samples": [
+        { "ticks": 1024, "containerUs": 66666, "sourceUs": 0 },
+        { "ticks": 1536, "containerUs": 100000, "sourceUs": 33334 },
+        { "ticks": 2048, "containerUs": 133333, "sourceUs": 66667 }
+      ]
+    },
+    {
+      "name": "24fps",
+      "timeBaseNum": 1,
+      "timeBaseDen": 24,
+      "originTicks": 1,
+      "originUs": 41666,
+      "samples": [
+        { "ticks": 1, "containerUs": 41666, "sourceUs": 0 },
+        { "ticks": 2, "containerUs": 83333, "sourceUs": 41667 },
+        { "ticks": 3, "containerUs": 125000, "sourceUs": 83334 }
+      ]
+    },
+    {
+      "name": "30000-over-1001",
+      "timeBaseNum": 1,
+      "timeBaseDen": 30000,
+      "originTicks": 1001,
+      "originUs": 33366,
+      "samples": [
+        { "ticks": 1001, "containerUs": 33366, "sourceUs": 0 },
+        { "ticks": 2002, "containerUs": 66733, "sourceUs": 33367 },
+        { "ticks": 3003, "containerUs": 100100, "sourceUs": 66734 }
+      ]
+    },
+    {
+      "name": "60000-over-1001",
+      "timeBaseNum": 1,
+      "timeBaseDen": 60000,
+      "originTicks": 1001,
+      "originUs": 16683,
+      "samples": [
+        { "ticks": 1001, "containerUs": 16683, "sourceUs": 0 },
+        { "ticks": 2002, "containerUs": 33366, "sourceUs": 16683 },
+        { "ticks": 3003, "containerUs": 50050, "sourceUs": 33367 }
+      ]
+    },
+    {
+      "name": "negative-container-pts",
+      "timeBaseNum": 1,
+      "timeBaseDen": 30,
+      "originTicks": -2,
+      "originUs": -66666,
+      "samples": [
+        { "ticks": -2, "containerUs": -66666, "sourceUs": 0 },
+        { "ticks": -1, "containerUs": -33333, "sourceUs": 33333 },
+        { "ticks": 0, "containerUs": 0, "sourceUs": 66666 }
+      ]
+    }
+  ]
+}

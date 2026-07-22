@@ -5,6 +5,16 @@ macOS investigation session; nobody has reproduced it on current `main` yet.
 **Environment when last observed:** Linux x64, Electron 42.4.1 (Chromium 148),
 sidecar ffmpeg n7.1 (BtbN), Lite/webcodecs export lane.
 
+**2026-07-22 implementation update:** the historical device failure is still
+unverified, but the investigation found and fixed a deterministic application
+bug with the same N→N+1 shape. The old store could evict the greatest frame PTS
+below a target when independently quantized duration left a 1 µs gap, after
+which `frameAt()` selected the future frame. Frame identity is now strictly the
+greatest `PTS <= target`, eviction retains that lower neighbour, and WebCodecs
+dispatch/output share one `DecodeClock`. This makes items 1–2 below historical
+hypotheses; another Linux run is still required before declaring it the root
+cause of the original observation.
+
 ## Symptom
 
 `e2e/electron/export-prores-fidelity.spec.ts` gate B ("native pin beats the
@@ -68,12 +78,12 @@ territory of ADR 0012, not a decode-delay problem.
    interval on the final sample grid point, the exported tail frame would
    hold the neighbor's content. Linux-only-ness could come from decoder
    timing deciding *which* side of the clamp the tail wait lands on.
-2. **6b loop's per-frame target computation.** The encode loop awaits
+2. **6b loop's per-frame target computation (historical).** The encode loop awaits
    `ring.waitForPts(clipSrcPtsAt)` per output frame
-   (`worker/exportWorker.ts:441-543`, the wait at `:457`). A rounding
-   asymmetry (`ptsOffset.ts` source↔container conversions) that only
-   materializes for the proxy's timebase/start-PTS on Linux builds would
-   shift exactly the tail sample.
+   (`worker/exportWorker.ts`). The former source↔container conversion rebuilt
+   packet time from floating-point seconds with a different rounding rule from
+   `EncodedVideoChunk`; `DecodeClock` now derives scheduling PTS from the actual
+   chunk timestamp instead.
 3. **Decoder-specific emission order at the drain.** The EOS flush
    (`issueEosFlush`, `:790-821`) floats concurrently with consumption; a
    different emission order out of the flushed drain on Linux's SW decoder
@@ -108,7 +118,8 @@ resolution, and re-run the full export + conformance specs on Linux.
 - Skip + comment: `e2e/electron/export-prores-fidelity.spec.ts:225-238`
 - Analyzer: `e2e/lib/analyze.mjs:13` → `media_conformance` bin
 - Tail machinery: `src/renderer/render/decoder/ExportDecoderPool.ts`
-  (`waitForPts` :161, `isReadyFor` :226, `issueEosFlush` :790)
+  (`ExportFrameStore`, `waitForPts`, `evictBefore`, `issueEosFlush`)
+- Canonical WebCodecs clock: `src/renderer/render/decoder/decodeClock.ts`
 - ADR 0012 (`docs/adr/0012-directexport-worker-decodable-codecs.md`) — the
   earlier PTS-grid deadlock in the same store
 - `56f09adf` — REORDER_MARGIN lead-in (the fix for the macOS wedge cousin)

@@ -17,9 +17,8 @@ describe("snapFrameRound", () => {
     expect(snapFrameRound(16_666, 30, 1)).toBe(0);
     expect(snapFrameRound(16_667, 30, 1)).toBe(33_333);
     expect(snapFrameRound(33_333, 30, 1)).toBe(33_333);
-    // Output is half-up rounded to match the source-PTS rounding in
-    // render/decoder/PacketPump.ts (Math.round(pts * 1e6))
-    // (frame 2 true µs = 66_666.667 → 66_667).
+    // The composition grid represents the exact frame start with half-up
+    // rounding (frame 2 true µs = 66_666.667 → 66_667).
     expect(snapFrameRound(50_000, 30, 1)).toBe(66_667);
   });
 
@@ -58,13 +57,11 @@ describe("frameDurUs", () => {
 });
 
 describe("lastFrameAnchorUs", () => {
-  it("returns the demuxer-aligned (half-up) last-frame start", () => {
+  it("returns the composition-grid-aligned (half-up) last-frame start", () => {
     // 10s 30fps comp: 300 frames. The exact start of frame 299 is
-    // 299/30 s = 9_966_666.667 µs. Source PTSes are rounded half-up
-    // (matches render/decoder/PacketPump.ts Math.round(pts * 1e6)), so
-    // the source sample's pts ≈ 9_966_667. lastFrameAnchorUs must match
-    // that rounding so the ring lookup at end-of-comp hits the last
-    // source sample.
+    // 299/30 s = 9_966_666.667 µs. The composition anchor is represented as
+    // 9_966_667; decoder PTS may be 9_966_666, and the ring's greatest-PTS<=
+    // target rule still selects logical frame 299.
     expect(lastFrameAnchorUs(10_000_000, 30, 1)).toBe(9_966_667);
   });
 
@@ -85,10 +82,10 @@ describe("lastFrameAnchorUs", () => {
 });
 
 describe("snapFrameFloor", () => {
-  it("rounds frame-grid values half-up to align with demuxer PTS rounding", () => {
+  it("rounds frame-grid values half-up to align all composition callers", () => {
     // Frame 299 exact start = 9_966_666.667 → half-up rounds to
-    // 9_966_667. render/decoder/PacketPump.ts uses the same Math.round
-    // (pts * 1e6), so this value matches the source's last sample PTS.
+    // 9_966_667. The export frame grid uses the same half-up rule; a decoder
+    // may represent the corresponding source PTS as 9_966_666 instead.
     expect(snapFrameFloor(9_966_666, 30, 1)).toBe(9_966_667);
     expect(snapFrameFloor(9_966_667, 30, 1)).toBe(9_966_667);
     expect(snapFrameFloor(9_999_999, 30, 1)).toBe(9_966_667);
@@ -102,7 +99,7 @@ describe("snapFrameFloor", () => {
 
   it("doesn't drift like the pre-rounded-frameDurUs floor", () => {
     // Math.floor(9_966_666 / 33_333) * 33_333 = 9_966_567 (off by 100 µs
-    // at frame 299 from the demuxer-aligned grid value).
+    // at frame 299 from the exact rational composition-grid value).
     expect(snapFrameFloor(9_966_666, 30, 1)).toBe(9_966_667);
     expect(Math.floor(9_966_666 / 33_333) * 33_333).toBe(9_966_567);
   });

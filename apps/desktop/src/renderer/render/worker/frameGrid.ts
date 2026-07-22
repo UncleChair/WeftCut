@@ -5,15 +5,15 @@
 // THE TRAP: computing an output frame's time as `i * round(1e6 / fps)` (or a
 // count as `ceil(span / round(1e6/fps))`) compounds the rounding floor. At
 // 30 fps `round(1e6/30) = 33333`, but the true frame duration is 33333.33…, so
-// `i * 33333` falls a fractional µs behind the source's PTS grid
-// (`round(i * 1e6 / fps)`) and the deficit grows with i. Once it crosses a
+// `i * 33333` falls a fractional µs behind the exact rational composition
+// grid (`round(i * 1e6 / fps)`) and the deficit grows with i. Once it crosses a
 // frame boundary the export's `frameAt(requestTime)` returns the PREVIOUS
 // source frame, duplicating an output frame and misaligning the rest (observed:
 // 301 frames for a 300-frame clip, output[N] = source[N-1]). Always derive both
 // the per-frame time AND the frame count from the exact rational below.
 
 /// Presentation time (µs) of output frame `i`, rounded from the EXACT rational
-/// fps so the grid matches the source's PTS grid (`round(i * 1e6 / fps)`).
+/// fps so every composition/output caller shares `round(i * 1e6 / fps)`.
 export function frameTimeUs(
   startUs: number,
   i: number,

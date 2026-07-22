@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ExportFrameStore, tenBitHighWaterFor } from "./ExportDecoderPool";
 import type { TenBitFrame } from "./tenBitFrame";
+import { frameTimeUs } from "../worker/frameGrid";
 
 // ExportFrameStore.push reads only `timestamp` + `duration` and calls `close()`
 // on eviction, so a plain stub stands in for a real VideoFrame in node/vitest.
@@ -31,16 +32,15 @@ describe("ExportFrameStore.waitForPts", () => {
   // Regression: the export wedged at frame 0 ("stuck at 0%") whenever a
   // DirectExport source's decoder PTS grid drifted off the integer output grid.
   //
-  // Reproduction: the decoder emits frames at 0, 33333, 66666, 100000 … (an
-  // occasional 33334 step to average 1e6/30), every frame stamped duration
-  // 33333. The export's per-output-frame target is `i × round(1e6/30)` =
-  // 0, 33333, 66666, 99999 … . At i=3 the target 99999 lands in the gap
-  // [99999, 100000) between two frames' [pts, pts+dur) intervals, AND
-  // `evictBefore` has already dropped the lower neighbour. Strict interval
-  // containment therefore never matches and the wait hangs forever.
+  // Reproduction: a decoder emits frames at 0, 33333, 66666, 100000 … (an
+  // occasional 33334 step), every frame stamped duration 33333. A quantized
+  // target at 99999 lands in the gap [99999, 100000) between intervals.
+  // Strict interval containment therefore never matches; eviction must also
+  // retain the lower neighbour so readiness cannot turn into a future-frame
+  // selection.
   //
   // With the fix, `waitForPts` resolves once a strictly-later frame is present
-  // (the target frame is then final; `frameAt` clamps to the nearest).
+  // (the target frame is then final; `frameAt` selects greatest PTS <= target).
   it("resolves when the target falls in a PTS-grid gap after eviction (AV1 export-deadlock regression)", async () => {
     const store = new ExportFrameStore();
     store.push(fakeFrame(0, 33333));
@@ -48,16 +48,19 @@ describe("ExportFrameStore.waitForPts", () => {
     store.push(fakeFrame(66666, 33333));
     store.push(fakeFrame(100000, 33333));
 
-    // Consumer evicts through the lower neighbour after compositing frame i=2
-    // (cutoff = the next output target, 99999). Drops 0 / 33333 / 66666.
+    // Consumer evicts after compositing frame i=2 (cutoff = the next output
+    // target, 99999). The immediate lower neighbour at 66666 MUST survive:
+    // target 99999 is in a quantization gap, and frame identity is defined as
+    // the greatest presentation PTS <= target.
     store.evictBefore(99999);
-    expect(store.firstPtsUs()).toBe(100000);
+    expect(store.firstPtsUs()).toBe(66666);
 
     // i=3 target (3 × 33333) sits in the [99999, 100000) gap. Pre-fix this never
-    // resolves → the test would time out. Post-fix it resolves (frame 100000 is
-    // present and strictly later) and frameAt clamps to it.
+    // resolves → the test would time out. Once frame 100000 is present the
+    // target is final, but frameAt must select its retained lower neighbour,
+    // never the future frame.
     await expect(store.waitForPts(99999)).resolves.toBeUndefined();
-    expect(store.frameAt(99999)).not.toBeNull();
+    expect(store.frameAt(99999)?.timestamp).toBe(66666);
   });
 
   it("resolves a pending wait once a strictly-later frame arrives", async () => {
@@ -78,10 +81,34 @@ describe("ExportFrameStore.waitForPts", () => {
     expect(resolved).toBe(true);
   });
 
-  it("resolves synchronously when the target's interval is already held", async () => {
+  it("resolves synchronously when the exact target PTS is already held", async () => {
     const store = new ExportFrameStore();
     store.push(fakeFrame(0, 33333));
     await expect(store.waitForPts(0)).resolves.toBeUndefined();
+  });
+
+  it("waits for a later PTS before finalizing a non-exact target despite overlapping duration", async () => {
+    const store = new ExportFrameStore();
+    let resolved = false;
+    const waited = store.waitForPts(50_000).then(() => {
+      resolved = true;
+    });
+
+    // Duration claims frame 0 covers the target, but a newer presentation PTS
+    // at 33,333 can still arrive and become the correct identity.
+    store.push(fakeFrame(0, 100_000));
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    store.push(fakeFrame(33_333, 100_000));
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    // A strictly later PTS proves no future presentation-ordered frame can be
+    // a better match at or before 50,000.
+    store.push(fakeFrame(66_666, 33_333));
+    await waited;
+    expect(store.frameAt(50_000)?.timestamp).toBe(33_333);
   });
 
   // Regression: long-GOP DirectExport DEADLOCK. When a chunk needs frames far
@@ -151,18 +178,72 @@ describe("ExportFrameStore.waitForPts", () => {
   });
 });
 
+describe("ExportFrameStore frame identity", () => {
+  it("selects the greatest presentation PTS at or before the target even when durations overlap", () => {
+    const store = new ExportFrameStore();
+    store.push(fakeFrame(0, 100_000));
+    store.push(fakeFrame(33_333, 33_333));
+
+    expect(store.frameAt(50_000)?.timestamp).toBe(33_333);
+  });
+
+  it.each([
+    [24, 1],
+    [25, 1],
+    [30, 1],
+    [50, 1],
+    [60, 1],
+    [30_000, 1_001],
+    [60_000, 1_001],
+  ] as const)(
+    "keeps 300 logical frames aligned at %i/%i fps across wait/select/evict",
+    async (fpsNum, fpsDen) => {
+      const store = new ExportFrameStore();
+      const frameCount = 300;
+      const durationUs = Math.trunc((1_000_000 * fpsDen) / fpsNum);
+      const sourcePtsUs = (i: number): number =>
+        Math.trunc((i * 1_000_000 * fpsDen) / fpsNum);
+
+      for (let i = 0; i < frameCount; i++) {
+        store.push(fakeFrame(sourcePtsUs(i), durationUs));
+      }
+      store.finishEosDrain();
+
+      for (let i = 0; i < frameCount; i++) {
+        const targetUs = frameTimeUs(0, i, fpsNum, fpsDen);
+        await expect(store.waitForPts(targetUs)).resolves.toBeUndefined();
+        expect(store.frameAt(targetUs)?.timestamp).toBe(sourcePtsUs(i));
+
+        if (i + 1 < frameCount) {
+          store.evictBefore(frameTimeUs(0, i + 1, fpsNum, fpsDen));
+        }
+      }
+
+      store.dispose();
+    },
+  );
+
+  it("keeps the 30 fps tail quantization distinct from a whole-frame offset", async () => {
+    const store = new ExportFrameStore();
+    store.push(fakeFrame(9_966_666, 33_333)); // logical frame 299
+    store.push(fakeFrame(10_000_000, 33_333)); // proof frame strictly after target
+
+    const targetUs = frameTimeUs(0, 299, 30, 1);
+    expect(targetUs).toBe(9_966_667);
+    await expect(store.waitForPts(targetUs)).resolves.toBeUndefined();
+    expect(store.frameAt(targetUs)?.timestamp).toBe(9_966_666);
+  });
+});
+
 // EOS finalization — the ring-side half of the export tail-deadlock fix. Once
 // the source hits end-of-stream the ring goes through two phases:
 //
-//   beginEosDrain()  — the EOS flush was ISSUED. Frames are still arriving from
-//                      the drain, but eviction must keep the last held entry
-//                      from now on: the consumer's per-frame cutoff can overrun
-//                      the final frame's interval (composition grid extends
-//                      past the video track), and an emptied ring leaves
-//                      nothing to clamp to later.
+//   beginEosDrain()  — the EOS flush was ISSUED. Frames are still arriving, so
+//                      the final clamp is not active. The universal eviction
+//                      invariant already retains the greatest lower neighbour.
 //   finishEosDrain() — the flush COMPLETED: no frame will EVER arrive again.
-//                      Any wait target is now final — resolve by clamping to
-//                      the nearest held frame instead of parking forever.
+//                      Any wait target is now final — resolve with the same PTS
+//                      identity rule instead of parking forever.
 //
 // The clamp must NOT activate at issue time: during the drain the real frame
 // for a target may still be on its way, and clamping early would composite a
@@ -223,9 +304,11 @@ describe("ExportFrameStore EOS finalization", () => {
       new Promise<"parked">((r) => setTimeout(() => r("parked"), 150)),
     ]);
     expect(outcome).toBe("parked");
-    // ...and eviction stops pinning the stale last entry.
+    // ...and eviction keeps the immediate lower neighbour needed to resolve
+    // the re-decoded target deterministically. It is replaced as newer lower
+    // PTS frames arrive, instead of being discarded before the next wait.
     store.evictBefore(1_000_000);
-    expect(store.size()).toBe(0);
+    expect(store.size()).toBe(1);
   });
 });
 
@@ -249,15 +332,18 @@ describe("ExportFrameStore TenBitFrame integration", () => {
       close: closeFn,
     };
 
+    const next = fakeTenBitFrame(33_333, 33_333, 0);
     const store = new ExportFrameStore();
     // push accepts the widened union (TenBitFrame carries timestamp/duration/close)
     store.push(tb);
+    store.push(next);
 
     expect(store.containsPts(10)).toBe(true);
     await expect(store.waitForPts(10)).resolves.toBeUndefined();
 
     store.evictBefore(40000);
-    expect(store.size()).toBe(0);
+    expect(store.size()).toBe(1);
+    expect(store.firstPtsUs()).toBe(33_333);
     expect(closeFn).toHaveBeenCalledTimes(1);
   });
 });

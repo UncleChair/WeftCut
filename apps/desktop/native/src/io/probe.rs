@@ -318,11 +318,11 @@ enum RawStream {
 }
 
 fn duration_seconds_to_us(s: &str) -> Option<i64> {
-    // Round to nearest (not truncate): matches the renderer's
-    // `Math.round(ts * 1e6)` (render/decoder/ptsOffset.ts) so a metadata start
-    // PTS and a packet-derived one agree, and a float product landing at
-    // `x.9999…` doesn't silently lose a whole µs. `round` is half-away-from-zero,
-    // which is also the faithful choice for negative starts (priming/edit lists).
+    // Probe metadata is decimal seconds rather than packet time-base ticks, so
+    // preserve the nearest representable microsecond instead of truncating a
+    // product at `x.9999…`. Decode scheduling does NOT use this metadata value:
+    // DecodeClock/native media_time anchor to the first packet's integer-µs PTS.
+    // Rust's `round` is half-away-from-zero, including negative starts.
     s.parse::<f64>()
         .ok()
         .map(|v| (v * 1_000_000.0).round() as i64)
@@ -677,11 +677,10 @@ mod tests {
             .into_metadata()
     }
 
-    /// ffprobe can report sub-µs precision. This must round to nearest to match
-    /// the renderer's `Math.round(ts * 1e6)` (renderer/render/decoder/ptsOffset.ts),
-    /// so a future metadata-driven decode offset agrees with the packet-derived
-    /// one. Truncation would drop this half-µs (→299674) and, worse, silently
-    /// lose a whole µs whenever the float product lands at `x.9999…`.
+    /// ffprobe can report sub-µs precision. Metadata keeps nearest-µs semantics;
+    /// it is intentionally not the decoder clock origin, which comes from the
+    /// first packet. Truncation would drop this half-µs (→299674) and can lose
+    /// a whole µs whenever the float product lands at `x.9999…`.
     #[test]
     fn seconds_to_us_rounds_to_nearest() {
         assert_eq!(duration_seconds_to_us("0.2996745"), Some(299_675));

@@ -21,9 +21,9 @@ export function frameDurUs(fpsNum: number, fpsDen: number): number {
 /// SINGLE SOURCE OF TRUTH: this is the wasm-backed `weftcut-eval::snap_frame_round`
 /// (the SAME crate the Rust actor links natively), re-exported so the actor's
 /// commit-side snap and the UI's drag-preview snap can never drift. The
-/// degenerate-fps guard + the half-up OUTPUT rounding landmine (which keeps
-/// `t_start_us`/`src_in_us` aligned with the source PTS so `FrameRing.frameAt`
-/// doesn't fall a frame short after a move) live in the leaf — see
+/// degenerate-fps guard + the half-up OUTPUT rounding rule (which keeps
+/// `t_start_us`/`src_in_us` aligned with the composition's exact rational grid)
+/// live in the leaf — see
 /// `native/eval/src/lib.rs::snap_frame_round`. `initEval()` must have resolved
 /// (the renderer bootstrap awaits it before mount).
 export { snapFrameRound } from "./eval";
@@ -39,15 +39,13 @@ export { snapFrameRound } from "./eval";
 ///    integer expression `floor(tUs·num / (US_PER_SEC·den))` with a
 ///    correction loop for the rounding-direction edge case.
 ///
-/// 2. Output grid value — the µs timestamp of frame N's start, used
-///    as the input to `ring.frameAt(...)`. Must use the SAME rounding
-///    direction as the source-PTS-to-µs conversion
-///    (`Math.round(ptsSeconds * 1e6)`). That's HALF-UP. If
-///    we floored instead, frame 299 of a 10 s 30 fps comp would snap
-///    to `9_966_666`, the source's last sample's PTS is `9_966_667`,
-///    and `findLatestAtOrBefore(9_966_666)` would fall back to sample
-///    298. The result: end-of-comp paint is the second-to-last source
-///    frame instead of the last.
+/// 2. Output grid value — the integer-µs representation of frame N's exact
+///    composition start, used as the input to `ring.frameAt(...)`. It uses
+///    HALF-UP so UI snapping, the Rust actor, and export `frameTimeUs` share
+///    one composition grid. Decoder PTS may use a different integer
+///    quantization (Mediabunny/WebCodecs truncates); frame stores deliberately
+///    select the greatest presentation PTS <= this target instead of requiring
+///    numeric equality.
 ///
 /// The pre-rounded `frameDurUs(num, den)` integer (33_333 for 30 fps,
 /// truncated from 33_333.333…) is NOT safe for either computation —
@@ -63,9 +61,8 @@ export function snapFrameFloor(
   let n = Math.floor((tUs * fpsNum) / div);
   if (n < 0) n = 0;
   while (Math.floor(((n + 1) * div) / fpsNum) <= tUs) n++;
-  // Half-up: matches the source-PTS-to-µs rounding in
-  // render/decoder/PacketPump.ts (Math.round(pts * 1e6)) so the ring
-  // lookup at this value hits the source sample for the same frame N.
+  // Half-up: matches the composition/output frame-grid contract shared with
+  // frameTimeUs and the Rust actor. Source PTS quantization is independent.
   return Math.round((n * div) / fpsNum);
 }
 

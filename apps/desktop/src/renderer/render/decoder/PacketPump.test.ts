@@ -8,6 +8,7 @@ import {
   type PumpPacketSink,
   type PumpRing,
 } from "./PacketPump";
+import { DecodeClock } from "./decodeClock";
 
 // ADR 0003, re-keyed to microseconds. The decision is purely a function
 // of the playhead target, the pump's decoded frontier, and the ring's
@@ -65,11 +66,16 @@ describe("decideReset", () => {
 const tick = (): Promise<void> => new Promise<void>((r) => setTimeout(r, 0));
 
 function makePacket(tsSeconds: number): PumpPacket {
+  const timestampUs = Math.trunc(tsSeconds * 1e6);
   return {
     timestamp: tsSeconds,
+    microsecondTimestamp: timestampUs,
     // The pump only passes this through to the (fake) decoder; the chunk
     // is never inspected, so a tagged stub stands in for EncodedVideoChunk.
-    toEncodedVideoChunk: () => ({ _ts: tsSeconds } as unknown as EncodedVideoChunk),
+    toEncodedVideoChunk: () => ({
+      _ts: tsSeconds,
+      timestamp: timestampUs,
+    }) as unknown as EncodedVideoChunk,
   };
 }
 
@@ -242,7 +248,7 @@ describe("PacketPump", () => {
       decoder: dec,
       packetSink: sink,
       ring,
-      sourceStartPtsUs,
+      decodeClock: DecodeClock.fromOrigin(sourceStartPtsUs),
     });
 
     pump.requestFrameAt(0);
@@ -250,6 +256,40 @@ describe("PacketPump", () => {
 
     expect(sink.getKeyCalls).toEqual([sourceStartPtsUs / 1e6]);
     expect(dec.decoded.map((p) => p.timestamp)).toEqual([sourceStartPtsUs / 1e6]);
+  });
+
+  it("uses the chunk timestamp as the decode frontier at a non-zero origin", async () => {
+    // Exact packet time is 2/30 s = 66,666.666… µs. Mediabunny dispatches a
+    // chunk timestamp of 66,666, while the old `round(seconds * 1e6)` frontier
+    // became source PTS +1. Put the next target exactly across the 1 s reset
+    // threshold so that one-microsecond disagreement is externally visible.
+    const key = {
+      timestamp: 2 / 30,
+      microsecondTimestamp: 66_666,
+      toEncodedVideoChunk: () => ({
+        _ts: 2 / 30,
+        timestamp: 66_666,
+      }) as unknown as EncodedVideoChunk,
+    } as PumpPacket;
+    const sink = new GatedSink(key);
+    const ring = new FakeRing();
+    const dec = makeFakeDecoder();
+    const pump = new PacketPump({
+      decoder: dec,
+      packetSink: sink,
+      ring,
+      decodeClock: DecodeClock.fromOrigin(66_666),
+    });
+
+    pump.requestFrameAt(0);
+    await tick(); // key decoded, frontier must be source PTS 0
+
+    pump.requestFrameAt(1_000_001);
+    sink.release(null); // end the in-flight fill so the new target is evaluated
+    await tick();
+
+    expect(dec.resets).toBe(1);
+    expect(sink.getKeyCalls).toHaveLength(2);
   });
 
   it("falls back to the first packet when the normalized start precedes the first key", async () => {
@@ -276,7 +316,7 @@ describe("PacketPump", () => {
       decoder: dec,
       packetSink: sink,
       ring,
-      sourceStartPtsUs,
+      decodeClock: DecodeClock.fromOrigin(sourceStartPtsUs),
     });
 
     pump.requestFrameAt(0);

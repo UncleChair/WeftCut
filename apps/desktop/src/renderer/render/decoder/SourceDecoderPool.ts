@@ -15,8 +15,8 @@
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
+import { DecodeClock } from "./decodeClock";
 import { FrameRing } from "./FrameRing";
-import { frameToSourceUs } from "./ptsOffset";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
@@ -43,7 +43,7 @@ export class SourceMedia {
   private readonly knownStartPtsUs: number | null;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
-  private startPtsUs = 0;
+  private clock = DecodeClock.fromOrigin(0);
   /// Cached in-flight `ensureReady` promise so concurrent handles share
   /// one open + getDecoderConfig. Cleared on dispose so a re-acquire
   /// after dispose re-opens rather than re-awaiting a stale resolved
@@ -69,7 +69,11 @@ export class SourceMedia {
   /// visible start of the source", even for edit-list / trimmed files whose
   /// first packet starts at a positive PTS.
   get sourceStartPtsUs(): number {
-    return this.startPtsUs;
+    return this.clock.containerUs(0);
+  }
+
+  get decodeClock(): DecodeClock {
+    return this.clock;
   }
 
   constructor(
@@ -106,9 +110,7 @@ export class SourceMedia {
       // getKeyPacket seek past EOF, the first-packet fallback decodes at PTS≈0,
       // normalized timestamps go negative, and lookbehind evicts every frame.
       const firstPacket = await opened.packetSink.getFirstPacket();
-      this.startPtsUs = firstPacket
-        ? Math.round(firstPacket.timestamp * 1e6)
-        : (this.knownStartPtsUs ?? 0);
+      this.clock = DecodeClock.fromFirstPacket(firstPacket, this.knownStartPtsUs ?? 0);
       // Untagged sources get a resolution-keyed default matrix so preview decode
       // matches the rest of the toolchain (see colorSpaceDefault) — and stays
       // consistent with the export pool, which applies the same default.
@@ -120,7 +122,7 @@ export class SourceMedia {
       console.log(
         `[weftcut/pixi] source ${this.mediaId} ready: codec=${config.codec} ` +
           `${config.codedWidth ?? "?"}x${config.codedHeight ?? "?"} ` +
-          `startPts=${this.startPtsUs}us ` +
+          `startPts=${this.sourceStartPtsUs}us ` +
           `desc=${config.description ? `${(config.description as { byteLength: number }).byteLength}B` : "none"}`,
       );
       return this.config;
@@ -134,7 +136,7 @@ export class SourceMedia {
     this.opened?.dispose(); // disposes the Input + aborts in-flight Range reads
     this.opened = null;
     this.config = null;
-    this.startPtsUs = 0;
+    this.clock = DecodeClock.fromOrigin(0);
     this.readyP = null;
   }
 }
@@ -252,7 +254,7 @@ export class SourceHandle {
         // optimizes `createImageBitmap(VideoFrame)` to keep pixels on
         // the GPU side; we pay a per-frame conversion but stop
         // holding the decoder's buffers across many ticks.
-        const ptsUs = frameToSourceUs(frame.timestamp, this.media.sourceStartPtsUs);
+        const ptsUs = this.media.decodeClock.sourceUs(frame.timestamp);
         const durationUs = frame.duration ?? 0;
         this.conversionsInFlight += 1;
         if (this.conversionsInFlight > this.peakConversionsInWindow) {
@@ -382,7 +384,7 @@ export class SourceHandle {
       },
       packetSink: handle.media.packetSink,
       ring: handle.ring,
-      sourceStartPtsUs: handle.media.sourceStartPtsUs,
+      decodeClock: handle.media.decodeClock,
       log: (msg: string) => {
         // eslint-disable-next-line no-console
         console.warn(`[weftcut/pixi] pump ${handle.mediaId}: ${msg}`);

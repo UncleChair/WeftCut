@@ -77,7 +77,8 @@ pub struct ExportSwOpenInfo {
     pub height: u32,
     pub color: SwColorTags,
     /// The container's first-packet PTS in source-normalized microseconds (the
-    /// offset `pts_to_source_us` subtracts). 0 for a stream that starts at t=0.
+    /// offset `media_time::ticks_to_source_us` subtracts). 0 for a stream that
+    /// starts at t=0.
     pub start_pts_us: i64,
 }
 

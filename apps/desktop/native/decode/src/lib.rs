@@ -6,6 +6,7 @@
 mod backend;
 mod events;
 mod export_sw;
+mod media_time;
 #[cfg(windows)]
 mod preview_gpu;
 mod preview_sw;
