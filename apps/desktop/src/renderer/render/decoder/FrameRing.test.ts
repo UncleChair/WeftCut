@@ -50,6 +50,20 @@ function ptsOf(frame: unknown): number | null {
 }
 
 describe("FrameRing.frameAt", () => {
+  it("returns the selected frame together with its presentation identity", () => {
+    const ring = new FrameRing();
+    const first = makeBitmap(0);
+    const second = makeBitmap(33_333);
+    ring.push(first, 0, 33_333);
+    ring.push(second, 33_333, 33_334);
+
+    expect(ring.selectFrame(50_000)).toEqual({
+      frame: second,
+      ptsUs: 33_333,
+      durationUs: 33_334,
+    });
+  });
+
   it("returns the right frame for a 60 fps stream with duration metadata", () => {
     const ring = new FrameRing();
     pushFrames(ring, 33, 16667);

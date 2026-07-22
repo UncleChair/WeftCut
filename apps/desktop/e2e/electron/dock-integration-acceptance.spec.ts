@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,12 +117,65 @@ async function settled(read: () => Promise<number>): Promise<number> {
 const settledWidth = (page: Page, selector: string) =>
   settled(async () => (await rect(page, selector)).width);
 
+type DockEdge = "left" | "right" | "top" | "bottom";
+
+/** Drive Dockview through the same pointer gesture as a user. Playwright's
+ * locator.dragTo() waits for the underlying target to remain actionability-
+ * clickable, but Dockview intentionally covers that target with its drop-zone
+ * overlay while dragging. A mouse gesture lets that overlay receive the move
+ * and drop events, then assertions stay on WeftCut-owned panel state. */
+async function dragDockTabToEdge(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  edge: DockEdge,
+): Promise<void> {
+  await expect(source).toBeVisible();
+  await expect(target).toBeVisible();
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) throw new Error("dock drag endpoints have no layout box");
+
+  const start = {
+    x: sourceBox.x + sourceBox.width / 2,
+    y: sourceBox.y + sourceBox.height / 2,
+  };
+  const inset = 8;
+  const end = {
+    x:
+      edge === "left"
+        ? targetBox.x + inset
+        : edge === "right"
+          ? targetBox.x + targetBox.width - inset
+          : targetBox.x + targetBox.width / 2,
+    y:
+      edge === "top"
+        ? targetBox.y + inset
+        : edge === "bottom"
+          ? targetBox.y + targetBox.height - inset
+          : targetBox.y + targetBox.height / 2,
+  };
+
+  let pressed = false;
+  try {
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    pressed = true;
+    await page.mouse.move(end.x, end.y, { steps: 24 });
+    await page.mouse.up();
+    pressed = false;
+  } finally {
+    if (pressed) await page.mouse.up();
+  }
+}
+
 const viewMenuTrigger = (page: Page) => page.locator(".menu-trigger").nth(2);
 const CLOSE_ACTIVE = /Close Active Panel|关闭活动面板/;
 
 async function setupEditor(page: Page, name: string): Promise<void> {
   const parent = tmpDir(`weftcut-${name}-proj-`);
   await newProject(page, { parentFolder: parent, name, canvas: CANVAS });
+  await expect(page.locator(".splash-screen")).toHaveCount(0, { timeout: 15_000 });
   await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
 }
 
@@ -308,12 +361,12 @@ test("an edge drop splits a Panel into its own group beside the target", async (
     // new split, not a tab stack: after it, Nearby is its own group beside
     // Timeline and BOTH are visible simultaneously (a center/tab drop would keep
     // only one of a shared group visible at a time).
-    const timeline = await rect(page, '[data-panel-kind="timeline"]');
-    await page
-      .getByTitle("Move Nearby")
-      .dragTo(page.locator('[data-panel-kind="timeline"]'), {
-        targetPosition: { x: 8, y: Math.round(timeline.height / 2) },
-      });
+    await dragDockTabToEdge(
+      page,
+      page.getByTitle("Move Nearby"),
+      page.locator('[data-panel-kind="timeline"]'),
+      "left",
+    );
 
     await expect.poll(() => panelVisible(page, "nearby")).toBe(true);
     expect(await panelVisible(page, "timeline")).toBe(true);

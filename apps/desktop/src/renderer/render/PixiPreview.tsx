@@ -60,6 +60,7 @@ import {
   publishMasterMeter,
 } from "../state/masterMeterStore";
 import { setPixiPresentationVisible } from "./previewPresentation";
+import type { PreviewFrameCapture } from "../testhook/e2eHook";
 
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
@@ -431,16 +432,19 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
             // sprite straight off the live Compositor.
             activeClipProbe: (layerId?: string) =>
               compositor.activeClipProbe(layerId),
-            // Preview-sw SSIM: encode the current composited frame to a PNG.
-            // Extract at composition resolution (the whole renderer surface),
-            // the same reliable `extract.pixels` path `sampleComposite` uses.
-            capturePng: async (): Promise<string> => {
+            // Preview conformance: encode the current composited frame and
+            // return the exact clip-frame identity bound during that same
+            // capture. Ring bounds alone cannot establish what was painted.
+            captureFrame: async (layerId?: string): Promise<PreviewFrameCapture> => {
               const W = app.renderer.width;
               const H = app.renderer.height;
               // Re-composite + render so the freshly-decoded frame is on the
               // framebuffer before the read (mirrors sampleComposite).
-              compositor.compositeFrame(engine.positionUs());
+              const positionUs = engine.positionUs();
+              compositor.compositeFrame(positionUs);
               app.renderer.render(app.stage);
+              const clip = compositor.activeClipProbe(layerId);
+              const { presentedCompositeCount } = compositor.presentationSnapshot();
               const out = app.renderer.extract.pixels({
                 target: app.stage,
                 frame: new Rectangle(0, 0, W, H),
@@ -464,7 +468,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               for (let i = 0; i < bytes.byteLength; i++) {
                 binary += String.fromCharCode(bytes[i]!);
               }
-              return btoa(binary);
+              return {
+                pngBase64: btoa(binary),
+                positionUs,
+                presentedCompositeCount,
+                clip,
+              };
             },
             resourceProbe: () => ({
               generation: resourceGeneration,

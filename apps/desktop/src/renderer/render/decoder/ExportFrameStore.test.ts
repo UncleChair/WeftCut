@@ -29,6 +29,20 @@ const BYTES_1080P = 1920 * 1080 * 3; // I420P10 ≈ 6.2 MB
 const BYTES_4K = 3840 * 2160 * 3; // ≈ 24.9 MB
 
 describe("ExportFrameStore.waitForPts", () => {
+  it("returns the selected frame together with its presentation identity", () => {
+    const store = new ExportFrameStore();
+    const first = fakeFrame(0, 33_333);
+    const second = fakeFrame(33_333, 33_334);
+    store.push(first);
+    store.push(second);
+
+    expect(store.selectFrame(50_000)).toEqual({
+      frame: second,
+      ptsUs: 33_333,
+      durationUs: 33_334,
+    });
+  });
+
   // Regression: the export wedged at frame 0 ("stuck at 0%") whenever a
   // DirectExport source's decoder PTS grid drifted off the integer output grid.
   //

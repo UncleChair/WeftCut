@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type TestInfo } from '@playwright/test'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -38,7 +38,26 @@ interface FamilyCase {
   forwardDecodeFloorUs: number
 }
 
-async function runFamilyConformance(c: FamilyCase) {
+interface PreviewFrameCapture {
+  pngBase64: string
+  positionUs: number
+  presentedCompositeCount: number
+  clip: {
+    boundFramePtsUs: number | null
+    boundFrameDurationUs: number | null
+    boundFrameSourceKey: string | null
+  } | null
+}
+
+const coversTarget = (
+  clip: PreviewFrameCapture['clip'],
+  targetUs: number,
+): boolean => {
+  if (clip?.boundFramePtsUs == null || clip.boundFrameDurationUs == null) return false
+  return clip.boundFramePtsUs <= targetUs && targetUs < clip.boundFramePtsUs + Math.max(1, clip.boundFrameDurationUs)
+}
+
+async function runFamilyConformance(c: FamilyCase, testInfo: TestInfo) {
   test.skip(!existsSync(c.fixture), `${c.label} fixture not found at ${c.fixture} — run gen-decode-bench-fixtures.mjs`)
   test.setTimeout(240_000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-families-proj-')
@@ -96,38 +115,68 @@ async function runFamilyConformance(c: FamilyCase) {
       ([id, target]) => {
         const p = (window as { __weftcutTest: { activeClipProbe(id?: string): {
           sourceKind: string; isSoftware: boolean; ringSize: number; ringFirstPtsUs: number | null; ringLastPtsUs: number | null; spriteBound: boolean
+          boundFramePtsUs: number | null; boundFrameDurationUs: number | null
         } | null } }).__weftcutTest.activeClipProbe(id)
         if (!p || p.sourceKind !== 'sw' || p.ringSize < 1 || !p.spriteBound) return null
         if (p.ringLastPtsUs == null || p.ringLastPtsUs < target) return null
+        if (p.boundFramePtsUs == null || p.boundFrameDurationUs == null) return null
+        if (p.boundFramePtsUs > target || target >= p.boundFramePtsUs + Math.max(1, p.boundFrameDurationUs)) return null
         return p
       },
       [layerId, c.seekUs] as const,
       { timeout: 90_000, polling: 200 },
     )
-    const probe = (await handle.jsonValue()) as { isSoftware: boolean; ringFirstPtsUs: number | null }
+    const probe = (await handle.jsonValue()) as { isSoftware: boolean; ringFirstPtsUs: number | null; boundFramePtsUs: number | null }
     expect(probe.isSoftware).toBe(true)
     // Long-GOP proof: the ring's earliest frame covers the target — not a pre-target keyframe.
     expect(probe.ringFirstPtsUs ?? 0).toBeGreaterThanOrEqual(c.forwardDecodeFloorUs)
+    expect(probe.boundFramePtsUs ?? 0).toBeGreaterThanOrEqual(c.forwardDecodeFloorUs)
 
     // SSIM vs an ffmpeg reference of the same source frame.
     const ffmpeg = ffmpegBin()
     test.skip(ffmpeg === null, 'ffmpeg not on PATH (set FFMPEG) — SSIM step skipped')
-    const b64 = (await page.evaluate(
-      () => (window as { __weftcutTest: { capturePreviewFramePng(): Promise<string> } }).__weftcutTest.capturePreviewFramePng(),
-    )) as string
+    const capture = (await page.evaluate(
+      (id) => (window as { __weftcutTest: { capturePreviewFrame(layerId?: string): Promise<PreviewFrameCapture> } }).__weftcutTest.capturePreviewFrame(id),
+      layerId,
+    )) as PreviewFrameCapture
     const rendered = path.join(OUT_DIR, `${c.label}-rendered.png`)
-    writeFileSync(rendered, Buffer.from(b64, 'base64'))
-    const idx = Math.round((c.seekUs * CANVAS.fpsNum) / (1_000_000 * CANVAS.fpsDen))
+    writeFileSync(rendered, Buffer.from(capture.pngBase64, 'base64'))
+    const capturedTarget = coversTarget(capture.clip, c.seekUs)
+    if (!capturedTarget) {
+      await testInfo.attach(`${c.label}-rendered`, { path: rendered, contentType: 'image/png' })
+      await testInfo.attach(`${c.label}-frame-diagnostics`, {
+        body: Buffer.from(JSON.stringify({ targetUs: c.seekUs, capture, probe }, null, 2)),
+        contentType: 'application/json',
+      })
+    }
+    expect(
+      capturedTarget,
+      `captured frame does not cover target: ${JSON.stringify(capture)}`,
+    ).toBe(true)
+    const boundPtsUs = capture.clip!.boundFramePtsUs!
+    const idx = Math.round((boundPtsUs * CANVAS.fpsNum) / (1_000_000 * CANVAS.fpsDen))
     const scores: Array<{ idx: number; ssim: number | null }> = []
+    const references: string[] = []
     for (const i of [idx - 1, idx, idx + 1].filter((n) => n >= 0)) {
       const reference = path.join(OUT_DIR, `${c.label}-ref-${i}.png`)
-      execFileSync(ffmpeg!, ['-y', '-i', c.fixture, '-vf', `select=eq(n\\,${i})`, '-vsync', '0', '-frames:v', '1', reference])
+      references.push(reference)
+      execFileSync(ffmpeg!, ['-y', '-loglevel', 'error', '-i', c.fixture, '-vf', `select=eq(n\\,${i})`, '-fps_mode', 'passthrough', '-frames:v', '1', '-update', '1', reference])
       const r = spawnSync(ffmpeg!, ['-i', rendered, '-i', reference, '-lavfi', '[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]ssim', '-f', 'null', '-'], { encoding: 'utf8' })
       scores.push({ idx: i, ssim: parseSsimAll(r.stderr) })
     }
     const best = scores.reduce<{ idx: number; ssim: number }>((acc, s) => (s.ssim != null && s.ssim > acc.ssim ? { idx: s.idx, ssim: s.ssim } : acc), { idx: -1, ssim: -1 })
     // eslint-disable-next-line no-console
     console.log(`[preview-sw ${c.label}] SSIM scores: ${JSON.stringify(scores)} → best=${JSON.stringify(best)}`)
+    if (best.ssim < SSIM_FLOOR) {
+      await testInfo.attach(`${c.label}-rendered`, { path: rendered, contentType: 'image/png' })
+      for (let i = 0; i < references.length; i++) {
+        await testInfo.attach(`${c.label}-reference-${scores[i]!.idx}`, { path: references[i]!, contentType: 'image/png' })
+      }
+      await testInfo.attach(`${c.label}-frame-diagnostics`, {
+        body: Buffer.from(JSON.stringify({ targetUs: c.seekUs, capture, probe, scores, best }, null, 2)),
+        contentType: 'application/json',
+      })
+    }
     expect(best.ssim, `SSIM below floor; scores=${JSON.stringify(scores)}`).toBeGreaterThanOrEqual(SSIM_FLOOR)
   } finally {
     if (toggledOn) {
@@ -137,16 +186,16 @@ async function runFamilyConformance(c: FamilyCase) {
   }
 }
 
-test('preview-sw: DNxHR (intra) previews via the ffmpeg engine\'s software lane + SSIM', async () => {
+test('preview-sw: DNxHR (intra) previews via the ffmpeg engine\'s software lane + SSIM @serial', async ({}, testInfo) => {
   await runFamilyConformance({
     label: 'dnxhr', fixture: path.join(BENCH_DIR, 'dnxhr-1080.mov'),
     seekUs: 500_000, forwardDecodeFloorUs: 0, // intra: any frame is a keyframe
-  })
+  }, testInfo)
 })
 
-test('preview-sw: MPEG-2 (long-GOP) previews the covering frame via the ffmpeg engine\'s software lane + SSIM', async () => {
+test('preview-sw: MPEG-2 (long-GOP) previews the covering frame via the ffmpeg engine\'s software lane + SSIM @serial', async ({}, testInfo) => {
   await runFamilyConformance({
     label: 'mpeg2', fixture: path.join(BENCH_DIR, 'mpeg2-1080.mpg'),
     seekUs: 800_000, forwardDecodeFloorUs: 700_000, // mid-GOP: ring must NOT hold the ~500ms keyframe
-  })
+  }, testInfo)
 })

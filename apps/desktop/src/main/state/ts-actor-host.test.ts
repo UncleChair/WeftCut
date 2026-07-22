@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import nodePath from 'node:path'
@@ -78,6 +78,82 @@ describe('createTsActorHost — persistence-route integration', () => {
 
     return { deps, vfs, napiCalls, sent }
   }
+
+  it('project_open flushes pending edits to the current workspace before switching', async () => {
+    vi.useFakeTimers()
+    const { deps, vfs } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+
+    try {
+      const targetDir = await host.handleInvoke('project_new_workspace', {
+        parentFolder: '/projects',
+        name: 'target',
+        width: 1920,
+        height: 1080,
+        fpsNum: 30,
+        fpsDen: 1,
+      }) as string
+      const currentDir = await host.handleInvoke('project_new_workspace', {
+        parentFolder: '/projects',
+        name: 'current',
+        width: 1920,
+        height: 1080,
+        fpsNum: 30,
+        fpsDen: 1,
+      }) as string
+
+      await host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
+      await host.handleInvoke('project_open', { path: targetDir })
+
+      const persisted = JSON.parse(vfs[`${currentDir}/project.json`]!) as {
+        tracks: Array<{ label: string }>
+      }
+      expect(persisted.tracks).toHaveLength(3)
+      expect(persisted.tracks.at(-1)?.label).toBe('Track')
+      expect(await host.handleInvoke('project_summary', {})).toMatchObject({ name: 'target' })
+    } finally {
+      host.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('project_new_workspace flushes pending edits to the current workspace before replacing it', async () => {
+    vi.useFakeTimers()
+    const { deps, vfs } = makeInMemoryDeps()
+    const host = createTsActorHost(deps)
+    host.start()
+
+    try {
+      const currentDir = await host.handleInvoke('project_new_workspace', {
+        parentFolder: '/projects',
+        name: 'current',
+        width: 1920,
+        height: 1080,
+        fpsNum: 30,
+        fpsDen: 1,
+      }) as string
+      await host.handleInvoke('add_track', {})
+
+      await host.handleInvoke('project_new_workspace', {
+        parentFolder: '/projects',
+        name: 'replacement',
+        width: 1920,
+        height: 1080,
+        fpsNum: 30,
+        fpsDen: 1,
+      })
+
+      const persisted = JSON.parse(vfs[`${currentDir}/project.json`]!) as {
+        tracks: Array<{ label: string }>
+      }
+      expect(persisted.tracks).toHaveLength(3)
+      expect(await host.handleInvoke('project_summary', {})).toMatchObject({ name: 'replacement' })
+    } finally {
+      host.stop()
+      vi.useRealTimers()
+    }
+  })
 
   it('newWorkspace → project_summary → add_track → project_save round-trip', async () => {
     const { deps, vfs } = makeInMemoryDeps()

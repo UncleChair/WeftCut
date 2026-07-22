@@ -269,10 +269,21 @@ export class ExportFrameStore implements FrameStore {
   frameAt(tUs: number): VideoFrame | TenBitFrame | NativeNv12Frame | null { // satisfies DecodedFrame | null
     if (this.entries.length === 0) return null;
     const index = this.indexAtOrBefore(tUs);
+    return this.entries[index >= 0 ? index : 0]!.frame;
+  }
+
+  selectFrame(tUs: number): { frame: VideoFrame | TenBitFrame | NativeNv12Frame; ptsUs: number; durationUs: number } | null {
+    if (this.entries.length === 0) return null;
+    const index = this.indexAtOrBefore(tUs);
     // A target before the first source PTS displays the opening frame. For all
     // other targets, identity is solely the greatest presentation PTS <= tUs;
     // independently-quantized duration must never redirect it to a neighbour.
-    return this.entries[index >= 0 ? index : 0]!.frame;
+    const selected = this.entries[index >= 0 ? index : 0]!;
+    return {
+      frame: selected.frame,
+      ptsUs: selected.ptsUs,
+      durationUs: selected.durationUs,
+    };
   }
 
   private indexAtOrBefore(tUs: number): number {

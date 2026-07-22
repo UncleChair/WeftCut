@@ -212,10 +212,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     snapshotComposition: () => actor.snapshot().composition,
   }
 
+  // Only state-replacing routes cross this gate. Save As preserves the current
+  // actor snapshot and writes it directly to its new destination.
+  const replaceWorkspace = async <T>(replace: () => Promise<T>): Promise<T> => {
+    await autosave.forceFlush()
+    return replace()
+  }
+
   const persistence: PersistenceHandlers = {
-    open: (dir) => openProject(orchestratorDeps, dir),
+    open: (dir) => replaceWorkspace(() => openProject(orchestratorDeps, dir)),
     saveAs: (dir) => saveProjectAs(orchestratorDeps, dir),
-    newWorkspace: (a) => newWorkspace(orchestratorDeps, a),
+    newWorkspace: (a) => replaceWorkspace(() => newWorkspace(orchestratorDeps, a)),
     save: () => autosave.forceFlush(),
   }
 

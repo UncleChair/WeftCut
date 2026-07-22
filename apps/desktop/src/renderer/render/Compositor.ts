@@ -160,6 +160,12 @@ export interface ActiveClipProbe {
   spriteBound: boolean;
   spriteWidth: number;
   spriteHeight: number;
+  /// Identity of the frame currently held by the sprite. Unlike the ring
+  /// bounds, these values change only after `updateClip` successfully binds a
+  /// selected frame; on a decode miss they keep describing the held frame.
+  boundFramePtsUs: number | null;
+  boundFrameDurationUs: number | null;
+  boundFrameSourceKey: string | null;
   /// The resolved HW lane (`nvdec`|`vaapi`|`d3d11va`) when the active clip's
   /// source is a `FfmpegSource` on its hardware lane, else null (software lane,
   /// a WebCodecs source, or no matching clip). The lane-parameterized preview-hw
@@ -275,6 +281,13 @@ interface ActiveClip {
   /// for this media, `ensureClip` starts a no-flash overlap-swap to the new
   /// source. Key semantics: see `ResolvedRendererSource`.
   builtFromKey: string;
+  /// Presentation identity of the pixels currently held by `sprite`. Kept
+  /// independently from the ring because a frameAt miss deliberately holds
+  /// the previous image, and independently from builtFromKey because a
+  /// no-flash source swap keeps the old pixels until the new source binds.
+  boundFramePtsUs: number | null;
+  boundFrameDurationUs: number | null;
+  boundFrameSourceKey: string | null;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
   /// found `ring.frameAt(srcTUs)` returned null. Used so the
   /// `frameAt → null` log fires once per transition rather than
@@ -1226,6 +1239,9 @@ export class Compositor {
       spriteBound: !isEmpty,
       spriteWidth: isEmpty ? 0 : tex.orig.width,
       spriteHeight: isEmpty ? 0 : tex.orig.height,
+      boundFramePtsUs: clip.boundFramePtsUs,
+      boundFrameDurationUs: clip.boundFrameDurationUs,
+      boundFrameSourceKey: clip.boundFrameSourceKey,
       hwLane: s instanceof FfmpegSource ? s.currentHwLane() : null,
       builtFromKey: clip.builtFromKey,
     };
@@ -1707,6 +1723,9 @@ export class Compositor {
       sprite,
       effects: new EffectChain(),
       builtFromKey,
+      boundFramePtsUs: null,
+      boundFrameDurationUs: null,
+      boundFrameSourceKey: null,
       loggedNull: false,
     };
     this.clips.set(layer.id, clip);
@@ -1862,8 +1881,9 @@ export class Compositor {
 
     // Upload the current frame BEFORE adjusting transforms so the
     // sprite's natural size reflects the real texture dimensions.
-    const frame = clip.source.ring.frameAt(srcTUs);
-    if (frame) {
+    const selected = clip.source.ring.selectFrame(srcTUs);
+    const frame = selected?.frame ?? null;
+    if (frame && selected) {
       if (isTenBitFrame(frame)) {
         clip.sprite.bindExternalTexture(
           this.ensureTenBitIngest().textureFor(clip.layerId, frame),
@@ -1879,6 +1899,9 @@ export class Compositor {
       } else {
         clip.sprite.updateFrame(frame);
       }
+      clip.boundFramePtsUs = selected.ptsUs;
+      clip.boundFrameDurationUs = selected.durationUs;
+      clip.boundFrameSourceKey = clip.builtFromKey;
     } else {
       // Diagnostic: log when frameAt returns null (painter holds
       // previous frame). Throttled to "only when this clip's state

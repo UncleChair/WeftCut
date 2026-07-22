@@ -309,6 +309,11 @@ export interface E2EHook {
   /// preview frame at composition resolution. The spec decodes this, produces
   /// an ffmpeg reference PNG of the same source frame, and SSIM-compares.
   capturePreviewFramePng(): Promise<string>;
+  /// Atomically composite, render, and capture one preview frame together with
+  /// the exact clip-frame identity that was bound for those pixels. This is the
+  /// conformance-safe surface: ring readiness alone does not prove which held
+  /// frame reached the framebuffer.
+  capturePreviewFrame(layerId?: string): Promise<PreviewFrameCapture>;
   /// The persisted decode-route kind for `mediaId` as the renderer store sees
   /// it ("native-sw"/"proxied"/"bypass"/…), or null if the media isn't in the
   /// store yet. Lets the preview-sw spec wait for the async proxy-decision to
@@ -446,9 +451,20 @@ interface PreviewBridge {
   /// Active VideoClip decode-source + sprite snapshot off the live Compositor
   /// (see Compositor.activeClipProbe). Null when no live clip.
   activeClipProbe(layerId?: string): ActiveClipProbe | null;
-  /// Base64 PNG (no `data:` prefix) of the current composited preview frame.
-  capturePng(): Promise<string>;
+  /// Composite + capture PNG and presented-frame metadata in one operation.
+  captureFrame(layerId?: string): Promise<PreviewFrameCapture>;
   resourceProbe(): PreviewResourceProbe;
+}
+
+export interface PreviewFrameCapture {
+  /// Base64 PNG, without a `data:` prefix.
+  pngBase64: string;
+  /// Composition time passed to the compositor for this capture.
+  positionUs: number;
+  /// Presentation counter after the captured composite completed.
+  presentedCompositeCount: number;
+  /// Snapshot taken after binding and before returning the encoded PNG.
+  clip: ActiveClipProbe | null;
 }
 
 export interface PreviewResourceProbe {
@@ -895,7 +911,11 @@ export function installMotifHook(): void {
   };
   hookSlot().capturePreviewFramePng = async () => {
     if (!previewBridge) throw new Error("capturePreviewFramePng: preview bridge not registered");
-    return previewBridge.capturePng();
+    return (await previewBridge.captureFrame()).pngBase64;
+  };
+  hookSlot().capturePreviewFrame = async (layerId?: string) => {
+    if (!previewBridge) throw new Error("capturePreviewFrame: preview bridge not registered");
+    return previewBridge.captureFrame(layerId);
   };
   hookSlot().mediaDecodeRouteKind = (mediaId: string) => {
     return useProjectStore.getState().mediaById.get(mediaId)?.decode_route?.route ?? null;

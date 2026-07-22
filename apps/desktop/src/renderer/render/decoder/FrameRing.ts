@@ -137,6 +137,23 @@ export class FrameRing {
   /// the input chunk set it, and a duration-based upper bound mis-selects
   /// (lands on an earlier entry, not the latest `ptsUs <= tUs`).
   frameAt(tUs: number): TransportFrame | null {
+    return this.entryAt(tUs)?.frame ?? null;
+  }
+
+  /// Same selection rule as `frameAt`, plus the presentation identity retained
+  /// by the ring. ImageBitmap carries no timing metadata of its own, so callers
+  /// that need to prove what was painted must read it here atomically.
+  selectFrame(tUs: number): { frame: TransportFrame; ptsUs: number; durationUs: number } | null {
+    const selected = this.entryAt(tUs);
+    if (!selected) return null;
+    return {
+      frame: selected.frame,
+      ptsUs: selected.ptsUs,
+      durationUs: selected.durationUs,
+    };
+  }
+
+  private entryAt(tUs: number): RingEntry | null {
     if (this.entries.length === 0) return null;
     const firstPts = this.entries[0]!.ptsUs;
     if (tUs < firstPts) {
@@ -144,10 +161,10 @@ export class FrameRing {
       // offset); otherwise the painter should hold its previous
       // frame rather than flash a wrong-region frame.
       if (firstPts - tUs > CLAMP_TO_FIRST_GAP_US) return null;
-      return this.entries[0]!.frame;
+      return this.entries[0]!;
     }
     const idx = this.findLatestAtOrBefore(tUs);
-    return idx === -1 ? null : this.entries[idx]!.frame;
+    return idx === -1 ? null : this.entries[idx]!;
   }
 
   /// Drop everything. Use on seek beyond the lookahead window.

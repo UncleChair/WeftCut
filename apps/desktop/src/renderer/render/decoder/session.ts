@@ -87,6 +87,9 @@ export interface SourceHandleInit {
 /// Minimal frame-by-PTS surface the Compositor reads through. Implemented by
 /// `FrameRing` (preview) and `ExportFrameStore` (export).
 export interface FrameStore {
+  /// Select the frame exactly as the compositor will present it, retaining the
+  /// PTS/duration that are otherwise lost for ImageBitmap-backed frames.
+  selectFrame(tUs: number): FrameSelection | null;
   frameAt(tUs: number): DecodedFrame | null;
   containsPts(tUs: number): boolean;
   /// PTS (µs) of the earliest cached frame, or null if empty.
@@ -95,6 +98,12 @@ export interface FrameStore {
   lastPtsUs(): number | null;
   /// Number of cached entries, for the dev `PerfHUD`.
   size(): number;
+}
+
+export interface FrameSelection {
+  frame: DecodedFrame;
+  ptsUs: number;
+  durationUs: number;
 }
 
 /// The surface the Compositor composites through (the minimal decode contract).
