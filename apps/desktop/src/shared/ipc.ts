@@ -181,7 +181,7 @@ export type ExportSwFrameMsg = {
 /// `ExportSwMsg`, narrowed to a discriminated union on `kind`.
 export type ExportSwMsg =
   | { sessionId: string; kind: 'frame'; frame: ExportSwFrameMsg }
-  | { sessionId: string; kind: 'rangeEnd' }
+  | { sessionId: string; kind: 'rangeEnd'; aUs: number; bUs: number }
   | { sessionId: string; kind: 'ended' }
   | { sessionId: string; kind: 'error'; message: string }
 

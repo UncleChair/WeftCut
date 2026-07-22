@@ -135,6 +135,9 @@ export type PreviewDecodeSession = DecodeSession;
 /// `waitForPts` / `isReadyFor` / `fail`).
 export interface ExportDecodeSession extends DecodeSession {
   readonly ring: ExportFrameStore;
+  /// Dispatch-only: must resolve without waiting for output that depends on
+  /// consumer progress. The adapter must eventually make every target in the
+  /// range final via an exact/later PTS, `completeRange`, EOS, or `fail`.
   decodeRange(aUs: number, bUs: number): Promise<void>;
   /// Release entries older than the greatest presentation PTS at/below the
   /// cutoff. The immediate lower neighbour is retained so a quantized PTS gap

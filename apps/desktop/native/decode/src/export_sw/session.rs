@@ -92,7 +92,11 @@ pub enum ExportPoke {
     /// The current `decode_range` has emitted every frame intersecting its
     /// `[a, b]`; the range is satisfied. Fired once per completed range (also
     /// for a zero-frame already-covered range).
-    RangeEnd { session_id: String },
+    RangeEnd {
+        session_id: String,
+        a_us: i64,
+        b_us: i64,
+    },
     /// The stream reached its end during a range: the final GOP's trailing frames
     /// were flushed internally (no external "next key" needed) and delivered
     /// before this signal. A subsequent backward range re-arms decoding.
@@ -279,6 +283,8 @@ fn serve_range(
             sink,
             ExportPoke::RangeEnd {
                 session_id: session_id.to_string(),
+                a_us: a,
+                b_us: b,
             },
         );
         return;
@@ -332,6 +338,8 @@ fn serve_range(
                         sink,
                         ExportPoke::RangeEnd {
                             session_id: session_id.to_string(),
+                            a_us: a,
+                            b_us: b,
                         },
                     );
                     return;
@@ -359,6 +367,8 @@ fn serve_range(
                 sink,
                 ExportPoke::RangeEnd {
                     session_id: session_id.to_string(),
+                    a_us: a,
+                    b_us: b,
                 },
             );
             return;
@@ -621,6 +631,7 @@ mod tests {
         formats: Vec<SwOutFormat>,
         datas: Vec<Vec<u8>>,
         range_ends: usize,
+        completed_ranges: Vec<(i64, i64)>,
         ended: usize,
         errors: Vec<String>,
     }
@@ -639,7 +650,10 @@ mod tests {
                     c.formats.push(frame.format);
                     c.datas.push(frame.data);
                 }
-                ExportPoke::RangeEnd { .. } => c.range_ends += 1,
+                ExportPoke::RangeEnd { a_us, b_us, .. } => {
+                    c.range_ends += 1;
+                    c.completed_ranges.push((a_us, b_us));
+                }
                 ExportPoke::Ended { .. } => c.ended += 1,
                 ExportPoke::Error { message, .. } => c.errors.push(message),
             }
@@ -679,6 +693,19 @@ mod tests {
         // ProRes fixture is color_range=tv; matrix/primaries/transfer unspecified.
         assert_eq!(info.color.range.as_deref(), Some("tv"));
         assert_eq!(info.start_pts_us, 0);
+        reg.close("s").unwrap();
+    }
+
+    #[test]
+    fn range_end_reports_the_exact_completed_range() {
+        let (reg, got) = registry_with_collector();
+        reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .expect("open");
+        run_range(&reg, "s", 125_000, 500_000, &got);
+        assert_eq!(
+            got.lock().unwrap().completed_ranges,
+            vec![(125_000, 500_000)]
+        );
         reg.close("s").unwrap();
     }
 

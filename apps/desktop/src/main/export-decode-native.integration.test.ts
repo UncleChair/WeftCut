@@ -129,6 +129,14 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     return { info, msgs }
   }
 
+  it('rangeEnd reports the exact completed source-time range', async () => {
+    const { msgs } = open('range-bounds', PRORES)
+    await drainRange(ctx, 'range-bounds', 125_000, 500_000)
+    const completed = msgs.find((m) => m.kind === 'rangeEnd')
+    expect(completed).toMatchObject({ aUs: 125_000, bUs: 500_000 })
+    close('range-bounds')
+  })
+
   function close(id: string) {
     ctx.backend.exportSwClose(id)
     openSessions.delete(id)

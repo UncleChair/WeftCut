@@ -204,6 +204,9 @@ pub struct ExportSwMsg {
     pub frame: Option<ExportSwFrame>,
     /// Present iff kind == "error".
     pub message: Option<String>,
+    /// Present iff kind == "rangeEnd": the exact completed source-time range.
+    pub a_us: Option<f64>,
+    pub b_us: Option<f64>,
 }
 
 /// The component's ffmpeg linkage identity — the SW capability-cache envKey.
@@ -366,18 +369,28 @@ impl NativeDecode {
                         session_id,
                         kind: "frame".into(),
                         message: None,
+                        a_us: None,
+                        b_us: None,
                     },
-                    ExportPoke::RangeEnd { session_id } => ExportSwMsg {
+                    ExportPoke::RangeEnd {
+                        session_id,
+                        a_us,
+                        b_us,
+                    } => ExportSwMsg {
                         session_id,
                         kind: "rangeEnd".into(),
                         frame: None,
                         message: None,
+                        a_us: Some(a_us as f64),
+                        b_us: Some(b_us as f64),
                     },
                     ExportPoke::Ended { session_id } => ExportSwMsg {
                         session_id,
                         kind: "ended".into(),
                         frame: None,
                         message: None,
+                        a_us: None,
+                        b_us: None,
                     },
                     ExportPoke::Error {
                         session_id,
@@ -387,6 +400,8 @@ impl NativeDecode {
                         kind: "error".into(),
                         frame: None,
                         message: Some(message),
+                        a_us: None,
+                        b_us: None,
                     },
                 };
                 if let Some(tsfn) = sinks_for_cb.lock_recover().get(&msg.session_id) {

@@ -173,8 +173,8 @@ export type ExportRequest =
   /// One decoded frame (NV12 or I420P10 per `frame.format`); `frame.data` is
   /// transferred (see the transfer list on the renderer-main `postMessage`).
   | { type: "nd:frame"; frame: NativeDecodeFrameMsg }
-  /// The in-flight `decodeRange` delivered every frame in its range.
-  | { type: "nd:rangeEnd"; sessionId: string }
+  /// The in-flight `decodeRange` delivered every frame in `[aUs, bUs]`.
+  | { type: "nd:rangeEnd"; sessionId: string; aUs: number; bUs: number }
   /// End of stream: the session flushed its final GOP; no more frames ever.
   | { type: "nd:ended"; sessionId: string }
   /// A native session error (mid-decode failure); the handle fails its ring.

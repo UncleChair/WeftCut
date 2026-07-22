@@ -118,6 +118,25 @@ describe("NativeExportSourceHandle", () => {
     expect(relay.decodeRanges).toEqual([{ sessionId: expect.any(String), aUs: 0, bUs: 100_000 }]);
   });
 
+  it("finalizes a quantized target when the native range completes", async () => {
+    const { handle, relay } = makeHandle();
+    await handle.decodeRange(0, 1_999_999);
+    const sink = relay.sink!;
+    sink.onFrame(frameMsg(1_966_666));
+
+    let settled = false;
+    void handle.ring.waitForPts(1_966_667).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    sink.onRangeEnd(0, 1_999_999);
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    expect(handle.ring.frameAt(1_966_667)?.timestamp).toBe(1_966_666);
+  });
+
   it("holds frames with no credit while resident, credits them on evict", async () => {
     const { handle, relay } = makeHandle();
     await handle.ensureReady();
@@ -211,6 +230,27 @@ describe("NativeExportSourceHandle", () => {
     sink.onFrame(frameMsg(6_000_000)); // …until a real frame satisfies it.
     await wait;
     expect(resolved).toBe(true);
+  });
+
+  it("a backward decodeRange cannot settle from frames in the previous generation", async () => {
+    const { handle, relay } = makeHandle();
+    await handle.decodeRange(1_000_000, 2_000_000);
+    const sink = relay.sink!;
+    sink.onFrame(frameMsg(1_000_000));
+    sink.onRangeEnd(1_000_000, 2_000_000);
+
+    await handle.decodeRange(0, 500_000);
+    let settled = false;
+    const waited = handle.ring.waitForPts(100_000).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    sink.onFrame(frameMsg(0));
+    sink.onFrame(frameMsg(125_000));
+    await waited;
+    expect(handle.ring.frameAt(100_000)?.timestamp).toBe(0);
   });
 
   it("clamps grid-overrun waiters to the last held frame on EOS", async () => {

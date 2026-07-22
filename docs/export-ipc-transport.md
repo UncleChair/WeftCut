@@ -63,7 +63,10 @@ consumption: [`render.md`](render.md) §Export decode pipelines):
    session.
 2. The session decodes GOP-aligned exact coverage of each requested range and
    emits **everything in-band** on its per-session callback as a tagged
-   `ExportSwMsg` — `frame`, `rangeEnd`, `ended`, `error`. The main process
+   `ExportSwMsg` — `frame`, `rangeEnd`, `ended`, `error`. `rangeEnd` includes
+   the exact completed `[aUs,bUs]`; after every preceding frame has arrived,
+   the Worker uses it as a presentation-finality proof for pending
+   `waitForPts` targets. The main process
    relays each message verbatim to the renderer over the one dedicated
    `exportSw:msg` channel, and the renderer re-posts frames into the Worker
    as transferred `ArrayBuffer`s (zero-copy at that hop).

@@ -28,7 +28,7 @@ import type {
 /// inbound `nd:*` message to the matching session's sink by `sessionId`.
 export interface NativeDecodeSink {
   onFrame(frame: NativeDecodeFrameMsg): void;
-  onRangeEnd(): void;
+  onRangeEnd(aUs: number, bUs: number): void;
   onEnded(): void;
   onError(msg: string): void;
 }
@@ -63,7 +63,7 @@ class NativeDecodeRelay {
         this.sinks.get(msg.frame.sessionId)?.onFrame(msg.frame);
         return;
       case "nd:rangeEnd":
-        this.sinks.get(msg.sessionId)?.onRangeEnd();
+        this.sinks.get(msg.sessionId)?.onRangeEnd(msg.aUs, msg.bUs);
         return;
       case "nd:ended":
         this.sinks.get(msg.sessionId)?.onEnded();

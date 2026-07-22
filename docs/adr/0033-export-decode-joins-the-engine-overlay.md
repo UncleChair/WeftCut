@@ -64,7 +64,14 @@ Everything the session emits travels **in-band on one ordered channel** as a
 tagged `ExportSwMsg` (`frame` / `rangeEnd` / `ended` / `error`), relayed
 verbatim main → renderer → Worker. Delivery order IS the contract — an `ended`
 arriving before its tail frames would corrupt the export tail — so control
-signals are never split onto a second channel. The transport format follows
+signals are never split onto a second channel. `rangeEnd` carries the exact
+completed `[a, b]` and is the producer's presentation-finality proof: once it
+arrives, `ExportFrameStore` may settle any target in that range from the
+greatest held PTS at/before the target, even when integer timestamp conversion
+leaves a one-microsecond gap and no later frame belongs to the range. The
+dispatch promise itself never awaits `rangeEnd` — doing so would block the
+consumer that returns credits and recreate the credit-window deadlock. The
+transport format follows
 the export's composite bit depth, table-wide (`NV12` at 8-bit, `I420P10` at
 10-bit); frames cross main → renderer over classic IPC and renderer → Worker
 as transferred ArrayBuffers. On the Worker side `NativeExportSourceHandle`
@@ -73,6 +80,11 @@ implements the existing `ExportDecodeSession` contract, so `waitForPts` /
 RGB in owned shaders, never by the browser
 ([ADR 0032](0032-cpu-plane-yuv-converts-in-owned-shaders.md)). The lane is
 software-only; hardware-lane readback is profiling-gated future work.
+
+A backward range starts a new decode generation. The Worker discards the old
+generation's resident frames and finality proof, returns their credits, then
+dispatches the re-seek; stale future PTS can therefore never satisfy the new
+earlier range.
 
 ### Failure is loud, and mid-export fallback is forbidden
 

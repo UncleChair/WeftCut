@@ -179,6 +179,22 @@ describe("ExportFrameStore.waitForPts", () => {
 });
 
 describe("ExportFrameStore frame identity", () => {
+  it("finalizes a quantized target when its decode range is complete", async () => {
+    const store = new ExportFrameStore();
+    store.push(fakeFrame(1_966_666, 33_333));
+
+    let settled = false;
+    const waited = store.waitForPts(1_966_667).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    store.completeRange(0, 1_999_999);
+    await waited;
+    expect(store.frameAt(1_966_667)?.timestamp).toBe(1_966_666);
+  });
+
   it("selects the greatest presentation PTS at or before the target even when durations overlap", () => {
     const store = new ExportFrameStore();
     store.push(fakeFrame(0, 100_000));
@@ -309,6 +325,21 @@ describe("ExportFrameStore EOS finalization", () => {
     // PTS frames arrive, instead of being discarded before the next wait.
     store.evictBefore(1_000_000);
     expect(store.size()).toBe(1);
+  });
+
+  it("clearEosDrain invalidates range completion from the previous decode generation", async () => {
+    const store = new ExportFrameStore();
+    store.push(fakeFrame(0, 33_333));
+    store.completeRange(0, 500_000);
+    await expect(store.waitForPts(100_000)).resolves.toBeUndefined();
+
+    store.clearEosDrain();
+    let settled = false;
+    void store.waitForPts(100_000).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
   });
 });
 

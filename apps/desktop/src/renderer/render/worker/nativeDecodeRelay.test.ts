@@ -83,7 +83,7 @@ function frameMsg(sessionId: string, ptsUs: number): NativeDecodeFrameMsg {
 function loggingSink(log: string[], tag = ""): NativeDecodeSink {
   return {
     onFrame: (f) => log.push(`${tag}frame@${f.ptsUs}`),
-    onRangeEnd: () => log.push(`${tag}rangeEnd`),
+    onRangeEnd: (aUs, bUs) => log.push(`${tag}rangeEnd[${aUs}..${bUs}]`),
     onEnded: () => log.push(`${tag}ended`),
     onError: (m) => log.push(`${tag}error:${m}`),
   };
@@ -97,8 +97,8 @@ describe("NativeDecodeRelay", () => {
     dispatch({ type: "nd:frame", frame: frameMsg("s", 0) });
     dispatch({ type: "nd:frame", frame: frameMsg("s", 33_333) });
     dispatch({ type: "nd:ended", sessionId: "s" });
-    dispatch({ type: "nd:rangeEnd", sessionId: "s" });
-    expect(log).toEqual(["frame@0", "frame@33333", "ended", "rangeEnd"]);
+    dispatch({ type: "nd:rangeEnd", sessionId: "s", aUs: 0, bUs: 500_000 });
+    expect(log).toEqual(["frame@0", "frame@33333", "ended", "rangeEnd[0..500000]"]);
   });
 
   it("demuxes by sessionId — each sink sees only its own frames and controls", async () => {
@@ -109,10 +109,10 @@ describe("NativeDecodeRelay", () => {
     relay.register("b", loggingSink(logB, "b:"));
     dispatch({ type: "nd:frame", frame: frameMsg("a", 0) });
     dispatch({ type: "nd:frame", frame: frameMsg("b", 100) });
-    dispatch({ type: "nd:rangeEnd", sessionId: "a" });
+    dispatch({ type: "nd:rangeEnd", sessionId: "a", aUs: 0, bUs: 500_000 });
     dispatch({ type: "nd:error", sessionId: "b", message: "boom" });
     dispatch({ type: "nd:ended", sessionId: "a" });
-    expect(logA).toEqual(["a:frame@0", "a:rangeEnd", "a:ended"]);
+    expect(logA).toEqual(["a:frame@0", "a:rangeEnd[0..500000]", "a:ended"]);
     expect(logB).toEqual(["b:frame@100", "b:error:boom"]);
   });
 
@@ -122,7 +122,7 @@ describe("NativeDecodeRelay", () => {
     relay.register("known", loggingSink(log));
     expect(() => {
       dispatch({ type: "nd:frame", frame: frameMsg("ghost", 0) });
-      dispatch({ type: "nd:rangeEnd", sessionId: "ghost" });
+      dispatch({ type: "nd:rangeEnd", sessionId: "ghost", aUs: 0, bUs: 500_000 });
       dispatch({ type: "nd:ended", sessionId: "ghost" });
       dispatch({ type: "nd:error", sessionId: "ghost", message: "boom" });
       // An openResult with no pending reqId is likewise ignored.
@@ -146,7 +146,7 @@ describe("NativeDecodeRelay", () => {
     dispatch({ type: "nd:frame", frame: frameMsg("s", 0) });
     relay.unregister("s");
     dispatch({ type: "nd:frame", frame: frameMsg("s", 33_333) });
-    dispatch({ type: "nd:rangeEnd", sessionId: "s" });
+    dispatch({ type: "nd:rangeEnd", sessionId: "s", aUs: 0, bUs: 500_000 });
     expect(log).toEqual(["frame@0"]);
   });
 

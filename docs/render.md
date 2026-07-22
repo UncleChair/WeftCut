@@ -443,8 +443,13 @@ and evicts consumed frames. A pipeline is one of two handles behind the same
   becomes an IPC command to a credit-windowed `export_sw` session in the
   native component, which decodes the **original** and streams NV12/I420P10
   planes back main → renderer → Worker in-band and in order; the handle
-  returns one credit per frame that leaves the ring, and the frames convert
-  to RGB in owned shaders, never by the browser (ADR 0032). Transport:
+  returns one credit per frame that leaves the ring. Its ordered `rangeEnd`
+  carries the completed source range and finalizes quantized wait targets
+  without decoding an out-of-range proof frame; `decodeRange` remains
+  dispatch-only so the consumer can keep returning credits. A backward range
+  starts a fresh decode generation and releases the prior generation's frames
+  and credits. Frames convert to RGB in owned shaders, never by the browser
+  (ADR 0032). Transport:
   [`export-ipc-transport.md`](export-ipc-transport.md); decision record:
   ADR 0033.
 

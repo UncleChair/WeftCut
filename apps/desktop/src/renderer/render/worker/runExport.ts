@@ -329,6 +329,8 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
           worker.postMessage({
             type: "nd:rangeEnd",
             sessionId: m.sessionId,
+            aUs: m.aUs,
+            bUs: m.bUs,
           } satisfies ExportRequest);
           return;
         case "ended":

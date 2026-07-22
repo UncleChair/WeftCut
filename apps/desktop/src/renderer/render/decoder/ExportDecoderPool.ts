@@ -84,6 +84,11 @@ export class ExportFrameStore implements FrameStore {
   /// unconsumed frames (pool exhaustion at ~8 outstanding frames
   /// was the export-stuck wedge).
   private waiters: Array<{ tUs: number; resolve: () => void; reject: (e: Error) => void }> = [];
+  /// The most recent decode range whose ordered producer has confirmed that
+  /// every in-range frame was delivered. This is a presentation-finality
+  /// proof, not an eviction or selection hint: `frameAt` still chooses the
+  /// greatest held PTS at/before the target.
+  private completedRange: { aUs: number; bUs: number } | null = null;
   /// Pending resolvers parked at the 10-bit high-water gate (I2 backpressure).
   private gateWaiters: Array<() => void> = [];
   /// Non-null once `fail()` is called; subsequent waitForPts calls reject.
@@ -176,6 +181,24 @@ export class ExportFrameStore implements FrameStore {
     return p;
   }
 
+  /// Record that the ordered producer delivered every frame in `[aUs, bUs]`.
+  /// A target in that range is now final even when integer time conversion
+  /// leaves it one microsecond after the last presentation PTS and no later
+  /// proof frame was included in the decode range.
+  completeRange(aUs: number, bUs: number): void {
+    this.completedRange = { aUs, bUs };
+    if (this.waiters.length === 0) return;
+    const stillWaiting: typeof this.waiters = [];
+    for (const w of this.waiters) {
+      if (this.isReadyFor(w.tUs)) {
+        w.resolve();
+      } else {
+        stillWaiting.push(w);
+      }
+    }
+    this.waiters = stillWaiting;
+  }
+
   /// The end-of-stream `decoder.flush()` was issued. Kept as an explicit phase
   /// marker in the interface: frames may still arrive, so callers must not yet
   /// activate the finalized EOS clamp. Lower-neighbour retention is already an
@@ -208,6 +231,7 @@ export class ExportFrameStore implements FrameStore {
   /// possible again, so finalized EOS clamping must deactivate.
   clearEosDrain(): void {
     this.ended = false;
+    this.completedRange = null;
   }
 
   /// Readiness gate for `waitForPts`. The source frame to display at `tUs`
@@ -230,6 +254,14 @@ export class ExportFrameStore implements FrameStore {
     if (atOrBefore >= 0 && this.entries[atOrBefore]!.ptsUs === tUs) return true;
     const last = this.lastPtsUs();
     if (last !== null && last > tUs) return true;
+    if (
+      this.entries.length > 0 &&
+      this.completedRange !== null &&
+      this.completedRange.aUs <= tUs &&
+      tUs <= this.completedRange.bUs
+    ) {
+      return true;
+    }
     // Source fully drained: no better frame can arrive — clamp to what's held.
     return this.ended && this.entries.length > 0;
   }
@@ -303,6 +335,7 @@ export class ExportFrameStore implements FrameStore {
     for (const e of this.entries) e.frame.close();
     this.entries = [];
     this.ended = false;
+    this.completedRange = null;
     // Any caller still awaiting waitForPts is now in a state where
     // their wait will never resolve naturally. Don't resolve them —
     // that would mislead the caller into thinking a frame is

@@ -86,7 +86,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.relay = relay;
     this.relay.register(this.sessionId, {
       onFrame: (f) => this.onFrame(f),
-      onRangeEnd: () => this.onRangeEnd(),
+      onRangeEnd: (aUs, bUs) => this.onRangeEnd(aUs, bUs),
       onEnded: () => this.onEnded(),
       onError: (m) => this.onError(m),
     });
@@ -117,12 +117,14 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
   async decodeRange(aUs: number, bUs: number): Promise<void> {
     await this.ensureReady();
     if (this._disposed) return;
-    // Backward clip-reuse jump: the Rust session re-seeks and produces frames
-    // again, so the ring's finalized EOS clamp must deactivate — else waiters
-    // resolve against a stale held frame while the real re-decoded frame is
-    // still in flight. Mirrors the WebCodecs handle's rebuild path calling
-    // `clearEosDrain()`.
-    if (aUs < this.lastRangeAUs) this.ring.clearEosDrain();
+    // Backward clip-reuse jump starts a new decode generation. Frames and
+    // finality proofs from the prior generation cannot satisfy its targets;
+    // release them (and their credits) before the Rust session re-seeks.
+    if (aUs < this.lastRangeAUs) {
+      this.ring.flush();
+      this.reconcileCredits();
+      this.ring.clearEosDrain();
+    }
     this.lastRangeAUs = aUs;
     this.relay.decodeRange(this.sessionId, Math.round(aUs), Math.round(bUs));
   }
@@ -234,9 +236,11 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.reconcileCredits();
   }
 
-  /// Informational — `ring.waitForPts` drives readiness, not range completion.
-  private onRangeEnd(): void {
-    // intentional no-op
+  /// Ordered range completion is a presentation-finality proof: every frame
+  /// in `[aUs, bUs]` arrived before this signal, so quantized targets in the
+  /// range no longer need an out-of-range lookahead frame to settle.
+  private onRangeEnd(aUs: number, bUs: number): void {
+    this.ring.completeRange(aUs, bUs);
   }
 
   /// End of stream: let the ring clamp any grid-overrun waiters to the last held
