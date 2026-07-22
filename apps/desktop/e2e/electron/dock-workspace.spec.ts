@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  dragDockTab,
   invokeCmd,
   launchApp,
   newProject,
@@ -191,12 +192,11 @@ test("hidden Preview keeps clock resources alive while presentation sleeps", asy
     const before = await page.evaluate(() =>
       (window as any).__weftcutTest.previewResourceProbe(),
     );
-    await page
-      .getByTitle("Move Effect")
-      .locator(".weft-dock-grip")
-      .dragTo(page.locator('[data-panel-kind="preview"]'), {
-        targetPosition: { x: 240, y: 140 },
-      });
+    await dragDockTab(
+      page,
+      page.getByTitle("Move Effect").locator(".weft-dock-grip"),
+      page.locator('[data-panel-kind="preview"]'),
+    );
 
     await expect
       .poll(() =>
@@ -346,11 +346,11 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
 
     // The converse isolation: docking the Effect Panel tab must not reorder
     // the chain. Drop the Effect tab onto Preview's group center.
-    await page
-      .getByTitle("Move Effect")
-      .dragTo(page.locator('[data-panel-kind="preview"]'), {
-        targetPosition: { x: 240, y: 140 },
-      });
+    await dragDockTab(
+      page,
+      page.getByTitle("Move Effect"),
+      page.locator('[data-panel-kind="preview"]'),
+    );
     await expect.poll(async () => (await visibleTabLabels()).sort()).toEqual([
       "Attribute",
       "Effect",

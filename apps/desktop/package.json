@@ -31,7 +31,7 @@
     "napi:build:decode": "node scripts/napi-build-decode.mjs",
     "mcp:catalog:snapshot": "node scripts/snapshot-mcp-catalog.mjs",
     "mcp:catalog:check": "node scripts/snapshot-mcp-catalog.mjs && git diff --exit-code fixtures/mcp/rust-catalog-snapshot.json",
-    "e2e": "playwright test -c playwright.config.ts",
+    "e2e": "node scripts/run-e2e.mjs",
     "ffmpeg:fetch": "node scripts/fetch-ffmpeg.mjs",
     "ffmpeg:fetch-lgpl": "node scripts/fetch-ffmpeg-lgpl.mjs",
     "package": "npm run napi:build && npm run build && electron-builder --publish never",

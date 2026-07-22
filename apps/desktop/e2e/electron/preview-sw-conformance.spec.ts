@@ -330,8 +330,10 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
       return rendererPrivMB()
     }
 
-    // Warm the pipeline with an initial sweep so the baseline reflects
-    // steady-state (decoder + ring allocated), isolating the leak signal.
+    // Warm the pipeline with the SAME full-span sweep used by the measured
+    // phase. A short 15-seek warm-up under-fills the 4K ring on a busy Windows
+    // host, so floorA measures lazy allocation while floorB measures steady
+    // state and reports hundreds of MB as a false "leak".
     const churn = async (count: number) => {
       for (let i = 0; i < count; i++) {
         const us = (i % 120) * 500_000 // 0 .. 59.5 s across the 60 s clip
@@ -341,11 +343,11 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
         await new Promise((r) => setTimeout(r, 120))
       }
     }
-    await churn(15)
+    await churn(120)
     const floorA = await gcFloor()
 
-    // Churn 4K SW decodes hard: 120 seeks spanning the whole clip force the
-    // ring to fill + evict repeatedly — the exact path a leak would ratchet.
+    // Repeat the identical 120-seek sweep. Any retained-frame leak now appears
+    // as growth between two equally warmed floors rather than warm-up cost.
     await churn(120)
     const floorB = await gcFloor()
     const ratchet = floorB - floorA

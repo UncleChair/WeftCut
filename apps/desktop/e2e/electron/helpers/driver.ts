@@ -1,4 +1,4 @@
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron as electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -51,6 +51,56 @@ export function tmpDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
   mintedTmpDirs.add(dir)
   return dir
+}
+
+export type DockDropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center'
+
+/** Drive Dockview with a real pointer gesture. Its drop-zone overlay
+ * intentionally covers the underlying target mid-drag, so locator.dragTo's
+ * target-actionability retry can wait forever even though a user drop works. */
+export async function dragDockTab(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  position: DockDropPosition = 'center',
+): Promise<void> {
+  await source.waitFor({ state: 'visible' })
+  await target.waitFor({ state: 'visible' })
+  const sourceBox = await source.boundingBox()
+  const targetBox = await target.boundingBox()
+  if (!sourceBox || !targetBox) throw new Error('dock drag endpoints have no layout box')
+
+  const start = {
+    x: sourceBox.x + sourceBox.width / 2,
+    y: sourceBox.y + sourceBox.height / 2,
+  }
+  const inset = 8
+  const end = {
+    x:
+      position === 'left'
+        ? targetBox.x + inset
+        : position === 'right'
+          ? targetBox.x + targetBox.width - inset
+          : targetBox.x + targetBox.width / 2,
+    y:
+      position === 'top'
+        ? targetBox.y + inset
+        : position === 'bottom'
+          ? targetBox.y + targetBox.height - inset
+          : targetBox.y + targetBox.height / 2,
+  }
+
+  let pressed = false
+  try {
+    await page.mouse.move(start.x, start.y)
+    await page.mouse.down()
+    pressed = true
+    await page.mouse.move(end.x, end.y, { steps: 24 })
+    await page.mouse.up()
+    pressed = false
+  } finally {
+    if (pressed) await page.mouse.up()
+  }
 }
 
 /// Wrap an app's close(): once the original close settles, remove the

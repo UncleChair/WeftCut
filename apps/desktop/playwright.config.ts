@@ -8,10 +8,11 @@ export default defineConfig({
   globalSetup: './e2e/global-setup.ts',
   /// Project split: `serial` holds the specs that must own the machine
   /// (GPU/HW-lane, perf-measurement, determinism capture — tagged `@serial`
-  /// in the test title) and runs first, alone, while the machine is quiet.
-  /// `parallel` runs everything else across workers; fresh throwaway
-  /// userData per launchApp() (auto-removed on app.close()) is what makes
-  /// the parallel project safe.
+  /// in the test title). `scripts/run-e2e.mjs` runs this project to completion
+  /// before starting `parallel`; Playwright otherwise schedules independent
+  /// projects concurrently even when one declares `workers: 1`.
+  /// Fresh throwaway userData per launchApp() (auto-removed on app.close()) is
+  /// what makes the parallel project safe.
   projects: [
     { name: 'serial', grep: /@serial/, workers: 1 },
     { name: 'parallel', grepInvert: /@serial/, workers: process.env.CI ? 2 : '50%' },

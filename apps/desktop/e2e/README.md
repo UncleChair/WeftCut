@@ -43,7 +43,7 @@ VITE_WEFTCUT_E2E=1 npm run build            # MUST set the flag — see below
 ### Run
 
 ```
-npm run e2e        # the full Playwright suite (playwright.config.ts)
+npm run e2e        # full suite: @serial project, then parallel project
 npm run e2e -- color-conformance.spec.ts        # one file
 npm run e2e -- -g "role"                         # by title grep
 npm run e2e -- --project=serial                  # only the @serial gates
@@ -77,6 +77,11 @@ to `launchApp` twice, as dock-workspace's restart test does). Set
 - **`parallel`** — everything else. `workers` is `2` on CI and `50%` of cores
   locally.
 
+The package script goes through `scripts/run-e2e.mjs` because Playwright runs
+independent projects concurrently by default. Unscoped runs are split into two
+Playwright invocations so `serial` genuinely finishes before `parallel` starts;
+an explicit `--project=...` remains a single targeted invocation.
+
 Tag a new spec `@serial` in its test title whenever it measures time, drives
 the GPU/HW lane, or captures determinism reference output; untagged specs must
 tolerate running alongside other app instances.
@@ -85,7 +90,7 @@ tolerate running alongside other app instances.
 
 ```
 electron/            Playwright specs (*.spec.ts) — the live suite
-electron/helpers/    driver.ts: launchApp / newProject / driveExport / waitForHook
+electron/helpers/    driver.ts: launchApp / newProject / dragDockTab / driveExport / waitForHook
 lib/                 analyzer + comparison: analyze.mjs (media_conformance),
                      compare-determinism.mjs, image-ssim.mjs
 fixtures/            generate.mjs + generate-fixtures.mjs (real test media via ffmpeg);
