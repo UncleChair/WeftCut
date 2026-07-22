@@ -333,6 +333,13 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     evictMs: 0,
   };
 
+  // Native-sink pipelining: the PREVIOUS frame's transport round-trip
+  // (worker → renderer → main → ffmpeg stdin → ack), still in flight while
+  // this frame composites + packs. Awaited before posting the next chunk, so
+  // exactly one postChunk is ever outstanding — the single `pendingChunkAck`
+  // resolver slot requires that.
+  let inflightAck: Promise<void> | null = null;
+
   // 6. Chunked decode + encode.
   for (let chunkStart = 0; chunkStart < totalFrames; chunkStart += CHUNK_FRAMES) {
     if (cancelled) {
@@ -483,7 +490,12 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         // Native-sink frames go to the main thread over the chunk/ack channel,
         // which forwards them to export_video_sink_write. Copy because postChunk
         // transfers the buffer and pack() reuses its output.
-        await postChunk(bytes.slice());
+        // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
+        // transport round-trip then overlaps the next frame's composite+pack
+        // instead of serializing after it. `encodeMs` therefore measures the
+        // stall blocked on transport, not the transport itself.
+        if (inflightAck) await inflightAck;
+        inflightAck = postChunk(bytes.slice());
         encodeMs += performance.now() - encT0;
       } else {
         // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
@@ -582,6 +594,14 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         `queueWait=${queueWaitMs.toFixed(0)}ms ` +
         `evict=${evictMs.toFixed(0)}ms`,
     );
+  }
+
+  // Drain the last in-flight native-sink frame BEFORE posting `done` — the
+  // main thread calls exportVideoSinkFinish on `done`, and an unacked final
+  // frame would race the sink's finish.
+  if (inflightAck) {
+    await inflightAck;
+    inflightAck = null;
   }
 
   const totalMs = performance.now() - startedAtMs;
