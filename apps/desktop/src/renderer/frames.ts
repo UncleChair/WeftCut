@@ -16,6 +16,29 @@ export function frameDurUs(fpsNum: number, fpsDen: number): number {
   return Math.round((US_PER_SEC * fpsDen) / fpsNum);
 }
 
+/** Return the canonical frame boundary immediately before or after `anchorUs`.
+ *
+ * A frame's integer-microsecond width is not constant at rational rates: for
+ * example, adjacent 30000/1001 boundaries can be 33_366 or 33_367 µs apart.
+ * Derive the neighbouring boundary from the anchor's frame index instead of
+ * adding a pre-rounded duration, so trim previews and commits stay on the
+ * exact composition grid.
+ */
+export function adjacentFrameBoundaryUs(
+  anchorUs: number,
+  direction: -1 | 1,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  if (fpsNum <= 0 || fpsDen <= 0) {
+    return Math.max(0, anchorUs + direction * DEFAULT_FRAME_DUR_US);
+  }
+  const frameScale = US_PER_SEC * fpsDen;
+  const anchorFrame = Math.round((anchorUs * fpsNum) / frameScale);
+  const adjacentFrame = Math.max(0, anchorFrame + direction);
+  return Math.round((adjacentFrame * frameScale) / fpsNum);
+}
+
 /// Round `tUs` to the nearest composition-fps frame boundary (half-up).
 ///
 /// SINGLE SOURCE OF TRUTH: this is the wasm-backed `weftcut-eval::snap_frame_round`

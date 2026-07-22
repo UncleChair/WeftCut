@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "vitest";
 import {
+  adjacentFrameBoundaryUs,
   formatTimecode,
   frameDurUs,
   frameIndexInLayer,
@@ -53,6 +54,24 @@ describe("frameDurUs", () => {
   it("falls back to a 30fps default on degenerate input", () => {
     expect(frameDurUs(0, 1)).toBe(33_333);
     expect(frameDurUs(30, 0)).toBe(33_333);
+  });
+});
+
+describe("adjacentFrameBoundaryUs", () => {
+  it("returns the previous and next canonical boundary at integer rates", () => {
+    expect(adjacentFrameBoundaryUs(0, 1, 30, 1)).toBe(33_333);
+    expect(adjacentFrameBoundaryUs(2_000_000, -1, 30, 1)).toBe(1_966_667);
+    expect(adjacentFrameBoundaryUs(0, 1, 60, 1)).toBe(16_667);
+  });
+
+  it("derives neighbouring fractional-rate boundaries without adding a rounded duration", () => {
+    const frame1 = adjacentFrameBoundaryUs(0, 1, 30_000, 1001);
+    const frame2 = adjacentFrameBoundaryUs(frame1, 1, 30_000, 1001);
+
+    expect(frame1).toBe(33_367);
+    expect(frame2).toBe(66_733);
+    expect(frame2 - frame1).toBe(33_366);
+    expect(adjacentFrameBoundaryUs(frame2, -1, 30_000, 1001)).toBe(frame1);
   });
 });
 

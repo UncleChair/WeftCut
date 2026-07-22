@@ -8,13 +8,12 @@ import {
   Sparkles,
   Type,
 } from "lucide-react";
-import { formatTimecode } from "../frames";
+import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
 import { AppInput } from "../components/AppInput";
 import {
   HEADER_COL_PX,
   LAYER_FULL_LABEL_MIN_PX,
   LAYER_LABEL_MIN_PX,
-  MIN_LAYER_DURATION_US,
   groupHue,
   keyframeHitTest,
   keyframeXWithinClip,
@@ -299,13 +298,23 @@ export function LayerBlock({
       case "trim-start":
         liveStart = Math.min(
           dragSubject.originalTStart + dx,
-          dragSubject.originalTEnd - MIN_LAYER_DURATION_US,
+          adjacentFrameBoundaryUs(
+            dragSubject.originalTEnd,
+            -1,
+            fpsNum,
+            fpsDen,
+          ),
         );
         liveEnd = dragSubject.originalTEnd;
         break;
       case "trim-end":
         liveEnd = Math.max(
-          dragSubject.originalTStart + MIN_LAYER_DURATION_US,
+          adjacentFrameBoundaryUs(
+            dragSubject.originalTStart,
+            1,
+            fpsNum,
+            fpsDen,
+          ),
           dragSubject.originalTEnd + dx,
         );
         liveStart = dragSubject.originalTStart;

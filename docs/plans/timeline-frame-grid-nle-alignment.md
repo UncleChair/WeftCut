@@ -1,6 +1,6 @@
 # Timeline frame-grid NLE alignment plan
 
-**Status:** findings recorded; implementation has not started
+**Status:** implementation started; FG-P1-1 completed locally
 **Recorded:** 2026-07-22
 **Scope:** composition frame grid, timeline ruler, edit snapping, timecode,
 audio edit precision, and composition-frame-rate lifecycle.
@@ -23,9 +23,8 @@ behaviours:
 2. an extreme trim can clamp an endpoint to `end - 1us` and persist an off-grid
    timeline value;
 3. frame mode creates one DOM node per frame across the whole composition;
-4. one-frame editing already works through stepping, blade cuts, timecode
-   entry, and clip moves, but mouse edge-drag trim uses a conflicting fixed
-   100 ms minimum;
+4. **resolved 2026-07-22:** mouse edge-drag trim now uses adjacent composition
+   frame boundaries instead of a fixed 100 ms minimum;
 5. timecode is NDF-only even for the 29.97 NTSC preset;
 6. audio edits and audio keyframes are constrained to the video frame grid;
 7. the actor can change fps after edits and silently re-snap timeline geometry.
@@ -112,12 +111,12 @@ surface. The current capability matrix is:
 | Create a one-frame clip with the blade | Yes | A blade click is frame-snapped; splitting one frame from an existing edge produces a one-frame half. The split mutation has no 100 ms minimum. |
 | Set a one-frame duration by timecode | Yes | The Attribute panel accepts `HH:MM:SS:FF` duration and sends the resulting Out point directly to the trim command. Normal source bounds still apply. |
 | Move an existing one-frame clip | Yes | Move destinations are frame-snapped and the clip span is retained. |
-| Trim down to one frame by dragging an edge | No | The drag preview and pointer-up commit both clamp to `MIN_LAYER_DURATION_US = 100_000`. |
-| Safely edge-drag an existing one-frame clip | No | The same clamp can expand the clip toward 100 ms instead of retaining its one-frame duration. |
+| Trim down to one frame by dragging an edge | Yes | Drag preview, magnetic-snap validation, and pointer-up commit use the adjacent canonical frame boundary. |
+| Safely edge-drag an existing one-frame clip | Yes | Extending by one frame produces a two-frame clip; dragging inward cannot cross the opposite edge's adjacent frame boundary. |
 
-This is therefore a **cross-path consistency defect**. The optimization work
-must preserve the already-working single-frame paths while making edge-drag
-trim obey the same frame-based duration policy.
+This cross-path consistency defect was corrected on 2026-07-22. The actor's
+separate one-microsecond clamp and its possible off-grid extreme result remain
+tracked by FG-P0-2.
 
 ## Findings
 
@@ -227,26 +226,28 @@ Make ruler cost proportional to the visible viewport, not composition length:
   while keeping accessible labels as a small virtualized DOM set;
 - keep node count bounded independently of a 24-hour test composition.
 
-### FG-P1-1 — One-frame editing exists, but edge-drag trim enforces 100 ms
+### FG-P1-1 — Resolved: edge-drag trim supports one-frame clips
 
-**Evidence**
+**Status:** completed locally on 2026-07-22
 
-`renderer/timeline/geometry.ts` defines `MIN_LAYER_DURATION_US = 100_000`, and
-the edge-drag preview and pointer-up commit use it for both trim edges.
+**Original evidence**
 
-This means edge-drag trim cannot reduce a clip to:
+Before the correction, `renderer/timeline/geometry.ts` defined
+`MIN_LAYER_DURATION_US = 100_000`, and the edge-drag preview, magnetic-snap
+validity check, and pointer-up commit used it for both trim edges.
+
+This meant edge-drag trim could not reduce a clip to:
 
 - a one- or two-frame clip at 30 fps;
 - a one- through five-frame clip at 60 fps.
 
-Other interaction paths are more capable: the blade can split one frame from
-an edge, the Attribute panel can submit a one-frame duration, frame stepping is
-available from the keyboard, and a one-frame clip can be moved. The actor,
-meanwhile, accepts any positive duration down to one microsecond. The result is
-three incompatible policies: one frame in frame-oriented UI paths, 100 ms in
-edge-drag trim, and one microsecond in the mutation clamp.
+Other interaction paths were already more capable: the blade could split one
+frame from an edge, the Attribute panel could submit a one-frame duration,
+frame stepping was available from the keyboard, and a one-frame clip could be
+moved. The actor still accepts any positive duration down to one microsecond;
+that remaining policy mismatch is covered by FG-P0-2.
 
-**Required correction**
+**Resolution requirements**
 
 - Replace the edge-drag-only 100 ms clamp with adjacent canonical frame
   boundaries computed through `FrameGrid`.
@@ -258,6 +259,17 @@ edge-drag trim, and one microsecond in the mutation clamp.
 - For audio layers, define one sample or a deliberate subframe quantum in the
   later audio phase. Hit-target sizing must be solved visually; it must not
   impose a larger temporal duration.
+
+**Implementation**
+
+- Added exact-rational adjacent-frame-boundary calculation in
+  `renderer/frames.ts`; it derives the neighbour from the anchor frame index
+  instead of adding a rounded frame duration.
+- Routed live trim preview, magnetic-snap validity, and pointer-up commit
+  through that shared calculation.
+- Added left/right edge interaction coverage at 30 and 60 fps, existing
+  one-frame clip coverage, fractional-rate boundary tests, and actor-side
+  acceptance tests for one-frame In/Out trims.
 
 ### FG-P1-2 — 29.97/59.94 timecode has no drop-frame mode
 

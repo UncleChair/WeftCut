@@ -96,6 +96,22 @@ describe("timeline snapping", () => {
     expect(deltaUs).toBe(1_000_000);
   });
 
+  it("allows an out-trim snap that leaves exactly one frame", () => {
+    const deltaUs = snapDragDeltaToTimelineBoundary({
+      ...baseOpts({ currentTimeUs: 33_333 }),
+      state: {
+        kind: "trim-end",
+        layerId: "layer-1",
+        originalTStart: 0,
+        originalTEnd: 2_000_000,
+        escapeGroup: false,
+      },
+      frameDeltaUs: -1_950_000,
+    });
+
+    expect(deltaUs).toBe(-1_966_667);
+  });
+
   it("snaps an in-trim edge to the playhead", () => {
     const deltaUs = snapDragDeltaToTimelineBoundary({
       ...baseOpts({ currentTimeUs: 1_000_000 }),
@@ -110,6 +126,22 @@ describe("timeline snapping", () => {
     });
 
     expect(deltaUs).toBe(-1_000_000);
+  });
+
+  it("allows an in-trim snap that leaves exactly one frame", () => {
+    const deltaUs = snapDragDeltaToTimelineBoundary({
+      ...baseOpts({ currentTimeUs: 1_966_667 }),
+      state: {
+        kind: "trim-start",
+        layerId: "layer-1",
+        originalTStart: 0,
+        originalTEnd: 2_000_000,
+        escapeGroup: false,
+      },
+      frameDeltaUs: 1_950_000,
+    });
+
+    expect(deltaUs).toBe(1_966_667);
   });
 
   it("does not snap drag operations when disabled", () => {

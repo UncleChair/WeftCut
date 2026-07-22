@@ -1,6 +1,5 @@
 import type { GroupSummary, TrackSummary } from "../ipc";
-import { snapFrameRound } from "../frames";
-import { MIN_LAYER_DURATION_US } from "./geometry";
+import { adjacentFrameBoundaryUs, snapFrameRound } from "../frames";
 
 const US_PER_SEC = 1_000_000;
 
@@ -108,6 +107,8 @@ function dragAnchors(
 function validDragDelta(
   state: TimelineDragSnapState,
   deltaUs: number,
+  fpsNum: number,
+  fpsDen: number,
 ): boolean {
   switch (state.kind) {
     case "move":
@@ -116,13 +117,24 @@ function validDragDelta(
       const newStart = state.originalTStart + deltaUs;
       return (
         newStart >= 0 &&
-        newStart <= state.originalTEnd - MIN_LAYER_DURATION_US
+        newStart <=
+          adjacentFrameBoundaryUs(
+            state.originalTEnd,
+            -1,
+            fpsNum,
+            fpsDen,
+          )
       );
     }
     case "trim-end":
       return (
         state.originalTEnd + deltaUs >=
-        state.originalTStart + MIN_LAYER_DURATION_US
+        adjacentFrameBoundaryUs(
+          state.originalTStart,
+          1,
+          fpsNum,
+          fpsDen,
+        )
       );
   }
 }
@@ -155,7 +167,7 @@ export function snapDragDeltaToTimelineBoundary(
         continue;
       }
       const deltaUs = boundaryUs - anchor.originalUs;
-      if (!validDragDelta(opts.state, deltaUs)) continue;
+      if (!validDragDelta(opts.state, deltaUs, opts.fpsNum, opts.fpsDen)) continue;
       bestDistanceUs = distanceUs;
       bestDeltaUs = deltaUs;
     }

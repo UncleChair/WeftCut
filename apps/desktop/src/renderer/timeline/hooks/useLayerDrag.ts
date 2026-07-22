@@ -7,9 +7,8 @@ import {
   type LayerSummary,
   type TrackSummary,
 } from "../../ipc";
-import { snapFrameRound } from "../../frames";
+import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
 import {
-  MIN_LAYER_DURATION_US,
   layerOverlapClass,
   type VisualTrack,
 } from "../geometry";
@@ -437,7 +436,12 @@ export function useLayerDrag(opts: {
               0,
               Math.min(
                 committed.originalTStart + deltaUs,
-                committed.originalTEnd - MIN_LAYER_DURATION_US,
+                adjacentFrameBoundaryUs(
+                  committed.originalTEnd,
+                  -1,
+                  fpsNum,
+                  fpsDen,
+                ),
               ),
             );
             await trimLayer(committed.layerId, "in", newStart, escape);
@@ -445,7 +449,12 @@ export function useLayerDrag(opts: {
           }
           case "trim-end": {
             const newEnd = Math.max(
-              committed.originalTStart + MIN_LAYER_DURATION_US,
+              adjacentFrameBoundaryUs(
+                committed.originalTStart,
+                1,
+                fpsNum,
+                fpsDen,
+              ),
               committed.originalTEnd + deltaUs,
             );
             await trimLayer(committed.layerId, "out", newEnd, escape);
@@ -461,6 +470,8 @@ export function useLayerDrag(opts: {
     [
       buildMoveProjection,
       drag,
+      fpsDen,
+      fpsNum,
       onMutated,
       pxPerSec,
       snapDragDelta,

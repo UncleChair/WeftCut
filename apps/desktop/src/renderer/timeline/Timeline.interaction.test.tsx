@@ -174,6 +174,8 @@ function renderTimeline(overrides: {
   groups?: GroupSummary[];
   media?: MediaSummary[];
   onMutated?: () => Promise<void>;
+  fpsNum?: number;
+  fpsDen?: number;
 }) {
   const onSeek = overrides.onSeek ?? vi.fn();
   const selectedLayerId = overrides.selectedLayerId ?? null;
@@ -184,8 +186,8 @@ function renderTimeline(overrides: {
       groups={overrides.groups ?? []}
       durationUs={5_000_000}
       keybindings={{}}
-      fpsNum={30}
-      fpsDen={1}
+      fpsNum={overrides.fpsNum ?? 30}
+      fpsDen={overrides.fpsDen ?? 1}
       bladeMode={overrides.bladeMode ?? false}
       media={overrides.media ?? []}
       importing={new Set()}
@@ -415,6 +417,161 @@ describe("Timeline seek/selection coupling", () => {
 
     expect(ruler.style.width).toBe("1040px");
     expect(canvas.style.width).toBe(ruler.style.width);
+  });
+
+  it.each([
+    {
+      fpsNum: 30,
+      fpsDen: 1,
+      oneFrameUs: 33_333,
+    },
+    {
+      fpsNum: 60,
+      fpsDen: 1,
+      oneFrameUs: 16_667,
+    },
+  ])(
+    "trims a layer down to one frame by dragging its right edge at $fpsNum/$fpsDen fps",
+    async ({ fpsNum, fpsDen, oneFrameUs }) => {
+      const onMutated = vi.fn().mockResolvedValue(undefined);
+      const { getByText } = renderTimeline({
+        selectedLayerId: layer.id,
+        onMutated,
+        fpsNum,
+        fpsDen,
+      });
+      const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+      vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+        left: 0,
+        right: 160,
+        top: 0,
+        bottom: 48,
+        width: 160,
+        height: 48,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      });
+
+      const oneFrameEdgeX = (oneFrameUs / 1_000_000) * 80;
+      fireEvent.pointerDown(block, { button: 0, clientX: 160, clientY: 24 });
+      fireEvent.pointerMove(window, { clientX: oneFrameEdgeX, clientY: 24 });
+
+      expect(block.title).toContain("00:00:00:00 → 00:00:00:01");
+
+      fireEvent.pointerUp(window, { clientX: oneFrameEdgeX, clientY: 24 });
+      await waitFor(() => {
+        expect(ipcMocks.trimLayer).toHaveBeenCalledWith(
+          layer.id,
+          "out",
+          oneFrameUs,
+          false,
+        );
+      });
+      expect(onMutated).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    {
+      fpsNum: 30,
+      fpsDen: 1,
+      lastFrameStartUs: 1_966_667,
+      lastFrameLabel: "00:00:01:29",
+    },
+    {
+      fpsNum: 60,
+      fpsDen: 1,
+      lastFrameStartUs: 1_983_333,
+      lastFrameLabel: "00:00:01:59",
+    },
+  ])(
+    "trims a layer down to one frame by dragging its left edge at $fpsNum/$fpsDen fps",
+    async ({ fpsNum, fpsDen, lastFrameStartUs, lastFrameLabel }) => {
+      const onMutated = vi.fn().mockResolvedValue(undefined);
+      const { getByText } = renderTimeline({
+        selectedLayerId: layer.id,
+        onMutated,
+        fpsNum,
+        fpsDen,
+      });
+      const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+      vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+        left: 0,
+        right: 160,
+        top: 0,
+        bottom: 48,
+        width: 160,
+        height: 48,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      });
+
+      const lastFrameEdgeX = (lastFrameStartUs / 1_000_000) * 80;
+      fireEvent.pointerDown(block, { button: 0, clientX: 0, clientY: 24 });
+      fireEvent.pointerMove(window, { clientX: lastFrameEdgeX, clientY: 24 });
+
+      expect(block.title).toContain(`${lastFrameLabel} → 00:00:02:00`);
+
+      fireEvent.pointerUp(window, { clientX: lastFrameEdgeX, clientY: 24 });
+      await waitFor(() => {
+        expect(ipcMocks.trimLayer).toHaveBeenCalledWith(
+          layer.id,
+          "in",
+          lastFrameStartUs,
+          false,
+        );
+      });
+      expect(onMutated).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("extends an existing one-frame clip by one frame instead of forcing 100 ms", async () => {
+    const oneFrameLayer: LayerSummary = {
+      ...layer,
+      id: "one-frame-layer",
+      label: "One frame",
+      t_end_us: 33_333,
+    };
+    const oneFrameTrack: TrackSummary = { ...track, layers: [oneFrameLayer] };
+    const { container } = renderTimeline({
+      tracks: [oneFrameTrack],
+      selectedLayerId: oneFrameLayer.id,
+    });
+    const block = container.querySelector(".timeline-layer") as HTMLElement;
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 4,
+      top: 0,
+      bottom: 48,
+      width: 4,
+      height: 48,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    const oneFrameWidthPx = (33_333 / 1_000_000) * 80;
+    fireEvent.pointerDown(block, { button: 0, clientX: 4, clientY: 24 });
+    fireEvent.pointerMove(window, {
+      clientX: 4 + oneFrameWidthPx,
+      clientY: 24,
+    });
+    expect(block.title).toContain("00:00:00:00 → 00:00:00:02");
+
+    fireEvent.pointerUp(window, {
+      clientX: 4 + oneFrameWidthPx,
+      clientY: 24,
+    });
+    await waitFor(() => {
+      expect(ipcMocks.trimLayer).toHaveBeenCalledWith(
+        oneFrameLayer.id,
+        "out",
+        66_667,
+        false,
+      );
+    });
   });
 
   it("previews every grouped layer during and immediately after a move drag", async () => {

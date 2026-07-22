@@ -31,7 +31,6 @@ export const MIN_TIMELINE_END_PADDING_PX = 240;
 export const DEFAULT_TRACK_HEIGHT = 56;
 export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 200;
-export const MIN_LAYER_DURATION_US = 100_000;
 // Debounce window after the last zoom/height edit before we hit disk.
 // Resize-drag tends to fire ~60×/sec; 200ms keeps the file write off the
 // critical drag path while still landing within a beat of the user

@@ -67,6 +67,15 @@ describe('trim', () => {
     const { p: p2, a: a2 } = setup()
     try { applyTrimLayer(p2, a2, 'Out', 1_000_000, false); /* would invert → clamp to -(dur-1); nonzero so applies */ } catch { /* ok */ }
   })
+  it.each([
+    ['In', 2_966_667],
+    ['Out', 1_033_333],
+  ] as const)('accepts a one-frame %s trim from the timeline UI', (edge, atUs) => {
+    const { p, a } = setup()
+    applyTrimLayer(p, a, edge, atUs, false)
+    const l = p.tracks[0].layers.find((x) => x.id === a)!
+    expect(l.t_end_us - l.t_start_us).toBe(33_333)
+  })
   it('clamps an AV OUT trim at normalized media duration', () => {
     const p = blankProject(seededGen(), 't')
     p.media_pool.m = media('m', 2_000_000)
