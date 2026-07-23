@@ -226,7 +226,7 @@ export class TransitionNodeManager {
     this.pool.release(node.rtB);
   }
 
-  /// Not-yet-implemented kind (07 adds Wipe/Slide shaders): fall back to the
+  /// Unknown kind (a snapshot newer than this build): fall back to the
   /// Crossfade mix and say so once per kind. LogBus needs the preload bridge
   /// — absent in the export Worker, where console is the only surface.
   private warnMissingShader(kindName: string): void {
