@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MotifRebindEntry, Project, Rational, Rgba, Uuid } from './model'
+import type { Animated, AudioRole, Composition, Interpolation, LayerParams, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid } from './model'
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -20,7 +20,7 @@ import { applyDurationAutofit } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
-import { applyAddTransition, applyRemoveTransition } from './mutations/transitions'
+import { applyAddTransition, applyRemoveTransition, applyUpdateTransition } from './mutations/transitions'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate,
   applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, referencingLayers,
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
@@ -31,7 +31,7 @@ import { applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CaptionStyle
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseRgba, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, parseNum, parseNumOpt, parseRgba, parseTransitionKind, parseTransitionKindOpt, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, mcpDef, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -440,6 +440,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_group); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
             case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_group); break
           }
+          // Same point as commit(): after the recipe, before validate — so a
+          // dry-run of an edit that breaks a transition predicts the real
+          // succeed-with-drop outcome instead of a spurious ValidationFailed.
+          // Drop info is discarded: DryRunOutput has no vocabulary for it.
+          reconcileTransitions(d)
         })
         runValidate(next)
         scratch = next
@@ -507,7 +512,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_effect': commit('Updated effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateEffect(d, a.layer as Uuid, a.effect as Uuid, a.patch as EffectPatch)); return { ok: true, value: null }
         case 'move_effect': commit('Reordered effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, parseNum(a.new_index, 'new_index'))); return { ok: true, value: null }
         case 'remove_effect': commit('Removed effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
-        case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), { kind: 'Crossfade' })) }
+        case 'add_transition': {
+          // kind/direction parsed BEFORE commit — a bad enum combo burns no
+          // op_id. Absent kind defaults to Crossfade (the pre-tool behavior).
+          const kind = parseTransitionKind(a.kind ?? 'Crossfade', a.direction)
+          return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, parseNum(a.duration_us, 'duration_us'), kind)) }
+        }
+        case 'update_transition': {
+          const kind = parseTransitionKindOpt(a.kind, a.direction)
+          const patch: { duration_us?: number; kind?: TransitionKind } = {}
+          const dur = parseNumOpt(a.duration_us, 'duration_us')
+          if (dur !== undefined) patch.duration_us = dur
+          if (kind !== undefined) patch.kind = kind
+          commit('Updated transition', [], { kind: 'Coarse' }, (d) => applyUpdateTransition(d, a.transition as Uuid, patch))
+          return { ok: true, value: null }
+        }
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null, (a.with_audio as boolean | undefined) ?? false)) }
         // add_media_item — insert a FULL probed MediaItem (the import_media

@@ -4,7 +4,7 @@
 // The byte-exact mcp.differential gate (vs Rust dispatch_tool) is the backstop.
 // Mirrors native/src/mcp/{tools.rs,wire.rs}.
 import type { CommandError } from './errors'
-import type { Animated, Interpolation, Keyframe, Rgba } from './model'
+import type { Animated, Interpolation, Keyframe, Rgba, TransitionDirection, TransitionKind } from './model'
 import { sortKeys } from './canonical'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
@@ -79,6 +79,37 @@ const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
 export function parseRole(v: unknown): string {
   if (typeof v !== 'string' || !AUDIO_ROLES.has(v)) throw new McpArgError(`unknown audio role '${String(v)}'`)
   return v
+}
+
+const TRANSITION_KINDS = new Set(['Crossfade', 'Wipe', 'Slide'])
+const TRANSITION_DIRECTIONS = new Set(['left', 'right', 'up', 'down'])
+/** Flat (kind, direction) wire args → TransitionKind (model.ts:87). Strict on
+ *  the pairing so agents get a precise error instead of a silently ignored
+ *  field: Wipe/Slide REQUIRE direction; Crossfade REJECTS one. Shared by the
+ *  actor dispatch arms and the MCP parsers (single source — no drift). */
+export function parseTransitionKind(kind: unknown, direction: unknown): TransitionKind {
+  if (typeof kind !== 'string' || !TRANSITION_KINDS.has(kind))
+    throw new McpArgError(`unknown transition kind '${String(kind)}' (expected 'Crossfade' | 'Wipe' | 'Slide')`, 'kind')
+  if (kind === 'Crossfade') {
+    if (direction !== undefined && direction !== null)
+      throw new McpArgError(`direction does not apply to Crossfade — omit it (only Wipe/Slide take one)`, 'direction')
+    return { kind: 'Crossfade' }
+  }
+  if (typeof direction !== 'string' || !TRANSITION_DIRECTIONS.has(direction))
+    throw new McpArgError(`${kind} requires direction 'left' | 'right' | 'up' | 'down', got ${String(direction)}`, 'direction')
+  return { kind: kind as 'Wipe' | 'Slide', direction: direction as TransitionDirection }
+}
+
+/** update_transition's optional (kind, direction) pair → TransitionKind or
+ *  undefined (no kind patch). direction rides INSIDE kind, so direction
+ *  without kind is rejected — patch both together. */
+export function parseTransitionKindOpt(kind: unknown, direction: unknown): TransitionKind | undefined {
+  if (kind === undefined || kind === null) {
+    if (direction !== undefined && direction !== null)
+      throw new McpArgError(`direction requires kind ('Wipe' | 'Slide') in the same patch`, 'direction')
+    return undefined
+  }
+  return parseTransitionKind(kind, direction)
 }
 
 /** Validate an Rgba (color.rs: four u8 fields). Rust serde rejects a non-object
@@ -168,6 +199,8 @@ export function dryRunErrorString(e: CommandError): string {
   if (e.error === 'InvalidArgument') return `${e.field}: ${e.detail}`
   if (e.error === 'Backend') return e.detail
   if (e.error === 'ValidationFailed') return `validation failed: ${e.detail.rule}`
+  if (e.error === 'TransitionInsufficientHandle') return `insufficient tail media on the outgoing layer ${e.layer}: ${e.available_us} µs available`
+  if (e.error === 'TransitionUnsupportedLayerKind') return `transitions are for visual layers only: layer ${e.layer} is ${e.kind}`
   return e.error
 }
 
@@ -218,6 +251,16 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
         { action: 'force_remove', note: 'calls remove_media with force=true; cascades layer deletions' },
         { action: 'delete_layers_first', layer_ids: e.referenced_by },
       ],
+    } }
+  }
+  if (e.error === 'TransitionInsufficientHandle') {
+    return { code: 'invalid_params', message: `insufficient tail media on the outgoing layer: only ${e.available_us} µs remaining past its source out-point — shorten the transition to at most that`, data: {
+      error: 'TransitionInsufficientHandle', layer: e.layer, available_us: e.available_us,
+    } }
+  }
+  if (e.error === 'TransitionUnsupportedLayerKind') {
+    return { code: 'invalid_params', message: `transitions are for visual layers only: layer ${e.layer} is ${e.kind} (audio crossfades are not supported yet)`, data: {
+      error: 'TransitionUnsupportedLayerKind', layer: e.layer, kind: e.kind,
     } }
   }
   return { code: 'invalid_params', message: e.error }
@@ -375,6 +418,38 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: 'Remove an effect from a layer by id.',
     inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' } }, required: ['effect_id', 'layer_id'] },
     parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
+  // ── table-exec: transitions ──────────────────────────────────────────────
+  { name: 'add_transition', exec: 'table',
+    description: "Add a transition at the cut between two layers on the SAME track. `from_layer_id` (outgoing) and `to_layer_id` (incoming) must be adjacent — the outgoing layer's t_end_us equal to the incoming layer's t_start_us. Alignment is start-at-cut: the outgoing layer auto-extends forward by `duration_us` and the transition occupies the incoming layer's FIRST `duration_us` microseconds. `kind` ∈ 'Crossfade' (default when omitted) | 'Wipe' | 'Slide'. `direction` is the MOTION direction ('left' = the wipe boundary / sliding content moves leftward); it is required for Wipe/Slide and rejected for Crossfade. Visual layers only (video, image, text, color, motif) — an Audio participant fails with TransitionUnsupportedLayerKind. If the outgoing layer has too little tail media to extend, fails with TransitionInsufficientHandle carrying `available_us` (the maximum extension possible) — shorten `duration_us` to at most that and retry. Returns the new transition id. Recorded (one undo restores the outgoing layer's original length too).",
+    inputSchema: { type: 'object', properties: {
+      direction: { type: 'string', enum: ['left', 'right', 'up', 'down'] },
+      duration_us: { type: 'integer' },
+      from_layer_id: { type: 'string' },
+      kind: { type: 'string', enum: ['Crossfade', 'Wipe', 'Slide'] },
+      to_layer_id: { type: 'string' },
+    }, required: ['duration_us', 'from_layer_id', 'to_layer_id'] },
+    parseArgs: (a) => {
+      parseTransitionKind(a.kind ?? 'Crossfade', a.direction) // strict enum gate at the MCP boundary; dispatch re-derives from the raw args below
+      return { op: 'add_transition', args: { from: parseUuid(a.from_layer_id, 'from_layer_id'), to: parseUuid(a.to_layer_id, 'to_layer_id'), duration_us: parseNum(a.duration_us, 'duration_us'), kind: a.kind, direction: a.direction } }
+    },
+    shapeResult: (v) => toolText(v as string) },
+  { name: 'update_transition', exec: 'table',
+    description: "Patch a transition's `duration_us`, `kind`, and/or `direction` in ONE recorded commit (one undo step). Only fields you set are applied. `direction` rides inside `kind`: changing kind to Wipe/Slide requires `direction` in the same call, and `direction` alone (without `kind`) or alongside Crossfade is rejected. Duration changes move the OUTGOING layer's auto-extended tail (start-at-cut alignment — the incoming layer never moves); growth is pre-checked against the outgoing layer's remaining tail media and fails with TransitionInsufficientHandle carrying `available_us`. Errors with TransitionNotFound for an unknown id.",
+    inputSchema: { type: 'object', properties: {
+      direction: { type: 'string', enum: ['left', 'right', 'up', 'down'] },
+      duration_us: { type: 'integer' },
+      kind: { type: 'string', enum: ['Crossfade', 'Wipe', 'Slide'] },
+      transition_id: { type: 'string' },
+    }, required: ['transition_id'] },
+    parseArgs: (a) => {
+      parseTransitionKindOpt(a.kind, a.direction) // strict enum gate; dispatch re-derives
+      parseNumOpt(a.duration_us, 'duration_us')
+      return { op: 'update_transition', args: { transition: parseUuid(a.transition_id, 'transition_id'), duration_us: a.duration_us, kind: a.kind, direction: a.direction } }
+    } },
+  { name: 'remove_transition', exec: 'table',
+    description: "Remove a transition by id. The outgoing layer's auto-extension is undone — its end shrinks back by the transition's duration, restoring the hard cut. Recorded (undoable). Errors with TransitionNotFound for an unknown id.",
+    inputSchema: { type: 'object', properties: { transition_id: { type: 'string' } }, required: ['transition_id'] },
+    parseArgs: (a) => ({ op: 'remove_transition', args: { transition: parseUuid(a.transition_id, 'transition_id') } }) },
   // ── table-exec: composition ──────────────────────────────────────────────
   { name: 'set_composition', exec: 'table',
     description: 'Update composition envelope (canvas size, fps, sample rate, channels, color space, background, duration). Only fields you set are applied. Width/height must be positive; fps denominator must be non-zero. Setting `duration_us` pins the composition duration — subsequent layer edits will no longer auto-fit it (except an overflow guard if a layer extends past the pinned value). Use `fit_composition_to_layers` to clear the pin and snap duration back to the layer high-water mark.',

@@ -4,13 +4,14 @@ import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 
-const ALL_47_NAMES = new Set<string>([
-  // table-exec tools (27)
+const ALL_50_NAMES = new Set<string>([
+  // table-exec tools (30) — transitions trio added by Transitions v1 ticket 04
   'add_track', 'remove_track', 'duplicate_layer', 'move_track',
   'update_layer', 'update_layer_params',
   'move_layer', 'trim_layer', 'delete_layer',
   'groups_create', 'groups_dissolve', 'groups_add_members', 'groups_remove_members', 'groups_rename',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
+  'add_transition', 'update_transition', 'remove_transition',
   'set_composition', 'fit_composition_to_layers',
   'update_marker', 'remove_marker',
   'remove_media', 'undo', 'redo',
@@ -25,8 +26,8 @@ const ALL_47_NAMES = new Set<string>([
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 47 tool names (add_motif added Phase 4a-ii §2.2)', () => {
-    expect(MCP_TOOLS).toEqual(ALL_47_NAMES)
+  it('MCP_TOOLS contains exactly the 50 tool names (transitions trio added Transitions v1 ticket 04)', () => {
+    expect(MCP_TOOLS).toEqual(ALL_50_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -66,15 +67,15 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(27)
+    expect(table.length).toBe(30)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
   })
 
-  it('shapeResult tools are the expected 4', () => {
+  it('shapeResult tools are the expected 5', () => {
     const shapers = MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => d.name).sort()
-    expect(shapers).toEqual(['add_effect', 'add_track', 'duplicate_layer', 'groups_create'])
+    expect(shapers).toEqual(['add_effect', 'add_track', 'add_transition', 'duplicate_layer', 'groups_create'])
   })
 
   it('parseBoolOpt hardening: escape_group rejects non-boolean', () => {
@@ -88,9 +89,112 @@ describe('MCP tool table projections', () => {
     expect(() => MCP_ARG_PARSERS['groups_create']({ layer_ids: u, label: null })).toThrow()
   })
 
+  it('transition tools round-trip valid args to dispatch vocabulary', () => {
+    const u1 = '00000000-0000-7000-8000-000000000001'
+    const u2 = '00000000-0000-7000-8000-000000000002'
+    expect(MCP_ARG_PARSERS['add_transition']({ from_layer_id: u1, to_layer_id: u2, duration_us: 1_000_000, kind: 'Wipe', direction: 'left' }))
+      .toEqual({ op: 'add_transition', args: { from: u1, to: u2, duration_us: 1_000_000, kind: 'Wipe', direction: 'left' } })
+    // kind omitted = Crossfade default; the raw (absent) fields pass through
+    expect(MCP_ARG_PARSERS['add_transition']({ from_layer_id: u1, to_layer_id: u2, duration_us: 500_000 }))
+      .toEqual({ op: 'add_transition', args: { from: u1, to: u2, duration_us: 500_000, kind: undefined, direction: undefined } })
+    expect(MCP_ARG_PARSERS['update_transition']({ transition_id: u1, duration_us: 250_000, kind: 'Slide', direction: 'down' }))
+      .toEqual({ op: 'update_transition', args: { transition: u1, duration_us: 250_000, kind: 'Slide', direction: 'down' } })
+    expect(MCP_ARG_PARSERS['remove_transition']({ transition_id: u1 }))
+      .toEqual({ op: 'remove_transition', args: { transition: u1 } })
+  })
+
+  it('transition parsers reject bad kind/direction combos at the MCP boundary', () => {
+    const u1 = '00000000-0000-7000-8000-000000000001'
+    const u2 = '00000000-0000-7000-8000-000000000002'
+    const base = { from_layer_id: u1, to_layer_id: u2, duration_us: 1_000_000 }
+    expect(() => MCP_ARG_PARSERS['add_transition']({ ...base, kind: 'Dissolve' })).toThrow()                       // unknown kind
+    expect(() => MCP_ARG_PARSERS['add_transition']({ ...base, kind: 'Wipe' })).toThrow()                           // missing direction
+    expect(() => MCP_ARG_PARSERS['add_transition']({ ...base, kind: 'Slide' })).toThrow()                          // missing direction
+    expect(() => MCP_ARG_PARSERS['add_transition']({ ...base, kind: 'Wipe', direction: 'diagonal' })).toThrow()    // bad direction
+    expect(() => MCP_ARG_PARSERS['add_transition']({ ...base, kind: 'Crossfade', direction: 'left' })).toThrow()   // direction on Crossfade
+    expect(() => MCP_ARG_PARSERS['add_transition']({ ...base, direction: 'left' })).toThrow()                      // absent kind = Crossfade → direction rejected
+    expect(() => MCP_ARG_PARSERS['update_transition']({ transition_id: u1, kind: 'Wipe' })).toThrow()              // missing direction
+    expect(() => MCP_ARG_PARSERS['update_transition']({ transition_id: u1, direction: 'left' })).toThrow()         // direction without kind
+    expect(() => MCP_ARG_PARSERS['update_transition']({ transition_id: u1, duration_us: 'long' })).toThrow()       // non-number duration
+  })
+
   it('parseStrOpt hardening: label rejects non-string non-null', () => {
     const u = '00000000-0000-7000-8000-000000000001'
     expect(() => MCP_ARG_PARSERS['groups_create']({ layer_ids: [u], label: 42 })).toThrow()
+  })
+})
+
+describe('transition tools through mcpCall (table-exec, end to end)', () => {
+  /** Actor with A1=[0,2M] → A2=[2M,4M] color layers on the A roll (adjacent cut). */
+  function withCut() {
+    const idGen = uuidV7Gen()
+    const initial = blankProject(idGen, 't')
+    const actor = createActor({ initial, idGen, clock: () => '2026-01-01T00:00:00.000Z' })
+    const track = initial.tracks[0].id
+    const a1 = (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
+    const a2 = (actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }) as { ok: true; value: string }).value
+    return { actor, track, a1, a2 }
+  }
+
+  it('add → update → remove round-trips through the MCP surface', () => {
+    const { actor, a1, a2 } = withCut()
+    const add = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000, kind: 'Wipe', direction: 'left' }))
+    expect(add.ok).toBe(true)
+    if (!add.ok) return
+    const tid = add.result.content[0].text
+    expect(actor.snapshot().transitions[0]).toMatchObject({ id: tid, kind: { kind: 'Wipe', direction: 'left' } })
+    const upd = actor.mcpCall('update_transition', JSON.stringify({ transition_id: tid, duration_us: 500_000, kind: 'Crossfade' }))
+    expect(upd.ok).toBe(true)
+    expect(actor.snapshot().transitions[0]).toMatchObject({ duration_us: 500_000, kind: { kind: 'Crossfade' } })
+    const rem = actor.mcpCall('remove_transition', JSON.stringify({ transition_id: tid }))
+    expect(rem.ok).toBe(true)
+    expect(actor.snapshot().transitions).toEqual([])
+  })
+
+  it('bad kind / missing direction / direction on Crossfade → clean invalid_params, no commit', () => {
+    const { actor, a1, a2 } = withCut()
+    const base = { from_layer_id: a1, to_layer_id: a2, duration_us: 1_000_000 }
+    for (const args of [
+      { ...base, kind: 'Dissolve' },
+      { ...base, kind: 'Wipe' },
+      { ...base, kind: 'Slide', direction: 'diagonal' },
+      { ...base, kind: 'Crossfade', direction: 'left' },
+    ]) {
+      const r = actor.mcpCall('add_transition', JSON.stringify(args))
+      expect(r.ok, JSON.stringify(args)).toBe(false)
+      if (!r.ok) expect(r.error.code).toBe('invalid_params')
+    }
+    expect(actor.snapshot().transitions).toEqual([])
+  })
+
+  it('TransitionInsufficientHandle surfaces friendly prose + structured data (available_us)', () => {
+    const { actor, track, a1, a2 } = withCut()
+    // A video layer with ZERO tail media (src_out == media duration) as the
+    // outgoing participant: extending for the transition is impossible.
+    const MID = '00000000-0000-7000-8000-0000000000aa'
+    actor.dispatch('add_media', { id: MID, kind: 'Video', duration_us: 2_000_000 })
+    actor.dispatch('delete_layer', { layer: a1 }) // free [0,2M)
+    const v1 = (actor.dispatch('add_layer', { track, kind: 'video', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
+    const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: v1, to_layer_id: a2, duration_us: 1_000_000 }))
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('invalid_params')
+    expect(r.error.message).toContain('µs remaining')
+    expect(r.error.data).toEqual({ error: 'TransitionInsufficientHandle', layer: v1, available_us: 0 })
+  })
+
+  it('audio participant → TransitionUnsupportedLayerKind prose + data', () => {
+    const { actor, track, a1, a2 } = withCut()
+    const MID = '00000000-0000-7000-8000-0000000000ab'
+    actor.dispatch('add_media', { id: MID, kind: 'Audio', duration_us: 10_000_000 })
+    actor.dispatch('delete_layer', { layer: a1 })
+    const au = (actor.dispatch('add_layer', { track, kind: 'audio', media: MID, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
+    const r = actor.mcpCall('add_transition', JSON.stringify({ from_layer_id: au, to_layer_id: a2, duration_us: 1_000_000 }))
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.code).toBe('invalid_params')
+    expect(r.error.message).toContain('visual layers only')
+    expect(r.error.data).toEqual({ error: 'TransitionUnsupportedLayerKind', layer: au, kind: 'Audio' })
   })
 })
 

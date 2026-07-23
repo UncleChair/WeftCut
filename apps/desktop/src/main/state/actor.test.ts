@@ -258,6 +258,104 @@ describe('dispatch: transitions', () => {
     const r = actor.dispatch('remove_transition', { transition: '00000000-0000-0000-0000-000000000000' })
     expect(r.ok).toBe(false); expect((r as { ok: false; error: { error: string } }).error.error).toBe('TransitionNotFound')
   })
+
+  // ── kind + direction parsing (ticket 04) ──
+  const errOf = (r: ReturnType<ReturnType<typeof createActor>['dispatch']>) =>
+    (r as { ok: false; error: { error: string; field?: string } }).error
+
+  it('add_transition without kind defaults to Crossfade (pre-04 behavior)', () => {
+    const { actor, a1, a2 } = setup()
+    expect(actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 }).ok).toBe(true)
+    expect(actor.snapshot().transitions[0].kind).toEqual({ kind: 'Crossfade' })
+  })
+  it('add_transition parses all three kinds (Wipe/Slide carry direction)', () => {
+    for (const [kind, direction, expected] of [
+      ['Crossfade', undefined, { kind: 'Crossfade' }],
+      ['Wipe', 'left', { kind: 'Wipe', direction: 'left' }],
+      ['Slide', 'up', { kind: 'Slide', direction: 'up' }],
+    ] as const) {
+      const { actor, a1, a2 } = setup()
+      const r = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, kind, direction })
+      expect(r.ok, `kind ${kind}`).toBe(true)
+      expect(actor.snapshot().transitions[0].kind).toEqual(expected)
+    }
+  })
+  it('add_transition Wipe/Slide without direction → InvalidArgument(direction)', () => {
+    for (const kind of ['Wipe', 'Slide']) {
+      const { actor, a1, a2 } = setup()
+      const r = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, kind })
+      expect(r.ok).toBe(false)
+      expect([errOf(r).error, errOf(r).field]).toEqual(['InvalidArgument', 'direction'])
+      expect(actor.snapshot().transitions).toEqual([])
+    }
+  })
+  it('add_transition Crossfade WITH direction → InvalidArgument(direction) (strict pairing)', () => {
+    const { actor, a1, a2 } = setup()
+    const r = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, kind: 'Crossfade', direction: 'left' })
+    expect(r.ok).toBe(false)
+    expect([errOf(r).error, errOf(r).field]).toEqual(['InvalidArgument', 'direction'])
+  })
+  it('add_transition unknown kind / bad direction string → InvalidArgument', () => {
+    const { actor, a1, a2 } = setup()
+    const badKind = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, kind: 'Dissolve' })
+    expect([errOf(badKind).error, errOf(badKind).field]).toEqual(['InvalidArgument', 'kind'])
+    const badDir = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000, kind: 'Wipe', direction: 'sideways' })
+    expect([errOf(badDir).error, errOf(badDir).field]).toEqual(['InvalidArgument', 'direction'])
+    expect(actor.snapshot().transitions).toEqual([])
+  })
+
+  // ── update_transition dispatch ──
+  function withCrossfade() {
+    const s = setup()
+    const tid = (s.actor.dispatch('add_transition', { from: s.a1, to: s.a2, duration_us: 1_000_000 }) as { ok: true; value: string }).value
+    return { ...s, tid } // a1 extended to 3M; overlap [2M,3M]
+  }
+  it('update_transition duration patch moves the outgoing tail; ONE recorded entry (one undo)', () => {
+    const { actor, a1, tid } = withCrossfade()
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('update_transition', { transition: tid, duration_us: 500_000 }).ok).toBe(true)
+    expect(actor.snapshot().transitions[0].duration_us).toBe(500_000)
+    expect(fromEnd(actor, a1)).toBe(2_500_000) // shrink rides the same commit
+    expect(actor.historyStatus().len).toBe(before + 1)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot().transitions[0].duration_us).toBe(1_000_000)
+    expect(fromEnd(actor, a1)).toBe(3_000_000)
+  })
+  it('update_transition kind patch (+direction) swaps kind without touching geometry', () => {
+    const { actor, a1, tid } = withCrossfade()
+    expect(actor.dispatch('update_transition', { transition: tid, kind: 'Wipe', direction: 'right' }).ok).toBe(true)
+    expect(actor.snapshot().transitions[0].kind).toEqual({ kind: 'Wipe', direction: 'right' })
+    expect(fromEnd(actor, a1)).toBe(3_000_000) // untouched
+  })
+  it('update_transition duration + kind together in one commit', () => {
+    const { actor, a1, tid } = withCrossfade()
+    const before = actor.historyStatus().len
+    expect(actor.dispatch('update_transition', { transition: tid, duration_us: 1_500_000, kind: 'Slide', direction: 'down' }).ok).toBe(true)
+    expect(actor.snapshot().transitions[0]).toMatchObject({ duration_us: 1_500_000, kind: { kind: 'Slide', direction: 'down' } })
+    expect(fromEnd(actor, a1)).toBe(3_500_000)
+    expect(actor.historyStatus().len).toBe(before + 1)
+  })
+  it('update_transition direction without kind → InvalidArgument(direction)', () => {
+    const { actor, tid } = withCrossfade()
+    const r = actor.dispatch('update_transition', { transition: tid, direction: 'left' })
+    expect([errOf(r).error, errOf(r).field]).toEqual(['InvalidArgument', 'direction'])
+  })
+  it('update_transition unknown id → TransitionNotFound', () => {
+    const { actor } = withCrossfade()
+    const r = actor.dispatch('update_transition', { transition: '00000000-0000-0000-0000-000000000000', duration_us: 500_000 })
+    expect([errOf(r).error]).toEqual(['TransitionNotFound'])
+  })
+
+  // ── dryRun ↔ commit alignment (inherited item a) ──
+  it('dryRun runs reconcile like commit: a trim over a transition edge predicts succeed-with-drop, not ValidationFailed', () => {
+    const { actor, a2 } = withCrossfade()
+    const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 3_000_000, escape_group: false }])
+    expect(out[0].ok, 'dry-run must match the real succeed-with-drop outcome').toBe(true)
+    expect(actor.snapshot().transitions).toHaveLength(1) // dry-run committed nothing
+    // parity: the real command also succeeds and drops the transition
+    expect(actor.dispatch('trim_layer', { layer: a2, edge: 'in', new_t_us: 3_000_000 }).ok).toBe(true)
+    expect(actor.snapshot().transitions).toEqual([])
+  })
 })
 
 describe('dispatch: set_composition full', () => {
