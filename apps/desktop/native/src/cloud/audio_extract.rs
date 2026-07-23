@@ -79,6 +79,9 @@ pub async fn extract_audio_window(
     // keyframe-aligned; transcription wants the actual requested window).
     let child = Command::new(ffmpeg_path())
         .no_console_window()
+        // Reap on future-drop so no orphan keeps writing the slice temp; see
+        // jobs/hwaccel.rs.
+        .kill_on_drop(true)
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(source)
         .args([

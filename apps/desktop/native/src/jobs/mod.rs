@@ -390,6 +390,61 @@ fn spawn_conform(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaIte
 fn spawn_proxy_decision(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
+        // Reopen self-heal: the content-addressed full master is already on
+        // disk but the route lost track of it (a build landed whose commit
+        // never persisted before an HMR/crash reopen, or the workspace moved
+        // and the stored absolute path went stale). Re-running the decision
+        // would reset the route and re-enqueue the full build (observed live
+        // 2026-07-23: reopen churn); adopt the master instead — the same
+        // trust as `proxy::run`'s cached-ok early return (a stale-format
+        // registered master was already deleted by the open-time invalidation
+        // pass before this enqueue). Proxied/NativeSw only: those are the two
+        // variants a full master belongs to, and the fold ignores it elsewhere.
+        if matches!(
+            media.decode_route,
+            DecodeRoute::Proxied { .. } | DecodeRoute::NativeSw { .. }
+        ) {
+            let master = cache.proxy(&media.file_hash_blake3);
+            if crate::cache::cached_ok(&master) {
+                emit(
+                    &events,
+                    EVENT_STARTED,
+                    &JobStarted {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Proxy,
+                    },
+                );
+                let patch = MediaDerivativesPatch {
+                    full_proxy_landed: Some(Some(FullProxyLanded {
+                        path: master.clone(),
+                        format_version: proxy::PROXY_FORMAT_VERSION,
+                    })),
+                    ..Default::default()
+                };
+                if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
+                    warn!("adopted-proxy commit failed for {media_id}: {e}");
+                }
+                info!("full proxy adopted from disk for {media_id} (reopen self-heal)");
+                emit(
+                    &events,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Proxy,
+                        path: Some(master.display().to_string()),
+                    },
+                );
+                let mut thumbnail_media = media.clone();
+                thumbnail_media.path_abs = master;
+                spawn_decorations(events.clone(), cache.clone(), thumbnail_media);
+                // The quick proxy is session-scoped (cleared on open) —
+                // rebuild the preview accelerator without re-chaining the
+                // full build. `None` GOP forces the safe transcode path,
+                // matching the on-demand build.
+                spawn_quick_proxy(events, cache, media, false, None);
+                return;
+            }
+        }
         // Probe the source's keyframe interval (on a blocking worker — it
         // shells out to ffprobe) so the routing policy can demote long-GOP
         // friendly H.264 to a short-GOP scrub proxy instead of a direct decode.
@@ -891,6 +946,97 @@ mod tests {
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v.get("set_route").unwrap(), &json!({ "route": "bypass" }));
+    }
+
+    /// Reopen self-heal: when the content-addressed full master is already on
+    /// disk but the (stale-persisted) route says un-built, the decision path
+    /// must ADOPT it — commit `full_proxy_landed` — and must NOT re-run the
+    /// routing decision (no `set_route` reset, no full rebuild). Regression
+    /// for the 2026-07-23 reopen churn.
+    #[tokio::test]
+    async fn proxy_decision_adopts_on_disk_master_without_redeciding() {
+        use crate::events::VecEventSink;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+
+        let hash = "healme";
+        std::fs::write(cache.proxy(hash), b"landed master").unwrap();
+
+        let media = MediaItem {
+            id: crate::state::new_id(),
+            label: None,
+            path_abs: tmp.path().join("gone.mp4"), // source needn't exist for the heal
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: Default::default(),
+            decode_route: DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None, // the landed commit never persisted
+                format_version: 0,
+            },
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: hash.into(),
+            file_size: 1,
+            file_mtime: 0,
+            imported_at: chrono::Utc::now(),
+        };
+        let media_id = media.id;
+
+        let sink = Arc::new(VecEventSink::new());
+        let events: Arc<dyn EventSink> = sink.clone();
+        spawn_proxy_decision(events, cache.clone(), media);
+
+        // The adopt commit is the first thing the spawned task does; poll for it.
+        let mut adopted = None;
+        for _ in 0..200 {
+            let recorded = sink.events.lock().unwrap().clone();
+            adopted = recorded
+                .into_iter()
+                .find(|(n, p)| {
+                    n == "media:derivatives"
+                        && p.get("patch")
+                            .and_then(|patch| patch.get("full_proxy_landed"))
+                            .is_some()
+                })
+                .map(|(_, p)| p);
+            if adopted.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let payload = adopted.expect("the on-disk master must be adopted");
+        assert_eq!(
+            payload.get("media_id").unwrap(),
+            &serde_json::json!(media_id.to_string())
+        );
+        let landed = payload
+            .get("patch")
+            .unwrap()
+            .get("full_proxy_landed")
+            .unwrap();
+        assert_eq!(
+            landed.get("path").unwrap(),
+            &serde_json::json!(cache.proxy(hash))
+        );
+        assert_eq!(
+            landed.get("format_version").unwrap(),
+            &serde_json::json!(proxy::PROXY_FORMAT_VERSION)
+        );
+
+        // No re-decision: nothing may carry a set_route reset.
+        let recorded = sink.events.lock().unwrap().clone();
+        assert!(
+            recorded.iter().all(|(n, p)| n != "media:derivatives"
+                || p.get("patch")
+                    .and_then(|patch| patch.get("set_route"))
+                    .is_none()),
+            "the heal must not reset the route via set_route"
+        );
     }
 
     /// `commit_media_derivatives` always emits a `media:derivatives` event for the

@@ -86,6 +86,9 @@ pub async fn extract_tile(
     // pattern (same incantation as jobs/frame.rs).
     let output = Command::new(ffmpeg_path())
         .no_console_window()
+        // Reap on future-drop so no orphan keeps writing the tile temp; see
+        // hwaccel.rs.
+        .kill_on_drop(true)
         .args([
             "-y",
             "-hide_banner",

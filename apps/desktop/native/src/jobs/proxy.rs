@@ -16,7 +16,7 @@ use ffmpeg_sidecar::command::ffmpeg_is_installed;
 #[cfg(test)]
 use tokio::process::Command;
 
-use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
+use crate::cache::{cached_ok, claim_temp, discard_temp, promote_temp_retry, CacheLayout};
 use crate::jobs::hwaccel;
 use crate::state::MediaItem;
 
@@ -75,17 +75,19 @@ pub fn source_color_args(media: &MediaItem) -> Vec<String> {
 }
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
-    if !ffmpeg_is_installed() {
-        anyhow::bail!("ffmpeg not installed; cannot generate proxy");
-    }
-
+    // Cache hit before the ffmpeg check: adopting an already-landed master
+    // needs no encoder.
     let dest = cache.proxy(&media.file_hash_blake3);
     if cached_ok(&dest) {
         return Ok(dest);
     }
-    let tmp = temp_path(&dest);
-    // Wipe any prior interrupted attempt.
-    let _ = tokio::fs::remove_file(&tmp).await;
+    if !ffmpeg_is_installed() {
+        anyhow::bail!("ffmpeg not installed; cannot generate proxy");
+    }
+    // Fails while another writer holds the temp (orphaned ffmpeg / concurrent
+    // build in another process) — bail in ms instead of burning a full 4K
+    // transcode that dies at promote.
+    let tmp = claim_temp(&dest)?;
 
     // `scale=-2:'min(ih,N)'` caps height without upscaling; the `-2` rounds
     // width to even (libx264 requires even dims). High profile + yuv420p give
@@ -160,7 +162,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         );
     }
 
-    promote_temp(&dest)?;
+    promote_temp_retry(&dest).await?;
     Ok(dest)
 }
 

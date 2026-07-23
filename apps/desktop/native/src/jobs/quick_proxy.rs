@@ -13,7 +13,7 @@ use tokio::process::Command;
 
 use crate::process::NoConsoleWindow;
 
-use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
+use crate::cache::{cached_ok, claim_temp, discard_temp, promote_temp_retry, CacheLayout};
 use crate::jobs::hwaccel;
 use crate::state::MediaItem;
 
@@ -28,16 +28,17 @@ pub async fn run(
     media: &MediaItem,
     source_gop_secs: Option<f64>,
 ) -> Result<PathBuf> {
-    if !ffmpeg_is_installed() {
-        anyhow::bail!("ffmpeg not installed; cannot generate quick proxy");
-    }
-
+    // Cache hit before the ffmpeg check: adopting an already-landed proxy
+    // needs no encoder.
     let dest = cache.quick_proxy(&media.file_hash_blake3);
     if cached_ok(&dest) {
         return Ok(dest);
     }
-    let tmp = temp_path(&dest);
-    let _ = tokio::fs::remove_file(&tmp).await;
+    if !ffmpeg_is_installed() {
+        anyhow::bail!("ffmpeg not installed; cannot generate quick proxy");
+    }
+    // Fails while another writer holds the temp — see proxy::run.
+    let tmp = claim_temp(&dest)?;
 
     let result = if can_remux(media, source_gop_secs) {
         run_remux(media, &tmp).await
@@ -58,7 +59,7 @@ pub async fn run(
         );
     }
 
-    promote_temp(&dest)?;
+    promote_temp_retry(&dest).await?;
     Ok(dest)
 }
 
@@ -77,6 +78,9 @@ fn can_remux(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
 async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
     let output = Command::new(ffmpeg_path())
         .no_console_window()
+        // Reap the child if this future is dropped (runtime shutdown) — an
+        // orphan would keep writing the shared `<dest>.tmp`; see hwaccel.rs.
+        .kill_on_drop(true)
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([

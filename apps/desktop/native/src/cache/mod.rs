@@ -349,6 +349,28 @@ pub fn temp_path(dest: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Claim `<dest>.tmp` for a fresh build by removing any prior attempt.
+/// NotFound is a clean claim. Any OTHER error is the overlap tell: Windows
+/// cannot delete a file another process holds open, so a live writer (an
+/// orphaned ffmpeg from a killed session, or a concurrent build in another
+/// process) is still mid-write on this exact temp. Proceeding would interleave
+/// two writers (`-y` truncates the holder's output) and burn a full transcode
+/// that then dies at promote — bail fast instead; the holder's exit unblocks
+/// the next attempt.
+pub fn claim_temp(dest: &Path) -> Result<PathBuf> {
+    let tmp = temp_path(dest);
+    match fs::remove_file(&tmp) {
+        Ok(()) => Ok(tmp),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(tmp),
+        Err(e) => Err(e).with_context(|| {
+            format!(
+                "another writer holds {} — refusing to start an overlapping build",
+                tmp.display()
+            )
+        }),
+    }
+}
+
 /// Promote a successfully-written `<dest>.tmp` to `dest`. The caller is
 /// responsible for ensuring the temp file is fully flushed to disk before
 /// calling — `tokio::process::Child` waits already cover that.
@@ -356,6 +378,46 @@ pub fn promote_temp(dest: &Path) -> Result<()> {
     let tmp = temp_path(dest);
     fs::rename(&tmp, dest)
         .with_context(|| format!("promote {} -> {}", tmp.display(), dest.display()))
+}
+
+/// `promote_temp` with Windows collision handling, for content-addressed
+/// derivatives (proxies) whose readers legitimately overlap writers:
+/// - dest already valid (`cached_ok`): an equivalent artifact landed first
+///   (same hash ⇒ same source + recipe) and a reader may hold it open
+///   indefinitely, so a replace-rename can never win (os error 5). Adopt the
+///   landed file and discard our temp — the rebuild was redundant.
+/// - transient sharing violation / access denied (os errors 32/5) with no
+///   valid dest: short-lived handle (AV scan, closing reader) — retry with
+///   backoff (~1.5 s total) before giving up.
+pub async fn promote_temp_retry(dest: &Path) -> Result<()> {
+    const MAX_ATTEMPTS: u32 = 6;
+    let tmp = temp_path(dest);
+    let mut delay = Duration::from_millis(50);
+    for attempt in 1..=MAX_ATTEMPTS {
+        let err = match fs::rename(&tmp, dest) {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        };
+        if cached_ok(dest) {
+            tracing::warn!(
+                "promote {}: an equivalent artifact already landed at {}; adopting it \
+                 and discarding the redundant temp",
+                tmp.display(),
+                dest.display()
+            );
+            let _ = fs::remove_file(&tmp);
+            return Ok(());
+        }
+        let transient = matches!(err.raw_os_error(), Some(5) | Some(32))
+            || err.kind() == std::io::ErrorKind::PermissionDenied;
+        if !transient || attempt == MAX_ATTEMPTS {
+            return Err(err)
+                .with_context(|| format!("promote {} -> {}", tmp.display(), dest.display()));
+        }
+        tokio::time::sleep(delay).await;
+        delay *= 2;
+    }
+    unreachable!("loop returns on success, adopt, or final error")
 }
 
 /// Best-effort cleanup of a `<dest>.tmp` that was never promoted. Used in the
@@ -530,6 +592,86 @@ mod tests {
         assert!(!temp2.exists());
         // discard on missing is fine
         discard_temp(&dest2);
+    }
+
+    #[test]
+    fn claim_temp_removes_stale_and_accepts_missing() {
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("out.mp4");
+        // Missing temp: clean claim.
+        let claimed = claim_temp(&dest).unwrap();
+        assert_eq!(claimed, temp_path(&dest));
+        // Stale unheld temp from an interrupted job: removed, clean claim.
+        fs::write(temp_path(&dest), b"stale").unwrap();
+        claim_temp(&dest).unwrap();
+        assert!(!temp_path(&dest).exists());
+    }
+
+    /// Open like ffmpeg's MSVC CRT does: FILE_SHARE_READ|WRITE but NOT
+    /// FILE_SHARE_DELETE. Rust std's default share mode INCLUDES delete, so a
+    /// plain `File::open` can't reproduce the collision the live app hits.
+    #[cfg(windows)]
+    fn open_like_ffmpeg(path: &Path, write: bool) -> fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+        fs::File::options()
+            .read(true)
+            .write(write)
+            .share_mode(FILE_SHARE_READ_WRITE)
+            .open(path)
+            .unwrap()
+    }
+
+    /// Windows-only: a temp held open by another writer (ffmpeg-style handle,
+    /// no FILE_SHARE_DELETE) can't be deleted — claim must FAIL (the overlap
+    /// tell) instead of silently proceeding into an interleaved two-writer
+    /// build. (POSIX unlinks open files, so the overlap is undetectable there
+    /// and the claim succeeds.)
+    #[cfg(windows)]
+    #[test]
+    fn claim_temp_errors_while_temp_is_held_open() {
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("out.mp4");
+        fs::write(temp_path(&dest), b"mid-write").unwrap();
+        let held = open_like_ffmpeg(&temp_path(&dest), true);
+        let err = claim_temp(&dest).expect_err("claim must refuse a held temp");
+        assert!(
+            err.to_string().contains("another writer holds"),
+            "unexpected error: {err:#}"
+        );
+        drop(held);
+        claim_temp(&dest).expect("claim succeeds once the holder exits");
+    }
+
+    #[tokio::test]
+    async fn promote_temp_retry_plain_promote() {
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("out.mp4");
+        fs::write(temp_path(&dest), b"data").unwrap();
+        promote_temp_retry(&dest).await.unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"data");
+        assert!(!temp_path(&dest).exists());
+    }
+
+    /// Windows-only: dest already landed and is held open by a reader (no
+    /// FILE_SHARE_DELETE) → replace-rename is denied forever. The retry must
+    /// ADOPT the landed file (content-addressed ⇒ equivalent) and discard the
+    /// redundant temp instead of erroring — the live 06:18 os-error-5 case.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn promote_temp_retry_adopts_dest_held_by_reader() {
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("out.mp4");
+        fs::write(&dest, b"landed-first").unwrap();
+        let _reader = open_like_ffmpeg(&dest, false);
+        fs::write(temp_path(&dest), b"redundant-rebuild").unwrap();
+        promote_temp_retry(&dest).await.unwrap();
+        assert_eq!(
+            fs::read(&dest).unwrap(),
+            b"landed-first",
+            "the already-landed artifact must win"
+        );
+        assert!(!temp_path(&dest).exists(), "redundant temp discarded");
     }
 
     #[test]

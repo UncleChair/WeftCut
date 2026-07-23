@@ -54,6 +54,11 @@ where
     if preferred_hwaccel().is_some() {
         let mut cmd = Command::new(ffmpeg_path());
         cmd.no_console_window();
+        // LANDMINE: without kill_on_drop, dropping the output() future (tokio
+        // runtime shutdown, task abort) ORPHANS the ffmpeg child, which keeps
+        // writing the deterministic `<dest>.tmp` — the next build then
+        // interleaves with it and dies at promote (observed live 2026-07-23).
+        cmd.kill_on_drop(true);
         build(true, &mut cmd);
         let output = cmd
             .output()
@@ -72,6 +77,7 @@ where
 
     let mut cmd = Command::new(ffmpeg_path());
     cmd.no_console_window();
+    cmd.kill_on_drop(true); // see the hw-attempt landmine above
     build(false, &mut cmd);
     if preferred_hwaccel().is_some() {
         info!("{label}: software decode fallback");

@@ -56,6 +56,9 @@ pub async fn extract(cache: &CacheLayout, media: &MediaItem, t_us: TimeUs) -> Re
     // of a `%d` pattern).
     let output = Command::new(ffmpeg_path())
         .no_console_window()
+        // Reap on future-drop so no orphan keeps writing the frame temp; see
+        // hwaccel.rs.
+        .kill_on_drop(true)
         .args([
             "-y",
             "-hide_banner",

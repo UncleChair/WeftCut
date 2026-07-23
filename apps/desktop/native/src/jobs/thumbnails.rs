@@ -71,6 +71,9 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // filter's output isn't second-guessed.
     let status = Command::new(ffmpeg_path())
         .no_console_window()
+        // Reap on future-drop so no orphan keeps writing the temp dir; see
+        // hwaccel.rs.
+        .kill_on_drop(true)
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([
