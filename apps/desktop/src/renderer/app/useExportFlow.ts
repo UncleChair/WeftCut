@@ -30,10 +30,12 @@ import {
   compositeBitDepth,
   computeBitrate,
   defaultCrf,
+  encoderHwHint,
   gopFrames,
   isIntermediateCodec,
   resolveOutputDims,
 } from "../render/exportSettings";
+import { rendererOS } from "../platform";
 import {
   exportVideoSinkStart,
   exportVideoSinkFinish,
@@ -644,18 +646,11 @@ export function useExportFlow(deps: {
       target.engine === "webcodecs" ? target.workerCodec : settings.codec;
     const workerBitrate = computeBitrate(settings, dims.width, dims.height, outFps);
     // Encoder-acceleration hint (WebCodecs path only — the worker IS the
-    // final encode there, so honor the user's HW/SW choice ("software" →
-    // prefer-software). Auto keeps today's behavior: H.264 forces
-    // prefer-hardware (Electron's Chromium engine treats it as mandatory, so AV1/HEVC omit it and
-    // let the browser fall back to software).
-    let hwHint: VideoEncoderConfig["hardwareAcceleration"] | undefined;
-    if (settings.hwAccel === "software") {
-      hwHint = "prefer-software";
-    } else if (workerCodec === "h264") {
-      hwHint = "prefer-hardware";
-    } else {
-      hwHint = undefined;
-    }
+    // final encode there). Chromium treats the hint as MANDATORY, so asking
+    // for prefer-hardware is OS-allowlisted (encoderHwHint): on Linux there
+    // is no WebCodecs hardware VideoEncoder and the ask would hard-error
+    // instead of falling back (issue #7 boundary #10).
+    const hwHint = encoderHwHint(rendererOS, workerCodec, settings.hwAccel);
     const encoderConfig: VideoEncoderConfig = {
       // codecString only runs on the WebCodecs path, where target.workerCodec
       // is a genuine WebCodecsCodecId. On the native-sink path settings.codec

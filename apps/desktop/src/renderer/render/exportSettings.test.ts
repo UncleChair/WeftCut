@@ -17,6 +17,7 @@ import {
   audioCodecsForContainer,
   downscaleFpsOptions,
   downscaleHeightOptions,
+  encoderHwHint,
   estimateBytes,
   formatBytes,
   mergeSettings,
@@ -462,5 +463,31 @@ describe("decode-engine merge defense", () => {
     // untouched — the axes swing independently.
     expect(m.encoderEngine).toBe("auto");
     expect(m.decodeEngine).toBe("ffmpeg");
+  });
+});
+
+describe("encoderHwHint", () => {
+  it("honors the user's software pin on every OS", () => {
+    for (const os of ["windows", "mac", "linux"] as const) {
+      expect(encoderHwHint(os, "h264", "software")).toBe("prefer-software");
+      expect(encoderHwHint(os, "av1", "software")).toBe("prefer-software");
+    }
+  });
+
+  it("auto + h264 asks for hardware only on the allowlisted OSes", () => {
+    expect(encoderHwHint("windows", "h264", "auto")).toBe("prefer-hardware");
+    expect(encoderHwHint("mac", "h264", "auto")).toBe("prefer-hardware");
+    // Linux has no WebCodecs hardware VideoEncoder and Chromium treats the
+    // hint as mandatory — prefer-hardware there is a guaranteed configure()
+    // error (issue #7 boundary #10). Omitting the hint lets Chromium pick
+    // the working software encoder.
+    expect(encoderHwHint("linux", "h264", "auto")).toBeUndefined();
+  });
+
+  it("auto + AV1/HEVC omits the hint everywhere (mandatory-hint hazard)", () => {
+    for (const os of ["windows", "mac", "linux"] as const) {
+      expect(encoderHwHint(os, "av1", "auto")).toBeUndefined();
+      expect(encoderHwHint(os, "hevc", "auto")).toBeUndefined();
+    }
   });
 });

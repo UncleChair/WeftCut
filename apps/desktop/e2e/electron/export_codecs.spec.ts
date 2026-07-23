@@ -65,6 +65,20 @@ const AV1_SETTINGS = {
   audio: { include: false },
 } as const
 
+// Pinned-WebCodecs H.264 — the DEFAULT codec through the consent-fallback
+// engine. Regression guard for the platform-gated encoder hint
+// (encoderHwHint, issue #7 boundary #10): on Linux the old unconditional
+// prefer-hardware hint was a guaranteed VideoEncoder configure() hard error
+// (Chromium treats the hint as mandatory and has no Linux HW encoder), so
+// this cell could not even start before the gate.
+const WEBCODECS_H264_SETTINGS = {
+  codec: 'h264',
+  encoderEngine: 'webcodecs',
+  bitDepth: 8,
+  container: 'mp4',
+  audio: { include: false },
+} as const
+
 const HEVC_SETTINGS = {
   codec: 'hevc',
   bitDepth: 8,
@@ -198,6 +212,49 @@ test.describe('multi-codec export smoke (Electron)', () => {
       const SSIM_FLOOR = 0.6
       const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
       console.log('[e2e] AV1 conformance report:', JSON.stringify(report))
+      const misaligned = report.samples.filter((s: any) => !s.aligned)
+      expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
+    } finally {
+      await app.close()
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // H.264, pinned `encoderEngine:'webcodecs'` — the default codec through the
+  // WebCodecs engine (the consent-fallback lane when the native sink fails).
+  // Regression guard for the platform-gated encoder hint (encoderHwHint):
+  // before the gate, Linux hard-errored at VideoEncoder configure() because
+  // the unconditional prefer-hardware hint is mandatory in Chromium and Linux
+  // has no WebCodecs hardware encoder (issue #7 boundary #10). Like the AV1
+  // cell, no color 4-tuple assertion — that's the native sink's contract.
+  // -------------------------------------------------------------------------
+  test('pinned-webcodecs H.264 export produces an aligned file (Electron)', async () => {
+    test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)
+    test.setTimeout(300000)
+    const OUTPUT = path.join(tmpDir('weftcut-e2e-codecs-out-'), 'webcodecs-h264.mp4')
+
+    const { app, page } = await launchApp()
+    try {
+      await newProject(page, {
+        parentFolder: tmpDir('weftcut-e2e-codecs-proj-'),
+        name: 'e2e-wc-h264-' + Date.now(),
+        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+      })
+      await exportTo(
+        page,
+        'WebCodecs H.264',
+        { mediaAbsPath: SOURCE, outputAbsPath: OUTPUT, settings: WEBCODECS_H264_SETTINGS },
+        280000,
+      )
+      expect(existsSync(OUTPUT), 'WebCodecs H.264 output file must exist').toBe(true)
+
+      const st = probeVideoStream(OUTPUT, 'codec_name')
+      console.log('[e2e] WebCodecs H.264 output stream:', JSON.stringify(st))
+      expect(st.codec_name).toBe('h264')
+
+      const SSIM_FLOOR = 0.6
+      const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150], ssimMin: SSIM_FLOOR })
+      console.log('[e2e] WebCodecs H.264 conformance report:', JSON.stringify(report))
       const misaligned = report.samples.filter((s: any) => !s.aligned)
       expect(misaligned, JSON.stringify(misaligned)).toHaveLength(0)
     } finally {

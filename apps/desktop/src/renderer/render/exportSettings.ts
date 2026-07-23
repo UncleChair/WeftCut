@@ -2,6 +2,8 @@
 // function here is unit-tested in exportSettings.test.ts. The renderer owns
 // this schema end to end; Rust persists it as an opaque JSON blob.
 
+import type { RendererOS } from "../platform";
+
 export type CodecId = "h264" | "av1" | "hevc" | "prores" | "dnxhr";
 /// Codecs a WebCodecs VideoEncoder can emit; intermediates are native-only.
 export type WebCodecsCodecId = "h264" | "av1" | "hevc";
@@ -405,6 +407,30 @@ export function isCodecContainerValid(
 ): boolean {
   if (isIntermediateCodec(codec)) return container === "mov";
   return !(container === "mov" && codec === "av1");
+}
+
+/// `hardwareAcceleration` hint for the WebCodecs-engine VideoEncoder.
+/// "software" honors the user's pin. Under "auto", H.264 asks for
+/// prefer-hardware — but Chromium treats the hint as MANDATORY (it rejects the
+/// config rather than falling back), so the ask is gated on an OS allowlist,
+/// the encode mirror of `hwExportDecodeAllowed`: Linux Chromium has NO
+/// hardware VideoEncoder at all (no NVENC integration; nvidia-vaapi-driver is
+/// decode-only; VAAPI-encode feature flags change nothing — issue #7 boundary
+/// #10), so prefer-hardware there is a guaranteed `configure()` hard error.
+/// Off-allowlist OSes omit the hint and let Chromium pick (OpenH264 software
+/// today, any future HW backend for free). AV1/HEVC always omit it for the
+/// same reason h264 must on Linux: their HW encoders are frequently absent and
+/// the mandatory hint would reject the working software fallback.
+export function encoderHwHint(
+  os: RendererOS,
+  codec: WebCodecsCodecId | CodecId,
+  hwAccel: ExportSettings["hwAccel"],
+): VideoEncoderConfig["hardwareAcceleration"] | undefined {
+  if (hwAccel === "software") return "prefer-software";
+  if (codec === "h264" && (os === "windows" || os === "mac")) {
+    return "prefer-hardware";
+  }
+  return undefined;
 }
 
 /// Containers the given codec can actually be written into.
