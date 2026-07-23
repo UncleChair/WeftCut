@@ -4,27 +4,84 @@
 
 <h1 align="center">WeftCut</h1>
 
-WeftCut is a cross-platform, web-based desktop video editor where **external AI agents are first-class citizens**. Connect Claude Desktop, Cursor, or any MCP-capable client to a localhost MCP server and let an agent edit your timeline through a structured tool surface — while you watch the changes land in the UI in real time and collaborate on editing.
+<p align="center">
+  A cross-platform desktop video editor where <strong>AI agents are first-class citizens</strong>.<br/>
+  Connect Claude, Cursor, or any MCP client — and audit it edit your timeline live.
+</p>
 
-## Why this is different
 
-Most editors bolt AI on as features. WeftCut exposes the editor *as* a tool surface. The intelligence lives in whoever connects; the app stays small, fast, bring-your-own-API-key, and free of bundled models.
+![WeftCut editor](docs/assets/editor.png)
 
-## Tech stack
+Most editors bolt AI on as features. WeftCut exposes the editor *as* a tool
+surface: a localhost MCP server with a full catalog of editing tools, driven by
+whatever agent you connect. The intelligence lives outside; the app stays
+small, fast, and free of bundled models. Everything an agent can do, you can
+do — it is also a complete editor for humans.
+
+![An agent editing the timeline live over MCP](docs/assets/agent-edit.gif)
+
+<p align="center"><em>An agent at work over MCP while playback runs: restyling the
+lower third live, trimming the B-roll, then undoing — every edit lands in the UI
+in real time.</em></p>
+
+## Features
+
+- **Agent-native editing** — a built-in MCP server (streamable HTTP) exposes
+  the whole editor: place and trim clips, restyle titles, set keyframes,
+  manage groups and markers, checkpoint and undo. Changes land in the UI in
+  real time while you keep editing alongside.
+- **A real NLE timeline** — A/B-roll rows with filmstrips and waveforms,
+  frame-aligned editing (SMPTE timecode), keyframes with bézier easing and a
+  curve editor, cross-track groups with auto-paired audio/video.
+- **Fast, accurate preview** — PixiJS v8 + WebCodecs compositing with a native
+  Rust decode engine underneath; optional proxies for heavy codecs; a
+  transport indicator that tells you when playback drops frames.
+- **Titles, captions & Motifs** — styled text layers; SRT/VTT/ASS import as
+  editable caption layers; "Motifs": animated, parameterized web overlays
+  (lower thirds, countdowns, karaoke text) rendered pixel-identically in
+  preview and export.
+- **Effects** — per-layer effect chains including chroma key, with an
+  eyedropper that picks from the live frame.
+- **Audio** — role-based mixing (dialogue / music / effects), gain, pan,
+  fades, and sample-accurate export through a Rust mixer.
+- **Export** — H.264 / HEVC / AV1 up to 10-bit, hardware or software
+  encoders, resolution/fps/quality controls, streamed muxing that doesn't
+  buffer the whole render in memory.
+- **Find anything** — a `Ctrl+K` palette that searches commands, media,
+  clips, captions, and markers (with pinyin support).
+
+![Search palette](docs/assets/search-palette.png)
+
+## How it's built
 
 | Layer | Choice |
 |---|---|
-| Shell | Electron (Rust core via a napi addon, Chromium UI) |
-| UI | React 19 + `@pixi/react` in the renderer |
-| Renderer | PixiJS v8 + WebCodecs (preview on `<canvas>`, export in a Worker on `OffscreenCanvas`) |
-| Audio export + final mux | ffmpeg via `ffmpeg-sidecar` |
-| Container demux/mux | `mediabunny` (WebCodecs pipeline; MP4/MOV + Matroska/WebM) |
-| Subtitles | `jassub` (libass-wasm) |
-| Agent protocol | MCP over streamable-HTTP (`@modelcontextprotocol/sdk`, hosted in the Electron main) |
-| UI i18n | `i18next` + `react-i18next` (en-US, zh-CN) |
-| Optional cloud | OpenAI (Whisper transcription, tts-1 TTS) — user-supplied key |
+| Shell | Electron; UI in React 19 |
+| Renderer | PixiJS v8 + WebCodecs — preview on `<canvas>`, export in a Worker on `OffscreenCanvas` |
+| Native core | Rust via napi-rs — decode engine, audio mixer, jobs, media analysis |
+| Encode / conform | ffmpeg (LGPL libraries in-process for decode; GPL CLI as a separate process for encode) |
+| Containers | `mediabunny` (MP4/MOV + Matroska/WebM demux/mux) |
+| Agent protocol | MCP over streamable HTTP (`@modelcontextprotocol/sdk`) |
 
-No local AI models. No bundled Chromium. No server backend.
+## Getting started
+
+Prerequisites: **Node 22+**, **Rust** (stable via `rustup`), and your
+platform's C++ build tools — per-OS install commands in
+[docs/setup.md](docs/setup.md).
+
+```sh
+npm install       # JS dependencies
+npm run bootstrap # one-time: fetch ffmpeg + build the Rust addons
+npm run dev       # start the editor
+```
+
+Common scripts: `npm run typecheck`, `npm test`, `npm run e2e`,
+`npm run build`, `npm run package` (installers). See
+[docs/setup.md](docs/setup.md) for packaging notes and troubleshooting.
+
+To connect an agent, grab the MCP URL + token the app prints on startup (also
+available in-app) and drop it into your client's MCP config — the full tool
+surface and multi-agent behavior are documented in [docs/mcp.md](docs/mcp.md).
 
 ## Documentation
 
@@ -37,55 +94,13 @@ No local AI models. No bundled Chromium. No server backend.
 - **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, and color.
 - **[MCP server & agent UX](docs/mcp.md)** — protocol, tool surface, resources, multi-agent.
 - **[Groups](docs/groups.md)** — flat group model that bundles layers across tracks.
+- **[Search](docs/search.md)** — the global search palette.
 - **[Status / Log system](docs/status-log.md)** — bottom-of-editor log bus.
 - **[Undo-stack scope](docs/undo-stack-scope.md)** — what records into history and what doesn't.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
 - **[Licensing](docs/licensing.md)** — MIT app + the two FFmpeg lanes (LGPL in-process decode, GPL sidecar) and their build-time compliance gates.
 - **[Roadmap](docs/roadmap.md)** — phased delivery journal.
-- **ADRs** — [`docs/adr/`](docs/adr/) (0001–0017): architecture decisions with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer [`docs/rendering.md`](docs/rendering.md) and other top-level docs for current export/audio behavior; older ADRs may be historical.
-
-## Getting started
-
-Prerequisites — see [docs/setup.md](docs/setup.md) for per-OS install commands:
-
-- **Rust** (stable, via `rustup`; this repo declares its wasm target in `rust-toolchain.toml`)
-- **MSVC Build Tools** (Windows) / **Xcode CLT** (macOS) / build tools (Linux)
-- **Node 22+**
-
-Electron bundles its own Chromium, so there is no per-OS webview runtime to install.
-
-After installing prerequisites, from the repo root:
-
-```sh
-npm install      # install JS deps (does NOT build the native addons)
-npm run bootstrap # fetch ffmpeg + compile the Rust napi addons (@weftcut/core, native-decode)
-npm run dev      # build the eval wasm, start Vite, and open the Electron window
-```
-
-`npm run bootstrap` is a one-time step after cloning: it fetches ffmpeg and
-compiles the two Rust napi addons the app imports. Re-run it only after
-changing the Rust sources under `native/` (cargo makes repeat runs fast).
-`npm run dev` then builds the eval wasm (`predev`), starts Vite, and opens the
-Electron window. ffmpeg is also auto-downloaded on first run via
-`ffmpeg-sidecar`; if that fails behind a SOCKS proxy, see the ffmpeg section in
-[setup.md](docs/setup.md).
-
-Other root scripts (thin façades over the `apps/desktop` workspace):
-`npm run typecheck` (TypeScript project references), `npm test` (unit +
-component), `npm run e2e` (Playwright/Electron suite), `npm run build`
-(release bundle) and `npm run package` (installers — icon set and packaging
-notes in [setup.md](docs/setup.md)). Workspace-only scripts (`ffmpeg:fetch`,
-`napi:build`, `gen:icons`, …) run via `npm run <name> --workspace apps/desktop`.
-
-Project layout follows the [architecture doc](docs/architecture.md):
-
-```
-apps/desktop/        Electron app
-  native/            Rust core (state actor, ir, export, ffmpeg, jobs, cache,
-                     mcp, cloud, io, logs, motifs, …)
-  src/               React UI + PixiJS/WebCodecs renderer (+ export Worker)
-docs/                design + architecture
-```
+- **ADRs** — [`docs/adr/`](docs/adr/): architecture decision records with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer the top-level docs above for current behavior; older ADRs may be historical.
 
 ## License
 
