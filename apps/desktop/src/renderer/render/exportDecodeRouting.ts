@@ -18,15 +18,16 @@ import type { ExportDecodeEngine } from "./exportSettings";
 /// texImage2D / copyTo all return zeros — importProbe.ts), with no decoder
 /// error to trip the HW→SW fallback, so every exported frame goes silently
 /// black. Windows is hardware-verified faithful (Chromium's ANGLE→D3D11
-/// backend composites GPU-backed frames correctly); macOS is untested on a
-/// real GPU, so it keeps software. Explicit ALLOWLIST, not a blocklist —
+/// backend composites GPU-backed frames correctly); macOS likewise (Apple
+/// Silicon force-test 2026-07-23: HW frames arrive NV12, every JS import path
+/// reads real pixels — issue #7 §5). Explicit ALLOWLIST, not a blocklist —
 /// unknown platforms take the safe software path. Resolved once on the
 /// renderer main thread at export start (the Worker has no OS signal) and
 /// rides the init protocol as `allowHwExportDecode`. The 10-bit lane's own
 /// preferSoftware pin is a separate correctness requirement (Hi10P has no HW
 /// path; AV1-10 HW emits opaque format=null frames) and ignores this verdict.
 export function hwExportDecodeAllowed(os: RendererOS): boolean {
-  return os === "windows";
+  return os === "windows" || os === "mac";
 }
 
 /// CPU transport format for native-decoded frames crossing the relay. Follows

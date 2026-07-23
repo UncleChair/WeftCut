@@ -219,12 +219,13 @@ describe("routingSourceCounts", () => {
 
 // The 8-bit WebCodecs export lane's HW-decode ALLOWLIST: only platforms where
 // a GPU-backed VideoFrame is proven readable by JS import paths may drop the
-// prefer-software black-frame workaround. Windows is hardware-verified; macOS
-// is untested; Linux is the platform the workaround exists for.
+// prefer-software black-frame workaround. Windows and macOS are
+// hardware-verified (issue #7 §5); Linux is the platform the workaround
+// exists for.
 describe("hwExportDecodeAllowed", () => {
-  it("allows hardware decode on Windows only", () => {
+  it("allows hardware decode on Windows and macOS only", () => {
     expect(hwExportDecodeAllowed("windows")).toBe(true);
-    expect(hwExportDecodeAllowed("mac")).toBe(false);
+    expect(hwExportDecodeAllowed("mac")).toBe(true);
     expect(hwExportDecodeAllowed("linux")).toBe(false);
   });
 });
