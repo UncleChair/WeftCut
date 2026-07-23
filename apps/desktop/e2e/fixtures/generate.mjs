@@ -225,10 +225,11 @@ export function runFfmpeg(args, { cwd = process.cwd(), spawn = spawnSync } = {})
 }
 
 /// Pick the AV1 encoder the ffmpeg on PATH actually ships. SVT-AV1 is the
-/// preferred 10-bit AV1 encoder, but lean sidecar builds may lack it (the
-/// macOS evermeet build has none) — fall back to libaom-av1 in
-/// constant-quality mode. Either produces the same AV1 10-bit ramp shape; the
-/// gates key on codec/depth, not the encoder. Probed once per process.
+/// preferred 10-bit AV1 encoder, but lean builds may lack it (the old macOS
+/// evermeet sidecar had none; the pinned martin-riedl arm64 build ships it) —
+/// fall back to libaom-av1 in constant-quality mode. Either produces the same
+/// AV1 10-bit ramp shape; the gates key on codec/depth, not the encoder.
+/// Probed once per process.
 let av1EncoderCache
 function pickAv1Encoder({ spawn = spawnSync } = {}) {
   if (av1EncoderCache) return av1EncoderCache

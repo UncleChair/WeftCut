@@ -1,5 +1,6 @@
 // Downloads a static ffmpeg + ffprobe for the host OS into resources/ffmpeg/<os>/.
-// Sources: Windows = gyan.dev essentials; Linux = BtbN/FFmpeg-Builds (GitHub CDN); macOS = evermeet.
+// Sources: Windows = gyan.dev essentials; Linux = BtbN/FFmpeg-Builds (GitHub CDN);
+// macOS = martin-riedl.de (arm64).
 // Used locally and in CI to populate extraResources before packaging.
 // CI may inline equivalent commands; this script mirrors them for local use.
 import { existsSync, mkdirSync, chmodSync, rmSync, statSync, readFileSync } from 'node:fs'
@@ -11,11 +12,19 @@ import { tmpdir } from 'node:os'
 
 const FFMPEG_VERSION = '7.1.1'
 // SHA-256 of the version-pinned Windows archive (gyan 7.1.1 essentials build) —
-// verified, rejects a tampered/corrupt download. Linux (BtbN `n7.1` asset) and
-// macOS (evermeet `getrelease`) are ROLLING WITHIN their pinned major.minor line,
-// so a pinned hash there would break on every upstream rebuild; they stay
-// size-validated only (rolling upstream builds have no stable hash to pin against).
+// verified, rejects a tampered/corrupt download. Linux (BtbN `n7.1` asset) is
+// ROLLING WITHIN its pinned major.minor line, so a pinned hash there would
+// break on every upstream rebuild; it stays size-validated only. macOS pins a
+// versioned martin-riedl build + hash (see FFMPEG_MAC_* below).
 const FFMPEG_WIN_SHA256 = '04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4'
+// macOS: martin-riedl.de arm64 static build, pinned by build id AND SHA-256
+// (the /download/<os>/<arch>/<id>/ URLs are stable, unlike evermeet's rolling
+// `getrelease`). arm64-only BY DESIGN — WeftCut supports Apple Silicon only.
+// Bump: resolve https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip
+// to its versioned URL, download both zips, and update the three constants.
+const FFMPEG_MAC_BUILD = '1783011502_8.1.2'
+const FFMPEG_MAC_FFMPEG_SHA256 = 'ef1aa60006c7b77ce170c1608c08d8e4ba1c30c5746f2ac986ded932d0ac2c3c'
+const FFMPEG_MAC_FFPROBE_SHA256 = 'c39787f4af7a3932502d2d48db6f6feaaa836b48a73ef78c32cc3285df61dfaf'
 const MIN_ARCHIVE_BYTES = 1 * 1024 * 1024   // 1 MB — corrupt/truncated guard
 const MIN_BINARY_BYTES  = 1 * 1024 * 1024   // 1 MB — incomplete-extract guard
 const MAX_ATTEMPTS = 3
@@ -164,19 +173,22 @@ if (plat === 'win32') {
   rmSync(tarPath, { force: true })
 
 } else if (plat === 'darwin') {
-  // evermeet.cx static build — x86_64 ONLY (no arm64/universal build is
-  // published); on Apple Silicon it runs under Rosetta 2. ffmpeg and ffprobe
-  // are separate downloads on evermeet.
-  // Verified URL: https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip (302→200, ffprobe-8.1.2.zip)
-  // Skew vs the pinned 7.1.x win/linux builds: evermeet rolls the 8.x line —
-  // `-vsync` is deprecated there but still accepted (verified on 8.1.2; the
-  // preview conformance e2e relies on it) — and ships no libsvtav1 (AV1 export
-  // probes fall back to libaom-av1; encoder_registry.rs AV1_SOFTWARE).
+  // martin-riedl.de static build — native **arm64** (Apple Silicon only; the
+  // evermeet.cx x86_64 build it replaces ran under Rosetta 2, where
+  // hevc_videotoolbox cannot create a VT compression session: -12908,
+  // issue #7 boundary #9). Version-pinned URL + SHA-256 (unlike evermeet's
+  // rolling `getrelease`, so mac gets the same tamper check as Windows).
+  // Skew vs the pinned 7.1.x win/linux builds: 8.1.2 — `-vsync` is deprecated
+  // but still accepted (verified; the preview conformance e2e relies on it) —
+  // and unlike evermeet it SHIPS libsvtav1, so AV1 export probes select it
+  // (encoder_registry.rs AV1_SOFTWARE) instead of falling back to libaom-av1.
+  // ffmpeg and ffprobe are separate single-binary zips.
+  const macBase = `https://ffmpeg.martin-riedl.de/download/macos/arm64/${FFMPEG_MAC_BUILD}`
+
   if (!existsSync(bin)) {
-    const ffmpegUrl = 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip'
     const ffmpegZip = join(tmp, 'ffmpeg-mac.zip')
-    console.log('Downloading ffmpeg (macOS) from evermeet.cx...')
-    downloadWithRetry(ffmpegUrl, ffmpegZip, 'macOS evermeet ffmpeg')
+    console.log(`Downloading ffmpeg ${FFMPEG_MAC_BUILD} (macOS arm64) from martin-riedl.de...`)
+    downloadWithRetry(`${macBase}/ffmpeg.zip`, ffmpegZip, 'macOS martin-riedl ffmpeg', FFMPEG_MAC_FFMPEG_SHA256)
     console.log('Extracting ffmpeg...')
     execSync(`unzip -o "${ffmpegZip}" ffmpeg -d "${dest}"`, { stdio: 'inherit' })
     rmSync(ffmpegZip, { force: true })
@@ -185,10 +197,9 @@ if (plat === 'win32') {
   }
 
   if (!existsSync(probeBin)) {
-    const ffprobeUrl = 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip'
     const ffprobeZip = join(tmp, 'ffprobe-mac.zip')
-    console.log('Downloading ffprobe (macOS) from evermeet.cx...')
-    downloadWithRetry(ffprobeUrl, ffprobeZip, 'macOS evermeet ffprobe')
+    console.log(`Downloading ffprobe ${FFMPEG_MAC_BUILD} (macOS arm64) from martin-riedl.de...`)
+    downloadWithRetry(`${macBase}/ffprobe.zip`, ffprobeZip, 'macOS martin-riedl ffprobe', FFMPEG_MAC_FFPROBE_SHA256)
     console.log('Extracting ffprobe...')
     execSync(`unzip -o "${ffprobeZip}" ffprobe -d "${dest}"`, { stdio: 'inherit' })
     rmSync(ffprobeZip, { force: true })

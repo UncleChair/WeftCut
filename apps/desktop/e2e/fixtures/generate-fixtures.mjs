@@ -47,8 +47,9 @@ export const MATRIX = [
   { gradientH264: true },
   { gradientH264Bf: true },
   // 10-bit ramp as AV1 10-bit (SVT-AV1, libaom-av1 fallback when the ffmpeg on
-  // PATH lacks it — e.g. the macOS evermeet sidecar) — the AV1-10 source
-  // admission probe + export gate (the second tenBitExportCapable codec).
+  // PATH lacks it — lean/system builds; every pinned sidecar now ships it) —
+  // the AV1-10 source admission probe + export gate (the second
+  // tenBitExportCapable codec).
   { gradientAv1: true },
   // The H.264 High10 ramp at 3840x2160 — the 4K ring-cap export gate
   // (resolution-derived ten-bit high-water clamps to its entry floor).
