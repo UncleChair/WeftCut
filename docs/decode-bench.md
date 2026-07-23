@@ -292,13 +292,12 @@ points to *keep deferred*.
 
 Same style of prerequisites as the [conformance suite](conformance.md#running):
 a native addon build, ffmpeg, an E2E-flagged build, and generated fixtures.
-From `apps/desktop`, in a bash shell (so the inline env-var prefix works on
-Windows):
+From `apps/desktop`:
 
 ```bash
 npm run napi:build                      # build @weftcut/core — close the dev app first, it locks the .node
 npm run ffmpeg:fetch                    # ffmpeg/ffprobe on PATH (or use a system ffmpeg)
-VITE_WEFTCUT_E2E=1 npm run build        # build WITH the window.__weftcutTest hook
+npm run build:e2e                       # build WITH the window.__weftcutTest hook
 ```
 
 Then, from `apps/desktop/e2e`:

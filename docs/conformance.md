@@ -178,16 +178,17 @@ instance.
 
 ```bash
 npm run napi:build                    # build the @weftcut/core native addon
-npm run ffmpeg:fetch                   # ffmpeg on PATH (or use a system ffmpeg)
+npm run ffmpeg:fetch                   # bundled ffmpeg (run-e2e wires it into FFMPEG/PATH)
 ( cd e2e && npm run fixtures )         # generate test media (needs ffmpeg)
-VITE_WEFTCUT_E2E=1 npm run build       # build WITH the E2E hook — see warning
+npm run build:e2e                      # build WITH the E2E hook — see warning
 ```
 
-> **`VITE_WEFTCUT_E2E=1` on the build is mandatory.** The `window.__weftcutTest`
-> control surface is gated on that flag and tree-shaken from any other build, so
-> a plain `npm run build` leaves every export spec timing out in `waitForHook`
-> (30 s) with no other symptom. Use a bash shell so the inline env-var prefix
-> works on Windows (this is what CI does).
+> **The build must carry `VITE_WEFTCUT_E2E=1`** (what `npm run build:e2e`
+> sets, on every OS). The `window.__weftcutTest` control surface is gated on
+> that flag and tree-shaken from any other build. `npm run e2e` preflights the
+> built bundle and refuses to start against a flag-less build — the old
+> symptom was every export spec timing out in `waitForHook` (30 s) with no
+> other clue.
 
 Then, from `apps/desktop`:
 

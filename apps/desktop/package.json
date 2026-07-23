@@ -20,6 +20,7 @@
     "predev": "npm run build:wasm",
     "build": "electron-vite build",
     "prebuild": "npm run build:wasm",
+    "build:e2e": "node scripts/build-e2e.mjs",
     "build:wasm": "node scripts/build-eval-wasm.mjs",
     "gen:icons": "electron scripts/gen-icons.mjs",
     "preview": "electron-vite preview",
@@ -35,7 +36,7 @@
     "e2e": "node scripts/run-e2e.mjs",
     "ffmpeg:fetch": "node scripts/fetch-ffmpeg.mjs",
     "ffmpeg:fetch-lgpl": "node scripts/fetch-ffmpeg-lgpl.mjs",
-    "package": "npm run napi:build && npm run build && electron-builder --publish never",
+    "package": "npm run napi:build && npm run napi:build:decode && npm run build && electron-builder --publish never",
     "pbt:stryker": "stryker run"
   },
   "dependencies": {
