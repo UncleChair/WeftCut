@@ -223,19 +223,16 @@ test.describe('export ProRes fidelity gates (Electron)', () => {
   // generation; the webcodecs leg re-encodes through the full proxy first, so
   // its output must sit strictly farther from the source.
   test('native pin beats the proxy path on SSIM to source (differential)', async ({}, testInfo) => {
-    // Linux: pending. This differential compares the NATIVE software-lane leg
-    // against the PROXY (webcodecs/Lite) leg. On Linux the proxy leg has an
-    // off-by-one tail-alignment issue (a tail sample best-matches source+1,
-    // failing the alignment precondition); the native software-lane leg is
-    // clean. That defect lives in the Lite/webcodecs path, ORTHOGONAL to the
-    // Standard engine's software lane this ticket delivers — whose fidelity
-    // is covered by the native-only color gate above (and the wedge SSIM
-    // gates). (The macOS proxy-leg wedge — the prefer-software decoder
-    // withholding each fed window's tail frames until more input — was fixed
-    // by generalizing the REORDER_MARGIN lead-in in ExportDecoderPool to every
-    // lane, so the macOS legs below both run for real.)
-    // Re-enable per-OS once that platform's webcodecs/proxy leg is fixed.
-    test.skip(process.platform === 'linux', 'proxy (webcodecs/Lite) leg is defective on Linux (off-by-one tail alignment); the native software-lane leg is clean — orthogonal to the Standard software lane')
+    // Linux re-enabled (issue #9, 2026-07-23): the historical proxy-leg
+    // off-by-one tail alignment did NOT reproduce on current main — ten
+    // sequential runs plus a wider matrix (24/25/50/60, 30000/1001,
+    // 60000/1001, non-zero start PTS, B-frame + edit-list input, mid-frame
+    // range end) all passed with byte-identical measurements. The likely
+    // fixes landed between the historical failure and the validation run:
+    // the REORDER_MARGIN lead-in (56f09adf) and the ExportFrameStore
+    // duration-eviction/identity rework. (The macOS proxy-leg wedge — the
+    // prefer-software decoder withholding each fed window's tail frames
+    // until more input — was the same REORDER_MARGIN fix.)
     // Two full exports + analysis. The webcodecs leg additionally blocks on
     // the import-time auto-enqueued full ProRes proxy transcode (blind-spot
     // route), so it gets the same 400s driveExport budget as the slow wedge
