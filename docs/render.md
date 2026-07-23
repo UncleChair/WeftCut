@@ -554,8 +554,10 @@ is never swapped silently.
 below need a GL renderer; the WebCodecs exit prefers WebGPU to match the
 preview surface instead). After compositing, a GPU pack pass — `PackYuvPlanar`
 for yuv420p/yuv422p/yuv422p10le, or the parity-gated `PackYuv420p10` for
-yuv420p10le — writes the target's rawvideo bytes, which stream over the export
-`chunk`/`chunk-ack` IPC loop into a native `ffmpeg` sink (`export/videosink.rs`);
+yuv420p10le — writes the target's rawvideo bytes, read back asynchronously
+(PBO + fence, two frames deep, `PboFrameReader`) so the Worker never blocks on
+GPU completion; the bytes stream over the export `chunk`/`chunk-ack` IPC loop
+into a native `ffmpeg` sink (`export/videosink.rs`);
 see [`export-ipc-transport.md`](export-ipc-transport.md) for the transport.
 The sink owns rawvideo input and the ffmpeg child lifecycle; it consumes one
 complete `EncoderPlan` from `export/encoder_registry.rs`. The registry accepts

@@ -1,9 +1,10 @@
 // f16 composite → yuv420p10le bytes via three byte-pack fragment passes into
-// RGBA8 targets (each texel = two u16LE samples) + readPixels (byte-exact).
-// The pass samples the composite BILINEARLY at output resolution, so encoder
-// downscale folds in here. Chroma = one bilinear tap at each 2×2 block
-// midpoint (an exact box average). GL readback rows are bottom-up; rows are
-// flipped on the CPU copy (PACK_ROW_FLIP, pinned by the parity e2e).
+// RGBA8 targets (each texel = two u16LE samples) + async PBO readback
+// (submit/retrieve, see PboFrameReader — byte-exact). The pass samples the
+// composite BILINEARLY at output resolution, so encoder downscale folds in
+// here. Chroma = one bilinear tap at each 2×2 block midpoint (an exact box
+// average). GL readback rows are bottom-up; rows are flipped on the CPU copy
+// (PACK_ROW_FLIP, pinned by the parity e2e).
 //
 // NOTE: VERT, FRAG_Y, and FRAG_C below are duplicated by the 10-bit
 // GL-parity gate — keep both copies byte-identical.
@@ -11,6 +12,7 @@
 import { Mesh, MeshGeometry, RenderTexture, Shader } from "pixi.js";
 import type { TextureSource, WebGLRenderer } from "pixi.js";
 import type { Texture } from "pixi.js";
+import { PboFrameReader } from "../yuv/pboReadback";
 
 /// Pixi's GL renderer applies a Y-flip projection (y=0 = RT top), so
 /// gl_FragCoord.y=0.5 corresponds to visual row 0 (top). readPixels at y=0
@@ -76,8 +78,7 @@ export class PackYuv420p10 {
   private y: Pass | null = null;
   private u: Pass | null = null;
   private v: Pass | null = null;
-  private out: Uint8Array | null = null;
-  private flip: Uint8Array | null = null;
+  private reader: PboFrameReader | null = null;
   private boundSource: TextureSource | null = null;
 
   constructor(
@@ -111,45 +112,40 @@ export class PackYuv420p10 {
     return { rt, mesh: new Mesh<MeshGeometry, Shader>({ geometry, shader }), w, h };
   }
 
-  /// Render the three pack passes off `composite` and return one buffer in
-  /// yuv420p10le plane order. The returned view is REUSED across calls —
-  /// the caller must consume (send) it before the next pack().
-  pack(composite: Texture): Uint8Array {
+  /// Render the three pack passes off `composite` and queue their async GPU
+  /// readback (PBO + fence) — non-blocking. Pair every submit() with one
+  /// retrieve(); at most two frames may be in flight.
+  submit(composite: Texture): void {
     if (this.boundSource === null) {
       this.boundSource = composite.source;
     } else if (composite.source !== this.boundSource) {
-      throw new Error("PackYuv420p10: composite texture changed after first pack() — recreate the packer");
+      throw new Error("PackYuv420p10: composite texture changed after first submit() — recreate the packer");
     }
     const W = this.outW, H = this.outH;
     this.y ??= this.buildPass(FRAG_Y, W / 2, H, null, composite);
     this.u ??= this.buildPass(FRAG_C, W / 4, H / 2, 0, composite);
     this.v ??= this.buildPass(FRAG_C, W / 4, H / 2, 1, composite);
-    const ySize = W * H * 2;
-    const cSize = (W >> 1) * (H >> 1) * 2;
-    this.out ??= new Uint8Array(ySize + 2 * cSize);
-    for (const [pass, offset] of [
-      [this.y, 0], [this.u, ySize], [this.v, ySize + cSize],
-    ] as Array<[Pass, number]>) {
+    const passes = [this.y, this.u, this.v];
+    for (const pass of passes) {
       this.renderer.render({ container: pass.mesh, target: pass.rt });
-      this.readPlane(pass, this.out.subarray(offset, offset + pass.w * pass.h * 4));
     }
-    return this.out;
+    this.reader ??= new PboFrameReader(
+      this.renderer.gl,
+      passes.map((p) => ({ w: p.w, h: p.h, dstRowBytes: p.w * 4, flipRows: PACK_ROW_FLIP })),
+    );
+    this.reader.submit((i) => this.renderer.renderTarget.bind(passes[i]!.rt, false));
   }
 
-  private readPlane(pass: Pass, dst: Uint8Array): void {
-    this.renderer.renderTarget.bind(pass.rt, false);
-    const gl = this.renderer.gl;
-    const rowBytes = pass.w * 4;
-    if (!PACK_ROW_FLIP) {
-      gl.readPixels(0, 0, pass.w, pass.h, gl.RGBA, gl.UNSIGNED_BYTE, dst);
-      return;
-    }
-    if (!this.flip || this.flip.length < dst.length) this.flip = new Uint8Array(dst.length);
-    const tmp = this.flip.subarray(0, dst.length);
-    gl.readPixels(0, 0, pass.w, pass.h, gl.RGBA, gl.UNSIGNED_BYTE, tmp);
-    for (let r = 0; r < pass.h; r++) {
-      dst.set(tmp.subarray(r * rowBytes, (r + 1) * rowBytes), (pass.h - 1 - r) * rowBytes);
-    }
+  /// Frames submitted but not yet retrieved.
+  get pending(): number {
+    return this.reader?.pending ?? 0;
+  }
+
+  /// Resolve the OLDEST submitted frame into one frame-owned buffer in
+  /// yuv420p10le plane order — safe to transfer.
+  retrieve(): Promise<Uint8Array> {
+    if (!this.reader) throw new Error("PackYuv420p10: retrieve() before submit()");
+    return this.reader.retrieve();
   }
 
   dispose(): void {
@@ -164,7 +160,7 @@ export class PackYuv420p10 {
     }
     this.y = this.u = this.v = null;
     this.boundSource = null;
-    this.out = null;
-    this.flip = null;
+    this.reader?.dispose();
+    this.reader = null;
   }
 }

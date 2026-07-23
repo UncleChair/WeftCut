@@ -482,21 +482,30 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         app.renderer.render({ container: app.stage, target: compositeRT! });
         compositeMs += performance.now() - compT0;
 
+        // Two-deep readback pipelining: submit frame i's pack passes + async
+        // PBO readback (non-blocking), then retrieve frame i-1 — its fence has
+        // had a full frame of wait/composite/pack behind it, so the retrieve
+        // is normally a straight CPU copy out of the PBO rather than a GPU
+        // sync stall (the old per-frame readPixels block, and the 10× run-
+        // order readback anomaly, both lived in that stall).
         const capT0 = performance.now();
-        const bytes = pack!.pack(compositeRT!);
+        pack!.submit(compositeRT!);
+        const bytes = pack!.pending > 1 ? await pack!.retrieve() : null;
         captureMs += performance.now() - capT0;
 
-        const encT0 = performance.now();
-        // Native-sink frames go to the main thread over the chunk/ack channel,
-        // which forwards them to export_video_sink_write. Copy because postChunk
-        // transfers the buffer and pack() reuses its output.
-        // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
-        // transport round-trip then overlaps the next frame's composite+pack
-        // instead of serializing after it. `encodeMs` therefore measures the
-        // stall blocked on transport, not the transport itself.
-        if (inflightAck) await inflightAck;
-        inflightAck = postChunk(bytes.slice());
-        encodeMs += performance.now() - encT0;
+        if (bytes) {
+          const encT0 = performance.now();
+          // Native-sink frames go to the main thread over the chunk/ack
+          // channel, which forwards them to export_video_sink_write.
+          // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
+          // transport round-trip then overlaps the next frame's composite+pack
+          // instead of serializing after it. `encodeMs` therefore measures the
+          // stall blocked on transport, not the transport itself. retrieve()
+          // hands over a frame-owned buffer, so postChunk transfers it as-is.
+          if (inflightAck) await inflightAck;
+          inflightAck = postChunk(bytes);
+          encodeMs += performance.now() - encT0;
+        }
       } else {
         // WebCodecs path: render to the OffscreenCanvas, capture as a VideoFrame,
         // push to the WebCodecs EncoderSink — UNCHANGED.
@@ -596,9 +605,15 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     );
   }
 
-  // Drain the last in-flight native-sink frame BEFORE posting `done` — the
-  // main thread calls exportVideoSinkFinish on `done`, and an unacked final
-  // frame would race the sink's finish.
+  // Drain the native-sink pipeline tails BEFORE posting `done` — the last
+  // frame's readback was submitted but never retrieved (the loop retrieves
+  // one frame behind), and the main thread calls exportVideoSinkFinish on
+  // `done`, so an unsent/unacked final frame would race the sink's finish.
+  while (pack && pack.pending > 0) {
+    const bytes = await pack.retrieve();
+    if (inflightAck) await inflightAck;
+    inflightAck = postChunk(bytes);
+  }
   if (inflightAck) {
     await inflightAck;
     inflightAck = null;

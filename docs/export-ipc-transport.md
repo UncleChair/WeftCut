@@ -16,13 +16,16 @@ fragmented-MP4 to disk) and uses neither transport.
    format (`rgba16float` for the yuv420p10le lane, `rgba8unorm` otherwise); a
    GPU pack pass — `PackYuvPlanar` for yuv420p/yuv422p/yuv422p10le, or the
    parity-gated `PackYuv420p10` for yuv420p10le — writes the sink's rawvideo
-   bytes.
-2. The Worker posts the frame to the renderer main thread over the export `chunk`
-   channel (zero-copy `postMessage` transfer). The `chunk-ack` is the backpressure,
-   with exactly one frame in flight: the Worker composites and packs the next frame
-   while the previous frame's ack is pending, and awaits that ack before posting —
-   the transport round-trip overlaps GPU work instead of serializing after it, and
-   the ack loop still bounds the pipeline at one unwritten frame.
+   bytes. The readback is asynchronous (PBO + fence, `PboFrameReader`): the
+   Worker submits frame N's readback, then retrieves frame N−1, whose fence
+   has had a full frame to signal — so the CPU never stalls on GPU completion.
+2. The Worker posts the retrieved frame to the renderer main thread over the export
+   `chunk` channel (zero-copy `postMessage` transfer of the frame-owned buffer). The
+   `chunk-ack` is the backpressure, with exactly one frame in flight: the Worker
+   composites and packs ahead while the previous frame's ack is pending, and awaits
+   that ack before posting — the transport round-trip overlaps GPU work instead of
+   serializing after it, and the ack loop still bounds the pipeline at one unwritten
+   frame.
 3. The main thread forwards the bytes to the backend via `window.api.videoSinkWrite` →
    `ipcMain.handle('export:videosink_write')` → `Backend.export_video_sink_write`.
 4. The backend writes the frame to `ffmpeg`'s stdin (`video_sink_write`). `ffmpeg`

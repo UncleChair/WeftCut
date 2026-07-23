@@ -4,13 +4,14 @@
 // the frozen PackYuv420p10 (its shaders are duplicated byte-identical by the
 // 10-bit GL-parity gate). Structure mirrors PackYuv420p10: three passes
 // (Y/Cb/Cr) sampled bilinearly at output resolution (encoder downscale folds
-// in), BT.709 limited-range quantization in-shader, readPixels per plane.
-// Rows may be padded to the texel boundary (yuvPlaneLayout.passW*4 >
-// rowBytes); readback trims per row.
+// in), BT.709 limited-range quantization in-shader, async PBO readback per
+// plane (submit/retrieve, see PboFrameReader). Rows may be padded to the
+// texel boundary (yuvPlaneLayout.passW*4 > rowBytes); retrieve trims per row.
 
 import { Mesh, MeshGeometry, RenderTexture, Shader } from "pixi.js";
 import type { Texture, TextureSource, WebGLRenderer } from "pixi.js";
 import type { NativePixFmt } from "../encodeTarget";
+import { PboFrameReader } from "./pboReadback";
 import { yuvPlaneLayout, type PlanePass, type YuvLayout } from "./yuvPlaneLayout";
 
 export type PackablePixFmt = Exclude<NativePixFmt, "yuv420p10le">;
@@ -114,8 +115,7 @@ export class PackYuvPlanar {
   private y: Pass | null = null;
   private u: Pass | null = null;
   private v: Pass | null = null;
-  private out: Uint8Array | null = null;
-  private scratch: Uint8Array | null = null;
+  private reader: PboFrameReader | null = null;
   private boundSource: TextureSource | null = null;
 
   constructor(
@@ -150,47 +150,40 @@ export class PackYuvPlanar {
     return { rt, mesh: new Mesh<MeshGeometry, Shader>({ geometry, shader }), plane };
   }
 
-  /// Render the three pack passes off `composite` and return one buffer in
-  /// planar order (Y, Cb, Cr). The returned view is REUSED across calls —
-  /// the caller must consume (send/copy) it before the next pack().
-  pack(composite: Texture): Uint8Array {
+  /// Render the three pack passes off `composite` and queue their async GPU
+  /// readback (PBO + fence) — non-blocking. Pair every submit() with one
+  /// retrieve(); at most two frames may be in flight.
+  submit(composite: Texture): void {
     if (this.boundSource === null) {
       this.boundSource = composite.source;
     } else if (composite.source !== this.boundSource) {
-      throw new Error("PackYuvPlanar: composite texture changed after first pack() — recreate the packer");
+      throw new Error("PackYuvPlanar: composite texture changed after first submit() — recreate the packer");
     }
     const tenBit = this.layout.bytesPerSample === 2;
     this.y ??= this.buildPass(tenBit ? FRAG_Y_10 : FRAG_Y_8, this.layout.y, null, composite);
     this.u ??= this.buildPass(tenBit ? FRAG_C_10 : FRAG_C_8, this.layout.c, 0, composite);
     this.v ??= this.buildPass(tenBit ? FRAG_C_10 : FRAG_C_8, this.layout.c, 1, composite);
-    this.out ??= new Uint8Array(this.layout.frameBytes);
-    let offset = 0;
-    for (const pass of [this.y, this.u, this.v]) {
+    const passes = [this.y, this.u, this.v];
+    for (const pass of passes) {
       this.renderer.render({ container: pass.mesh, target: pass.rt });
-      this.readPlane(pass, this.out.subarray(offset, offset + pass.plane.planeBytes));
-      offset += pass.plane.planeBytes;
     }
-    return this.out;
+    this.reader ??= new PboFrameReader(
+      this.renderer.gl,
+      passes.map((p) => ({ w: p.plane.passW, h: p.plane.passH, dstRowBytes: p.plane.rowBytes })),
+    );
+    this.reader.submit((i) => this.renderer.renderTarget.bind(passes[i]!.rt, false));
   }
 
-  private readPlane(pass: Pass, dst: Uint8Array): void {
-    this.renderer.renderTarget.bind(pass.rt, false);
-    const gl = this.renderer.gl;
-    const { passW, passH, rowBytes } = pass.plane;
-    const paddedRow = passW * 4;
-    if (paddedRow === rowBytes) {
-      gl.readPixels(0, 0, passW, passH, gl.RGBA, gl.UNSIGNED_BYTE, dst);
-      return;
-    }
-    // Padded pass rows (W not divisible by samples-per-texel): read the padded
-    // target, then trim each row to the plane's valid byte count.
-    const need = paddedRow * passH;
-    if (!this.scratch || this.scratch.length < need) this.scratch = new Uint8Array(need);
-    const tmp = this.scratch.subarray(0, need);
-    gl.readPixels(0, 0, passW, passH, gl.RGBA, gl.UNSIGNED_BYTE, tmp);
-    for (let r = 0; r < passH; r++) {
-      dst.set(tmp.subarray(r * paddedRow, r * paddedRow + rowBytes), r * rowBytes);
-    }
+  /// Frames submitted but not yet retrieved.
+  get pending(): number {
+    return this.reader?.pending ?? 0;
+  }
+
+  /// Resolve the OLDEST submitted frame into one frame-owned buffer in planar
+  /// order (Y, Cb, Cr) — safe to transfer.
+  retrieve(): Promise<Uint8Array> {
+    if (!this.reader) throw new Error("PackYuvPlanar: retrieve() before submit()");
+    return this.reader.retrieve();
   }
 
   dispose(): void {
@@ -205,7 +198,7 @@ export class PackYuvPlanar {
     }
     this.y = this.u = this.v = null;
     this.boundSource = null;
-    this.out = null;
-    this.scratch = null;
+    this.reader?.dispose();
+    this.reader = null;
   }
 }
