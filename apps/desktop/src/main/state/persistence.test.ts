@@ -19,6 +19,17 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
     const back = parseProjectJson(serializeProjectToJson(p))
     expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
   })
+  it('round-trips all three transition kinds (wire twin: native/src/state/transition.rs)', () => {
+    const p = blankProject(seededGen(), 'doc')
+    p.transitions.push(
+      { id: 't1', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Crossfade' } },
+      { id: 't2', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Wipe', direction: 'left' } },
+      { id: 't3', from_layer: 'a', to_layer: 'b', duration_us: 1_000_000, kind: { kind: 'Slide', direction: 'up' } },
+    )
+    const back = parseProjectJson(serializeProjectToJson(p))
+    expect(back.transitions).toEqual(p.transitions)
+    expect(canonicalString(serializeProject(back))).toBe(canonicalString(serializeProject(p)))
+  })
 })
 
 describe('schemaGate (mirror io/migrate.rs:20 run)', () => {

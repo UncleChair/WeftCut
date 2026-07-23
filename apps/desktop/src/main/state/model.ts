@@ -82,7 +82,13 @@ export interface Composition {
   sample_rate: number; channels: number; color_space: ColorSpace; background: Rgba
 }
 export interface Marker { id: Uuid; t_us: TimeUs; end_t_us: TimeUs | null; label: string; color: Rgba; metadata: Record<string, unknown> }
-export interface Transition { id: Uuid; from_layer: Uuid; to_layer: Uuid; duration_us: TimeUs; kind: { kind: 'Crossfade' } }
+/** Motion direction, not reveal side — semantics in native/src/state/transition.rs (the serde twin). */
+export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
+export type TransitionKind =
+  | { kind: 'Crossfade' }
+  | { kind: 'Wipe'; direction: TransitionDirection }
+  | { kind: 'Slide'; direction: TransitionDirection }
+export interface Transition { id: Uuid; from_layer: Uuid; to_layer: Uuid; duration_us: TimeUs; kind: TransitionKind }
 /** `members` kept sorted; `label` omitted (not null) when absent — see serialize.ts. */
 export interface Group { id: Uuid; label?: string; members: Uuid[] }
 export interface RoleMixSettings { gain_db: number; muted: boolean; solo: boolean }

@@ -57,7 +57,7 @@ pub use project::{
 pub use time::{snap_frame_ceil, snap_frame_floor, Rational, TimeUs, US_PER_MS, US_PER_SEC};
 pub use track::{Track, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};
-pub use transition::{Transition, TransitionKind};
+pub use transition::{Transition, TransitionDirection, TransitionKind};
 
 #[cfg(test)]
 mod tests {
@@ -69,6 +69,7 @@ mod tests {
         let media_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000001").unwrap();
         let track_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000002").unwrap();
         let layer_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000003").unwrap();
+        let layer2_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000004").unwrap();
 
         let media = MediaItem {
             id: media_id,
@@ -162,7 +163,35 @@ mod tests {
             media_pool: imbl::HashMap::unit(media_id, media),
             tracks: imbl::vector![track],
             markers: imbl::Vector::new(),
-            transitions: imbl::Vector::new(),
+            // All three kinds so the round-trip covers the full tagged union
+            // (pure serde — participants aren't validated here).
+            transitions: imbl::vector![
+                Transition {
+                    id: uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000010").unwrap(),
+                    from_layer: layer_id,
+                    to_layer: layer2_id,
+                    duration_us: 1_000_000,
+                    kind: TransitionKind::Crossfade,
+                },
+                Transition {
+                    id: uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000011").unwrap(),
+                    from_layer: layer_id,
+                    to_layer: layer2_id,
+                    duration_us: 1_000_000,
+                    kind: TransitionKind::Wipe {
+                        direction: TransitionDirection::Left,
+                    },
+                },
+                Transition {
+                    id: uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000012").unwrap(),
+                    from_layer: layer_id,
+                    to_layer: layer2_id,
+                    duration_us: 1_000_000,
+                    kind: TransitionKind::Slide {
+                        direction: TransitionDirection::Up,
+                    },
+                },
+            ],
             groups: imbl::Vector::new(),
             audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
