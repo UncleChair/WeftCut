@@ -178,6 +178,42 @@ impl Drop for QuickProxyGuard {
     }
 }
 
+/// Per-media in-flight set for FULL proxy builds. `proxy::run` writes the same
+/// deterministic `<dest>.tmp` scheme as the quick proxy, and `spawn_proxy` has
+/// two callers (the quick-proxy `then_full` chain and export-recovery
+/// `ensure_full_proxy`) that workspace re-opens / re-decisions can fire for the
+/// same media while a build is still running — observed live 2026-07-23: two
+/// identical 4K transcodes racing on one `.tmp`, the second's `-y` truncating
+/// the first's output to garbage. Dedupe like the quick proxy: the running
+/// job's completion event serves every waiter.
+fn full_proxy_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<MediaId>> {
+    static S: OnceLock<std::sync::Mutex<std::collections::HashSet<MediaId>>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+fn try_begin_full_proxy(id: MediaId) -> Option<FullProxyGuard> {
+    let inserted = full_proxy_in_flight()
+        .lock()
+        .expect("full proxy in-flight set poisoned")
+        .insert(id);
+    inserted.then_some(FullProxyGuard(id))
+}
+
+fn end_full_proxy(id: MediaId) {
+    full_proxy_in_flight()
+        .lock()
+        .expect("full proxy in-flight set poisoned")
+        .remove(&id);
+}
+
+/// Drop guard so `end_full_proxy` runs on every task exit path.
+struct FullProxyGuard(MediaId);
+impl Drop for FullProxyGuard {
+    fn drop(&mut self) {
+        end_full_proxy(self.0);
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobKind {
@@ -590,7 +626,18 @@ fn spawn_quick_proxy(
 }
 
 fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, media: MediaItem) {
+    let Some(guard) = try_begin_full_proxy(media.id) else {
+        // Already building — the then_full chain and ensure_full_proxy can race
+        // to call this for the same media. That job's complete/error event
+        // serves this caller's wait too.
+        info!(
+            "full proxy already in flight for {}; skipping duplicate build",
+            media.id
+        );
+        return;
+    };
     tokio::spawn(async move {
+        let _guard = guard;
         let media_id = media.id;
         emit(
             &events,
@@ -767,6 +814,22 @@ mod tests {
         drop(guard);
         assert!(
             try_begin_quick_proxy(id).is_some(),
+            "free again after the guard drops"
+        );
+    }
+
+    #[test]
+    fn full_proxy_in_flight_guard_dedups_until_dropped() {
+        let id = uuid::Uuid::new_v4();
+        let guard = try_begin_full_proxy(id);
+        assert!(guard.is_some(), "first begin wins");
+        assert!(
+            try_begin_full_proxy(id).is_none(),
+            "second begin is deduped while the first guard is held"
+        );
+        drop(guard);
+        assert!(
+            try_begin_full_proxy(id).is_some(),
             "free again after the guard drops"
         );
     }
