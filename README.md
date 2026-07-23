@@ -6,7 +6,7 @@
 
 <p align="center">
   A cross-platform desktop video editor where <strong>AI agents are first-class citizens</strong>.<br/>
-  Connect Claude, Cursor, or any MCP client — and audit it edit your timeline live.
+  Connect Claude, Cursor, or any MCP client — and audit its edits to your timeline live.
 </p>
 
 
