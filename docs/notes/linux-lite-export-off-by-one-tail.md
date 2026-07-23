@@ -1,9 +1,36 @@
 # Linux Lite-export off-by-one tail alignment — open issue handoff
 
-**Status:** open, Linux-only, e2e gate skipped. Recorded 2026-07-19 from the
-macOS investigation session; nobody has reproduced it on current `main` yet.
+**Status:** RESOLVED 2026-07-23 — does not reproduce on current `main`
+(GitHub issue #9 closed; Gate B's Linux skip removed in `49b7f57e`). See
+"Resolution" below. The rest of this document is kept as the historical
+record of the observation and the investigation trail.
 **Environment when last observed:** Linux x64, Electron 42.4.1 (Chromium 148),
 sidecar ffmpeg n7.1 (BtbN), Lite/webcodecs export lane.
+
+## Resolution (2026-07-23, original RTX 3050 Linux host)
+
+- **Ten sequential Gate B runs on current `main`: 10/10 pass**, both legs
+  exactly 300 frames, every sample aligned, and byte-identical measurements
+  run to run (mean SSIM native 0.91676 / proxy 0.88610). This answers the
+  "Unknown" items below: `totalFrames === 300` holds, and NO sample
+  misaligns — not even the tail.
+- **A wider matrix also passed 9/9**: 24/25/50/60 fps, 30000/1001,
+  60000/1001, non-zero container start PTS (3.2 s), H.264 B-frame +
+  edit-list input decoded directly by the WebCodecs leg, and a range ending
+  mid-frame (both legs agree on the ceil'd frame count). VFR remains
+  untested by design — the analyzer and composition grid assume CFR.
+- **Likely fixes** (landed between the historical observation and the
+  validation run): the `REORDER_MARGIN` lead-in (`56f09adf`) and the
+  `ExportFrameStore` duration-eviction/identity rework described in the
+  2026-07-22 update below. The historical failure retained no artifacts, so
+  this is closure-by-non-reproduction, not a proven root cause.
+- **Why the gate was un-runnable on this host before:** the export's
+  unconditional `prefer-hardware` VideoEncoder hint was a guaranteed hard
+  error on Linux (Chromium treats the hint as mandatory and has no Linux HW
+  encoder — issue #7 boundary #10, platform-gated in `bfd0e0ee`); and on
+  current `main` Gate B's output encode is native-first anyway, so it no
+  longer touches VideoEncoder at all.
+- Full evidence tables: GitHub issue #9, the two 2026-07-23 comments.
 
 **2026-07-22 implementation update:** the historical device failure is still
 unverified, but the investigation found and fixed a deterministic application
@@ -112,6 +139,8 @@ repeatedly — a race gives intermittent ±1, a deterministic grid bug gives
 
 When fixed: remove the Linux arm of the skip, keep the comment recording the
 resolution, and re-run the full export + conformance specs on Linux.
+**Done 2026-07-23:** skip removed in `49b7f57e` with the resolution recorded
+in the test comment; the repro steps above no longer need the un-skip edit.
 
 ## References
 

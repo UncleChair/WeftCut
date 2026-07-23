@@ -2,6 +2,26 @@
 
 **记录日期：** 2026-07-22
 
+> **Postscript 2026-07-23 (the Linux tail issue is closed):** both obstacles
+> this note recorded — "this host cannot create a VideoEncoder" and "the full
+> export never ran" — are resolved. (a) The blocker was the export's
+> unconditional `prefer-hardware` request for H.264: Chromium treats the hint
+> as mandatory and Linux has no WebCodecs hardware encoder at all (issue #7
+> boundary #10), platform-gated in `bfd0e0ee`. (b) On current main, Gate B's
+> output encode is native-first anyway and no longer touches VideoEncoder.
+> On the original Linux/RTX 3050 host: Gate B then passed ten sequential runs
+> 10/10 (300 frames on both legs, every sample aligned, byte-identical
+> measurements run to run), and a wider 9-case matrix passed 9/9 (24/25/50/60,
+> 30000/1001, 60000/1001, non-zero start PTS 3.2 s, B-frame + edit-list
+> input, and a range ending mid-frame). The historical `N→N+1` is judged
+> **not reproducible on current main** (no retained artifacts, so this is
+> closure by non-reproduction; likely fixes: the `56f09adf` REORDER_MARGIN
+> lead-in plus the ExportFrameStore duration-eviction/identity rework).
+> Gate B's Linux skip was removed in `49b7f57e` and GitHub issue #9 is
+> closed. VFR remains uncovered — the analyzer and composition grid assume
+> CFR, so VFR alignment needs its own verdict semantics first. The rest of
+> this document is kept as the historical record of the investigation.
+
 **范围：** Linux 尾部 `source + 1`、macOS 解码尾部滞留、Linux 硬件帧黑屏，以及三者是否源自同一个设计问题。
 
 本文用三种标签区分证据强度：
