@@ -27,9 +27,9 @@ function validateComposition(p: Project): void {
 
 /** Returns authorized overlaps (pairKey → overlap µs) for the per-track check. */
 function validateTransitions(p: Project): Map<string, number> {
-  // layer id → {track, start, end}
-  const idx = new Map<Uuid, { track: Uuid; start: number; end: number }>()
-  for (const t of p.tracks) for (const l of t.layers) idx.set(l.id, { track: t.id, start: l.t_start_us, end: l.t_end_us })
+  // layer id → {track, start, end, kind}
+  const idx = new Map<Uuid, { track: Uuid; start: number; end: number; kind: LayerParams['kind'] }>()
+  for (const t of p.tracks) for (const l of t.layers) idx.set(l.id, { track: t.id, start: l.t_start_us, end: l.t_end_us, kind: l.params.kind })
 
   const authorized = new Map<string, number>()
   const seenIds = new Set<Uuid>()
@@ -42,6 +42,11 @@ function validateTransitions(p: Project): Map<string, number> {
     const from = idx.get(tr.from_layer) ?? fail({ rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.from_layer })
     const to = idx.get(tr.to_layer) ?? fail({ rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.to_layer })
     if (from.track !== to.track) fail({ rule: 'TransitionCrossTrack', transition: tr.id, from: tr.from_layer, to: tr.to_layer })
+    // Visual participants only (audio crossfade is a named fast-follow). Backstop
+    // for applyAddTransition's mutation-level check — no path sneaks in a
+    // semantically dead audio transition (deserialize, replace_state, ...).
+    if (from.kind === 'Audio') fail({ rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.from_layer })
+    if (to.kind === 'Audio') fail({ rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.to_layer })
     const fromLen = Math.max(from.end - from.start, 0)
     const toLen = Math.max(to.end - to.start, 0)
     if (tr.duration_us <= 0 || tr.duration_us > fromLen || tr.duration_us > toLen)

@@ -8,6 +8,7 @@ export type ValidationError =
   | { rule: 'TransitionSelfReference'; transition: Uuid; layer: Uuid }
   | { rule: 'TransitionLayerMissing'; transition: Uuid; layer: Uuid }
   | { rule: 'TransitionCrossTrack'; transition: Uuid; from: Uuid; to: Uuid }
+  | { rule: 'TransitionUnsupportedLayerKind'; transition: Uuid; layer: Uuid }
   | { rule: 'TransitionDurationOutOfRange'; transition: Uuid; duration: TimeUs }
   | { rule: 'TransitionDurationMismatch'; transition: Uuid; duration: TimeUs; overlap: TimeUs }
   | { rule: 'LayerInMultipleTransitions'; layer: Uuid }
@@ -31,6 +32,8 @@ export type CommandError =
   | { error: 'MarkerNotFound'; marker: Uuid }
   | { error: 'TransitionNotFound'; transition: Uuid }
   | { error: 'TransitionLayersNotAdjacent'; from: Uuid; to: Uuid; duration: TimeUs }
+  | { error: 'TransitionUnsupportedLayerKind'; layer: Uuid; kind: string }
+  | { error: 'TransitionInsufficientHandle'; layer: Uuid; available_us: TimeUs }
   | { error: 'CheckpointNotFound'; checkpoint: Uuid }
   | { error: 'MediaNotFound'; media: Uuid }
   | { error: 'MediaInUse'; media: Uuid; referenced_by: Uuid[] }
