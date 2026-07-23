@@ -18,12 +18,12 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-#[cfg(test)]
-use super::encoder_registry::SelectedAcceleration;
 use super::encoder_registry::{
     Acceleration, BitDepth, BitrateMode, DnxhrProfile, EncodeUnavailable, EncoderIntent,
-    EncoderPlan, EncoderRegistry, OutputContainer, ProresProfile, RateControl, Speed, VideoCodec,
+    EncoderPlan, EncoderRegistry, OutputContainer, ProresProfile, RateControl,
+    SelectedAcceleration, Speed, VideoCodec,
 };
+use crate::logs::{LogBusSlot, LogCategory, LogEntryInput, LogLevel, LogSource};
 
 #[derive(Default)]
 pub struct VideoSinkState(pub Mutex<Option<ActiveSink>>);
@@ -207,6 +207,7 @@ pub(crate) fn sink_cmd_args(
 pub async fn export_video_sink_start(
     state: &VideoSinkState,
     registry: &EncoderRegistry,
+    log_slot: &LogBusSlot,
     args: VideoSinkStartArgs,
 ) -> Result<(), String> {
     // An active sink here is always stale (single-export invariant); reclaim it.
@@ -229,6 +230,35 @@ pub async fn export_video_sink_start(
             acceleration = ?plan.acceleration,
             "video sink resolved encoder plan"
         );
+        // Status-log producer: the tracing line above reaches stderr only
+        // (the LogBus tracing bridge forwards errors, not info), so the
+        // encoder actually selected at runtime was invisible in packaged
+        // builds. Surface it in the status log + session JSONL.
+        log_slot.emit(LogEntryInput {
+            level: LogLevel::Info,
+            category: LogCategory::Export,
+            source: LogSource::System,
+            message: format!(
+                "Export encoder: {} ({})",
+                plan.encoder_name,
+                match plan.acceleration {
+                    SelectedAcceleration::Hardware => "hardware",
+                    SelectedAcceleration::Software => "software",
+                }
+            ),
+            details: Some(serde_json::json!({
+                "encoder": plan.encoder_name,
+                "codec": format!("{:?}", plan.codec),
+                "bitDepth": match plan.bit_depth {
+                    BitDepth::Eight => 8,
+                    BitDepth::Ten => 10,
+                },
+                "acceleration": format!("{:?}", plan.acceleration),
+                "pixFmt": args.pix_fmt.clone(),
+                "size": format!("{}x{}", args.width, args.height),
+            })),
+            ..Default::default()
+        });
         let mut cmd = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path());
         cmd.no_console_window();
         for arg in sink_cmd_args(&args, &plan) {
@@ -488,13 +518,61 @@ mod tests {
         assert_eq!(v.pix_fmt, "yuv420p10le");
     }
 
+    // The resolved encoder must be user-reachable, not tracing-stderr-only:
+    // start emits one category=Export info entry whose details carry the
+    // runtime-selected encoder name (the per-platform capability record's
+    // "confirm the encoder actually selected" line reads this). Spawns a
+    // real ffmpeg via the sidecar path (like the audio mix roundtrip test);
+    // cancel reaps it before asserting.
+    #[tokio::test]
+    async fn start_logs_the_resolved_encoder_to_the_status_log() {
+        let state = VideoSinkState::default();
+        let registry = EncoderRegistry::default();
+        let slot = LogBusSlot::new();
+        let workspace = tempfile::tempdir().expect("tempdir");
+        slot.install(crate::logs::LogBus::spawn(
+            &workspace.path().to_path_buf(),
+            std::sync::Arc::new(crate::events::VecEventSink::new()),
+        ));
+        let mut args = args_8bit("h264");
+        args.width = 64;
+        args.height = 64;
+        args.output_path = workspace
+            .path()
+            .join("encoder-log.mp4")
+            .to_string_lossy()
+            .into_owned();
+        export_video_sink_start(&state, &registry, &slot, args)
+            .await
+            .expect("start");
+        export_video_sink_cancel(&state).await.expect("cancel");
+
+        let entries = slot.current().expect("bus installed").list();
+        let entry = entries
+            .iter()
+            .find(|e| e.category == LogCategory::Export)
+            .expect("an Export status-log entry");
+        assert!(
+            entry.message.starts_with("Export encoder: "),
+            "unexpected message: {}",
+            entry.message
+        );
+        let encoder = entry
+            .details
+            .as_ref()
+            .and_then(|d| d.get("encoder"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(!encoder.is_empty(), "details.encoder must carry the resolved name");
+    }
+
     // Unknown codecs are rejected while translating the wire request, before
     // any adapter name can be guessed or any probe can run.
     #[tokio::test]
     async fn start_rejects_vp9_at_8bit() {
         let state = VideoSinkState::default();
         let registry = EncoderRegistry::default();
-        let err = export_video_sink_start(&state, &registry, args_8bit("vp9"))
+        let err = export_video_sink_start(&state, &registry, &LogBusSlot::new(), args_8bit("vp9"))
             .await
             .unwrap_err();
         assert!(
@@ -565,6 +643,7 @@ mod tests {
         export_video_sink_start(
             &state,
             &registry,
+            &LogBusSlot::new(),
             VideoSinkStartArgs {
                 width: 64,
                 height: 64,

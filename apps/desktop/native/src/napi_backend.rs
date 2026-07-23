@@ -570,6 +570,7 @@ impl Backend {
                 ser(crate::export::videosink::export_video_sink_start(
                     &self.video_sink,
                     &self.encoder_registry,
+                    &self.log_slot,
                     a.args,
                 )
                 .await)
