@@ -304,6 +304,26 @@ const zhCN: Resources = {
     bake_dot_baking: "预烘焙中…",
     bake_dot_ready: "已预烘焙",
     bake_dot_error: "预烘焙失败",
+    // 转场创建入口——右键落在相邻可视图层剪切点的容差范围内时显示。
+    add_transition_crossfade: "添加交叉溶解",
+    add_transition_wipe: "添加划像 · {{direction}}",
+    add_transition_slide: "添加滑动 · {{direction}}",
+    transition_chip_title: "{{kind}}转场 · {{start}} → {{end}}",
+  },
+  transitions: {
+    kind_crossfade: "交叉溶解",
+    kind_wipe: "划像",
+    kind_slide: "滑动",
+    // 方向 = 运动方向（行业惯例）：「划像 向左」表示揭示边界从右向左扫过；
+    // 「滑动 向左」表示入场片段从右侧进入向左移动。
+    direction_left: "向左",
+    direction_right: "向右",
+    direction_up: "向上",
+    direction_down: "向下",
+    insufficient_handle:
+      "出点片段的尾部素材余量不足，无法创建该转场——可用：{{available}}",
+    add_failed: "添加转场失败：{{detail}}",
+    update_failed: "更新转场失败：{{detail}}",
   },
   peek: {
     heading: "播放头附近（{{count}}）",
@@ -776,6 +796,9 @@ const zhCN: Resources = {
     motif_source_apply: "应用",
     motif_source_applying: "应用中…",
     motif_source_hint: "编辑 Motif 的 HTML 与清单岛，然后点击「应用」更新预览。",
+    transition: "转场",
+    direction: "方向",
+    transition_delete: "删除转场",
   },
   captions: {
     title: "字幕",

@@ -9,7 +9,14 @@ import {
 } from "./LayerBlock";
 import { computeLayerSlices } from "./geometry";
 import { formatTimecode } from "../frames";
-import type { AnimTrack, LayerSummary, TrackSummary } from "../ipc";
+import { TransitionChip } from "./TransitionChip";
+import { transitionChipsForTrack } from "./transitions";
+import type {
+  AnimTrack,
+  LayerSummary,
+  TrackSummary,
+  TransitionSummary,
+} from "../ipc";
 import { playheadTimeUs } from "../state/playheadStore";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
@@ -29,6 +36,8 @@ export function TrackLane({
   isExpanded,
   selectedLayerId,
   selectedLayerIds,
+  transitions,
+  selectedTransitionId,
   groupByLayerId,
   dragState,
   pendingPlacements,
@@ -59,6 +68,10 @@ export function TrackLane({
   isExpanded: boolean;
   selectedLayerId: string | null;
   selectedLayerIds: ReadonlySet<string>;
+  /// Full project transition list; the lane filters to chips whose both
+  /// participants live on this track.
+  transitions: TransitionSummary[];
+  selectedTransitionId: string | null;
   groupByLayerId: Map<string, string>;
   dragState: DragState | null;
   pendingPlacements: PendingLayerPlacement[] | null;
@@ -183,6 +196,13 @@ export function TrackLane({
     track.id,
     track.layers,
   ]);
+
+  // Static per project version (playhead-gate discipline): derives only from
+  // the summary, so playback never re-renders the chip layer.
+  const transitionChips = useMemo(
+    () => transitionChipsForTrack(track, transitions),
+    [track, transitions],
+  );
 
   const duplicatePreview = useMemo(() => {
     if (dragState?.kind !== "move" || !dragState.duplicate) return null;
@@ -493,6 +513,25 @@ export function TrackLane({
               onContextMenu={onContextMenu}
               onCommitLabel={onCommitLabel}
               onCommitParamTrack={onCommitParamTrack}
+              fpsNum={fpsNum}
+              fpsDen={fpsDen}
+            />,
+          );
+        }
+        // Transition chips render AFTER the blocks so they sit above the
+        // participating layers' heads in DOM order (same z tier as a
+        // selected block). Slotted to the incoming layer's slice so they
+        // hug its block in combined V+A rows.
+        for (const chip of transitionChips) {
+          blocks.push(
+            <TransitionChip
+              key={chip.transition.id}
+              chip={chip}
+              pxPerSec={pxPerSec}
+              laneHeight={height}
+              slice={slices.get(chip.toLayer.id) ?? "full"}
+              isSelected={selectedTransitionId === chip.transition.id}
+              bladeMode={bladeMode}
               fpsNum={fpsNum}
               fpsDen={fpsDen}
             />,

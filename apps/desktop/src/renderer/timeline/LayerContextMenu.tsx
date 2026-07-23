@@ -1,33 +1,52 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+import type { TransitionDirection } from "../ipc";
+import {
+  TRANSITION_DIRECTIONS,
+  type TransitionCut,
+  type TransitionKindName,
+} from "./transitions";
 
 /// Floating context menu (Base UI Menu) anchored to a zero-size virtual
 /// element at the right-click coordinates. The popup machinery (portal,
 /// outside-press + Escape close, arrow-key nav) comes from the library.
 /// Action items are scoped to the right-clicked layer's kind.
+///
+/// When the right-click landed within the click-tolerance band of a cut
+/// between same-track adjacent visual layers (`transitionCut` non-null), an
+/// "Add transition" section appends: Crossfade, then Wipe/Slide × 4
+/// directions as a flat list (the app's menus are flat — no submenus).
 export function LayerContextMenu({
   x,
   y,
   layerId,
   layerKind,
   layerEnabled,
+  transitionCut,
   onClose,
   onRename,
   onToggleEnabled,
   onSeparateAudio,
   onPrebakeNow,
+  onAddTransition,
 }: {
   x: number;
   y: number;
   layerId: string;
   layerKind: string;
   layerEnabled: boolean;
+  transitionCut: TransitionCut | null;
   onClose: () => void;
   onRename: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
   onSeparateAudio: (id: string) => void;
   onPrebakeNow: (id: string) => void;
+  onAddTransition: (
+    cut: TransitionCut,
+    kind: TransitionKindName,
+    direction?: TransitionDirection,
+  ) => void;
 }) {
   const { t } = useTranslation();
   const anchor = useMemo(
@@ -45,6 +64,8 @@ export function LayerContextMenu({
     }),
     [x, y],
   );
+  const directionLabel = (d: TransitionDirection) =>
+    t(`transitions.direction_${d}`, { defaultValue: d });
   return (
     <MenuPrimitive.Root
       open
@@ -100,6 +121,43 @@ export function LayerContextMenu({
                 >
                   {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
                 </MenuPrimitive.Item>
+              </>
+            )}
+            {transitionCut && (
+              <>
+                <MenuPrimitive.Separator className="menu-separator" />
+                <MenuPrimitive.Item
+                  className="app-menu-item"
+                  onClick={() => onAddTransition(transitionCut, "Crossfade")}
+                >
+                  {t("timeline.add_transition_crossfade", {
+                    defaultValue: "Add crossfade",
+                  })}
+                </MenuPrimitive.Item>
+                {TRANSITION_DIRECTIONS.map((d) => (
+                  <MenuPrimitive.Item
+                    key={`wipe-${d}`}
+                    className="app-menu-item"
+                    onClick={() => onAddTransition(transitionCut, "Wipe", d)}
+                  >
+                    {t("timeline.add_transition_wipe", {
+                      direction: directionLabel(d),
+                      defaultValue: "Add wipe · {{direction}}",
+                    })}
+                  </MenuPrimitive.Item>
+                ))}
+                {TRANSITION_DIRECTIONS.map((d) => (
+                  <MenuPrimitive.Item
+                    key={`slide-${d}`}
+                    className="app-menu-item"
+                    onClick={() => onAddTransition(transitionCut, "Slide", d)}
+                  >
+                    {t("timeline.add_transition_slide", {
+                      direction: directionLabel(d),
+                      defaultValue: "Add slide · {{direction}}",
+                    })}
+                  </MenuPrimitive.Item>
+                ))}
               </>
             )}
           </MenuPrimitive.Popup>

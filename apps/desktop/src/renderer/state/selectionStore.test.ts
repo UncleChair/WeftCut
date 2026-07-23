@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearLayerSelection,
+  clearTransitionSelection,
   extendLayerSelection,
   retainLayerSelection,
+  retainTransitionSelection,
   setLayerSelection,
+  setTransitionSelection,
   useSelectionStore,
 } from "./selectionStore";
 
@@ -81,5 +84,68 @@ describe("selectionStore", () => {
     retainLayerSelection([]);
     expect(useSelectionStore.getState().primaryLayerId).toBeNull();
     expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+  });
+});
+
+describe("transition selection (mutually exclusive with layer selection)", () => {
+  it("selecting a transition deselects all layers", () => {
+    setLayerSelection("layer-1", ["layer-1", "layer-2"]);
+    setTransitionSelection("tr-1");
+
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+  });
+
+  it("selecting layers deselects the transition", () => {
+    setTransitionSelection("tr-1");
+    setLayerSelection("layer-1", ["layer-1"]);
+
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+    expect(useSelectionStore.getState().primaryLayerId).toBe("layer-1");
+  });
+
+  it("extendLayerSelection also evicts the transition", () => {
+    setTransitionSelection("tr-1");
+    extendLayerSelection("layer-1", ["layer-1"]);
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+  });
+
+  it("clearLayerSelection clears the transition too (background-click semantics)", () => {
+    setTransitionSelection("tr-1");
+    clearLayerSelection();
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+  });
+
+  it("clearTransitionSelection clears only the transition", () => {
+    setTransitionSelection("tr-1");
+    clearTransitionSelection();
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+  });
+
+  it("retainTransitionSelection drops a vanished id and keeps a surviving one", () => {
+    setTransitionSelection("tr-1");
+    retainTransitionSelection(["tr-1", "tr-2"]);
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+
+    retainTransitionSelection(["tr-2"]);
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+  });
+
+  it("retainLayerSelection preserves a selected transition (layers were empty by invariant)", () => {
+    setTransitionSelection("tr-1");
+    retainLayerSelection(["layer-1", "layer-2"]);
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+  });
+
+  it("does not notify subscribers when the transition selection is unchanged", () => {
+    setTransitionSelection("tr-1");
+    const spy = vi.fn();
+    const unsub = useSelectionStore.subscribe(spy);
+
+    setTransitionSelection("tr-1");
+
+    expect(spy).not.toHaveBeenCalled();
+    unsub();
   });
 });

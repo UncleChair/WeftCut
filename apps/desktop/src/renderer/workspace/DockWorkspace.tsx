@@ -181,6 +181,7 @@ function TimelineDockPanel() {
       <Timeline
         tracks={summary?.tracks ?? []}
         groups={summary?.groups ?? []}
+        transitions={summary?.transitions ?? []}
         durationUs={summary?.duration_us ?? 0}
         revealedTrackId={contracts.revealedTrackId}
         keybindings={contracts.keybindings}

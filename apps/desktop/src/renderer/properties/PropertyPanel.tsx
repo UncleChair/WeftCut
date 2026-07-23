@@ -43,7 +43,8 @@ const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
 import { useProjectStore, useProjectSummary } from "../state/projectStore";
-import { useSelectedLayerIds } from "../state/selectionStore";
+import { useSelectedLayerIds, useSelectedTransitionId } from "../state/selectionStore";
+import { TransitionFields } from "./TransitionFields";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 import { findPanelLayer } from "../panels/panelLayer";
 
@@ -81,6 +82,37 @@ export function AttributePanel({
     () => (layer ? tracks.find((tr) => tr.layers.some((l) => l.id === layer.id)) : undefined),
     [tracks, layer],
   );
+  // Selected transition chip — mutually exclusive with layer selection
+  // (selectionStore invariant), so this branch and the layer branch never
+  // compete. Resolved from the project store; the summary is the same
+  // snapshot the timeline chips render from.
+  const selectedTransitionId = useSelectedTransitionId();
+  const summaryForTransition = useProjectSummary();
+  const transition = useMemo(
+    () =>
+      selectedTransitionId === null
+        ? null
+        : (summaryForTransition?.transitions ?? []).find(
+            (tr) => tr.id === selectedTransitionId,
+          ) ?? null,
+    [selectedTransitionId, summaryForTransition],
+  );
+
+  if (transition) {
+    return (
+      <aside
+        className="property-panel attribute-panel"
+        aria-label={t("property_panel.heading")}
+      >
+        <TransitionFields
+          transition={transition}
+          fpsNum={fpsNum}
+          fpsDen={fpsDen}
+          onMutated={onMutated}
+        />
+      </aside>
+    );
+  }
 
   if (!layer) {
     return (

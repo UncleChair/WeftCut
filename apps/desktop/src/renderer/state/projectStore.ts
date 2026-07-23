@@ -8,7 +8,10 @@ import {
   type ProjectSummary,
   type RoleMixView,
 } from "../ipc";
-import { retainLayerSelection } from "./selectionStore";
+import {
+  retainLayerSelection,
+  retainTransitionSelection,
+} from "./selectionStore";
 
 /// Frontend mirror of the main-process TS state actor's project, kept in sync
 /// via `project:changed` backend events. The PixiJS preview consumes this
@@ -85,6 +88,11 @@ export const useProjectStore = create<
       ready: true,
     });
     retainLayerSelection(indices.layerById.keys());
+    // Transitions are optional on the wire (older snapshots omit them);
+    // absent == empty, so a missing field also clears a stale chip selection.
+    retainTransitionSelection(
+      (summary?.transitions ?? []).map((tr) => tr.id),
+    );
   },
 }));
 

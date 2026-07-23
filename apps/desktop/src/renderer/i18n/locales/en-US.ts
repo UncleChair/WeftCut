@@ -307,6 +307,27 @@ const enUS = {
     bake_dot_baking: "Pre-baking…",
     bake_dot_ready: "Pre-baked",
     bake_dot_error: "Pre-bake failed",
+    // Transition create entries — shown when the right-click lands within
+    // the tolerance band of a cut between adjacent visual layers.
+    add_transition_crossfade: "Add crossfade",
+    add_transition_wipe: "Add wipe · {{direction}}",
+    add_transition_slide: "Add slide · {{direction}}",
+    transition_chip_title: "{{kind}} transition · {{start}} → {{end}}",
+  },
+  transitions: {
+    kind_crossfade: "Crossfade",
+    kind_wipe: "Wipe",
+    kind_slide: "Slide",
+    // Direction = MOTION direction (industry convention): "Wipe left" sweeps
+    // the reveal boundary right-to-left; "Slide left" enters from the right.
+    direction_left: "Left",
+    direction_right: "Right",
+    direction_up: "Up",
+    direction_down: "Down",
+    insufficient_handle:
+      "Not enough tail media on the outgoing clip for this transition — available: {{available}}",
+    add_failed: "Add transition failed: {{detail}}",
+    update_failed: "Update transition failed: {{detail}}",
   },
   peek: {
     heading: "Near playhead ({{count}})",
@@ -798,6 +819,9 @@ const enUS = {
     motif_source_apply: "Apply",
     motif_source_applying: "Applying…",
     motif_source_hint: "Edit the Motif's HTML + manifest island, then Apply to update the preview.",
+    transition: "Transition",
+    direction: "Direction",
+    transition_delete: "Delete transition",
   },
   captions: {
     title: "Captions",

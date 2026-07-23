@@ -1,0 +1,272 @@
+// @vitest-environment jsdom
+// Timeline transition UI: chip render/selection/Delete, the cut context menu,
+// and the insufficient-handle error surface. Geometry math is unit-tested in
+// transitions.test.ts; this covers the wiring (same style as
+// Timeline.interaction.test.tsx).
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import "../i18n"; // initialize i18next so t(key) resolves in chrome
+import type { LayerSummary, TrackSummary, TransitionSummary } from "../ipc";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { Timeline } from "./Timeline";
+import {
+  clearLayerSelection,
+  setLayerSelection,
+  useSelectionStore,
+} from "../state/selectionStore";
+
+const ipcMocks = vi.hoisted(() => ({
+  addTransition: vi.fn().mockResolvedValue("new-transition"),
+  removeTransition: vi.fn().mockResolvedValue(undefined),
+  getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
+  logEmit: vi.fn().mockResolvedValue(undefined),
+  viewStateGet: vi
+    .fn()
+    .mockResolvedValue({ timeline_px_per_sec: 80, track_heights: {}, expanded_tracks: [] }),
+  viewStateSet: vi.fn().mockResolvedValue(undefined),
+}));
+
+// jsdom does not implement PointerEvent; alias it to MouseEvent (same shim
+// as Timeline.interaction.test.tsx).
+if (typeof window !== "undefined" && !window.PointerEvent) {
+  (window as unknown as Record<string, unknown>).PointerEvent = window.MouseEvent;
+}
+
+vi.mock("../ipc", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc")>();
+  return {
+    ...actual,
+    addTransition: ipcMocks.addTransition,
+    removeTransition: ipcMocks.removeTransition,
+    getWaveformPeaks: ipcMocks.getWaveformPeaks,
+    logEmit: ipcMocks.logEmit,
+    viewStateGet: ipcMocks.viewStateGet,
+    viewStateSet: ipcMocks.viewStateSet,
+  };
+});
+
+function colorLayer(id: string, label: string, tStartUs: number, tEndUs: number): LayerSummary {
+  return {
+    id,
+    label,
+    t_start_us: tStartUs,
+    t_end_us: tEndUs,
+    kind: "Color",
+    color_hint: "#4488cc",
+    enabled: true,
+    locked: false,
+    params: {
+      kind: "Color",
+      color: { mode: "Static", value: { r: 0, g: 0, b: 0, a: 255 } },
+      width: 1920,
+      height: 1080,
+    },
+    effects: [],
+  };
+}
+
+function makeTrack(layers: LayerSummary[]): TrackSummary {
+  return {
+    id: "track-1",
+    kind: "Video",
+    label: "S1",
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: "a-roll",
+    transient: false,
+    layers,
+  };
+}
+
+// Adjacent hard cut at 2s (no transition yet).
+const layerA = colorLayer("layer-a", "Clip A", 0, 2_000_000);
+const layerB = colorLayer("layer-b", "Clip B", 2_000_000, 4_000_000);
+
+// Post-add state: A auto-extended by the 0.5s overlap, transition riding it.
+const extendedA = colorLayer("layer-a", "Clip A", 0, 2_500_000);
+const transition: TransitionSummary = {
+  id: "tr-1",
+  from_layer: "layer-a",
+  to_layer: "layer-b",
+  duration_us: 500_000,
+  kind: { kind: "Wipe", direction: "left" },
+};
+
+function renderTimeline(overrides: {
+  tracks?: TrackSummary[];
+  transitions?: TransitionSummary[];
+  onMutated?: () => Promise<void>;
+}) {
+  return render(
+    <Timeline
+      tracks={overrides.tracks ?? [makeTrack([layerA, layerB])]}
+      groups={[]}
+      {...(overrides.transitions ? { transitions: overrides.transitions } : {})}
+      durationUs={5_000_000}
+      keybindings={{}}
+      fpsNum={30}
+      fpsDen={1}
+      bladeMode={false}
+      media={[]}
+      importing={new Set()}
+      proxyState={new Map()}
+      previewDecodable={new Set()}
+      onExitBlade={vi.fn()}
+      onSeek={vi.fn()}
+      onMutated={overrides.onMutated ?? vi.fn().mockResolvedValue(undefined)}
+    />,
+  );
+}
+
+beforeEach(() => {
+  clearLayerSelection();
+  ipcMocks.addTransition.mockClear();
+  ipcMocks.removeTransition.mockClear();
+  ipcMocks.logEmit.mockClear();
+  useAppSettingsStore.setState((s) => ({
+    settings: { ...s.settings, display_mode: "ShowAll" },
+  }));
+});
+afterEach(cleanup);
+
+describe("transition chip", () => {
+  it("renders over the incoming layer's head: left at the cut, width = duration", () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    const chip = container.querySelector(
+      '[data-testid="transition-chip"]',
+    ) as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.dataset.transitionId).toBe("tr-1");
+    // 80 px/s: cut at 2s → 160px; 0.5s duration → 40px.
+    expect(chip.style.left).toBe("160px");
+    expect(chip.style.width).toBe("40px");
+  });
+
+  it("click selects the chip and deselects layers; lane background click deselects the chip", () => {
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    setLayerSelection("layer-a", ["layer-a"]);
+    const chip = container.querySelector(
+      '[data-testid="transition-chip"]',
+    ) as HTMLElement;
+
+    fireEvent.pointerDown(chip, { button: 0 });
+    fireEvent.click(chip);
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+    expect(useSelectionStore.getState().primaryLayerId).toBeNull();
+    expect(useSelectionStore.getState().selectedLayerIds.size).toBe(0);
+
+    // Selecting a layer evicts the chip selection (mutual exclusion).
+    setLayerSelection("layer-b", ["layer-b"]);
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+  });
+
+  it("Delete key removes the selected chip via remove_transition", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+      onMutated,
+    });
+    const chip = container.querySelector(
+      '[data-testid="transition-chip"]',
+    ) as HTMLElement;
+    fireEvent.pointerDown(chip, { button: 0 });
+    expect(useSelectionStore.getState().selectedTransitionId).toBe("tr-1");
+
+    fireEvent.keyDown(window, { key: "Delete" });
+    await waitFor(() => {
+      expect(ipcMocks.removeTransition).toHaveBeenCalledWith("tr-1");
+      expect(onMutated).toHaveBeenCalled();
+    });
+    expect(useSelectionStore.getState().selectedTransitionId).toBeNull();
+  });
+
+  it("Delete does nothing when no chip is selected", () => {
+    renderTimeline({
+      tracks: [makeTrack([extendedA, layerB])],
+      transitions: [transition],
+    });
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(ipcMocks.removeTransition).not.toHaveBeenCalled();
+  });
+});
+
+describe("cut context menu", () => {
+  it("right-click near the seam offers Add transition; crossfade dispatches with the frame-snapped 1s default", async () => {
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    const { getByText } = renderTimeline({ onMutated });
+    const blockA = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    // Seam at 2s = 160px at 80 px/s (canvas rect is 0 in jsdom).
+    fireEvent.contextMenu(blockA, { clientX: 160, clientY: 30 });
+
+    const crossfadeItem = await screen.findByText("Add crossfade");
+    expect(screen.getByText("Add wipe · Left")).toBeTruthy();
+    expect(screen.getByText("Add slide · Down")).toBeTruthy();
+
+    fireEvent.click(crossfadeItem);
+    await waitFor(() => {
+      expect(ipcMocks.addTransition).toHaveBeenCalledWith({
+        fromLayerId: "layer-a",
+        toLayerId: "layer-b",
+        durationUs: 1_000_000, // 30 whole frames at 30 fps
+        kind: "Crossfade",
+      });
+      expect(onMutated).toHaveBeenCalled();
+    });
+  });
+
+  it("wipe entries carry their direction", async () => {
+    const { getByText } = renderTimeline({});
+    const blockA = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.contextMenu(blockA, { clientX: 160, clientY: 30 });
+
+    fireEvent.click(await screen.findByText("Add wipe · Up"));
+    await waitFor(() => {
+      expect(ipcMocks.addTransition).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "Wipe", direction: "up" }),
+      );
+    });
+  });
+
+  it("right-click away from the seam shows no Add transition entries", async () => {
+    const { getByText } = renderTimeline({});
+    const blockA = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    // 80px = 1s — far outside the 6px tolerance band around the 160px seam.
+    fireEvent.contextMenu(blockA, { clientX: 80, clientY: 30 });
+
+    await screen.findByText("Rename"); // menu is open
+    expect(screen.queryByText("Add crossfade")).toBeNull();
+  });
+
+  it("TransitionInsufficientHandle surfaces available_us through the status log — never a silent clamp", async () => {
+    ipcMocks.addTransition.mockRejectedValueOnce(
+      new Error(
+        '{"error":"TransitionInsufficientHandle","layer":"layer-a","available_us":433333}',
+      ),
+    );
+    const { getByText } = renderTimeline({});
+    const blockA = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    fireEvent.contextMenu(blockA, { clientX: 160, clientY: 30 });
+
+    fireEvent.click(await screen.findByText("Add crossfade"));
+    await waitFor(() => {
+      expect(ipcMocks.logEmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          level: "error",
+          // 433_333 µs at 30 fps = 13 frames.
+          message: expect.stringContaining("00:00:00:13"),
+        }),
+      );
+    });
+  });
+});

@@ -11,8 +11,11 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   addMediaLayer,
+  addTransition,
   groupsCreate,
   groupsDissolve,
+  logEmit,
+  removeTransition,
   separateAudioToNewTrack,
   splitLayerGrouped,
   updateLayer,
@@ -23,6 +26,8 @@ import {
   type LayerSummary,
   type MediaSummary,
   type TrackSummary,
+  type TransitionDirection,
+  type TransitionSummary,
 } from "../ipc";
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
 import { formatTimecode, snapFrameRound } from "../frames";
@@ -59,11 +64,22 @@ import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
 import { registerScrollToTime } from "../state/navigation";
 import {
   clearLayerSelection,
+  clearTransitionSelection,
   extendLayerSelection,
   setLayerSelection,
   usePrimaryLayerId,
   useSelectedLayerIds,
+  useSelectedTransitionId,
 } from "../state/selectionStore";
+import { isEditableTarget } from "../shortcuts/match";
+import {
+  CUT_CLICK_TOLERANCE_PX,
+  defaultTransitionDurationUs,
+  findCutNear,
+  parseTransitionCommandError,
+  type TransitionCut,
+  type TransitionKindName,
+} from "./transitions";
 
 // Any media kind drops on any track (tracks are kind-agnostic; the
 // backend enforces overlap rules). Kept as a stub returning true to
@@ -85,6 +101,10 @@ interface TimelineProps {
   tracks: TrackSummary[];
   /// `docs/groups.md`. Empty array when no groups exist.
   groups: GroupSummary[];
+  /// Transitions between same-track adjacent visual layers, rendered as
+  /// chips over the incoming layer's head. Optional — older snapshots and
+  /// test fixtures omit the field; absent means empty.
+  transitions?: TransitionSummary[];
   durationUs: number;
   /// (`docs/data-model.md`): when set, this hidden track is
   /// included in the AB-mode ordered list at its natural accretion
@@ -127,9 +147,12 @@ interface TimelineProps {
 }
 
 
+const EMPTY_TRANSITIONS: TransitionSummary[] = [];
+
 export function Timeline({
   tracks,
   groups,
+  transitions = EMPTY_TRANSITIONS,
   durationUs,
   revealedTrackId,
   keybindings,
@@ -145,17 +168,23 @@ export function Timeline({
   onSeek,
   onMutated,
 }: TimelineProps) {
+  const { t } = useTranslation();
   // Right-click context-menu state. `null` when closed; otherwise
   // anchors the menu at the cursor and stores the target layer id.
+  // `cut` is non-null when the click landed within the tolerance band of a
+  // hard cut between same-track adjacent visual layers — the menu then
+  // offers the "Add transition" section.
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
     layerId: string;
     layerKind: string;
     layerEnabled: boolean;
+    cut: TransitionCut | null;
   } | null>(null);
   const primaryLayerId = usePrimaryLayerId();
   const selectedLayerIds = useSelectedLayerIds();
+  const selectedTransitionId = useSelectedTransitionId();
   const [bladePreview, setBladePreview] = useState<{
     layerId: string;
     atUs: number;
@@ -419,7 +448,10 @@ export function Timeline({
   );
 
   // Context-menu open handler. Captures cursor position + target layer;
-  // triggered by LayerBlock's onContextMenu (right-click).
+  // triggered by LayerBlock's onContextMenu (right-click). Also hit-tests
+  // the click against the cuts on the layer's track: within
+  // CUT_CLICK_TOLERANCE_PX of a seam between same-track adjacent visual
+  // layers, the menu grows the "Add transition" section.
   const onContextMenu = useCallback(
     (
       e: React.MouseEvent,
@@ -427,16 +459,102 @@ export function Timeline({
       layerKind: string,
       layerEnabled: boolean,
     ) => {
+      let cut: TransitionCut | null = null;
+      const canvas = canvasRef.current;
+      const track = tracks.find((candidate) =>
+        candidate.layers.some((l) => l.id === layerId),
+      );
+      if (canvas && track && pxPerSec > 0) {
+        const rect = canvas.getBoundingClientRect();
+        const xUs = ((e.clientX - rect.left) / pxPerSec) * 1_000_000;
+        const toleranceUs = (CUT_CLICK_TOLERANCE_PX / pxPerSec) * 1_000_000;
+        cut = findCutNear(track.layers, xUs, toleranceUs);
+      }
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
         layerId,
         layerKind,
         layerEnabled,
+        cut,
       });
     },
-    [],
+    [tracks, pxPerSec],
   );
+
+  // Create a transition at a cut (context-menu action). Default duration is
+  // the hardcoded 1 s snapped DOWN to whole comp frames. Errors surface
+  // through the status bar / log (the app's error path) — notably
+  // TransitionInsufficientHandle carries `available_us`, which the message
+  // includes verbatim as a timecode. NO silent clamping.
+  const onAddTransition = useCallback(
+    async (
+      cut: TransitionCut,
+      kind: TransitionKindName,
+      direction?: TransitionDirection,
+    ) => {
+      setContextMenu(null);
+      try {
+        await addTransition({
+          fromLayerId: cut.fromLayerId,
+          toLayerId: cut.toLayerId,
+          durationUs: defaultTransitionDurationUs(fpsNum, fpsDen),
+          kind,
+          ...(direction !== undefined ? { direction } : {}),
+        });
+        await onMutated();
+      } catch (err) {
+        const parsed = parseTransitionCommandError(String(err));
+        const message =
+          parsed?.name === "TransitionInsufficientHandle"
+            ? t("transitions.insufficient_handle", {
+                available: formatTimecode(
+                  parsed.availableUs ?? 0,
+                  fpsNum,
+                  fpsDen,
+                ),
+                defaultValue:
+                  "Not enough tail media on the outgoing clip for this transition — available: {{available}}",
+              })
+            : t("transitions.add_failed", {
+                detail: String(err),
+                defaultValue: "Add transition failed: {{detail}}",
+              });
+        void logEmit({
+          level: "error",
+          category: { kind: "Project" },
+          source: { kind: "User" },
+          message,
+        });
+      }
+    },
+    [fpsNum, fpsDen, onMutated, t],
+  );
+
+  // Delete/Backspace removes the selected transition chip. Capture phase +
+  // stopImmediatePropagation preempts the app-level delete-selected-layer
+  // shortcut (same pattern as the keyframe-diamond Delete in LayerBlock);
+  // armed only while a chip is selected, and never while typing in a field.
+  useEffect(() => {
+    if (selectedTransitionId === null) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
+      if (isEditableTarget(ev.target)) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      void (async () => {
+        try {
+          await removeTransition(selectedTransitionId);
+          clearTransitionSelection();
+          await onMutatedRef.current();
+        } catch (err) {
+          console.error("remove_transition failed:", err);
+        }
+      })();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [selectedTransitionId]);
 
   const onCommitLabel = useCallback(
     async (layerId: string, label: string) => {
@@ -707,6 +825,8 @@ export function Timeline({
                 isExpanded={expandedTracks.has(track.id)}
                 selectedLayerId={primaryLayerId}
                 selectedLayerIds={selectedLayerIds}
+                transitions={transitions}
+                selectedTransitionId={selectedTransitionId}
                 groupByLayerId={groupByLayerId}
                 dragState={drag}
                 pendingPlacements={pendingPlacements}
@@ -757,11 +877,15 @@ export function Timeline({
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
         layerEnabled={contextMenu.layerEnabled}
+        transitionCut={contextMenu.cut}
         onClose={() => setContextMenu(null)}
         onRename={onRename}
         onToggleEnabled={onToggleEnabled}
         onSeparateAudio={onSeparateAudio}
         onPrebakeNow={onPrebakeNow}
+        onAddTransition={(cut, kind, direction) =>
+          void onAddTransition(cut, kind, direction)
+        }
       />
     )}
     </>

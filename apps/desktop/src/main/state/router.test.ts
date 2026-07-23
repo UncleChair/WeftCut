@@ -19,6 +19,7 @@ const ALL_CHANNELS: readonly string[] = [
   'move_effect', 'remove_effect', 'move_layer', 'trim_layer', 'split_layer_grouped',
   'groups_create', 'groups_dissolve', 'duplicate_layer', 'paste_layer', 'delete_layer', 'set_composition',
   'fit_composition_to_layers', 'update_track_flags', 'set_role_gain', 'update_role_flags',
+  'add_transition', 'update_transition', 'remove_transition',
   'project_undo', 'project_redo', 'project_restore_checkpoint', 'update_project_settings',
   'restyle_captions', 'add_motif',
   // router special-cases (summary / settings / persistence seam / agent-session)

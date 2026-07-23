@@ -1070,6 +1070,54 @@ export async function deleteLayer(layerId: string): Promise<void> {
   return invoke<void>("delete_layer", { layerId });
 }
 
+// ============================================================
+// Transitions (spec § Command surface — three recorded, undoable ops)
+// ============================================================
+
+/// Add a transition at a hard cut between same-track adjacent visual layers.
+/// The outgoing layer auto-extends by `durationUs` (start-at-cut alignment).
+/// Crossfade must OMIT `direction`; Wipe/Slide must carry one — the backend
+/// rejects the other pairing. Throws structured errors, notably
+/// `TransitionInsufficientHandle { available_us }` — surface it, never clamp.
+export async function addTransition(args: {
+  fromLayerId: string;
+  toLayerId: string;
+  durationUs: number;
+  kind: TransitionKindView["kind"];
+  direction?: TransitionDirection;
+}): Promise<string> {
+  return invoke<string>("add_transition", {
+    fromLayerId: args.fromLayerId,
+    toLayerId: args.toLayerId,
+    durationUs: args.durationUs,
+    kind: args.kind,
+    ...(args.direction !== undefined ? { direction: args.direction } : {}),
+  });
+}
+
+/// Patch duration and/or kind+direction in ONE recorded commit (one undo
+/// step). Direction rides inside kind — sending direction without kind is
+/// rejected, so kind changes to Wipe/Slide must include a direction.
+export async function updateTransition(args: {
+  transitionId: string;
+  durationUs?: number;
+  kind?: TransitionKindView["kind"];
+  direction?: TransitionDirection;
+}): Promise<void> {
+  return invoke<void>("update_transition", {
+    transitionId: args.transitionId,
+    ...(args.durationUs !== undefined ? { durationUs: args.durationUs } : {}),
+    ...(args.kind !== undefined ? { kind: args.kind } : {}),
+    ...(args.direction !== undefined ? { direction: args.direction } : {}),
+  });
+}
+
+/// Remove by id; the outgoing layer shrinks back by the transition's
+/// duration, restoring the hard cut. Recorded (undoable).
+export async function removeTransition(transitionId: string): Promise<void> {
+  return invoke<void>("remove_transition", { transitionId });
+}
+
 export interface CompositionPatchPartial {
   width?: number;
   height?: number;

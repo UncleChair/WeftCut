@@ -2,7 +2,7 @@
 // Unit tests for production param builders in commands.ts.
 // TDD: written to fail before the exports exist; green after Step 3 impl.
 import { describe, it, expect } from 'vitest'
-import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS } from '../commands'
+import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS, parseMechanical } from '../commands'
 import type { Project } from '../model'
 import { createActor } from '../actor'
 import { blankProject } from '../model'
@@ -13,19 +13,66 @@ import { seededGen } from '../ids'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 34 in-scope renderer channels', () => {
+  it('contains exactly the 37 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
-      'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'delete_layer', 'duplicate_layer',
+      'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
+      'delete_layer', 'duplicate_layer',
       'fit_composition_to_layers', 'groups_create', 'groups_dissolve', 'move_effect',
       'move_layer', 'paste_layer', 'project_redo', 'project_restore_checkpoint', 'project_undo',
-      'remove_effect', 'restyle_captions',
+      'remove_effect', 'remove_transition', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'split_layer_grouped',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track',
       'update_layer_param_tracks', 'update_layer_params', 'update_project_settings',
-      'update_role_flags', 'update_track_flags',
+      'update_role_flags', 'update_track_flags', 'update_transition',
     ].sort()
     expect([...PRODUCTION_OPS].sort()).toEqual(expected)
+  })
+})
+
+// ── transition channels: camelCase wire args → actor op args ────────────────
+// Pure mechanical renaming; kind/direction pass through untouched (the actor's
+// parseTransitionKind owns pairing validation — Crossfade rejects a direction,
+// Wipe/Slide require one).
+describe('parseMechanical transitions', () => {
+  it('add_transition maps from/to/duration and passes kind+direction through', () => {
+    expect(
+      parseMechanical('add_transition', {
+        fromLayerId: 'from-1', toLayerId: 'to-1', durationUs: 1_000_000,
+        kind: 'Wipe', direction: 'left',
+      }),
+    ).toEqual({
+      op: 'add_transition',
+      args: { from: 'from-1', to: 'to-1', duration_us: 1_000_000, kind: 'Wipe', direction: 'left' },
+    })
+  })
+
+  it('add_transition leaves an omitted direction undefined (Crossfade case)', () => {
+    const mech = parseMechanical('add_transition', {
+      fromLayerId: 'from-1', toLayerId: 'to-1', durationUs: 500_000, kind: 'Crossfade',
+    })
+    expect(mech?.args.direction).toBeUndefined()
+    expect(mech?.args.kind).toBe('Crossfade')
+  })
+
+  it('update_transition maps transitionId and passes the optional trio through', () => {
+    expect(
+      parseMechanical('update_transition', {
+        transitionId: 'tr-1', durationUs: 750_000, kind: 'Slide', direction: 'up',
+      }),
+    ).toEqual({
+      op: 'update_transition',
+      args: { transition: 'tr-1', duration_us: 750_000, kind: 'Slide', direction: 'up' },
+    })
+    const durationOnly = parseMechanical('update_transition', { transitionId: 'tr-1', durationUs: 250_000 })
+    expect(durationOnly?.args).toEqual({ transition: 'tr-1', duration_us: 250_000, kind: undefined, direction: undefined })
+  })
+
+  it('remove_transition maps transitionId', () => {
+    expect(parseMechanical('remove_transition', { transitionId: 'tr-1' })).toEqual({
+      op: 'remove_transition',
+      args: { transition: 'tr-1' },
+    })
   })
 })
 
