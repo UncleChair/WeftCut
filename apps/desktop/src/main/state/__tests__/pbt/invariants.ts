@@ -56,6 +56,50 @@ export function invNoUnauthorizedOverlap(p: WireProject): void {
   }
 }
 
+const TRANSITION_DIRECTIONS = new Set(['left', 'right', 'up', 'down'])
+
+/** Independently re-derived transition laws (linear-NLE authorized overlap;
+ *  Policy B). reconcileTransitions runs inside EVERY commit, so no command
+ *  sequence — however hostile — may leave a surviving transition violating
+ *  any of these. Fresh statement of the domain rules, NOT a validate.ts import. */
+export function invTransitionsWellFormed(p: WireProject): void {
+  const loc = new Map<string, { track: string; layer: WireLayer }>()
+  for (const t of p.tracks) for (const l of t.layers) loc.set(l.id, { track: t.id, layer: l })
+  const seen = new Set<string>()
+  const asFrom = new Set<string>(), asTo = new Set<string>()
+  for (const tr of p.transitions) {
+    if (seen.has(tr.id)) fail(`duplicate transition id ${tr.id}`)
+    seen.add(tr.id)
+    if (tr.from_layer === tr.to_layer) fail(`transition ${tr.id} is self-referencing (${tr.from_layer})`)
+    const from = loc.get(tr.from_layer)
+    if (!from) fail(`transition ${tr.id} references missing from_layer ${tr.from_layer}`)
+    const to = loc.get(tr.to_layer)
+    if (!to) fail(`transition ${tr.id} references missing to_layer ${tr.to_layer}`)
+    if (from.track !== to.track) fail(`transition ${tr.id} spans tracks (${from.track} → ${to.track})`)
+    // Visual participants only — audio crossfade is a named fast-follow.
+    if (overlapClass(from.layer.params.kind) !== 'visual') fail(`transition ${tr.id} has audio from_layer ${tr.from_layer}`)
+    if (overlapClass(to.layer.params.kind) !== 'visual') fail(`transition ${tr.id} has audio to_layer ${tr.to_layer}`)
+    const fromLen = from.layer.t_end_us - from.layer.t_start_us
+    const toLen = to.layer.t_end_us - to.layer.t_start_us
+    if (tr.duration_us <= 0 || tr.duration_us > fromLen || tr.duration_us > toLen)
+      fail(`transition ${tr.id} duration ${tr.duration_us}µs out of range (fromLen ${fromLen}µs, toLen ${toLen}µs)`)
+    const overlap = Math.min(from.layer.t_end_us, to.layer.t_end_us) - Math.max(from.layer.t_start_us, to.layer.t_start_us)
+    if (overlap !== tr.duration_us) fail(`transition ${tr.id} duration ${tr.duration_us}µs !== geometric overlap ${overlap}µs`)
+    if (asFrom.has(tr.from_layer)) fail(`layer ${tr.from_layer} is from_layer in two transitions`)
+    asFrom.add(tr.from_layer)
+    if (asTo.has(tr.to_layer)) fail(`layer ${tr.to_layer} is to_layer in two transitions`)
+    asTo.add(tr.to_layer)
+    // Kind union shape (spec § Data model): direction rides INSIDE kind,
+    // present iff the kind is directional.
+    if (tr.kind.kind === 'Crossfade') {
+      if (tr.kind.direction !== undefined) fail(`transition ${tr.id} is Crossfade but carries direction '${tr.kind.direction}'`)
+    } else if (tr.kind.kind === 'Wipe' || tr.kind.kind === 'Slide') {
+      if (tr.kind.direction === undefined || !TRANSITION_DIRECTIONS.has(tr.kind.direction))
+        fail(`transition ${tr.id} is ${tr.kind.kind} with invalid direction '${String(tr.kind.direction)}'`)
+    } else fail(`transition ${tr.id} has unknown kind '${tr.kind.kind}'`)
+  }
+}
+
 export function invGroupsWellFormed(p: WireProject): void {
   const known = new Set<string>()
   for (const t of p.tracks) for (const l of t.layers) known.add(l.id)
@@ -77,6 +121,7 @@ export function checkAllInvariants(p: WireProject): void {
   invUniqueLayerIds(p)
   invLayerRanges(p)
   invNoUnauthorizedOverlap(p)
+  invTransitionsWellFormed(p)
   // NOTE: duration-autofit is a per-operation behavior (add/move/trim/delete/fit
   // autofit; update_layer intentionally does NOT), NOT a universal state invariant
   // — so it is not checked here. See the update_layer intent example in
