@@ -89,3 +89,21 @@ format/lane — keyed by format class, persisted by main and invalidated when
 the component's ffmpeg changes. A property of the machine, never of a
 project.
 _Avoid_: session bridge, decode memo
+
+## Transitions
+
+**Transition direction**:
+The **motion** direction of a Wipe or Slide, never the reveal side (industry
+convention): `Wipe left` = the reveal boundary sweeps right-to-left across
+the frame; `Slide left` = the incoming layer enters from the right edge
+moving left. Agents consume the enum directly, so this reading is the wire
+contract's meaning (ADR 0035).
+_Avoid_: reveal side, wipe from, source edge
+
+**Start-at-cut**:
+The alignment of every transition: the window occupies the incoming layer's
+first `duration` microseconds, and only the outgoing layer extends forward —
+pulling its tail source handle — to open the authorized overlap. The cut
+instant is the window's start, not its midpoint (ADR 0035); center-at-cut and
+end-at-cut are future additive parameters.
+_Avoid_: centered transition, symmetric overlap, cut-straddling window

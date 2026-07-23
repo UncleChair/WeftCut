@@ -371,35 +371,47 @@ gradual-transition accuracy. Deliberately *not* the renderer/GPU path (keeps
 analysis off the compositor the user is driving) and *not* a vision model
 (semantic "what's in the frame" stays the multimodal agent's job).
 
-### Transitions
+### Transitions — v1 shipped; named deferrals remain
 
-**Backend skeleton only — not wired to rendering, UI, or the agent
-surface.** The data model (`Transition` with the single
-`TransitionKind::Crossfade`), the `add_transition` / `remove_transition`
-actor mutations (which auto-extend the outgoing layer to open the
-overlap window and pull source handles), and the overlap-authorizing
-validator exist and are unit-tested. Nothing else is connected:
-`transitions` is not surfaced to the renderer or the export IR, no napi
-command or MCP tool reaches the mutations (only Rust tests call them),
-and there is no timeline UI. So no transition is reachable or visible
-today, and an authorized overlap currently renders as a hard cut rather
-than a blend.
+Transitions ship end-to-end for visual layers: **Crossfade**, **Wipe**, and
+**Slide** (direction = motion direction — see the
+[CONTEXT.md glossary](../CONTEXT.md#transitions)) between any mix of visual
+layer kinds. Every kind renders through one two-input compositor node — both
+participants bake, with their own transform / opacity / effects applied, into
+pooled composition-sized render textures, and a full-frame quad composites
+them with a per-kind shader at the track's z-slot; preview and export share
+the path, gated by the transitions-WYSIWYG e2e. Authoring: right-click at a
+cut on the timeline, a chip straddling the join (Delete key removes), an
+inspector kind / direction / duration editor, and the
+`add_transition` / `update_transition` / `remove_transition` MCP tools;
+default duration is 1 s snapped to whole composition frames. Edits that break
+a transition's overlap drop it via reconcile-on-commit — visibly logged, one
+undo restores edit + transition, no shrink-back — while a split inside a
+transition is blocked atomically; insufficient tail handle is a named
+pre-check error carrying the available microseconds. See
+[ADR 0035](adr/0035-transitions-two-input-node-reconcile-on-commit.md).
 
-Completing crossfade is small because the substrate already exists: the
-compositor draws every layer whose window contains the current time —
-overlapping same-track layers included — and applies each layer's own
-`opacity`, which is already keyframeable. The remaining work is to
-surface `transitions` to the per-frame eval and export paths, ramp the
-incoming layer's effective `opacity` 0 → 1 across the authorized overlap
-window, expose the mutations via a napi command + MCP tool, and add a
-create-at-cut authoring affordance.
+The named deferrals:
 
-Other kinds (wipe, slide, push) are a separate, larger effort: they are
-two-input operations — each output pixel is a function of *both* clips at
-once — so they cannot ride the per-layer `opacity` path and need a
-dedicated two-input transition compositor node (both textures + a
-progress uniform + a shader per kind). Crossfade falls out of that node
-as the degenerate `mix()` case if it is ever built.
+- **Push** kind (an enum variant + shader on the existing node: slide's
+  boundary plus outgoing translation).
+- **Wipe edge softness** (additive uniform + slider).
+- **Easing / keyframeable progress** — progress is fixed linear; easing is an
+  additive parameter reusing the keyframe bézier infrastructure.
+- **Center-at-cut / end-at-cut alignment** — alignment is start-at-cut only;
+  the variants are additive parameters.
+- **Freeze-frame handle padding** (Premiere's repeat-last-frame when the
+  outgoing clip lacks tail media; needs decode-session past-tail clamping).
+- **Audio equal-power crossfade** — Crossfade kind only, on the
+  WebAudio-preview + Rust-mixer twin seam (a second and third evaluation
+  surface on the golden-guarded audio twins).
+- **Policy C — the transition rides the trim**: individual mutations become
+  transition-aware, reconcile degrades to a backstop (upgrade path recorded
+  in ADR 0035).
+- **Chip edge drag-resize** on the timeline (duration edits go through the
+  inspector or MCP).
+- **Transition-specific error for blocked in-transition splits** — the
+  atomic rejection surfaces as the generic `LayerOverlap` error.
 
 ## v1 ship checklist
 

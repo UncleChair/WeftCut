@@ -24,7 +24,7 @@ through `broadcast_unrecorded`.
 | `update_track_flags` (eye/M/S/lock toggles) | no — unrecorded; patched into every history snapshot; undo never flips a track control |
 | `add_layer`, `update_layer`, `update_layer_params`, `move_layer`, `duplicate_layer`, `split_layer`, `delete_layer` | yes |
 | `add_marker`, `update_marker`, `remove_marker` | yes |
-| `add_transition`, `remove_transition` | yes |
+| `add_transition`, `update_transition`, `remove_transition` | yes |
 | `add_media_item` | no |
 | `set_media_workspace_paths`, `set_media_derivatives` | no |
 | `remove_media`, no references / `force=false` | no — mirror import |
