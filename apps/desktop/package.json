@@ -7,6 +7,7 @@
     "name": "UncleChair",
     "email": "voidgun1998@gmail.com"
   },
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",

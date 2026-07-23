@@ -40,6 +40,7 @@ No local AI models. No bundled Chromium. No server backend.
 - **[Status / Log system](docs/status-log.md)** — bottom-of-editor log bus.
 - **[Undo-stack scope](docs/undo-stack-scope.md)** — what records into history and what doesn't.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
+- **[Licensing](docs/licensing.md)** — MIT app + the two FFmpeg lanes (LGPL in-process decode, GPL sidecar) and their build-time compliance gates.
 - **[Roadmap](docs/roadmap.md)** — phased delivery journal.
 - **ADRs** — [`docs/adr/`](docs/adr/) (0001–0017): architecture decisions with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer [`docs/rendering.md`](docs/rendering.md) and other top-level docs for current export/audio behavior; older ADRs may be historical.
 
@@ -85,3 +86,11 @@ apps/desktop/        Electron app
   src/               React UI + PixiJS/WebCodecs renderer (+ export Worker)
 docs/                design + architecture
 ```
+
+## License
+
+WeftCut is licensed under the [MIT License](LICENSE). Packaged installers
+bundle FFmpeg binaries under their own licenses (LGPL shared libraries for
+in-process decode, GPL command-line tools run as a separate process) — see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and
+[docs/licensing.md](docs/licensing.md) for the full model.

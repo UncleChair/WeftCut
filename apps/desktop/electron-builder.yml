@@ -1,10 +1,12 @@
 appId: dev.weftcut.desktop
 productName: WeftCut
 executableName: WeftCut
-# Re-assert LGPL-cleanliness from the packaged ffmpeg-lgpl manifest before the
-# app is folded into a distributable, so a GPL/nonfree build can never ship even
-# if the fetched runtime were swapped out from under the packager (§6 gate).
-afterPack: ./scripts/after-pack-lgpl.mjs
+# Re-assert both ffmpeg lanes' licensing compliance from the packaged manifests
+# before the app is folded into a distributable: the native-decode runtime must
+# be LGPL-clean (§6 gate) and the ffmpeg sidecar must carry its GPLv3 text +
+# source offer — a non-compliant build can never ship even if the fetched
+# runtime were swapped out from under the packager.
+afterPack: ./scripts/after-pack-licensing.mjs
 directories:
   output: release
   buildResources: build
@@ -39,9 +41,15 @@ asarUnpack:
   - "**/node_modules/@weftcut/native-decode/*.so.*"
   - "**/node_modules/@weftcut/native-decode/*.dylib"
 extraResources:
+  # GPL ffmpeg/ffprobe sidecar binaries + their compliance materials
+  # (manifest.json + SOURCE-OFFER.txt, staged by fetch-ffmpeg.mjs). The GPLv3
+  # license text rides from the repo-tracked copy below; after-pack-licensing.mjs
+  # asserts the full set at pack time.
   - from: resources/ffmpeg/${os}
     to: ffmpeg
-    filter: ["**/*"]
+    filter: ["**/*", "!.gitkeep"]
+  - from: resources/licenses/GPL-3.0.txt
+    to: ffmpeg/LICENSE.txt
   - from: src/shared/motifs/builtin
     to: motifs/builtin
     filter: ["**/*"]

@@ -2,6 +2,7 @@
   "name": "weftcut",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Electron desktop video editor with an MCP tool surface for external AI agents",
   "workspaces": [
     "apps/*"

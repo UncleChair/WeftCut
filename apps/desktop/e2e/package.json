@@ -1,6 +1,7 @@
 {
   "name": "@weftcut/e2e",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "fixtures": "node fixtures/generate-fixtures.mjs",

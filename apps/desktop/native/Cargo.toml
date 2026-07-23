@@ -9,6 +9,7 @@ name = "weftcut"
 version = "0.0.0"
 edition = "2021"
 description = "WeftCut desktop app"
+license = "MIT"
 authors = ["WeftCut"]
 publish = false
 rust-version = "1.77"

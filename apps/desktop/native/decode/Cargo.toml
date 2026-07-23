@@ -8,6 +8,7 @@ name = "weftcut-native-decode"
 version = "0.0.0"
 edition = "2021"
 description = "WeftCut native decode component"
+license = "MIT"
 authors = ["WeftCut"]
 publish = false
 rust-version = "1.77"
