@@ -60,6 +60,8 @@ import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 import { EffectChain } from "./effects/EffectChain";
 import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
+import { selectActiveTransitions } from "./transitions/activeTransitions";
+import { TransitionNodeManager } from "./transitions/TransitionNodes";
 import {
   judgeFrameSelection,
   UnderrunTracker,
@@ -88,6 +90,13 @@ export interface CompositorPerfSnapshot {
   swapsInFlight: number;
   /// Playback underrun state (dropped-frame indicator's ground truth).
   underrun: UnderrunSnapshot;
+  /// Transition node + RT-pool accounting; null until the first active
+  /// window. `rt.created` staying flat across a played transition is the
+  /// "no per-frame RT allocation" memory-ratchet probe.
+  transitions: {
+    nodes: number;
+    rt: { free: number; outstanding: number; created: number; destroyed: number };
+  } | null;
   clips: Array<{
     layerId: string;
     mediaId: string;
@@ -427,6 +436,14 @@ export class Compositor {
   /// and `hasLookaheadAt`. Without this map those would be O(layers)
   /// per active clip per tick — quadratic for long timelines.
   private layerById = new Map<string, LayerSummary>();
+  /// layerId → owning track's `enabled`, maintained alongside `layerById`;
+  /// feeds the per-frame active-transition selection without re-walking
+  /// tracks.
+  private trackEnabledByLayer = new Map<string, boolean>();
+  /// Two-input transition node (transitions/TransitionNodes.ts). Lazily
+  /// built on the first active window so transition-free projects (and
+  /// mock-App unit tests) never touch the renderer for it.
+  private transitionNodes: TransitionNodeManager | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
   private resolveSource: (mediaId: string) => ResolvedRendererSource | null;
   /// Preview-only unsupported-format notification (see `CompositorInit`).
@@ -728,6 +745,7 @@ export class Compositor {
       this.audios.clear();
       this.stage.removeChildren();
       this.cancelAllSwaps();
+      this.transitionNodes?.reset();
       this.pool.dispose();
     }
   }
@@ -738,6 +756,7 @@ export class Compositor {
   setProject(summary: ProjectSummary | null): void {
     this.projectSummary = summary;
     this.layerById.clear();
+    this.trackEnabledByLayer.clear();
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
@@ -747,6 +766,9 @@ export class Compositor {
       this.tenBitIngest = null;
       this.nv12Ingest?.dispose();
       this.nv12Ingest = null;
+      // Transition nodes hold pooled RTs; compositeFrame's per-frame release
+      // never runs again while the summary is null, so free them here.
+      this.transitionNodes?.reset();
       this.baker?.setTargets([]);
       this.manualPrebakeLayers.clear();
       sharedBakedKeyIndex.clear();
@@ -767,6 +789,7 @@ export class Compositor {
       for (const l of t.layers) {
         livingLayerIds.add(l.id);
         this.layerById.set(l.id, l);
+        this.trackEnabledByLayer.set(l.id, t.enabled);
       }
     }
     // No `unsupportedMedia` reconciliation: the next `compositeFrame` sweep
@@ -849,6 +872,18 @@ export class Compositor {
   ): void {
     if (effects) {
       sprite.displayObject.filters = effectsFor(effects, layer, tInLayerUs, effectOpts);
+    }
+    // Transition divert: a participant's finished node — transform, opacity,
+    // and filters exactly as the normal path would stage them — goes into its
+    // side's offscreen container (baked to an RT in `finishFrame`) instead of
+    // the stage; the two-input quad stands in at the FIRST participant's
+    // stage position. See transitions/TransitionNodes.ts.
+    const side = this.transitionNodes?.sideFor(layer.id);
+    if (side) {
+      if (sprite.stageReady) side.addChild(sprite.displayObject);
+      const quad = this.transitionNodes!.takeQuadToStage(layer.id);
+      if (quad) this.stage.addChild(quad);
+      return;
     }
     // Skip not-yet-ready sprites. Sprite-backed kinds report stageReady false
     // while their texture is still the EMPTY placeholder — PixiJS v8's batched
@@ -990,6 +1025,24 @@ export class Compositor {
     // Same reset half for the underrun sweep; `updateClip` only ADDS.
     this.sweepLateLayers = 0;
 
+    // Two-input transition node: pick this frame's active windows, then let
+    // the sweep divert participants through `stageVisual`. beginFrame also
+    // runs when the active set is empty but nodes linger, so a just-finished
+    // window returns its RTs to the pool that same frame.
+    const activeTransitions = selectActiveTransitions(
+      this.projectSummary.transitions,
+      tUsSnapped,
+      (id) => this.layerById.get(id),
+      (id) => this.trackEnabledByLayer.get(id) ?? false,
+    );
+    if (activeTransitions.length > 0 || this.transitionNodes?.hasNodes()) {
+      (this.transitionNodes ??= new TransitionNodeManager(
+        this.app.renderer,
+        this.compositionWidth,
+        this.compositionHeight,
+      )).beginFrame(activeTransitions);
+    }
+
     let z = 0;
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;
@@ -1028,6 +1081,10 @@ export class Compositor {
         }
       }
     }
+    // Bake diverted sides into their RTs + publish progress, after the sweep
+    // (so any branch's staging is caught) and before the ticker's stage
+    // render (so the quad samples THIS frame's pixels).
+    this.transitionNodes?.finishFrame();
     // Fire `onUnsupported` ONLY on membership change — size first (cheap),
     // then an early-exit membership scan. An unconditional fire would drive
     // React `setState` per frame — the whole-tree re-render memory ratchet
@@ -1240,6 +1297,7 @@ export class Compositor {
       upcomingPrewarm: this.upcomingPrewarm,
       swapsInFlight: this.swaps.size,
       underrun: this.underrun.snapshot(),
+      transitions: this.transitionNodes?.stats() ?? null,
       clips,
     };
   }
@@ -1341,6 +1399,8 @@ export class Compositor {
     this.tenBitIngest = null;
     this.nv12Ingest?.dispose();
     this.nv12Ingest = null;
+    this.transitionNodes?.dispose();
+    this.transitionNodes = null;
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);

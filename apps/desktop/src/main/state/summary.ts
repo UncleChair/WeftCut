@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Effect, Group, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, Uuid } from './model'
+import type { Animated, Effect, Group, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, TransitionKind, Uuid } from './model'
 import type { HistoryStatus } from './history'
 import type { DecodeRoute } from '../../shared/decode-route'
 
@@ -150,6 +150,10 @@ export interface HistoryView { cursor: number; len: number; can_undo: boolean; c
 export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
 export interface GroupSummary { id: string; label: string | null; layer_ids: string[] }
 export interface MarkerSummary { id: string; t_us: number; end_t_us: number | null; label: string; color_hint: string }
+/** Wire shape == model shape (model.ts `Transition`) — the compositor's
+ *  two-input node consumes it verbatim in both realms (preview snapshot and
+ *  the export Worker's structured-clone of this summary). */
+export interface TransitionView { id: string; from_layer: string; to_layer: string; duration_us: number; kind: TransitionKind }
 export interface MediaSummary {
   id: string; label: string; path: string; kind: string; duration_us: number | null
   start_pts_us: number | null; container_duration_us: number | null
@@ -174,7 +178,7 @@ export interface TrackSummary {
 export interface ProjectSummary {
   project_id: string; name: string; composition: CompositionSummary
   track_count: number; layer_count: number; duration_us: number; history: HistoryView
-  media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; groups: GroupSummary[]; audio_roles: RoleMixView[]
+  media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; groups: GroupSummary[]; audio_roles: RoleMixView[]
 }
 
 // commands/mod.rs:395-401 — TrackRole kebab wire form (matches Rust match arms verbatim).
@@ -241,6 +245,9 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   const markers: MarkerSummary[] = p.markers.map((m: Marker) => ({
     id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, color_hint: markerColorHint(m.color),
   }))
+  const transitions: TransitionView[] = p.transitions.map((t) => ({
+    id: t.id, from_layer: t.from_layer, to_layer: t.to_layer, duration_us: t.duration_us, kind: t.kind,
+  }))
   const groups: GroupSummary[] = p.groups.map((g: Group) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
   const audio_roles: RoleMixView[] = ROLE_ORDER.map((role) => {
     const s = p.audio_roles[role] ?? DEFAULT_ROLE
@@ -253,7 +260,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
       fps_den: p.composition.fps.den, duration_pinned: p.composition.duration_pinned },
     track_count: p.tracks.length, layer_count, duration_us: p.composition.duration_us,
     history: { cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo },
-    media, tracks, markers, groups, audio_roles,
+    media, tracks, markers, transitions, groups, audio_roles,
   }
   if (history.lock_reason !== undefined) view.history.lock_reason = history.lock_reason
   return view

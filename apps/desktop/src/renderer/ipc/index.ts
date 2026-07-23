@@ -280,6 +280,10 @@ export interface ProjectSummary {
   media: MediaSummary[];
   tracks: TrackSummary[];
   markers: MarkerSummary[];
+  /// Transitions between same-track visual layers, composited by the
+  /// renderer's two-input transition node. Optional: older snapshots and
+  /// test fixtures omit it — consumers treat absent as empty.
+  transitions?: TransitionSummary[];
   /// `docs/groups.md`. Empty when no groups exist. UI uses this to
   /// render the tinted-border indicator and to resolve "what group is
   /// this layer in?" for click-selects-whole-group behavior.
@@ -330,6 +334,26 @@ export interface MarkerSummary {
   end_t_us: number | null;
   label: string;
   color_hint: string;
+}
+
+/// Motion direction, not reveal side — glossary semantics live with the
+/// serde twin (`native/src/state/transition.rs`).
+export type TransitionDirection = "left" | "right" | "up" | "down";
+
+export type TransitionKindView =
+  | { kind: "Crossfade" }
+  | { kind: "Wipe"; direction: TransitionDirection }
+  | { kind: "Slide"; direction: TransitionDirection };
+
+/// Wire mirror of the model's `Transition`. Start-at-cut alignment: the
+/// transition occupies the incoming layer's first `duration_us` µs, which is
+/// exactly the authorized overlap with `from_layer`.
+export interface TransitionSummary {
+  id: string;
+  from_layer: string;
+  to_layer: string;
+  duration_us: number;
+  kind: TransitionKindView;
 }
 
 export interface LayerPatch {
