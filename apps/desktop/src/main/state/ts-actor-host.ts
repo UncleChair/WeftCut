@@ -157,7 +157,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // list_motifs (disk-backed) sees it, without waiting for the debounced refresh.
   const store = deps.motifStore
   const motifCatalog = new MotifCatalog(store ? (id) => store.getMotif(id)?.manifest ?? null : undefined)
-  const actor = createActor({ initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog })
+  const actor = createActor({
+    initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog,
+    // Reconcile-dropped-transition rows ride the same log_emit seam as the
+    // relink/checkpoint pin-rows. Best-effort — never abort a commit.
+    emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (actor)', err) } },
+  })
   let unsub: (() => void) | null = null
 
   const autosave: AutosaveController = createAutosave({

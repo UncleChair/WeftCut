@@ -5,7 +5,7 @@ import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
-import { validate } from './validate'
+import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { snapFrameRound } from './snap'
 import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
 import { applyMoveLayer } from './mutations/move'
@@ -58,7 +58,24 @@ export type DryRunOutput =
   | { kind: 'SplitLayer'; left_id: Uuid; right_id: Uuid }
   | { kind: 'Void' }
 
-export interface ActorOptions { initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor; motifCatalog?: MotifCatalog }
+/** Status-log row payload — structurally matches TsActorHostDeps.emitLog so the
+ *  host passes its LogBus seam (backend `log_emit`) straight through. Schema:
+ *  docs/status-log.md. */
+export interface ActorLogEntry {
+  level: 'trace' | 'debug' | 'info' | 'warn' | 'error'
+  category: { kind: string; name?: string }
+  source: { kind: 'User' } | { kind: 'Agent'; client: string } | { kind: 'System' }
+  message: string
+  details?: Record<string, unknown>
+}
+
+export interface ActorOptions {
+  initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor; motifCatalog?: MotifCatalog
+  /** Status-log seam (reconcile-dropped-transition rows). Optional → no-op when
+   *  omitted (tests that do not care about logging). Called AFTER a successful
+   *  commit is recorded; a throwing emit is caught and must never abort. */
+  emitLog?: (entry: ActorLogEntry) => void
+}
 export type DispatchResult = { ok: true; value: unknown } | { ok: false; error: CommandError }
 
 export interface ActorHandle {
@@ -101,26 +118,56 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
-  /** Run a draft mutation, then validate, record, emit. Mirrors actor.rs commit:
-   *  validate FIRST, op_id AFTER validate. Returns the recipe's value. Throws
-   *  CommandFailure on a mutation error or a validation failure. */
+  /** Run a draft mutation, then reconcile transitions, then validate, record,
+   *  emit. Mirrors actor.rs commit: validate FIRST, op_id AFTER validate.
+   *  Returns the recipe's value. Throws CommandFailure on a mutation error or a
+   *  validation failure.
+   *
+   *  Reconcile (Policy B, spec § Edit-interaction policy) runs on EVERY commit
+   *  — trim/move/split/delete/group ops stay transition-blind — inside the same
+   *  produce(), so the drop lands in the SAME snapshot as the edit (one undo
+   *  restores both). add/update/remove_transition need no exemption: after
+   *  their apply the invariant holds by construction, so reconcile is a no-op. */
   function commit<T>(summary: string, affected: EntityRef[], diff: DiffHint, recipe: (draft: Project) => T): T {
     let value!: T
+    let droppedTransitions: DroppedTransition[] = []
     // produce: a throw inside the recipe aborts and discards the draft (Rust:
     // the clone is dropped on error → authoritative state untouched).
-    const next = produce(current(), (draft) => { value = recipe(draft) })
+    const next = produce(current(), (draft) => {
+      value = recipe(draft)
+      droppedTransitions = reconcileTransitions(draft)
+    })
     // No-op guard: if the recipe left the draft unmodified, immer returns the
     // original object by reference. Recording an identical snapshot would waste
     // a history slot and an op_id, and would fool the undo-unwind property's
     // state-change detector (two entries with the same state look like "bottom").
     // Mirrors the intent of applyTrimLayer's requestedDelta===0 early return.
+    // (A no-op recipe can't dirty a transition, so reconcile never blocks this.)
     if (next === current()) return value
     runValidate(next)
     const opId = idGen() // AFTER validate — failed validate consumes no op_id
     const ts = clock()
     history.record({ op_id: opId, actor, timestamp: ts, summary, affected, snapshot: next })
     emit({ op_id: opId, actor, timestamp: ts, summary, affected, new_snapshot: next, diff_hint: diff })
+    logDroppedTransitions(droppedTransitions) // after record — a failed validate logs nothing
     return value
+  }
+
+  /** One status-log row per reconcile-dropped transition. Best-effort: a
+   *  throwing emit must never abort the (already recorded) commit. */
+  function logDroppedTransitions(dropped: DroppedTransition[]): void {
+    if (dropped.length === 0 || !opts.emitLog) return
+    for (const d of dropped) {
+      try {
+        opts.emitLog({
+          level: 'info',
+          category: { kind: 'Project' },
+          source: actor.kind === 'Agent' ? { kind: 'Agent', client: actor.client } : { kind: 'User' },
+          message: `Transition removed: edit broke its overlap (transition ${d.id}, from ${d.from_layer}, to ${d.to_layer})`,
+          details: { kind: 'TransitionReconcileDrop', transition: d.id, from_layer: d.from_layer, to_layer: d.to_layer, reason: d.reason },
+        })
+      } catch (err) { console.warn('[actor] emitLog failed (transition reconcile)', err) }
+    }
   }
 
   function emit(e: ChangeEvent): void {

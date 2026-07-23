@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/validate.ts
-import type { Layer, LayerParams, Project, Uuid } from './model'
+import type { Layer, LayerParams, Project, Transition, Uuid } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
 
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
@@ -25,12 +25,51 @@ function validateComposition(p: Project): void {
   if (c.fps.num === 0 || c.fps.den === 0) fail({ rule: 'InvalidFps', num: c.fps.num, den: c.fps.den })
 }
 
+// ── Per-transition invariant — ONE predicate, TWO callers ─────────────────────
+// validateTransitions fails on it; reconcileTransitions drops on it. Keeping the
+// logic in a single function is the design's anti-drift guarantee (Policy B,
+// spec § Edit-interaction policy): validate and reconcile can never disagree
+// about what a healthy transition looks like.
+
+/** layer id → {track, start, end, kind} geometry snapshot for the predicate. */
+type TransitionLayerIndex = Map<Uuid, { track: Uuid; start: number; end: number; kind: LayerParams['kind'] }>
+function buildTransitionLayerIndex(p: Project): TransitionLayerIndex {
+  const idx: TransitionLayerIndex = new Map()
+  for (const t of p.tracks) for (const l of t.layers) idx.set(l.id, { track: t.id, start: l.t_start_us, end: l.t_end_us, kind: l.params.kind })
+  return idx
+}
+
+/** The invariant an ordinary layer edit (trim/move/split/delete/track op) can
+ *  break: participants exist, same track, visual-only, duration in range,
+ *  overlap exactly equals duration. Structural corruption (duplicate transition
+ *  id, self-reference, LayerInMultipleTransitions) is deliberately NOT here —
+ *  no layer edit can produce those, so they stay validate-only failures; a
+ *  reconcile that silently swallowed them would mask real bugs. */
+function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex): ValidationError | null {
+  const from = idx.get(tr.from_layer)
+  if (!from) return { rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.from_layer }
+  const to = idx.get(tr.to_layer)
+  if (!to) return { rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.to_layer }
+  if (from.track !== to.track) return { rule: 'TransitionCrossTrack', transition: tr.id, from: tr.from_layer, to: tr.to_layer }
+  // Visual participants only (audio crossfade is a named fast-follow). Backstop
+  // for applyAddTransition's mutation-level check — no path sneaks in a
+  // semantically dead audio transition (deserialize, replace_state, ...).
+  if (from.kind === 'Audio') return { rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.from_layer }
+  if (to.kind === 'Audio') return { rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.to_layer }
+  const fromLen = Math.max(from.end - from.start, 0)
+  const toLen = Math.max(to.end - to.start, 0)
+  if (tr.duration_us <= 0 || tr.duration_us > fromLen || tr.duration_us > toLen)
+    return { rule: 'TransitionDurationOutOfRange', transition: tr.id, duration: tr.duration_us }
+  const overlapStart = Math.max(from.start, to.start)
+  const overlapEnd = Math.min(from.end, to.end)
+  const overlap = Math.max(overlapEnd - overlapStart, 0)
+  if (overlap !== tr.duration_us) return { rule: 'TransitionDurationMismatch', transition: tr.id, duration: tr.duration_us, overlap }
+  return null
+}
+
 /** Returns authorized overlaps (pairKey → overlap µs) for the per-track check. */
 function validateTransitions(p: Project): Map<string, number> {
-  // layer id → {track, start, end, kind}
-  const idx = new Map<Uuid, { track: Uuid; start: number; end: number; kind: LayerParams['kind'] }>()
-  for (const t of p.tracks) for (const l of t.layers) idx.set(l.id, { track: t.id, start: l.t_start_us, end: l.t_end_us, kind: l.params.kind })
-
+  const idx = buildTransitionLayerIndex(p)
   const authorized = new Map<string, number>()
   const seenIds = new Set<Uuid>()
   const asFrom = new Set<Uuid>()
@@ -39,29 +78,40 @@ function validateTransitions(p: Project): Map<string, number> {
     if (seenIds.has(tr.id)) fail({ rule: 'DuplicateTransitionId', transition: tr.id })
     seenIds.add(tr.id)
     if (tr.from_layer === tr.to_layer) fail({ rule: 'TransitionSelfReference', transition: tr.id, layer: tr.from_layer })
-    const from = idx.get(tr.from_layer) ?? fail({ rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.from_layer })
-    const to = idx.get(tr.to_layer) ?? fail({ rule: 'TransitionLayerMissing', transition: tr.id, layer: tr.to_layer })
-    if (from.track !== to.track) fail({ rule: 'TransitionCrossTrack', transition: tr.id, from: tr.from_layer, to: tr.to_layer })
-    // Visual participants only (audio crossfade is a named fast-follow). Backstop
-    // for applyAddTransition's mutation-level check — no path sneaks in a
-    // semantically dead audio transition (deserialize, replace_state, ...).
-    if (from.kind === 'Audio') fail({ rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.from_layer })
-    if (to.kind === 'Audio') fail({ rule: 'TransitionUnsupportedLayerKind', transition: tr.id, layer: tr.to_layer })
-    const fromLen = Math.max(from.end - from.start, 0)
-    const toLen = Math.max(to.end - to.start, 0)
-    if (tr.duration_us <= 0 || tr.duration_us > fromLen || tr.duration_us > toLen)
-      fail({ rule: 'TransitionDurationOutOfRange', transition: tr.id, duration: tr.duration_us })
-    const overlapStart = Math.max(from.start, to.start)
-    const overlapEnd = Math.min(from.end, to.end)
-    const overlap = Math.max(overlapEnd - overlapStart, 0)
-    if (overlap !== tr.duration_us) fail({ rule: 'TransitionDurationMismatch', transition: tr.id, duration: tr.duration_us, overlap })
+    const invariantErr = transitionInvariantError(tr, idx)
+    if (invariantErr !== null) fail(invariantErr)
     if (asFrom.has(tr.from_layer)) fail({ rule: 'LayerInMultipleTransitions', layer: tr.from_layer })
     asFrom.add(tr.from_layer)
     if (asTo.has(tr.to_layer)) fail({ rule: 'LayerInMultipleTransitions', layer: tr.to_layer })
     asTo.add(tr.to_layer)
-    authorized.set(pairKey(tr.from_layer, tr.to_layer), overlap)
+    // Predicate passed ⇒ geometric overlap === duration_us.
+    authorized.set(pairKey(tr.from_layer, tr.to_layer), tr.duration_us)
   }
   return authorized
+}
+
+export interface DroppedTransition { id: Uuid; from_layer: Uuid; to_layer: Uuid; reason: ValidationError }
+
+/** Reconcile-on-commit (Policy B): remove every transition whose invariant no
+ *  longer holds. The actor runs this inside commit's produce() — AFTER the
+ *  mutation apply, BEFORE validate — so ordinary edits stay transition-blind
+ *  and the removal lands in the SAME history snapshot (one undo restores the
+ *  edit and the transition together). Deliberately does NOT shrink the outgoing
+ *  layer back: the user's edit defines the new shape (only the explicit
+ *  applyRemoveTransition shrinks). Returns primitive drop info (never draft
+ *  references — immer revokes them) for the actor's status-log rows. */
+export function reconcileTransitions(p: Project): DroppedTransition[] {
+  if (p.transitions.length === 0) return []
+  const idx = buildTransitionLayerIndex(p)
+  const dropped: DroppedTransition[] = []
+  const kept: Transition[] = []
+  for (const tr of p.transitions) {
+    const reason = transitionInvariantError(tr, idx)
+    if (reason === null) kept.push(tr)
+    else dropped.push({ id: tr.id, from_layer: tr.from_layer, to_layer: tr.to_layer, reason })
+  }
+  if (dropped.length > 0) p.transitions = kept
+  return dropped
 }
 
 function checkSrcRange(p: Project, layer: Uuid, media: Uuid, srcIn: number, srcOut: number): void {
