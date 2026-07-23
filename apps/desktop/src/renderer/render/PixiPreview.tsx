@@ -40,7 +40,11 @@ import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { isWebcodecsUnusable } from "./decoder/webcodecsCapability";
 import { noteResolution } from "./decoder/decodeCapability";
-import { type MediaSummary, reportAudioMeter } from "../ipc";
+import { logEmit, type MediaSummary, reportAudioMeter } from "../ipc";
+import {
+  resetUnderrunState,
+  setUnderrunState,
+} from "../state/underrunStore";
 import {
   setEffectDisabled,
   subscribeEffectOverrides,
@@ -244,6 +248,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         // diff/fire around its layer sweep) — safe to feed straight into
         // React state.
         onUnsupported: setUnsupportedIds,
+        // Edge-triggered + throttled (UnderrunTracker) — feeds the
+        // transport bar's DroppedFramesIndicator via the module store.
+        onUnderrun: setUnderrunState,
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
@@ -272,6 +279,25 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // play/pause without polling.
       engine.onPlayStateChange(setTransportPlaying);
       registerTransport(engine);
+
+      // Session-end dropped-frame summary → status log. FCP-style "warn
+      // after playback": the transport indicator shows drops live; this
+      // row makes them durable + explains the cause. `takeUnderrun
+      // SessionSummary` is once-per-session, so a pause-during-warmup
+      // (which also fires playing=false) can't re-log a stale count.
+      engine.onPlayStateChange((playing) => {
+        if (playing) return;
+        const dropped = compositor.takeUnderrunSessionSummary();
+        if (dropped === 0) return;
+        void logEmit({
+          level: "warn",
+          category: { kind: "System" },
+          source: { kind: "System" },
+          message: `Playback dropped ${dropped} frame${dropped === 1 ? "" : "s"} — decoding fell behind`,
+          i18n_key: "log.playback_dropped_frames",
+          i18n_args: { count: dropped },
+        });
+      });
 
       // Color picker: register the sampling surface (same replace-on-remount
       // lifecycle as the transport registration above). captureFrame reuses the
@@ -548,6 +574,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // Identity-guarded release: a stale unmount can't tear down a newer
       // mount's registration.
       if (engineRef.current) releaseTransport(engineRef.current);
+      resetUnderrunState();
       if (samplerRef.current) clearPreviewSampler(samplerRef.current);
       samplerRef.current = null;
       unsubOverridesRef.current?.();

@@ -19,6 +19,7 @@ import {
   type PreviewSurfaceHandle,
 } from "../preview/PreviewSurface";
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
+import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
 
 interface PreviewSectionProps {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
@@ -130,20 +131,23 @@ export function PreviewSection({
             <SkipForwardIcon size={16} aria-hidden />
           </button>
         </div>
-        <span className="preview-meta" aria-hidden="true">
-          {summary && (
-            <>
-              {t("project.canvas", {
-                width: summary.composition.width,
-                height: summary.composition.height,
-                fps: fpsLabel,
-              })}
-              {" · "}
-              {t("project.duration", {
-                value: formatTimecode(summary.duration_us, summary.composition.fps_num, summary.composition.fps_den),
-              })}
-            </>
-          )}
+        <span className="preview-meta-cell">
+          <DroppedFramesIndicator />
+          <span className="preview-meta" aria-hidden="true">
+            {summary && (
+              <>
+                {t("project.canvas", {
+                  width: summary.composition.width,
+                  height: summary.composition.height,
+                  fps: fpsLabel,
+                })}
+                {" · "}
+                {t("project.duration", {
+                  value: formatTimecode(summary.duration_us, summary.composition.fps_num, summary.composition.fps_den),
+                })}
+              </>
+            )}
+          </span>
         </span>
       </div>
     </section>

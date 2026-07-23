@@ -60,6 +60,11 @@ import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 import { EffectChain } from "./effects/EffectChain";
 import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
+import {
+  judgeFrameSelection,
+  UnderrunTracker,
+  type UnderrunSnapshot,
+} from "./underrunTracker";
 
 /// Match the preview ring's default lookahead window
 /// (`FrameRing.DEFAULT_LOOKAHEAD_US`). We only use this to warm the next clip
@@ -81,6 +86,8 @@ export interface CompositorPerfSnapshot {
   /// during the overlap window when a clip is being repointed to a
   /// freshly-built proxy; explains transient extra decode cost.
   swapsInFlight: number;
+  /// Playback underrun state (dropped-frame indicator's ground truth).
+  underrun: UnderrunSnapshot;
   clips: Array<{
     layerId: string;
     mediaId: string;
@@ -243,6 +250,11 @@ export interface CompositorInit {
   /// (feedback_playhead_gate_and_tiers). See `compositeFrame`'s
   /// reset/diff/fire around its layer sweep.
   onUnsupported?: (unsupported: ReadonlySet<string>) => void;
+  /// Preview-only: playback underrun (dropped-frame) state changes for the
+  /// transport-bar indicator. Edge-triggered + throttled by
+  /// `UnderrunTracker` (never per-frame — feedback_playhead_gate_and_tiers);
+  /// safe to feed straight into React state. Export omits it.
+  onUnderrun?: (snapshot: UnderrunSnapshot) => void;
   /// Resolver for the asset URL of a media item's ORIGINAL file.
   /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
   /// May return the same URL as `proxyAssetUrl` for media kinds
@@ -548,6 +560,14 @@ export class Compositor {
   private compositeMsLast = 0;
   private compositeMsMax = 0;
   private upcomingPrewarm: UpcomingClipPrewarmSnapshot | null = null;
+  /// Dropped-frame accounting (preview only; inert in export mode where
+  /// `playing` never goes true). Sweep verdicts come from `updateClip`
+  /// via `sweepLateLayers`; session lifecycle from `setMasterPlayState`.
+  private underrun: UnderrunTracker;
+  /// Visible VideoClip layers judged late during the CURRENT composite
+  /// sweep. Reset before the layer loop, read after it — same
+  /// reset/accumulate/fire ownership split as `unsupportedMedia`.
+  private sweepLateLayers = 0;
 
   constructor(init: CompositorInit) {
     this.app = init.app;
@@ -565,6 +585,7 @@ export class Compositor {
     this.compositionHeight = init.height;
     this.mode = init.mode;
     this.conformAssetUrl = init.conformAssetUrl ?? ((): string | null => null);
+    this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
     this.app.stage.addChild(this.stage);
     // Preview + real DOM only — the export Worker has neither `document`
     // nor preview audio.
@@ -641,7 +662,24 @@ export class Compositor {
   /// PlaybackEngine writes its current play state here on play /
   /// pause / seek so the audio pass knows whether to schedule.
   setMasterPlayState(playing: boolean): void {
+    // Master-clock release = new play session: reset the dropped-frame
+    // counters so the indicator reflects this run, not history.
+    if (playing && !this.playing) this.underrun.beginPlay();
     this.playing = playing;
+  }
+
+  /// PlaybackEngine calls this on an in-play seek. The seek flushes the
+  /// decoder rings, so the tracker suppresses lateness until the
+  /// pipeline re-primes (first all-fresh sweep, capped) — otherwise
+  /// every timeline click during playback would flash the indicator.
+  noteSeekWhilePlaying(): void {
+    this.underrun.noteSeekWhilePlaying();
+  }
+
+  /// Session-end dropped-frame count for the LogBus summary row; at most
+  /// once per play session (see `UnderrunTracker.takeSessionSummary`).
+  takeUnderrunSessionSummary(): number {
+    return this.underrun.takeSessionSummary();
   }
 
   /// PlaybackEngine forwards its clock anchor every tick. The AudioMixers
@@ -949,6 +987,8 @@ export class Compositor {
     // ADDS during the sweep below.
     const prevUnsupported = this.unsupportedMedia;
     this.unsupportedMedia = new Set<string>();
+    // Same reset half for the underrun sweep; `updateClip` only ADDS.
+    this.sweepLateLayers = 0;
 
     let z = 0;
     for (const track of this.projectSummary.tracks) {
@@ -1003,6 +1043,16 @@ export class Compositor {
     }
     if (unsupportedChanged) {
       this.onUnsupported?.(new Set(this.unsupportedMedia));
+    }
+    // Underrun verdict for this sweep. Judged only while the master
+    // clock is running and not scrubbing (a scrub deliberately paints
+    // approximate frames); decay ticks unconditionally so the indicator
+    // dims after pause too (the engine's rAF tick keeps compositing).
+    if (this.mode === "preview") {
+      if (this.playing && !this.scrubbing) {
+        this.underrun.judgeSweep(this.sweepLateLayers > 0, tUsSnapped);
+      }
+      this.underrun.tickDecay();
     }
     // One-shot diagnostic the first time we transition from "stage
     // has no children" to "stage has some" so the user can confirm
@@ -1189,6 +1239,7 @@ export class Compositor {
       compositeMsMax: this.compositeMsMax,
       upcomingPrewarm: this.upcomingPrewarm,
       swapsInFlight: this.swaps.size,
+      underrun: this.underrun.snapshot(),
       clips,
     };
   }
@@ -1879,10 +1930,32 @@ export class Compositor {
     const params = resolveVideoClipView(layer.params, layerLocalUs);
     const srcTUs = params.src_in_us + layerLocalUs;
 
+    const media = this.mediaById(params.media_id);
+
     // Upload the current frame BEFORE adjusting transforms so the
     // sprite's natural size reflects the real texture dimensions.
     const selected = clip.source.ring.selectFrame(srcTUs);
     const frame = selected?.frame ?? null;
+
+    // Underrun accounting: while the master clock runs, a stale or
+    // missing frame here is a dropped frame the free-running playhead
+    // glossed over. Swap-in-flight clips are exempt — the no-flash
+    // source swap deliberately holds the old pixels while the new
+    // source's ring fills (see `SwapState`).
+    if (
+      this.mode === "preview" &&
+      this.playing &&
+      !this.scrubbing &&
+      !this.swaps.has(clip.layerId)
+    ) {
+      const verdict = judgeFrameSelection({
+        selectedPtsUs: selected?.ptsUs ?? null,
+        selectedDurationUs: selected?.durationUs ?? 0,
+        srcTUs,
+        mediaDurationUs: media?.duration_us ?? null,
+      });
+      if (verdict === "late") this.sweepLateLayers += 1;
+    }
     if (frame && selected) {
       if (isTenBitFrame(frame)) {
         clip.sprite.bindExternalTexture(
@@ -1925,7 +1998,6 @@ export class Compositor {
     // as the source would. Avoid Pixi's width/height setters because they
     // derive scale from `Texture.EMPTY` before the first frame lands.
     const tex = clip.sprite.sprite.texture;
-    const media = this.mediaById(params.media_id);
     const textureW = tex === Texture.EMPTY ? null : tex.orig.width;
     const textureH = tex === Texture.EMPTY ? null : tex.orig.height;
     const sourceScaleX =

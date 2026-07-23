@@ -193,6 +193,10 @@ export class PlaybackEngine {
   /// snaps in within 50 ms of the user releasing the drag.
   seek(tUs: number): void {
     this.clock.setPosition(tUs);
+    // In-play seek flushes the decoder rings — arm the underrun
+    // tracker's grace window so the rebuild interval doesn't count as
+    // dropped frames on every timeline click during playback.
+    if (this.intendedPlaying) this.compositor.noteSeekWhilePlaying();
     // Immediate visual feedback: paint whatever's currently in the
     // ring nearest to this position. compositeFrame doesn't issue
     // new decoder work.

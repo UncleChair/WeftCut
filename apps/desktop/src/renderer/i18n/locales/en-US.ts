@@ -369,6 +369,10 @@ const enUS = {
     to_end_hint: "Jump to end",
     timecode_label: "Current time",
     timecode_edit_hint: "Click to edit · Enter to seek · Esc to cancel",
+    dropped_frames_one:
+      "{{count}} frame dropped during playback — decoding fell behind",
+    dropped_frames_other:
+      "{{count}} frames dropped during playback — decoding fell behind",
   },
   export: {
     title: "Export",

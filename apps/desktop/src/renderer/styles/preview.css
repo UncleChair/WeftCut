@@ -150,13 +150,47 @@
   padding-left: 4px;
 }
 
-.preview-meta {
+.preview-meta-cell {
   justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.preview-meta {
   font-size: var(--font-size-caption);
   color: var(--color-gray-500);
   font-variant-numeric: tabular-nums;
   padding-right: 4px;
   user-select: none;
+}
+
+/* Dropped-frame indicator: dim while merely reporting a past-session
+   count, full --warning while decode is actively behind. */
+.dropped-frames-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  user-select: none;
+  cursor: default;
+}
+
+.dropped-frames-indicator .dropped-frames-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+
+.dropped-frames-indicator.is-active {
+  color: var(--warning);
+}
+
+.dropped-frames-indicator.is-active .dropped-frames-dot {
+  background: var(--warning);
 }
 
 .preview-transport button {

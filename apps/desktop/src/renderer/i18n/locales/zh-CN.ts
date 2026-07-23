@@ -366,6 +366,8 @@ const zhCN: Resources = {
     to_end_hint: "跳转到结尾",
     timecode_label: "当前时间",
     timecode_edit_hint: "点击编辑 · 回车跳转 · Esc 取消",
+    dropped_frames_one: "播放期间丢帧 {{count}} 帧——解码速度未跟上",
+    dropped_frames_other: "播放期间丢帧 {{count}} 帧——解码速度未跟上",
   },
   export: {
     title: "导出",

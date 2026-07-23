@@ -347,6 +347,19 @@ function PerfDashboard({
           title="Preview warmup before play. 'cap hit' = WARMUP_MAX_WAIT_MS reached before the ring filled (possible initial-frame stutter)."
         />
         <StatTile
+          label="Dropped"
+          value={
+            (snap?.underrun?.droppedFrames ?? 0) === 0 ? (
+              <span className="perf-muted">0</span>
+            ) : (
+              <>{snap!.underrun.droppedFrames} <span className="perf-tile-unit">frames</span></>
+            )
+          }
+          meta={snap?.underrun?.active ? "decode behind NOW" : "this play session"}
+          warn={Boolean(snap?.underrun?.active)}
+          title="Comp frames painted late while the master clock ran (underrunTracker). The transport-bar dot mirrors this."
+        />
+        <StatTile
           label="Prewarm"
           value={
             !prewarm ? (
