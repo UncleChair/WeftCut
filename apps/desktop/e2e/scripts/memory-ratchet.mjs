@@ -11,12 +11,22 @@
 // Run it after touching the playback loop, playhead consumers, or anything
 // that subscribes per-frame:
 //   1. Have the dev server running:  npm run dev   (port 1420)
-//   2. node apps/desktop/e2e/scripts/memory-ratchet.mjs
+//   2. node apps/desktop/e2e/scripts/memory-ratchet.mjs [scenario]
+//
+// Scenarios (positional arg, default `text`):
+//   text        — the original fixture: one static Text layer. Guards the
+//                 playhead/React-subscription ratchet class.
+//   transitions — alternating full-frame RED/BLUE Color layers with a 1 s
+//                 transition at EVERY cut, kinds cycling Crossfade → Wipe →
+//                 Slide. 90 s of playback crosses ~22 active windows, so the
+//                 two-input transition node's RT pool (TransitionRtPool)
+//                 acquires/releases every cycle — a per-frame or per-window
+//                 RT leak ratchets straight past the red line.
 //
 // Method: assembles a throwaway shell package (isolated userData via a
 // distinct app name; node_modules junction into the repo; copy of out/) so
 // the probe NEVER touches the developer's own app instance, seeds a
-// synthesized text-only project (no media needed), auto-opens it via
+// synthesized no-media project, auto-opens it via
 // reopen_on_launch, plays 90 s, and compares forced-GC memory floors.
 // PASS: ratchet < 30 MB (healthy runs measure ~10 MB; the regression this
 // gate exists for measured +197 MB on the same fixture).
@@ -28,6 +38,12 @@ import { fileURLToPath } from 'node:url';
 
 const THRESHOLD_MB = 30;
 const PLAY_SECONDS = 90;
+
+const SCENARIO = process.argv[2] ?? 'text';
+if (!['text', 'transitions'].includes(SCENARIO)) {
+  console.error(`[memory-ratchet] unknown scenario '${SCENARIO}' — use 'text' or 'transitions'.`);
+  process.exit(2);
+}
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP = path.resolve(HERE, '../..');
@@ -65,10 +81,73 @@ const project = path.join(work, 'fixture');
 fs.mkdirSync(project);
 const DURATION_US = 120_000_000;
 const staticNum = (v) => ({ mode: 'Static', value: v });
+const fixtureId = (suffix) => `019f0000-0000-7000-8000-${suffix.toString(16).padStart(12, '0')}`;
+
+// Scenario `text`: the original single static Text layer.
+const textLayers = () => [{
+  id: '019f0000-0000-7000-8000-0000000000ab',
+  label: null, t_start_us: 0, t_end_us: DURATION_US,
+  enabled: true, locked: false, metadata: {},
+  params: {
+    kind: 'Text', content: 'MEMORY RATCHET GATE',
+    font: { family: 'Arial', size_px: 72, weight: 400, italic: false },
+    color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
+    align: 'Center',
+    transform: {
+      x: staticNum(0), y: staticNum(0), scale_x: staticNum(1), scale_y: staticNum(1),
+      rotation_deg: staticNum(0), anchor: [0.5, 0.5],
+    },
+    opacity: staticNum(1),
+    shadow: null, outline: null, intro: null, outro: null,
+    backend_hint: 'DrawText',
+  },
+  effects: [],
+}];
+
+// Scenario `transitions`: alternating full-frame RED/BLUE Color layers, cuts
+// every 4 s, a 1 s transition at EVERY cut (kinds cycling Crossfade → Wipe →
+// Slide). Start-at-cut shape: each outgoing layer's tail extends 1 s past the
+// cut, so overlap === duration_us (the validate/reconcile invariant). A layer
+// is `from` of one transition and `to` of the previous — chains are legal
+// (LayerInMultipleTransitions tracks from/to separately).
+const SEG_US = 4_000_000;
+const TRANSITION_US = 1_000_000;
+const SEGMENTS = DURATION_US / SEG_US; // 30 layers, 29 transitions
+const transitionsLayers = () => Array.from({ length: SEGMENTS }, (_, i) => ({
+  id: fixtureId(0x1000 + i),
+  label: null,
+  t_start_us: i * SEG_US,
+  // Every layer except the last is an outgoing participant → +1 s tail.
+  t_end_us: (i + 1) * SEG_US + (i < SEGMENTS - 1 ? TRANSITION_US : 0),
+  enabled: true, locked: false, metadata: {},
+  params: {
+    kind: 'Color',
+    color: { mode: 'Static', value: i % 2 === 0 ? { r: 255, g: 0, b: 0, a: 255 } : { r: 0, g: 0, b: 255, a: 255 } },
+    width: 1920, height: 1080,
+  },
+  effects: [],
+}));
+const TRANSITION_KINDS = [
+  { kind: 'Crossfade' },
+  { kind: 'Wipe', direction: 'left' },
+  { kind: 'Slide', direction: 'left' },
+];
+const transitionsList = () => Array.from({ length: SEGMENTS - 1 }, (_, i) => ({
+  id: fixtureId(0x2000 + i),
+  from_layer: fixtureId(0x1000 + i),
+  to_layer: fixtureId(0x1000 + i + 1),
+  duration_us: TRANSITION_US,
+  kind: TRANSITION_KINDS[i % TRANSITION_KINDS.length],
+}));
+
+const layers = SCENARIO === 'transitions' ? transitionsLayers() : textLayers();
+const transitions = SCENARIO === 'transitions' ? transitionsList() : [];
+log(`scenario: ${SCENARIO} (${layers.length} layers, ${transitions.length} transitions)`);
+
 fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
   schema_version: 10,
   project_id: '019f0000-0000-7000-8000-00000000c0de',
-  metadata: { name: 'memory-ratchet-fixture', created_at: '2026-01-01T00:00:00.000Z', modified_at: '2026-01-01T00:00:00.000Z', description: null },
+  metadata: { name: `memory-ratchet-${SCENARIO}`, created_at: '2026-01-01T00:00:00.000Z', modified_at: '2026-01-01T00:00:00.000Z', description: null },
   composition: {
     width: 1920, height: 1080, fps: { num: 30, den: 1 },
     duration_us: DURATION_US, duration_pinned: true,
@@ -80,27 +159,9 @@ fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
     id: '019f0000-0000-7000-8000-0000000000aa',
     label: 'Overlay', enabled: true, locked: false, muted: false, solo: false,
     removable: true, role: null, transient: false, height_px: 64,
-    layers: [{
-      id: '019f0000-0000-7000-8000-0000000000ab',
-      label: null, t_start_us: 0, t_end_us: DURATION_US,
-      enabled: true, locked: false, metadata: {},
-      params: {
-        kind: 'Text', content: 'MEMORY RATCHET GATE',
-        font: { family: 'Arial', size_px: 72, weight: 400, italic: false },
-        color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
-        align: 'Center',
-        transform: {
-          x: staticNum(0), y: staticNum(0), scale_x: staticNum(1), scale_y: staticNum(1),
-          rotation_deg: staticNum(0), anchor: [0.5, 0.5],
-        },
-        opacity: staticNum(1),
-        shadow: null, outline: null, intro: null, outro: null,
-        backend_hint: 'DrawText',
-      },
-      effects: [],
-    }],
+    layers,
   }],
-  markers: [], transitions: [], groups: [], audio_roles: {},
+  markers: [], transitions, groups: [], audio_roles: {},
   settings: {
     preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
     history_capacity: 200, auto_pair_audio_on_import: true, auto_delete_empty_tracks: true,
@@ -113,7 +174,7 @@ const userData = path.join(appData, 'weftcut-memprobe-gate');
 fs.mkdirSync(userData, { recursive: true });
 fs.writeFileSync(path.join(userData, 'recents.json'), JSON.stringify({
   reopen_on_launch: true,
-  entries: [{ path: project, name: 'memory-ratchet-fixture', last_opened: '2026-01-01T00:00:00.000Z' }],
+  entries: [{ path: project, name: `memory-ratchet-${SCENARIO}`, last_opened: '2026-01-01T00:00:00.000Z' }],
   last_new_project_parent: null,
 }));
 
@@ -171,10 +232,12 @@ try {
   log(`floor B (post-play, post-GC) = ${floorB} MB → ratchet = ${ratchet} MB over ${PLAY_SECONDS}s`);
 
   if (ratchet < THRESHOLD_MB) {
-    log(`PASS (< ${THRESHOLD_MB} MB)`);
+    log(`PASS [${SCENARIO}] (< ${THRESHOLD_MB} MB)`);
     exitCode = 0;
+  } else if (SCENARIO === 'transitions') {
+    log(`FAIL [transitions] (>= ${THRESHOLD_MB} MB) — likely a transition RT-pool leak (per-frame/per-window RenderTexture allocation); see src/renderer/render/transitions/TransitionRtPool.ts`);
   } else {
-    log(`FAIL (>= ${THRESHOLD_MB} MB) — a frame-rate React subscription has likely crept back in; see docs/render.md §Playhead updates`);
+    log(`FAIL [text] (>= ${THRESHOLD_MB} MB) — a frame-rate React subscription has likely crept back in; see docs/render.md §Playhead updates`);
   }
 } finally {
   await app.close().catch(() => {});
