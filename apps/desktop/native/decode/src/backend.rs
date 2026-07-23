@@ -321,6 +321,9 @@ impl NativeDecode {
         // that dispatches each `Frame` poke to the matching stream's per-stream
         // `ThreadsafeFunction` in `preview_sw_sinks`. `Eof`/`Error` pokes have no JS
         // callback shape (the delivery contract is frame bytes only) — log them.
+        // A poke whose `stream_id` has no entry drops silently — load-bearing:
+        // `preview_sw_close` may DETACH a wedged session thread, so a straggler
+        // can still poke after the entry is removed.
         let (preview_sw, preview_sw_sinks) = {
             let registry = crate::preview_sw::PreviewSwRegistry::new();
             let sinks: Arc<Mutex<HashMap<String, ThreadsafeFunction<PreviewSwFrame>>>> =
@@ -686,10 +689,14 @@ impl NativeDecode {
             .map_err(napi::Error::from_reason)
     }
 
-    /// Tear down a session: close+join the decode thread FIRST (the FIFO command
-    /// channel guarantees no poke is in flight once `close` returns), THEN drop
-    /// the per-stream `ThreadsafeFunction` — so no `Frame` poke can arrive after
-    /// its callback is removed. Returns the close result either way.
+    /// Tear down a session: close the decode thread FIRST, THEN drop the
+    /// per-stream `ThreadsafeFunction`. `close` returns promptly (bounded grace,
+    /// then detach — never an unbounded join on this napi thread); the contract
+    /// is that no poke is DELIVERED after the sink entry is removed, NOT that
+    /// the thread has exited: a detached straggler's late pokes hit the
+    /// constructor's router and drop silently once the entry is gone (a panic
+    /// on a detached thread is unobservable). Returns the close result either
+    /// way.
     #[napi]
     pub fn preview_sw_close(&self, stream_id: String) -> napi::Result<()> {
         let r = self
