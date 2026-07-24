@@ -76,13 +76,16 @@ export async function handleCallTool(
     // from the actor (sole state owner) and forward it.
     if (CLIP_SLICE_TOOLS.has(name)) {
       const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
-      // Default the transcription backend from the user's preferred engine when
-      // the agent didn't pick one (ADR 0036: select by user preference THEN
-      // availability). An explicit `backend` arg wins; "auto"/unset falls through
-      // so the Rust resolver's availability-ordered DEFAULT_ORDER decides.
+      // Inject the user's preferred engine as the SOFT `preferred_backend`
+      // hint (ADR 0036: select by user preference THEN availability). The
+      // agent-visible `backend` arg is deliberately NOT touched — it is a
+      // STRICT override in Rust (that engine or an error, never a substitute),
+      // so conflating the two would turn a mere preference into a hard
+      // requirement (or worse, a hard requirement into a silent fallback).
+      // "auto"/unset injects nothing; the Rust resolver's DEFAULT_ORDER decides.
       if (name === 'transcribe_clip' && merged.backend == null) {
         const pref = getPreferredEngine()
-        if (pref && pref !== 'auto') merged.backend = pref
+        if (pref && pref !== 'auto') merged.preferred_backend = pref
       }
       return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
     }

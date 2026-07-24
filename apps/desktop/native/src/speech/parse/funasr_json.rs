@@ -1,7 +1,7 @@
 //! sherpa-onnx-offline (FunASR Paraformer) JSON → [`Transcript`], with exact
 //! per-token (Mandarin: per-character) timing.
 //!
-//! ## Wire contract with the sherpa-onnx-offline sidecar (ticket 06)
+//! ## Wire contract with the sherpa-onnx-offline sidecar
 //!
 //! `sherpa-onnx-offline` prints ONE JSON object **to stdout** per input WAV (the
 //! wav filename and progress/RTF logs go to stderr), so the sidecar captures

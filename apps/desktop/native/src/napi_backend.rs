@@ -41,9 +41,10 @@ pub struct Backend {
     /// "whisper_cpp", …). Cloud entries are `BackendConfig::ApiKey` (plaintext,
     /// pushed in by Electron main after decrypting safeStorage via
     /// `set_cloud_key`); local entries are `BackendConfig::Local` binary/model
-    /// paths (pushed by the TS config store — ticket 05). Read synchronously by
-    /// the speech resolver. Always compiled (feature-independent) so main can
-    /// push keys regardless of the addon's feature set.
+    /// paths (pushed by the TS config store, `main/speech-config.ts`, via
+    /// `set_local_backend`). Read synchronously by the speech resolver. Always
+    /// compiled (feature-independent) so main can push keys regardless of the
+    /// addon's feature set.
     pub(crate) speech_config: std::sync::Mutex<
         std::collections::HashMap<String, crate::speech::config::BackendConfig>,
     >,
@@ -139,7 +140,8 @@ impl Backend {
     /// stays off the renderer). Signature is a stable TS wire contract — TS
     /// `main/keys.ts` calls it after safeStorage-decrypting `cloud_keys.json`,
     /// so it (and the on-disk file format) is unchanged, which is what keeps
-    /// existing OpenAI users resolving. Local-config setters are ticket 05.
+    /// existing OpenAI users resolving. The local-config counterpart is
+    /// `set_local_backend`.
     #[napi]
     pub fn set_cloud_key(&self, provider: String, key: String) {
         self.speech_config
@@ -915,9 +917,9 @@ mod tests {
 
     /// `set_local_backend` is the non-secret counterpart to `set_cloud_key`: it
     /// stores a `BackendConfig::Local` (binary/model/tokens/device/threads) under
-    /// the backend tag, and `clear_local_backend` removes it. Ticket 05 population
-    /// path for the local engines, pushed by the TS config store. whisper.cpp
-    /// omits `tokens` (stored `None`); FunASR passes it through.
+    /// the backend tag, and `clear_local_backend` removes it. This is the
+    /// population path for the local engines, pushed by the TS config store.
+    /// whisper.cpp omits `tokens` (stored `None`); FunASR passes it through.
     #[tokio::test]
     async fn set_local_backend_stores_local_config() {
         use crate::speech::config::BackendConfig;
@@ -970,8 +972,7 @@ mod tests {
     /// availability and marks the one the resolver would use. With an OpenAI key
     /// set and no `preferred`, OpenAI is `available` + `selected`; the
     /// unconfigured local engines report `needs_binary`. Proves the wire shape
-    /// the Settings UI consumes (ticket 05) and that `selected` tracks the
-    /// resolver.
+    /// the Settings UI consumes and that `selected` tracks the resolver.
     #[cfg(feature = "speech")]
     #[tokio::test]
     async fn settings_get_speech_backends_reports_availability_and_selected() {

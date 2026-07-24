@@ -64,9 +64,11 @@ tool_table! {
                           metadata via ffprobe when installed. Returns the new media id.", tools::ImportMediaArgs, tools::import_media),
     #[cfg(feature = "speech")]
     "transcribe_clip" => ("Transcribe a VideoClip or Audio layer through the configured transcription \
-                          provider (OpenAI Whisper today) and return a normalized transcript as JSON: \
-                          `{ segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], \
+                          provider (cloud OpenAI Whisper, or local whisper.cpp / FunASR) and return a \
+                          normalized transcript as JSON: \
+                          `{ backend, segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], \
                           language, word_timing, srt }`. All timestamps are timeline-absolute microseconds. \
+                          `backend` is the engine tag that actually served the request. \
                           `word_timing` is the provenance of the per-word times: `exact` (from an engine's \
                           token offsets) or `interpolated_from_cue` (approximated by splitting an SRT cue span \
                           across its words). Pipe the `srt` field straight into `apply_subtitles` (the cues \
@@ -74,8 +76,11 @@ tool_table! {
                           takes no start/end); use `segments`/`words` for word-level editing. Optional \
                           `t_start_us`/`t_end_us` narrow the transcription window inside the layer's time range; \
                           both default to the layer endpoints. Optional `backend` (`\"openai\"` | `\"whisper_cpp\"` | \
-                          `\"funasr\"`) forces a specific engine instead of the default preference-then-availability \
-                          order; an unknown value is rejected. Optional `word_timestamps` (default false) requests \
+                          `\"funasr\"`) REQUIRES that engine: if it is not available the call errors naming the \
+                          missing piece (key / binary / model) instead of substituting another engine, so an \
+                          explicit local choice never falls back to a cloud upload; an unknown value is rejected. \
+                          When omitted, selection is the user's preferred engine then availability. Optional \
+                          `word_timestamps` (default false) requests \
                           exact per-word times when the chosen backend can emit them (whisper.cpp `-ojf`); OpenAI \
                           Whisper is SRT-only and ignores it. VideoClip layers with speed != 1.0 are rejected — \
                           split off a speed-1 segment first. Errors with structured messages if no transcription \
@@ -168,6 +173,13 @@ mod tests {
                 assert!(
                     !props.contains_key("media"),
                     "{name}: `media` must not be advertised (schemars skip)"
+                );
+                // Host-injected soft preference (transcribe_clip only): agents
+                // must never see it — the agent-visible knob is the strict
+                // `backend` arg.
+                assert!(
+                    !props.contains_key("preferred_backend"),
+                    "{name}: `preferred_backend` must not be advertised (schemars skip)"
                 );
             }
         }

@@ -21,7 +21,7 @@
 //! end-to-end run against a real binary is a manual check.
 //!
 //! Model provisioning (bundle vs download vs user-path) is out of scope — v1 is
-//! a user-provided binary + model path from config (ticket 05 Settings UI).
+//! a user-provided binary + model path from the Settings UI config.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -117,7 +117,7 @@ impl Transcriber for WhisperCpp {
 /// `-m <model> -f <wav> {-ojf|-osrt} -of <prefix> -l <lang|auto> [-t <threads>]`.
 ///
 /// Kept as a free function (paths borrowed) so the flag logic is unit-testable
-/// without a running binary — the acceptance test for this ticket.
+/// without a running binary — the only automated pin on this CLI contract.
 fn build_args(
     model: &Path,
     wav: &Path,

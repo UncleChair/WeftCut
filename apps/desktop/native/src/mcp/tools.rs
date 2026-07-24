@@ -502,12 +502,20 @@ pub(super) struct TranscribeClipArgs {
     /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
     #[serde(default)]
     pub language: Option<String>,
-    /// Optional backend override: `"openai"` | `"whisper_cpp"` | `"funasr"`.
-    /// When omitted, the resolver walks preference then availability. An unknown
-    /// value is rejected; a known-but-unconfigured value (e.g. `"funasr"` today)
-    /// falls through availability and surfaces the "no backend configured" error.
+    /// Optional STRICT backend override: `"openai"` | `"whisper_cpp"` |
+    /// `"funasr"`. When set, that engine serves the request or the call errors
+    /// naming its exact gap (missing key / binary / model) — it never
+    /// substitutes another engine, so an explicit local choice can never leak
+    /// audio to a cloud provider. When omitted, the resolver walks the user's
+    /// preference then availability. An unknown value is rejected.
     #[serde(default)]
     pub backend: Option<String>,
+    /// Injected by the TS MCP host from the user's Settings preferred-engine —
+    /// a SOFT hint (falls back by availability), unlike the agent-visible
+    /// strict `backend` above. Unknown tags are ignored. Never advertised.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub preferred_backend: Option<String>,
     /// Request exact per-word timestamps when the chosen backend can emit them
     /// (whisper.cpp → `-ojf`). OpenAI Whisper is SRT-only and ignores it.
     /// Default false.
@@ -717,13 +725,15 @@ fn map_speech_error(e: speech::SpeechError) -> McpToolError {
 
 /// JSON envelope `transcribe_clip` returns: the normalized transcript
 /// (`segments` with per-word spans, detected `language`, `word_timing`
-/// provenance) PLUS a rendered `srt` field. The agent inspects `segments` for
-/// word-level editing and pipes `srt` straight into `apply_subtitles` (which
-/// still expects an SRT body). Borrows the transcript so we serialize without
-/// cloning the segment vec.
+/// provenance), the `backend` tag that actually served the request (so a
+/// fallback pick is visible, not silent), PLUS a rendered `srt` field. The
+/// agent inspects `segments` for word-level editing and pipes `srt` straight
+/// into `apply_subtitles` (which still expects an SRT body). Borrows the
+/// transcript so we serialize without cloning the segment vec.
 #[cfg(feature = "speech")]
 #[derive(Serialize)]
 struct TranscribeClipResult<'a> {
+    backend: &'a str,
     segments: &'a [speech::Segment],
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<&'a str>,
@@ -792,10 +802,12 @@ async fn transcribe_clip_inner(
         args.t_end_us,
     )?;
 
-    // Optional per-call backend override → `preferred`. Unknown tag → clean
-    // invalid_params. Matches the stable `as_str` wire tag (not the serde form),
-    // same idiom as commands::speech::parse_backend.
-    let preferred = match args.backend.as_deref() {
+    // Explicit `backend` arg → STRICT (that engine or an error naming its
+    // gap; never a silent substitute — the caller may have chosen local for
+    // privacy). Unknown tag → clean invalid_params, matched against the stable
+    // `as_str` wire tag (not the serde form), same idiom as
+    // commands::speech::parse_backend.
+    let explicit = match args.backend.as_deref() {
         None => None,
         Some(tag) => Some(
             speech::SpeechBackend::all()
@@ -812,16 +824,31 @@ async fn transcribe_clip_inner(
                 })?,
         ),
     };
+    // Host-injected user preference → SOFT hint for the resolver's
+    // preference-then-availability walk. Unknown/absent tags fall to None.
+    let preferred = args.preferred_backend.as_deref().and_then(|tag| {
+        speech::SpeechBackend::all()
+            .iter()
+            .copied()
+            .find(|b| b.as_str() == tag)
+    });
 
-    let transcriber = {
+    let (used_backend, transcriber) = {
         let cfg = b.speech_config.lock().expect("speech_config poisoned");
-        // Honor the caller's `backend` override, then fall through DEFAULT_ORDER
-        // by availability. A known-but-unconfigured `preferred` (e.g. "funasr"
-        // before ticket 05/06) is simply skipped, landing on the actionable
-        // "nothing configured" error below when nothing else is available.
-        speech::resolve_transcriber(preferred, &cfg)
-    }
-    .ok_or_else(|| McpToolError::invalid_request(speech::NO_TRANSCRIBER_CONFIGURED, None))?;
+        match explicit {
+            Some(b) => (
+                b,
+                // Strict-resolution failures are the caller's/config's to fix
+                // (wrong choice or missing key/binary/model) → invalid_request,
+                // not internal_error.
+                speech::resolve_transcriber_exact(b, &cfg)
+                    .map_err(|e| McpToolError::invalid_request(e.to_string(), None))?,
+            ),
+            None => speech::resolve_transcriber(preferred, &cfg).ok_or_else(|| {
+                McpToolError::invalid_request(speech::NO_TRANSCRIBER_CONFIGURED, None)
+            })?,
+        }
+    };
 
     let audio_path = speech::audio_extract::extract_audio_window(
         &b.cache,
@@ -852,6 +879,7 @@ async fn transcribe_clip_inner(
 
     let srt = transcript.render_srt();
     let result = TranscribeClipResult {
+        backend: used_backend.as_str(),
         segments: &transcript.segments,
         language: transcript.language.as_deref(),
         word_timing: transcript.word_timing,
@@ -880,7 +908,8 @@ pub(crate) async fn synthesize_speech_audio(
 
     let synthesizer = {
         let cfg = b.speech_config.lock().expect("speech_config poisoned");
-        // `preferred: None` — same rationale as transcribe_clip (ticket 04/05).
+        // `preferred: None` — TTS has one capable backend (OpenAI), so there is
+        // no preference to honor; the resolver's availability walk suffices.
         speech::resolve_synthesizer(None, &cfg)
     }
     .ok_or_else(|| McpToolError::invalid_request(speech::NO_SYNTHESIZER_CONFIGURED, None))?;

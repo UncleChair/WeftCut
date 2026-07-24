@@ -70,7 +70,8 @@ impl Transcriber for OpenAiWhisper {
         let response = loop {
             // Rebuild the multipart form each iteration — `Form`/`Part` aren't
             // cleanly cloneable, but the bytes/filename/language are cheap to
-            // re-wrap. Bytes are owned via `Vec<u8>::clone` only on retry.
+            // re-wrap. `bytes.clone()` runs on every attempt (incl. the first);
+            // at ≤25 MB per upload that copy is acceptable.
             let file_part = Part::bytes(bytes.clone())
                 .file_name(filename.clone())
                 .mime_str("audio/wav")
@@ -366,7 +367,15 @@ fn trim_body(s: &str) -> String {
     if trimmed.len() <= MAX {
         trimmed.to_string()
     } else {
-        format!("{}…", &trimmed[..MAX])
+        // Cut on a char boundary at or below MAX bytes — a raw `[..MAX]` slice
+        // panics when byte 400 lands inside a multi-byte char (e.g. a proxy's
+        // Chinese error page).
+        let cut = trimmed
+            .char_indices()
+            .take_while(|(i, _)| *i <= MAX)
+            .last()
+            .map_or(0, |(i, _)| i);
+        format!("{}…", &trimmed[..cut])
     }
 }
 
@@ -505,8 +514,8 @@ mod tests {
         let d = tts_cache_key("hello world", "Alloy", None);
         assert_eq!(a, d);
 
-        // Speed: None and Some(1.0) MUST collide if both are "use default".
-        // We use a literal "default" sentinel for None so they're distinct.
+        // Speed: None hashes a literal "default" sentinel, so it is DISTINCT
+        // from an explicit Some(1.0) — see the function doc for why.
         let e = tts_cache_key("hello world", "alloy", Some(1.0));
         assert_ne!(
             a, e,

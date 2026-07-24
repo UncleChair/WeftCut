@@ -99,26 +99,34 @@ describe('handleCallTool flip routing', () => {
     expect(spy).toHaveBeenCalledWith('cleanup')
   })
 
-  // ADR 0036: transcribe_clip selects by user preference THEN availability. The
-  // host defaults the `backend` arg from the stored preferred engine when the
-  // agent omits it; an explicit arg wins; "auto" defers to the Rust resolver.
+  // ADR 0036: transcribe_clip selects by user preference THEN availability.
+  // The host injects the stored preferred engine as the SOFT `preferred_backend`
+  // hint when the agent omits `backend`; the agent's explicit `backend` is a
+  // STRICT Rust-side override and must pass through untouched (and suppress the
+  // preference injection); "auto" defers to the Rust resolver.
   const okEnvelope = (_n: string, _a: string) => Promise.resolve('{"ok":true,"result":{"content":[{"type":"text","text":"{}"}]}}')
-  it('defaults transcribe_clip backend from the preferred engine when the agent omits it', async () => {
+  it('injects the preferred engine as preferred_backend when the agent omits backend', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
     await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, () => 'whisper_cpp')
-    expect(JSON.parse(spy.mock.calls[0][1]).backend).toBe('whisper_cpp')
+    const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.preferred_backend).toBe('whisper_cpp')
+    expect(sent.backend).toBeUndefined() // never promoted to the strict arg
   })
-  it('does not override an explicit transcribe_clip backend with the preferred engine', async () => {
+  it('passes an explicit transcribe_clip backend through untouched and injects no preference', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
     await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone', backend: 'openai' }, () => 'whisper_cpp')
-    expect(JSON.parse(spy.mock.calls[0][1]).backend).toBe('openai')
+    const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.backend).toBe('openai')
+    expect(sent.preferred_backend).toBeUndefined()
   })
-  it('injects no backend when the preferred engine is auto', async () => {
+  it('injects nothing when the preferred engine is auto', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
     await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, () => 'auto')
-    expect(JSON.parse(spy.mock.calls[0][1]).backend).toBeUndefined()
+    const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.backend).toBeUndefined()
+    expect(sent.preferred_backend).toBeUndefined()
   })
 })

@@ -1,7 +1,7 @@
 //! whisper.cpp `-ojf` (output-json-full) → [`Transcript`], with exact
 //! per-word timing.
 //!
-//! ## Wire contract with the whisper.cpp sidecar (ticket 04)
+//! ## Wire contract with the whisper.cpp sidecar
 //!
 //! This parser reads whisper.cpp's **native** full-JSON schema verbatim — the
 //! sidecar must pass `-ojf` and hand us the resulting `.json` untouched (no unit
@@ -21,12 +21,18 @@
 //! `offsets.from`/`offsets.to` are **milliseconds** (whisper.cpp's JSON unit),
 //! NOT the centisecond `t0`/`t1` of the C API — we multiply by 1000 to reach
 //! microseconds. Token `text` uses a leading space to mark a word boundary
-//! (SentencePiece convention); we group sub-word tokens back into words on that
-//! signal. `word_timing = Exact`.
+//! (SentencePiece convention); we group sub-word tokens back into words on
+//! that signal, AND on a token starting with a space-less CJK character (Han,
+//! kana) — Chinese/Japanese tokens carry no leading space, so without the CJK
+//! rule an entire segment would merge into one giant "word", discarding the
+//! per-token offsets the engine paid for. `word_timing = Exact` when the words
+//! come from token offsets; a segment-only JSON (no token arrays anywhere)
+//! degrades to one pseudo-word per segment and reports `word_timing = None` —
+//! segment granularity, honestly labeled.
 
 use serde::Deserialize;
 
-use super::TranscriptParser;
+use super::{is_cjk_char, TranscriptParser};
 use crate::speech::error::SpeechError;
 use crate::speech::transcript::{Segment, Transcript, Word, WordTiming};
 
@@ -38,18 +44,23 @@ impl TranscriptParser for WhisperJsonParser {
             .map_err(|e| SpeechError::Parse(format!("whisper -ojf JSON: {e}")))?;
 
         let mut segments = Vec::with_capacity(full.transcription.len());
+        let mut any_token_words = false;
         for seg in &full.transcription {
             let seg_text = seg.text.trim().to_string();
             let mut words = group_tokens_into_words(&seg.tokens);
-            // Fallback: some whisper builds omit the token array (segment-only
-            // JSON). Keep a usable word by spanning the whole segment rather
-            // than emitting a wordless segment.
-            if words.is_empty() && !seg_text.is_empty() {
-                words.push(Word {
-                    t_start_us: ms_to_us(seg.offsets.from),
-                    t_end_us: ms_to_us(seg.offsets.to),
-                    text: seg_text.clone(),
-                });
+            if words.is_empty() {
+                // Fallback: some whisper builds omit the token array
+                // (segment-only JSON). Keep a usable word by spanning the whole
+                // segment rather than emitting a wordless segment.
+                if !seg_text.is_empty() {
+                    words.push(Word {
+                        t_start_us: ms_to_us(seg.offsets.from),
+                        t_end_us: ms_to_us(seg.offsets.to),
+                        text: seg_text.clone(),
+                    });
+                }
+            } else {
+                any_token_words = true;
             }
             segments.push(Segment {
                 t_start_us: ms_to_us(seg.offsets.from),
@@ -65,28 +76,40 @@ impl TranscriptParser for WhisperJsonParser {
                 .result
                 .language
                 .filter(|l| !l.is_empty() && l != "auto"),
-            word_timing: WordTiming::Exact,
+            // Exact only when at least one word came from real token offsets;
+            // an all-fallback (segment-only) transcript is segment-granular and
+            // must not certify its pseudo-words as exact.
+            word_timing: if any_token_words {
+                WordTiming::Exact
+            } else {
+                WordTiming::None
+            },
         })
     }
 }
 
 /// Group whisper's sub-word tokens back into words. A token whose raw `text`
-/// begins with a space opens a new word (SentencePiece word-boundary marker);
-/// tokens without a leading space are continuations (sub-word pieces or
-/// attached punctuation) appended to the current word, extending its end time.
-/// whisper's internal special tokens (`[_BEG_]`, `[_TT_123]`, `[_EOT_]`, …) are
-/// skipped.
+/// begins with a space opens a new word (SentencePiece word-boundary marker),
+/// and so does a token starting with a space-less CJK character — Chinese and
+/// Japanese tokens carry no leading spaces, so the space rule alone would
+/// merge a whole segment into one word. Tokens matching neither rule are
+/// continuations (sub-word pieces or attached punctuation) appended to the
+/// current word, extending its end time. A multi-character CJK token stays one
+/// word (the engine reports no finer offsets than the token). whisper's
+/// internal special tokens (`[_BEG_]`, `[_TT_123]`, `[_EOT_]`, …) are skipped.
 fn group_tokens_into_words(tokens: &[WhisperToken]) -> Vec<Word> {
     let mut words: Vec<Word> = Vec::new();
     for tok in tokens {
         if tok.text.trim_start().starts_with("[_") {
             continue; // whisper internal marker, not transcript content
         }
-        let opens_word = tok.text.starts_with(' ') || tok.text.starts_with('\n');
         let piece = tok.text.trim();
         if piece.is_empty() {
             continue;
         }
+        let opens_word = tok.text.starts_with(' ')
+            || tok.text.starts_with('\n')
+            || piece.chars().next().is_some_and(is_cjk_char);
         let t0 = ms_to_us(tok.offsets.from);
         let t1 = ms_to_us(tok.offsets.to);
         if opens_word || words.is_empty() {
@@ -197,13 +220,51 @@ mod tests {
     }
 
     #[test]
-    fn segment_without_tokens_falls_back_to_one_word() {
+    fn segment_without_tokens_falls_back_to_one_word_marked_segment_granular() {
         let json = r#"{"transcription":[{"offsets":{"from":500,"to":1500},"text":"solo"}]}"#;
         let t = WhisperJsonParser.parse(json).expect("parse");
         assert_eq!(t.segments[0].words.len(), 1);
         assert_eq!(t.segments[0].words[0].text, "solo");
         assert_eq!(t.segments[0].words[0].t_start_us, 500_000);
         assert_eq!(t.segments[0].words[0].t_end_us, 1_500_000);
+        // The pseudo-word spans the segment — that is segment granularity, and
+        // must NOT be certified `Exact`.
+        assert_eq!(t.word_timing, WordTiming::None);
+    }
+
+    /// Chinese tokens carry no leading space; each CJK-starting token must open
+    /// its own word (keeping the engine's exact per-token offsets) instead of
+    /// the whole segment merging into one giant "word". Trailing CJK
+    /// punctuation (non-CJK-start, no leading space) stays a continuation.
+    #[test]
+    fn cjk_tokens_without_leading_spaces_stay_separate_words() {
+        let json = r#"{
+            "result": { "language": "zh" },
+            "transcription": [
+                {
+                    "offsets": { "from": 0, "to": 1200 },
+                    "text": "你好世界。",
+                    "tokens": [
+                        { "text": "你", "offsets": { "from": 0,   "to": 300 } },
+                        { "text": "好", "offsets": { "from": 300, "to": 600 } },
+                        { "text": "世", "offsets": { "from": 600, "to": 900 } },
+                        { "text": "界", "offsets": { "from": 900, "to": 1100 } },
+                        { "text": "。", "offsets": { "from": 1100, "to": 1200 } }
+                    ]
+                }
+            ]
+        }"#;
+        let t = WhisperJsonParser.parse(json).expect("parse");
+        assert_eq!(t.word_timing, WordTiming::Exact);
+        let words = &t.segments[0].words;
+        assert_eq!(
+            words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(),
+            ["你", "好", "世", "界。"],
+        );
+        // Exact per-token offsets survive the grouping.
+        assert_eq!(words[1].t_start_us, 300_000);
+        assert_eq!(words[1].t_end_us, 600_000);
+        assert_eq!(words[3].t_end_us, 1_200_000); // extended by the 。 token
     }
 
     #[test]

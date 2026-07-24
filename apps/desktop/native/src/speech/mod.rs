@@ -12,15 +12,19 @@
 //! can run right now (cloud → key present; local → binary + model on disk).
 //!
 //! [`resolve_transcriber`] / [`resolve_synthesizer`] honor an optional
-//! `preferred` backend, then fall through [`backend::DEFAULT_ORDER`], returning
-//! the first that both supports the surface AND is available. When nothing is
-//! configured they return `None` and the tool layer surfaces
-//! [`NO_TRANSCRIBER_CONFIGURED`] / [`NO_SYNTHESIZER_CONFIGURED`] — actionable
-//! messages that name every remedy.
+//! `preferred` backend as a SOFT hint, then fall through
+//! [`backend::DEFAULT_ORDER`], returning the first that both supports the
+//! surface AND is available. When nothing is configured they return `None` and
+//! the tool layer surfaces [`NO_TRANSCRIBER_CONFIGURED`] /
+//! [`NO_SYNTHESIZER_CONFIGURED`] — actionable messages that name every remedy.
+//! [`resolve_transcriber_exact`] is the STRICT counterpart for an explicit
+//! per-call `backend` override: that engine or an error naming its gap, never
+//! a silent substitute (a local-for-privacy request must not fall back to a
+//! cloud upload).
 //!
 //! OpenAI (cloud), whisper.cpp and FunASR (local sidecars) all have concrete
-//! `impl`s; the local engines become *selectable* once ticket 05's config store
-//! populates their binary/model (and, for FunASR, tokens) paths.
+//! `impl`s; the local engines are selectable once Settings populates their
+//! binary/model (and, for FunASR, tokens) paths.
 //!
 //! Design: `docs/adr/0036-pluggable-speech-backends-normalized-transcript.md`;
 //! `docs/mcp.md` "Speech".
@@ -64,16 +68,63 @@ pub const NO_SYNTHESIZER_CONFIGURED: &str =
      engines are not supported yet)";
 
 /// Resolve a transcription-capable backend by **preference then availability**:
-/// honor `preferred`, then fall through [`DEFAULT_ORDER`], picking the first
-/// backend whose [`Capabilities::transcription`] holds AND whose
-/// [`availability`] (given its `speech_config` entry) is `Available`. Returns
-/// `None` when nothing is configured.
+/// honor `preferred` as a soft hint, then fall through [`DEFAULT_ORDER`],
+/// picking the first backend whose [`Capabilities::transcription`] holds AND
+/// whose [`availability`] (given its `speech_config` entry) is `Available`.
+/// Returns the chosen backend alongside the transcriber so the tool layer can
+/// report which engine actually served the request; `None` when nothing is
+/// configured. For a caller that *requires* a specific engine, use
+/// [`resolve_transcriber_exact`] instead — this function substitutes freely.
 pub fn resolve_transcriber(
     preferred: Option<SpeechBackend>,
     cfg: &HashMap<String, BackendConfig>,
-) -> Option<Box<dyn Transcriber>> {
+) -> Option<(SpeechBackend, Box<dyn Transcriber>)> {
     let chosen = select_backend(preferred, cfg, |c| c.transcription)?;
-    construct_transcriber(chosen, cfg.get(chosen.as_str()))
+    let t = construct_transcriber(chosen, cfg.get(chosen.as_str()))?;
+    Some((chosen, t))
+}
+
+/// STRICT single-backend resolution for an explicit per-call override: build
+/// `backend` or error naming exactly what is missing. Never falls back — the
+/// caller asked for THIS engine (possibly local-for-privacy), so substituting
+/// another (possibly cloud) engine would silently violate that choice. The
+/// error text tells the agent both remedies: fix the gap, or omit `backend`
+/// to let the resolver fall back.
+pub fn resolve_transcriber_exact(
+    backend: SpeechBackend,
+    cfg: &HashMap<String, BackendConfig>,
+) -> Result<Box<dyn Transcriber>, SpeechError> {
+    if !backend.capabilities().transcription {
+        return Err(SpeechError::Provider {
+            provider: backend,
+            message: "backend does not support transcription".into(),
+        });
+    }
+    let entry = cfg.get(backend.as_str());
+    match availability(backend, entry) {
+        Availability::Available => {
+            construct_transcriber(backend, entry).ok_or_else(|| SpeechError::Provider {
+                provider: backend,
+                // Available but unconstructable = a config-shape hole this
+                // module failed to keep in sync; degrade to a clean error.
+                message: "backend is configured but could not be constructed".into(),
+            })
+        }
+        Availability::NeedsKey => Err(SpeechError::MissingKey { provider: backend }),
+        Availability::NeedsBinary => Err(SpeechError::Provider {
+            provider: backend,
+            message: "requested explicitly but its binary was not found — set its path in \
+                      Settings, or omit `backend` to fall back to another engine"
+                .into(),
+        }),
+        Availability::NeedsModel => Err(SpeechError::Provider {
+            provider: backend,
+            message: "requested explicitly but its model file (for FunASR, also tokens.txt) was \
+                      not found — set its path in Settings, or omit `backend` to fall back to \
+                      another engine"
+                .into(),
+        }),
+    }
 }
 
 /// TTS-capable counterpart to [`resolve_transcriber`].
@@ -89,9 +140,7 @@ pub fn resolve_synthesizer(
 /// constructing it — the public counterpart to [`select_backend`] for the
 /// Settings "which engine is active" (`selected`) marker. Same
 /// preference-then-availability walk as [`resolve_transcriber`]; `None` when
-/// nothing is available. (Distinct from `resolve_transcriber` in that it needs
-/// no concrete `impl`, so a backend whose sidecar isn't built yet — but which
-/// IS available — can still report as the selected engine.)
+/// nothing is available.
 pub fn resolve_selected_transcriber_backend(
     preferred: Option<SpeechBackend>,
     cfg: &HashMap<String, BackendConfig>,
@@ -235,7 +284,7 @@ pub async fn probe_backend(
         Locality::Local => {
             // GUARD: bail on the file-existence verdict BEFORE any spawn, so a
             // missing binary/model reports NeedsBinary/NeedsModel with no child
-            // process (ticket 04 acceptance).
+            // process ever started.
             match availability(backend, cfg) {
                 Availability::Available => {}
                 Availability::NeedsBinary => {
@@ -355,12 +404,42 @@ mod tests {
 
     #[test]
     fn preferred_unavailable_falls_through_to_openai() {
-        // whisper.cpp preferred but has no local config (unavailable) → the
-        // resolver falls through DEFAULT_ORDER to OpenAI, which has a key. A
-        // Some result proves the fall-through: had it stuck on WhisperCpp, the
-        // constructor would return None (no sidecar impl yet).
+        // whisper.cpp SOFT-preferred but has no local config (unavailable) →
+        // the resolver falls through DEFAULT_ORDER to OpenAI, which has a key.
+        // The returned backend tag proves the fall-through landed on OpenAI.
         let cfg = cfg_with(&[("openai", BackendConfig::ApiKey("sk-x".into()))]);
-        assert!(resolve_transcriber(Some(SpeechBackend::WhisperCpp), &cfg).is_some());
+        let (chosen, _) =
+            resolve_transcriber(Some(SpeechBackend::WhisperCpp), &cfg).expect("falls back");
+        assert_eq!(chosen, SpeechBackend::OpenAi);
+    }
+
+    /// The STRICT counterpart never substitutes: an explicitly-requested but
+    /// unconfigured whisper.cpp errors (naming the gap and the omit-`backend`
+    /// remedy) even though OpenAI is available and could serve the request.
+    #[test]
+    fn exact_unavailable_errors_instead_of_falling_back() {
+        let cfg = cfg_with(&[("openai", BackendConfig::ApiKey("sk-x".into()))]);
+        // (`Box<dyn Transcriber>` has no Debug, so no expect_err — destructure.)
+        let Err(err) = resolve_transcriber_exact(SpeechBackend::WhisperCpp, &cfg) else {
+            panic!("must not substitute OpenAI for an explicit whisper.cpp request");
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("binary was not found"), "names the gap: {msg}");
+        assert!(msg.contains("omit `backend`"), "names the fallback remedy: {msg}");
+    }
+
+    #[test]
+    fn exact_available_backend_constructs() {
+        let cfg = cfg_with(&[("openai", BackendConfig::ApiKey("sk-x".into()))]);
+        assert!(resolve_transcriber_exact(SpeechBackend::OpenAi, &cfg).is_ok());
+    }
+
+    #[test]
+    fn exact_cloud_without_key_is_missing_key() {
+        let Err(err) = resolve_transcriber_exact(SpeechBackend::OpenAi, &HashMap::new()) else {
+            panic!("no key must not resolve");
+        };
+        assert!(matches!(err, SpeechError::MissingKey { .. }));
     }
 
     #[test]

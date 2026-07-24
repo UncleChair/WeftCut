@@ -81,11 +81,10 @@ fn parse_backend(s: &str) -> Result<SpeechBackend, String> {
 /// Presence-only status for the Settings → API keys panel. Reports whether an
 /// API key is cached for each cloud backend.
 ///
-/// Ticket 02 keeps this listing **cloud backends only** (the ones an API key
-/// applies to), so the wire content is identical to today's single OpenAI row.
-/// Local-engine rows — configured by binary/model path, not a key — are ticket
-/// 05's UI generalization, not this one. `configured` is strictly "an `ApiKey`
-/// entry is present".
+/// Deliberately lists **cloud backends only** (the ones an API key applies
+/// to); the full multi-backend listing incl. local engines is
+/// [`settings_get_speech_backends`]. Kept alongside it so existing TS callers
+/// don't break. `configured` is strictly "an `ApiKey` entry is present".
 pub async fn settings_get_api_key_status(b: &Backend) -> Result<Vec<ApiKeyStatus>, String> {
     let cfg = b.speech_config.lock().expect("speech_config poisoned");
     Ok(SpeechBackend::all()

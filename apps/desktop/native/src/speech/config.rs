@@ -4,12 +4,12 @@
 //! ADR 0036 "Config splits by secrecy": the OpenAI **key** is secret — it lives
 //! in the `safeStorage`-backed cache and is persisted as `cloud_keys.json`. A
 //! local engine's **paths** (binary, model) are non-secret and come from a
-//! TS-owned config store. Electron main merges both into the single
+//! TS-owned config store (`main/speech-config.ts` → `speech_config.json`).
+//! Electron main merges both into the single
 //! `Backend.speech_config: HashMap<String, BackendConfig>` snapshot the
-//! stateless Rust resolver reads (keyed by [`SpeechBackend::as_str`]).
-//!
-//! Ticket 02 only builds the `ApiKey` arm end-to-end (via the unchanged
-//! `set_cloud_key`); local-config setters land in ticket 05.
+//! stateless Rust resolver reads (keyed by [`SpeechBackend::as_str`]) — the
+//! `ApiKey` arm arrives via the unchanged `set_cloud_key`, the `Local` arm via
+//! `set_local_backend`.
 
 use std::path::PathBuf;
 
@@ -24,7 +24,8 @@ pub enum BackendConfig {
     /// `cloud_keys.json` resolving.
     ApiKey(String),
     /// A local sidecar's on-disk config: the CLI binary + model file, with
-    /// optional device / thread hints. Populated by ticket 05's config store.
+    /// optional device / thread hints. Populated from the TS config store via
+    /// `Backend::set_local_backend`.
     Local {
         binary: PathBuf,
         model: PathBuf,

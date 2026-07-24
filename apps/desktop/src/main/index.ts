@@ -629,7 +629,7 @@ app.whenReady().then(async () => {
       backend!.clearCloudKey(provider)
       return null
     }
-    // Speech backends (ticket 05). Like the API-key writes above, these are
+    // Speech backends. Like the API-key writes above, these are
     // intercepted here — the reads merge Rust-side availability with the
     // TS-owned config store, and the writes both persist non-secret local config
     // AND push it into the backend cache (setLocalBackend, the non-secret sibling
@@ -658,7 +658,7 @@ app.whenReady().then(async () => {
     }
     if (channel === 'settings_set_local_backend') {
       const a = (args ?? {}) as { backend: string; binary: string; model: string; tokens?: string; device?: string; threads?: number }
-      speechConfig.apply({
+      const next = speechConfig.apply({
         local: {
           backend: a.backend,
           config: {
@@ -670,7 +670,13 @@ app.whenReady().then(async () => {
           },
         },
       })
-      backend!.setLocalBackend(a.backend, a.binary, a.model, a.device ?? null, a.threads ?? null, a.tokens ?? null)
+      // Push the PERSISTED (sanitized) entry, not the raw args — the store
+      // trims paths and drops bogus threads, and pushing anything else would
+      // give the live resolver a different config than the next launch reads.
+      // A sanitized-away entry (both paths blank) clears the cache entry too.
+      const entry = next.local[a.backend]
+      if (entry) backend!.setLocalBackend(a.backend, entry.binary, entry.model, entry.device ?? null, entry.threads ?? null, entry.tokens ?? null)
+      else backend!.clearLocalBackend(a.backend)
       return null
     }
     if (channel === 'settings_clear_local_backend') {

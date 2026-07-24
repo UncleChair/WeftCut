@@ -47,10 +47,11 @@ pub enum Locality {
 }
 
 /// The order the resolver walks after honoring the caller's `preferred` hint.
-/// OpenAI is first today — it is the only backend with a real `impl` right now;
-/// whisper.cpp / FunASR join the fallback once tickets 04/06 build their
-/// sidecar transcribers (and can only be *selected* once ticket 05 populates
-/// their local config, so listing them here early is inert).
+/// All three backends have working impls (OpenAI cloud; whisper.cpp / FunASR
+/// CLI sidecars). OpenAI leads: with both a key and a local engine configured
+/// and no preference set, cloud wins — it needs no local model download and
+/// its quality is the known baseline; users who want local-first say so via
+/// the Settings preferred engine.
 pub const DEFAULT_ORDER: &[SpeechBackend] = &[
     SpeechBackend::OpenAi,
     SpeechBackend::WhisperCpp,

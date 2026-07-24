@@ -1090,7 +1090,9 @@ const NEEDS_TOKENS: ReadonlySet<string> = new Set(["funasr"]);
 /// One LOCAL engine's config row: binary + model path pickers (native dialog),
 /// a tokens picker for engines in `NEEDS_TOKENS` (FunASR), optional device +
 /// threads, plus Save / Clear / Test. Test routes through the generalized
-/// `settings_test_provider` → `--help` liveness (tickets 04/06).
+/// `settings_test_provider` → `--help` liveness against the SAVED config, so
+/// it is disabled while the edit buffers are dirty (unsaved paths would make
+/// its verdict lie about what is on screen).
 function LocalBackendRow({
   info,
   onChanged,
@@ -1214,6 +1216,17 @@ function LocalBackendRow({
   };
 
   const available = info.availability === "available";
+
+  // Test probes the SAVED config (the Rust-side cache), not these edit
+  // buffers — so gate it while they differ (or nothing is saved yet), or its
+  // verdict would contradict the paths on screen.
+  const dirty =
+    binary !== (info.local?.binary ?? "") ||
+    model !== (info.local?.model ?? "") ||
+    tokens !== (info.local?.tokens ?? "") ||
+    device !== (info.local?.device ?? "") ||
+    (threads ?? null) !== (info.local?.threads ?? null);
+  const canTest = info.local !== undefined && !dirty;
 
   return (
     <div className="settings-key-row">
@@ -1347,8 +1360,12 @@ function LocalBackendRow({
         <Button
           size="sm"
           onClick={() => void test()}
-          disabled={busy !== null}
-          title={t("settings.speech_test_hint")}
+          disabled={busy !== null || !canTest}
+          title={
+            canTest
+              ? t("settings.speech_test_hint")
+              : t("settings.speech_test_unsaved_hint")
+          }
         >
           {busy === "test" ? t("settings.testing") : t("settings.test")}
         </Button>

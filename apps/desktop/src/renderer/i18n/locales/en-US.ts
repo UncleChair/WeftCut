@@ -682,6 +682,8 @@ const enUS = {
     speech_pick_tokens: "Choose the tokens file",
     speech_test_hint:
       "Check the binary runs and the model file is present, without transcribing anything.",
+    speech_test_unsaved_hint:
+      "Save the paths first — Test checks the saved configuration.",
     motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:

@@ -22,8 +22,8 @@
 //! wired in v1 (tokens + Paraformer only).
 //!
 //! Model/tokens provisioning (bundle vs download vs user-path) is out of scope —
-//! v1 is a user-provided binary + model + tokens path from config (ticket 05
-//! Settings UI). `device` is accepted and reserved for a future GPU-selection
+//! v1 is a user-provided binary + model + tokens path from the Settings UI
+//! config. `device` is accepted and reserved for a future GPU-selection
 //! flag but intentionally NOT mapped: sherpa's provider selection is a
 //! build/provider concern, not a portable CLI flag, and inventing one here would
 //! be a hazard on a path that can't run in CI (same stance as whisper.cpp).
@@ -105,7 +105,7 @@ impl Transcriber for FunAsr {
 ///
 /// sherpa takes `--flag=value` form and the WAV as a trailing positional. Kept a
 /// free function (paths borrowed) so the flag logic is unit-testable without a
-/// running binary — the acceptance test for this ticket.
+/// running binary — the only automated pin on this CLI contract.
 fn build_args(model: &Path, tokens: &Path, wav: &Path, threads: Option<u32>) -> Vec<OsString> {
     let mut args: Vec<OsString> = Vec::with_capacity(4);
     args.push(eq_arg("--paraformer=", model.as_os_str()));

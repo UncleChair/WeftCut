@@ -1,7 +1,7 @@
 //! Shared one-shot CLI-sidecar transcription helper.
 //!
-//! Every *local* speech backend (whisper.cpp today, FunASR via sherpa-onnx in
-//! ticket 06) has the same shape: feed the `extract_audio_window` 16 kHz mono
+//! Every *local* speech backend (whisper.cpp, FunASR via sherpa-onnx) has the
+//! same shape: feed the `extract_audio_window` 16 kHz mono
 //! WAV to a spawned CLI child, wait for it to finish, and read one transcript
 //! body back — either off stdout or out of a sidecar file the engine wrote.
 //! This module owns everything that MUST be identical across those engines and
@@ -15,7 +15,7 @@
 //!
 //! A backend supplies only the binary, the built argument vector, where the
 //! body lands ([`OutputSink`]), and which [`RawTranscript`] variant to tag it
-//! as. Ticket 06 reuses [`SidecarRun`] and [`probe_liveness`] verbatim.
+//! as — both engines reuse [`SidecarRun`] and [`probe_liveness`] verbatim.
 //!
 //! Parsing/normalization is deliberately NOT here — the returned
 //! [`RawTranscript`] is handed to [`parse_raw`](crate::speech::parse::parse_raw)

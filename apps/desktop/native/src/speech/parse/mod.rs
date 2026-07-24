@@ -63,6 +63,28 @@ pub trait TranscriptParser {
     fn parse(&self, raw: &str) -> Result<Transcript, SpeechError>;
 }
 
+/// True for characters of space-less CJK scripts (Han ideographs, kana) where
+/// each character is its own word for timing purposes — `split_whitespace`
+/// cannot segment them and whisper's leading-space word-boundary convention
+/// never fires on them, so without this test a whole Chinese sentence
+/// collapses into one "word". Hangul is deliberately EXCLUDED (Korean delimits
+/// words with spaces; per-syllable splitting would shred real words), and CJK
+/// punctuation is excluded so it attaches to a neighboring word like its ASCII
+/// counterpart. Shared by [`srt`] (cue tokenization) and [`whisper_json`]
+/// (token→word grouping); FunASR needs no help (its tokens are already
+/// per-character).
+pub(crate) fn is_cjk_char(c: char) -> bool {
+    matches!(c,
+        '\u{4E00}'..='\u{9FFF}'     // CJK Unified Ideographs
+        | '\u{3400}'..='\u{4DBF}'   // Extension A
+        | '\u{F900}'..='\u{FAFF}'   // Compatibility Ideographs
+        | '\u{20000}'..='\u{2FA1F}' // Extensions B–F + Compatibility Supplement
+        | '\u{3040}'..='\u{309F}'   // Hiragana
+        | '\u{30A0}'..='\u{30FF}'   // Katakana
+        | '\u{31F0}'..='\u{31FF}'   // Katakana Phonetic Extensions
+    )
+}
+
 /// Dispatch a tagged [`RawTranscript`] to its style parser. The single
 /// chokepoint the tool layer calls.
 pub fn parse_raw(raw: RawTranscript) -> Result<Transcript, SpeechError> {
@@ -145,8 +167,8 @@ mod tests {
 
     /// A FunASR (sherpa-onnx-offline) result routed through `parse_raw` yields
     /// the SAME `Transcript` structure as the SRT / whisper styles — segments
-    /// with monotonic words — differing only in `word_timing` (`Exact`). This is
-    /// the ticket-06 acceptance: identical shape, char-level provenance.
+    /// with monotonic words — differing only in `word_timing` (`Exact`):
+    /// identical shape, char-level provenance.
     #[test]
     fn funasr_style_yields_the_same_transcript_structure() {
         let t = parse_raw(RawTranscript::FunAsrJson(

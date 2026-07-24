@@ -1230,7 +1230,7 @@ export async function settingsTestProvider(
 }
 
 // ============================================================
-// Speech backends (ticket 05) — the multi-backend generalization of the
+// Speech backends — the multi-backend generalization of the
 // API-key surface. Cloud backends still configure a key (settingsSetApiKey);
 // local engines configure binary/model paths + device/threads via the setters
 // below. All four channels are intercepted in Electron main (they merge the

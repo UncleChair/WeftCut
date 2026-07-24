@@ -37,8 +37,13 @@ FunAsr }` with an `enum Locality { Cloud, Local }`. The agent entry
 `resolve_transcriber(cfg)` selecting by **user preference then availability**
 (`Cloud → has key`; `Local → binary + model present`), falling back down a
 default order and erroring with an actionable message when nothing is
-available. `CloudError → SpeechError` (adds spawn/exit/parse/timeout); feature
-`cloud → speech`.
+available. Preference and override are deliberately **two inputs**: the user's
+Settings preference is a soft hint that falls back by availability, while the
+agent's explicit per-call `backend` arg is strict — that engine or an error
+naming its gap, never a silent substitute (an explicit local choice must not
+degrade into a cloud upload). The result envelope echoes the backend that
+actually served the request. `CloudError → SpeechError` (adds
+spawn/exit/parse/timeout); feature `cloud → speech`.
 
 ### Backends emit a *style*; a pluggable parser normalizes it
 
@@ -59,10 +64,14 @@ Two trait layers, deliberately split so no backend reimplements SRT→words:
   ```
 
 `SrtParser` converts cue spans → words by distributing across word lengths and
-marks `word_timing = InterpolatedFromCue` (honest: approximate). It **reuses
+marks `word_timing = InterpolatedFromCue` (honest: approximate). Words are
+whitespace-delimited except space-less CJK text (Han, kana), which splits per
+character — whitespace tokenization alone would collapse a Chinese cue into
+one sentence-sized "word". It **reuses
 the caption-import parser** `native/src/subtitles/srt.rs` to get cues — one SRT
 parser in the codebase, not two. `WhisperJsonParser` reads whisper.cpp `-ojf`
-token offsets → `Word`s, marks `Exact`. Result:
+token offsets → `Word`s (grouping sub-word tokens on the leading-space
+boundary, or a CJK character start), marks `Exact`. Result:
 
 - **Cloud (OpenAI Whisper)** — SRT only → SRT parser → interpolated words.
 - **whisper.cpp** — JSON (`-ojf`) → exact words, or SRT → interpolated (its

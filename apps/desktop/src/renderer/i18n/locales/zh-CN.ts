@@ -662,6 +662,7 @@ const zhCN: Resources = {
     speech_pick_model: "选择模型文件",
     speech_pick_tokens: "选择词表文件",
     speech_test_hint: "检查可执行文件能否运行、模型文件是否存在，不进行实际转写。",
+    speech_test_unsaved_hint: "请先保存路径——测试针对的是已保存的配置。",
     motifs_heading: "Motifs",
     prebake_motifs: "预烘焙 Motifs",
     prebake_motifs_hint:
