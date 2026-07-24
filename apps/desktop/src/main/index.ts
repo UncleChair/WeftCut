@@ -293,6 +293,14 @@ app.whenReady().then(async () => {
   const { createSpeechConfigStore } = await import('./speech-config.js')
   const speechConfig = createSpeechConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'speech_config.json'), dir: app.getPath('userData') })
 
+  // Video-understanding (VLM) backend config store — <userData>/vlm_config.json,
+  // the non-secret sibling of the cloud key (ticket 06). Unlike speech (pushed
+  // onto the napi Backend), VLM config is injected per-call into describe_clip /
+  // media://{id}/description (stateless, ADR 0024) via the provider passed to
+  // startMcpHost below.
+  const { createVlmConfigStore, toVlmBackendSnapshot } = await import('./vlm-config.js')
+  const vlmConfig = createVlmConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'vlm_config.json'), dir: app.getPath('userData') })
+
   // Resolve the user-configurable data root BEFORE the Backend cache dir
   // (`new Backend(...)` below) and UserMotifStore are constructed — both take
   // their paths from it. Ticket 02 wires the consumers to `dataRoot.*`; ticket
@@ -593,7 +601,13 @@ app.whenReady().then(async () => {
   // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
-  const mcpHost = await startMcpHost(backend, () => tsHost, () => speechConfig.get().preferred_engine)
+  const mcpHost = await startMcpHost(backend, () => tsHost, () => speechConfig.get().preferred_engine, () => {
+    // Merge non-secret store config + the OpenAI cloud key (the VLM cloud
+    // backend is gpt-4o) into the snapshot the stateless describe_clip resolver
+    // reads; empty until the user configures an engine → "no backend available".
+    const cfg = vlmConfig.get()
+    return { config: toVlmBackendSnapshot(cfg, loadAllKeys().openai ?? null), preferred: cfg.preferred_engine }
+  })
   mcpHostRef = mcpHost
 
   ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())

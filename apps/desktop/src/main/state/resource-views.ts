@@ -53,11 +53,20 @@ export function serveProjectResource(
  *  resources that stay Rust compute: `project://compiled` gets the full
  *  project (audio mix plan); `media://*` gets the MediaItem resolved by id;
  *  `composition://meter` gets nothing. */
-export function buildResourceInjection(uri: string, snapshot: Project): string {
+export function buildResourceInjection(
+  uri: string,
+  snapshot: Project,
+  vlmConfig: Record<string, unknown> = {},
+): string {
   if (uri === 'project://compiled') return JSON.stringify({ project: serializeProject(snapshot) })
   if (uri.startsWith(PREFIX_MEDIA)) {
     const id = uri.slice(PREFIX_MEDIA.length).split('/')[0] ?? ''
-    return JSON.stringify({ media: snapshot.media_pool[id] ?? null })
+    const media = snapshot.media_pool[id] ?? null
+    // media://{id}/description additionally needs the merged VLM backend config
+    // (stateless, ADR 0024) so the cached-view reader can resolve the default
+    // backend + compute the cache key; the always-computable media reads don't.
+    if (uri.endsWith('/description')) return JSON.stringify({ media, vlm_config: vlmConfig })
+    return JSON.stringify({ media })
   }
   return '{}'
 }

@@ -42,6 +42,13 @@ function unwrapEnvelope(env: Envelope): unknown {
 }
 function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) as Envelope) }
 
+/** Per-call VLM config provider (describe_clip + media://{id}/description): the
+ *  merged backend-config snapshot the stateless resolver reads (ADR 0024) keyed
+ *  by backend tag, plus the user's SOFT preferred engine. VLM config is not held
+ *  on the napi `Backend` like speech — it rides in with each call. */
+type VlmProvider = () => { config: Record<string, unknown>; preferred: string | null }
+const NO_VLM: VlmProvider = () => ({ config: {}, preferred: null })
+
 /** CallTool routing (tsHost present): mutations → TS actor.mcpCall, hybrid →
  *  runHybrid, rust → backend (native reads/compute that take an injected state slice). */
 export async function handleCallTool(
@@ -50,6 +57,7 @@ export async function handleCallTool(
   name: string,
   args: Record<string, unknown>,
   getPreferredEngine: () => string | null = () => null,
+  getVlm: VlmProvider = NO_VLM,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (tsHost) {
@@ -71,9 +79,15 @@ export async function handleCallTool(
       const raw = tsHost.motifTool(name, args)
       return shapeMotifMcpResult(name, raw) as unknown as ServerResult
     }
-    // Clip-audio compute (detect_silences / transcribe_clip) routes to 'rust',
-    // but the Rust core holds no state: resolve the { layer, media } slice
-    // from the actor (sole state owner) and forward it.
+    // Clip compute (detect_silences / transcribe_clip audio; describe_clip
+    // video) routes to 'rust', but the Rust core holds no state: resolve the
+    // { layer, media } slice from the actor (sole state owner) and forward it.
+    // NOTE: describe_clip additionally reads an injected `vlm_config` snapshot
+    // (its config is stateless, ADR 0024). Wiring that snapshot in from the
+    // vlm-config store + cloud keys is the one remaining integration step (it
+    // lives in index.ts, out of this change's scope); until then describe_clip
+    // resolves against an empty config and returns the actionable
+    // "no video-understanding backend available" error.
     if (CLIP_SLICE_TOOLS.has(name)) {
       const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
       // Inject the user's preferred engine as the SOFT `preferred_backend`
@@ -86,6 +100,17 @@ export async function handleCallTool(
       if (name === 'transcribe_clip' && merged.backend == null) {
         const pref = getPreferredEngine()
         if (pref && pref !== 'auto') merged.preferred_backend = pref
+      }
+      // describe_clip: inject the stateless VLM backend-config snapshot (ADR
+      // 0024) it resolves against, plus the SOFT preferred-engine hint — same
+      // soft/strict split as transcribe_clip (the agent-visible `backend` stays
+      // a STRICT override, so only fill preferred_backend when it is unset).
+      if (name === 'describe_clip') {
+        const vlm = getVlm()
+        merged.vlm_config = vlm.config
+        if (merged.backend == null && vlm.preferred && vlm.preferred !== 'auto') {
+          merged.preferred_backend = vlm.preferred
+        }
       }
       return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
     }
@@ -111,6 +136,7 @@ export async function handleReadResource(
   backend: Backend,
   getTsHost: () => TsActorHost | null,
   uri: string,
+  getVlm: VlmProvider = NO_VLM,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (tsHost) {
@@ -123,13 +149,13 @@ export async function handleReadResource(
     if (served) return served
     // project://compiled / media://* / composition://meter stay Rust compute —
     // inject the project / MediaItem / nothing the stateless reader now needs.
-    const injection = buildResourceInjection(uri, tsHost.actor.snapshot())
+    const injection = buildResourceInjection(uri, tsHost.actor.snapshot(), getVlm().config)
     return unwrap(await backend.mcpReadResource(uri, injection)) as ServerResult
   }
   return unwrap(await backend.mcpReadResource(uri)) as ServerResult
 }
 
-export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | null = () => null, getPreferredEngine: () => string | null = () => null): Server {
+export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | null = () => null, getPreferredEngine: () => string | null = () => null, getVlm: VlmProvider = NO_VLM): Server {
   const server = new Server(
     { name: 'weftcut', version: '0.1.0' },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
@@ -140,14 +166,14 @@ export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | 
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
   })
   server.setRequestHandler(CallToolRequestSchema, async (req) =>
-    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine),
+    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine, getVlm),
   )
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }
     return { resources: mergeMcpResources(cat.resources, MOTIF_RESOURCE_DEFS) } as unknown as ServerResult
   })
   server.setRequestHandler(ReadResourceRequestSchema, async (req) =>
-    handleReadResource(backend, getTsHost, req.params.uri),
+    handleReadResource(backend, getTsHost, req.params.uri, getVlm),
   )
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
     return { prompts: JSON.parse(await backend.mcpListPrompts()) } as unknown as ServerResult

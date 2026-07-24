@@ -216,6 +216,67 @@
         "title": "SynthesizeSpeechArgs",
         "type": "object"
       }
+    },
+    {
+      "name": "describe_clip",
+      "description": "Describe a VideoClip layer's visual content as timestamped, open-vocabulary segments using a video-understanding model (local Qwen3-VL / MiniCPM-V via llama-mtmd-cli, a self-hosted OpenAI-compatible endpoint, or a cloud VLM). Samples frames from the layer's source at `fps` (default 1.0), runs the model once over the whole window, and returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`. All timestamps are SOURCE-ABSOLUTE microseconds; `backend`/`model` name the engine that actually served the request. `text` is a free-text description of the span; `tags` are short visual keywords (subjects, setting, camera motion, shot type) the agent can filter on. Results are cached per source range — a later call over an already-described window returns instantly with no model spawn. Optional `t_start_us`/`t_end_us` narrow the window inside the layer's time range (both default to the layer endpoints). Optional `fps` sets the sampling rate; `focus` (`\"general\"` | `\"shot-type\"`) selects the prompt template that populates `tags`. Optional `backend` (`\"qwen3_vl\"` | `\"minicpm_v\"` | `\"byo_endpoint\"` | `\"cloud\"`) REQUIRES that engine: if it is not available the call errors naming the missing piece (binary / model / endpoint / key) instead of substituting another engine, so an explicit local choice never uploads frames to the cloud; an unknown value is rejected. When omitted, selection is the user's preferred engine then availability (local-first). VideoClip layers with speed != 1.0 are rejected — split off a speed-1 segment first. Errors with an actionable message when no video-understanding backend is configured.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "backend": {
+            "default": null,
+            "description": "Optional STRICT backend override: `\"qwen3_vl\"` | `\"minicpm_v\"` | `\"byo_endpoint\"` | `\"cloud\"`. When set, that engine serves the request or the call errors naming its exact gap — it never substitutes another engine, so an explicit local choice can never leak frames to the cloud. When omitted, selection is preference then availability. Unknown → rejected.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "focus": {
+            "default": null,
+            "description": "Prompt focus: `\"general\"` (default) or `\"shot-type\"` (biases `tags` toward shot type / camera).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fps": {
+            "default": null,
+            "description": "Frames sampled per second across the window (default 1.0). Higher = finer temporal detail at more cost; capped so the frame set fits the model's context.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "layer_id": {
+            "description": "Target VideoClip layer id.",
+            "type": "string"
+          },
+          "t_end_us": {
+            "default": null,
+            "description": "Optional window end in timeline microseconds. Defaults to the layer's `t_end_us`. Must lie within the layer.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "t_start_us": {
+            "default": null,
+            "description": "Optional window start in timeline microseconds. Defaults to the layer's `t_start_us`. Must lie within the layer.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "layer_id"
+        ],
+        "title": "DescribeClipArgs",
+        "type": "object"
+      }
     }
   ],
   "resources": [

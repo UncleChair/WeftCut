@@ -48,6 +48,13 @@ struct ResourceState {
     project: Option<crate::state::Project>,
     #[serde(default)]
     media: Option<crate::state::MediaItem>,
+    /// Injected by the TS host for `media://{id}/description`: the merged
+    /// video-understanding backend config (so the cached-view read can resolve
+    /// the default backend + compute the cache key). Stateless — same pattern as
+    /// `describe_clip`'s injected config (ADR 0024). Empty → "no backend".
+    #[cfg(feature = "speech")]
+    #[serde(default)]
+    vlm_config: std::collections::HashMap<String, crate::vlm::BackendConfig>,
 }
 
 fn serialize_err(e: serde_json::Error) -> McpToolError {
@@ -79,6 +86,14 @@ pub(crate) async fn read_resource(
     // MediaItem the TS host resolved by id (TS owns state). We peel them
     // off here so the rest of `read_resource` can stay text/JSON oriented.
     if let Some(tail) = uri.strip_prefix(PREFIX_MEDIA) {
+        // media://{id}/description is the cached video-understanding view — a
+        // separate reader because, unlike the always-computable frame/waveform,
+        // it needs the injected VLM config to resolve the default backend + key,
+        // and may report "not computed yet" (reflecting the incremental cache).
+        #[cfg(feature = "speech")]
+        if let Some(id_part) = tail.strip_suffix("/description") {
+            return read_description_resource(b, uri, id_part, state.media, &state.vlm_config).await;
+        }
         return read_media_resource(b, uri, tail, state.media).await;
     }
 
@@ -212,6 +227,61 @@ async fn read_media_resource(
         format!("media resources require the jobs feature: {uri}"),
         None,
     ))
+}
+
+/// Serve `media://{id}/description` — the cached scene-description view for the
+/// resolver's DEFAULT params (default backend, fps 1.0, general focus). Resolves
+/// the backend from the injected VLM config, computes the same cache key
+/// `describe_clip` uses, and returns the stored `DescriptionCache`
+/// (`{ covered_ranges, segments }`, source-absolute). Reports a clear not-found
+/// when no backend is configured or nothing has been described yet — unlike the
+/// always-computable analysis resources.
+#[cfg(feature = "speech")]
+async fn read_description_resource(
+    b: &Backend,
+    uri: &str,
+    id_part: &str,
+    media: Option<crate::state::MediaItem>,
+    vlm_config: &std::collections::HashMap<String, crate::vlm::BackendConfig>,
+) -> Result<ResourceResult, McpToolError> {
+    use crate::vlm;
+
+    let media_id = Uuid::parse_str(id_part).map_err(|_| {
+        McpToolError::resource_not_found(format!("media URI has invalid UUID: {id_part}"), None)
+    })?;
+    let media = media.ok_or_else(|| {
+        McpToolError::resource_not_found(format!("media {media_id} not found"), None)
+    })?;
+
+    // Same preference-then-availability walk as describe_clip, no preference.
+    let backend = vlm::resolve::select_backend(None, vlm_config).ok_or_else(|| {
+        McpToolError::resource_not_found(
+            format!(
+                "no video-understanding backend configured — configure one, then call describe_clip for media {media_id}",
+            ),
+            None,
+        )
+    })?;
+    let model = vlm::resolve::model_label(backend, vlm_config.get(backend.as_str()));
+    // Default view params mirror describe_clip's defaults (fps 1.0, general).
+    let key = vlm::cache_key(&media.file_hash_blake3, backend, &model, 1000, vlm::Focus::General);
+    let path = b.cache.description(&key);
+    crate::cache::touch_if_stale(&path);
+    if !crate::cache::cached_ok(&path) {
+        return Err(McpToolError::resource_not_found(
+            format!(
+                "no description computed yet for media {media_id} ({}, default sampling) — call describe_clip",
+                backend.as_str(),
+            ),
+            None,
+        ));
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("read {}: {e}", path.display()), None))?;
+    let body: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| McpToolError::internal_error(format!("parse description cache: {e}"), None))?;
+    text_resource(uri, &body)
 }
 
 #[cfg(feature = "jobs")]

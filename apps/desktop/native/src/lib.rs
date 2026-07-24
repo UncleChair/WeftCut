@@ -22,6 +22,11 @@ mod process;
 
 #[cfg(feature = "speech")]
 mod speech;
+// Video-understanding sidecar (scene description). Twin of `speech/`; gated on
+// the same `speech` feature — it reuses `jobs` ffmpeg (frame sampling) and the
+// `speech::http` cloud client, both of which `speech` already pulls in.
+#[cfg(feature = "speech")]
+mod vlm;
 #[cfg(feature = "export")]
 mod export;
 #[cfg(any(feature = "jobs", feature = "export"))]

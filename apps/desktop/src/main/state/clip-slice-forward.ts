@@ -1,10 +1,12 @@
 import type { Layer, MediaItem, Project } from './model'
 
-/** MCP clip-audio compute tools whose Rust handler takes one layer + its MediaItem
- *  (the `resolve_clip_audio_source` inputs) as an injected slice; the TS actor
- *  (the sole state owner) resolves and forwards it. */
+/** MCP clip compute tools whose Rust handler takes one layer + its MediaItem
+ *  (the `resolve_clip_audio_source` / `resolve_clip_video_source` inputs) as an
+ *  injected slice; the TS actor (the sole state owner) resolves and forwards it.
+ *  `detect_silences` / `transcribe_clip` read the layer's audio; `describe_clip`
+ *  reads its video frames. */
 export const CLIP_SLICE_TOOLS: ReadonlySet<string> = new Set([
-  'detect_silences', 'transcribe_clip',
+  'detect_silences', 'transcribe_clip', 'describe_clip',
 ])
 
 /** Resolve the `{ layer, media }` slice for a clip-audio MCP tool from the actor

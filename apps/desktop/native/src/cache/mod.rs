@@ -262,6 +262,20 @@ impl CacheLayout {
         self.transcribe_audio_dir().join(format!("{hash}.wav"))
     }
 
+    /// Cached scene descriptions for the video-understanding sidecar (`vlm`).
+    /// A SEPARATE namespace from the shot layer's `VSHOT` sidecar so the cheap
+    /// deterministic layer and the expensive opt-in layer never block each
+    /// other. The `key` is `vlm::description::cache_key` (source content hash +
+    /// {backend, model, fps, focus, prompt_template_version}); the value is a
+    /// range-lazy incremental `DescriptionCache` JSON — see `vlm/description.rs`.
+    pub fn descriptions_dir(&self) -> PathBuf {
+        self.current_root().join("descriptions")
+    }
+
+    pub fn description(&self, key: &str) -> PathBuf {
+        self.descriptions_dir().join(format!("{key}.json"))
+    }
+
     /// Synthesized TTS output. Content-addressed by `blake3(model || '\0' ||
     /// voice || '\0' || speed || '\0' || text)` so repeated requests with the
     /// same parameters skip the API call entirely — see
@@ -295,6 +309,7 @@ impl CacheLayout {
             self.filmstrip_root(),
             self.inline_subs_dir(),
             self.transcribe_audio_dir(),
+            self.descriptions_dir(),
             self.voiceover_dir(),
         ] {
             fs::create_dir_all(&p).with_context(|| format!("create cache dir {}", p.display()))?;
@@ -472,6 +487,10 @@ mod tests {
             tmp.path().join("transcribe-audio").join("abc.wav"),
         );
         assert_eq!(
+            layout.description("abc"),
+            tmp.path().join("descriptions").join("abc.json"),
+        );
+        assert_eq!(
             layout.voiceover("abc", "mp3"),
             tmp.path().join("voiceover").join("abc.mp3"),
         );
@@ -499,6 +518,7 @@ mod tests {
         assert!(layout.frames_root().is_dir());
         assert!(layout.inline_subs_dir().is_dir());
         assert!(layout.transcribe_audio_dir().is_dir());
+        assert!(layout.descriptions_dir().is_dir());
         assert!(layout.voiceover_dir().is_dir());
         assert!(layout.filmstrip_root().is_dir());
     }

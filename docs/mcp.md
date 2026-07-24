@@ -106,6 +106,7 @@ get confused. The current set is around 40, organised below.
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
 | `media://{id}/frame/{t_us}` | on-demand frame at the given microsecond, lazy-cached (multimodal-friendly) |
 | `media://{id}/waveform` | audio peaks file (binary, base64) |
+| `media://{id}/description` | cached scene descriptions for the resolver's default backend + sampling (`{ covered_ranges, segments }`); `404` until `describe_clip` has populated it (unlike the always-computable resources above) |
 | `motifs://current` | full motif catalog (built-ins, installed, drafts) — same payload as `list_motifs`; `html` stripped |
 
 `media://*` reads return `404` with a hint pointing at the
@@ -115,6 +116,7 @@ yet, so agents know to wait + retry rather than give up.
 ### Analysis tools
 
 - `detect_silences { layer_id, threshold_amp?, min_silence_us? }` → `[{ t_start_us, t_end_us }, ...]`. Reads pre-computed peaks; defaults `threshold_amp=0.02` (≈ -34 dBFS) and `min_silence_us=500000`.
+- `describe_clip { layer_id, t_start_us?, t_end_us?, fps?, focus?, backend? }` → `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [...] }] }` — see "Video understanding" below.
 
 ### Edit tools
 
@@ -303,6 +305,27 @@ available" error that names the Settings panel. Hiding unsupported speech
 tools from the catalog entirely is a possible refinement.
 
 These are MCP tools like any other; the agent doesn't see "cloud vs local" — just "this tool exists or doesn't."
+
+## Video understanding (optional, user-supplied)
+
+The architectural twin of Speech, for *what is in a shot* rather than *what was
+said*. Scene description runs over the same **pluggable-backend** rails: a
+`SceneDescriber` trait, a resolver by **preference then availability**, a
+normalized `SceneDescription` output, and a per-backend parser — mirroring
+ADR 0036. Backends: **Qwen3-VL** and **MiniCPM-V** (local one-shot
+`llama-mtmd-cli` sidecars — a GGUF model + mmproj on disk), a **BYO** self-hosted
+OpenAI-compatible endpoint, and a **cloud** VLM. All four ingest the SAME input
+(frames we sample from the source + injected `<t s>` text-timestamp markers) and
+diverge only in the output parser + availability probe.
+
+**Capability surface:**
+
+- **Scene description** (`SceneDescriber` trait) — `describe_clip { layer_id, t_start_us?, t_end_us?, fps?, focus?, backend? }` returns `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`, all times **source-absolute** microseconds; `backend`/`model` name the engine that served the request. Samples frames from the layer's source across the window (defaults: the whole layer) at `fps` (default 1.0), runs the model ONCE over all the frames, and normalizes the model's JSON array into timestamped segments — `text` is a free-text span description, `tags` are filterable visual keywords (subjects, setting, camera motion, shot type). `focus` (`"general"` | `"shot-type"`) selects the prompt template that populates `tags`. Results are **cached per source range**: a later call over an already-described window returns instantly with no model spawn (the cache is a `{ covered_ranges, segments }` value keyed by source hash + `{ backend, model, fps, focus, prompt-template version }`, a SEPARATE namespace from the shot layer so the cheap deterministic layer and this opt-in layer never block each other). `VideoClip` layers with `speed != 1.0` reject with a hint to `split_layer` first. The `backend` arg (`"qwen3_vl"` | `"minicpm_v"` | `"byo_endpoint"` | `"cloud"`) is a **strict** override: that engine serves the call or it errors naming the missing piece (binary / model / endpoint / key) — it never substitutes another engine. This is **privacy-strict**: frames are heavier and more sensitive than audio, so the default order is local-first and cloud-last, and an explicit local choice can never fall back to a cloud upload. The cached view is also readable as `media://{id}/description`.
+
+**Config UI (planned):** same secrecy split as Speech — a cloud VLM key lives in
+`safeStorage`; the local engines' binary/model/mmproj paths and a BYO endpoint
+URL live in the TS-owned `vlm_config` store; Electron main merges both into the
+config snapshot the stateless resolver reads.
 
 ## Observability
 

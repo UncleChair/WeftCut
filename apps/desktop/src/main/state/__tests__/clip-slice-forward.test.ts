@@ -21,7 +21,7 @@ describe('resolveClipSliceArgs', () => {
     expect(out.layer).toBe(text)
     expect(out.media).toBeNull()
   })
-  it('lists exactly the two clip-audio tools', () => {
-    expect([...CLIP_SLICE_TOOLS].sort()).toEqual(['detect_silences', 'transcribe_clip'])
+  it('lists exactly the clip-slice compute tools', () => {
+    expect([...CLIP_SLICE_TOOLS].sort()).toEqual(['describe_clip', 'detect_silences', 'transcribe_clip'])
   })
 })

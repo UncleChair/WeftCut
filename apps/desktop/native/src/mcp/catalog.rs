@@ -98,6 +98,30 @@ tool_table! {
                           'Voiceover' track), optional `t_start_us` (defaults to the composition's \
                           current duration so the voiceover appends at the end). Returns \
                           `{ layer_id, media_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech),
+    #[cfg(feature = "speech")]
+    "describe_clip" => ("Describe a VideoClip layer's visual content as timestamped, open-vocabulary \
+                          segments using a video-understanding model (local Qwen3-VL / MiniCPM-V via \
+                          llama-mtmd-cli, a self-hosted OpenAI-compatible endpoint, or a cloud VLM). \
+                          Samples frames from the layer's source at `fps` (default 1.0), runs the model \
+                          once over the whole window, and returns \
+                          `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [ ... ] }] }`. \
+                          All timestamps are SOURCE-ABSOLUTE microseconds; `backend`/`model` name the \
+                          engine that actually served the request. `text` is a free-text description of \
+                          the span; `tags` are short visual keywords (subjects, setting, camera motion, \
+                          shot type) the agent can filter on. Results are cached per source range — a \
+                          later call over an already-described window returns instantly with no model \
+                          spawn. Optional `t_start_us`/`t_end_us` narrow the window inside the layer's \
+                          time range (both default to the layer endpoints). Optional `fps` sets the \
+                          sampling rate; `focus` (`\"general\"` | `\"shot-type\"`) selects the prompt \
+                          template that populates `tags`. Optional `backend` (`\"qwen3_vl\"` | \
+                          `\"minicpm_v\"` | `\"byo_endpoint\"` | `\"cloud\"`) REQUIRES that engine: if it \
+                          is not available the call errors naming the missing piece (binary / model / \
+                          endpoint / key) instead of substituting another engine, so an explicit local \
+                          choice never uploads frames to the cloud; an unknown value is rejected. When \
+                          omitted, selection is the user's preferred engine then availability \
+                          (local-first). VideoClip layers with speed != 1.0 are rejected — split off a \
+                          speed-1 segment first. Errors with an actionable message when no \
+                          video-understanding backend is configured.", tools::DescribeClipArgs, tools::describe_clip),
 }
 
 pub(crate) fn resource_catalog() -> Vec<ResourceDef> {
@@ -156,7 +180,7 @@ mod tests {
     #[test]
     fn injected_slice_fields_are_not_advertised() {
         let cat = catalog();
-        for name in ["detect_silences", "transcribe_clip"] {
+        for name in ["detect_silences", "transcribe_clip", "describe_clip"] {
             let tool = cat
                 .tools
                 .iter()
@@ -182,6 +206,12 @@ mod tests {
                     !props.contains_key("preferred_backend"),
                     "{name}: `preferred_backend` must not be advertised (schemars skip)"
                 );
+                // describe_clip additionally injects the merged VLM backend
+                // config (stateless — ADR 0024); it must never be advertised.
+                assert!(
+                    !props.contains_key("vlm_config"),
+                    "{name}: `vlm_config` must not be advertised (schemars skip)"
+                );
             }
         }
     }
@@ -192,6 +222,7 @@ mod tests {
         let cat = catalog();
         assert!(cat.tools.iter().any(|t| t.name == "transcribe_clip"));
         assert!(cat.tools.iter().any(|t| t.name == "synthesize_speech"));
+        assert!(cat.tools.iter().any(|t| t.name == "describe_clip"));
         // every advertised tool must dispatch — schema is an object.
         for t in &cat.tools {
             assert!(

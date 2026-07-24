@@ -892,6 +892,370 @@ async fn transcribe_clip_inner(
     ToolResult::json(&result)
 }
 
+// ============================================================
+// Video-understanding tool: describe_clip. Gated on feature = "speech" (reuses
+// jobs ffmpeg for frame sampling + the speech HTTP client for cloud/BYO). The
+// architectural twin of transcribe_clip; see native/src/vlm/.
+// ============================================================
+
+#[cfg(feature = "speech")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct DescribeClipArgs {
+    /// Target VideoClip layer id.
+    pub layer_id: String,
+    /// Optional window start in timeline microseconds. Defaults to the layer's
+    /// `t_start_us`. Must lie within the layer.
+    #[serde(default)]
+    pub t_start_us: Option<i64>,
+    /// Optional window end in timeline microseconds. Defaults to the layer's
+    /// `t_end_us`. Must lie within the layer.
+    #[serde(default)]
+    pub t_end_us: Option<i64>,
+    /// Frames sampled per second across the window (default 1.0). Higher = finer
+    /// temporal detail at more cost; capped so the frame set fits the model's
+    /// context.
+    #[serde(default)]
+    pub fps: Option<f64>,
+    /// Prompt focus: `"general"` (default) or `"shot-type"` (biases `tags`
+    /// toward shot type / camera).
+    #[serde(default)]
+    pub focus: Option<String>,
+    /// Optional STRICT backend override: `"qwen3_vl"` | `"minicpm_v"` |
+    /// `"byo_endpoint"` | `"cloud"`. When set, that engine serves the request or
+    /// the call errors naming its exact gap — it never substitutes another
+    /// engine, so an explicit local choice can never leak frames to the cloud.
+    /// When omitted, selection is preference then availability. Unknown → rejected.
+    #[serde(default)]
+    pub backend: Option<String>,
+    /// Injected by the TS MCP host from the user's Settings preferred VLM engine
+    /// — a SOFT hint (falls back by availability). Never advertised.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub preferred_backend: Option<String>,
+    /// Injected by the TS MCP host: the merged video-understanding backend
+    /// config snapshot (cloud key + local paths + endpoint), keyed by backend
+    /// tag. The subsystem is stateless (ADR 0024) — unlike transcribe_clip, VLM
+    /// config is not held on `Backend`; it rides in with the call. `#[schemars(skip)]`
+    /// keeps it out of the advertised schema; empty → "no backend available".
+    #[serde(default)]
+    #[schemars(skip)]
+    pub vlm_config: std::collections::HashMap<String, crate::vlm::BackendConfig>,
+    /// Injected by the TS MCP host (sole state owner) — see DetectSilencesArgs.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub layer: Option<crate::state::Layer>,
+    #[serde(default)]
+    #[schemars(skip)]
+    pub media: Option<crate::state::MediaItem>,
+}
+
+/// Resolved source-video coordinates for a `describe_clip` call.
+#[cfg(feature = "speech")]
+#[derive(Debug)]
+struct ResolvedClipVideo {
+    source_path: std::path::PathBuf,
+    source_hash: String,
+    /// Source-relative microseconds: the window mapped onto the source.
+    source_in_us: i64,
+    source_out_us: i64,
+}
+
+/// Find a VideoClip layer, validate the requested timeline window lies inside
+/// it, and map that window onto the source media's coordinate space. Mirrors
+/// `resolve_clip_audio_source` but video-only (frames, not audio).
+#[cfg(feature = "speech")]
+fn resolve_clip_video_source(
+    layer: Option<&crate::state::Layer>,
+    media: Option<&crate::state::MediaItem>,
+    layer_id: LayerId,
+    t_start_arg: Option<i64>,
+    t_end_arg: Option<i64>,
+) -> Result<ResolvedClipVideo, McpToolError> {
+    use crate::state::VideoClipParams;
+
+    let layer = layer
+        .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
+
+    let (media_id, src_in_us, src_out_us) = match &layer.params {
+        LayerParams::VideoClip(VideoClipParams {
+            media,
+            src_in_us,
+            src_out_us,
+            speed,
+            ..
+        }) => {
+            if (*speed - 1.0).abs() > f64::EPSILON {
+                return Err(McpToolError::invalid_params(
+                    format!(
+                        "describe_clip does not yet support speed != 1.0 (layer speed={speed}); \
+                         split off a speed-1 segment first",
+                    ),
+                    None,
+                ));
+            }
+            (*media, *src_in_us, *src_out_us)
+        }
+        _ => {
+            return Err(McpToolError::invalid_params(
+                format!("layer {layer_id} kind is not describable — pass a VideoClip layer"),
+                None,
+            ));
+        }
+    };
+
+    let media = media.ok_or_else(|| {
+        McpToolError::invalid_params(
+            format!(
+                "layer {layer_id} references missing media {media_id} (project state is inconsistent)",
+            ),
+            None,
+        )
+    })?;
+    if !matches!(media.kind, crate::state::MediaKind::Video) {
+        return Err(McpToolError::invalid_params(
+            format!("media {media_id} is not a video — describe_clip needs a video source"),
+            None,
+        ));
+    }
+
+    let t_start = t_start_arg.unwrap_or(layer.t_start_us);
+    let t_end = t_end_arg.unwrap_or(layer.t_end_us);
+    if t_end <= t_start {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "description window must have positive duration (t_start_us={t_start}, t_end_us={t_end})",
+            ),
+            None,
+        ));
+    }
+    if t_start < layer.t_start_us || t_end > layer.t_end_us {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "description window [{t_start}, {t_end}] is outside layer range [{}, {}]",
+                layer.t_start_us, layer.t_end_us,
+            ),
+            None,
+        ));
+    }
+
+    let source_in = src_in_us + (t_start - layer.t_start_us);
+    let source_out = src_in_us + (t_end - layer.t_start_us);
+    if source_out > src_out_us {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "description window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
+            ),
+            None,
+        ));
+    }
+
+    Ok(ResolvedClipVideo {
+        source_path: media.path_abs.clone(),
+        source_hash: media.file_hash_blake3.clone(),
+        source_in_us: source_in,
+        source_out_us: source_out,
+    })
+}
+
+/// Map a `vlm::VlmError` to a structured `McpToolError` — mirror of
+/// `map_speech_error`.
+#[cfg(feature = "speech")]
+fn map_vlm_error(e: crate::vlm::VlmError) -> McpToolError {
+    use crate::vlm::VlmError as E;
+    let message = e.to_string();
+    match e {
+        E::MissingKey { .. } | E::InvalidKey { .. } | E::MissingEndpoint { .. } => {
+            McpToolError::invalid_request(message, None)
+        }
+        E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
+            McpToolError::internal_error(message, None)
+        }
+        E::Io(_) | E::FrameExtract(_) | E::Parse(_) => McpToolError::internal_error(message, None),
+        E::EngineExit { .. } | E::Spawn { .. } | E::Timeout { .. } => {
+            McpToolError::internal_error(message, None)
+        }
+    }
+}
+
+/// Persist a `DescriptionCache` JSON atomically (temp → promote), mirroring
+/// `write_voiceover_atomic`.
+#[cfg(feature = "speech")]
+async fn write_description_atomic(
+    dest: &std::path::Path,
+    cache: &crate::vlm::DescriptionCache,
+) -> Result<(), anyhow::Error> {
+    use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path};
+    use anyhow::Context;
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("ensure {}", parent.display()))?;
+    }
+    let body = serde_json::to_vec_pretty(cache).context("serialize description cache")?;
+    let tmp = temp_path(dest);
+    let _ = tokio::fs::remove_file(&tmp).await;
+    tokio::fs::write(&tmp, &body)
+        .await
+        .with_context(|| format!("write {}", tmp.display()))?;
+    if !cached_ok(&tmp) {
+        discard_temp(dest);
+        anyhow::bail!("description cache is empty after write");
+    }
+    promote_temp(dest)?;
+    Ok(())
+}
+
+#[cfg(feature = "speech")]
+pub(super) async fn describe_clip(
+    b: &Backend,
+    args: DescribeClipArgs,
+) -> Result<ToolResult, McpToolError> {
+    let log_op_id = uuid::Uuid::now_v7();
+    b.log_slot.emit(crate::logs::LogEntryInput {
+        level: crate::logs::LogLevel::Info,
+        category: crate::logs::LogCategory::Mcp,
+        source: crate::logs::LogSource::Agent { client: "mcp".into() },
+        message: "MCP: describe_clip started".into(),
+        op_id: Some(log_op_id),
+        op_state: Some(crate::logs::OpState::Started),
+        details: Some(serde_json::json!({
+            "layer_id": args.layer_id,
+            "backend": args.backend,
+            "fps": args.fps,
+            "focus": args.focus,
+        })),
+        ..Default::default()
+    });
+    let result = describe_clip_inner(b, args).await;
+    b.log_slot.emit(crate::logs::LogEntryInput {
+        level: if result.is_ok() { crate::logs::LogLevel::Info } else { crate::logs::LogLevel::Error },
+        category: crate::logs::LogCategory::Mcp,
+        source: crate::logs::LogSource::Agent { client: "mcp".into() },
+        message: match &result {
+            Ok(_) => "MCP: describe_clip done".into(),
+            Err(e) => format!("MCP: describe_clip failed: {e}"),
+        },
+        op_id: Some(log_op_id),
+        op_state: Some(if result.is_ok() { crate::logs::OpState::Ok } else { crate::logs::OpState::Err }),
+        ..Default::default()
+    });
+    result
+}
+
+#[cfg(feature = "speech")]
+async fn describe_clip_inner(
+    b: &Backend,
+    args: DescribeClipArgs,
+) -> Result<ToolResult, McpToolError> {
+    use crate::vlm;
+
+    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let resolved = resolve_clip_video_source(
+        args.layer.as_ref(),
+        args.media.as_ref(),
+        layer_id,
+        args.t_start_us,
+        args.t_end_us,
+    )?;
+
+    // Explicit `backend` → STRICT; unknown tag → clean invalid_params. Matched
+    // against the stable `as_str` wire tag (not the serde form).
+    let explicit = match args.backend.as_deref() {
+        None => None,
+        Some(tag) => Some(
+            vlm::VlmBackend::all()
+                .iter()
+                .copied()
+                .find(|b| b.as_str() == tag)
+                .ok_or_else(|| {
+                    McpToolError::invalid_params(
+                        format!(
+                            "unknown backend {tag:?}; expected \"qwen3_vl\", \"minicpm_v\", \"byo_endpoint\", or \"cloud\""
+                        ),
+                        None,
+                    )
+                })?,
+        ),
+    };
+    let preferred = args
+        .preferred_backend
+        .as_deref()
+        .and_then(|tag| vlm::VlmBackend::all().iter().copied().find(|b| b.as_str() == tag));
+
+    let cfg = &args.vlm_config;
+    let (used_backend, describer) = match explicit {
+        Some(be) => (
+            be,
+            vlm::resolve_scene_describer_exact(be, cfg)
+                .map_err(|e| McpToolError::invalid_request(e.to_string(), None))?,
+        ),
+        None => vlm::resolve_scene_describer(preferred, cfg)
+            .ok_or_else(|| McpToolError::invalid_request(vlm::NO_DESCRIBER_CONFIGURED, None))?,
+    };
+    let model = vlm::model_label(used_backend, cfg.get(used_backend.as_str()));
+
+    let fps = args.fps.unwrap_or(1.0);
+    if !(fps.is_finite() && fps > 0.0 && fps <= 30.0) {
+        return Err(McpToolError::invalid_params(
+            format!("fps {fps} must be in (0.0, 30.0]"),
+            None,
+        ));
+    }
+    let focus = vlm::Focus::parse(args.focus.as_deref());
+    let fps_milli = (fps * 1000.0).round() as u32;
+
+    let key = vlm::cache_key(&resolved.source_hash, used_backend, &model, fps_milli, focus);
+    let dest = b.cache.description(&key);
+
+    // Range-lazy: load the prior cache; if the window is already covered, reuse
+    // it with NO engine spawn (acceptance #2).
+    let mut cache: vlm::DescriptionCache = match tokio::fs::read(&dest).await {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Err(_) => vlm::DescriptionCache::default(),
+    };
+
+    if !cache.covers(resolved.source_in_us, resolved.source_out_us) {
+        // Uncovered → sample the window's frames and describe it once.
+        let anchors = vlm::frame_extract::plan_anchors(
+            resolved.source_in_us,
+            resolved.source_out_us,
+            fps,
+        );
+        let tmp = tempfile::Builder::new()
+            .prefix("weftcut-vlm")
+            .tempdir()
+            .map_err(|e| McpToolError::internal_error(format!("temp dir: {e}"), None))?;
+        let frames = vlm::frame_extract::sample_frames(
+            &resolved.source_path,
+            resolved.source_in_us,
+            tmp.path(),
+            &anchors,
+        )
+        .await
+        .map_err(map_vlm_error)?;
+
+        let raw = describer
+            .describe(vlm::DescribeRequest { frames, focus })
+            .await
+            .map_err(map_vlm_error)?;
+        let mut fresh = vlm::parse_raw(raw).map_err(map_vlm_error)?;
+        // Parser output is window-relative; place it on source-absolute time.
+        vlm::shift_segments(&mut fresh, resolved.source_in_us);
+
+        cache.merge_window(resolved.source_in_us, resolved.source_out_us, fresh);
+        write_description_atomic(&dest, &cache)
+            .await
+            .map_err(|e| McpToolError::internal_error(format!("persist description: {e:#}"), None))?;
+    }
+
+    let result = vlm::SceneDescription {
+        backend: used_backend.as_str().to_string(),
+        model,
+        segments: cache.segments_in(resolved.source_in_us, resolved.source_out_us),
+    };
+    ToolResult::json(&result)
+}
+
 /// TTS compute half of the `synthesize_speech` hybrid.
 /// Validates the text, picks the synthesizer, checks the content-addressed
 /// cache, synthesizes+writes the audio if needed, probes it for duration,
