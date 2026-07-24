@@ -10,7 +10,7 @@
 
 use async_trait::async_trait;
 
-use super::errors::CloudError;
+use super::error::SpeechError;
 
 /// Audio container/codec the provider returned. The synthesize tool uses this
 /// to pick the cache-file extension and the lowering-side container hint
@@ -56,7 +56,7 @@ pub struct SynthesizeResponse {
 
 #[async_trait]
 pub trait Synthesizer: Send + Sync {
-    async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResponse, CloudError>;
+    async fn synthesize(&self, req: SynthesizeRequest) -> Result<SynthesizeResponse, SpeechError>;
 }
 
 #[cfg(test)]

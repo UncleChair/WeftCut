@@ -62,18 +62,26 @@ tool_table! {
     #[cfg(feature = "jobs")]
     "import_media" => ("Import a media file from an absolute path. Hashes the file (blake3) and probes \
                           metadata via ffprobe when installed. Returns the new media id.", tools::ImportMediaArgs, tools::import_media),
-    #[cfg(feature = "cloud")]
-    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer through the configured cloud transcription \
-                          provider (OpenAI Whisper today) and return the SRT body with timestamps already \
-                          shifted to timeline-absolute microseconds. Pipe the returned body straight into \
-                          `apply_subtitles` (the cues self-position into a new caption track via their \
-                          internal timestamps — `apply_subtitles` takes no start/end). Optional `t_start_us`/`t_end_us` \
-                          narrow the transcription window inside the layer's time range; both default to \
-                          the layer endpoints. VideoClip layers with speed != 1.0 are rejected — split off \
-                          a speed-1 segment first. Errors with structured messages if no API key is \
-                          configured, the audio slice exceeds the provider cap (~13 min for Whisper at \
+    #[cfg(feature = "speech")]
+    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer through the configured transcription \
+                          provider (OpenAI Whisper today) and return a normalized transcript as JSON: \
+                          `{ segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], \
+                          language, word_timing, srt }`. All timestamps are timeline-absolute microseconds. \
+                          `word_timing` is the provenance of the per-word times: `exact` (from an engine's \
+                          token offsets) or `interpolated_from_cue` (approximated by splitting an SRT cue span \
+                          across its words). Pipe the `srt` field straight into `apply_subtitles` (the cues \
+                          self-position into a new caption track via their internal timestamps — `apply_subtitles` \
+                          takes no start/end); use `segments`/`words` for word-level editing. Optional \
+                          `t_start_us`/`t_end_us` narrow the transcription window inside the layer's time range; \
+                          both default to the layer endpoints. Optional `backend` (`\"openai\"` | `\"whisper_cpp\"` | \
+                          `\"funasr\"`) forces a specific engine instead of the default preference-then-availability \
+                          order; an unknown value is rejected. Optional `word_timestamps` (default false) requests \
+                          exact per-word times when the chosen backend can emit them (whisper.cpp `-ojf`); OpenAI \
+                          Whisper is SRT-only and ignores it. VideoClip layers with speed != 1.0 are rejected — \
+                          split off a speed-1 segment first. Errors with structured messages if no transcription \
+                          backend is configured (API key or local engine), the audio slice exceeds the provider cap (~13 min for Whisper at \
                           25 MB), or the provider rate-limits / rejects auth.", tools::TranscribeClipArgs, tools::transcribe_clip),
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "speech")]
     "synthesize_speech" => ("Synthesize speech via the configured cloud TTS provider (OpenAI tts-1 today) \
                           and attach the result as an Audio layer. The MP3 is content-addressed in cache \
                           by `(model, voice, speed, text)`, so a repeat call with the same args reuses \
@@ -138,7 +146,7 @@ mod tests {
     /// serde-deserialized `layer` / `media` slice fields the TS host injects.
     /// `#[schemars(skip)]` MUST keep them out of the advertised tool schema so
     /// agents never see (or try to fill) them.
-    #[cfg(all(feature = "jobs", feature = "cloud"))]
+    #[cfg(all(feature = "jobs", feature = "speech"))]
     #[test]
     fn injected_slice_fields_are_not_advertised() {
         let cat = catalog();
@@ -165,7 +173,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "speech")]
     #[test]
     fn catalog_advertises_cloud_tools() {
         let cat = catalog();

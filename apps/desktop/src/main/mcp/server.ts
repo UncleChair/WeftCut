@@ -49,6 +49,7 @@ export async function handleCallTool(
   getTsHost: () => TsActorHost | null,
   name: string,
   args: Record<string, unknown>,
+  getPreferredEngine: () => string | null = () => null,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (tsHost) {
@@ -75,6 +76,14 @@ export async function handleCallTool(
     // from the actor (sole state owner) and forward it.
     if (CLIP_SLICE_TOOLS.has(name)) {
       const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
+      // Default the transcription backend from the user's preferred engine when
+      // the agent didn't pick one (ADR 0036: select by user preference THEN
+      // availability). An explicit `backend` arg wins; "auto"/unset falls through
+      // so the Rust resolver's availability-ordered DEFAULT_ORDER decides.
+      if (name === 'transcribe_clip' && merged.backend == null) {
+        const pref = getPreferredEngine()
+        if (pref && pref !== 'auto') merged.backend = pref
+      }
       return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
     }
     // route === 'rust' → fall through (other reads are served by the backend).
@@ -117,7 +126,7 @@ export async function handleReadResource(
   return unwrap(await backend.mcpReadResource(uri)) as ServerResult
 }
 
-export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | null = () => null): Server {
+export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | null = () => null, getPreferredEngine: () => string | null = () => null): Server {
   const server = new Server(
     { name: 'weftcut', version: '0.1.0' },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
@@ -128,7 +137,7 @@ export function buildMcpServer(backend: Backend, getTsHost: () => TsActorHost | 
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS]) } as unknown as ServerResult
   })
   server.setRequestHandler(CallToolRequestSchema, async (req) =>
-    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>),
+    handleCallTool(backend, getTsHost, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>, getPreferredEngine),
   )
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     const cat = JSON.parse(await backend.mcpCatalog()) as { resources: Array<{ uri: string }> }

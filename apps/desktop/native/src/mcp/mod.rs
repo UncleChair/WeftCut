@@ -32,7 +32,7 @@ pub use catalog::dispatch_tool;
 // mod is private) — same precedent as `dispatch_tool` above; not a public widening.
 pub(crate) use prompts::{catalog as list_prompts, expand as get_prompt};
 pub(crate) use resources::read_resource;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 pub(crate) use tools::{synthesize_speech_audio, SynthesizeSpeechArgs};
 
 // The `mcp:change` notification is emitted by the TS host (the TS actor's

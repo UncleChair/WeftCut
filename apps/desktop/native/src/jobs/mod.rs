@@ -99,7 +99,7 @@ pub const EVENT_ERROR: &str = "media:job_error";
 
 const MAX_PARALLEL_FFMPEG: usize = 2;
 
-/// Global ffmpeg-child semaphore. Shared with `cloud::audio_extract` so cloud
+/// Global ffmpeg-child semaphore. Shared with `speech::audio_extract` so cloud
 /// transcription slices compete fairly with background derivative jobs
 /// (thumbnails/proxy/waveform) rather than spawning unbounded extra ffmpegs.
 pub(crate) fn ffmpeg_sem() -> &'static Semaphore {

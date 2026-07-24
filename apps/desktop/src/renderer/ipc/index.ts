@@ -1229,6 +1229,86 @@ export async function settingsTestProvider(
   return invoke<ConnectionTestInfo>("settings_test_provider", { provider });
 }
 
+// ============================================================
+// Speech backends (ticket 05) — the multi-backend generalization of the
+// API-key surface. Cloud backends still configure a key (settingsSetApiKey);
+// local engines configure binary/model paths + device/threads via the setters
+// below. All four channels are intercepted in Electron main (they merge the
+// TS-owned speech_config store with Rust availability). PreferredEngine /
+// LocalEngineConfig are single-sourced in src/shared/speech-config.ts.
+// ============================================================
+
+import type {
+  PreferredEngine,
+  LocalEngineConfig,
+} from "../../shared/speech-config";
+export type { PreferredEngine, LocalEngineConfig };
+
+/// Availability verdict tags mirroring Rust `config::Availability`.
+export type SpeechAvailability =
+  | "available"
+  | "needs_key"
+  | "needs_binary"
+  | "needs_model";
+
+/// One backend row for the Settings → Transcription/Speech panel. `local` is
+/// present only for local backends that have stored config (populates the
+/// picker fields); cloud backends configure a key instead.
+export interface SpeechBackendInfo {
+  backend: string;
+  label: string;
+  locality: "cloud" | "local";
+  capabilities: { transcription: boolean; tts: boolean };
+  availability: SpeechAvailability;
+  /// The one backend the resolver would use right now (preference + what is
+  /// available). `false` on every row when nothing is configured.
+  selected: boolean;
+  local?: LocalEngineConfig;
+}
+
+export interface SpeechBackendsView {
+  preferred_engine: PreferredEngine;
+  backends: SpeechBackendInfo[];
+}
+
+/// Full backend listing + the user's preferred engine, for the Settings panel.
+export async function settingsGetSpeechBackends(): Promise<SpeechBackendsView> {
+  return invoke<SpeechBackendsView>("settings_get_speech_backends");
+}
+
+/// Persist the user's preferred transcription engine ("auto" | a backend tag).
+export async function settingsSetSpeechPreferred(
+  engine: PreferredEngine,
+): Promise<void> {
+  return invoke<void>("settings_set_speech_preferred", { engine });
+}
+
+/// Set (or replace) one local engine's binary/model config + optional hints.
+/// Persists to the TS store AND pushes into the backend cache so the resolver
+/// sees it immediately.
+export async function settingsSetLocalBackend(args: {
+  backend: string;
+  binary: string;
+  model: string;
+  tokens?: string;
+  device?: string;
+  threads?: number;
+}): Promise<void> {
+  return invoke<void>("settings_set_local_backend", {
+    backend: args.backend,
+    binary: args.binary,
+    model: args.model,
+    ...(args.tokens !== undefined ? { tokens: args.tokens } : {}),
+    ...(args.device !== undefined ? { device: args.device } : {}),
+    ...(args.threads !== undefined ? { threads: args.threads } : {}),
+  });
+}
+
+/// Clear one local engine's config (idempotent).
+export async function settingsClearLocalBackend(backend: string): Promise<void> {
+  return invoke<void>("settings_clear_local_backend", { backend });
+}
+
 export interface WaveformPeaks {
   /// One f32 in [0.0, 1.0] per peak window; max-abs over `1 / peaks_per_second`
   /// of source audio. Resolves rejected with the literal string "not_ready" if

@@ -24,7 +24,7 @@ export interface McpHost {
   close(): Promise<void>
 }
 
-export async function startMcpHost(backend: Backend, getTsHost: () => import('../state/ts-actor-host.js').TsActorHost | null = () => null): Promise<McpHost> {
+export async function startMcpHost(backend: Backend, getTsHost: () => import('../state/ts-actor-host.js').TsActorHost | null = () => null, getPreferredEngine: () => string | null = () => null): Promise<McpHost> {
   let auth: McpAuth = loadOrInitAuth()
   const transports = new Map<string, StreamableHTTPServerTransport>()
   const servers = new Set<Server>()
@@ -78,7 +78,7 @@ export async function startMcpHost(backend: Backend, getTsHost: () => import('..
         if (transport!.sessionId) transports.delete(transport!.sessionId)
         if (newServer) servers.delete(newServer)
       }
-      newServer = buildMcpServer(backend, getTsHost)
+      newServer = buildMcpServer(backend, getTsHost, getPreferredEngine)
       servers.add(newServer)
       // Cast: the SDK declares Transport.onclose as a getter typed
       // `(() => void) | undefined`, which TS won't accept against the optional

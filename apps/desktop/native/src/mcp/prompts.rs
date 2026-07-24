@@ -7,7 +7,7 @@
 //! value is the recipe, not new capability.
 //!
 //! The `auto-caption` / `voiceover` prompts reference cloud tools and are
-//! enabled under `#[cfg(feature = "cloud")]`.
+//! enabled under `#[cfg(feature = "speech")]`.
 //!
 //! Argument schemas declared in `catalog()` flow back to clients via
 //! `prompts/list`; the per-call interpolation happens in `expand_*`.
@@ -20,9 +20,9 @@ use super::wire::{
 };
 
 pub const NAME_CUT_SILENCES: &str = "cut-silences";
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 pub const NAME_AUTO_CAPTION: &str = "auto-caption";
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 pub const NAME_VOICEOVER: &str = "voiceover";
 
 /// Static prompt catalog. Mirrored 1:1 in `list_prompts`.
@@ -56,7 +56,7 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
             },
         ],
     }];
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "speech")]
     {
         prompts.push(PromptDef {
             name: NAME_AUTO_CAPTION.into(),
@@ -132,14 +132,14 @@ pub(crate) fn expand(
 ) -> Result<PromptResult, McpToolError> {
     match name {
         NAME_CUT_SILENCES => expand_cut_silences(args),
-        #[cfg(feature = "cloud")]
+        #[cfg(feature = "speech")]
         NAME_AUTO_CAPTION => expand_auto_caption(args),
-        #[cfg(feature = "cloud")]
+        #[cfg(feature = "speech")]
         NAME_VOICEOVER => expand_voiceover(args),
         other => Err(McpToolError::invalid_params(
             format!(
                 "unknown prompt '{other}'; available: cut-silences{}",
-                if cfg!(feature = "cloud") {
+                if cfg!(feature = "speech") {
                     ", auto-caption, voiceover"
                 } else {
                     ""
@@ -185,7 +185,7 @@ Defaults if the agent leaves args off: threshold_amp ≈ 0.02 (-34 dBFS), min_si
     })
 }
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let layer_id = require_str(args, "layer_id")?;
     let language = optional_str(args, "language");
@@ -197,9 +197,9 @@ fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult
 "Auto-caption the clip on layer `{layer_id}` using cloud transcription.
 
 Steps:
-1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), uploads it to Whisper, and returns SRT with cue timestamps already shifted to timeline-absolute microseconds.
-2. Inspect the returned SRT. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose.
-3. Call `apply_subtitles` with the (possibly edited) SRT body. The cues self-position into a new caption track of editable Text layers via their internal timestamps — you do not pass start/end times (any `t_start_us`/`t_end_us` are ignored). The tool returns the new caption track id.
+1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), transcribes it, and returns a JSON envelope `{{ segments, language, word_timing, srt }}` with all timestamps already shifted to timeline-absolute microseconds. The `srt` field is a ready-to-apply SubRip body; `segments`/`words` carry the same content with per-word spans.
+2. Inspect the `srt` field. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose.
+3. Call `apply_subtitles` with the (possibly edited) `srt` body — NOT the whole JSON envelope. The cues self-position into a new caption track of editable Text layers via their internal timestamps — you do not pass start/end times (any `t_start_us`/`t_end_us` are ignored). The tool returns the new caption track id.
 
 If `transcribe_clip` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → API keys. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — Whisper's per-request cap is ~13 minutes of mono 16 kHz audio."
     );
@@ -212,7 +212,7 @@ If `transcribe_clip` errors with `MissingKey` or `InvalidKey`, tell the user to 
     })
 }
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let script = require_str(args, "script")?;
     let voice = optional_str(args, "voice");
@@ -288,9 +288,9 @@ mod tests {
     #[test]
     fn catalog_lists_cut_silences_with_required_args_marked() {
         let cat = catalog();
-        #[cfg(not(feature = "cloud"))]
+        #[cfg(not(feature = "speech"))]
         assert_eq!(cat.len(), 1);
-        #[cfg(feature = "cloud")]
+        #[cfg(feature = "speech")]
         assert_eq!(cat.len(), 3);
 
         let cs = cat.iter().find(|p| p.name == NAME_CUT_SILENCES).unwrap();
@@ -342,7 +342,7 @@ mod tests {
         assert!(format!("{err}").contains("layer_id"));
     }
 
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "speech")]
     #[test]
     fn catalog_includes_cloud_prompts() {
         let names: Vec<_> = catalog().into_iter().map(|p| p.name).collect();
@@ -350,7 +350,7 @@ mod tests {
         assert!(names.iter().any(|n| n == "voiceover"));
     }
 
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "speech")]
     #[test]
     fn voiceover_expands_with_script() {
         let a = args(&[("script", json!("hello there"))]);

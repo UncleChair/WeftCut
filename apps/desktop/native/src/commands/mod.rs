@@ -5,18 +5,18 @@
 //! their args. There is no response *view* builder and no actor-mutation
 //! wrapper.
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 use serde::Serialize;
 
-#[cfg(feature = "cloud")]
-pub mod cloud;
+#[cfg(feature = "speech")]
+pub mod speech;
 #[cfg(feature = "export")]
 pub mod export;
 #[cfg(feature = "jobs")]
 pub mod media;
 pub mod prefs;
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 #[derive(Serialize, Clone)]
 pub struct ApiKeyStatus {
     pub provider: String,

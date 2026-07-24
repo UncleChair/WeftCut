@@ -110,10 +110,10 @@ proptest = "1"
 # feature union. The only consumer that deviates is `cargo test`, which ADDS
 # `test-noop` (below) on top of the defaults; keep no second copy of this list.
 [features]
-default = ["jobs", "export", "mcp", "cloud"]
+default = ["jobs", "export", "mcp", "speech"]
 jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
 export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_conform/io::probe
-cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
+speech = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
 
 # test-noop: NAPI-RS's official Cargo-test compilation mode (TEST-ONLY, never in

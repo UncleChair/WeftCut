@@ -37,12 +37,16 @@ pub struct Backend {
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
-    /// Plaintext cloud-provider API keys, keyed by provider tag ("openai").
-    /// Pushed in by Electron main (decrypted from safeStorage) via
-    /// `set_cloud_key`; read synchronously by the cloud reqwest providers.
-    /// Always compiled (cache is feature-independent) so main can push keys
-    /// regardless of the addon's feature set.
-    pub(crate) cloud_keys: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// Per-backend speech config, keyed by the stable backend tag ("openai",
+    /// "whisper_cpp", …). Cloud entries are `BackendConfig::ApiKey` (plaintext,
+    /// pushed in by Electron main after decrypting safeStorage via
+    /// `set_cloud_key`); local entries are `BackendConfig::Local` binary/model
+    /// paths (pushed by the TS config store — ticket 05). Read synchronously by
+    /// the speech resolver. Always compiled (feature-independent) so main can
+    /// push keys regardless of the addon's feature set.
+    pub(crate) speech_config: std::sync::Mutex<
+        std::collections::HashMap<String, crate::speech::config::BackendConfig>,
+    >,
 }
 
 /// Build the config-dir-rooted stores + cache layout + log slot, install the
@@ -86,7 +90,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
-        cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
+        speech_config: std::sync::Mutex::new(std::collections::HashMap::new()),
     }
 }
 
@@ -129,24 +133,75 @@ impl Backend {
             .map_err(Error::from_reason)
     }
 
-    /// Push a decrypted cloud API key into the in-memory cache. Called by
-    /// Electron main after reading safeStorage; never a renderer-invoke arm
-    /// (key material stays off the renderer).
+    /// Push a decrypted cloud API key into the in-memory speech config, stored
+    /// as `BackendConfig::ApiKey` under the backend tag. Called by Electron main
+    /// after reading safeStorage; never a renderer-invoke arm (key material
+    /// stays off the renderer). Signature is a stable TS wire contract — TS
+    /// `main/keys.ts` calls it after safeStorage-decrypting `cloud_keys.json`,
+    /// so it (and the on-disk file format) is unchanged, which is what keeps
+    /// existing OpenAI users resolving. Local-config setters are ticket 05.
     #[napi]
     pub fn set_cloud_key(&self, provider: String, key: String) {
-        self.cloud_keys
+        self.speech_config
             .lock()
-            .expect("cloud_keys poisoned")
-            .insert(provider, key);
+            .expect("speech_config poisoned")
+            .insert(provider, crate::speech::config::BackendConfig::ApiKey(key));
     }
 
-    /// Remove a cloud API key from the cache (key cleared in Settings).
+    /// Remove a backend's config entry from the cache (key cleared in Settings).
+    /// Signature unchanged for the same wire-contract reason as `set_cloud_key`.
     #[napi]
     pub fn clear_cloud_key(&self, provider: String) {
-        self.cloud_keys
+        self.speech_config
             .lock()
-            .expect("cloud_keys poisoned")
+            .expect("speech_config poisoned")
             .remove(&provider);
+    }
+
+    /// Push a local engine's (non-secret) config into the in-memory speech
+    /// config as `BackendConfig::Local` under the backend tag. The local-engine
+    /// counterpart to `set_cloud_key` (ADR 0036 "Config splits by secrecy"):
+    /// the API key is secret (safeStorage), but a local engine's binary/model
+    /// paths are not, so they come from the TS-owned `speech_config.json` store.
+    /// Electron main (`speech-config.ts`) calls this on startup and on every
+    /// Settings change so the resolver sees a complete `speech_config` snapshot
+    /// before the first `transcribe_clip`. Always compiled (feature-independent)
+    /// so main can push local config regardless of the addon's feature set.
+    ///
+    /// `tokens` is a TRAILING optional (FunASR's sherpa-onnx `tokens.txt`, part
+    /// of the model bundle) so it is backward-compatible — whisper.cpp callers
+    /// omit it (or pass `null`) and it stays `None`, unused by that engine.
+    #[napi]
+    pub fn set_local_backend(
+        &self,
+        backend: String,
+        binary: String,
+        model: String,
+        device: Option<String>,
+        threads: Option<u32>,
+        tokens: Option<String>,
+    ) {
+        self.speech_config.lock().expect("speech_config poisoned").insert(
+            backend,
+            crate::speech::config::BackendConfig::Local {
+                binary: std::path::PathBuf::from(binary),
+                model: std::path::PathBuf::from(model),
+                tokens: tokens.map(std::path::PathBuf::from),
+                device,
+                threads,
+            },
+        );
+    }
+
+    /// Remove a local engine's config entry (its paths were cleared in
+    /// Settings). Mirror of `clear_cloud_key`; distinct name so the caller reads
+    /// as the local-config counterpart to `set_local_backend`.
+    #[napi]
+    pub fn clear_local_backend(&self, backend: String) {
+        self.speech_config
+            .lock()
+            .expect("speech_config poisoned")
+            .remove(&backend);
     }
 
     /// Re-point cache + workspace, end any in-flight agent session, and rotate
@@ -341,8 +396,8 @@ impl Backend {
     }
 }
 
-// synthesize_speech compute is `cloud`-gated for the same reason — its own block.
-#[cfg(feature = "cloud")]
+// synthesize_speech compute is `speech`-gated for the same reason — its own block.
+#[cfg(feature = "speech")]
 #[napi]
 impl Backend {
     /// synthesize_speech hybrid compute: validate text → pick
@@ -583,15 +638,21 @@ impl Backend {
             "export_video_sink_cancel" => {
                 ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
             }
-            #[cfg(feature = "cloud")]
+            #[cfg(feature = "speech")]
             "settings_get_api_key_status" => {
-                ser(crate::commands::cloud::settings_get_api_key_status(self).await)
+                ser(crate::commands::speech::settings_get_api_key_status(self).await)
             }
-            #[cfg(feature = "cloud")]
+            #[cfg(feature = "speech")]
             "settings_test_provider" => {
-                let a: crate::commands::cloud::SettingsTestProviderArgs =
+                let a: crate::commands::speech::SettingsTestProviderArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::cloud::settings_test_provider(self, a.provider).await)
+                ser(crate::commands::speech::settings_test_provider(self, a.provider).await)
+            }
+            #[cfg(feature = "speech")]
+            "settings_get_speech_backends" => {
+                let a: crate::commands::speech::SpeechBackendsArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::speech::settings_get_speech_backends(self, a.preferred).await)
             }
             other => Err(format!("unknown command: '{other}'")),
         }
@@ -768,7 +829,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "speech")]
     #[tokio::test]
     async fn settings_status_reflects_cache() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
@@ -803,7 +864,7 @@ mod tests {
         assert_eq!(openai["configured"], true);
     }
 
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "speech")]
     #[tokio::test]
     async fn settings_test_provider_missing_key_is_clean_error() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
@@ -835,20 +896,106 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_key_cache_set_and_clear() {
+        use crate::speech::config::BackendConfig;
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
-        assert!(!b.cloud_keys.lock().unwrap().contains_key("openai"));
+        assert!(!b.speech_config.lock().unwrap().contains_key("openai"));
+        // set_cloud_key stores an ApiKey entry under the backend tag.
         b.set_cloud_key("openai".into(), "sk-abc".into());
-        assert_eq!(
-            b.cloud_keys
-                .lock()
-                .unwrap()
-                .get("openai")
-                .map(String::as_str),
-            Some("sk-abc"),
+        assert!(
+            matches!(
+                b.speech_config.lock().unwrap().get("openai"),
+                Some(BackendConfig::ApiKey(k)) if k == "sk-abc"
+            ),
+            "set_cloud_key must store BackendConfig::ApiKey(\"sk-abc\")"
         );
         b.clear_cloud_key("openai".into());
-        assert!(!b.cloud_keys.lock().unwrap().contains_key("openai"));
+        assert!(!b.speech_config.lock().unwrap().contains_key("openai"));
+    }
+
+    /// `set_local_backend` is the non-secret counterpart to `set_cloud_key`: it
+    /// stores a `BackendConfig::Local` (binary/model/tokens/device/threads) under
+    /// the backend tag, and `clear_local_backend` removes it. Ticket 05 population
+    /// path for the local engines, pushed by the TS config store. whisper.cpp
+    /// omits `tokens` (stored `None`); FunASR passes it through.
+    #[tokio::test]
+    async fn set_local_backend_stores_local_config() {
+        use crate::speech::config::BackendConfig;
+        use std::path::PathBuf;
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        assert!(!b.speech_config.lock().unwrap().contains_key("whisper_cpp"));
+        // whisper.cpp: the trailing `tokens` param is omitted → stored None.
+        b.set_local_backend(
+            "whisper_cpp".into(),
+            "/opt/whisper/whisper-cli".into(),
+            "/opt/whisper/ggml-base.bin".into(),
+            Some("cpu".into()),
+            Some(8),
+            None,
+        );
+        assert!(
+            matches!(
+                b.speech_config.lock().unwrap().get("whisper_cpp"),
+                Some(BackendConfig::Local { binary, model, tokens: None, device, threads })
+                    if binary == &PathBuf::from("/opt/whisper/whisper-cli")
+                        && model == &PathBuf::from("/opt/whisper/ggml-base.bin")
+                        && device.as_deref() == Some("cpu")
+                        && *threads == Some(8)
+            ),
+            "set_local_backend must store BackendConfig::Local with the given paths/hints and tokens=None"
+        );
+        // FunASR: tokens is passed through into the config.
+        b.set_local_backend(
+            "funasr".into(),
+            "/opt/sherpa/sherpa-onnx-offline".into(),
+            "/opt/sherpa/paraformer.onnx".into(),
+            None,
+            None,
+            Some("/opt/sherpa/tokens.txt".into()),
+        );
+        assert!(
+            matches!(
+                b.speech_config.lock().unwrap().get("funasr"),
+                Some(BackendConfig::Local { tokens: Some(t), .. })
+                    if t == &PathBuf::from("/opt/sherpa/tokens.txt")
+            ),
+            "set_local_backend must store the FunASR tokens path"
+        );
+        b.clear_local_backend("whisper_cpp".into());
+        assert!(!b.speech_config.lock().unwrap().contains_key("whisper_cpp"));
+    }
+
+    /// `settings_get_speech_backends` lists EVERY backend with its live
+    /// availability and marks the one the resolver would use. With an OpenAI key
+    /// set and no `preferred`, OpenAI is `available` + `selected`; the
+    /// unconfigured local engines report `needs_binary`. Proves the wire shape
+    /// the Settings UI consumes (ticket 05) and that `selected` tracks the
+    /// resolver.
+    #[cfg(feature = "speech")]
+    #[tokio::test]
+    async fn settings_get_speech_backends_reports_availability_and_selected() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        b.set_cloud_key("openai".into(), "sk-x".into());
+        let out = b
+            .dispatch("settings_get_speech_backends", r#"{"preferred":null}"#)
+            .await
+            .unwrap();
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let rows = rows.as_array().unwrap();
+        // Every known backend is listed.
+        assert_eq!(rows.len(), 3, "all three backends listed");
+        let openai = rows.iter().find(|r| r["backend"] == "openai").unwrap();
+        assert_eq!(openai["locality"], "cloud");
+        assert_eq!(openai["availability"], "available");
+        assert_eq!(openai["selected"], true, "auto resolves to the only available backend");
+        assert_eq!(openai["capabilities"]["transcription"], true);
+        assert_eq!(openai["capabilities"]["tts"], true);
+        let whisper = rows.iter().find(|r| r["backend"] == "whisper_cpp").unwrap();
+        assert_eq!(whisper["locality"], "local");
+        assert_eq!(whisper["availability"], "needs_binary");
+        assert_eq!(whisper["selected"], false);
     }
 
     /// A `log_emit` dispatch after a workspace is installed (via `commit_workspace`,
@@ -887,7 +1034,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "cloud", feature = "mcp"))]
+    #[cfg(all(feature = "speech", feature = "mcp"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn transcribe_clip_without_key_is_clean_error() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));

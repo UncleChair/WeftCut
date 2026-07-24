@@ -586,7 +586,7 @@ const enUS = {
     cat_general: "General",
     cat_editing: "Editing",
     cat_keyboard: "Keyboard",
-    cat_api_keys: "API Keys",
+    cat_api_keys: "Transcription / Speech",
     scope_project: "Project",
     scope_project_hint: "Applies to the current project only.",
     startup_heading: "Startup",
@@ -654,6 +654,34 @@ const enUS = {
     testing: "Testing…",
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
+    // Transcription / Speech pane (ticket 05): engine selector + per-backend rows.
+    speech_blurb:
+      "Choose which engine transcribes audio (transcribe_clip). Cloud (OpenAI) needs an API key; local engines (whisper.cpp) run offline from a binary + model file you point to below.",
+    speech_engine: "Transcription engine",
+    speech_engine_auto: "Automatic (recommended)",
+    speech_engine_soon: "coming soon",
+    speech_engine_active: "Active engine: {{engine}}",
+    speech_engine_none:
+      "No engine configured — add an API key or a local engine's binary + model below.",
+    speech_available: "Available",
+    speech_needs_key: "Needs API key",
+    speech_needs_binary: "Needs binary",
+    speech_needs_model: "Needs model",
+    speech_binary: "Binary",
+    speech_binary_placeholder: "Path to the engine CLI (e.g. whisper-cli)",
+    speech_model: "Model",
+    speech_model_placeholder: "Path to the model file (e.g. ggml-base.bin)",
+    speech_tokens: "Tokens",
+    speech_tokens_placeholder: "Path to tokens.txt (FunASR / sherpa-onnx)",
+    speech_device: "Device",
+    speech_device_placeholder: "optional (e.g. cpu, cuda)",
+    speech_threads: "Threads",
+    speech_browse: "Browse…",
+    speech_pick_binary: "Choose the engine binary",
+    speech_pick_model: "Choose the model file",
+    speech_pick_tokens: "Choose the tokens file",
+    speech_test_hint:
+      "Check the binary runs and the model file is present, without transcribing anything.",
     motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:

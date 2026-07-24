@@ -190,7 +190,7 @@ jobs:
           # via the Linux `npm test` TS goldens, which run the same fixtures.)
           cargo test -p weftcut-eval --manifest-path native/Cargo.toml
           # The production feature union is the crate `default` (jobs/export/mcp/
-          # cloud — see native/Cargo.toml; motifs migrated to TS and is NOT a Cargo
+          # speech — see native/Cargo.toml; motifs migrated to TS and is NOT a Cargo
           # feature). Features are additive, so `--features test-noop` = defaults +
           # test-noop, compiling every #[cfg(feature)] module PLUS the standalone-
           # binary symbol-resolution shim. No hand-kept feature list here — it

@@ -19,12 +19,19 @@ import {
   recentsSetReopenOnLaunch,
   setComposition,
   settingsClearApiKey,
-  settingsGetApiKeyStatus,
   settingsSetApiKey,
   settingsTestProvider,
+  settingsGetSpeechBackends,
+  settingsSetSpeechPreferred,
+  settingsSetLocalBackend,
+  settingsClearLocalBackend,
+  type SpeechBackendInfo,
+  type SpeechBackendsView,
+  type PreferredEngine,
   updateProjectSettings,
 } from "../ipc";
 import { listen, type UnlistenFn } from "@/bridge/events";
+import { open as openFileDialog } from "@/bridge/dialog";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
@@ -35,6 +42,7 @@ import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import { decodeEngineOptions } from "./decodeEngineOptions";
+import { speechEngineOptions } from "./speechEngineOptions";
 import {
   useDecodeComponentAvailable,
   useDecodeComponentReason,
@@ -119,7 +127,6 @@ export function SettingsPanel({
   onCompositionChanged,
 }: Props) {
   const { t } = useTranslation();
-  const [statuses, setStatuses] = useState<ApiKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
   const [category, setCategory] = useState<SettingsCategory>(initialCategory);
@@ -145,17 +152,7 @@ export function SettingsPanel({
     }
   };
 
-  const refresh = async () => {
-    try {
-      const next = await settingsGetApiKeyStatus();
-      setStatuses(next);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
   useEffect(() => {
-    refresh();
     recentsGetReopenOnLaunch()
       .then(setReopenOnLaunch)
       .catch((e) => setError(String(e)));
@@ -320,22 +317,7 @@ export function SettingsPanel({
             <div className="settings-pane-title">
               {t("settings.cat_api_keys")}
             </div>
-            <section className="settings-section">
-              <p className="settings-blurb">{t("settings.api_keys_blurb")}</p>
-
-              {statuses === null ? (
-                <p className="settings-status">…</p>
-              ) : (
-                statuses.map((s) => (
-                  <ApiKeyRow
-                    key={s.provider}
-                    status={s}
-                    onChanged={refresh}
-                    onError={setError}
-                  />
-                ))
-              )}
-            </section>
+            <SpeechSection onError={setError} />
           </div>
         </div>
       </div>
@@ -987,6 +969,402 @@ function CompositionSection({
         </p>
       )}
     </>
+  );
+}
+
+/// Transcription / Speech pane. Fetches the full backend listing (engine
+/// preference + per-backend availability, merged with the local config store),
+/// renders the engine selector, then one row per backend by locality: cloud →
+/// the existing `ApiKeyRow` (key), local → `LocalBackendRow` (binary/model
+/// paths + device/threads). Self-fetches on mount (the pane stays mounted and
+/// toggles via `hidden`, so the effect runs once) and re-fetches after any
+/// mutation so badges + the "active engine" hint stay live.
+function SpeechSection({ onError }: { onError: (msg: string) => void }) {
+  const { t } = useTranslation();
+  const [view, setView] = useState<SpeechBackendsView | null>(null);
+
+  const refresh = async () => {
+    try {
+      setView(await settingsGetSpeechBackends());
+    } catch (e) {
+      onError(String(e));
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  if (view === null) {
+    return (
+      <section className="settings-section">
+        <p className="settings-status">…</p>
+      </section>
+    );
+  }
+
+  // The backend the resolver would use right now (null → nothing configured).
+  const active = view.backends.find((b) => b.selected) ?? null;
+
+  return (
+    <>
+      <section className="settings-section">
+        <p className="settings-blurb">{t("settings.speech_blurb")}</p>
+        <label className="settings-toggle-row">
+          <AppSelect
+            value={view.preferred_engine}
+            onValueChange={async (next) => {
+              onError("");
+              try {
+                await settingsSetSpeechPreferred(next as PreferredEngine);
+                await refresh();
+              } catch (e) {
+                onError(String(e));
+              }
+            }}
+            options={speechEngineOptions(t, view.backends)}
+            ariaLabel={t("settings.speech_engine")}
+          />
+          <span>
+            <span className="settings-toggle-label">
+              {t("settings.speech_engine")}
+            </span>
+            <span className="settings-toggle-hint">
+              {active
+                ? t("settings.speech_engine_active", { engine: active.label })
+                : t("settings.speech_engine_none")}
+            </span>
+          </span>
+        </label>
+      </section>
+      <section className="settings-section">
+        {view.backends.map((b) =>
+          b.locality === "cloud" ? (
+            <ApiKeyRow
+              key={b.backend}
+              status={{
+                provider: b.backend,
+                label: b.label,
+                configured: b.availability === "available",
+              }}
+              onChanged={refresh}
+              onError={onError}
+            />
+          ) : (
+            <LocalBackendRow
+              key={b.backend}
+              info={b}
+              onChanged={refresh}
+              onError={onError}
+            />
+          ),
+        )}
+      </section>
+    </>
+  );
+}
+
+/// Localized label for an availability verdict → the row's badge text.
+function availabilityLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  a: SpeechBackendInfo["availability"],
+): string {
+  switch (a) {
+    case "available":
+      return t("settings.speech_available");
+    case "needs_key":
+      return t("settings.speech_needs_key");
+    case "needs_binary":
+      return t("settings.speech_needs_binary");
+    case "needs_model":
+      return t("settings.speech_needs_model");
+  }
+}
+
+/// Local backends whose model bundle includes a `tokens.txt` (FunASR's
+/// sherpa-onnx Paraformer needs `--tokens=`). Such a row shows a third path
+/// picker and requires it to save; whisper.cpp (not listed) shows binary+model
+/// only. Data-driven so a future tokens-using engine only joins this set.
+const NEEDS_TOKENS: ReadonlySet<string> = new Set(["funasr"]);
+
+/// One LOCAL engine's config row: binary + model path pickers (native dialog),
+/// a tokens picker for engines in `NEEDS_TOKENS` (FunASR), optional device +
+/// threads, plus Save / Clear / Test. Test routes through the generalized
+/// `settings_test_provider` → `--help` liveness (tickets 04/06).
+function LocalBackendRow({
+  info,
+  onChanged,
+  onError,
+}: {
+  info: SpeechBackendInfo;
+  onChanged: () => Promise<void>;
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const needsTokens = NEEDS_TOKENS.has(info.backend);
+  const [binary, setBinary] = useState(info.local?.binary ?? "");
+  const [model, setModel] = useState(info.local?.model ?? "");
+  const [tokens, setTokens] = useState(info.local?.tokens ?? "");
+  const [device, setDevice] = useState(info.local?.device ?? "");
+  const [threads, setThreads] = useState<number | null>(
+    info.local?.threads ?? null,
+  );
+  const [busy, setBusy] = useState<"save" | "clear" | "test" | null>(null);
+  const [flash, setFlash] = useState<"saved" | "cleared" | null>(null);
+  const [testResult, setTestResult] = useState<
+    { kind: "ok"; summary: string } | { kind: "err"; message: string } | null
+  >(null);
+
+  // Resync the edit buffers when the upstream stored config changes (after a
+  // Save round-trip re-fetches, or a Clear).
+  useEffect(() => {
+    setBinary(info.local?.binary ?? "");
+    setModel(info.local?.model ?? "");
+    setTokens(info.local?.tokens ?? "");
+    setDevice(info.local?.device ?? "");
+    setThreads(info.local?.threads ?? null);
+  }, [
+    info.local?.binary,
+    info.local?.model,
+    info.local?.tokens,
+    info.local?.device,
+    info.local?.threads,
+  ]);
+
+  const browse = async (which: "binary" | "model" | "tokens") => {
+    onError("");
+    try {
+      const picked = await openFileDialog({
+        title:
+          which === "binary"
+            ? t("settings.speech_pick_binary")
+            : which === "model"
+              ? t("settings.speech_pick_model")
+              : t("settings.speech_pick_tokens"),
+      });
+      if (typeof picked === "string") {
+        if (which === "binary") setBinary(picked);
+        else if (which === "model") setModel(picked);
+        else setTokens(picked);
+      }
+    } catch (e) {
+      onError(String(e));
+    }
+  };
+
+  // FunASR can't run without its tokens.txt (availability reports NeedsModel
+  // without it), so require it to save when the engine needs one.
+  const canSave =
+    binary.trim() !== "" &&
+    model.trim() !== "" &&
+    (!needsTokens || tokens.trim() !== "");
+
+  const save = async () => {
+    if (!canSave) return;
+    setBusy("save");
+    onError("");
+    setTestResult(null);
+    try {
+      await settingsSetLocalBackend({
+        backend: info.backend,
+        binary: binary.trim(),
+        model: model.trim(),
+        ...(needsTokens && tokens.trim() !== "" ? { tokens: tokens.trim() } : {}),
+        ...(device.trim() !== "" ? { device: device.trim() } : {}),
+        ...(threads != null ? { threads } : {}),
+      });
+      setFlash("saved");
+      window.setTimeout(() => setFlash(null), 1500);
+      await onChanged();
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clear = async () => {
+    setBusy("clear");
+    onError("");
+    setTestResult(null);
+    try {
+      await settingsClearLocalBackend(info.backend);
+      setFlash("cleared");
+      window.setTimeout(() => setFlash(null), 1500);
+      await onChanged();
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const test = async () => {
+    setBusy("test");
+    setTestResult(null);
+    onError("");
+    try {
+      const r = await settingsTestProvider(info.backend);
+      setTestResult({ kind: "ok", summary: r.summary });
+    } catch (e) {
+      setTestResult({ kind: "err", message: String(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const available = info.availability === "available";
+
+  return (
+    <div className="settings-key-row">
+      <div className="settings-key-header">
+        <span className="settings-key-label">{info.label}</span>
+        <span
+          className={
+            available
+              ? "settings-badge settings-badge-on"
+              : "settings-badge settings-badge-off"
+          }
+        >
+          {availabilityLabel(t, info.availability)}
+        </span>
+      </div>
+      <div className="settings-key-input-row">
+        <span className="settings-slider-label">
+          {t("settings.speech_binary")}
+        </span>
+        <AppInput
+          mono
+          spellCheck={false}
+          value={binary}
+          placeholder={t("settings.speech_binary_placeholder")}
+          disabled={busy !== null}
+          onValueChange={setBinary}
+          ariaLabel={t("settings.speech_binary")}
+        />
+        <Button
+          size="sm"
+          onClick={() => void browse("binary")}
+          disabled={busy !== null}
+        >
+          {t("settings.speech_browse")}
+        </Button>
+      </div>
+      <div className="settings-key-input-row">
+        <span className="settings-slider-label">
+          {t("settings.speech_model")}
+        </span>
+        <AppInput
+          mono
+          spellCheck={false}
+          value={model}
+          placeholder={t("settings.speech_model_placeholder")}
+          disabled={busy !== null}
+          onValueChange={setModel}
+          ariaLabel={t("settings.speech_model")}
+        />
+        <Button
+          size="sm"
+          onClick={() => void browse("model")}
+          disabled={busy !== null}
+        >
+          {t("settings.speech_browse")}
+        </Button>
+      </div>
+      {needsTokens && (
+        <div className="settings-key-input-row">
+          <span className="settings-slider-label">
+            {t("settings.speech_tokens")}
+          </span>
+          <AppInput
+            mono
+            spellCheck={false}
+            value={tokens}
+            placeholder={t("settings.speech_tokens_placeholder")}
+            disabled={busy !== null}
+            onValueChange={setTokens}
+            ariaLabel={t("settings.speech_tokens")}
+          />
+          <Button
+            size="sm"
+            onClick={() => void browse("tokens")}
+            disabled={busy !== null}
+          >
+            {t("settings.speech_browse")}
+          </Button>
+        </div>
+      )}
+      <div className="settings-key-input-row">
+        <span className="settings-slider-label">
+          {t("settings.speech_device")}
+        </span>
+        <AppInput
+          spellCheck={false}
+          value={device}
+          placeholder={t("settings.speech_device_placeholder")}
+          disabled={busy !== null}
+          onValueChange={setDevice}
+          ariaLabel={t("settings.speech_device")}
+        />
+        <span className="settings-slider-label">
+          {t("settings.speech_threads")}
+        </span>
+        <AppNumberField
+          value={threads}
+          min={1}
+          max={64}
+          align="center"
+          className="settings-input-narrow"
+          disabled={busy !== null}
+          ariaLabel={t("settings.speech_threads")}
+          onValueChange={(v) => setThreads(v)}
+          onClear={() => setThreads(null)}
+        />
+      </div>
+      <div className="settings-key-input-row">
+        <Button
+          size="sm"
+          onClick={() => void save()}
+          disabled={busy !== null || !canSave}
+        >
+          {busy === "save"
+            ? t("settings.saving")
+            : flash === "saved"
+              ? t("settings.saved")
+              : t("settings.save")}
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => void clear()}
+          disabled={busy !== null || info.local === undefined}
+        >
+          {busy === "clear"
+            ? t("settings.clearing")
+            : flash === "cleared"
+              ? t("settings.cleared")
+              : t("settings.clear")}
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => void test()}
+          disabled={busy !== null}
+          title={t("settings.speech_test_hint")}
+        >
+          {busy === "test" ? t("settings.testing") : t("settings.test")}
+        </Button>
+      </div>
+      {testResult && (
+        <p
+          className={
+            testResult.kind === "ok" ? "settings-test-ok" : "settings-test-err"
+          }
+        >
+          {testResult.kind === "ok"
+            ? `✓ ${testResult.summary}`
+            : `✗ ${testResult.message}`}
+        </p>
+      )}
+    </div>
   );
 }
 

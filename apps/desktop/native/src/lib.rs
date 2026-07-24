@@ -20,8 +20,8 @@ mod napi_backend;
 // console-window suppression trait can't live behind a feature gate.
 mod process;
 
-#[cfg(feature = "cloud")]
-mod cloud;
+#[cfg(feature = "speech")]
+mod speech;
 #[cfg(feature = "export")]
 mod export;
 #[cfg(any(feature = "jobs", feature = "export"))]

@@ -5,14 +5,14 @@
 //!
 //! Only the native/compute/hybrid-compute tool handlers live here.
 //! The ~47 TS-executed mutation handlers are deleted; the TS actor serves them.
-//! Cloud tools (transcribe/synthesize) are gated on `feature = "cloud"`.
+//! Cloud tools (transcribe/synthesize) are gated on `feature = "speech"`.
 
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "cloud")]
-use crate::cloud;
+#[cfg(feature = "speech")]
+use crate::speech;
 
 #[cfg(feature = "jobs")]
 use crate::cache::cached_ok;
@@ -483,10 +483,10 @@ mod tests {
 }
 
 // ============================================================
-// Cloud tools: transcribe_clip + synthesize_speech. Gated on feature = "cloud".
+// Cloud tools: transcribe_clip + synthesize_speech. Gated on feature = "speech".
 // ============================================================
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub(super) struct TranscribeClipArgs {
     /// Target VideoClip or Audio layer id.
@@ -502,6 +502,17 @@ pub(super) struct TranscribeClipArgs {
     /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
     #[serde(default)]
     pub language: Option<String>,
+    /// Optional backend override: `"openai"` | `"whisper_cpp"` | `"funasr"`.
+    /// When omitted, the resolver walks preference then availability. An unknown
+    /// value is rejected; a known-but-unconfigured value (e.g. `"funasr"` today)
+    /// falls through availability and surfaces the "no backend configured" error.
+    #[serde(default)]
+    pub backend: Option<String>,
+    /// Request exact per-word timestamps when the chosen backend can emit them
+    /// (whisper.cpp → `-ojf`). OpenAI Whisper is SRT-only and ignores it.
+    /// Default false.
+    #[serde(default)]
+    pub word_timestamps: Option<bool>,
     /// Injected by the TS MCP host (sole state owner) — see DetectSilencesArgs.
     /// `skip_serializing` keeps the slice out of the tool's log details.
     #[serde(default, skip_serializing)]
@@ -512,7 +523,7 @@ pub(super) struct TranscribeClipArgs {
     pub media: Option<crate::state::MediaItem>,
 }
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SynthesizeSpeechArgs {
     /// Text to synthesize. tts-1 caps at 4096 characters.
@@ -533,7 +544,7 @@ pub(crate) struct SynthesizeSpeechArgs {
 }
 
 /// Resolved source-audio coordinates for a `transcribe_clip` call.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 #[derive(Debug)]
 struct ResolvedClipAudio {
     source_path: std::path::PathBuf,
@@ -550,7 +561,7 @@ struct ResolvedClipAudio {
 /// Find a layer with audio attached (VideoClip or Audio), validate the
 /// requested timeline window lies inside it, and map that window onto the
 /// source media's coordinate space.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 fn resolve_clip_audio_source(
     layer: Option<&crate::state::Layer>,
     media: Option<&crate::state::MediaItem>,
@@ -658,7 +669,7 @@ fn resolve_clip_audio_source(
 /// Write synthesized audio bytes atomically to the cache. Mirrors the
 /// `<dest>.tmp → promote_temp` pattern from the jobs module so an interrupted
 /// write never leaves a zero-byte file that `cached_ok` would happily skip.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 async fn write_voiceover_atomic(dest: &std::path::Path, bytes: &[u8]) -> Result<(), anyhow::Error> {
     use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path};
     use anyhow::Context;
@@ -680,12 +691,12 @@ async fn write_voiceover_atomic(dest: &std::path::Path, bytes: &[u8]) -> Result<
     Ok(())
 }
 
-/// Map a `cloud::CloudError` to an `McpToolError` so the agent sees a structured
+/// Map a `speech::SpeechError` to an `McpToolError` so the agent sees a structured
 /// failure (missing key, invalid key, rate-limited, too-large payload) with
 /// actionable recovery steps in the message.
-#[cfg(feature = "cloud")]
-fn map_cloud_error(e: cloud::CloudError) -> McpToolError {
-    use cloud::CloudError as E;
+#[cfg(feature = "speech")]
+fn map_speech_error(e: speech::SpeechError) -> McpToolError {
+    use speech::SpeechError as E;
     let message = e.to_string();
     match e {
         E::MissingKey { .. } | E::InvalidKey { .. } => McpToolError::invalid_request(message, None),
@@ -693,11 +704,34 @@ fn map_cloud_error(e: cloud::CloudError) -> McpToolError {
         E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
             McpToolError::internal_error(message, None)
         }
-        E::Io(_) | E::AudioExtract(_) => McpToolError::internal_error(message, None),
+        E::Io(_) | E::AudioExtract(_) | E::Parse(_) => {
+            McpToolError::internal_error(message, None)
+        }
+        // Local CLI-sidecar failures (whisper.cpp / FunASR): the message already
+        // carries the exit code + engine stderr / the spawn cause / the timeout.
+        E::EngineExit { .. } | E::Spawn { .. } | E::Timeout { .. } => {
+            McpToolError::internal_error(message, None)
+        }
     }
 }
 
-#[cfg(feature = "cloud")]
+/// JSON envelope `transcribe_clip` returns: the normalized transcript
+/// (`segments` with per-word spans, detected `language`, `word_timing`
+/// provenance) PLUS a rendered `srt` field. The agent inspects `segments` for
+/// word-level editing and pipes `srt` straight into `apply_subtitles` (which
+/// still expects an SRT body). Borrows the transcript so we serialize without
+/// cloning the segment vec.
+#[cfg(feature = "speech")]
+#[derive(Serialize)]
+struct TranscribeClipResult<'a> {
+    segments: &'a [speech::Segment],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<&'a str>,
+    word_timing: speech::WordTiming,
+    srt: String,
+}
+
+#[cfg(feature = "speech")]
 pub(super) async fn transcribe_clip(
     b: &Backend,
     args: TranscribeClipArgs,
@@ -744,7 +778,7 @@ pub(super) async fn transcribe_clip(
     result
 }
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 async fn transcribe_clip_inner(
     b: &Backend,
     args: TranscribeClipArgs,
@@ -758,18 +792,38 @@ async fn transcribe_clip_inner(
         args.t_end_us,
     )?;
 
-    let transcriber = {
-        let keys = b.cloud_keys.lock().expect("cloud_keys poisoned");
-        cloud::pick_transcriber(&keys)
-    }
-    .ok_or_else(|| {
-        McpToolError::invalid_request(
-            "no transcription provider configured — open Settings → API keys and add an OpenAI API key",
-            None,
-        )
-    })?;
+    // Optional per-call backend override → `preferred`. Unknown tag → clean
+    // invalid_params. Matches the stable `as_str` wire tag (not the serde form),
+    // same idiom as commands::speech::parse_backend.
+    let preferred = match args.backend.as_deref() {
+        None => None,
+        Some(tag) => Some(
+            speech::SpeechBackend::all()
+                .iter()
+                .copied()
+                .find(|b| b.as_str() == tag)
+                .ok_or_else(|| {
+                    McpToolError::invalid_params(
+                        format!(
+                            "unknown backend {tag:?}; expected \"openai\", \"whisper_cpp\", or \"funasr\""
+                        ),
+                        None,
+                    )
+                })?,
+        ),
+    };
 
-    let audio_path = cloud::audio_extract::extract_audio_window(
+    let transcriber = {
+        let cfg = b.speech_config.lock().expect("speech_config poisoned");
+        // Honor the caller's `backend` override, then fall through DEFAULT_ORDER
+        // by availability. A known-but-unconfigured `preferred` (e.g. "funasr"
+        // before ticket 05/06) is simply skipped, landing on the actionable
+        // "nothing configured" error below when nothing else is available.
+        speech::resolve_transcriber(preferred, &cfg)
+    }
+    .ok_or_else(|| McpToolError::invalid_request(speech::NO_TRANSCRIBER_CONFIGURED, None))?;
+
+    let audio_path = speech::audio_extract::extract_audio_window(
         &b.cache,
         &resolved.source_path,
         &resolved.source_hash,
@@ -779,16 +833,31 @@ async fn transcribe_clip_inner(
     .await
     .map_err(|e| McpToolError::internal_error(format!("audio extract: {e:#}"), None))?;
 
-    let resp = transcriber
-        .transcribe(cloud::TranscribeRequest {
+    let raw = transcriber
+        .transcribe(speech::TranscribeRequest {
             audio_path,
             language: args.language,
+            // Caller opt-in to exact per-word timing. Backends that can't emit
+            // it (OpenAI is SRT-only) ignore the hint; whisper.cpp switches to
+            // `-ojf` when true.
+            want_word_timing: args.word_timestamps.unwrap_or(false),
         })
         .await
-        .map_err(map_cloud_error)?;
+        .map_err(map_speech_error)?;
 
-    let shifted = cloud::srt::shift_srt(&resp.srt_body, resolved.timeline_start_us);
-    Ok(ToolResult::text(shifted))
+    // Normalize the backend's raw style → one Transcript, then place the
+    // audio-slice-relative times on the timeline.
+    let mut transcript = speech::parse_raw(raw).map_err(map_speech_error)?;
+    transcript.shift(resolved.timeline_start_us);
+
+    let srt = transcript.render_srt();
+    let result = TranscribeClipResult {
+        segments: &transcript.segments,
+        language: transcript.language.as_deref(),
+        word_timing: transcript.word_timing,
+        srt,
+    };
+    ToolResult::json(&result)
 }
 
 /// TTS compute half of the `synthesize_speech` hybrid.
@@ -796,7 +865,7 @@ async fn transcribe_clip_inner(
 /// cache, synthesizes+writes the audio if needed, probes it for duration,
 /// and builds the `MediaItem`. Does NOT write to the project actor — that is
 /// the TS host's job. Returns `(MediaItem, cached)`.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 pub(crate) async fn synthesize_speech_audio(
     b: &Backend,
     args: &SynthesizeSpeechArgs,
@@ -810,17 +879,13 @@ pub(crate) async fn synthesize_speech_audio(
     }
 
     let synthesizer = {
-        let keys = b.cloud_keys.lock().expect("cloud_keys poisoned");
-        cloud::pick_synthesizer(&keys)
+        let cfg = b.speech_config.lock().expect("speech_config poisoned");
+        // `preferred: None` — same rationale as transcribe_clip (ticket 04/05).
+        speech::resolve_synthesizer(None, &cfg)
     }
-    .ok_or_else(|| {
-        McpToolError::invalid_request(
-            "no TTS provider configured — open Settings → API keys and add an OpenAI API key",
-            None,
-        )
-    })?;
+    .ok_or_else(|| McpToolError::invalid_request(speech::NO_SYNTHESIZER_CONFIGURED, None))?;
 
-    let cache_key = cloud::providers::openai::tts_cache_key(&args.text, &args.voice, args.speed);
+    let cache_key = speech::backends::openai::tts_cache_key(&args.text, &args.voice, args.speed);
     // Cache extension hardcoded "mp3": the only TTS provider pins
     // `response_format=mp3`. The `debug_assert!` below trips in dev the first time
     // a provider returns a different format — fix the extension-from-response here.
@@ -829,16 +894,16 @@ pub(crate) async fn synthesize_speech_audio(
     let cached = cached_ok(&dest);
     if !cached {
         let resp = synthesizer
-            .synthesize(cloud::SynthesizeRequest {
+            .synthesize(speech::SynthesizeRequest {
                 text: args.text.clone(),
                 voice: args.voice.clone(),
                 speed: args.speed,
             })
             .await
-            .map_err(map_cloud_error)?;
+            .map_err(map_speech_error)?;
         debug_assert_eq!(
             resp.format,
-            cloud::AudioFormat::Mp3,
+            speech::AudioFormat::Mp3,
             "TTS cache extension assumes mp3 output; update it before adding non-mp3 providers",
         );
         write_voiceover_atomic(&dest, &resp.audio)
@@ -896,7 +961,7 @@ pub(crate) async fn synthesize_speech_audio(
 /// advertises it, but the TS host intercepts the call before dispatch reaches
 /// this handler. The compute half (`synthesize_speech_audio`) stays — the napi
 /// `synthesize_speech_compute` calls it.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "speech")]
 pub(super) async fn synthesize_speech(
     _b: &Backend,
     _args: SynthesizeSpeechArgs,

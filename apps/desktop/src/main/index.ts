@@ -285,6 +285,14 @@ app.whenReady().then(async () => {
   const { createAppSettingsStore } = await import('./app-settings.js')
   const appSettings = createAppSettingsStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'app_settings.json'), dir: app.getPath('userData') })
 
+  // Speech-backend config store — persists <userData>/speech_config.json (NON-
+  // secret: preferred engine + each local engine's binary/model/device/threads).
+  // The OpenAI API key stays in safeStorage (keys.ts); this is its non-secret
+  // sibling (ADR 0036). Single owner — the startup population loop + the Settings
+  // IPC intercepts below reuse this instance.
+  const { createSpeechConfigStore } = await import('./speech-config.js')
+  const speechConfig = createSpeechConfigStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'speech_config.json'), dir: app.getPath('userData') })
+
   // Resolve the user-configurable data root BEFORE the Backend cache dir
   // (`new Backend(...)` below) and UserMotifStore are constructed — both take
   // their paths from it. Ticket 02 wires the consumers to `dataRoot.*`; ticket
@@ -410,6 +418,13 @@ app.whenReady().then(async () => {
   // reqwest providers + settings_test_provider see them without a renderer round-trip.
   for (const [provider, key] of Object.entries(loadAllKeys())) {
     backend.setCloudKey(provider, key)
+  }
+  // …and the TS-owned local-engine config (non-secret binary/model paths) so the
+  // speech resolver sees a COMPLETE speech_config snapshot (cloud keys + local
+  // config) before the first transcribe_clip. Ordered right after the keys, well
+  // ahead of the MCP host start below.
+  for (const [tag, lc] of Object.entries(speechConfig.get().local)) {
+    backend.setLocalBackend(tag, lc.binary, lc.model, lc.device ?? null, lc.threads ?? null, lc.tokens ?? null)
   }
 
   // Construct the motif store + resolve the built-in dir once at boot.
@@ -578,7 +593,7 @@ app.whenReady().then(async () => {
   // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
-  const mcpHost = await startMcpHost(backend, () => tsHost)
+  const mcpHost = await startMcpHost(backend, () => tsHost, () => speechConfig.get().preferred_engine)
   mcpHostRef = mcpHost
 
   ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
@@ -612,6 +627,56 @@ app.whenReady().then(async () => {
       const { provider } = (args ?? {}) as { provider: string }
       clearKey(provider)
       backend!.clearCloudKey(provider)
+      return null
+    }
+    // Speech backends (ticket 05). Like the API-key writes above, these are
+    // intercepted here — the reads merge Rust-side availability with the
+    // TS-owned config store, and the writes both persist non-secret local config
+    // AND push it into the backend cache (setLocalBackend, the non-secret sibling
+    // of setCloudKey). Intercepted BEFORE the router, so they never route to Rust.
+    if (channel === 'settings_get_speech_backends') {
+      const sc = speechConfig.get()
+      const json = await backend!.invoke('settings_get_speech_backends', JSON.stringify({
+        preferred: sc.preferred_engine === 'auto' ? null : sc.preferred_engine,
+      }))
+      const rows = JSON.parse(json) as Array<{ backend: string; locality: string } & Record<string, unknown>>
+      // Merge each LOCAL backend's stored paths/hints so the UI can populate its
+      // picker fields; cloud rows carry no local config.
+      return {
+        preferred_engine: sc.preferred_engine,
+        backends: rows.map((r) =>
+          r.locality === 'local' && sc.local[r.backend]
+            ? { ...r, local: sc.local[r.backend] }
+            : r,
+        ),
+      }
+    }
+    if (channel === 'settings_set_speech_preferred') {
+      const { engine } = (args ?? {}) as { engine: import('../shared/speech-config.js').PreferredEngine }
+      speechConfig.apply({ preferred_engine: engine })
+      return null
+    }
+    if (channel === 'settings_set_local_backend') {
+      const a = (args ?? {}) as { backend: string; binary: string; model: string; tokens?: string; device?: string; threads?: number }
+      speechConfig.apply({
+        local: {
+          backend: a.backend,
+          config: {
+            binary: a.binary,
+            model: a.model,
+            ...(a.tokens ? { tokens: a.tokens } : {}),
+            ...(a.device ? { device: a.device } : {}),
+            ...(a.threads != null ? { threads: a.threads } : {}),
+          },
+        },
+      })
+      backend!.setLocalBackend(a.backend, a.binary, a.model, a.device ?? null, a.threads ?? null, a.tokens ?? null)
+      return null
+    }
+    if (channel === 'settings_clear_local_backend') {
+      const { backend: tag } = (args ?? {}) as { backend: string }
+      speechConfig.apply({ local: { backend: tag, config: null } })
+      backend!.clearLocalBackend(tag)
       return null
     }
     // Single-media compute: the TS actor owns state, so resolve the MediaItem

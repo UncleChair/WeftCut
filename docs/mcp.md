@@ -203,7 +203,7 @@ tools. Agents that need a render either ask the user, or read
 
 User-invoked workflows discoverable in agent UIs (Claude Desktop slash menu, Cursor command palette):
 
-- `/auto-caption { layer_id, language? }` — walks the agent through `transcribe_clip` → inspect SRT → `apply_subtitles`.
+- `/auto-caption { layer_id, language? }` — walks the agent through `transcribe_clip` → inspect the `srt` field → `apply_subtitles`.
 - `/cut-silences { layer_id, threshold_amp?, min_silence_us? }` — `detect_silences` → `split_layer` + `delete_layer` to tighten dead air.
 - `/voiceover { script, voice, speed?, target_track_id? }` — `synthesize_speech` for an agent-supplied script. Prompts the agent to split long scripts at paragraph boundaries (tts-1 caps at 4096 chars).
 
@@ -271,7 +271,7 @@ notification whose params are the compact change summary:
 Agents can fetch the full new state by reading `project://current` after a
 change notification arrives — the notification is a hint, not a sync protocol.
 
-## Cloud APIs (optional, user-supplied)
+## Speech (optional, user-supplied)
 
 For things agents can't do well themselves. The cloud surface is
 provider-agnostic: keys live in the OS keyring keyed by **API provider**
@@ -282,7 +282,7 @@ serve the surface.
 
 **Capability surfaces:**
 
-- **Transcription** (`Transcriber` trait) — `transcribe_clip { layer_id, t_start_us?, t_end_us?, language? }` returns a timeline-absolute SRT body. Slices the layer's source audio at the requested window (defaults: the whole layer), posts to the picked provider, shifts SRT cues forward by the timeline offset, returns the SRT body so the agent can inspect / edit before passing it to `apply_subtitles`. `VideoClip` layers with `speed != 1.0` reject with a hint to `split_layer` off a speed-1 segment first. Provider today: OpenAI Whisper.
+- **Transcription** (`Transcriber` trait) — `transcribe_clip { layer_id, t_start_us?, t_end_us?, language? }` returns a normalized transcript envelope `{ segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }`, all times timeline-absolute. Slices the layer's source audio at the requested window (defaults: the whole layer), transcribes with the picked provider, normalizes the raw output to timestamped word segments, shifts every timestamp forward by the timeline offset, and includes a rendered `srt` field so the agent can inspect / edit and pass it to `apply_subtitles` (word-level data stays in `segments`). `word_timing` records the per-word timing provenance — `exact` from an engine's token offsets, `interpolated_from_cue` when derived by splitting an SRT cue span across its words. `VideoClip` layers with `speed != 1.0` reject with a hint to `split_layer` off a speed-1 segment first. Provider today: OpenAI Whisper (SRT → interpolated words).
 - **Text-to-speech** (`Synthesizer` trait) — `synthesize_speech { text, voice, speed?, target_track_id?, t_start_us? }` returns `{ layer_id, media_id, t_start_us, t_end_us, cached }`. Synthesizes audio for the supplied script, writes a content-addressed file under `<workspace>/Cache/voiceover/<hash>.mp3`, imports it as a `MediaItem`, and adds an `Audio` layer on the target Audio track (auto-creates one labeled "Voiceover" when absent). `t_start_us` defaults to the composition's current `duration_us` so voiceover appends at the end. `cached=true` means the request hit the cache and no API call billed. Provider today: OpenAI tts-1 (same key as Whisper).
 
 **Single-key, multi-surface:** an OpenAI key activates BOTH

@@ -38,7 +38,7 @@ pub fn shared_client() -> &'static Client {
 
 /// Build the `Authorization: Bearer <key>` header value. The caller resolves
 /// the key from the in-memory cache (missing-key handling lives at the call
-/// site / picker, which returns `CloudError::MissingKey` cleanly).
+/// site / picker, which returns `SpeechError::MissingKey` cleanly).
 pub fn bearer_auth(key: &str) -> String {
     format!("Bearer {key}")
 }
@@ -100,8 +100,8 @@ fn is_transient_status(status: StatusCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cloud::errors::CloudError;
-    use crate::cloud::keys::Provider;
+    use crate::speech::backend::SpeechBackend;
+    use crate::speech::error::SpeechError;
 
     #[test]
     fn shared_client_is_a_singleton() {
@@ -116,13 +116,10 @@ mod tests {
     #[test]
     fn missing_key_returns_structured_error() {
         // No real keyring access — this test relies on the user not having a
-        // bogus "test-only" provider key. The `Provider::OpenAi` variant is
-        // intentionally not used here because it may be configured locally;
-        // when we add a second provider variant this test will exercise that
-        // unconfigured path. For now we just verify the error constructor is
-        // wired up.
-        let err = CloudError::MissingKey {
-            provider: Provider::OpenAi,
+        // bogus "test-only" backend key. For now we just verify the error
+        // constructor is wired up and its message hints Settings.
+        let err = SpeechError::MissingKey {
+            provider: SpeechBackend::OpenAi,
         };
         assert!(format!("{err}").contains("Settings"));
     }

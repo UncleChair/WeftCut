@@ -253,7 +253,7 @@ impl CacheLayout {
 
     /// Audio slices extracted for cloud transcription (mono 16 kHz WAV).
     /// Hash composition is `blake3([source_hash_bytes, in_us.to_le_bytes(),
-    /// out_us.to_le_bytes()].concat())` — see `cloud::audio_extract`.
+    /// out_us.to_le_bytes()].concat())` — see `speech::audio_extract`.
     pub fn transcribe_audio_dir(&self) -> PathBuf {
         self.current_root().join("transcribe-audio")
     }
@@ -265,7 +265,7 @@ impl CacheLayout {
     /// Synthesized TTS output. Content-addressed by `blake3(model || '\0' ||
     /// voice || '\0' || speed || '\0' || text)` so repeated requests with the
     /// same parameters skip the API call entirely — see
-    /// `cloud::providers::openai::tts_cache_key` and the `synthesize_speech`
+    /// `speech::backends::openai::tts_cache_key` and the `synthesize_speech`
     /// MCP tool.
     pub fn voiceover_dir(&self) -> PathBuf {
         self.current_root().join("voiceover")
