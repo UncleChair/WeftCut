@@ -26,10 +26,18 @@
   --dv-paneview-active-outline-color: var(--ring);
   --dv-separator-border: var(--border-soft);
   --dv-tab-divider-color: var(--border);
-  /* Dockview's default drop highlight is a neutral gray — route it through
-     the shared selection blue so dock feedback matches every other drop. */
-  --dv-drag-over-background-color: var(--selection-bg);
-  --dv-drag-over-border-color: var(--selection-border);
+  /* Drop feedback: VS Code-style — a translucent accent fill with a solid
+     accent outline, so the pending split reads as a real region. Dockview's
+     default is borderless (`--dv-drag-over-border: none`) with a faint gray
+     fill, which made the drop state nearly invisible. */
+  --dv-drag-over-background-color: color-mix(in srgb, var(--ring) 20%, transparent);
+  --dv-drag-over-border-color: var(--ring);
+  --dv-drag-over-border: 2px solid var(--ring);
+  /* Dockview's built-in tab context menu, themed to match the app menus. */
+  --dv-context-menu-background-color: var(--card);
+  --dv-context-menu-color: var(--foreground);
+  --dv-icon-hover-background-color: var(--muted);
+  --dv-border-radius: var(--radius-sm);
 }
 
 .weft-dockview .dv-groupview {
@@ -123,13 +131,22 @@
   background: var(--muted);
 }
 
-/* Every group keeps its 28px tab header — single-Panel groups included — so
-   the drag handle, Panel title, and close affordance stay in one fixed place
-   regardless of group state. The native Dockview tab remains the only dock
-   drag source. */
+/* Every group keeps its 28px tab header — so the drag handle, Panel title,
+   and close affordance stay in one fixed place regardless of group state —
+   with one exception: a group holding only Preview has its strip hidden by
+   the adapter (Dockview `hideHeader`). With no strip there is no drag handle,
+   so a solo Preview cannot be dragged, and the preview surface gains the
+   vertical space. Once another Panel joins the group the strip returns for
+   tab switching. */
 .weft-dockview .dv-tabs-and-actions-container .dv-tab {
   height: 28px;
   padding: 0 8px;
+}
+
+/* The drop preview is a real region, not a hairline: soften its corners to
+   match the app's surfaces. */
+.weft-dockview .dv-drop-target-selection {
+  border-radius: var(--radius-sm);
 }
 
 .weft-dock-empty {

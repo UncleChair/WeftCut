@@ -112,7 +112,11 @@ function strictModeApi() {
     string,
     {
       id: string;
-      group: { panels: unknown[]; api: { isMaximized(): boolean } };
+      group: {
+        panels: unknown[];
+        model: { header: { hidden: boolean } };
+        api: { isMaximized(): boolean };
+      };
       api: {
         id: string;
         title: string;
@@ -125,7 +129,8 @@ function strictModeApi() {
       };
     }
   >();
-  const groups: { panels: unknown[] }[] = [];
+  const groups: { panels: unknown[]; model: { header: { hidden: boolean } } }[] =
+    [];
   const addPanel = vi.fn((options: Record<string, unknown>) => {
     const position = options.position as
       | { referencePanel?: string; direction?: string }
@@ -137,6 +142,7 @@ function strictModeApi() {
       ? reference.group
       : {
           panels: [] as unknown[],
+          model: { header: { hidden: false } },
           api: { isMaximized: () => false },
         };
     if (!groups.includes(group)) groups.push(group);
@@ -250,6 +256,7 @@ function strictModeApi() {
     getPanel: (id: string) => panels.get(id),
     addPanel,
     onWillShowOverlay,
+    onWillDrop: event,
     onDidLayoutChange: event,
     onDidActivePanelChange: event,
     onDidMaximizedGroupChange: event,
@@ -398,7 +405,7 @@ describe("DockWorkspace React integration", () => {
     expect(previewHarness.unmounts).toBe(previewHarness.mounts);
   });
 
-  it("shows direct close only for multi-Panel tabs and toggles maximize on chrome", () => {
+  it("closes and maximizes from the tab chrome", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;
     dockHarness.headerApi = {
@@ -416,7 +423,7 @@ describe("DockWorkspace React integration", () => {
     expect(effect?.api.close).toHaveBeenCalledOnce();
   });
 
-  it("keeps single-Panel chrome to the drag handle without a close control", () => {
+  it("shows a close control even for a single-Panel tab", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;
     dockHarness.headerApi = {
@@ -427,10 +434,88 @@ describe("DockWorkspace React integration", () => {
 
     render(<DockWorkspace contracts={contracts} />);
 
+    const preview = dock.panels.get("preview");
     expect(screen.getByTitle("Move Preview")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close Preview" }));
+    expect(preview?.api.close).toHaveBeenCalledOnce();
+  });
+
+  it("builds a localized tab context menu with working close actions", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    const props = dockHarness.captures[
+      dockHarness.captures.length - 1
+    ] as unknown as {
+      getTabContextMenuItems: (params: {
+        panel: { id: string };
+        group: { panels: { id: string }[] };
+      }) => { label: string; action: () => void }[];
+    };
+
+    // Multi-Panel group: Close / Close Others / Close All, in English here.
+    const multi = props.getTabContextMenuItems({
+      panel: { id: "media" },
+      group: { panels: [{ id: "media" }, { id: "preview" }] },
+    });
+    expect(multi.map((item) => item.label)).toEqual([
+      "Close",
+      "Close Others",
+      "Close All",
+    ]);
+
+    const media = dock.panels.get("media");
+    multi[0]!.action();
+    expect(media?.api.close).toHaveBeenCalledOnce();
+
+    const preview = dock.panels.get("preview");
+    multi[1]!.action();
+    expect(preview?.api.close).toHaveBeenCalledOnce();
+
+    multi[2]!.action();
+    expect(dock.panels.size).toBe(0);
+
+    // Single-Panel group: no Close Others.
+    const solo = props.getTabContextMenuItems({
+      panel: { id: "timeline" },
+      group: { panels: [{ id: "timeline" }] },
+    });
+    expect(solo.map((item) => item.label)).toEqual(["Close", "Close All"]);
+
+    // Unknown panels get no menu at all.
     expect(
-      screen.queryByRole("button", { name: "Close Preview" }),
-    ).toBeNull();
+      props.getTabContextMenuItems({
+        panel: { id: "not-a-panel" },
+        group: { panels: [{ id: "not-a-panel" }] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("widens drop targets and sizes the overlay to the resulting split", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    const props = dockHarness.captures[
+      dockHarness.captures.length - 1
+    ] as unknown as {
+      dropOverlayModel: (params: { location: string }) => unknown;
+      dndEdges: unknown;
+    };
+
+    expect(props.dropOverlayModel({ location: "content" })).toEqual({
+      activationSize: { value: 30, type: "percentage" },
+      size: { value: 50, type: "percentage" },
+    });
+    expect(props.dropOverlayModel({ location: "tab" })).toBeUndefined();
+    expect(
+      props.dropOverlayModel({ location: "header_space" }),
+    ).toBeUndefined();
+    // Root edge bands stay off — they capture-phase-hijack tab-strip drops.
+    expect(props.dndEdges).toBe(false);
   });
 
   it("renders Open Panel and Reset Workspace recovery for an empty tree", async () => {

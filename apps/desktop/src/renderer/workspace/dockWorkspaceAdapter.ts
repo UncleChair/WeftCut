@@ -1,5 +1,7 @@
 import {
   type DockviewApi,
+  type DockviewGroupPanel,
+  type DockviewWillDropEvent,
   type IDockviewPanel,
   type DockviewWillShowOverlayLocationEvent,
 } from "dockview-react";
@@ -33,6 +35,17 @@ interface Disposable {
 
 interface DockPanelParams {
   kind: PanelKind;
+}
+
+/** Geometry captured just before a split drop lands, used to undo Dockview's
+ *  sibling-equalizing relayout. */
+interface PendingSplitDropFix {
+  axis: "width" | "height";
+  targetGroupId: string;
+  /** Pre-drop on-axis size of every group, target included. */
+  sizes: Map<string, number>;
+  draggedPanelId: string | null;
+  draggedGroupId: string;
 }
 
 export interface DockWorkspaceSnapshot {
@@ -76,6 +89,22 @@ function positiveSize(value: number, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+type SplitAxis = "width" | "height";
+
+function measureOnAxis(group: DockviewGroupPanel, axis: SplitAxis): number {
+  const box = group.api.boundingBox;
+  return box ? box[axis] : 0;
+}
+
+function setSizeOnAxis(
+  group: DockviewGroupPanel,
+  axis: SplitAxis,
+  value: number,
+): void {
+  if (axis === "width") group.api.setSize({ width: value });
+  else group.api.setSize({ height: value });
+}
+
 /** True only for OS Files or WeftCut business drags, never Dockview drags. */
 export function isBusinessDockDrag(
   dataTransfer: Pick<DataTransfer, "types"> | null | undefined,
@@ -103,6 +132,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   private readonly listeners = new Set<() => void>();
   private readonly lastPlacements = new Map<PanelKind, PanelPlacement>();
   private hoveredPanel: PanelKind | null = null;
+  private pendingSplitDropFix: PendingSplitDropFix | null = null;
 
   constructor(private readonly api: DockviewApi) {
     this.disposables.push(api.onWillShowOverlay((event) => {
@@ -111,7 +141,12 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       }
     }));
     this.disposables.push(
+      api.onWillDrop((event) => this.captureSplitDropFix(event)),
+    );
+    this.disposables.push(
       api.onDidLayoutChange(() => {
+        this.applySplitDropFix();
+        this.syncPreviewGroupChrome();
         this.captureOpenPlacements();
         this.emitChange();
       }),
@@ -121,6 +156,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // A StrictMode-ready replay may hand a fresh adapter an API whose Panels
     // were already registered by the first pass. Seed recovery metadata from
     // that live tree instead of waiting for another layout mutation.
+    this.syncPreviewGroupChrome();
     this.captureOpenPlacements();
   }
 
@@ -370,6 +406,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
   }
 
   dispose(): void {
+    this.pendingSplitDropFix = null;
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
     this.listeners.clear();
   }
@@ -380,6 +417,91 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
 
   private captureOpenPlacements(): void {
     for (const panel of this.api.panels) this.capturePlacement(panel);
+  }
+
+  /** A group left holding only Preview loses its tab strip — no strip means
+   *  no drag handle, so a solo Preview stays put. Re-evaluated on every layout
+   *  change: once another Panel joins the group the strip (and tab switching)
+   *  returns. Uses Dockview's own hideHeader, which normalizeLayout keeps out
+   *  of persisted snapshots — the state is derived, never stored. */
+  private syncPreviewGroupChrome(): void {
+    for (const group of this.api.groups) {
+      const soloPreview =
+        group.panels.length === 1 && group.panels[0]?.id === "preview";
+      group.model.header.hidden = soloPreview;
+    }
+  }
+
+  /** Dockview answers every split drop by inserting the new group with no
+   *  explicit size, which makes Splitview *distribute*: every sibling in the
+   *  branch is resized to an equal share. The drop preview (50% of the
+   *  target) therefore lies — carefully sized columns jump to equal widths.
+   *  Capture the pre-drop geometry here (synchronously before the move) and
+   *  repair it right after: untouched groups keep their size, the target and
+   *  the new group split the freed space evenly — what the preview promised. */
+  private captureSplitDropFix(event: DockviewWillDropEvent): void {
+    this.pendingSplitDropFix = null;
+    const { position, group, kind } = event;
+    if (!group) return; // root edge drops carry no target group (and are off)
+    if (kind !== "content" && kind !== "header_space") return;
+    if (
+      position !== "left" &&
+      position !== "right" &&
+      position !== "top" &&
+      position !== "bottom"
+    ) {
+      return; // merges and tab insertions don't rebalance siblings
+    }
+    const data = event.getData();
+    if (!data || data.viewId !== this.api.id) return; // not a layout move
+    const axis: SplitAxis =
+      position === "left" || position === "right" ? "width" : "height";
+    const sizes = new Map<string, number>();
+    for (const candidate of this.api.groups) {
+      const size = measureOnAxis(candidate, axis);
+      if (size > 0) sizes.set(candidate.id, size);
+    }
+    if (!sizes.has(group.id)) return;
+    this.pendingSplitDropFix = {
+      axis,
+      targetGroupId: group.id,
+      sizes,
+      draggedPanelId: data.panelId ?? null,
+      draggedGroupId: data.groupId,
+    };
+    // The move is processed synchronously right after this event, so a
+    // microtask still beats the next paint: the repair is invisible.
+    queueMicrotask(() => this.applySplitDropFix());
+  }
+
+  private applySplitDropFix(): void {
+    const fix = this.pendingSplitDropFix;
+    this.pendingSplitDropFix = null;
+    if (!fix) return;
+    const target = this.api.groups.find(
+      (candidate) => candidate.id === fix.targetGroupId,
+    );
+    const dragged = fix.draggedPanelId
+      ? this.api.getPanel(fix.draggedPanelId)?.group
+      : this.api.groups.find(
+          (candidate) => candidate.id === fix.draggedGroupId,
+        );
+    // Merges, reorders, and rejected drops leave the dragged item inside the
+    // target group; only a real split lands it beside the target.
+    if (!target || !dragged || dragged === target) return;
+    for (const candidate of this.api.groups) {
+      if (candidate === target || candidate === dragged) continue;
+      const size = fix.sizes.get(candidate.id);
+      if (size !== undefined && size > 0) {
+        setSizeOnAxis(candidate, fix.axis, size);
+      }
+    }
+    const combined =
+      measureOnAxis(target, fix.axis) + measureOnAxis(dragged, fix.axis);
+    if (combined <= 0) return;
+    const half = Math.round(combined / 2);
+    setSizeOnAxis(target, fix.axis, half);
+    setSizeOnAxis(dragged, fix.axis, combined - half);
   }
 
   private capturePlacement(panel: IDockviewPanel): void {

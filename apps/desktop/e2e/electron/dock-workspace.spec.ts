@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  dragDockTab,
   invokeCmd,
   launchApp,
   newProject,
@@ -50,34 +49,47 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(0);
     await expect(page.locator('[data-panel-kind="role-mixer"]')).toHaveCount(0);
 
-    const geometry = await page.evaluate(() => {
-      const rect = (selector: string) => {
-        const element = document.querySelector(selector);
-        if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
-        const box = element.getBoundingClientRect();
-        return { x: box.x, y: box.y, width: box.width, height: box.height };
-      };
-      return {
-        workspace: rect(".dock-workspace"),
-        media: rect('[data-panel-kind="media"]'),
-        preview: rect('[data-panel-kind="preview"]'),
-        attribute: rect('[data-panel-kind="attribute"]'),
-        timeline: rect('[data-panel-kind="timeline"]'),
-      };
-    });
+    const geometryOf = () =>
+      page.evaluate(() => {
+        const rect = (selector: string) => {
+          const element = document.querySelector(selector);
+          if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
+          const box = element.getBoundingClientRect();
+          return { x: box.x, y: box.y, width: box.width, height: box.height };
+        };
+        return {
+          workspace: rect(".dock-workspace"),
+          media: rect('[data-panel-kind="media"]'),
+          preview: rect('[data-panel-kind="preview"]'),
+          attribute: rect('[data-panel-kind="attribute"]'),
+          timeline: rect('[data-panel-kind="timeline"]'),
+        };
+      });
 
+    // Panels exist in the DOM before their render overlays are positioned
+    // (a few startup frames); until then an overlay still measures as the
+    // whole workspace. Wait for the timeline share to settle at the baseline
+    // proportion, then assert the full geometry in one read.
     const ratio = (value: number, total: number) => value / total;
+    await expect
+      .poll(async () => {
+        const g = await geometryOf();
+        return ratio(g.timeline.height, g.workspace.height);
+      })
+      .toBeCloseTo(0.38, 1);
+
+    const geometry = await geometryOf();
     expect(ratio(geometry.timeline.height, geometry.workspace.height)).toBeCloseTo(0.38, 1);
     expect(ratio(geometry.timeline.width, geometry.workspace.width)).toBeCloseTo(1, 1);
     expect(ratio(geometry.media.width, geometry.workspace.width)).toBeCloseTo(0.22, 1);
     expect(ratio(geometry.preview.width, geometry.workspace.width)).toBeCloseTo(0.53, 1);
     expect(ratio(geometry.attribute.width, geometry.workspace.width)).toBeCloseTo(0.25, 1);
 
-    // Every group keeps its 28px tab strip with a visible title — single-Panel
-    // groups included.
+    // Every group keeps its 28px tab strip with a visible title — except a
+    // solo Preview, whose strip (and drag handle) is hidden until another
+    // Panel joins its group.
     for (const label of [
       "Media Pool",
-      "Preview",
       "Timeline",
       "Attribute",
       "Effect",
@@ -87,11 +99,53 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
         page.locator(".weft-dock-tab-label", { hasText: label }),
       ).toBeVisible();
     }
+    await expect(
+      page.locator(".weft-dock-tab-label", { hasText: "Preview" }),
+    ).not.toBeVisible();
 
     const minimumSize = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0]?.getMinimumSize(),
     );
     expect(minimumSize).toEqual([960, 640]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("every tab closes directly, and its right-click menu carries batch close actions", async () => {
+  const { app, page } = await launchApp();
+  try {
+    const parent = tmpDir("weftcut-dock-menu-");
+    await newProject(page, {
+      parentFolder: parent,
+      name: "dock-tab-menu",
+      canvas: CANVAS,
+    });
+
+    // A solo tab has its own close button, and its menu offers Close plus
+    // Close All — no Close Others while it is alone in its group.
+    const mediaTab = page.getByTitle("Move Media Pool");
+    await expect(
+      mediaTab.getByRole("button", { name: "Close Media Pool" }),
+    ).toBeVisible();
+    await mediaTab.click({ button: "right" });
+    const soloItems = page.locator(".dv-context-menu-item");
+    await expect(soloItems).toHaveCount(2);
+    await expect(soloItems.nth(0)).toHaveText("Close");
+    await expect(soloItems.nth(1)).toHaveText("Close All");
+    await soloItems.nth(0).click();
+    await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(0);
+
+    // In a multi-Panel group the menu gains Close Others, which closes the
+    // group's other tabs and keeps the right-clicked one.
+    await page.getByTitle("Move Attribute").click({ button: "right" });
+    const groupItems = page.locator(".dv-context-menu-item");
+    await expect(groupItems).toHaveCount(3);
+    await expect(groupItems.nth(1)).toHaveText("Close Others");
+    await groupItems.nth(1).click();
+    await expect(page.locator('[data-panel-kind="attribute"]')).toHaveCount(1);
+    await expect(page.locator('[data-panel-kind="effect"]')).toHaveCount(0);
+    await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(0);
   } finally {
     await app.close();
   }
@@ -192,11 +246,12 @@ test("hidden Preview keeps clock resources alive while presentation sleeps", asy
     const before = await page.evaluate(() =>
       (window as any).__weftcutTest.previewResourceProbe(),
     );
-    await dragDockTab(
-      page,
-      page.getByTitle("Move Effect").locator(".weft-dock-grip"),
-      page.locator('[data-panel-kind="preview"]'),
-    );
+    // Center-merge onto Preview's content. Native dragTo: the manual
+    // mouse-gesture helper does not reliably drive HTML5 center drops on
+    // Windows (edge drops are fine — see dragDockTab).
+    await page
+      .getByTitle("Move Effect")
+      .dragTo(page.locator('[data-panel-kind="preview"]'));
 
     await expect
       .poll(() =>
@@ -332,12 +387,12 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     await invokeCmd(page, "project_redo", {});
     await expect.poll(effectOrder).toEqual(reordered);
 
-    // The card gesture never touched the Dock Tree.
+    // The card gesture never touched the Dock Tree. Preview sits solo, so its
+    // tab strip (and label) is hidden; every other group's tab shows.
     const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "timeline"];
     expect(await panelKinds()).toEqual(defaultPanelSet);
     expect(await visibleTabLabels()).toEqual([
       "Media Pool",
-      "Preview",
       "Attribute",
       "Effect",
       "Nearby",
@@ -345,12 +400,13 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     ]);
 
     // The converse isolation: docking the Effect Panel tab must not reorder
-    // the chain. Drop the Effect tab onto Preview's group center.
-    await dragDockTab(
-      page,
-      page.getByTitle("Move Effect"),
-      page.locator('[data-panel-kind="preview"]'),
-    );
+    // the chain. Drop the Effect tab onto Preview's group center — a real
+    // merge, which also brings Preview's strip back for tab switching.
+    // (Native dragTo: the manual gesture helper is unreliable for HTML5
+    // center drops on Windows.)
+    await page
+      .getByTitle("Move Effect")
+      .dragTo(page.locator('[data-panel-kind="preview"]'));
     await expect.poll(async () => (await visibleTabLabels()).sort()).toEqual([
       "Attribute",
       "Effect",

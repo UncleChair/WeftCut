@@ -30,7 +30,12 @@ interface FakeGroup {
   id: string;
   panels: AddedPanel[];
   activePanel: AddedPanel | undefined;
-  api: { isMaximized: ReturnType<typeof vi.fn> };
+  model: { header: { hidden: boolean } };
+  api: {
+    isMaximized: ReturnType<typeof vi.fn>;
+    boundingBox: { left: number; top: number; width: number; height: number };
+    setSize: ReturnType<typeof vi.fn>;
+  };
 }
 
 function signal<T>() {
@@ -70,6 +75,12 @@ function fakeDockview(
   const layout = signal<void>();
   const active = signal<{ panel: AddedPanel | undefined; origin: "api" }>();
   const maximized = signal<{ group: FakeGroup; isMaximized: boolean }>();
+  const willDrop = signal<{
+    position: string;
+    group: FakeGroup | undefined;
+    kind: string;
+    getData(): { viewId: string; groupId: string; panelId: string | null } | undefined;
+  }>();
 
   function activate(panel: AddedPanel | undefined) {
     activePanel = panel;
@@ -98,6 +109,7 @@ function fakeDockview(
   }
 
   const api = {
+    id: "test-dockview",
     width,
     height,
     get totalPanels() {
@@ -139,8 +151,11 @@ function fakeDockview(
           id: `group-${++groupSequence}`,
           panels: [],
           activePanel: undefined,
+          model: { header: { hidden: false } },
           api: {
             isMaximized: vi.fn(() => maximizedGroup === group),
+            boundingBox: { left: 0, top: 0, width: 361, height: 516 },
+            setSize: vi.fn(),
           },
         };
         groups.push(group);
@@ -181,6 +196,7 @@ function fakeDockview(
       overlayListener = listener;
       return { dispose: disposeOverlay };
     }),
+    onWillDrop: vi.fn(willDrop.event),
     onDidLayoutChange: vi.fn(layout.event),
     onDidActivePanelChange: vi.fn(active.event),
     onDidMaximizedGroupChange: vi.fn(maximized.event),
@@ -269,7 +285,12 @@ function fakeDockview(
             id: leaf.id ?? `group-${++groupSequence}`,
             panels: [],
             activePanel: undefined,
-            api: { isMaximized: vi.fn(() => maximizedGroup === group) },
+            model: { header: { hidden: false } },
+            api: {
+              isMaximized: vi.fn(() => maximizedGroup === group),
+              boundingBox: { left: 0, top: 0, width: 361, height: 516 },
+              setSize: vi.fn(),
+            },
           };
           groups.push(group);
           for (const id of leaf.views ?? []) {
@@ -303,6 +324,7 @@ function fakeDockview(
     groups,
     added,
     rawApi: api,
+    willDrop,
     disposeOverlay,
     showOverlay(types: string[]) {
       const preventDefault = vi.fn();
@@ -396,6 +418,147 @@ describe("DockWorkspaceAdapter", () => {
     }
     expect(dock.panels.has("caption")).toBe(false);
     expect(dock.panels.has("role-mixer")).toBe(false);
+  });
+
+  it("hides the tab strip only while a group holds solo Preview", () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    const groupOf = (id: string) => {
+      const group = dock.groups.find((candidate) =>
+        candidate.panels.some((panel) => panel.id === id),
+      );
+      if (!group) throw new Error(`no group holds ${id}`);
+      return group;
+    };
+    const headerHidden = (id: string) => groupOf(id).model.header.hidden;
+
+    // Preview sits alone; every other group keeps its strip. Media and
+    // Timeline are solo too, but the hidden strip is Preview's alone.
+    expect(headerHidden("preview")).toBe(true);
+    expect(headerHidden("media")).toBe(false);
+    expect(headerHidden("timeline")).toBe(false);
+    expect(headerHidden("attribute")).toBe(false);
+
+    // A Panel dropped into Preview's group brings the strip back for tab
+    // switching; closing it again re-hides the strip.
+    dock.rawApi.addPanel({
+      id: "caption",
+      title: "Caption",
+      position: { referencePanel: "preview", direction: "within" },
+    });
+    expect(headerHidden("preview")).toBe(false);
+    adapter.closePanel("caption");
+    expect(headerHidden("preview")).toBe(true);
+  });
+
+  it("repairs a split drop: untouched groups keep their size, target and new group split evenly", async () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    const groupOf = (id: string) => {
+      const group = dock.groups.find((candidate) =>
+        candidate.panels.some((panel) => panel.id === id),
+      );
+      if (!group) throw new Error(`no group holds ${id}`);
+      return group;
+    };
+    const timelineGroup = groupOf("timeline");
+    const attributeGroup = groupOf("attribute");
+
+    // Pre-drop geometry on the height axis (a 'top' split on Timeline).
+    groupOf("media").api.boundingBox.height = 516;
+    groupOf("preview").api.boundingBox.height = 516;
+    attributeGroup.api.boundingBox.height = 516;
+    timelineGroup.api.boundingBox.height = 317;
+
+    dock.willDrop.fire({
+      position: "top",
+      group: timelineGroup,
+      kind: "content",
+      getData: () => ({
+        viewId: "test-dockview",
+        groupId: attributeGroup.id,
+        panelId: "effect",
+      }),
+    });
+
+    // Simulate what Dockview does next, synchronously: Effect moves into a
+    // new group beside Timeline, and Splitview's distribute equalizes every
+    // sibling — the jump the repair must undo.
+    const effect = dock.panels.get("effect");
+    if (!effect) throw new Error("effect missing");
+    attributeGroup.panels.splice(attributeGroup.panels.indexOf(effect), 1);
+    const newGroup: FakeGroup = {
+      id: "group-new",
+      panels: [effect],
+      activePanel: effect,
+      model: { header: { hidden: false } },
+      api: {
+        isMaximized: vi.fn(() => false),
+        boundingBox: { left: 0, top: 0, width: 1_442, height: 277 },
+        setSize: vi.fn(),
+      },
+    };
+    effect.group = newGroup;
+    dock.groups.push(newGroup);
+    for (const group of dock.groups) group.api.boundingBox.height = 277;
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Untouched groups are restored to their pre-drop sizes…
+    expect(groupOf("media").api.setSize).toHaveBeenCalledWith({
+      height: 516,
+    });
+    expect(groupOf("preview").api.setSize).toHaveBeenCalledWith({
+      height: 516,
+    });
+    expect(attributeGroup.api.setSize).toHaveBeenCalledWith({ height: 516 });
+    // …and target + new group split their combined space evenly.
+    expect(timelineGroup.api.setSize).toHaveBeenCalledWith({ height: 277 });
+    expect(newGroup.api.setSize).toHaveBeenCalledWith({ height: 277 });
+  });
+
+  it("leaves merges and rejected drops untouched", async () => {
+    const dock = fakeDockview();
+    const adapter = new DockWorkspaceAdapter(dock.api);
+    adapter.initializeEditingLayout();
+
+    const attributeGroup = dock.groups.find((candidate) =>
+      candidate.panels.some((panel) => panel.id === "attribute"),
+    );
+    if (!attributeGroup) throw new Error("attribute group missing");
+
+    // A center merge: not a split — nothing is captured in the first place.
+    dock.willDrop.fire({
+      position: "center",
+      group: attributeGroup,
+      kind: "content",
+      getData: () => ({
+        viewId: "test-dockview",
+        groupId: "group-elsewhere",
+        panelId: "effect",
+      }),
+    });
+    // A split-shaped drop that Dockview then rejects (Effect never leaves).
+    dock.willDrop.fire({
+      position: "top",
+      group: attributeGroup,
+      kind: "content",
+      getData: () => ({
+        viewId: "test-dockview",
+        groupId: attributeGroup.id,
+        panelId: "effect",
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    for (const group of dock.groups) {
+      expect(group.api.setSize).not.toHaveBeenCalled();
+    }
   });
 
   it("focuses an existing singleton instead of constructing a duplicate", () => {

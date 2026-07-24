@@ -139,6 +139,11 @@ const zhCN: Resources = {
     reset: "重置工作区",
     move_panel: "移动{{title}}",
     close_panel: "关闭{{title}}",
+    menu: {
+      close: "关闭",
+      close_others: "关闭其他",
+      close_all: "全部关闭",
+    },
     panels: {
       media: "素材库",
       preview: "预览",

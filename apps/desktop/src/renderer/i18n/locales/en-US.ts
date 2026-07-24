@@ -135,6 +135,11 @@ const enUS = {
     reset: "Reset Workspace",
     move_panel: "Move {{title}}",
     close_panel: "Close {{title}}",
+    menu: {
+      close: "Close",
+      close_others: "Close Others",
+      close_all: "Close All",
+    },
     panels: {
       media: "Media Pool",
       preview: "Preview",

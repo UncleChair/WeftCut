@@ -71,8 +71,8 @@ const panelKinds = async (page: Page): Promise<string[]> =>
     .sort();
 
 /// The tab labels currently visible across the workspace. Every group keeps
-/// its tab header (single-Panel groups included), so this lists every open
-/// Panel's tab, in DOM order.
+/// its tab header — except a solo Preview, whose strip is hidden — so this
+/// lists every open Panel's tab but that one's, in DOM order.
 const visibleTabLabels = async (page: Page): Promise<string[]> =>
   page
     .locator(".weft-dock-tab-label")
@@ -146,21 +146,24 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
     await page.keyboard.press("Control+Shift+Comma");
     await expect.poll(() => activePanel(page)).toBe(before);
 
-    // Double-click a Panel's drag handle to maximize it: the Dock Tree is
+    // Preview has no tab strip while solo, so maximize it the way a user
+    // would: hover its surface and press Backquote. The Dock Tree is
     // untouched (still six Panels), the snapshot reports the runtime maximize
     // overlay, and Preview fills the workspace while the others go non-visible.
     const workspaceWidth = (await rect(page, ".dock-workspace")).width;
-    await page.getByTitle("Move Preview").dblclick();
+    await page.locator('[data-panel-kind="preview"]').hover();
+    await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBe("preview");
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
     const maximized = await settledWidth(page, '[data-panel-kind="preview"]');
     expect(maximized / workspaceWidth).toBeGreaterThan(0.9);
 
-    // A second double-click reverses the overlay: no Panel is maximized, the tree
-    // is still the six built-in Panels (maximize never persisted), and the layout
-    // is a genuine multi-column split again — Preview back to a shared column
-    // alongside Media and Timeline (both single-Panel groups, so robustly visible).
-    await page.getByTitle("Move Preview").dblclick();
+    // A second Backquote press reverses the overlay: no Panel is maximized,
+    // the tree is still the six built-in Panels (maximize never persisted),
+    // and the layout is a genuine multi-column split again — Preview back to
+    // a shared column alongside Media and Timeline (both single-Panel groups,
+    // so robustly visible).
+    await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBeNull();
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
     const restored = await settledWidth(page, '[data-panel-kind="preview"]');
@@ -297,14 +300,13 @@ test("an edge drop splits a Panel into its own group beside the target", async (
 
     // Nearby starts tabbed with Attribute and Effect in the contextual group, so
     // only the active contextual tab's content is visible; Nearby's content is
-    // hidden. Every group's tab (single-Panel included) shows its label.
+    // hidden. Every group's tab shows its label — except solo Preview's.
     expect(await panelVisible(page, "nearby")).toBe(false);
     expect((await visibleTabLabels(page)).sort()).toEqual([
       "Attribute",
       "Effect",
       "Media Pool",
       "Nearby",
-      "Preview",
       "Timeline",
     ]);
 
@@ -324,7 +326,8 @@ test("an edge drop splits a Panel into its own group beside the target", async (
     // Still the six built-in Panels open, just re-split into a new group.
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
     // Nearby left the contextual strip for its own group; its tab stays visible
-    // there (single-Panel groups show their header), so all six tabs remain.
+    // there (single-Panel groups show their header), so every tab but solo
+    // Preview's remains visible.
     await expect
       .poll(async () => (await visibleTabLabels(page)).filter((l) => l !== "").sort())
       .toEqual([
@@ -332,7 +335,6 @@ test("an edge drop splits a Panel into its own group beside the target", async (
         "Effect",
         "Media Pool",
         "Nearby",
-        "Preview",
         "Timeline",
       ]);
     // Nearby now sits to the left of Timeline.
@@ -371,22 +373,24 @@ test("Preview keeps its resource identity through maximize, restore, and a dock 
     await page.locator(".transport-buttons button").nth(1).click();
     const start = (await readProbe())!;
 
-    // Maximize Preview and restore it. The Playback Engine + Compositor must
+    // Maximize Preview and restore it (hover + Backquote — a solo Preview has
+    // no tab strip). The Playback Engine + Compositor must
     // survive: same generation, position still advancing.
-    await page.getByTitle("Move Preview").dblclick();
+    await page.locator('[data-panel-kind="preview"]').hover();
+    await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBe("preview");
-    await page.getByTitle("Move Preview").dblclick();
+    await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBeNull();
     const afterMaximize = (await readProbe())!;
     expect(afterMaximize.generation).toBe(start.generation);
 
     // Move a tool Panel into Preview's group (Preview becomes a hidden tab), then
     // reactivate Preview. Docking must never recreate the resource.
-    await dragDockTab(
-      page,
-      page.getByTitle("Move Effect"),
-      page.locator('[data-panel-kind="preview"]'),
-    );
+    // (Native dragTo: the manual gesture helper is unreliable for HTML5
+    // center drops on Windows.)
+    await page
+      .getByTitle("Move Effect")
+      .dragTo(page.locator('[data-panel-kind="preview"]'));
     await page.getByTitle("Move Preview").click();
     const afterMove = (await readProbe())!;
     expect(afterMove.generation).toBe(start.generation);
@@ -436,9 +440,10 @@ test("Workspace mutations never change Project undo depth, and a business edit a
     await page.locator(".app-menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
     await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(0);
 
-    await page.getByTitle("Move Preview").dblclick();
+    await page.locator('[data-panel-kind="preview"]').hover();
+    await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBe("preview");
-    await page.getByTitle("Move Preview").dblclick();
+    await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBeNull();
 
     const h2 = await history(page);
@@ -512,11 +517,10 @@ test("selection and business Panels keep working after a Panel move and a Worksp
 
     // Move the Effect Panel into Preview's group. Selection and the chain survive
     // the dock move, and the keyboard move-down command still reorders (one undo).
-    await dragDockTab(
-      page,
-      page.getByTitle("Move Effect"),
-      page.locator('[data-panel-kind="preview"]'),
-    );
+    // (Native dragTo for the center merge — see the earlier note.)
+    await page
+      .getByTitle("Move Effect")
+      .dragTo(page.locator('[data-panel-kind="preview"]'));
     await page.getByTitle("Move Effect").click();
     await expect(page.getByTestId("effect-drag-0")).toBeVisible();
     expect(await effectOrder()).toEqual(effectIds);
@@ -581,11 +585,10 @@ test("Caption cue navigation still selects and seeks after the Caption Panel mov
 
     // Move the Caption Panel into Preview's group (it becomes a tab there), then
     // reactivate it — the Panel instance is reused, so its cue list persists.
-    await dragDockTab(
-      page,
-      page.getByTitle("Move Caption"),
-      page.locator('[data-panel-kind="preview"]'),
-    );
+    // (Native dragTo for the center merge — see the earlier note.)
+    await page
+      .getByTitle("Move Caption")
+      .dragTo(page.locator('[data-panel-kind="preview"]'));
     await page.getByTitle("Move Caption").click();
     await expect(caption.locator(".caption-row")).toHaveCount(3);
 

@@ -13,6 +13,9 @@ import {
   DockviewReact,
   type DockviewMessages,
   type DockviewReadyEvent,
+  type DroptargetOverlayModel,
+  type DropOverlayModelParams,
+  type GetTabContextMenuItemsParams,
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
 } from "dockview-react";
@@ -343,7 +346,6 @@ export function WeftCutDockTab({
   const kind = isPanelKind(api.id) ? api.id : null;
   const title = kind ? t(PANEL_REGISTRY[kind].titleKey) : (api.title ?? api.id);
   const chrome = useWorkspaceChrome();
-  const multiple = api.group.panels.length > 1;
   return (
     <div
       className="weft-dock-tab"
@@ -361,7 +363,7 @@ export function WeftCutDockTab({
         <GripVerticalIcon size={14} />
       </span>
       <span className="weft-dock-tab-label">{title}</span>
-      {kind && multiple ? (
+      {kind ? (
         <button
           type="button"
           className="weft-dock-tab-close"
@@ -415,6 +417,28 @@ export function EmptyWorkspaceRecovery() {
 const DOCK_COMPONENTS = { [DOCK_COMPONENT_ID]: WeftCutPanelRenderer };
 const DOCK_TAB_COMPONENTS = { [DOCK_TAB_COMPONENT_ID]: WeftCutDockTab };
 
+/* Drop-target geometry, tuned so the highlight always equals the layout the
+ * drop will produce (a 50/50 split or a full-area tab merge) and targets are
+ * large enough to hit: a group's outer third splits, its middle merges, and
+ * the outermost groups' edges double as the workspace edges. Dockview's
+ * default was a 20% activation zone, which made edge drops hard to hit.
+ *
+ * The root-level edge band (`dndEdges`) stays off: it listens on the capture
+ * phase, so any band wider than the default 10px hijacks drops aimed at the
+ * 28px tab strips that live inside it — the exact "drop did not land where I
+ * aimed" failure. Generous per-group zones cover the same edges predictably. */
+const GROUP_CONTENT_DROP_OVERLAY: DroptargetOverlayModel = {
+  activationSize: { value: 30, type: "percentage" },
+  size: { value: 50, type: "percentage" },
+};
+
+function dropOverlayModel({
+  location,
+}: DropOverlayModelParams): DroptargetOverlayModel | undefined {
+  // Tab-strip and header drops keep the default whole-strip merge highlight.
+  return location === "content" ? GROUP_CONTENT_DROP_OVERLAY : undefined;
+}
+
 interface DockWorkspaceProps {
   contracts: DockPanelContracts;
   onControllerReady?: (controller: DockWorkspaceController | null) => void;
@@ -467,6 +491,43 @@ export function DockWorkspace({
     [onResetWorkspace],
   );
 
+  /* Right-click affordance for every tab — the single-Panel case included,
+   * whose compact header carries no other menu. Labels are built per click so
+   * they follow the active locale. */
+  const getTabContextMenuItems = useCallback(
+    ({ panel, group }: GetTabContextMenuItemsParams) => {
+      const kind = isPanelKind(panel.id) ? panel.id : null;
+      if (!kind) return [];
+      const items: { label: string; action: () => void }[] = [
+        {
+          label: t("dock_workspace.menu.close"),
+          action: () => chrome.closePanel(kind),
+        },
+      ];
+      if (group.panels.length > 1) {
+        items.push({
+          label: t("dock_workspace.menu.close_others"),
+          action: () => {
+            for (const candidate of [...group.panels]) {
+              if (candidate.id !== panel.id && isPanelKind(candidate.id)) {
+                chrome.closePanel(candidate.id);
+              }
+            }
+          },
+        });
+      }
+      items.push({
+        label: t("dock_workspace.menu.close_all"),
+        action: () => {
+          const open = adapterRef.current?.getSnapshot().openPanels ?? [];
+          for (const candidate of open) chrome.closePanel(candidate);
+        },
+      });
+      return items;
+    },
+    [t, chrome],
+  );
+
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
     let adapter = adapterRef.current;
     if (!adapter?.belongsTo(api)) {
@@ -510,6 +571,9 @@ export function DockWorkspace({
             noPanelsOverlay="watermark"
             announcements
             messages={messages}
+            getTabContextMenuItems={getTabContextMenuItems}
+            dropOverlayModel={dropOverlayModel}
+            dndEdges={false}
           />
         </section>
       </WorkspaceChromeContext.Provider>
