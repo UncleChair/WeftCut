@@ -1,6 +1,6 @@
-# Rendering
+# Export
 
-The render pipeline has three concerns:
+The export pipeline has three concerns:
 
 1. **Visual preview + export** — both run through the PixiJS + WebCodecs
    compositor described in [`render.md`](render.md). One renderer

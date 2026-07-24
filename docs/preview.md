@@ -286,7 +286,7 @@ source against the new clock origin; pause stops scheduling but holds
 state for the next play.
 
 The audio compositor that produces the final m4a at export time still
-runs in Rust ffmpeg — see [`docs/rendering.md`](rendering.md). The
+runs in Rust ffmpeg — see [`docs/export.md`](export.md). The
 Web Audio path is preview-only.
 
 ## Proxies

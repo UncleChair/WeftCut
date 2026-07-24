@@ -90,7 +90,7 @@ surface and multi-agent behavior are documented in [docs/mcp.md](docs/mcp.md).
 - **[Render](docs/render.md)** — PixiJS + WebCodecs renderer architecture.
 - **[Motifs](docs/motifs.md)** — parameterized web overlays (CDP capture, raster cache, user-authored catalog).
 - **[Preview](docs/preview.md)** — interactive preview surface and transport.
-- **[Rendering](docs/rendering.md)** — audio IR, audio export, final mux.
+- **[Export](docs/export.md)** — export settings + range, audio export, final mux, proxies and background jobs.
 - **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, and color.
 - **[MCP server & agent UX](docs/mcp.md)** — protocol, tool surface, resources, multi-agent.
 - **[Features](docs/features.md)** — small-feature contracts: undo-stack scope, groups, the search palette, the color picker.

@@ -352,7 +352,7 @@ Adding more locales is a strict addition — drop a resource file under
 - [Render](render.md) — PixiJS + WebCodecs renderer architecture.
 - [Motifs](motifs.md) — parameterized web overlays captured via the DevTools Protocol: authoring contract, capture harness, raster cache.
 - [Preview](preview.md) — interactive preview surface.
-- [Rendering](rendering.md) — export orchestration + final mux.
+- [Export](export.md) — export orchestration + final mux.
 - [Audio](audio.md) — conform cache, envelope contract, preview + export mixers.
 - [Conformance](conformance.md) — media fixtures and E2E gates.
 - [Features](features.md) — small-feature contracts (undo scope, groups, search palette, color picker).

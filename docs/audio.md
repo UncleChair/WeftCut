@@ -284,7 +284,7 @@ ffmpeg -f f32le -ar 48000 -ac 2 -i - \
   either way.
 - Everything downstream — temp-file naming, `mux_to_file`, the
   no-audio-layers short-circuit, the `include=false` skip — is
-  unchanged from [`rendering.md`](rendering.md).
+  unchanged from [`export.md`](export.md).
 
 The audio IR (`DecodeA/Adelay/Amix/OutA` and the lavfi emitter) is
 retired by this design; the mixer plan is its replacement.

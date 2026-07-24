@@ -6,7 +6,7 @@ Worker. Preview pixels equal export pixels by construction.
 
 This doc covers the architecture. For the preview-side mount + clock
 + transport see [`preview.md`](preview.md). For the audio export +
-final mux see [`rendering.md`](rendering.md).
+final mux see [`export.md`](export.md).
 
 ## Boundaries
 
@@ -424,7 +424,7 @@ file has already been streamed to disk.
 
 The main thread then optionally awaits the Rust audio-only export into a
 sibling temp audio file and asks Rust to stream-copy mux both into the user's
-chosen output; see [`rendering.md`](rendering.md).
+chosen output; see [`export.md`](export.md).
 
 ### Export decode pipelines (one per media × phase)
 

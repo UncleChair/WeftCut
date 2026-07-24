@@ -6,7 +6,7 @@ status: superseded
 
 > **Superseded (partially retained).** Mediabunny still demuxes sources and muxes the
 > export Worker's **video-only** fragmented MP4 stream (`render/worker/encoder.ts`). Final
-> audio+video mux/transcode is Rust ffmpeg per [`docs/rendering.md`](../rendering.md), not
+> audio+video mux/transcode is Rust ffmpeg per [`docs/export.md`](../export.md), not
 > a combined mediabunny output as ADR 0001 envisioned.
 
 Mediabunny is the container library for the WebCodecs pipeline: it handles demuxing source files in the decoder path (`render/decoder/Demuxer.ts`), muxing the encoded video stream on export (`render/worker/encoder.ts`), and producing combined video+audio MP4 output as required by ADR 0001.
