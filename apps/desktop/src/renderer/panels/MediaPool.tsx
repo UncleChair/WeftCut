@@ -10,7 +10,7 @@ import {
   useMediaDragStore,
 } from "../timeline/mediaDrag";
 import { AppInput } from "../components/AppInput";
-import { type MediaSummary, generateQuickProxy } from "../ipc";
+import { type MediaSummary, generateQuickProxy, analyzeShots } from "../ipc";
 import { registerRevealMedia } from "../state/navigation";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { quickProxyPath } from "../render/decodeRoute";
@@ -184,6 +184,10 @@ export function MediaPool({
   // Palette "reveal in media pool": clear any filter (the target must be
   // in the filtered list), then flash + scroll the row into view.
   const [flashId, setFlashId] = useState<string | null>(null);
+  // The media id whose shot analysis is currently running (drive-by "Analyze
+  // shots"). One at a time is enough for a pool action; the button shows a
+  // pending label and disables so a second click can't re-kick mid-run.
+  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   useEffect(
     () =>
       registerRevealMedia((id) => {
@@ -381,6 +385,30 @@ export function MediaPool({
               <span className="media-item-name" title={m.label}>
                 {m.label}
               </span>
+              {interactive && m.kind === "Video" && (
+                // Drive-by "Analyze shots": warms the deterministic shot-detector
+                // cache (shared with the agent's analyze_clip / auto_split_by_shot)
+                // via the main-side `analyze_shots` handler. Disabled + relabeled
+                // while running; on a long clip the whole-source scan is inline, so
+                // the pending state is the user's only progress cue for now.
+                <button
+                  type="button"
+                  className="media-analyze-shots"
+                  disabled={analyzingId === m.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAnalyzingId(m.id);
+                    void analyzeShots(m.id).finally(() => setAnalyzingId((cur) => (cur === m.id ? null : cur)));
+                  }}
+                  title={t("media_pool.analyze_shots_hint", {
+                    defaultValue: "Detect shot cuts for this clip",
+                  })}
+                >
+                  {analyzingId === m.id
+                    ? t("media_pool.analyze_shots_running", { defaultValue: "Analyzing…" })
+                    : t("media_pool.analyze_shots", { defaultValue: "Analyze shots" })}
+                </button>
+              )}
             </li>
           );
         })}

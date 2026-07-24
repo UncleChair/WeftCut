@@ -12,7 +12,7 @@ import { captureMotifFrameB64 } from '../motif/capture.js'
 import { routeMcpTool } from './mutationTools.js'
 import { shapeMotifMcpResult } from './motifResult.js'
 import { runHybrid } from '../state/hybrids.js'
-import { CLIP_SLICE_TOOLS, resolveClipSliceArgs } from '../state/clip-slice-forward.js'
+import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
 import { serveProjectResource, buildResourceInjection } from '../state/resource-views.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
@@ -88,6 +88,13 @@ export async function handleCallTool(
     // lives in index.ts, out of this change's scope); until then describe_clip
     // resolves against an empty config and returns the actionable
     // "no video-understanding backend available" error.
+    // Two-slice compute (compare_frames): resolve BOTH nested { a, b } clip
+    // slices from the actor and forward. Kept separate from the single-slice
+    // branch below, which reads a top-level `layer_id`.
+    if (TWO_SLICE_TOOLS.has(name)) {
+      const merged = resolveTwoSliceArgs(args, tsHost.actor.snapshot())
+      return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult
+    }
     if (CLIP_SLICE_TOOLS.has(name)) {
       const merged = resolveClipSliceArgs(args, tsHost.actor.snapshot())
       // Inject the user's preferred engine as the SOFT `preferred_backend`

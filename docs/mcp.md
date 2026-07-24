@@ -106,6 +106,7 @@ get confused. The current set is around 40, organised below.
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
 | `media://{id}/frame/{t_us}` | on-demand frame at the given microsecond, lazy-cached (multimodal-friendly) |
 | `media://{id}/waveform` | audio peaks file (binary, base64) |
+| `media://{id}/analysis` | deterministic shot report (`{ shots, cut_scores }`, source-absolute) for the default detection params, content-addressed per source; computed on demand on a miss (no `404`) and shared with `analyze_clip` |
 | `media://{id}/description` | cached scene descriptions for the resolver's default backend + sampling (`{ covered_ranges, segments }`); `404` until `describe_clip` has populated it (unlike the always-computable resources above) |
 | `motifs://current` | full motif catalog (built-ins, installed, drafts) — same payload as `list_motifs`; `html` stripped |
 
@@ -116,6 +117,8 @@ yet, so agents know to wait + retry rather than give up.
 ### Analysis tools
 
 - `detect_silences { layer_id, threshold_amp?, min_silence_us? }` → `[{ t_start_us, t_end_us }, ...]`. Reads pre-computed peaks; defaults `threshold_amp=0.02` (≈ -34 dBFS) and `min_silence_us=500000`.
+- `analyze_clip { layer_id, sensitivity?, min_shot_us?, passes? }` → `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags: [...] }], cut_scores: [{ t_us, score }] }`. Deterministic shot boundaries + per-shot brightness / motion / sharpness (0..1, sharpness = variance-of-Laplacian) and `black` / `freeze` / `fade` flags for a VideoClip layer. Runs over the source (preferring the 720p proxy); source-absolute times clipped to the layer's source window. `cut_scores` is the raw cut signal, `shots` the cleaned segmentation. Defaults `sensitivity=0.4`, `min_shot_us=500000`, `passes=["shots","stats","events"]` (drop `stats`/`events` for timing only). Per-shot stat values are advisory (proxy-decode-derived, not bit-identical across machines); the flags are the deterministic signal.
+- `compare_frames { a: { layer_id, t_us }, b: { layer_id, t_us } }` → `{ phash_hamming, ssim, similar }`. Pairwise perceptual similarity of two video frames — dedup shots, match a cutaway. Each side names a VideoClip layer and a source-absolute `t_us` (same coordinate space as `media://{id}/frame/{t_us}` and `analyze_clip`'s `keyframe_t_us`); the two sides may be the same clip or different clips. `phash_hamming` is the 0..64 Hamming distance between the frames' DCT perceptual hashes (0 = identical, small = same frame re-encoded / rescaled); `ssim` is MSSIM in 0..1; `similar` is `phash_hamming <= 10 && ssim >= 0.5` (both must agree; the pHash is the strong signal and the loose SSIM floor keeps a source frame vs its lossy downscaled proxy similar while rejecting unrelated frames). Cross-aspect-ratio pairs are approximate (the MSSIM path squares both frames, so differing aspect ratios misalign) and lean on the aspect-independent pHash; same-clip dedup (one aspect ratio) is exact. Read-only, no cache; VideoClip layers only.
 - `describe_clip { layer_id, t_start_us?, t_end_us?, fps?, focus?, backend? }` → `{ backend, model, segments: [{ t_start_us, t_end_us, text, tags: [...] }] }` — see "Video understanding" below.
 
 ### Edit tools
@@ -139,6 +142,7 @@ Layers:
 - `update_layer_params { layer_id, patch }` — kind-specific params.
 - `move_layer { layer_id, new_track_id, new_t_start_us, escape_group? }`
 - `split_layer { layer_id, at_t_us, escape_group? }` → `{ left, right }`
+- `auto_split_by_shot { layer_id, min_shot_us?, drop_short? }` → `{ layer_ids }` — detect the VideoClip's shot cuts and split it at every in-window cut in ONE undoable step; returns the new segment layer ids in timeline order (or the single unchanged id when there is no interior cut). `min_shot_us` (default `500000`) is the detection minimum-shot length (closer cuts merge); `drop_short=true` also deletes any resulting segment shorter than `min_shot_us`. Pure convenience — reproducible with `analyze_clip` + `split_layer`, and it reuses the SAME cached shot report as `analyze_clip` (a prior `analyze_clip` at matching params is a cache hit). Group-aware: an auto-paired audio partner splits in lockstep. Caveat: with `drop_short=true`, only the short VIDEO segment is deleted — its group-paired audio sliver is left in place (v1 limitation).
 - `trim_layer { layer_id, edge, new_t_us, escape_group? }` — `edge` ∈ `"in" | "out"`.
 - `delete_layer { layer_id }`
 - `duplicate_layer { layer_id, t_offset_us }` → `LayerId`

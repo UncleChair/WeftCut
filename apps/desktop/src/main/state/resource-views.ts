@@ -64,7 +64,9 @@ export function buildResourceInjection(
     const media = snapshot.media_pool[id] ?? null
     // media://{id}/description additionally needs the merged VLM backend config
     // (stateless, ADR 0024) so the cached-view reader can resolve the default
-    // backend + compute the cache key; the always-computable media reads don't.
+    // backend + compute the cache key. The always-computable media reads
+    // (/thumbnail, /frame, /waveform, and the shot-layer /analysis view) are
+    // self-contained — they need only the resolved MediaItem, no injected config.
     if (uri.endsWith('/description')) return JSON.stringify({ media, vlm_config: vlmConfig })
     return JSON.stringify({ media })
   }

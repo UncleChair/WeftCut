@@ -66,6 +66,13 @@ describe('buildResourceInjection', () => {
     const actor = mkActor()
     expect(JSON.parse(buildResourceInjection('media://gone/thumbnail', actor.snapshot())).media).toBeNull()
   })
+  it('injects only the MediaItem for the self-contained media://{id}/analysis view (no vlm_config)', () => {
+    const actor = mkActor()
+    const snap = { ...actor.snapshot(), media_pool: { m1: mediaItemTemplate('m1', 'Video', 1_000_000) } } as never
+    const injected = JSON.parse(buildResourceInjection('media://m1/analysis', snap, { qwen3_vl: {} }))
+    expect(injected.media.id).toBe('m1')
+    expect('vlm_config' in injected).toBe(false)
+  })
   it('injects nothing for composition://meter', () => {
     const actor = mkActor()
     expect(buildResourceInjection('composition://meter', actor.snapshot())).toBe('{}')

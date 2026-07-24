@@ -600,6 +600,16 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     description: "Enter agent mode: flip the human's UI to a simplified preview / scrub / record-only layout while the agent makes changes. `reason` is a short free-text label shown in the record panel header (e.g. 'cutting filler words'). Creates an automatic checkpoint named 'Pre-agent: {reason}' so the human can revert the entire session in one click. Calling this while already in agent mode replaces the session. The human exits via the UI; there is no end_agent_session tool.",
     inputSchema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'] },
     parseDedicated: (a) => ({ reason: parseStr(a.reason, 'reason') }) },
+  // ── hybrid def (TS-owned) — executed by runHybrid (routeMcpTool → 'hybrid'),
+  //    NOT an actor.mcpCall arm. It lives here (not the Rust catalog like the
+  //    other hybrids) because its cuts compute in Rust but its splits write
+  //    through the TS actor, and its def must merge into the advertised catalog
+  //    from the TS side. parseDedicated is the bijection gate's required-scalar
+  //    check only; runHybrid re-validates layer_id itself. ──
+  { name: 'auto_split_by_shot', exec: 'dedicated',
+    description: "Detect shot cuts in a VideoClip layer and split it at every in-window cut, as ONE undoable step. `min_shot_us` (optional) is the minimum shot length for cut detection (closer cuts merge; default 500000 = 0.5s). `drop_short=true` additionally deletes any resulting segment shorter than `min_shot_us`. Returns `{ layer_ids }` — the new segment layer ids in timeline order (or the single unchanged layer id when no interior cut is found). Pure convenience: reproducible with `analyze_clip` + `split_layer`, and it reads the SAME cached shot report as `analyze_clip`.",
+    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, min_shot_us: { type: ['integer', 'null'] }, drop_short: { type: ['boolean', 'null'] } }, required: ['layer_id'] },
+    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
 ]
 
 const DEF_BY_NAME: Map<string, McpToolDef> = new Map(MCP_TOOL_DEFS.map((d) => [d.name, d]))

@@ -87,6 +87,55 @@ describe('dispatch: split + groups', () => {
     const s = actor.dispatch('split_layer', { layer: l1v, at_t_us: 400_000, escape_group: false })
     expect(s.ok).toBe(true)
   })
+  it('split_layer_multi splits at every cut in ONE commit (one undo reverts all), returns segment ids', () => {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'd')
+    const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const VID = '00000000-0000-0000-0000-0000000000cc'
+    actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 6_000_000 })
+    const add = actor.dispatch('add_layer', { track: a, kind: 'video', media: VID, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+    const layer = (add as { ok: true; value: unknown }).value as string
+    const before = JSON.stringify(actor.snapshot())
+    const lenBefore = actor.historyStatus().len
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000], drop_short_us: null })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect((r.value as string[]).length).toBe(3) // 2 cuts → 3 segments
+    expect(actor.historyStatus().len - lenBefore).toBe(1) // ONE recorded commit
+    const track = actor.snapshot().tracks.find((t) => t.id === a)!
+    expect(track.layers.map((l) => [l.t_start_us, l.t_end_us])).toEqual([[0, 2_000_000], [2_000_000, 4_000_000], [4_000_000, 6_000_000]])
+    expect(actor.dispatch('undo', {}).ok).toBe(true) // single commit → one undo restores all
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+  it('split_layer_multi with drop_short_us deletes sub-threshold segments in the same commit', () => {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'd')
+    const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const VID = '00000000-0000-0000-0000-0000000000cc'
+    actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 6_000_000 })
+    const add = actor.dispatch('add_layer', { track: a, kind: 'video', media: VID, src_in_us: 0, src_out_us: 6_000_000, t_start_us: 0, t_end_us: 6_000_000 })
+    const layer = (add as { ok: true; value: unknown }).value as string
+    const r = actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 2_300_000], drop_short_us: 500_000 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect((r.value as string[]).length).toBe(2) // the ~0.3s middle segment was dropped
+    expect(actor.snapshot().tracks.find((t) => t.id === a)!.layers).toHaveLength(2)
+  })
+  it('add_markers drops every marker in ONE commit (one undo reverts all)', () => {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'd')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const before = JSON.stringify(actor.snapshot())
+    const r = actor.dispatch('add_markers', { markers: [{ t_us: 2_000_000, label: 'Cut 1' }, { t_us: 4_000_000, label: 'Cut 2' }] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect((r.value as string[]).length).toBe(2)
+    expect(actor.snapshot().markers.map((m) => m.t_us)).toEqual([2_000_000, 4_000_000])
+    expect(actor.dispatch('undo', {}).ok).toBe(true) // single commit → one undo
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
   it('groups_create with < 2 layers returns a GroupCreateNeedsTwoLayers error', () => {
     const idGen = seededGen()
     const initial = blankProject(idGen, 'd')

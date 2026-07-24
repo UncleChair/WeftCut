@@ -34,12 +34,21 @@ describe('routeMcpTool', () => {
     for (const t of ['ping', 'detect_silences', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
-  it('single-writer invariant: every TS-adapter tool routes to ts, never rust', () => {
-    for (const t of MCP_TOOLS) expect(routeMcpTool(t), t).toBe('ts')
+  it('routes auto_split_by_shot to the hybrid orchestrator (TS-owned def, Rust cuts + TS writes)', () => {
+    expect(routeMcpTool('auto_split_by_shot')).toBe('hybrid')
   })
-  it('no hybrid tool is also a TS-adapter tool', () => {
+  it('single-writer invariant: every TS-def tool routes to ts (or hybrid for the TS-owned hybrid), never rust', () => {
+    // No TS-def tool may reach the Rust project writer. Almost all route 'ts';
+    // auto_split_by_shot routes 'hybrid' (HYBRID_TOOLS is consulted first) — its
+    // splits still write through the TS actor, so the single-writer holds.
+    for (const t of MCP_TOOLS) expect(routeMcpTool(t), t).toBe(HYBRID_TOOLS.has(t) ? 'hybrid' : 'ts')
+  })
+  it('the only hybrid tool with a TS-owned def is auto_split_by_shot (the rest are Rust-catalog-sourced)', () => {
+    // import_media / apply_subtitles / synthesize_speech advertise via the Rust
+    // catalog, so they are NOT in MCP_TOOLS; auto_split_by_shot's def is TS-owned
+    // (it must merge into the catalog from the TS side), so it is the lone overlap.
     for (const t of HYBRID_TOOLS) {
-      expect(MCP_TOOLS.has(t), t).toBe(false)
+      expect(MCP_TOOLS.has(t), t).toBe(t === 'auto_split_by_shot')
     }
   })
 })

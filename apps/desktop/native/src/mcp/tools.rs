@@ -196,6 +196,215 @@ pub(super) async fn detect_silences(
     ToolResult::json(&regions)
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct AnalyzeClipArgs {
+    /// Target VideoClip layer id.
+    pub layer_id: String,
+    /// Cut sensitivity in [0.0, 1.0]: a frame whose shot-change score exceeds
+    /// this starts a new shot. Lower = more (finer) cuts. Default 0.4.
+    pub sensitivity: Option<f32>,
+    /// Minimum shot duration (microseconds); cuts closer than this are merged.
+    /// Default 500000 (0.5 seconds).
+    pub min_shot_us: Option<i64>,
+    /// Which passes to run — a subset of `["shots", "stats", "events"]`.
+    /// Default all. Drop `"stats"` / `"events"` to skip per-shot frame sampling
+    /// and return timing only.
+    pub passes: Option<Vec<String>>,
+    /// Injected by the TS MCP host (sole state owner) — see DetectSilencesArgs.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub layer: Option<crate::state::Layer>,
+    #[serde(default)]
+    #[schemars(skip)]
+    pub media: Option<crate::state::MediaItem>,
+}
+
+#[cfg(feature = "jobs")]
+pub(super) async fn analyze_clip(
+    b: &Backend,
+    args: AnalyzeClipArgs,
+) -> Result<ToolResult, McpToolError> {
+    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let layer = args
+        .layer
+        .as_ref()
+        .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
+
+    // Video-only: shots are a pixel concept. Reject anything else with an
+    // actionable message (mirrors detect_silences).
+    let (media_id, src_in_us, src_out_us) = match &layer.params {
+        LayerParams::VideoClip(p) => (p.media, p.src_in_us, p.src_out_us),
+        _ => {
+            return Err(McpToolError::invalid_params(
+                format!("layer {layer_id} kind is not analyzable for shots — pass a VideoClip layer"),
+                None,
+            ));
+        }
+    };
+    let media = args.media.as_ref().ok_or_else(|| {
+        McpToolError::invalid_params(
+            format!("layer {layer_id} references missing media {media_id}"),
+            None,
+        )
+    })?;
+    if !matches!(media.kind, crate::state::MediaKind::Video) {
+        return Err(McpToolError::invalid_params(
+            format!("media {media_id} is not a video — analyze_clip needs a video source"),
+            None,
+        ));
+    }
+
+    let sensitivity = args.sensitivity.unwrap_or(0.4);
+    if !(0.0..=1.0).contains(&sensitivity) {
+        return Err(McpToolError::invalid_params(
+            format!("sensitivity {sensitivity} must be in [0.0, 1.0]"),
+            None,
+        ));
+    }
+    let min_shot_us = args.min_shot_us.unwrap_or(500_000);
+    if min_shot_us <= 0 {
+        return Err(McpToolError::invalid_params(
+            format!("min_shot_us {min_shot_us} must be positive"),
+            None,
+        ));
+    }
+
+    // Passes: default all. Unknown tags are rejected so a typo never silently
+    // drops a pass. "shots" is always the base; "stats"/"events" gate the
+    // per-shot frame sampling.
+    let (mut want_stats, mut want_events) = (true, true);
+    if let Some(passes) = &args.passes {
+        want_stats = passes.iter().any(|p| p == "stats");
+        want_events = passes.iter().any(|p| p == "events");
+        for p in passes {
+            if !matches!(p.as_str(), "shots" | "stats" | "events") {
+                return Err(McpToolError::invalid_params(
+                    format!("unknown pass {p:?}; expected \"shots\", \"stats\", or \"events\""),
+                    None,
+                ));
+            }
+        }
+    }
+
+    let opts = jobs::shot::ShotOpts {
+        sensitivity,
+        min_shot_us,
+        stats: want_stats,
+        events: want_events,
+    };
+    // Content-addressed write-through: compute the WHOLE-source report once
+    // (keyed by source hash + params, `jobs::shot::cache_key`), cache it, then
+    // clip to THIS layer's window. A second call on any layer of the same source
+    // with the same params hits the sidecar and skips the ffmpeg scan; the cache
+    // shares no namespace with the video-understanding `description` sidecar.
+    let source_report = jobs::shot::cached_source_report(&b.cache, media, &opts)
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("shot analysis: {e:#}"), None))?;
+    let report = jobs::shot::clip_report(&source_report, src_in_us, src_out_us);
+
+    ToolResult::json(&report)
+}
+
+/// One side of a `compare_frames` pair. `#[schemars(skip)]` on the injected
+/// `layer` / `media` keeps each side's ADVERTISED schema exactly
+/// `{ layer_id, t_us }`; serde still deserializes the host-injected slice.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct FrameRef {
+    /// Target VideoClip layer id.
+    pub layer_id: String,
+    /// SOURCE-ABSOLUTE timestamp (microseconds) of the frame to sample — the
+    /// same coordinate space as `media://{id}/frame/<t_us>` and the
+    /// `keyframe_t_us` / `t_*_us` that `analyze_clip` returns, so a shot cover
+    /// frame can be fed straight in.
+    pub t_us: i64,
+    /// Injected by the TS MCP host (sole state owner) — the layer resolved by
+    /// `layer_id` and its `MediaItem`; see DetectSilencesArgs. `None` on a direct
+    /// Rust call → the handler produces the same not-found error.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub layer: Option<crate::state::Layer>,
+    #[serde(default)]
+    #[schemars(skip)]
+    pub media: Option<crate::state::MediaItem>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct CompareFramesArgs {
+    /// First frame to compare.
+    pub a: FrameRef,
+    /// Second frame to compare.
+    pub b: FrameRef,
+}
+
+/// Resolve one `FrameRef` to `(source_path, t_us)`: the layer must be a VideoClip
+/// whose media is a video (same guards as `analyze_clip`). `side` ("a" / "b") is
+/// folded into every error so the agent knows which frame is at fault.
+#[cfg(feature = "jobs")]
+fn resolve_frame_ref(
+    r: &FrameRef,
+    side: &str,
+) -> Result<(std::path::PathBuf, i64), McpToolError> {
+    let layer_id = parse_uuid(&r.layer_id, &format!("{side}.layer_id"))?;
+    let layer = r.layer.as_ref().ok_or_else(|| {
+        McpToolError::invalid_params(format!("{side}: layer {layer_id} not found"), None)
+    })?;
+    let media_id = match &layer.params {
+        LayerParams::VideoClip(p) => p.media,
+        _ => {
+            return Err(McpToolError::invalid_params(
+                format!("{side}: layer {layer_id} is not a VideoClip — compare_frames compares video frames only"),
+                None,
+            ));
+        }
+    };
+    let media = r.media.as_ref().ok_or_else(|| {
+        McpToolError::invalid_params(
+            format!("{side}: layer {layer_id} references missing media {media_id}"),
+            None,
+        )
+    })?;
+    if !matches!(media.kind, crate::state::MediaKind::Video) {
+        return Err(McpToolError::invalid_params(
+            format!("{side}: media {media_id} is not a video — compare_frames needs a video source"),
+            None,
+        ));
+    }
+    if r.t_us < 0 {
+        return Err(McpToolError::invalid_params(
+            format!("{side}.t_us {} must be >= 0", r.t_us),
+            None,
+        ));
+    }
+    Ok((media.path_abs.clone(), r.t_us))
+}
+
+/// `compare_frames` — pairwise perceptual similarity of two video frames.
+/// Read-only and cacheless (a pure function, per the ticket): sample one frame
+/// per side at its source-absolute `t_us` through the same PNG extract as the
+/// shot stats, then a DCT perceptual hash + MSSIM fused into a `similar` verdict.
+/// Works across two different clips as well as within one.
+#[cfg(feature = "jobs")]
+pub(super) async fn compare_frames(
+    _b: &Backend,
+    args: CompareFramesArgs,
+) -> Result<ToolResult, McpToolError> {
+    let (path_a, t_a) = resolve_frame_ref(&args.a, "a")?;
+    let (path_b, t_b) = resolve_frame_ref(&args.b, "b")?;
+
+    let tmp = tempfile::Builder::new()
+        .prefix("weftcut-cmp")
+        .tempdir()
+        .map_err(|e| McpToolError::internal_error(format!("temp dir: {e}"), None))?;
+    let img_a = jobs::shot::extract_rgb(&path_a, t_a, &tmp.path().join("a.png"))
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("frame a extract: {e:#}"), None))?;
+    let img_b = jobs::shot::extract_rgb(&path_b, t_b, &tmp.path().join("b.png"))
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("frame b extract: {e:#}"), None))?;
+
+    ToolResult::json(&jobs::shot::sim::compare_frames(&img_a, &img_b))
+}
+
 // Layer-mutation tools (update_layer, update_layer_params, move_layer,
 // split_layer, delete_layer, trim_layer), group mutation tools
 // (groups_create, groups_dissolve, groups_add_members, groups_remove_members,

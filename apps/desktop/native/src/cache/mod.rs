@@ -276,6 +276,26 @@ impl CacheLayout {
         self.descriptions_dir().join(format!("{key}.json"))
     }
 
+    /// Deterministic shot-analysis reports (VSHOT) for the always-on shot layer
+    /// (`jobs::shot`). A SEPARATE namespace from `descriptions` (the opt-in
+    /// video-understanding layer) so the cheap deterministic layer and the
+    /// expensive opt-in layer never share a sidecar or block each other. The
+    /// `key` is `jobs::shot::cache_key` (source content hash + the source tier
+    /// the detector ran on + the detection params that change the report); the
+    /// value is a WHOLE-source `ShotReport`
+    /// JSON with source-absolute times, which `analyze_clip` and
+    /// `media://{id}/analysis` clip to a layer window at read time — so one entry
+    /// serves every layer on that source. Because the source content hash IS part
+    /// of the key, a source content-hash change (relink-by-content) auto-
+    /// invalidates the entry; no manual eviction needed.
+    pub fn shots_dir(&self) -> PathBuf {
+        self.current_root().join("shots")
+    }
+
+    pub fn shot(&self, key: &str) -> PathBuf {
+        self.shots_dir().join(format!("{key}.json"))
+    }
+
     /// Synthesized TTS output. Content-addressed by `blake3(model || '\0' ||
     /// voice || '\0' || speed || '\0' || text)` so repeated requests with the
     /// same parameters skip the API call entirely — see
@@ -310,6 +330,7 @@ impl CacheLayout {
             self.inline_subs_dir(),
             self.transcribe_audio_dir(),
             self.descriptions_dir(),
+            self.shots_dir(),
             self.voiceover_dir(),
         ] {
             fs::create_dir_all(&p).with_context(|| format!("create cache dir {}", p.display()))?;
@@ -491,6 +512,10 @@ mod tests {
             tmp.path().join("descriptions").join("abc.json"),
         );
         assert_eq!(
+            layout.shot("abc"),
+            tmp.path().join("shots").join("abc.json"),
+        );
+        assert_eq!(
             layout.voiceover("abc", "mp3"),
             tmp.path().join("voiceover").join("abc.mp3"),
         );
@@ -519,6 +544,7 @@ mod tests {
         assert!(layout.inline_subs_dir().is_dir());
         assert!(layout.transcribe_audio_dir().is_dir());
         assert!(layout.descriptions_dir().is_dir());
+        assert!(layout.shots_dir().is_dir());
         assert!(layout.voiceover_dir().is_dir());
         assert!(layout.filmstrip_root().is_dir());
     }

@@ -4,7 +4,7 @@ import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 
-const ALL_50_NAMES = new Set<string>([
+const ALL_51_NAMES = new Set<string>([
   // table-exec tools (30) — transitions trio added by Transitions v1 ticket 04
   'add_track', 'remove_track', 'duplicate_layer', 'move_track',
   'update_layer', 'update_layer_params',
@@ -16,18 +16,21 @@ const ALL_50_NAMES = new Set<string>([
   'update_marker', 'remove_marker',
   'remove_media', 'undo', 'redo',
   'set_role_gain', 'set_role_flags',
-  // dedicated-exec tools (20) — add_motif added Phase 4a-ii §2.2
+  // dedicated-exec tools (21) — add_motif added Phase 4a-ii §2.2;
+  // auto_split_by_shot is a TS-owned HYBRID def (routes 'hybrid', not an actor
+  // arm) that carries a parseDedicated for the bijection required-scalar gate.
   'add_color_layer', 'add_video_layer', 'split_layer', 'add_marker',
   'add_motif',
   'lock_history', 'unlock_history',
   'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
   'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track',
   'dry_run', 'checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session',
+  'auto_split_by_shot',
 ])
 
 describe('MCP tool table projections', () => {
-  it('MCP_TOOLS contains exactly the 50 tool names (transitions trio added Transitions v1 ticket 04)', () => {
-    expect(MCP_TOOLS).toEqual(ALL_50_NAMES)
+  it('MCP_TOOLS contains exactly the 51 tool names (auto_split_by_shot hybrid def added by scene-analysis ticket 04)', () => {
+    expect(MCP_TOOLS).toEqual(ALL_51_NAMES)
   })
 
   it('MCP_TOOLS equals the set of def names', () => {
@@ -59,7 +62,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(20) // add_motif added Phase 4a-ii §2.2
+    expect(dedicated.length).toBe(21) // add_motif (Phase 4a-ii §2.2) + auto_split_by_shot (scene-analysis ticket 04)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }

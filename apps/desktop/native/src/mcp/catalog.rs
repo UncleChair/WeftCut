@@ -60,6 +60,40 @@ tool_table! {
                           `NotReady` if the waveform job hasn't finished yet — wait for a \
                           `media:job_complete` event with `kind=waveform` and retry.", tools::DetectSilencesArgs, tools::detect_silences),
     #[cfg(feature = "jobs")]
+    "analyze_clip" => ("Detect shot boundaries in a VideoClip layer and return the shot list plus per-shot \
+                          pixel stats. Runs a deterministic detector over the layer's source (preferring the \
+                          720p proxy) and returns \
+                          `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags: [ ... ] }], cut_scores: [{ t_us, score }] }`. \
+                          All timestamps are SOURCE-ABSOLUTE microseconds, clipped to the layer's source \
+                          window. `cut_scores` is the raw cut signal (one entry per detected cut, `score` in \
+                          0..1); `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged). \
+                          Per shot: `keyframe_t_us` is a representative cover-frame time (the midpoint); \
+                          `brightness` is mean luma (0..1); `sharpness` is a focus proxy (variance of the \
+                          Laplacian, higher = sharper); `motion` is how much the shot's endpoints differ \
+                          (0..1); `flags` may include `\"black\"`, `\"freeze\"`, `\"fade\"`. Use the shots to \
+                          split, trim, drop bad takes, or pick a cover frame. Optional `sensitivity` (0..1 cut \
+                          threshold, default 0.4; lower = more cuts), `min_shot_us` (minimum shot duration, \
+                          default 500000), and `passes` (subset of `[\"shots\", \"stats\", \"events\"]`, \
+                          default all — drop `\"stats\"` / `\"events\"` to skip the per-shot frame sampling and \
+                          return timing only). VideoClip layers only; any other layer kind errors.", tools::AnalyzeClipArgs, tools::analyze_clip),
+    #[cfg(feature = "jobs")]
+    "compare_frames" => ("Compare two video frames for perceptual similarity — dedup shots or match a \
+                          cutaway. Args `{ a: { layer_id, t_us }, b: { layer_id, t_us } }`; each side names \
+                          a VideoClip layer and a SOURCE-ABSOLUTE timestamp (microseconds) in the same \
+                          coordinate space as `media://{id}/frame/<t_us>` and `analyze_clip`'s \
+                          `keyframe_t_us`, so a shot cover frame drops straight in. The two sides may point \
+                          at the same clip or different clips. Samples one frame per side and returns \
+                          `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 Hamming distance \
+                          between the frames' DCT perceptual hashes (0 = identical, small = the same frame \
+                          re-encoded / rescaled); `ssim` is MSSIM structural similarity in 0..1 (1.0 = \
+                          identical); `similar` is true when `phash_hamming <= 10 && ssim >= 0.5` — both \
+                          the hash and the structural score must agree. The pHash is the strong signal \
+                          (0 for the same frame re-encoded, 20+ for a different scene); the loose SSIM \
+                          floor keeps a source frame vs its lossy downscaled proxy similar while still \
+                          rejecting unrelated frames. Read-only; VideoClip layers only \
+                          (any other layer kind, or a missing/non-video source, errors naming the offending \
+                          side).", tools::CompareFramesArgs, tools::compare_frames),
+    #[cfg(feature = "jobs")]
     "import_media" => ("Import a media file from an absolute path. Hashes the file (blake3) and probes \
                           metadata via ffprobe when installed. Returns the new media id.", tools::ImportMediaArgs, tools::import_media),
     #[cfg(feature = "speech")]

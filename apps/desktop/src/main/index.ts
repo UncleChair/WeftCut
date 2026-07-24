@@ -517,6 +517,7 @@ app.whenReady().then(async () => {
     hashMediaSource: (p: string) => backend!.hashMediaSource(p),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(argsJson),
+    analyzeShots: (mediaJson: string, optsJson: string) => backend!.analyzeShots(mediaJson, optsJson),
   }
 
   // Load built-in Motif sources once (manifest + relocated index.html) for the
@@ -698,6 +699,21 @@ app.whenReady().then(async () => {
       speechConfig.apply({ local: { backend: tag, config: null } })
       backend!.clearLocalBackend(tag)
       return null
+    }
+    // "Analyze shots" (media-pool drive-by): warm the deterministic shot report
+    // for one media through the existing shot-analysis napi — the SAME VSHOT
+    // cache the agent's analyze_clip / auto_split_by_shot read, so a later agent
+    // call is a hit. Handled here rather than via SINGLE_MEDIA_CHANNELS because
+    // it calls the direct `analyzeShots` napi (whole-source report) rather than a
+    // Rust `invoke` arm; the TS actor (sole state owner) resolves the MediaItem.
+    // Returns the detected shot count for a status line.
+    if (tsHost && channel === 'analyze_shots') {
+      const { mediaId } = (args ?? {}) as { mediaId?: string }
+      const pool = tsHost.actor.snapshot().media_pool as Record<string, import('./state/model.js').MediaItem>
+      const item = pool[mediaId ?? '']
+      if (!item) throw new Error(`media ${mediaId ?? ''} not found`)
+      const report = JSON.parse(await backend!.analyzeShots(JSON.stringify(item), '{}')) as { shots?: unknown[] }
+      return { shots: report.shots?.length ?? 0 }
     }
     // Single-media compute: the TS actor owns state, so resolve the MediaItem
     // here and forward it — the Rust fns take it as a call argument.

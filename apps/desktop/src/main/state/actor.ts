@@ -16,7 +16,7 @@ import { applySplitLayer } from './mutations/split'
 import { applyGroupsCreate, applyGroupsDissolve, applyGroupsAddMembers, applyGroupsRemoveMembers, applyGroupsRename } from './mutations/groups'
 import { applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
-import { applyDurationAutofit } from './mutations/helpers'
+import { applyDurationAutofit, locateLayer } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
@@ -493,6 +493,64 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'redo': redo(); return { ok: true, value: null }
         case 'restore_checkpoint': restoreCheckpoint(parseUuid(a.checkpoint_id, 'checkpoint_id')); return { ok: true, value: null }
         case 'split_layer': return { ok: true, value: commit('Split layer', [], { kind: 'Coarse' }, (d) => applySplitLayer(d, idGen, a.layer as Uuid, parseNum(a.at_t_us, 'at_t_us'), (a.escape_group as boolean) ?? false)) }
+        // split_layer_multi — coalesced multi-split for the auto_split_by_shot
+        // hybrid: split `layer` at every ascending, strictly-interior timeline
+        // time in `at_t_us_list` inside ONE commit, so a whole shot-split is a
+        // single undo (mirrors update_layer_param_tracks' one-commit batch, per
+        // the ticket's single-history-entry acceptance). Each split's RIGHT half
+        // carries forward to the next cut; group-aware (escape_group=false) so an
+        // auto-paired audio partner splits in lockstep with the video. Cuts arrive
+        // pre-snapped from resolveShotCuts, but each is re-checked against the
+        // CURRENT segment bounds and a non-interior one is SKIPPED (not thrown),
+        // so a redundant/collapsed cut can never abort the whole batch.
+        // When `drop_short_us` is set, any resulting VIDEO segment shorter than it
+        // is deleted (applyDeleteLayer honors empty-track cleanup). LANDMINE: the
+        // drop walks only the video ids the splits returned, NOT their group-paired
+        // audio halves, so drop_short leaves the paired audio sliver orphaned at
+        // that cut — a known v1 limitation (called out in docs/mcp.md). Returns the
+        // ordered target segment layer ids that survived.
+        case 'split_layer_multi': {
+          const layer = a.layer as Uuid
+          const ats = (a.at_t_us_list as number[]) ?? []
+          const dropShortUs = parseNumOpt(a.drop_short_us, 'drop_short_us') ?? null
+          return { ok: true, value: commit('Split layer by shots', [{ kind: 'Layer', id: layer }], { kind: 'Coarse' }, (d) => {
+            const { num, den } = d.composition.fps
+            let currentId = layer
+            const ids: Uuid[] = []
+            for (const at of ats) {
+              // Re-snap to the split's own grid and skip a cut that no longer
+              // falls strictly inside the current right-half — defensive against
+              // a redundant cut so applySplitLayer never rejects mid-batch.
+              const atSnapped = snapFrameRound(parseNum(at, 'at_t_us'), num, den)
+              const loc = locateLayer(d, currentId)
+              const seg = loc ? d.tracks[loc[0]].layers[loc[1]] : null
+              if (!seg || atSnapped <= seg.t_start_us || atSnapped >= seg.t_end_us) continue
+              const { left, right } = applySplitLayer(d, idGen, currentId, atSnapped, false)
+              ids.push(left)
+              currentId = right
+            }
+            ids.push(currentId)
+            if (dropShortUs === null) return ids
+            const kept: Uuid[] = []
+            for (const id of ids) {
+              const loc = locateLayer(d, id)
+              const seg = loc ? d.tracks[loc[0]].layers[loc[1]] : null
+              if (seg && seg.t_end_us - seg.t_start_us < dropShortUs) applyDeleteLayer(d, id)
+              else kept.push(id)
+            }
+            return kept
+          }) }
+        }
+        // add_markers — coalesced multi-marker drop for shot-boundary
+        // materialization (the human/agent shot-marker surface): add every row in
+        // `markers` inside ONE commit so a whole boundary set is a single undo.
+        // Each row reuses applyAddMarker (same as the add_marker arm); color/label
+        // default to the shot-marker style. Returns the new marker ids in order.
+        case 'add_markers': {
+          const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba }>) ?? []
+          return { ok: true, value: commit('Added shot markers', [], { kind: 'Coarse' }, (d) =>
+            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }))) }
+        }
         case 'groups_create': return { ok: true, value: commit('Created group', [], { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, a.layers as Uuid[], (a.label as string) ?? null, (a.reassign as boolean) ?? false)) }
         case 'groups_dissolve': commit('Dissolved group', [], { kind: 'Coarse' }, (d) => applyGroupsDissolve(d, a.group as Uuid)); return { ok: true, value: null }
         case 'groups_add_members': commit('Added group members', [], { kind: 'Coarse' }, (d) => applyGroupsAddMembers(d, a.group as Uuid, a.layers as Uuid[], (a.reassign as boolean) ?? false)); return { ok: true, value: null }

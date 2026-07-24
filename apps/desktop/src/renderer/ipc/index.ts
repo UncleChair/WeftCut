@@ -1407,6 +1407,22 @@ export async function ensureConform(mediaId: string): Promise<void> {
   await invoke("ensure_conform", { mediaId });
 }
 
+/// Drive-by "Analyze shots" for a media-pool item: warm the deterministic shot
+/// report (VSHOT cache, shared with the agent's `analyze_clip` /
+/// `auto_split_by_shot`) and return the detected shot count. The main-side
+/// `analyze_shots` handler resolves the MediaItem and runs the whole-source
+/// analysis through the shot napi. Best-effort — errors are logged and return
+/// `null`, so a click never crashes the pool.
+export async function analyzeShots(mediaId: string): Promise<number | null> {
+  try {
+    const r = await invoke<{ shots: number }>("analyze_shots", { mediaId });
+    return r?.shots ?? null;
+  } catch (err) {
+    console.warn("[media-pool] analyze_shots failed", err);
+    return null;
+  }
+}
+
 /// Export-readiness audio gate (Rust `ensure_export_audio_conform`): media
 /// ids of audible in-range audio layers whose conform cache is absent or
 /// invalid, each with a conform job kicked. Selection mirrors the Rust mix

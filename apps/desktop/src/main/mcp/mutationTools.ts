@@ -2,9 +2,13 @@ import { MCP_TOOLS } from '../state/mcp-commands.js'
 
 export type McpRoute = 'ts' | 'rust' | 'hybrid' | 'motif'
 
-/** MCP tools served by the native-compute → TS-write hybrid orchestrator. */
+/** MCP tools served by the native-compute → TS-write hybrid orchestrator.
+ *  `auto_split_by_shot` is the one hybrid whose DEF is TS-owned (MCP_TOOL_DEFS)
+ *  rather than Rust-catalog-sourced — the other three carry Rust catalog defs —
+ *  so it routes 'hybrid' here (checked before MCP_TOOLS) yet advertises via the
+ *  TS def set. */
 export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
-  'import_media', 'apply_subtitles', 'synthesize_speech',
+  'import_media', 'apply_subtitles', 'synthesize_speech', 'auto_split_by_shot',
 ])
 
 /** Motif catalog-read + authoring + install + staleness tools, served in TS by

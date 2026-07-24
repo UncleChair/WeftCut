@@ -105,8 +105,11 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
     }
   })
 
-  it('4. every TS def routes ts; every motif def routes motif except preview_motif_draft (rust capture)', () => {
-    for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name), d.name).toBe('ts')
+  it('4. every TS def routes ts (hybrid for TS-owned hybrid defs); every motif def routes motif except preview_motif_draft (rust capture)', () => {
+    // A TS def normally routes 'ts'; a TS-owned HYBRID def (auto_split_by_shot)
+    // routes 'hybrid' — HYBRID_TOOLS is consulted before MCP_TOOLS, because its
+    // cuts compute in Rust while its splits write through the TS actor.
+    for (const d of MCP_TOOL_DEFS) expect(routeMcpTool(d.name), d.name).toBe(HYBRID_TOOLS.has(d.name) ? 'hybrid' : 'ts')
     for (const d of MOTIF_TOOL_DEFS) {
       // preview_motif_draft is the one motif DEF whose EXECUTION is not the motif-store
       // route: it is served by the CDP-capture special-case in server.ts, so it routes

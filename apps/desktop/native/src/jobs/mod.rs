@@ -25,6 +25,7 @@ pub mod import;
 pub mod proxy;
 pub mod proxy_decision;
 pub mod quick_proxy;
+pub mod shot;
 mod thumbnails;
 pub mod waveform;
 

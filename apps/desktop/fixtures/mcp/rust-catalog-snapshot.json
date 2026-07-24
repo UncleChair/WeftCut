@@ -91,6 +91,102 @@
       }
     },
     {
+      "name": "analyze_clip",
+      "description": "Detect shot boundaries in a VideoClip layer and return the shot list plus per-shot pixel stats. Runs a deterministic detector over the layer's source (preferring the 720p proxy) and returns `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags: [ ... ] }], cut_scores: [{ t_us, score }] }`. All timestamps are SOURCE-ABSOLUTE microseconds, clipped to the layer's source window. `cut_scores` is the raw cut signal (one entry per detected cut, `score` in 0..1); `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged). Per shot: `keyframe_t_us` is a representative cover-frame time (the midpoint); `brightness` is mean luma (0..1); `sharpness` is a focus proxy (variance of the Laplacian, higher = sharper); `motion` is how much the shot's endpoints differ (0..1); `flags` may include `\"black\"`, `\"freeze\"`, `\"fade\"`. Use the shots to split, trim, drop bad takes, or pick a cover frame. Optional `sensitivity` (0..1 cut threshold, default 0.4; lower = more cuts), `min_shot_us` (minimum shot duration, default 500000), and `passes` (subset of `[\"shots\", \"stats\", \"events\"]`, default all — drop `\"stats\"` / `\"events\"` to skip the per-shot frame sampling and return timing only). VideoClip layers only; any other layer kind errors.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "layer_id": {
+            "description": "Target VideoClip layer id.",
+            "type": "string"
+          },
+          "min_shot_us": {
+            "description": "Minimum shot duration (microseconds); cuts closer than this are merged. Default 500000 (0.5 seconds).",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "passes": {
+            "description": "Which passes to run — a subset of `[\"shots\", \"stats\", \"events\"]`. Default all. Drop `\"stats\"` / `\"events\"` to skip per-shot frame sampling and return timing only.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "sensitivity": {
+            "description": "Cut sensitivity in [0.0, 1.0]: a frame whose shot-change score exceeds this starts a new shot. Lower = more (finer) cuts. Default 0.4.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "layer_id"
+        ],
+        "title": "AnalyzeClipArgs",
+        "type": "object"
+      }
+    },
+    {
+      "name": "compare_frames",
+      "description": "Compare two video frames for perceptual similarity — dedup shots or match a cutaway. Args `{ a: { layer_id, t_us }, b: { layer_id, t_us } }`; each side names a VideoClip layer and a SOURCE-ABSOLUTE timestamp (microseconds) in the same coordinate space as `media://{id}/frame/<t_us>` and `analyze_clip`'s `keyframe_t_us`, so a shot cover frame drops straight in. The two sides may point at the same clip or different clips. Samples one frame per side and returns `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 Hamming distance between the frames' DCT perceptual hashes (0 = identical, small = the same frame re-encoded / rescaled); `ssim` is MSSIM structural similarity in 0..1 (1.0 = identical); `similar` is true when `phash_hamming <= 10 && ssim >= 0.5` — both the hash and the structural score must agree. The pHash is the strong signal (0 for the same frame re-encoded, 20+ for a different scene); the loose SSIM floor keeps a source frame vs its lossy downscaled proxy similar while still rejecting unrelated frames. Read-only; VideoClip layers only (any other layer kind, or a missing/non-video source, errors naming the offending side).",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "FrameRef": {
+            "description": "One side of a `compare_frames` pair. `#[schemars(skip)]` on the injected `layer` / `media` keeps each side's ADVERTISED schema exactly `{ layer_id, t_us }`; serde still deserializes the host-injected slice.",
+            "properties": {
+              "layer_id": {
+                "description": "Target VideoClip layer id.",
+                "type": "string"
+              },
+              "t_us": {
+                "description": "SOURCE-ABSOLUTE timestamp (microseconds) of the frame to sample — the same coordinate space as `media://{id}/frame/<t_us>` and the `keyframe_t_us` / `t_*_us` that `analyze_clip` returns, so a shot cover frame can be fed straight in.",
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "layer_id",
+              "t_us"
+            ],
+            "type": "object"
+          }
+        },
+        "properties": {
+          "a": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/FrameRef"
+              }
+            ],
+            "description": "First frame to compare."
+          },
+          "b": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/FrameRef"
+              }
+            ],
+            "description": "Second frame to compare."
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "title": "CompareFramesArgs",
+        "type": "object"
+      }
+    },
+    {
       "name": "import_media",
       "description": "Import a media file from an absolute path. Hashes the file (blake3) and probes metadata via ffprobe when installed. Returns the new media id.",
       "inputSchema": {

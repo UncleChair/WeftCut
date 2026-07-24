@@ -94,6 +94,14 @@ pub(crate) async fn read_resource(
         if let Some(id_part) = tail.strip_suffix("/description") {
             return read_description_resource(b, uri, id_part, state.media, &state.vlm_config).await;
         }
+        // media://{id}/analysis is the deterministic shot-layer view. Unlike
+        // /description it is ALWAYS computable, so a cache miss COMPUTES on demand
+        // + writes through rather than 404ing (see read_analysis_resource). It is
+        // self-contained — only the injected MediaItem, no backend config.
+        #[cfg(feature = "jobs")]
+        if let Some(id_part) = tail.strip_suffix("/analysis") {
+            return read_analysis_resource(b, uri, id_part, state.media).await;
+        }
         return read_media_resource(b, uri, tail, state.media).await;
     }
 
@@ -281,6 +289,50 @@ async fn read_description_resource(
         .map_err(|e| McpToolError::internal_error(format!("read {}: {e}", path.display()), None))?;
     let body: Value = serde_json::from_slice(&bytes)
         .map_err(|e| McpToolError::internal_error(format!("parse description cache: {e}"), None))?;
+    text_resource(uri, &body)
+}
+
+/// Serve `media://{id}/analysis` — the deterministic shot-layer view for the
+/// tool's DEFAULT detection params (sensitivity 0.4, min_shot_us 500000, all
+/// passes). Unlike `media://{id}/description`, the shot layer is ALWAYS
+/// computable, so a cache miss COMPUTES on demand (a whole-source scan) and
+/// writes it through, then returns — it never reports "not computed yet"
+/// (mirrors `serve_frame`'s on-demand `jobs::extract_frame`). Idempotent pure
+/// view: the same source + default params key the same VSHOT sidecar, so
+/// repeated reads return byte-identical JSON; `analyze_clip` is the parameterized
+/// recompute path that shares this cache. Returns the WHOLE-source `ShotReport`
+/// (source-absolute times) — a media resource has no layer window to clip to.
+#[cfg(feature = "jobs")]
+async fn read_analysis_resource(
+    b: &Backend,
+    uri: &str,
+    id_part: &str,
+    media: Option<MediaItem>,
+) -> Result<ResourceResult, McpToolError> {
+    let media_id = Uuid::parse_str(id_part).map_err(|_| {
+        McpToolError::resource_not_found(format!("media URI has invalid UUID: {id_part}"), None)
+    })?;
+    let media = media.ok_or_else(|| {
+        McpToolError::resource_not_found(format!("media {media_id} not found"), None)
+    })?;
+    if !matches!(media.kind, crate::state::MediaKind::Video) {
+        return Err(McpToolError::invalid_request(
+            format!("media {media_id} is not a video — media://{{id}}/analysis needs a video source"),
+            None,
+        ));
+    }
+    // Default params mirror analyze_clip's defaults; source-keyed, so a layer's
+    // analyze_clip with default args shares this exact cache entry.
+    let opts = jobs::shot::ShotOpts {
+        sensitivity: 0.4,
+        min_shot_us: 500_000,
+        stats: true,
+        events: true,
+    };
+    let report = jobs::shot::cached_source_report(&b.cache, &media, &opts)
+        .await
+        .map_err(|e| McpToolError::internal_error(format!("shot analysis: {e:#}"), None))?;
+    let body = serde_json::to_value(&report).map_err(serialize_err)?;
     text_resource(uri, &body)
 }
 

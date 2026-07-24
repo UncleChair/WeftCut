@@ -95,6 +95,53 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
     }
 }
 
+/// Wire args for the `analyze_shots` compute — the auto_split_by_shot subset of
+/// `AnalyzeClipArgs` (no injected layer/media; those are the caller's). All
+/// optional so `{}` is valid (every field falls back to the analyze_clip
+/// default, which is what keeps the two on the same VSHOT cache key).
+#[cfg(feature = "jobs")]
+#[derive(serde::Deserialize)]
+struct AnalyzeShotsOpts {
+    sensitivity: Option<f32>,
+    min_shot_us: Option<i64>,
+    passes: Option<Vec<String>>,
+}
+
+/// Parse + validate the `analyze_shots` opts JSON into a `ShotOpts`, applying
+/// the EXACT defaults the `analyze_clip` tool uses (sensitivity 0.4,
+/// min_shot_us 500000, all passes on) so the two share one VSHOT entry per
+/// (source, params). Pure + total (no I/O), so it is unit-tested directly.
+/// Errors are plain strings (the napi method maps them to `Error::from_reason`).
+#[cfg(feature = "jobs")]
+fn parse_shot_opts(opts_json: &str) -> std::result::Result<crate::jobs::shot::ShotOpts, String> {
+    let raw: AnalyzeShotsOpts =
+        serde_json::from_str(opts_json).map_err(|e| format!("parse shot opts: {e}"))?;
+    let sensitivity = raw.sensitivity.unwrap_or(0.4);
+    if !(0.0..=1.0).contains(&sensitivity) {
+        return Err(format!("sensitivity {sensitivity} must be in [0.0, 1.0]"));
+    }
+    let min_shot_us = raw.min_shot_us.unwrap_or(500_000);
+    if min_shot_us <= 0 {
+        return Err(format!("min_shot_us {min_shot_us} must be positive"));
+    }
+    // Passes: default all. "shots" is the always-on base; "stats"/"events" gate
+    // per-shot frame sampling. Unknown tags reject so a typo never silently
+    // drops a pass. Mirrors analyze_clip (tools.rs) verbatim.
+    let (mut stats, mut events) = (true, true);
+    if let Some(passes) = &raw.passes {
+        stats = passes.iter().any(|p| p == "stats");
+        events = passes.iter().any(|p| p == "events");
+        for p in passes {
+            if !matches!(p.as_str(), "shots" | "stats" | "events") {
+                return Err(format!(
+                    "unknown pass {p:?}; expected \"shots\", \"stats\", or \"events\""
+                ));
+            }
+        }
+    }
+    Ok(crate::jobs::shot::ShotOpts { sensitivity, min_shot_us, stats, events })
+}
+
 #[napi]
 impl Backend {
     #[napi(constructor)]
@@ -306,6 +353,34 @@ impl Backend {
             .map_err(|e| Error::from_reason(format!("hash join: {e}")))?
             .map_err(|e| Error::from_reason(format!("{e:#}")))?;
         Ok(facts.blake3_hex)
+    }
+
+    /// auto_split_by_shot hybrid compute: the WHOLE-source shot report for
+    /// `media` under `opts_json` detection settings, from the VSHOT cache
+    /// (`jobs::shot::cached_source_report` — computed + written through on a
+    /// miss). Returns `ShotReport` JSON `{ shots, cut_scores }` in
+    /// SOURCE-ABSOLUTE time; the TS host clips it to the layer's
+    /// `[src_in_us, src_out_us]` window and maps the interior shot boundaries to
+    /// timeline time before it splits (and drops markers). This is the SAME
+    /// content-addressed cache + params the `analyze_clip` tool uses, so
+    /// `opts_json` mirrors `AnalyzeClipArgs`'s defaults (sensitivity 0.4,
+    /// min_shot_us 500000, all passes) — an agent's prior `analyze_clip` at the
+    /// same params is a cache HIT here, and vice-versa. NO actor write: the
+    /// split / marker writes are the TS actor's.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn analyze_shots(
+        &self,
+        media_json: String,
+        opts_json: String,
+    ) -> napi::Result<String> {
+        let media: crate::state::MediaItem = serde_json::from_str(&media_json)
+            .map_err(|e| Error::from_reason(format!("parse media: {e}")))?;
+        let opts = parse_shot_opts(&opts_json).map_err(Error::from_reason)?;
+        let report = crate::jobs::shot::cached_source_report(&self.cache, &media, &opts)
+            .await
+            .map_err(|e| Error::from_reason(format!("shot analysis: {e:#}")))?;
+        serde_json::to_string(&report).map_err(|e| Error::from_reason(e.to_string()))
     }
 
     /// Pure parse half of the `apply_subtitles` hybrid. Validates
@@ -684,6 +759,34 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         sink.names().iter().any(|n| n == name)
+    }
+
+    /// `parse_shot_opts` applies the analyze_clip defaults and validates ranges.
+    /// `{}` → sensitivity 0.4 / min_shot_us 500000 / stats+events on (the exact
+    /// key analyze_clip's default computes, so the two share one VSHOT entry);
+    /// `passes` selects the per-shot passes; bad ranges / unknown tags reject.
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn parse_shot_opts_defaults_and_validation() {
+        let d = parse_shot_opts("{}").unwrap();
+        assert_eq!(d.sensitivity, 0.4);
+        assert_eq!(d.min_shot_us, 500_000);
+        assert!(d.stats && d.events, "default = all passes on");
+
+        // Explicit fields override; passes narrows the per-shot sampling.
+        let o = parse_shot_opts(r#"{"sensitivity":0.2,"min_shot_us":250000,"passes":["shots"]}"#)
+            .unwrap();
+        assert_eq!(o.sensitivity, 0.2);
+        assert_eq!(o.min_shot_us, 250_000);
+        assert!(!o.stats && !o.events, "only \"shots\" requested");
+        let se = parse_shot_opts(r#"{"passes":["stats"]}"#).unwrap();
+        assert!(se.stats && !se.events);
+
+        // Validation: out-of-range sensitivity, non-positive min, unknown pass.
+        assert!(parse_shot_opts(r#"{"sensitivity":1.5}"#).is_err());
+        assert!(parse_shot_opts(r#"{"min_shot_us":0}"#).is_err());
+        assert!(parse_shot_opts(r#"{"passes":["bogus"]}"#).is_err());
+        assert!(parse_shot_opts("not json").is_err());
     }
 
     #[cfg(feature = "jobs")]
