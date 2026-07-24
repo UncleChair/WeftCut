@@ -112,7 +112,7 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
     fireWhenEditing: false,
     suppressInTransientWidget: true,
   },
-  // `docs/groups.md` — Ctrl/Cmd+G groups the current multi-
+  // `docs/features.md#groups` — Ctrl/Cmd+G groups the current multi-
   // selection; Ctrl/Cmd+Shift+G dissolves every group represented in
   // the selection. Handler lives in Timeline.tsx, while the complete
   // selection itself is renderer-global. Surfaced here so the Keyboard

@@ -161,7 +161,7 @@ Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
 
 Valid `param_key`: VideoClip/Motif → `x, y, scale_x, scale_y, rotation_deg, opacity`; ImageOverlay/Text → `x, y, rotation_deg, opacity`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them.
 
-Groups (see [groups.md](groups.md)):
+Groups (see [features.md §Groups](features.md#groups)):
 - `groups_create { layer_ids, label?, reassign? }` → `GroupId`
 - `groups_dissolve { group_id }`
 - `groups_add_members { group_id, layer_ids, reassign? }` / `groups_remove_members { group_id, layer_ids }`

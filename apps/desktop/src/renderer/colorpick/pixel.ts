@@ -1,7 +1,7 @@
 // CPU-side sampling math for the color-pick session. Pure — the overlay and
 // the preview sampler both build on these, so every coordinate rule is
 // testable without a renderer. Spec:
-// docs/color-picker.md
+// docs/features.md#color-picker-eyedropper
 
 export interface FrameBuffer {
   pixels: Uint8Array | Uint8ClampedArray;

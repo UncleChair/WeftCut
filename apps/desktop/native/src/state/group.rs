@@ -1,7 +1,7 @@
 //! Layer groups — bundle any set of layers across any tracks into a unit
 //! that moves, trims, and splits together.
 //!
-//! Design: `docs/groups.md`. Membership is flat (a layer is in at most
+//! Design: `docs/features.md#groups`. Membership is flat (a layer is in at most
 //! one group). The actor enforces invariants on every commit; fan-out for
 //! structural ops lives in `state::actor` and consults the derived
 //! `LayerId → GroupId` index built by `index_groups`.

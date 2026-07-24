@@ -545,7 +545,7 @@ struct NamedCheckpoint {
 - **Undo/redo**: move `cursor`, broadcast snapshot at cursor.
 - **Checkpoint**: explicit named snapshot stored separately; survives undo-truncation; persists in save file.
 - v1 is linear undo; tree-of-edits is v2 (the snapshot model already supports it — just add parent pointers).
-- **Several mutation classes sit outside the undo stack** — see `docs/undo-stack-scope.md` for the full per-op table. The pattern: patch every snapshot (and checkpoint) in place via `replace_media_pool_everywhere` or `replace_composition_canvas_everywhere`, broadcast a non-recorded `ChangeEvent`, cursor unchanged. Covers media imports/removals of unreferenced media, derivative and workspace-path updates, canvas setup fields, and project open/new (`replace_state` resets history instead). Timeline edits, duration changes, and cascade media removals still record normally.
+- **Several mutation classes sit outside the undo stack** — see `docs/features.md#undo-stack-scope` for the full per-op table. The pattern: patch every snapshot (and checkpoint) in place via `replace_media_pool_everywhere` or `replace_composition_canvas_everywhere`, broadcast a non-recorded `ChangeEvent`, cursor unchanged. Covers media imports/removals of unreferenced media, derivative and workspace-path updates, canvas setup fields, and project open/new (`replace_state` resets history instead). Timeline edits, duration changes, and cascade media removals still record normally.
 
 ## Concurrency: single-writer actor
 
@@ -640,7 +640,7 @@ the UI uses the same actor via backend commands.
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
 | `update_layer_params(layer_id, patch)` | kind-specific params |
 | `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins), recorded, rejects empty-keyframed / unknown-param / locked-track |
-| `move_layer(layer_id, new_track_id, new_t_start_us, escape_group?)` | rejects on overlap; group-aware (see `groups.md`) |
+| `move_layer(layer_id, new_track_id, new_t_start_us, escape_group?)` | rejects on overlap; group-aware (see `features.md#groups`) |
 | `split_layer(layer_id, at_t_us, escape_group?)` → `(LayerId, LayerId)` | |
 | `trim_layer(layer_id, edge, new_t_us, escape_group?)` | `edge` ∈ `"in" | "out"` |
 | `delete_layer(layer_id)` | |

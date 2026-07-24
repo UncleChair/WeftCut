@@ -93,10 +93,8 @@ surface and multi-agent behavior are documented in [docs/mcp.md](docs/mcp.md).
 - **[Rendering](docs/rendering.md)** — audio IR, audio export, final mux.
 - **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, and color.
 - **[MCP server & agent UX](docs/mcp.md)** — protocol, tool surface, resources, multi-agent.
-- **[Groups](docs/groups.md)** — flat group model that bundles layers across tracks.
-- **[Search](docs/search.md)** — the global search palette.
+- **[Features](docs/features.md)** — small-feature contracts: undo-stack scope, groups, the search palette, the color picker.
 - **[Status / Log system](docs/status-log.md)** — bottom-of-editor log bus.
-- **[Undo-stack scope](docs/undo-stack-scope.md)** — what records into history and what doesn't.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
 - **[Licensing](docs/licensing.md)** — MIT app + the two FFmpeg lanes (LGPL in-process decode, GPL sidecar) and their build-time compliance gates.
 - **[Roadmap](docs/roadmap.md)** — phased delivery journal.

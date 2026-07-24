@@ -2,12 +2,9 @@
 
 A persistent status bar + expandable inline console that records shortcut
 results, wait operations, MCP agent activity, and system errors. Lives at
-the bottom of the editor view. Designed to subsume `ActivityPanel`, the
-menu-bar error span, and the derivatives pill, and to scale forward into
-a future "full agent mode".
-
-This document is the canonical design. It was settled in a grilling
-session on 2026-05-14; sections map 1:1 to the questions resolved there.
+the bottom of the editor view. It replaced `ActivityPanel` and the
+menu-bar error span, and is designed to scale forward into a future
+"full agent mode".
 
 ---
 
@@ -17,14 +14,15 @@ session on 2026-05-14; sections map 1:1 to the questions resolved there.
 - Expandable inline overlay console that **lifts** over the editor
   (drag-resize handle on top + slight dim of underlying content). Does
   not push the editor up.
-- Replaces: `ActivityPanel`, inline `<span className="error">` in the
-  menu bar, the `derivatives-pill` in the project bar.
+- Replaced `ActivityPanel` and the menu bar's inline error span. The
+  `derivatives-pill` in the project bar stays until its aggregate-row
+  replacement lands (roadmap §Polish).
 - Coexists with: `ExportPanel` (detailed progress UI), `QueuePanel`
   (editable export queue).
 
 ## Backend
 
-A new `LogBus` actor owns the system.
+A `LogBus` actor (`native/src/logs/bus.rs`) owns the system.
 
 - Ring buffer: in-memory `VecDeque<LogEntry>` capped at **1000 entries**.
 - Broadcast: `tokio::sync::broadcast` channel; the Electron bridge
@@ -207,42 +205,9 @@ Deferred until agent-mode lands:
   session grouping, an `agent.message` MCP endpoint for free-form
   narration.
 
-## Phasing
+## Deferred
 
-1. **`LogBus` core.** Ring buffer + JSONL writer + backend commands +
-   `log:entry` event + tracing-subscriber bridge + project-mutation
-   producer + minimal status bar (latest + error count, no expanded
-   console).
-2. **Expanded console.** Filters, search, list with op-grouping,
-   footer, shortcut bindings. `ActivityPanel` still ships in parallel.
-3. **Remaining producers.** Shortcuts, MCP `transcribe_clip` started/
-   ok/err with `op_id` grouping, MCP server lifecycle, export
-   started/ok/err, import started/ok/err, redactor.
-4. **Deletions.** `ActivityPanel` (file + menu entry + i18n),
-   menu-bar error span. Routed UI errors to the bus.
-
-### Deferred from Phase 4
-
-* **Derivatives pill.** The design called for deleting it, replaced by
-  a "Generating derivatives (N)" *aggregate* row in the bar. Without
-  the aggregate-row UI in place (current bar shows a generic running-
-  ops counter, not a per-category breakdown), removing the pill would
-  be a downgrade — users would lose the specific signal. Land the
-  aggregate-row UI first, then delete the pill.
-* **Full MCP tool-call transcript.** Phase 3 wired `transcribe_clip`
-  as the canonical example; the rest of the tool surface produces log
-  entries only via the project-mutation feed (which already covers
-  every state-changing tool). Add tool-level Started/Ok wraps for the
-  remaining cloud/long-running tools (`synthesize_speech`,
-  `detect_silences`) as a polish.
-* **Derivative-job producers** (thumbnails / proxy / waveform). Same
-  shape as import; deferred together with the pill deletion.
-* **True virtualization.** The console renders all 1000 entries
-  directly. Modern Chromium handles this fine; switch to `react-window`
-  if profiling shows a real cost.
-* **Drag-to-resize handle.** The console height is fixed at 40vh; the
-  CSS cursor is set but no pointer-drag handler is wired. Add when the
-  UX complaint actually surfaces.
-
-Each phase delivers visible value; the consolidation is last so we
-never break working UI before its replacement is solid.
+Open deferrals — the derivatives-pill aggregate row, tool-level log wraps
+for the remaining long-running MCP tools, derivative-job producers,
+console virtualization, and the console resize handle — are tracked in
+[roadmap.md §Polish](roadmap.md#polish).

@@ -173,7 +173,7 @@ export function LayerBlock({
   isPrimary: boolean;
   /// Member of the current selection set (highlight only).
   isSelected: boolean;
-  /// `docs/groups.md` — null when ungrouped.
+  /// `docs/features.md#groups` — null when ungrouped.
   groupId: string | null;
   dragState: DragState | null;
   pendingPlacement: PendingLayerPlacement | null;
@@ -408,7 +408,7 @@ export function LayerBlock({
     );
     const kind: DragKind =
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
-    // `docs/groups.md` — match click-selection semantics on
+    // `docs/features.md#groups` — match click-selection semantics on
     // pointerdown so drag and click share the same group-aware path.
     onSelectFromClick(layer.id, {
       altKey: e.altKey,
@@ -461,7 +461,7 @@ export function LayerBlock({
     sliceHeight = interiorHeight - halfHeight - 1;
   }
 
-  // `docs/groups.md` — tinted left border + chain-link icon hue
+  // `docs/features.md#groups` — tinted left border + chain-link icon hue
   // derived from group_id so all members share an accent color.
   const groupStyle: React.CSSProperties = {};
   if (groupId !== null) {

@@ -27,7 +27,7 @@ export interface EffectDescriptor {
   fidelity: "f16-verified" | "precision-reduced";
   colorspace: "display-gamma";
   /// RGB triplets of 0–1 scalar params that get an inspector eyedropper
-  /// (docs/color-picker.md). Names must
+  /// (docs/features.md#color-picker-eyedropper). Names must
   /// exist in `params`.
   colorGroups?: Array<{ params: [string, string, string] }>;
 }

@@ -303,7 +303,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // lifecycle as the transport registration above). captureFrame reuses the
       // compositeFrame→render→extract discipline the e2e sampleComposite path
       // proved; excludeEffectId freezes the PRE-key frame the chromakey
-      // eyedropper samples. Spec: docs/color-picker.md
+      // eyedropper samples. Spec: docs/features.md#color-picker-eyedropper
       unsubOverridesRef.current?.();
       const previewSampler: PreviewSampler = {
         captureFrame: async (opts) => {

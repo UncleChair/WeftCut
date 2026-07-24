@@ -284,7 +284,7 @@ export interface ProjectSummary {
   /// renderer's two-input transition node. Optional: older snapshots and
   /// test fixtures omit it — consumers treat absent as empty.
   transitions?: TransitionSummary[];
-  /// `docs/groups.md`. Empty when no groups exist. UI uses this to
+  /// `docs/features.md#groups`. Empty when no groups exist. UI uses this to
   /// render the tinted-border indicator and to resolve "what group is
   /// this layer in?" for click-selects-whole-group behavior.
   groups: GroupSummary[];
@@ -991,7 +991,7 @@ export async function moveLayer(
   });
 }
 
-/** `docs/groups.md` — group-aware trim. `edge` is `"in"` or `"out"`. */
+/** `docs/features.md#groups` — group-aware trim. `edge` is `"in"` or `"out"`. */
 export async function trimLayer(
   layerId: string,
   edge: "in" | "out",
@@ -1018,7 +1018,7 @@ export async function splitLayerGrouped(
   });
 }
 
-/** `docs/groups.md` — bundle ≥2 layer ids into a group. */
+/** `docs/features.md#groups` — bundle ≥2 layer ids into a group. */
 export async function groupsCreate(
   layerIds: string[],
   label: string | null = null,

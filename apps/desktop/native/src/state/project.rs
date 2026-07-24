@@ -38,7 +38,7 @@ pub struct Project {
     /// otherwise. `#[serde(default)]` keeps older `.vproj` files loadable.
     #[serde(default)]
     pub transitions: imbl::Vector<Transition>,
-    /// Layer groups (`docs/groups.md`). Each `Group` owns a set of
+    /// Layer groups (`docs/features.md#groups`). Each `Group` owns a set of
     /// `LayerId`s; flat membership (a layer is in at most one group). The
     /// actor maintains a derived `LayerId → GroupId` index for fast lookup
     /// and fans out move/trim/split ops across members. `#[serde(default)]`
@@ -119,7 +119,7 @@ pub struct ProjectSettings {
     pub history_capacity: usize,
     /// When `true` (default), importing a video source that has an audio
     /// stream creates both a `VideoClip` and an `Audio` layer pointing at
-    /// the same media, and groups them. See `docs/groups.md`. When
+    /// the same media, and groups them. See `docs/features.md#groups`. When
     /// `false`, only the `VideoClip` layer is created (audio is silently
     /// dropped, matching pre-v3 behavior).
     #[serde(default = "default_auto_pair_audio_on_import")]

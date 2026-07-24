@@ -99,7 +99,7 @@ function trackAcceptsMediaForAutoRoute(_trackKind: string, _mediaKind: string): 
 
 interface TimelineProps {
   tracks: TrackSummary[];
-  /// `docs/groups.md`. Empty array when no groups exist.
+  /// `docs/features.md#groups`. Empty array when no groups exist.
   groups: GroupSummary[];
   /// Transitions between same-track adjacent visual layers, rendered as
   /// chips over the incoming layer's head. Optional — older snapshots and
@@ -276,7 +276,7 @@ export function Timeline({
   );
 
   /// Map a click event on a layer chip to the resulting selection set.
-  /// `docs/groups.md`: plain click on a grouped layer selects the
+  /// `docs/features.md#groups`: plain click on a grouped layer selects the
   /// whole group; `Alt+click` selects only the clicked layer (escape
   /// path); `Shift+click` extends the current selection (with the
   /// clicked layer's whole group if any).
@@ -295,7 +295,7 @@ export function Timeline({
     [groupByLayerId, groups],
   );
 
-  /// `docs/groups.md` — Mod+G groups the current multi-selection;
+  /// `docs/features.md#groups` — Mod+G groups the current multi-selection;
   /// Mod+Shift+G dissolves every group represented in the selection.
   /// Wired through the global `useShortcuts` registry so the Keyboard
   /// Shortcuts settings panel exposes them and they're rebindable.

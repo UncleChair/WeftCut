@@ -341,10 +341,20 @@ to verify on real macOS + Linux hardware:
   [`timeline-content-preview.md`](timeline-content-preview.md)); this is the
   media-pool panel counterpart.
 - Drive the menus from the command registry
-  (`renderer/commands/registry.ts`, see [`search.md`](search.md)) so
+  (`renderer/commands/registry.ts`, see
+  [features.md §Global search palette](features.md#global-search-palette)) so
   `ACTION_DEFS` and the menu markup stop being parallel books; while there,
   render platform-pretty shortcut hints (`⌘K` / `Ctrl+K`) in the palette and
   menus instead of the raw chord string.
+- Status-log deferrals ([status-log.md](status-log.md)): a "Generating
+  derivatives (N)" aggregate row in the status bar, which then replaces the
+  project-bar derivatives pill (removing the pill first would lose the
+  specific signal); tool-level Started/Ok log wraps for the remaining
+  long-running MCP tools (`synthesize_speech`, `detect_silences`);
+  derivative-job log producers (proxy / thumbnails / waveform); console list
+  virtualization (`react-window`) only if profiling shows real cost; a
+  drag-to-resize handle for the console (height is fixed at 40vh; the CSS
+  cursor is set but no pointer-drag handler is wired).
 
 ### MCP tool gating
 

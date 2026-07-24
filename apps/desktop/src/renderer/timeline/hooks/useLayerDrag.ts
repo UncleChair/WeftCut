@@ -386,7 +386,7 @@ export function useLayerDrag(opts: {
       if (Math.abs(deltaUs) < 1_000 && sameTrack) return;
 
       try {
-        // `docs/groups.md` — Alt-held at drag start opts the move /
+        // `docs/features.md#groups` — Alt-held at drag start opts the move /
         // trim out of group fanout for this single op.
         const escape = committed.escapeGroup;
         switch (committed.kind) {

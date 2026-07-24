@@ -355,6 +355,6 @@ Adding more locales is a strict addition — drop a resource file under
 - [Rendering](rendering.md) — export orchestration + final mux.
 - [Audio](audio.md) — conform cache, envelope contract, preview + export mixers.
 - [Conformance](conformance.md) — media fixtures and E2E gates.
-- [Groups](groups.md) — group model.
+- [Features](features.md) — small-feature contracts (undo scope, groups, search palette, color picker).
 - [MCP](mcp.md) — agent connection protocol and tool surface.
 - [Roadmap](roadmap.md) — phased delivery.

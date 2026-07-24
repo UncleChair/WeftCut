@@ -183,7 +183,7 @@ export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-/// `docs/groups.md`. Stable, deterministic hue per group id so all
+/// `docs/features.md#groups`. Stable, deterministic hue per group id so all
 /// members share an accent color across renders. Skips the yellow/green
 /// band that conflicts with the selection highlight (ring token) on LayerBlock.
 export function groupHue(groupId: string): number {
