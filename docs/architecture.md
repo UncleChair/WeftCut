@@ -164,7 +164,7 @@ directly; no encode-and-swap step.
 | Renderer → workspace files | The `weftcut-media://localhost/<encoded-abs-path>` custom protocol (registered privileged + `supportFetchAPI`/`stream`; HTTP `Range`, served from main) — used by the Pixi decoder pool to fetch proxies and originals. The `fs:*` IPC surface (confined to temp / userData / active-workspace roots) handles export-scratch writes and reads. |
 | External agent → main (MCP host) | MCP over streamable-HTTP on localhost (`@modelcontextprotocol/sdk` host in the main process; bearer enforced by main, token in `app_config_dir/mcp_auth.json`). The tool catalog + resources are merged in TS — the TS-routed tool defs plus the Rust compute/hybrid tools. |
 | Main → External agent | The TS host's change notification, relayed by the in-process MCP host as a streamable-HTTP notification. |
-| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), the native video encode sink (the default export engine's ffmpeg-backed encoder), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for cloud transcription, and final mux (stream-copy only). |
+| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), the native video encode sink (the default export engine's ffmpeg-backed encoder), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for transcription, and final mux (stream-copy only). |
 
 ## Repository layout
 
@@ -197,11 +197,13 @@ weftcut/
         mcp/                  ← compute/hybrid tool defs + wire + resources
                               ←   (TS owns the merged catalog; HTTP host in
                               ←   src/main/mcp)
-        cloud/                ← provider-agnostic cloud APIs:
-                              ←   Transcriber / Synthesizer traits,
-                              ←   in-memory key cache populated from
-                              ←   Electron safeStorage,
-                              ←   providers/openai.rs (Whisper + tts-1)
+        speech/               ← provider-agnostic speech backends:
+                              ←   Transcriber / Synthesizer + resolver
+                              ←   (user preference then availability);
+                              ←   cloud (OpenAI key via safeStorage) +
+                              ←   local one-shot CLI sidecars (whisper.cpp,
+                              ←   FunASR); parse/ normalizes each raw style
+                              ←   → one word-timed Transcript
         io/                   ← media probe helpers; project.json load/save
                               ←   and schema-version gate live in TS
                               ←   state/persistence.ts
@@ -267,7 +269,8 @@ weftcut/
         properties/
         panels/               ← side / floating panels
         connect/              ← Connect-agent panel
-        settings/             ← Settings panel (cloud API keys, …)
+        settings/             ← Settings panel (Transcription / Speech,
+                              ←   API keys, data location, …)
         logs/                 ← status bar + log console
         keyframe/             ← keyframe authoring + curve editing
         menu/ shortcuts/ agent/ hooks/ ipc/ i18n/ state/

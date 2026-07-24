@@ -5,9 +5,9 @@ Electron main), the workspace on-disk format, media import with proxy / thumbnai
 audio IR + ffmpeg export + final mux, PixiJS + WebCodecs renderer
 (preview and export share one compositor), the Motif catalog
 (built-in + user-authored, with an agent authoring loop over MCP),
-cloud transcription + TTS
+speech-to-text over pluggable backends (OpenAI cloud + local whisper.cpp / FunASR sidecars) + cloud TTS
 behind a provider-agnostic trait surface, the MCP server (streamable-HTTP,
-hosted in the Electron main) with its edit / workflow / cloud tools and
+hosted in the Electron main) with its edit / workflow / speech tools and
 its in-protocol change feed, the status-bar `LogBus` console, the i18n
 stack (en-US + zh-CN).
 
@@ -349,9 +349,9 @@ to verify on real macOS + Linux hardware:
 ### MCP tool gating
 
 The `tool_table!` macro registers tools at compile time, and the
-catalog has no per-session filter. Unconfigured cloud tools are listed
-and return `MissingKey` errors instead of being hidden. The refinement
-is to omit unsupported cloud tools from the advertised catalog
+catalog has no per-session filter. Unconfigured speech tools are listed
+and return actionable "not configured" errors instead of being hidden. The refinement
+is to omit unsupported speech tools from the advertised catalog
 entirely, keyed on which providers are configured.
 
 ### Frame analysis for agents (`analyze_clip` / `compare_frames`) — unscheduled

@@ -32,9 +32,10 @@ chokepoint so there is exactly one parsing path and one mutation:
 - **MCP `apply_subtitles`.** An agent passes a subtitle body inline. Cue timings
   come from the body; the tool builds its own caption track and returns the new
   track id.
-- **Transcription.** `transcribe_clip` returns an SRT body with timestamps
-  already shifted to timeline-absolute microseconds; piping it into
-  `apply_subtitles` lands the cues on a caption track at the right offset.
+- **Transcription.** `transcribe_clip` returns a normalized transcript
+  envelope; its rendered `srt` field (timestamps already timeline-absolute)
+  pipes into `apply_subtitles` to land the cues on a caption track at the
+  right offset.
 
 All three call `subtitles::parse(body, format)` → `Cue { start_us, end_us, text,
 style }`, then the atomic `add_caption_track` mutation. Format is sniffed

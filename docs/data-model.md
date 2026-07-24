@@ -685,7 +685,7 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 │   ├── frames/               ← on-demand video frames (media://{id}/frame/{t})
 │   ├── raster/               ← persisted Motif L2 pre-bake PNGs (opt-in; see `motifs.md`)
 │   ├── inline-subs/          ← reserved; currently unused
-│   ├── transcribe-audio/     ← mono 16 kHz WAV slices for cloud transcription
+│   ├── transcribe-audio/     ← mono 16 kHz WAV slices for transcription (cloud + local sidecars)
 │   └── voiceover/            ← TTS output
 ├── Backups/                  ← periodic project.json snapshots (rolling 20)
 └── Renders/                  ← export outputs default here

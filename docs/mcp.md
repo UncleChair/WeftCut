@@ -273,28 +273,32 @@ change notification arrives — the notification is a hint, not a sync protocol.
 
 ## Speech (optional, user-supplied)
 
-For things agents can't do well themselves. The cloud surface is
-provider-agnostic: keys live in the OS keyring keyed by **API provider**
-(`OpenAi`, future `Deepgram` / `ElevenLabs` / …), and each provider
-declares which capabilities it supports. The default-provider picker
-for each tool falls back to the first configured provider that can
-serve the surface.
+For things agents can't do well themselves. Speech-to-text runs over
+**pluggable backends** — OpenAI Whisper (cloud) plus local one-shot CLI
+sidecars (whisper.cpp, FunASR via sherpa-onnx) — behind one entry point.
+The API key (secret) lives in `safeStorage`; local engine paths live in a
+TS-owned config store; Electron main merges both into the snapshot the
+stateless Rust resolver reads. The resolver picks a transcriber by **user
+preference then availability** (cloud = has key; local = binary + model
+present), falls through a default order, and errors with an actionable
+message naming every remedy when nothing is available.
 
 **Capability surfaces:**
 
-- **Transcription** (`Transcriber` trait) — `transcribe_clip { layer_id, t_start_us?, t_end_us?, language? }` returns a normalized transcript envelope `{ segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }`, all times timeline-absolute. Slices the layer's source audio at the requested window (defaults: the whole layer), transcribes with the picked provider, normalizes the raw output to timestamped word segments, shifts every timestamp forward by the timeline offset, and includes a rendered `srt` field so the agent can inspect / edit and pass it to `apply_subtitles` (word-level data stays in `segments`). `word_timing` records the per-word timing provenance — `exact` from an engine's token offsets, `interpolated_from_cue` when derived by splitting an SRT cue span across its words. `VideoClip` layers with `speed != 1.0` reject with a hint to `split_layer` off a speed-1 segment first. Provider today: OpenAI Whisper (SRT → interpolated words).
+- **Transcription** (`Transcriber` trait) — `transcribe_clip { layer_id, t_start_us?, t_end_us?, language? }` returns a normalized transcript envelope `{ segments: [{ t_start_us, t_end_us, text, words: [{ t_start_us, t_end_us, text }] }], language, word_timing, srt }`, all times timeline-absolute. Slices the layer's source audio at the requested window (defaults: the whole layer), transcribes with the picked provider, normalizes the raw output to timestamped word segments, shifts every timestamp forward by the timeline offset, and includes a rendered `srt` field so the agent can inspect / edit and pass it to `apply_subtitles` (word-level data stays in `segments`). `word_timing` records the per-word timing provenance — `exact` from an engine's token offsets, `interpolated_from_cue` when derived by splitting an SRT cue span across its words. `VideoClip` layers with `speed != 1.0` reject with a hint to `split_layer` off a speed-1 segment first. Backends: OpenAI Whisper (cloud, SRT → interpolated words); whisper.cpp + FunASR (local sidecars, exact word timing from JSON token offsets). Optional `backend` / `word_timestamps` args override the default selection.
 - **Text-to-speech** (`Synthesizer` trait) — `synthesize_speech { text, voice, speed?, target_track_id?, t_start_us? }` returns `{ layer_id, media_id, t_start_us, t_end_us, cached }`. Synthesizes audio for the supplied script, writes a content-addressed file under `<workspace>/Cache/voiceover/<hash>.mp3`, imports it as a `MediaItem`, and adds an `Audio` layer on the target Audio track (auto-creates one labeled "Voiceover" when absent). `t_start_us` defaults to the composition's current `duration_us` so voiceover appends at the end. `cached=true` means the request hit the cache and no API call billed. Provider today: OpenAI tts-1 (same key as Whisper).
 
-**Single-key, multi-surface:** an OpenAI key activates BOTH
-`transcribe_clip` and `synthesize_speech`. The Settings panel lists
-providers (one row per `Provider` enum variant), not surfaces — so the
-user thinks in terms of "configure OpenAI" once.
+**Config UI:** an OpenAI key activates BOTH `transcribe_clip` and
+`synthesize_speech` (TTS is cloud-only today). Settings → **Transcription /
+Speech** has an engine selector plus per-backend rows: cloud = API key,
+local = binary / model (/ tokens) path pickers, each with a "Test" button
+that reports `Available` or the exact missing piece.
 
 **Tool gating:** the `tool_table!` macro registers tools at compile
 time, and the catalog has no per-session filter today, so unconfigured
-cloud tools are always listed and fail with a structured `MissingKey`
-error that names the Settings panel. Hiding unsupported cloud tools
-from the catalog entirely is a possible refinement.
+speech tools are always listed and fail with a structured "no backend
+available" error that names the Settings panel. Hiding unsupported speech
+tools from the catalog entirely is a possible refinement.
 
 These are MCP tools like any other; the agent doesn't see "cloud vs local" — just "this tool exists or doesn't."
 
