@@ -50,9 +50,12 @@ spawn/exit/parse/timeout); feature `cloud → speech`.
 Two trait layers, deliberately split so no backend reimplements SRT→words:
 
 - `Transcriber` (thin): audio → `RawTranscript`, a format-tagged payload —
-  `Srt(String)` or `WhisperJson(String)` (FunASR JSON later). A backend
-  declares which styles it can emit; the pipeline picks one from the request's
-  `want_word_timing` hint and backend support.
+  `Srt(String)`, `WhisperJson(String)`, or `FunAsrJson(String)`. Honoring the
+  request's `want_word_timing` hint (default **true** — exact timing costs the
+  engine nothing extra), each backend picks its output style internally;
+  whether an engine can deliver engine-exact word times is a static
+  `Capabilities::exact_word_timing` fact (badged in Settings), not a trait
+  method.
 - `TranscriptParser` (new, one impl per style): `RawTranscript → Transcript` —
   the single normalized shape:
 

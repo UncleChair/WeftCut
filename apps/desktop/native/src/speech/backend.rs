@@ -101,14 +101,19 @@ impl SpeechBackend {
             SpeechBackend::OpenAi => Capabilities {
                 transcription: true,
                 tts: true,
+                // response_format=srt only — word times are interpolated
+                // downstream, never engine-exact.
+                exact_word_timing: false,
             },
             SpeechBackend::WhisperCpp => Capabilities {
                 transcription: true,
                 tts: false,
+                exact_word_timing: true, // -ojf per-token offsets
             },
             SpeechBackend::FunAsr => Capabilities {
                 transcription: true,
                 tts: false,
+                exact_word_timing: true, // per-token (per-character) timestamps
             },
         }
     }
@@ -120,6 +125,11 @@ impl SpeechBackend {
 pub struct Capabilities {
     pub transcription: bool,
     pub tts: bool,
+    /// Whether the engine reports per-word/token timestamps itself
+    /// (`WordTiming::Exact`), as opposed to word times interpolated from cue
+    /// spans. A static fact of the engine's output format — shown as a badge
+    /// in Settings so users choosing an engine can see it.
+    pub exact_word_timing: bool,
 }
 
 #[cfg(test)]
@@ -139,6 +149,8 @@ mod tests {
         let caps = SpeechBackend::OpenAi.capabilities();
         assert!(caps.transcription);
         assert!(caps.tts);
+        // SRT-only → word times are interpolated, never engine-exact.
+        assert!(!caps.exact_word_timing);
         assert_eq!(SpeechBackend::OpenAi.locality(), Locality::Cloud);
     }
 
@@ -148,6 +160,7 @@ mod tests {
             let caps = b.capabilities();
             assert!(caps.transcription, "{b:?} should transcribe");
             assert!(!caps.tts, "{b:?} has no TTS");
+            assert!(caps.exact_word_timing, "{b:?} reports engine-exact word times");
             assert_eq!(b.locality(), Locality::Local, "{b:?} is local");
         }
     }

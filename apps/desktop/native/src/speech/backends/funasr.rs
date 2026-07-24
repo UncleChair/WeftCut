@@ -74,12 +74,6 @@ impl FunAsr {
 
 #[async_trait]
 impl Transcriber for FunAsr {
-    /// Paraformer emits its own timestamped JSON only; there is no SRT style
-    /// here (that is the cloud/whisper interpolated fallback).
-    fn output_formats(&self) -> &'static [TranscriptFormat] {
-        &[TranscriptFormat::FunAsrJson]
-    }
-
     async fn transcribe(&self, req: TranscribeRequest) -> Result<RawTranscript, SpeechError> {
         // sherpa-onnx-offline is language-agnostic per model (Paraformer-zh is
         // Mandarin), so the request's `language` hint has no CLI flag here — the
@@ -192,15 +186,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn output_formats_is_funasr_json_only() {
-        let f = FunAsr::new(
-            PathBuf::from("b"),
-            PathBuf::from("m"),
-            PathBuf::from("tk"),
-            None,
-            None,
-        );
-        assert_eq!(f.output_formats(), &[TranscriptFormat::FunAsrJson]);
-    }
 }

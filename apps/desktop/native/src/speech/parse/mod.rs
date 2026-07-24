@@ -2,10 +2,9 @@
 //! converging on [`Transcript`]. This is the deliberate split that keeps no
 //! backend reimplementing SRT→words:
 //!
-//! - A [`Transcriber`](crate::speech::Transcriber) declares which styles it can
-//!   emit ([`output_formats`](crate::speech::Transcriber::output_formats)) and,
-//!   honoring the request's `want_word_timing` hint, returns one tagged
-//!   [`RawTranscript`].
+//! - A [`Transcriber`](crate::speech::Transcriber), honoring the request's
+//!   `want_word_timing` hint, returns one tagged [`RawTranscript`] — which
+//!   style is each backend's internal choice.
 //! - Here, [`parse_raw`] dispatches that tag to the matching
 //!   [`TranscriptParser`] — [`srt::SrtParser`], [`whisper_json::WhisperJsonParser`],
 //!   or [`funasr_json::FunAsrParser`] (sherpa-onnx-offline / FunASR Paraformer).
@@ -35,11 +34,9 @@ pub enum RawTranscript {
     FunAsrJson(String),
 }
 
-/// The style tag advertised by [`Transcriber::output_formats`]. Separate from
-/// [`RawTranscript`] so a backend can declare *which* styles it can emit
-/// without producing one.
-///
-/// [`Transcriber::output_formats`]: crate::speech::Transcriber::output_formats
+/// The style tag alone, without a payload — what a sidecar run declares it
+/// will produce ([`SidecarRun::format`](crate::speech::backends::sidecar::SidecarRun))
+/// before the body exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptFormat {
     Srt,

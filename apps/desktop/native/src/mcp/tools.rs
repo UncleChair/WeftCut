@@ -517,8 +517,10 @@ pub(super) struct TranscribeClipArgs {
     #[schemars(skip)]
     pub preferred_backend: Option<String>,
     /// Request exact per-word timestamps when the chosen backend can emit them
-    /// (whisper.cpp → `-ojf`). OpenAI Whisper is SRT-only and ignores it.
-    /// Default false.
+    /// (whisper.cpp → `-ojf`). Defaults to `true` — the backend's best
+    /// precision, at no extra engine cost; pass `false` to force the SRT-style
+    /// (interpolated) output instead. OpenAI Whisper is SRT-only and ignores
+    /// it either way; check `word_timing` in the result for what you got.
     #[serde(default)]
     pub word_timestamps: Option<bool>,
     /// Injected by the TS MCP host (sole state owner) — see DetectSilencesArgs.
@@ -864,10 +866,12 @@ async fn transcribe_clip_inner(
         .transcribe(speech::TranscribeRequest {
             audio_path,
             language: args.language,
-            // Caller opt-in to exact per-word timing. Backends that can't emit
-            // it (OpenAI is SRT-only) ignore the hint; whisper.cpp switches to
-            // `-ojf` when true.
-            want_word_timing: args.word_timestamps.unwrap_or(false),
+            // Default TRUE: exact word timing costs the engine nothing extra
+            // (whisper.cpp computes token offsets regardless; `-ojf` just emits
+            // them), and word-level editing is the point of the normalized
+            // transcript. `false` is an explicit opt-down to SRT style;
+            // SRT-only backends (OpenAI) ignore the hint either way.
+            want_word_timing: args.word_timestamps.unwrap_or(true),
         })
         .await
         .map_err(map_speech_error)?;

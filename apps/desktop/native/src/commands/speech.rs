@@ -29,12 +29,14 @@ pub struct SpeechBackendsArgs {
 }
 
 /// Static capability surface of a backend, echoed to the Settings UI so it can
-/// gray out rows a locality can never serve (e.g. TTS on a local engine).
+/// gray out rows a locality can never serve (e.g. TTS on a local engine) and
+/// badge engines that report exact per-word timestamps.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechCapabilities {
     pub transcription: bool,
     pub tts: bool,
+    pub exact_word_timing: bool,
 }
 
 /// One row for the Settings → Transcription/Speech panel: a backend's identity
@@ -157,6 +159,7 @@ pub async fn settings_get_speech_backends(
                 capabilities: SpeechCapabilities {
                     transcription: caps.transcription,
                     tts: caps.tts,
+                    exact_word_timing: caps.exact_word_timing,
                 },
                 availability: availability_tag(availability(p, cfg.get(p.as_str()))).to_string(),
                 selected: selected == Some(p),

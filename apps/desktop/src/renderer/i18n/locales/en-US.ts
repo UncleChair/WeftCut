@@ -684,6 +684,9 @@ const enUS = {
       "Check the binary runs and the model file is present, without transcribing anything.",
     speech_test_unsaved_hint:
       "Save the paths first — Test checks the saved configuration.",
+    speech_exact_words: "exact word timing",
+    speech_exact_words_hint:
+      "This engine reports precise per-word timestamps itself; cloud Whisper approximates them from subtitle cue spans.",
     motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:

@@ -15,7 +15,7 @@ use crate::speech::http::{
     bearer_auth, retry_delay_for_status, shared_client, MAX_RETRY_ATTEMPTS, RETRY_TOTAL_BUDGET,
 };
 use crate::speech::backend::SpeechBackend;
-use crate::speech::parse::{RawTranscript, TranscriptFormat};
+use crate::speech::parse::RawTranscript;
 use crate::speech::synthesizer::{AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer};
 use crate::speech::transcriber::{TranscribeRequest, Transcriber};
 
@@ -42,11 +42,8 @@ impl OpenAiWhisper {
 #[async_trait]
 impl Transcriber for OpenAiWhisper {
     /// OpenAI Whisper serves SRT only (`response_format=srt`), so it ignores
-    /// `want_word_timing` — the SRT parser interpolates word times downstream.
-    fn output_formats(&self) -> &'static [TranscriptFormat] {
-        &[TranscriptFormat::Srt]
-    }
-
+    /// `want_word_timing` — the SRT parser interpolates word times downstream
+    /// (`Capabilities::exact_word_timing` is `false` for this backend).
     async fn transcribe(&self, req: TranscribeRequest) -> Result<RawTranscript, SpeechError> {
         let bytes = fs::read(&req.audio_path).await?;
         let size = bytes.len() as u64;

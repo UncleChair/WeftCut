@@ -80,8 +80,9 @@ tool_table! {
                           missing piece (key / binary / model) instead of substituting another engine, so an \
                           explicit local choice never falls back to a cloud upload; an unknown value is rejected. \
                           When omitted, selection is the user's preferred engine then availability. Optional \
-                          `word_timestamps` (default false) requests \
-                          exact per-word times when the chosen backend can emit them (whisper.cpp `-ojf`); OpenAI \
+                          `word_timestamps` (default true) requests exact per-word times when the chosen backend \
+                          can emit them (whisper.cpp `-ojf`; FunASR always); pass false to force SRT-style \
+                          interpolated output. OpenAI \
                           Whisper is SRT-only and ignores it. VideoClip layers with speed != 1.0 are rejected — \
                           split off a speed-1 segment first. Errors with structured messages if no transcription \
                           backend is configured (API key or local engine), the audio slice exceeds the provider cap (~13 min for Whisper at \

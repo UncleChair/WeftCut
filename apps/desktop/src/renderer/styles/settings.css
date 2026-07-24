@@ -179,6 +179,13 @@
   border: 1px solid var(--border);
 }
 
+/* A second badge on the same row (e.g. the exact-word-timing capability badge
+   after the availability badge): only the first takes the auto push-right
+   margin, siblings just get a small gap. */
+.settings-badge + .settings-badge {
+  margin-left: 6px;
+}
+
 .settings-test-ok {
   margin: 6px 0 0;
   font-size: var(--font-size-caption);

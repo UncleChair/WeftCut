@@ -1258,7 +1258,10 @@ export interface SpeechBackendInfo {
   backend: string;
   label: string;
   locality: "cloud" | "local";
-  capabilities: { transcription: boolean; tts: boolean };
+  /// `exactWordTiming`: the engine reports per-word/token timestamps itself
+  /// (`word_timing: exact`) rather than interpolating from cue spans — shown
+  /// as a badge on the backend row.
+  capabilities: { transcription: boolean; tts: boolean; exactWordTiming: boolean };
   availability: SpeechAvailability;
   /// The one backend the resolver would use right now (preference + what is
   /// available). `false` on every row when nothing is configured.

@@ -66,11 +66,6 @@ impl WhisperCpp {
 
 #[async_trait]
 impl Transcriber for WhisperCpp {
-    /// JSON preferred (exact word timing); SRT as the interpolated fallback.
-    fn output_formats(&self) -> &'static [TranscriptFormat] {
-        &[TranscriptFormat::WhisperJson, TranscriptFormat::Srt]
-    }
-
     async fn transcribe(&self, req: TranscribeRequest) -> Result<RawTranscript, SpeechError> {
         // Pin a deterministic, disposable output path. RAII: the dir (and the
         // engine's `.json`/`.srt` inside it) is removed when `tmp` drops at the
@@ -272,14 +267,5 @@ mod tests {
         let prefix = Path::new("/t/out");
         assert_eq!(prefix.with_extension("json"), Path::new("/t/out.json"));
         assert_eq!(prefix.with_extension("srt"), Path::new("/t/out.srt"));
-    }
-
-    #[test]
-    fn output_formats_prefers_json_then_srt() {
-        let w = WhisperCpp::new(PathBuf::from("b"), PathBuf::from("m"), None, None);
-        assert_eq!(
-            w.output_formats(),
-            &[TranscriptFormat::WhisperJson, TranscriptFormat::Srt],
-        );
     }
 }

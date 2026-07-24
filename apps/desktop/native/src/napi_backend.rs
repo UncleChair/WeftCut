@@ -993,10 +993,14 @@ mod tests {
         assert_eq!(openai["selected"], true, "auto resolves to the only available backend");
         assert_eq!(openai["capabilities"]["transcription"], true);
         assert_eq!(openai["capabilities"]["tts"], true);
+        // SRT-only cloud → interpolated word times; the Settings badge keys
+        // off this camelCase field.
+        assert_eq!(openai["capabilities"]["exactWordTiming"], false);
         let whisper = rows.iter().find(|r| r["backend"] == "whisper_cpp").unwrap();
         assert_eq!(whisper["locality"], "local");
         assert_eq!(whisper["availability"], "needs_binary");
         assert_eq!(whisper["selected"], false);
+        assert_eq!(whisper["capabilities"]["exactWordTiming"], true);
     }
 
     /// A `log_emit` dispatch after a workspace is installed (via `commit_workspace`,

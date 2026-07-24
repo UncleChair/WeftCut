@@ -1241,6 +1241,14 @@ function LocalBackendRow({
         >
           {availabilityLabel(t, info.availability)}
         </span>
+        {info.capabilities.exactWordTiming && (
+          <span
+            className="settings-badge settings-badge-off"
+            title={t("settings.speech_exact_words_hint")}
+          >
+            {t("settings.speech_exact_words")}
+          </span>
+        )}
       </div>
       <div className="settings-key-input-row">
         <span className="settings-slider-label">
