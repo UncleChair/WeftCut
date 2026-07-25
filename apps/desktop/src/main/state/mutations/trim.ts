@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/mutations/trim.ts
 import type { Layer, Project, Uuid } from '../model'
-import { snapFrameRound } from '../snap'
+import { snapFrameCeil, snapFrameFloor, snapFrameRound } from '../snap'
 import { applyDurationAutofit, locateLayer, shiftLayerKeyframes } from './helpers'
 import { CommandFailure } from '../errors'
 import { groupSiblingsExcluding, checkGroupLock } from './groups'
@@ -13,10 +13,19 @@ export function clampSigned(d: number, min: number, max: number): number {
   return Math.min(Math.max(d, min), max)
 }
 
-/** motifMaxDurUs is null for all Phase-1 kinds → the
+/** The RAW µs constraints on a trim delta. `trimEdgeWindowUs` is the bound the
+ *  mutation path clamps against — it lifts these onto the composition frame grid.
+ *
+ *  motifMaxDurUs is null for all Phase-1 kinds → the
  *  motif-cap branches collapse to ±INF; only timeline + src bounds remain.
  *  `sourceDurationUs` is the normalized media content duration for AV layers;
- *  it caps OUT trims so `src_out_us` never extends past source content. */
+ *  it caps OUT trims so `src_out_us` never extends past source content.
+ *
+ *  LANDMINE: every `- 1` below is a STRICT-inequality exclusion (`t_start` must
+ *  land strictly before `t_end`; `src_in` strictly before `src_out`), never a
+ *  minimum duration — `trimEdgeWindowUs`' inward snap is what widens each of
+ *  them to a whole frame. Delete them as µs-era relics and that snap lands both
+ *  edges on the same frame, i.e. a zero-length layer. */
 export function trimDeltaBounds(
   layer: Layer,
   edge: LayerEdge,
@@ -39,6 +48,34 @@ export function trimDeltaBounds(
       if (sourceDurationUs != null) srcMax = sourceDurationUs - pa.src_out_us
     }
     return { min: Math.max(timelineMin, srcMin), max: srcMax }
+  }
+}
+
+/** The absolute window the trimmed edge may land in, as canonical composition
+ *  frame boundaries: `trimDeltaBounds` snapped INWARD (ceil the low end, floor the
+ *  high end). Because both ends come out of the grid, a clamp can only ever
+ *  persist a canonical `t_start_us` / `t_end_us` — the endpoint invariant in
+ *  `docs/data-model.md` (Timeline-field alignment).
+ *
+ *  Inward is the load-bearing half. A source-derived bound is arbitrary µs (a
+ *  media duration is not a frame boundary), so the layer gives up to one frame of
+ *  media back rather than persisting an off-grid endpoint, and the strict µs
+ *  exclusions become a one-composition-frame minimum duration. `hi < lo` means no
+ *  legal frame is left — `applyTrimLayer` reports `TrimEdgeOutOfRange` instead of
+ *  committing a sub-frame sliver. `INF` stays a sentinel: an OUT trim with no
+ *  source cap has no upper bound to put on the grid. */
+export function trimEdgeWindowUs(
+  layer: Layer,
+  edge: LayerEdge,
+  fpsNum: number,
+  fpsDen: number,
+  sourceDurationUs: number | null = null,
+): { lo: number; hi: number } {
+  const b = trimDeltaBounds(layer, edge, null, sourceDurationUs)
+  const edgeT = edge === 'In' ? layer.t_start_us : layer.t_end_us
+  return {
+    lo: snapFrameCeil(Math.max(0, edgeT + b.min), fpsNum, fpsDen),
+    hi: b.max >= INF ? INF : snapFrameFloor(edgeT + b.max, fpsNum, fpsDen),
   }
 }
 
@@ -76,14 +113,21 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   const requestedDelta = snapped - curEdgeT
   if (requestedDelta === 0) return // no-op early return
 
-  // Clamp against every aligned member.
-  let clamped = requestedDelta
+  // Clamp against every aligned member: intersect their grid windows so the
+  // tightest member governs. The windows are absolute times yet share one delta
+  // basis because every aligned member's matching edge sits at `curEdgeT` — that
+  // is what "aligned" means. Both `snapped` and every window end are canonical, so
+  // whichever the clamp picks keeps the moved edge on the grid.
+  let lo = -INF
+  let hi = INF
   for (const mid of aligned) {
     const ml = locateLayer(p, mid)!
     const m = p.tracks[ml[0]].layers[ml[1]]
-    const b = trimDeltaBounds(m, edge, null, sourceDurationForLayer(p, m))
-    clamped = clampSigned(clamped, b.min, b.max)
+    const w = trimEdgeWindowUs(m, edge, fpsN, fpsD, sourceDurationForLayer(p, m))
+    lo = Math.max(lo, w.lo)
+    hi = Math.min(hi, w.hi)
   }
+  const clamped = clampSigned(requestedDelta, lo - curEdgeT, hi - curEdgeT)
   if (clamped === 0) throw new CommandFailure({ error: 'TrimEdgeOutOfRange', layer: id, new_t: snapped, cur_start: curStart, cur_end: curEnd })
 
   for (const mid of aligned) {

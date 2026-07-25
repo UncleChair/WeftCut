@@ -6,16 +6,24 @@ import { snapFrameRound } from '../snap'
 
 /** Shallow-clone the layer with one fresh id (nested keyframe/effect ids are
  *  NOT regenerated), offset by tOffsetUs, insert t-start-sorted on the same
- *  track, autofit. Duplicate does NOT join a group. */
+ *  track, autofit. Duplicate does NOT join a group.
+ *
+ *  `tOffsetUs` arrives raw from `duplicate_layer` (MCP-only — no UI caller), so
+ *  offsetting both edges by it directly takes them off the frame grid at every
+ *  rational rate. It goes through `pasteLayerInterval` instead: ONE shift model
+ *  for duplicate and paste, snapped start with the end carried by the resulting
+ *  delta, so the copy keeps the source's frame span. */
 export function applyDuplicateLayer(p: Project, idGen: IdGen, id: Uuid, tOffsetUs: number): Uuid {
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
-  const copy = cloneLayer(p.tracks[ti].layers[li])
+  const source = p.tracks[ti].layers[li]
+  const interval = pasteLayerInterval(p, id, source.t_start_us + tOffsetUs)
+  const copy = cloneLayer(source)
   const dupId = idGen()
   copy.id = dupId
-  copy.t_start_us += tOffsetUs
-  copy.t_end_us += tOffsetUs
+  copy.t_start_us = interval.tStartUs
+  copy.t_end_us = interval.tEndUs
   const track = p.tracks[ti]
   const at = track.layers.findIndex((l) => l.t_start_us > copy.t_start_us)
   track.layers.splice(at < 0 ? track.layers.length : at, 0, copy)

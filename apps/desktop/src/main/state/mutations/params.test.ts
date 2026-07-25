@@ -6,6 +6,7 @@ import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack } from './params'
 import { MotifCatalog } from '../../../shared/motifs/catalog'
+import { validate } from '../validate'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
@@ -164,6 +165,22 @@ describe('applyUpdateLayerParams — Motif content-window clamp', () => {
     const m = layer.params as MotifParams
     expect(m.src_in_us).toBe(0)
     expect(layer.t_end_us).toBe(10_000_000)
+  })
+
+  // Regression: the zero-width guard used to floor at `tStart + 1` µs, which is
+  // off-grid — with validate's grid backstop that turned a silent 1 µs sliver into
+  // a REJECTED edit. Floor is one frame, and the result must survive validate.
+  it.each([
+    { fps: { num: 30, den: 1 }, expected: 33_333 },
+    { fps: { num: 30_000, den: 1001 }, expected: 33_367 },
+  ])('content under one frame clamps to exactly one frame at $fps.num/$fps.den', ({ fps, expected }) => {
+    const { p } = makeCountdownProject()
+    p.composition.fps = fps
+    applyUpdateLayerParams(p, 'mo1', { kind: 'Motif', props: { seconds: 0.01 } }, new MotifCatalog())
+    const layer = p.tracks[0].layers.find((l) => l.id === 'mo1')!
+    expect(layer.t_start_us).toBe(0)
+    expect(layer.t_end_us).toBe(expected)
+    expect(() => validate(p)).not.toThrow()
   })
 
   it('no catalog entry → no clamp (motif_id not in catalog)', () => {

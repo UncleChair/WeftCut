@@ -2,6 +2,7 @@ import type { Layer, LayerParams, Marker, Project, Rgba, TrackRole, Uuid } from 
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
 import { applyDurationAutofit } from './helpers'
+import { snapMarkerTimes } from './markers'
 import { CommandFailure } from '../errors'
 
 export function colorParams(color: Rgba, width: number, height: number): LayerParams {
@@ -49,11 +50,14 @@ export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, tr
   return id
 }
 
-/** Marker inserted t-sorted, empty metadata. */
+/** Marker inserted t-sorted, empty metadata. Times land on the composition frame
+ *  grid via `snapMarkerTimes`, which also rejects a collapsed region — before the
+ *  id is minted, so a rejected marker burns none (id contract). */
 export function applyAddMarker(p: Project, idGen: IdGen, tUs: number, endTUs: number | null, label: string, color: Rgba): Uuid {
+  const snapped = snapMarkerTimes(p, tUs, endTUs)
   const id = idGen()
-  const marker: Marker = { id, t_us: tUs, end_t_us: endTUs, label, color, metadata: {} }
-  const at = p.markers.findIndex((m) => m.t_us > tUs)
+  const marker: Marker = { id, t_us: snapped.tUs, end_t_us: snapped.endTUs, label, color, metadata: {} }
+  const at = p.markers.findIndex((m) => m.t_us > snapped.tUs)
   p.markers.splice(at < 0 ? p.markers.length : at, 0, marker)
   return id
 }

@@ -13,6 +13,7 @@ import type {
   TransitionKindView,
   TransitionSummary,
 } from "../ipc";
+import { timeUsAtFrame } from "../frames";
 import { VISUAL_LAYER_KINDS } from "../render/transitions/activeTransitions";
 import type { LayerSlice } from "./geometry";
 
@@ -78,14 +79,17 @@ export function findCutNear(
 
 /// Default duration: 1 second snapped DOWN to a whole composition-frame
 /// count, minimum 1 frame (spec § UI, hardcoded — no settings entry).
-/// Returned in µs on the comp grid (half-up like the rest of the grid math).
+///
+/// The µs value comes from `timeUsAtFrame`, not local arithmetic, so the UI
+/// proposes a whole-frame duration that `applyAddTransition`'s own grid snap
+/// accepts unchanged.
 export function defaultTransitionDurationUs(
   fpsNum: number,
   fpsDen: number,
 ): number {
   if (fpsNum <= 0 || fpsDen <= 0) return US_PER_SEC;
   const wholeFrames = Math.max(1, Math.floor(fpsNum / fpsDen));
-  return Math.round((wholeFrames * US_PER_SEC * fpsDen) / fpsNum);
+  return timeUsAtFrame(wholeFrames, fpsNum, fpsDen);
 }
 
 /// One chip on a track lane. Start-at-cut alignment: the window is the

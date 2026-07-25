@@ -5,6 +5,7 @@ import { applyAddLayer, applyAddTrack, colorParams } from './add'
 import { applyDeleteLayer } from './delete'
 import { applyDuplicateLayer } from './duplicate'
 import { isCommandFailure } from '../errors'
+import { validate } from '../validate'
 
 describe('delete + duplicate', () => {
   it('deletes a layer and autofits', () => {
@@ -33,5 +34,18 @@ describe('delete + duplicate', () => {
     const copy = p.tracks[0].layers.find((l) => l.id === dup)!
     expect(copy.t_start_us).toBe(2_000_000); expect(copy.t_end_us).toBe(3_000_000)
     expect(p.groups).toHaveLength(0)
+  })
+  it('snaps the duplicate onto the frame grid at a fractional rate', () => {
+    // `t_offset_us` arrives raw (duplicate_layer is MCP-only), so `+=` on both
+    // edges left them off the grid at every rational rate. Both edges now come out
+    // of the same snap-the-start-then-carry-the-delta model as paste.
+    const g = seededGen(); const p = blankProject(g, 't')
+    p.composition.fps = { num: 30000, den: 1001 }
+    const a = applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), 0, 100_100)
+    const dup = applyDuplicateLayer(p, g, a, 500_000) // 500_000 µs is NOT a boundary at 29.97
+    const copy = p.tracks[0].layers.find((l) => l.id === dup)!
+    expect(copy.t_start_us).toBe(500_500) // frame 15
+    expect(copy.t_end_us).toBe(600_600)   // frame 18 — the source's 3-frame span, preserved
+    expect(() => validate(p)).not.toThrow()
   })
 })

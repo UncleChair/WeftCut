@@ -1,6 +1,7 @@
 // apps/desktop/src/main/state/validate.ts
-import type { Layer, LayerParams, Project, Transition, Uuid } from './model'
+import type { Composition, Layer, LayerParams, Project, Rational, Transition, Uuid } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
+import { snapFrameRound } from './snap'
 
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 
@@ -17,12 +18,62 @@ export function validate(project: Project): void {
   const seenLayers = new Set<Uuid>()
   for (const track of project.tracks) validateTrack(project, track, authorized, seenLayers)
   validateGroups(project, seenLayers)
+  validateMarkers(project)
+}
+
+// ── Frame-grid backstop ───────────────────────────────────────────────────────
+// The endpoint invariant is STRUCTURAL, not per-mutation: every mutator snaps,
+// and these rules are what make "a committed project holds no off-grid timeline
+// time" true even for a mutator that forgot (docs/data-model.md § Timeline-field
+// alignment).
+//
+// Legacy off-grid data does NOT reach here: `replaceState` shares this validator
+// with `project_open`, so a hard rule alone would make an already-written
+// off-grid project unopenable. `parseProject` repairs on load instead, in one
+// pass, so validate only ever sees canonical input.
+
+/** The grid a layer's timeline endpoints must land on, keyed by kind. */
+function layerEndpointGrid(kind: LayerParams['kind'], c: Composition): Rational {
+  // Audio is the kind that will diverge (a sample / subframe grid), and it is on
+  // the composition grid TODAY — so both arms answer the same rate on purpose.
+  // Keeping them apart is the whole point: the divergence becomes a one-line
+  // change here instead of a sweep over every call site.
+  switch (kind) {
+    case 'Audio': return c.fps
+    default: return c.fps
+  }
+}
+
+/** A time is canonical on `grid` when it is `round(i * 1e6 * den / num)` for an
+ *  integer frame index `i` — equivalently, when snapping is the identity. Asked
+ *  of the shared leaf, never re-derived in TS: the grid has exactly one
+ *  implementation (ADR 0025) and a second one would drift.
+ *
+ *  Deliberately NOT `i >= 0`: a negative canonical time passes. `applyMoveLayer`
+ *  can still reach one, and that is a clamp-policy defect with its own ticket —
+ *  folding it in here would silently turn a grid rule into a bounds rule. */
+function isCanonicalOn(tUs: number, grid: Rational): boolean {
+  if (grid.num <= 0 || grid.den <= 0) return true // degenerate rate — InvalidFps owns it
+  return snapFrameRound(tUs, grid.num, grid.den) === tUs
 }
 
 function validateComposition(p: Project): void {
   const c = p.composition
   if (c.width === 0 || c.height === 0) fail({ rule: 'InvalidCanvas', width: c.width, height: c.height })
   if (c.fps.num === 0 || c.fps.den === 0) fail({ rule: 'InvalidFps', num: c.fps.num, den: c.fps.den })
+  if (!isCanonicalOn(c.duration_us, c.fps))
+    fail({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: c.duration_us, fps: c.fps })
+}
+
+/** Marker times are on the composition grid (`snapMarkerTimes` is the mutation
+ *  side). Checked last so this rule never pre-empts an existing structural one. */
+function validateMarkers(p: Project): void {
+  for (const m of p.markers) {
+    if (!isCanonicalOn(m.t_us, p.composition.fps))
+      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: p.composition.fps })
+    if (m.end_t_us !== null && m.end_t_us !== undefined && !isCanonicalOn(m.end_t_us, p.composition.fps))
+      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 'end_t_us', t: m.end_t_us, fps: p.composition.fps })
+  }
 }
 
 // ── Per-transition invariant — ONE predicate, TWO callers ─────────────────────
@@ -63,6 +114,14 @@ function transitionInvariantError(tr: Transition, idx: TransitionLayerIndex): Va
   const overlapStart = Math.max(from.start, to.start)
   const overlapEnd = Math.min(from.end, to.end)
   const overlap = Math.max(overlapEnd - overlapStart, 0)
+  // This equality IS the transition's frame-grid rule, and there is deliberately
+  // no `isCanonicalOn(tr.duration_us)` beside it: a duration is a DISTANCE
+  // between two canonical boundaries, and at fractional rates a distance is not
+  // itself a canonical time (a 1-frame transition at 30000/1001 is 33_367 µs at
+  // cut frame 0 and 33_366 µs at cut frame 1). Both participants' endpoints are
+  // grid-checked below, so overlap === duration_us already forces the duration to
+  // be a whole number of frames — asserting canonicality on top would be false at
+  // every fractional rate.
   if (overlap !== tr.duration_us) return { rule: 'TransitionDurationMismatch', transition: tr.id, duration: tr.duration_us, overlap }
   return null
 }
@@ -124,6 +183,13 @@ function checkSrcRange(p: Project, layer: Uuid, media: Uuid, srcIn: number, srcO
 
 function validateLayerParams(p: Project, layer: Layer): void {
   // Out-of-range keyframes are intentionally NOT checked (validate.rs:495-509).
+  // Neither are OFF-GRID keyframe times, and for a sharper reason: content-glued
+  // rebases (`trim.ts` shiftLayerKeyframes, `split.ts` shiftKeyframes) move keys by
+  // a DELTA, and the difference of two canonical times is not canonical at
+  // fractional rates. Re-snapping to satisfy a rule here would run
+  // `normalizeKeyframes`' dedupe-last-wins over the shifted set and SILENTLY MERGE
+  // two keys that landed on one frame — authored data lost. The visible cost of
+  // leaving it is a ≤ half-frame offset on an interpolated value.
   const pa = layer.params
   if (pa.kind === 'VideoClip' || pa.kind === 'Audio') checkSrcRange(p, layer.id, pa.media, pa.src_in_us, pa.src_out_us)
   else if (pa.kind === 'ImageOverlay') { if (!(pa.media in p.media_pool)) fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media }) }
@@ -137,6 +203,11 @@ function validateTrack(p: Project, track: Project['tracks'][number], authorized:
     if (seenLayers.has(layer.id)) fail({ rule: 'DuplicateLayerId', layer: layer.id })
     seenLayers.add(layer.id)
     if (layer.t_start_us >= layer.t_end_us) fail({ rule: 'InvalidLayerRange', layer: layer.id, t_start: layer.t_start_us, t_end: layer.t_end_us })
+    const grid = layerEndpointGrid(layer.params.kind, p.composition)
+    if (!isCanonicalOn(layer.t_start_us, grid))
+      fail({ rule: 'OffGridLayerBoundary', layer: layer.id, field: 't_start_us', t: layer.t_start_us, fps: grid })
+    if (!isCanonicalOn(layer.t_end_us, grid))
+      fail({ rule: 'OffGridLayerBoundary', layer: layer.id, field: 't_end_us', t: layer.t_end_us, fps: grid })
     validateLayerParams(p, layer)
     const cls = layerOverlapClass(layer.params)
     const prev = cls === 'visual' ? prevVisual : prevAudio

@@ -35,4 +35,18 @@ describe('additive mutations', () => {
     applyAddMarker(p, g, 1_000_000, null, 'm1', { r: 0, g: 128, b: 255, a: 255 })
     expect(p.markers.map((m) => m.t_us)).toEqual([1_000_000, 2_000_000])
   })
+  it('applyAddMarker snaps both times to the composition frame grid before inserting', () => {
+    const g = seededGen(); const p = blankProject(g, 't')
+    p.composition.fps = { num: 30000, den: 1001 }
+    applyAddMarker(p, g, 1_000_000, 2_000_000, 'm', { r: 0, g: 128, b: 255, a: 255 })
+    // 29.97: frame 30 = 1_001_000 µs, frame 60 = 2_002_000 µs.
+    expect([p.markers[0].t_us, p.markers[0].end_t_us]).toEqual([1_001_000, 2_002_000])
+  })
+  it('applyAddMarker rejects a collapsed region BEFORE consuming the marker id', () => {
+    const g = seededGen(); const p = blankProject(g, 't')
+    try { applyAddMarker(p, g, 1_000_000, 1_000_001, 'm', { r: 0, g: 128, b: 255, a: 255 }); throw new Error('x') }
+    catch (e) { expect(isCommandFailure(e) && e.err.error).toBe('InvalidArgument') }
+    expect(p.markers).toEqual([])
+    expect(applyAddTrack(p, g, 'L')).toBe('00000000-0000-0000-0000-000000000004') // no id consumed
+  })
 })

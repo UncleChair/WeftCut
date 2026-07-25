@@ -1,9 +1,14 @@
 import type { Layer, Project, Transition, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
+import { frameIndexRound, timeUsAtFrame } from '../snap'
 
 /** Extend t_end_us (and src_out_us for media-bearing kinds)
- *  by deltaUs. Used by add_transition to open the authorized overlap. */
+ *  by deltaUs. Used by add_transition to open the authorized overlap.
+ *
+ *  Raw µs, deliberately: the caller derives the delta as the distance between
+ *  two canonical frame boundaries (`wholeFrameDurationUs`), so adding it keeps a
+ *  canonical `t_end_us` canonical. A rate-derived "n frames in µs" would not. */
 export function extendLayerTEnd(layer: Layer, deltaUs: number): void {
   layer.t_end_us += deltaUs
   if (layer.params.kind === 'VideoClip' || layer.params.kind === 'Audio') layer.params.src_out_us += deltaUs
@@ -37,6 +42,29 @@ function tailHandleUs(p: Project, layer: Layer): number {
   return Math.max(dur - pa.src_out_us, 0)
 }
 
+/** A transition duration rounded to a whole number of composition frames, in µs,
+ *  measured FROM `cutUs` (the incoming layer's head, where the overlap starts).
+ *
+ *  Anchored at the cut rather than derived from the rate alone because at
+ *  fractional rates `canonical(k) + canonical(n) != canonical(k + n)` — at
+ *  30000/1001 they differ by up to 1 µs — so a bare "n frames in µs" would push
+ *  the outgoing layer's `t_end_us` off the grid or break validate's
+ *  `overlap === duration_us`; both cannot hold. The distance between two
+ *  canonical boundaries satisfies both at once.
+ *
+ *  A request under half a frame FAILS here (precise, pre-id-mint) rather than
+ *  collapsing to a zero-length transition. */
+function wholeFrameDurationUs(p: Project, cutUs: number, requestedUs: number): number {
+  const { num, den } = p.composition.fps
+  // A span and an absolute time share the same index arithmetic, so the round
+  // INDEX policy doubles as "how many frames long is this".
+  const frames = frameIndexRound(requestedUs, num, den)
+  if (frames < 1)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'duration_us',
+      detail: `${requestedUs}µs is under half a frame at ${num}/${den} fps; a transition spans at least 1 composition frame` })
+  return timeUsAtFrame(frameIndexRound(cutUs, num, den) + frames, num, den) - cutUs
+}
+
 /** Audio participants are rejected here (precise, pre-id-mint error); validate's
  *  TransitionUnsupportedLayerKind rule is the backstop no path can bypass. */
 function rejectAudioParticipant(layer: Layer): void {
@@ -47,7 +75,10 @@ function rejectAudioParticipant(layer: Layer): void {
 /** add_transition. Both layers must live on the SAME track.
  *  Three cases: adjacent (extend from — pre-checked against the outgoing tail
  *  handle), pre-overlapped by exactly duration (no extension, so no handle
- *  pre-check), or reject TransitionLayersNotAdjacent. The transition id is
+ *  pre-check), or reject TransitionLayersNotAdjacent. `durationUs` is snapped to
+ *  whole composition frames first, and every case — the handle pre-check, the
+ *  overlap comparison, the stored field — reads the SNAPPED value, so the
+ *  decision is made on what actually gets applied. The transition id is
  *  minted AFTER all checks (so LayerNotFound/TransitionUnsupportedLayerKind/
  *  TransitionInsufficientHandle/TransitionLayersNotAdjacent burn no id) but
  *  BEFORE commit's validate — so a downstream ValidationFailed burns it
@@ -66,18 +97,19 @@ export function applyAddTransition(p: Project, idGen: IdGen, fromLayer: Uuid, to
 
   const fromEnd = fromLayerObj.t_end_us
   const toStart = toLayerObj.t_start_us
+  const durUs = wholeFrameDurationUs(p, toStart, durationUs)
   const curOverlap = Math.max(fromEnd - toStart, 0)
   if (curOverlap === 0 && fromEnd === toStart) {
     const available = tailHandleUs(p, fromLayerObj)
-    if (available < durationUs)
+    if (available < durUs)
       throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: fromLayer, available_us: available })
-    extendLayerTEnd(fromLayerObj, durationUs)
+    extendLayerTEnd(fromLayerObj, durUs)
   }
-  else if (curOverlap === durationUs) { /* pre-positioned; no adjustment */ }
-  else throw new CommandFailure({ error: 'TransitionLayersNotAdjacent', from: fromLayer, to: toLayer, duration: durationUs })
+  else if (curOverlap === durUs) { /* pre-positioned; no adjustment */ }
+  else throw new CommandFailure({ error: 'TransitionLayersNotAdjacent', from: fromLayer, to: toLayer, duration: durUs })
 
   const id = idGen() // after the checks, before commit's validate (keystone)
-  p.transitions.push({ id, from_layer: fromLayer, to_layer: toLayer, duration_us: durationUs, kind })
+  p.transitions.push({ id, from_layer: fromLayer, to_layer: toLayer, duration_us: durUs, kind })
   return id
 }
 
@@ -86,25 +118,33 @@ export function applyAddTransition(p: Project, idGen: IdGen, fromLayer: Uuid, to
  *  tail via extend/shrinkLayerTEnd (start-at-cut alignment: only from_layer's
  *  geometry changes); growth gets the same tail-handle pre-check as add.
  *  Kind change is a pure field swap, never geometry. Patch semantics so the
- *  actor exposes it as ONE recorded command (one undo step). Mints no ids. */
+ *  actor exposes it as ONE recorded command (one undo step). Mints no ids.
+ *  The requested duration is snapped to whole composition frames against the cut
+ *  before anything is compared, so a request that rounds to the current duration
+ *  stays a no-op and the tail delta stays a whole number of frames. */
 export function applyUpdateTransition(p: Project, transitionId: Uuid, patch: { duration_us?: number; kind?: Transition['kind'] }): void {
   const tr = p.transitions.find((t) => t.id === transitionId)
   if (!tr) throw new CommandFailure({ error: 'TransitionNotFound', transition: transitionId })
-  const newDur = patch.duration_us
-  if (newDur !== undefined && newDur !== tr.duration_us) {
-    if (newDur <= 0)
-      throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: transitionId, duration: newDur } })
-    const loc = locate(p, tr.from_layer)
-    if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: tr.from_layer })
-    const fromLayerObj = p.tracks[loc[0]].layers[loc[1]]
-    const delta = newDur - tr.duration_us
-    if (delta > 0) {
-      const available = tailHandleUs(p, fromLayerObj)
-      if (available < delta)
-        throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: tr.from_layer, available_us: available })
-      extendLayerTEnd(fromLayerObj, delta)
-    } else shrinkLayerTEnd(fromLayerObj, -delta)
-    tr.duration_us = newDur
+  const requested = patch.duration_us
+  if (requested !== undefined) {
+    if (requested <= 0)
+      throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'TransitionDurationOutOfRange', transition: transitionId, duration: requested } })
+    const toLoc = locate(p, tr.to_layer)
+    if (!toLoc) throw new CommandFailure({ error: 'LayerNotFound', layer: tr.to_layer })
+    const newDur = wholeFrameDurationUs(p, p.tracks[toLoc[0]].layers[toLoc[1]].t_start_us, requested)
+    if (newDur !== tr.duration_us) {
+      const loc = locate(p, tr.from_layer)
+      if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: tr.from_layer })
+      const fromLayerObj = p.tracks[loc[0]].layers[loc[1]]
+      const delta = newDur - tr.duration_us
+      if (delta > 0) {
+        const available = tailHandleUs(p, fromLayerObj)
+        if (available < delta)
+          throw new CommandFailure({ error: 'TransitionInsufficientHandle', layer: tr.from_layer, available_us: available })
+        extendLayerTEnd(fromLayerObj, delta)
+      } else shrinkLayerTEnd(fromLayerObj, -delta)
+      tr.duration_us = newDur
+    }
   }
   if (patch.kind !== undefined) tr.kind = patch.kind
 }

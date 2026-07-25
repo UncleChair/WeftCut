@@ -1,6 +1,6 @@
 import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextParams, Uuid, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
-import { snapFrameRound, snapFrameFloor } from '../snap'
+import { snapFrameRound, snapFrameFloor, snapFrameCeil } from '../snap'
 import { checkTrackLock, locateLayer, applyDurationAutofit } from './helpers'
 import { normalizeKeyframes } from './animated'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
@@ -140,12 +140,14 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
     // round) so newSrcIn can never round UP toward contentDur on off-grid inputs.
     const maxSrcIn = Math.max(contentDur - 1, 0)
     const fps = p.composition.fps
-    // Double-snap: floor keeps it < contentDur; round canonicalises the µs grid.
-    const newSrcIn = snapFrameRound(snapFrameFloor(Math.min(srcIn, maxSrcIn), fps.num, fps.den), fps.num, fps.den)
+    const newSrcIn = snapFrameFloor(Math.min(srcIn, maxSrcIn), fps.num, fps.den)
     // Largest grid t_end whose derived src_out stays <= contentDur.
-    const cappedEnd = snapFrameRound(snapFrameFloor(tStart + (contentDur - newSrcIn), fps.num, fps.den), fps.num, fps.den)
-    // Never collapse to zero-width (guards degenerate contentDur <= 0).
-    const newTEnd = Math.max(cappedEnd, tStart + 1)
+    const cappedEnd = snapFrameFloor(tStart + (contentDur - newSrcIn), fps.num, fps.den)
+    // Never collapse to zero-width (guards degenerate contentDur <= 0). The floor
+    // is ONE FRAME, not one µs: `tStart + 1` is off-grid, and validate's grid
+    // backstop would reject the whole commit — turning a silent 1 µs sliver into
+    // a failed edit whenever a motif's remaining content is under one frame.
+    const newTEnd = Math.max(cappedEnd, snapFrameCeil(tStart + 1, fps.num, fps.den))
 
     params.src_in_us = newSrcIn
     layer.t_end_us = newTEnd

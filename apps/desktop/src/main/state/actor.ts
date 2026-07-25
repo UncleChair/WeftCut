@@ -6,7 +6,7 @@ import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
-import { snapFrameRound } from './snap'
+import { snapFrameCeil, snapFrameRound } from './snap'
 import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
 import { applyMoveLayer } from './mutations/move'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
@@ -213,6 +213,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (l.params.kind === 'Motif') l.params.src_in_us = snapFrameRound(l.params.src_in_us, nf.num, nf.den)
         }
         d.composition.duration_us = snapFrameRound(d.composition.duration_us, nf.num, nf.den)
+        // Markers ride the SAME composition grid as layer endpoints, so they
+        // re-snap with them — miss them and validate's grid backstop rejects the
+        // whole fps change (OffGridTime) on any project that has a marker.
+        // `snapMarkerTimes`' collapsed-region REJECTION is deliberately not reused:
+        // an fps change must not fail because a region quantizes to zero frames at
+        // the new rate, so such a region widens to one frame. Order is preserved —
+        // the snap is monotonic.
+        for (const m of d.markers) {
+          m.t_us = snapFrameRound(m.t_us, nf.num, nf.den)
+          if (m.end_t_us !== null && m.end_t_us !== undefined) {
+            const end = snapFrameRound(m.end_t_us, nf.num, nf.den)
+            m.end_t_us = end > m.t_us ? end : snapFrameCeil(m.t_us + 1, nf.num, nf.den)
+          }
+        }
       }
       applyDurationAutofit(d)
     }

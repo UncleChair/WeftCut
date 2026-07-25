@@ -1,4 +1,4 @@
-import type { TimeUs, Uuid } from './model'
+import type { Rational, TimeUs, Uuid } from './model'
 
 // ── ValidationError — mirrors native/src/state/validate.rs variants ──
 export type ValidationError =
@@ -14,6 +14,13 @@ export type ValidationError =
   | { rule: 'LayerInMultipleTransitions'; layer: Uuid }
   | { rule: 'DuplicateLayerId'; layer: Uuid }
   | { rule: 'InvalidLayerRange'; layer: Uuid; t_start: TimeUs; t_end: TimeUs }
+  // ── Frame-grid backstop (docs/data-model.md § Timeline-field alignment). `fps`
+  // rides along because "off grid" is meaningless without the rate it is off:
+  // 2_999_999 is off grid at 30/1 and canonical at 1000000/1. A caller that hits
+  // either variant asked for a sub-frame time; the fix is to snap and retry, and
+  // the value it should have sent is `round(i * 1e6 * den / num)`.
+  | { rule: 'OffGridLayerBoundary'; layer: Uuid; field: 't_start_us' | 't_end_us'; t: TimeUs; fps: Rational }
+  | { rule: 'OffGridTime'; entity: 'Composition' | 'Marker'; id: Uuid | null; field: string; t: TimeUs; fps: Rational }
   | { rule: 'MissingMedia'; layer: Uuid; media: Uuid }
   | { rule: 'InvalidSrcRange'; layer: Uuid; src_in: TimeUs; src_out: TimeUs }
   | { rule: 'SrcRangeExceedsMedia'; layer: Uuid; src_in: TimeUs; src_out: TimeUs; media_duration: TimeUs }
