@@ -2,6 +2,11 @@
 
 **Status:** implementation started; FG-P1-1 completed locally
 **Recorded:** 2026-07-22
+**Implementation contract:** `.scratch/timeline-frame-grid/spec.md` — pinned
+decisions, the enforced invariant, nine findings this review missed, and tickets
+`01`–`07` for the correctness + scalability round. This document keeps the review
+itself (industry baseline, drift tables, capability matrix); the spec keeps the
+plan of record. Do not restate one in the other.
 **Scope:** composition frame grid, timeline ruler, edit snapping, timecode,
 audio edit precision, and composition-frame-rate lifecycle.
 

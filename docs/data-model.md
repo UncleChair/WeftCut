@@ -23,6 +23,42 @@ fields (`src_in_us`/`src_out_us`) are NOT snapped — they're in the
 source media's own time space, and the renderer's
 `sampleIndexForPtsUs` naturally handles whatever value lands there.
 
+`transition.duration_us` and marker `t_us` / `end_t_us` are on that grid
+too. A transition duration is a whole number of composition frames
+measured **from the cut**, which is what lets the outgoing layer's
+auto-extended `t_end_us` stay on the grid *and* keep the
+`overlap == duration_us` invariant — at 29.97 / 23.976 a duration derived
+from the rate alone cannot satisfy both. Requests below half a frame are
+rejected, not rounded down: a transition and a region marker each span at
+least one frame. Markers being frame-quantized matches Premiere/Resolve,
+so a marker dropped mid-frame moves up to half a frame.
+
+Alignment is **structural**, not merely per-mutation. The commit validator
+rejects any layer endpoint, `composition.duration_us`, or marker time that
+is not `round(i × 1e6 × den / num)` for an integer frame index, so a
+mutator that forgets to snap fails loudly instead of quietly persisting a
+sub-frame time. The endpoint predicate is keyed by layer kind; every kind,
+audio included, is on the composition grid.
+
+Two fields are deliberately outside that rule. `transition.duration_us` is
+a *distance* between two canonical boundaries, and at 29.97 / 23.976 a
+distance is not itself a boundary time — so what is enforced is
+`overlap == duration_us`, and canonical participant endpoints then make the
+duration a whole frame count automatically. Keyframe `t_us` is snapped on
+write but not enforced: trim and split rebase keys by a delta, and
+re-snapping the shifted set would dedupe-merge two keys that landed on one
+frame, losing authored data.
+
+Off-grid times already on disk **repair on load rather than reject**.
+`project_open` reaches the actor through `replace_state`, which runs that
+same validator, so a hard rule alone would make any project written by an
+older build unopenable. `parseProject` snaps every grid-bound field inside
+its single normalize pass — beside the additive-field backfills, one pass in
+one place — re-derives each transition duration from the repaired geometry,
+and reports what it moved so a migrated project is visible rather than
+mysterious. The pass is idempotent: saving a repaired project and reopening
+it repairs nothing.
+
 Display format follows the same grid: timecode reads SMPTE
 `HH:MM:SS:FF`, NDF (non-drop-frame) at every fps — at 29.97/59.94 the
 displayed timecode drifts vs. wall-clock by ~3.6s/hour. v1 is
@@ -602,7 +638,8 @@ struct ChangeEvent {
 | Invariant | Failure |
 |---|---|
 | `t_start_us < t_end_us` | reject |
-| `t_start_us`, `t_end_us`, `composition.duration_us` snap to composition-frame grid | snap-round (half-up) before validation |
+| `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected |
+| `transition.duration_us` == the geometric overlap of its participants | reject — this *is* the transition's grid rule; a duration is a distance, not a boundary time |
 | `0 ≤ src_in_us < src_out_us ≤ media.duration_us` | reject |
 | No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |
 | `composition.duration_us == max(layer.t_end_us)` while `duration_pinned == false` | auto-fit bidirectionally (grow on adds, shrink on deletes/inward trims) |
