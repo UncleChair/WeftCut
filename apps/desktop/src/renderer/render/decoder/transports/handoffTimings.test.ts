@@ -17,6 +17,21 @@ describe("HandoffTimings", () => {
     expect(s.residentP50).toBeCloseTo(12);
   });
 
+  // The subtraction also absorbs `vf.close()` and the scheduling gap around the
+  // `createImageBitmap` await, so where a direct stamp exists it must win — the
+  // derived figure overstates the drain by several times.
+  it("prefers a directly-stamped barrier over the subtraction", () => {
+    const t = new HandoffTimings();
+    t.record(0.5, 1.5, 12, 0.4);
+    expect(t.summary()!.barrierP50).toBeCloseTo(0.4);
+  });
+
+  it("does not clamp a directly-stamped zero barrier away", () => {
+    const t = new HandoffTimings();
+    t.record(1, 1, 20, 0);
+    expect(t.summary()!.barrierP50).toBe(0);
+  });
+
   // A non-instrumented build omits the fields; recording them as zero would
   // report the barrier as free, which is the exact wrong conclusion.
   it("ignores a frame missing any stamp rather than counting it as zero", () => {

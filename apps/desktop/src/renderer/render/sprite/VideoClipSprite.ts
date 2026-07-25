@@ -12,6 +12,7 @@
 import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
 import { type BrowserConvertibleFrame, decodedDims } from "../decoder/decodedFrame";
+import { STAGE, stageAdd, stageNow } from "../perf/stageTimers";
 import type { StageableSprite } from "./StageableSprite";
 
 export interface VideoClipSpriteInit {
@@ -136,7 +137,9 @@ export class VideoClipSprite implements StageableSprite {
     // returns the canvas owns the pixels, so the borrowed preview bitmap
     // (evicted on fast scrub) or the export VideoFrame (closed by the
     // store's `evictBefore`) can be released right after.
+    const tBlit = stageNow();
     this.snapCtx.drawImage(frame, 0, 0, width, height);
+    stageAdd(STAGE.BlitDrawImage, tBlit);
 
     if (!this.source || !this.texture || dimsChanged) {
       this.rebindSource(this.snapCanvas, width, height);

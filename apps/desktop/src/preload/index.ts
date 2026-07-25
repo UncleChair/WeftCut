@@ -455,9 +455,15 @@ ipcRenderer.on(
       // into `bmp` has GPU-completed, BEFORE the outer finally's consumeAck
       // frees the slot for the producer to overwrite. Without this the native-hw
       // lane presents frames pool_size out of order (see the block comment).
+      // Stamped DIRECTLY rather than left to be derived as
+      // `resident - gvf - cib`: the subtraction also absorbs `vf.close()` and
+      // any scheduling gap around the await, which made the derived figure read
+      // several times the real drain and INVERT with load.
+      const tBarrier = performance.now()
       forceSharedTextureReadComplete(bmp)
+      const barrierMs = performance.now() - tBarrier
       const residentMs = performance.now() - tEntry
-      port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs }, [bmp])
+      port.postMessage({ kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs, barrierMs }, [bmp])
     } catch (err) {
       port.postMessage({ kind: 'error', streamId, message: err instanceof Error ? err.message : String(err) })
     } finally {

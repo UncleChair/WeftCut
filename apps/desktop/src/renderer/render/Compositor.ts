@@ -63,6 +63,7 @@ import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
 import { selectActiveTransitions } from "./transitions/activeTransitions";
 import { TransitionNodeManager } from "./transitions/TransitionNodes";
+import { STAGE, stageAdd, stageNow, stageRecord } from "./perf/stageTimers";
 import {
   judgeFrameSelection,
   UnderrunTracker,
@@ -928,7 +929,9 @@ export class Compositor {
     effectOpts: { previewEffectsEnabled: boolean },
   ): void {
     if (effects) {
+      const tEffects = stageNow();
       sprite.displayObject.filters = effectsFor(effects, layer, tInLayerUs, effectOpts);
+      stageAdd(STAGE.Effects, tEffects);
     }
     // Transition divert: a participant's finished node — transform, opacity,
     // and filters exactly as the normal path would stage them — goes into its
@@ -976,7 +979,9 @@ export class Compositor {
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
 
     const prevChildCount = this.stage.children.length;
+    const tRebuild = stageNow();
     this.stage.removeChildren();
+    stageAdd(STAGE.SceneRebuild, tRebuild);
 
     // First pass: ensure audio mixers for every Audio layer. Skipped
     // entirely in export mode — export audio mixes in Rust
@@ -989,6 +994,7 @@ export class Compositor {
     // track. Treating the VideoClip as also audio-bearing here would
     // play the same audio twice — the audible doubling bug.
     if (this.audioGraph !== null) {
+      const tAudio = stageNow();
       // Audio gates — mirror audio/mix.rs audible_audio_layers semantics:
       // whole-track disable still gates, but audio mute/solo now lives on
       // ROLES (mute wins over solo; an absent role defaults audible iff no
@@ -1051,6 +1057,7 @@ export class Compositor {
         const layer = this.layerById.get(layerId);
         audio.mixer.tick(tUsSnapped, false, layer?.t_end_us ?? 0, null);
       }
+      stageAdd(STAGE.Audio, tAudio);
     }
 
     this.ownerCompositeCount += 1;
@@ -1058,6 +1065,9 @@ export class Compositor {
     // hidden. Everything below this point is visual/presentation-only work.
     if (!this.presentationVisible) {
       this.presentationDirty = true;
+      // The `compositeMsLast` stamp at the tail never sees this exit, so this
+      // bracket is the only account of an audio-only (hidden-tab) frame.
+      stageAdd(STAGE.Composite, compositeStart);
       return;
     }
     this.presentationDirty = false;
@@ -1101,6 +1111,7 @@ export class Compositor {
     }
 
     let z = 0;
+    const tSweep = stageNow();
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
@@ -1138,6 +1149,7 @@ export class Compositor {
         }
       }
     }
+    stageAdd(STAGE.LayerSweep, tSweep);
     // Bake diverted sides into their RTs + publish progress, after the sweep
     // (so any branch's staging is caught) and before the ticker's stage
     // render (so the quad samples THIS frame's pixels).
@@ -1211,6 +1223,7 @@ export class Compositor {
     if (this.compositeMsLast > this.compositeMsMax) {
       this.compositeMsMax = this.compositeMsLast;
     }
+    stageRecord(STAGE.Composite, this.compositeMsLast);
   }
 
   /// Authored composition duration, in microseconds, from the current
@@ -2048,7 +2061,9 @@ export class Compositor {
 
     // Upload the current frame BEFORE adjusting transforms so the
     // sprite's natural size reflects the real texture dimensions.
+    const tRing = stageNow();
     const selected = clip.source.ring.selectFrame(srcTUs);
+    stageAdd(STAGE.RingLookup, tRing);
     const frame = selected?.frame ?? null;
 
     // Underrun accounting: while the master clock runs, a stale or
@@ -2072,19 +2087,23 @@ export class Compositor {
     }
     if (frame && selected) {
       if (isTenBitFrame(frame)) {
-        clip.sprite.bindExternalTexture(
-          this.ensureTenBitIngest().textureFor(clip.layerId, frame),
-        );
+        const tTenBit = stageNow();
+        const texture = this.ensureTenBitIngest().textureFor(clip.layerId, frame);
+        stageAdd(STAGE.TenBitIngest, tTenBit);
+        clip.sprite.bindExternalTexture(texture);
       } else if (isNativeNv12Frame(frame)) {
         // Native 8-bit CPU-plane frames (export relay AND the SW preview
         // lane) convert in OUR shader — Chromium's software conversion of
         // buffer-defined NV12 VideoFrames applies BT.601 regardless of the
         // stamped colorSpace (see nv12Frame.ts).
-        clip.sprite.bindExternalTexture(
-          this.ensureNv12Ingest().textureFor(clip.layerId, frame),
-        );
+        const tNv12 = stageNow();
+        const texture = this.ensureNv12Ingest().textureFor(clip.layerId, frame);
+        stageAdd(STAGE.Nv12Ingest, tNv12);
+        clip.sprite.bindExternalTexture(texture);
       } else {
+        const tUpload = stageNow();
         clip.sprite.updateFrame(frame);
+        stageAdd(STAGE.BitmapUpload, tUpload);
       }
       clip.boundFramePtsUs = selected.ptsUs;
       clip.boundFrameDurationUs = selected.durationUs;

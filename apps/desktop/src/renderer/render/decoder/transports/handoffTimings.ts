@@ -47,12 +47,21 @@ export class HandoffTimings {
   /// Record one frame's preload timings. A message without the (optional)
   /// timing fields is ignored rather than recorded as zero — a
   /// non-instrumented build must not read as "the barrier is free".
-  record(gvfMs: number | undefined, cibMs: number | undefined, residentMs: number | undefined): void {
+  record(
+    gvfMs: number | undefined,
+    cibMs: number | undefined,
+    residentMs: number | undefined,
+    barrierMs?: number,
+  ): void {
     if (gvfMs === undefined || cibMs === undefined || residentMs === undefined) return;
     const i = this.next % this.capacity;
-    // Clamp: `performance.now()` granularity can make the three stamps sum
-    // marginally past `residentMs`, and a negative barrier reads as nonsense.
-    this.barrier[i] = Math.max(0, residentMs - gvfMs - cibMs);
+    // Prefer the directly-stamped barrier. The subtraction below is the legacy
+    // fallback and OVERSTATES the drain — it also absorbs `vf.close()` and any
+    // scheduling gap around the `createImageBitmap` await, so it reads several
+    // times the real cost and inverts with load. Clamped because
+    // `performance.now()` granularity can make the three stamps sum marginally
+    // past `residentMs`, and a negative barrier reads as nonsense.
+    this.barrier[i] = barrierMs ?? Math.max(0, residentMs - gvfMs - cibMs);
     this.cib[i] = cibMs;
     this.resident[i] = residentMs;
     this.next += 1;

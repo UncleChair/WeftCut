@@ -34,6 +34,9 @@ interface PortFrameMsg {
   gvfMs?: number;
   cibMs?: number;
   residentMs?: number;
+  /// The read-completion barrier, stamped directly around the drain rather than
+  /// derived from the other three.
+  barrierMs?: number;
 }
 interface PortEofMsg {
   kind: "eof";
@@ -170,7 +173,7 @@ export class GpuTransport implements DecodeTransport {
         data.bitmap?.close?.();
         return;
       }
-      this.timings.record(data.gvfMs, data.cibMs, data.residentMs);
+      this.timings.record(data.gvfMs, data.cibMs, data.residentMs, data.barrierMs);
       this.frameCb?.(data.bitmap, data.ptsUs, data.durUs);
     } else if (data.kind === "eof") {
       this.eofCb?.();

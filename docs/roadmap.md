@@ -243,6 +243,96 @@ from the pinned source tarball — see `fetch-ffmpeg-lgpl.mjs`). Where the
 runtime is absent, the Standard engine is simply unavailable (`auto` resolves
 to Lite) rather than broken.
 
+### Preview playback smoothness — measured, five levers ranked
+
+[playback-perf](playback-perf.md) profiles the whole preview loop under N
+tracks across 1080p/4K × ffmpeg-hw / ffmpeg-sw / WebCodecs. The headline is
+that **the compositor is not the problem**: `PlaybackEngine.tick` plus the
+Pixi present run 2–6 % of a 16.7 ms budget in every cell measured, while the
+tick *interval* p99 reaches 38–140 ms. Every wall is in frame delivery or in
+retained memory, and each lever below is named by a measurement, not a guess.
+Ranked by measured payoff per unit of work.
+
+1. **Budget the `FrameRing` in bytes, not in time.** `DEFAULT_LOOKAHEAD_US`
+   1 s + `DEFAULT_LOOKBEHIND_US` 0.5 s is resolution-blind, and the
+   `ImageBitmap`s it retains are GPU-backed: ~8 MB each at 1080p, ~33 MB at 4K.
+   One 4K clip pins ~1.9 GB and two ask for ~4 GB, at which point drops go
+   0.0 % → 83.5 % *with the tick still clean at p95 17.6 ms*. Cap the retained
+   bytes globally and divide the budget across active clips (falling back to a
+   shorter window rather than a shallower one), so a 4K timeline degrades its
+   lookahead instead of its decoders.
+
+   **Partly landed** (`decoder/frameRingBudget.ts`): a 1 GiB total shared across
+   live rings, expressed as backpressure on the FORWARD fill only. 4K retention
+   fell 38 % at one clip and 55 % at two, and 4K two-track drops 83.5 % → 55.3 %,
+   with the 1080p ceiling unchanged. Three results bound what is left: a budget
+   tight enough to clamp 1080p makes things **worse** (512 MiB drove decode
+   throughput +40 % and drops 7.2 % → 55.5 %, because evicted frames get
+   re-requested and one re-seek re-decodes an 8 s GOP); trimming *lookbehind* on
+   byte pressure fails the same way; and halving retained bytes left the 4K tick
+   tail untouched, so **retention is not the dominant 4K cause**. The 1080p
+   3–4 track collapse is decoders dying rather than buffers overflowing — rings
+   read empty while delivery reports full rate — and is now its own ticket.
+2. **Get the hardware lane's read barrier off the renderer's main thread.**
+   `forceSharedTextureReadComplete` costs a flat **19–21 ms per delivered frame
+   per session** — 0.29–1.01 thread-seconds per wall-second, roughly 20× the
+   entire composite-plus-present CPU. It is **size-independent** (1080p 19.3 ms
+   vs 4K 20.8 ms; 4K at ¼ still 20.8 ms) and `createImageBitmap` beside it is
+   0.20 ms, so it is a fixed synchronous wait, not a transfer — which also
+   supersedes the reading recorded in the revert of `e8371231`. It is what caps
+   the Standard engine at 2 tracks (1080p) and 0 (4K). Directions: satisfy the
+   ack with a GPU fence / the keyed mutex the transport already holds instead of
+   a rasterize-to-force-flush, or move receive+barrier to a worker so the wait
+   stops blocking the loop that consumes the frames. Do NOT re-try shrinking the
+   sampled region — that was measured and is noise.
+3. **Make the over-budget hardware clip fall to WebCodecs, not to the ffmpeg
+   software lane.** Past `MAX_HW_SESSIONS` (3) the fourth clip opens on the
+   software transport in place, and that single clip takes the session with it:
+   tick p50 15.1 → 82.6 ms, presented 59.9 → 13.0 fps, main-process CPU
+   0.7 % → 28.7 %, drops 0 → 39.8 %. WebCodecs carries 1080p far better than
+   that lane does, so routing the over-budget clip there turns a cliff into a
+   slope. At minimum, make the transition observable — it currently fires no
+   event and no LogBus row, contrary to what [preview.md](preview.md) claims.
+4. **Give the software lane flow control.** It fails in both directions for one
+   reason. Starved: H.264 1080p delivers 28 fps for 30 fps content, and two
+   clips split a fixed budget (15.0 + 15.4) while the main process never reaches
+   half a core — a serialized per-frame round-trip, not a compute limit
+   (¼ resolution buys only 1.6× for 16× fewer shipped pixels). Flooded: ProRes
+   all-intra decodes at **3.1× realtime**, pushes its ring to 66 frames past the
+   45 the window should hold, and starves the renderer's main thread with NV12
+   IPC — 93 fps delivered, yet tick p50 41.7 ms and presented 27.1 fps. So:
+   honor `isLookaheadFull` as real backpressure, and pipeline the request path
+   (decode ahead per session) instead of demand-driving one frame at a time.
+   This lane is mandatory for ProRes / DNxHR / MPEG-2 / 10-bit, so it is not an
+   edge case — 10-bit HEVC 1080p currently previews at **3.3 fps**.
+5. **Teach the dropped-frame indicator to see judder.** The tracker judges
+   whether the ring *had* a fresh frame, so a loop stalled by a synchronous
+   drain reads **zero drops while looking jerky**: 1080p hardware at 3 tracks
+   reports 0.00 % drops with tick p99 38.8 ms, and 4K WebCodecs reports 0.00 %
+   with p99 74.3 ms. A late-tick / late-present counter beside the existing one
+   would make the indicator reflect what the user sees.
+
+Two decisions this data informs but does not settle:
+
+- **The `auto` default.** WebCodecs measurably out-plays the Standard engine on
+  8-bit ≤1080p — HEVC 1080p sustains ≥4 tracks at tick p95 17.2 ms and H.264 2,
+  against 1–2 for ffmpeg-hw — because it pays no barrier. But
+  [decode-bench](decode-bench.md) gives ffmpeg the decisive **seek** advantage,
+  which is what scrubbing feels. Sustained playback and scrub latency want
+  different engines; picking per-interaction rather than per-source is the
+  design question. Fix lever 2 first — it may remove the tradeoff.
+- **10-bit ingest.** `TenBitIngest` never fires on the software route (the
+  transport ships NV12 by ADR 0029), so the 10-bit preview path is 8-bit and
+  slow. Whether that is worth a 10-bit ship format is a colour-fidelity
+  question, not a performance one.
+
+Measured non-levers — do not spend time here: the snapshot blit
+(`blitDrawImage` mean 0.02–0.03 ms), `ringLookup`, the audio sweep,
+`stage.removeChildren()`, and the effect-chain sync are each ≤ 3 % of a
+sub-millisecond tick; `nv12Ingest` is negligible at 1080p (p95 1.3 ms) and only
+becomes real at 4K (p95 9.0 ms); the GPU's VideoDecode engine sits at ~5 % per
+hardware track, so no decoder is saturated anywhere in the matrix.
+
 ### Zero-copy GPU frame upload — deprioritized, measure first
 
 Export composites a decoded `VideoFrame` by snapshotting it into a 2D
@@ -263,6 +353,15 @@ offline export, a cost that is bounded, unmeasured, and instrumented
 (bespoke Pixi pass, a permanent WebGL dual-path, external-texture
 sampling limits, a fresh conformance pass). Do not start without
 profiling showing the blit matters (4K export is where it would).
+
+**On the preview side that profiling now exists, and it says no.**
+[playback-perf](playback-perf.md) brackets the snapshot blit as its own
+stage: `blitDrawImage` means 0.03 ms per frame at 1080p and 0.02 ms at
+4K, p95 ≤ 0.2 ms — a rounding error against a 16.7 ms budget, and a
+small fraction of a `tickTotal` that is itself 2–6 % of budget. Preview
+judder is elsewhere entirely (the hardware lane's read barrier, the
+FrameRing's byte budget, composition-resolution raster). Export remains
+unmeasured and is still the only case that could justify this work.
 
 If profiling ever justifies it, the staged plan:
 

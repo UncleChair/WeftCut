@@ -68,7 +68,10 @@ import {
   clearMasterMeter,
   publishMasterMeter,
 } from "../state/masterMeterStore";
-import { setPixiPresentationVisible } from "./previewPresentation";
+import {
+  installTimedPresent,
+  setPixiPresentationVisible,
+} from "./previewPresentation";
 import type { PreviewFrameCapture } from "../testhook/e2eHook";
 
 interface Props {
@@ -305,6 +308,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         playbackScaleDiv(useAppSettingsStore.getState().settings.playback_resolution),
       );
       compositor.setPresentationVisible(visibleRef.current);
+      // Before the visibility call: that one early-returns when the state is
+      // unchanged (the usual init case, already visible), so it would never
+      // install the timed present on its own.
+      installTimedPresent(app);
       setPixiPresentationVisible(app, visibleRef.current);
       const initialSummary = useProjectStore.getState().summary;
       compositor.setProject(initialSummary);
@@ -565,6 +572,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               positionUs: engine.positionUs(),
               ...compositor.presentationSnapshot(),
             }),
+            // Playback bench: read the product's OWN per-frame accounting
+            // (dropped frames, per-clip rings, HW handoff barrier) rather than
+            // having the driver recompute frame timing from outside.
+            perfSnapshot: () => compositor.getPerfSnapshot(),
           });
         });
       }

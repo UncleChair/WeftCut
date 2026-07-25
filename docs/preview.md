@@ -395,6 +395,16 @@ the engine's warmup max so a one-off cold-start spike doesn't pin
 the displayed max forever. The HUD's z-index sits below page
 chrome popovers / settings dialogs so it doesn't obscure them.
 
+For a per-stage breakdown rather than a single `composite ms` — including
+the two costs that bracket lives outside, `setAnchorTime` and the Pixi
+present — see [`playback-perf.md`](playback-perf.md), the multi-track
+playback benchmark (operated per
+[`playback-perf-runbook.md`](playback-perf-runbook.md)), and
+`render/perf/stageTimers.ts`, the accumulator it reads. Note what the
+HUD's **Dropped** counter cannot see: it judges whether the ring held a
+fresh frame, so a loop stalled by a synchronous GPU drain reports zero
+drops while looking visibly jerky.
+
 ## Render & Play
 
 The "Render & Play" affordance kicks off the same Pixi+WebCodecs

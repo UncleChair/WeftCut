@@ -8,6 +8,13 @@ import { UPDATE_PRIORITY, type Ticker } from "pixi.js";
 import type { Compositor } from "./Compositor";
 import { SyntheticClock } from "./clock";
 import { ScrubCoalescer } from "./decoder/scrub";
+import {
+  STAGE,
+  stageAdd,
+  stageFrameBegin,
+  stageFrameEnd,
+  stageNow,
+} from "./perf/stageTimers";
 
 export interface PlaybackEngineInit {
   compositor: Compositor;
@@ -325,8 +332,11 @@ export class PlaybackEngine {
   /// Ticker invokes it, and so reference identity is stable for
   /// `ticker.remove(this.tick, this)` in dispose.
   private tick = (): void => {
+    const t0 = stageFrameBegin();
     try {
+      const tClock = stageNow();
       const { tUs } = this.clock.tick();
+      stageAdd(STAGE.ClockTick, tClock);
       // Forward THE clock anchor so the AudioMixers schedule against the
       // exact pair the playhead derives from (docs/audio.md §Clock).
       // Cheap: a reference set; null while paused or audio-suspended.
@@ -361,7 +371,9 @@ export class PlaybackEngine {
         this.pause();
         return;
       }
+      const tAnchor = stageNow();
       this.compositor.setAnchorTime(tUs);
+      stageAdd(STAGE.Anchor, tAnchor);
       this.compositor.compositeFrame(tUs);
       if (tUs !== this.lastEmittedUs) {
         this.lastEmittedUs = tUs;
@@ -373,6 +385,11 @@ export class PlaybackEngine {
       // Don't re-throw: ticker would happily call us again next
       // frame, but a thrown error inside a ticker listener prints a
       // noisy stack — caught here for diagnostic clarity.
+    } finally {
+      // Every exit closes the frame it opened — the auto-pause early return
+      // above and the catch included.
+      stageAdd(STAGE.TickTotal, t0);
+      stageFrameEnd();
     }
   };
 

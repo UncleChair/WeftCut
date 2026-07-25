@@ -104,6 +104,11 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// (via `ActiveClipProbe.hwLane`) to assert WHICH HW lane engaged.
   currentHwLane(): string | null { return this.hwPlan?.lane ?? null; }
   isDowngraded(): boolean { return this.startedHardware && this.lane === "software"; }
+  /// Cumulative frames this source delivered, for the PerfHUD's per-clip fps
+  /// column and the playback bench. Counted at the ring rather than in a
+  /// transport so an internal HW→SW lane flip keeps ONE monotonic series — both
+  /// transports push into the same `FrameRing`.
+  decodedFrameCount(): number { return this.ring.pushCount; }
   isLookaheadFull(): boolean { return this.ring.isLookaheadFull(); }
   isIdle(nowMs: number): boolean { return this.lastUseMs > 0 && nowMs - this.lastUseMs > IDLE_DISPOSE_MS; }
 
