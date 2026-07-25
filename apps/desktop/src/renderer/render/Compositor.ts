@@ -643,6 +643,14 @@ export class Compositor {
     });
   }
 
+  /// Preview-only: hand the decoder pool a new playback-resolution divisor
+  /// (1 | 2 | 4). Pure passthrough — the pool owns both the value and the
+  /// in-place transport re-open. Optional-chained because the export pool has
+  /// no such method (export always decodes full size).
+  setPlaybackScaleDiv(div: number): void {
+    this.pool.setPlaybackScaleDiv?.(div);
+  }
+
   setPresentationVisible(visible: boolean): void {
     if (this.presentationVisible === visible) return;
     this.presentationVisible = visible;

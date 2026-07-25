@@ -697,6 +697,41 @@ mod tests {
     }
 
     #[test]
+    fn export_decodes_at_full_source_resolution() {
+        // LANDMINE: the PREVIEW lane can ship a downscaled frame (the
+        // playback-resolution divisor). Export shares `SwVideoStream` and must
+        // never inherit it — an export silently rendered at half res is data
+        // loss. `open_with_format` takes the decoder's default out-size policy
+        // (`OutScale::FULL`) and this lane has no way to set another.
+        let stream = SwVideoStream::open_with_format(PRORES, SwOutFormat::Nv12).expect("open");
+        assert_eq!(
+            (stream.out_width, stream.out_height),
+            (stream.width, stream.height),
+            "export stream must decode at source resolution"
+        );
+        drop(stream);
+
+        let (reg, got) = registry_with_collector();
+        let info = reg
+            .open("full", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)
+            .expect("open");
+        assert_eq!((info.width, info.height), (320, 240));
+        run_range(&reg, "full", 0, 300_000, &got);
+        let c = got.lock().unwrap();
+        assert!(c.errors.is_empty(), "errors: {:?}", c.errors);
+        assert!(!c.datas.is_empty(), "no frames delivered");
+        for d in &c.datas {
+            assert_eq!(
+                d.len(),
+                320 * 240 + 320 * 240 / 2,
+                "export frame is not full-size NV12"
+            );
+        }
+        drop(c);
+        reg.close("full").unwrap();
+    }
+
+    #[test]
     fn range_end_reports_the_exact_completed_range() {
         let (reg, got) = registry_with_collector();
         reg.open("s", PRORES, "NV12", DEFAULT_CREDIT_WINDOW)

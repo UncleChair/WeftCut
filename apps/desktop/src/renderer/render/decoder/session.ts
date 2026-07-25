@@ -168,4 +168,8 @@ export interface DecoderPool {
   acquire(init: SourceHandleInit): DecodeSession;
   release(key: string): void;
   dispose(): void;
+  /// Preview-only: adopt a new playback-resolution divisor (1 | 2 | 4).
+  /// Honestly optional — the EXPORT pool must never downscale (a half-res
+  /// export would be silent data loss), so it simply omits the method.
+  setPlaybackScaleDiv?(div: number): void;
 }

@@ -49,10 +49,20 @@ export class SwTransport implements DecodeTransport {
   /// behind.
   private lastSentTargetUs: number | null = null;
 
-  /// Optional hardware copy-back accel (Linux NVDEC/VAAPI): forwarded to main on
-  /// `open()` so the GPU decodes and copies NV12 back to CPU. Absent (software)
-  /// means no accel rides through and the native path stays plain CPU decode.
-  constructor(private readonly accel?: { lane: string; device: string | null }) {}
+  /// `accel`: optional hardware copy-back accel (Linux NVDEC/VAAPI), forwarded to
+  /// main on `open()` so the GPU decodes and copies NV12 back to CPU. Absent
+  /// (software) means no accel rides through and the native path stays plain CPU
+  /// decode.
+  ///
+  /// `scaleDiv`: optional playback-resolution divisor (1 | 2 | 4). Native
+  /// downscales each frame before it crosses IPC — 4K NV12 is 12.44 MB/frame at
+  /// full res — and reports the shipped dims on the frame, which the Compositor
+  /// renormalizes against the media size. Absent or 1 = full resolution, and
+  /// nothing extra rides through: an unscaled open stays exactly today's call.
+  constructor(
+    private readonly accel?: { lane: string; device: string | null },
+    private readonly scaleDiv?: number,
+  ) {}
 
   /// Subscribe to the frame event, then open the native session. Throws on
   /// failure (`previewSw.open` rejecting); the caller (`FfmpegSource`)
@@ -69,6 +79,7 @@ export class SwTransport implements DecodeTransport {
         streamId: this.streamId,
         path: o.path,
         ...(this.accel ? { lane: this.accel.lane, device: this.accel.device } : {}),
+        ...(this.scaleDiv !== undefined && this.scaleDiv > 1 ? { scaleDiv: this.scaleDiv } : {}),
       });
     } catch (err) {
       // Open failure: surface it as the terminal error BEFORE rethrowing —

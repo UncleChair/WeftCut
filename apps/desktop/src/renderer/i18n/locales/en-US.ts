@@ -727,6 +727,12 @@ const enUS = {
     decode_engine_webcodecs_tag: "webcodecs",
     decode_engine_unavailable: "Standard engine unavailable: {{reason}}",
     decode_engine_unavailable_suffix: "unavailable",
+    playback_resolution: "Playback resolution",
+    playback_resolution_hint:
+      "Draws the preview at reduced detail so playback keeps up — and decodes at reduced detail too, wherever the Standard engine works in software. Only sharpness changes; framing stays put. Export always renders at full resolution.",
+    playback_resolution_full: "Full",
+    playback_resolution_half: "Half (1/2)",
+    playback_resolution_quarter: "Quarter (1/4)",
     decode_unsupported_title: "Unsupported format",
     decode_unsupported_body:
       "The Lite engine can't decode this clip. Switch to the Standard engine to play it.",

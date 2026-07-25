@@ -50,6 +50,7 @@ const FALLBACK: AppSettings = {
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",
+  playback_resolution: "full",
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -74,6 +75,12 @@ export const usePrebakeMotifsEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.prebake_motifs);
 export const useDecodeEngine = (): AppSettings["decode_engine"] =>
   useAppSettingsStore((s) => s.settings.decode_engine);
+/// Preview playback resolution (`full` | `half` | `quarter`). The preview
+/// itself does NOT read this hook — `PixiPreview` subscribes to the store
+/// directly so a change re-opens the decode transport in place instead of
+/// re-rendering the React tree. This is for the settings UI.
+export const usePlaybackResolution = (): AppSettings["playback_resolution"] =>
+  useAppSettingsStore((s) => s.settings.playback_resolution);
 /// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset
 /// (the renderer auto-detects the OS language). i18next remains the live
 /// language source; this is the persisted user choice.

@@ -854,10 +854,10 @@ app.whenReady().then(async () => {
   // WebCodecs-blind-format path). Frames flow out of band on the dedicated
   // `previewSw:frame` channel (see ./previewSw), not through the generic
   // `evt:*` EventSink relay above.
-  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string; lane?: string | null; device?: string | null }) => {
+  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null }) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) throw new Error('previewSw:open — no window for sender')
-    return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null)
+    return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null, a.scaleDiv ?? null)
   })
   ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) => {
     // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer

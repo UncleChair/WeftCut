@@ -147,6 +147,11 @@ export type PreviewGpuMainTiming = { rendererRoundTripMs: PreviewGpuTimingSummar
 /// to the renderer as a `Uint8Array` (the one main→renderer copy). Color tags
 /// are canonical FFmpeg string names or absent where the stream leaves them
 /// unspecified.
+///
+/// `width`/`height` are the SHIPPED dimensions, which are the media's ONLY at
+/// `scaleDiv` 1 — a downscaled preview frame is smaller, and `data.byteLength`
+/// follows these two, never the media's. The Compositor renormalizes with
+/// `media.width / textureW`, so the on-canvas rect is unchanged either way.
 export type PreviewSwFrameMsg = {
   streamId: string
   ptsUs: number
@@ -339,7 +344,12 @@ export interface WeftcutApi {
     /// (Linux NVDEC/VAAPI; `device` = the DRM node for VAAPI). Absent/null =
     /// software. This is the private HW-vs-SW choice — the frame contract the
     /// session emits is unchanged NV12 either way.
-    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null }): Promise<{ width: number; height: number }>
+    ///
+    /// `scaleDiv` is the playback-resolution divisor (1 | 2 | 4; absent = 1 =
+    /// full): native downscales each frame BEFORE it crosses IPC, so the reply
+    /// and every `PreviewSwFrameMsg` carry the SHIPPED dimensions, which can be
+    /// smaller than the media's.
+    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null }): Promise<{ width: number; height: number }>
     requestFrameAt(args: { streamId: string; targetUs: number }): void
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void

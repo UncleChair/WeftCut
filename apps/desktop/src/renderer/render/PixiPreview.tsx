@@ -16,6 +16,7 @@ import {
 import { convertFileSrc } from "@/bridge/ipc";
 import { Application as PixiApplication } from "@pixi/react";
 import { Rectangle, type Application } from "pixi.js";
+import type { PlaybackResolution } from "../../shared/app-settings";
 
 import {
   registerTransport,
@@ -37,6 +38,10 @@ import {
 import { quickProxyPath } from "./decodeRoute";
 import { proxyIntent } from "../state/proxyPreferenceStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
+import {
+  playbackRenderResolution,
+  playbackScaleDiv,
+} from "./decoder/playbackResolution";
 import { isFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { isWebcodecsUnusable } from "./decoder/webcodecsCapability";
 import { noteResolution } from "./decoder/decodeCapability";
@@ -79,6 +84,25 @@ interface Props {
 
 const LOG = "[weftcut/pixi]";
 let previewResourceSequence = 0;
+
+/// The render-target half of Playback Resolution: rasterize at
+/// `composition × fraction`. Pixi shrinks only the canvas backing store
+/// (`texture.source.pixelWidth`) — the logical size stays `width`/`height`, so
+/// `app.screen`, `renderer.width/height`, `containMap` and every render
+/// texture keep composition coordinates and nothing has to move. The canvas
+/// scales the smaller buffer back up through its `objectFit: contain` styling.
+///
+/// Size and fraction are applied together on purpose: a composition-size
+/// change must carry the current fraction forward rather than reset it.
+function applyPlaybackRenderResolution(
+  app: Application,
+  size: { width: number; height: number },
+  resolution: PlaybackResolution | undefined,
+): void {
+  // Read out first: callers pass `app.screen`, which `resize` then mutates.
+  const { width, height } = size;
+  app.renderer.resize(width, height, playbackRenderResolution(resolution));
+}
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
   { onTimeUpdate, onPausedChange, previewDecodableOf, visible = true },
@@ -156,6 +180,14 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const handleInit = useCallback(
     (app: Application) => {
       applicationRef.current = app;
+      // Before the log so it reports the buffer we actually got, and before
+      // the first composite so the very first frame rasterizes at the user's
+      // setting instead of full res and then re-rendering.
+      applyPlaybackRenderResolution(
+        app,
+        app.screen,
+        useAppSettingsStore.getState().settings.playback_resolution,
+      );
       console.log(
         `${LOG} application init: canvas=${app.canvas.width}×${app.canvas.height} ` +
           `renderer=${app.renderer.type}`,
@@ -163,8 +195,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // @pixi/react renders a bare <canvas> with no CSS sizing.
       // Inline-replaced canvas elements default to their intrinsic
       // pixel size (here 1920×1080), which overflows the preview
-      // panel. Force the display size to fill the wrapper while the
-      // internal pixel size stays at composition resolution.
+      // panel. Force the display size to fill the wrapper; the backing
+      // store's own size is the renderer's business, and `contain` scales
+      // whatever it is into the box without changing the framing.
       const c = app.canvas as HTMLCanvasElement;
       c.style.width = "100%";
       c.style.height = "100%";
@@ -240,8 +273,14 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       const compositor = new Compositor({
         app,
-        width: app.canvas.width,
-        height: app.canvas.height,
+        // LANDMINE: the LOGICAL size, not `app.canvas.width/height`. The
+        // canvas is the physical backing store, which the playback-resolution
+        // fraction shrinks; these two become `compositionWidth`/`Height` and
+        // size the effect + transition render textures, so reading the
+        // physical buffer would silently render effects at the preview
+        // throttle and diverge from export.
+        width: app.screen.width,
+        height: app.screen.height,
         mode: "preview",
         resolveSource,
         // Membership-change snapshot only (see `compositeFrame`'s reset/
@@ -256,6 +295,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         mediaById: lookupMedia,
         conformAssetUrl,
       });
+      // Playback resolution: seed the pool BEFORE the first `ensureClip` so the
+      // very first source opens at the user's setting instead of full res and
+      // then re-opening. Deliberately NOT part of the swap key that
+      // `resolveSource` builds — the divisor is a transport property, and
+      // `FfmpegSource` re-opens its transport in place (same ring, no flash),
+      // which is both cheaper and gapless compared to rebuilding the handle.
+      compositor.setPlaybackScaleDiv(
+        playbackScaleDiv(useAppSettingsStore.getState().settings.playback_resolution),
+      );
       compositor.setPresentationVisible(visibleRef.current);
       setPixiPresentationVisible(app, visibleRef.current);
       const initialSummary = useProjectStore.getState().summary;
@@ -315,6 +363,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
             const out = app.renderer.extract.pixels({
               target: app.stage,
               frame: new Rectangle(0, 0, app.renderer.width, app.renderer.height),
+              // Pinned, because `extract` otherwise inherits
+              // `renderer.resolution` while `mapClientToComposition` below maps
+              // through the LOGICAL size — a throttled preview would hand the
+              // eyedropper a buffer the coordinates don't index.
+              resolution: 1,
             });
             return { pixels: out.pixels, width: out.width, height: out.height };
           } finally {
@@ -380,9 +433,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               // (reliable on WebGPU/WebGL regardless of preserveDrawingBuffer,
               // and avoids the OffscreenCanvas 2D-context quirks of the
               // canvas()+drawImage route). Frame is pinned to the WHOLE
-              // composition (renderer size) so (x,y) are ABSOLUTE composition
-              // pixels — the countdown sits at (0,0) scale 1, so its center is
-              // (W/2, H/2).
+              // composition (renderer size) AND `resolution: 1`, so (x,y) are
+              // ABSOLUTE composition pixels no matter what the playback-
+              // resolution knob does to the canvas — the countdown sits at
+              // (0,0) scale 1, so its center is (W/2, H/2).
               const W = app.renderer.width;
               const H = app.renderer.height;
               // Force a render of the live tree before extracting so the
@@ -397,6 +451,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
                 const out = app.renderer.extract.pixels({
                   target,
                   frame: new Rectangle(0, 0, W, H),
+                  resolution: 1,
                 });
                 const buf = out.pixels;
                 const w = out.width;
@@ -474,6 +529,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               const out = app.renderer.extract.pixels({
                 target: app.stage,
                 frame: new Rectangle(0, 0, W, H),
+                // Conformance PNGs are composition-sized at every playback
+                // resolution — a gate must not read a preview performance knob.
+                resolution: 1,
               });
               const canvas = new OffscreenCanvas(out.width, out.height);
               const ctx = canvas.getContext("2d");
@@ -535,6 +593,50 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   useEffect(() => {
     compositorRef.current?.scheduleRepaint();
   }, [decodeEngine, decodeComponentAvailable]);
+
+  // Playback resolution can change mid-session, and drives BOTH halves of the
+  // setting from this one subscription: the decode side (fewer pixels shipped
+  // over IPC) and the raster side (fewer pixels drawn). Subscribed to the store
+  // DIRECTLY rather than read through a hook: a re-render is the wrong
+  // response — the pool hands the new divisor to every live `FfmpegSource`,
+  // which re-opens its transport in place keeping the ring, and the renderer
+  // resize keeps every logical coordinate put, so playback continues without a
+  // rebuild or a black frame. Neither target may exist yet (async onInit);
+  // `handleInit` seeds both itself in that case.
+  useEffect(() => {
+    return useAppSettingsStore.subscribe((s) => {
+      compositorRef.current?.setPlaybackScaleDiv(
+        playbackScaleDiv(s.settings.playback_resolution),
+      );
+      const app = applicationRef.current;
+      // `app.screen` IS the composition size — the renderer's logical size is
+      // never the throttled one, which is what makes re-applying safe here.
+      if (app) {
+        applyPlaybackRenderResolution(
+          app,
+          app.screen,
+          s.settings.playback_resolution,
+        );
+      }
+    });
+  }, []);
+
+  // A composition-size change under an open project re-applies the current
+  // fraction rather than dropping back to 1: `renderer.resize` takes size and
+  // resolution together, so passing one without the other is what would reset
+  // it. No-ops while the sizes are unchanged (Pixi compares pixel dimensions).
+  const compositionWidth = composition?.width;
+  const compositionHeight = composition?.height;
+  useEffect(() => {
+    const app = applicationRef.current;
+    if (!app || compositionWidth === undefined || compositionHeight === undefined)
+      return;
+    applyPlaybackRenderResolution(
+      app,
+      { width: compositionWidth, height: compositionHeight },
+      useAppSettingsStore.getState().settings.playback_resolution,
+    );
+  }, [compositionWidth, compositionHeight]);
 
   // Forward summary updates to the Compositor without remounting the
   // Application.

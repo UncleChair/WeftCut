@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use super::decoder::{DecodeAccel, SwFrame, SwOutFormat, SwVideoStream};
+use super::decoder::{DecodeAccel, OutScale, SwFrame, SwOutFormat, SwVideoStream};
 use crate::recover::{panic_message, LockExt};
 
 /// How many frames a single `request_frame_at` emits, starting at the frame that
@@ -67,9 +67,11 @@ const SEEK_RETRY_MARGIN_US: i64 = 1_000_000;
 const CLOSE_GRACE: Duration = Duration::from_millis(300);
 
 /// What `open` hands back once the session thread has opened its decoder: the
-/// stream's frame dimensions. Built from `SwVideoStream`'s public `width`/`height`
-/// fields (set at open) — no frame is decoded just to learn them. The addon
-/// maps this to a `#[napi(object)]`.
+/// dimensions frames will SHIP at — the session's [`OutScale`] already applied,
+/// so a downscaled preview reports the smaller size rather than the source's.
+/// Built from `SwVideoStream`'s public `out_width`/`out_height` fields (set at
+/// open) — no frame is decoded just to learn them. The addon maps this to a
+/// `#[napi(object)]`.
 #[derive(Debug, Clone, Copy)]
 pub struct PreviewSwOpenInfo {
     pub width: u32,
@@ -311,23 +313,26 @@ fn session_thread(
     stream_id: String,
     path: String,
     accel: DecodeAccel,
+    out_scale: OutScale,
     rx: Receiver<SwSessionMsg>,
     init_tx: Sender<Result<PreviewSwOpenInfo, String>>,
     sink: FrameSink,
     shutdown: Arc<AtomicBool>,
 ) {
-    let mut stream = match SwVideoStream::open_with_accel(&path, SwOutFormat::Nv12, accel) {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = init_tx.send(Err(e));
-            return;
-        }
-    };
+    let mut stream =
+        match SwVideoStream::open_with_accel(&path, SwOutFormat::Nv12, accel, out_scale) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = init_tx.send(Err(e));
+                return;
+            }
+        };
     // Dimensions come from the stream's public fields (set at open) — do NOT
-    // decode a frame just to learn them.
+    // decode a frame just to learn them. The SHIPPED pair, not the source's:
+    // every frame this session emits carries these.
     let info = PreviewSwOpenInfo {
-        width: stream.width,
-        height: stream.height,
+        width: stream.out_width,
+        height: stream.out_height,
     };
     if init_tx.send(Ok(info)).is_err() {
         // `open` gave up waiting; drop `stream` and exit.
@@ -431,12 +436,13 @@ impl PreviewSwRegistry {
         *self.sink.lock_recover() = Some(sink);
     }
 
-    /// Open `path` for software preview: spawn its decode thread and hand back the
-    /// frame dimensions once the thread reports ready. Blocks on the init
-    /// handshake so a decoder-open failure surfaces synchronously. Delegates to
+    /// Open `path` for software preview at full resolution: spawn its decode
+    /// thread and hand back the frame dimensions once the thread reports ready.
+    /// Blocks on the init handshake so a decoder-open failure surfaces
+    /// synchronously. Delegates to
     /// [`open_with_accel`](Self::open_with_accel) on the software lane.
     pub fn open(&self, stream_id: &str, path: &str) -> Result<PreviewSwOpenInfo, String> {
-        self.open_with_accel(stream_id, path, DecodeAccel::Software)
+        self.open_with_accel(stream_id, path, DecodeAccel::Software, OutScale::FULL)
     }
 
     /// Open `path` for preview on `accel` — the software lane (mirrors [`open`]) or
@@ -446,12 +452,18 @@ impl PreviewSwRegistry {
     /// software. Blocks on the init handshake so a decoder-open failure (including a
     /// hw device that can't be created) surfaces synchronously and falls back.
     ///
+    /// `out_scale` is the playback-resolution divisor: the session ships every
+    /// frame at that fraction of the source size, so a 4K frame crosses IPC
+    /// smaller. Both lanes honor it — the copy-back lanes land a full-size CPU
+    /// frame first either way.
+    ///
     /// [`open`]: Self::open
     pub fn open_with_accel(
         &self,
         stream_id: &str,
         path: &str,
         accel: DecodeAccel,
+        out_scale: OutScale,
     ) -> Result<PreviewSwOpenInfo, String> {
         let mut sessions = self.sessions.lock_recover();
         if sessions.contains_key(stream_id) {
@@ -478,6 +490,7 @@ impl PreviewSwRegistry {
                     sid,
                     path_owned,
                     accel,
+                    out_scale,
                     cmd_rx,
                     init_tx,
                     sink,
@@ -670,6 +683,39 @@ mod tests {
             "expected pts_us >= 0, got {}",
             frames[0].1
         );
+    }
+
+    #[test]
+    fn open_reports_the_shipped_dimensions_and_honors_the_small_source_floor() {
+        // The 320x240 fixture is already at the floor, so even a ¼ request ships
+        // full size — and `open`'s reply must agree with the frames, or the
+        // renderer sizes its texture against a resolution that never arrives.
+        let got: Arc<Mutex<Vec<(u32, u32, usize)>>> = Arc::new(Mutex::new(vec![]));
+        let g2 = got.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { frame, .. } = poke {
+                g2.lock()
+                    .unwrap()
+                    .push((frame.width, frame.height, frame.data.len()));
+            }
+        }));
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        let info = reg
+            .open_with_accel("sc1", p, DecodeAccel::Software, OutScale::from_divisor(4))
+            .expect("open");
+        assert_eq!((info.width, info.height), (320, 240));
+        let _ = reg.request_frame_at("sc1", 0);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = reg.close("sc1");
+        let frames = got.lock().unwrap();
+        assert!(!frames.is_empty(), "expected at least one frame poke");
+        assert_eq!(frames[0].0, info.width);
+        assert_eq!(frames[0].1, info.height);
+        assert_eq!(frames[0].2, (320 * 240) + (320 * 240 / 2));
     }
 
     #[test]

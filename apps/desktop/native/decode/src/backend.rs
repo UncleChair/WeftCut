@@ -66,7 +66,8 @@ pub struct PreviewGpuTimingReport {
     pub final_eof: bool,
 }
 
-/// Reply of `preview_sw_open`: the decoded stream's frame dimensions.
+/// Reply of `preview_sw_open`: the dimensions the session's frames will SHIP at
+/// (`scale_div` already applied), which can be smaller than the source's.
 #[napi(object)]
 pub struct PreviewSwOpenInfoJs {
     pub width: u32,
@@ -78,7 +79,9 @@ pub struct PreviewSwOpenInfoJs {
 /// `"NV12"`. `pts_us`/`dur_us` cross as `f64` (napi has no ergonomic `i64`
 /// binding — matches the `preview_gpu` `target_us` convention). Color tags are
 /// canonical FFmpeg string names (`bt709`, `tv`, …) or `null` where the stream
-/// leaves them unspecified.
+/// leaves them unspecified. `width`/`height` are the SHIPPED dimensions
+/// (`preview_sw_open`'s `scale_div` already applied), and `data`'s length always
+/// follows them — not the source resolution.
 #[napi(object)]
 pub struct PreviewSwFrame {
     pub stream_id: String,
@@ -645,6 +648,13 @@ impl NativeDecode {
     ///   (empty when absent, letting libva default-select).
     /// - any other `lane` → treated as software (safe fallback; the caller should
     ///   only ever open an already-probed lane).
+    ///
+    /// `scale_div` is the playback-resolution divisor (1 | 2 | 4; absent = 1 =
+    /// full): frames are swscale'd DOWN to `src / scale_div` BEFORE they are
+    /// packed, so a 4K frame crosses IPC at a fraction of 12.44 MB. Native owns
+    /// the dimension math (even rounding, small-source floor) — the reply and
+    /// every frame report the shipped size. Preview only; the export lane has no
+    /// such knob.
     #[napi]
     pub fn preview_sw_open(
         &self,
@@ -653,8 +663,9 @@ impl NativeDecode {
         on_frame: ThreadsafeFunction<PreviewSwFrame>,
         lane: Option<String>,
         device: Option<String>,
+        scale_div: Option<u32>,
     ) -> napi::Result<PreviewSwOpenInfoJs> {
-        use crate::preview_sw::decoder::DecodeAccel;
+        use crate::preview_sw::decoder::{DecodeAccel, OutScale};
         let accel = match lane.as_deref() {
             None | Some("software") => DecodeAccel::Software,
             Some("nvdec") => DecodeAccel::Nvdec,
@@ -665,12 +676,13 @@ impl NativeDecode {
             // only opens lanes it has already probed, so this is defensive.
             Some(_) => DecodeAccel::Software,
         };
+        let out_scale = scale_div.map_or(OutScale::FULL, OutScale::from_divisor);
         self.preview_sw_sinks
             .lock_recover()
             .insert(stream_id.clone(), on_frame);
         let info = self
             .preview_sw
-            .open_with_accel(&stream_id, &path, accel)
+            .open_with_accel(&stream_id, &path, accel, out_scale)
             .map_err(napi::Error::from_reason)?;
         Ok(PreviewSwOpenInfoJs {
             width: info.width,

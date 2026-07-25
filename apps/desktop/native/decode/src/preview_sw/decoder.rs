@@ -292,6 +292,76 @@ impl SwOutFormat {
     }
 }
 
+/// Smallest long edge (px) a downscaled frame may ship at. Without it, ¼ of an
+/// already-small source is a thumbnail the Compositor then blows back up over
+/// the whole canvas.
+const MIN_SCALED_LONG_EDGE: u32 = 320;
+
+/// Largest divisor honored. The wire carries 1 | 2 | 4 (Premiere's Full/½/¼);
+/// anything wilder is clamped rather than trusted.
+const MAX_OUT_DIVISOR: u32 = 4;
+
+/// The ship-stage output-size policy: an integer divisor applied to the source
+/// dimensions before a frame is packed, so a 4K preview frame crosses IPC at ¼
+/// or 1/16 of 12.44 MB (playback resolution). swscale converts and scales in one
+/// traversal, so a smaller destination makes the existing pass CHEAPER on every
+/// non-NV12 source — the downscale is negative cost before a single saved IPC
+/// byte.
+///
+/// [`FULL`](Self::FULL) is the `Default` and the identity: the export lane never
+/// sets a divisor, and MUST keep decoding at source resolution — an export
+/// silently rendered at half res is data loss.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutScale(u32);
+
+impl Default for OutScale {
+    fn default() -> Self {
+        OutScale::FULL
+    }
+}
+
+impl OutScale {
+    /// No downscale: frames ship at source resolution, through the exact
+    /// pre-scaling code path.
+    pub const FULL: OutScale = OutScale(1);
+
+    /// Clamped to `[1, MAX_OUT_DIVISOR]`, so a bogus wire value can neither
+    /// divide by zero nor ask for a thumbnail.
+    pub fn from_divisor(div: u32) -> Self {
+        OutScale(div.clamp(1, MAX_OUT_DIVISOR))
+    }
+
+    pub fn divisor(self) -> u32 {
+        self.0
+    }
+
+    /// The dimensions a `(src_w, src_h)` frame actually ships at. One place owns
+    /// this math; everything downstream reports what it returns.
+    ///
+    /// Divisor 1 returns the source dims VERBATIM — no even-rounding, no
+    /// swscale — because full resolution must stay byte-identical to the
+    /// pre-scaling behavior, odd source dims included. A divisor that would push
+    /// the long edge below [`MIN_SCALED_LONG_EDGE`] steps down to the largest one
+    /// that clears it (and 1 always clears it).
+    ///
+    /// LANDMINE: both axes round DOWN to even. NV12 chroma is subsampled and
+    /// [`extract_nv12_planes`] walks `h / 2` rows, so an odd dimension silently
+    /// drops a row. Per-axis rounding can drift the aspect by <1%; harmless,
+    /// because the Compositor derives scaleX/scaleY independently from
+    /// `media.width / textureW`.
+    pub fn dims_for(self, src_w: u32, src_h: u32) -> (u32, u32) {
+        let mut div = self.0;
+        while div > 1 {
+            let (w, h) = ((src_w / div) & !1, (src_h / div) & !1);
+            if w.max(h) >= MIN_SCALED_LONG_EDGE {
+                return (w, h);
+            }
+            div -= 1;
+        }
+        (src_w, src_h)
+    }
+}
+
 /// One software-decoded frame, tightly packed per `format` (layouts on
 /// [`SwOutFormat`]) plus its source-normalized timing and color tags. Fully
 /// owned (unlike the GPU path's borrowed texture handle), so it can outlive
@@ -300,6 +370,8 @@ impl SwOutFormat {
 pub struct SwFrame {
     pub data: Vec<u8>,
     pub format: SwOutFormat,
+    /// The SHIPPED dimensions (the stream's [`OutScale`] already applied), which
+    /// `data`'s length always matches — never the source's when they differ.
     pub width: u32,
     pub height: u32,
     /// Presentation time, source-normalized microseconds (`ticks_to_source_us`).
@@ -320,10 +392,21 @@ pub struct SwVideoStream {
     stream_index: usize,
     /// Reused frame buffer; `receive_frame` overwrites it each call.
     frame: VideoFrame,
+    /// Reused swscale destination, reallocated only when the required
+    /// `(format, width, height)` changes — see [`ensure_scratch`]. Stays untouched
+    /// on the already-correct-format fast paths, which skip swscale entirely.
+    out_scratch: VideoFrame,
     /// Set once `send_eof` has been issued, so we only drain afterwards.
     eof_sent: bool,
+    /// Source frame dimensions as libavcodec reports them — the swscale SOURCE,
+    /// not necessarily what ships (see `out_width`/`out_height`).
     pub width: u32,
     pub height: u32,
+    /// Dimensions every packed frame actually carries: the stream's [`OutScale`]
+    /// applied to `(width, height)`, fixed at open. Equal to the source dims at
+    /// `OutScale::FULL` — which is always the case on the export lane.
+    pub out_width: u32,
+    pub out_height: u32,
     /// Video stream's `(numerator, denominator)`, captured at `open`. Needed by
     /// `ticks_to_source_us` and by `seek`'s target-us -> stream-timestamp math.
     pub time_base: (i32, i32),
@@ -362,29 +445,40 @@ impl Drop for SwVideoStream {
 }
 
 impl SwVideoStream {
-    /// Open `path` for pure-software decode into NV12 (all preview callers).
+    /// Open `path` for pure-software decode into NV12 at full resolution (probes
+    /// and tests; the preview session passes its own [`OutScale`]).
     pub fn open(path: &str) -> Result<SwVideoStream, String> {
-        Self::open_with_accel(path, SwOutFormat::Nv12, DecodeAccel::Software)
+        Self::open_with_accel(
+            path,
+            SwOutFormat::Nv12,
+            DecodeAccel::Software,
+            OutScale::FULL,
+        )
     }
 
     /// Open `path` for pure-software decode, packing every decoded frame into
-    /// `out_format` (the export lane's 10-bit selector). Software only.
+    /// `out_format` (the export lane's 10-bit selector). Software only, and
+    /// always at FULL resolution — export must never inherit a preview
+    /// downscale.
     pub fn open_with_format(path: &str, out_format: SwOutFormat) -> Result<SwVideoStream, String> {
-        Self::open_with_accel(path, out_format, DecodeAccel::Software)
+        Self::open_with_accel(path, out_format, DecodeAccel::Software, OutScale::FULL)
     }
 
     /// Open `path` on `accel` and prepare for streaming, packing every decoded
-    /// frame into `out_format`. On a hardware lane a hw device context is attached
-    /// (`get_format` keeps frames on the GPU) and each `next_frame` transfers the
-    /// surface back to system memory before packing — the packed bytes are
-    /// identical to the software lane's, so the same transport carries both. On
-    /// the software lane libavcodec decodes to CPU frames with parallel threads.
-    /// A hw device that can't be created (GPU/driver absent) surfaces as an `Err`
-    /// so the caller falls back to software.
+    /// frame into `out_format` at `out_scale`'s output size. On a hardware lane a
+    /// hw device context is attached (`get_format` keeps frames on the GPU) and
+    /// each `next_frame` transfers the surface back to system memory before
+    /// packing — the packed bytes are identical to the software lane's, so the
+    /// same transport carries both (and the copy-back lanes get the downscale for
+    /// free: the transfer lands a full-size CPU frame either way). On the software
+    /// lane libavcodec decodes to CPU frames with parallel threads. A hw device
+    /// that can't be created (GPU/driver absent) surfaces as an `Err` so the
+    /// caller falls back to software.
     pub fn open_with_accel(
         path: &str,
         out_format: SwOutFormat,
         accel: DecodeAccel,
+        out_scale: OutScale,
     ) -> Result<SwVideoStream, String> {
         ffmpeg_next::init().ok();
         let map = |e: ffmpeg_next::Error| e.to_string();
@@ -448,6 +542,7 @@ impl SwVideoStream {
         let thread_count = unsafe { (*decoder.as_mut_ptr()).thread_count };
         let width = decoder.width();
         let height = decoder.height();
+        let (out_width, out_height) = out_scale.dims_for(width, height);
 
         // Reuse ffmpeg-next's canonical AVCOL->string mapping (`av_color_*_name`,
         // the same functions ffprobe uses), so these strings match the import
@@ -468,9 +563,12 @@ impl SwVideoStream {
             decoder,
             stream_index,
             frame: VideoFrame::empty(),
+            out_scratch: VideoFrame::empty(),
             eof_sent: false,
             width,
             height,
+            out_width,
+            out_height,
             time_base,
             start_pts_us,
             color,
@@ -544,16 +642,22 @@ impl SwVideoStream {
                 } else {
                     &self.frame
                 };
+                // Source dims in, SHIPPED dims out: at `OutScale::FULL` these are
+                // the same pair and the pack takes the pre-scaling path.
+                let (sw, sh) = (self.width, self.height);
+                let (dw, dh) = (self.out_width, self.out_height);
                 let data = match self.out_format {
-                    SwOutFormat::Nv12 => frame_to_nv12(src, self.width, self.height),
-                    SwOutFormat::I420p10 => frame_to_i420p10(src, self.width, self.height),
+                    SwOutFormat::Nv12 => frame_to_nv12(src, sw, sh, dw, dh, &mut self.out_scratch),
+                    SwOutFormat::I420p10 => {
+                        frame_to_i420p10(src, sw, sh, dw, dh, &mut self.out_scratch)
+                    }
                 }
                 .map_err(map)?;
                 return Ok(Some(SwFrame {
                     data,
                     format: self.out_format,
-                    width: self.width,
-                    height: self.height,
+                    width: self.out_width,
+                    height: self.out_height,
                     pts_us,
                     dur_us,
                     color: self.color.clone(),
@@ -646,7 +750,8 @@ pub fn probe_hw_first_frame(path: &str, accel: DecodeAccel) -> Result<(), String
     let want = accel
         .hw_pix_fmt()
         .ok_or_else(|| "software is not a hardware lane".to_string())?;
-    let mut stream = SwVideoStream::open_with_accel(path, SwOutFormat::Nv12, accel)?;
+    let mut stream =
+        SwVideoStream::open_with_accel(path, SwOutFormat::Nv12, accel, OutScale::FULL)?;
     match stream.decode_one_raw_format()? {
         Some(fmt) if fmt == want => Ok(()),
         Some(fmt) => Err(format!(
@@ -656,30 +761,60 @@ pub fn probe_hw_first_frame(path: &str, accel: DecodeAccel) -> Result<(), String
     }
 }
 
-/// Convert a decoded `VideoFrame` to tightly-packed NV12 bytes. If it is already
-/// NV12 (e.g. from a codec that decodes to it directly) pack it as-is; otherwise
-/// swscale it to NV12 first. Mirrors `preview_gpu::frame_to_nv12` minus the
-/// D3D11 hw-transfer branch (a SW frame is already in system memory).
+/// Point `scratch` at a buffer matching `(fmt, w, h)`, reallocating only when it
+/// does not already — the swscale destination is otherwise reused frame after
+/// frame. `sws.run` allocates any empty destination handed to it, so a fresh
+/// output per frame costs a 12.44 MB allocation plus first-touch page faults at
+/// 4K on EVERY decoded frame (measured −1.5 ms/frame for 8-bit `yuv420p`,
+/// −3.6 ms for `yuv422p10le`).
+///
+/// LANDMINE: `sws.run` rejects the destination with `Error::OutputChanged` unless
+/// it matches the context's output triple exactly, so this must be called with
+/// the same `(fmt, w, h)` the context was built for.
+fn ensure_scratch(scratch: &mut VideoFrame, fmt: Pixel, w: u32, h: u32) {
+    if scratch.format() != fmt || scratch.width() != w || scratch.height() != h {
+        *scratch = VideoFrame::new(fmt, w, h);
+    }
+}
+
+/// Convert a decoded `VideoFrame` of `(src_w, src_h)` to tightly-packed NV12
+/// bytes at `(dst_w, dst_h)`. If it is already NV12 AND no resize is asked for
+/// (e.g. a codec that decodes to NV12 directly, at full playback resolution) pack
+/// it as-is; otherwise swscale it through the caller's reused `scratch` frame
+/// first. Mirrors `preview_gpu::frame_to_nv12` minus the D3D11 hw-transfer branch
+/// (a SW frame is already in system memory).
+///
+/// The returned `Vec` is a fresh per-frame allocation by design — it is handed to
+/// JS and outlives the stream, so only the swscale destination is pooled.
 fn frame_to_nv12(
     frame: &VideoFrame,
-    width: u32,
-    height: u32,
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    scratch: &mut VideoFrame,
 ) -> Result<Vec<u8>, ffmpeg_next::Error> {
-    if frame.format() == Pixel::NV12 {
+    let resize = (dst_w, dst_h) != (src_w, src_h);
+    if frame.format() == Pixel::NV12 && !resize {
         Ok(extract_nv12_planes(frame))
     } else {
+        // AREA is both the faster and the quality-correct kernel for reduction
+        // (measured at 4K yuv420p: ½ 2.66 vs 2.98 ms, ¼ 1.41 vs 2.40 ms against
+        // BILINEAR); same-size conversion keeps BILINEAR, which is what full
+        // resolution has always used.
+        let flags = if resize { Flags::AREA } else { Flags::BILINEAR };
         let mut sws = SwsContext::get(
             frame.format(),
-            width,
-            height,
+            src_w,
+            src_h,
             Pixel::NV12,
-            width,
-            height,
-            Flags::BILINEAR,
+            dst_w,
+            dst_h,
+            flags,
         )?;
-        let mut nv = VideoFrame::empty();
-        sws.run(frame, &mut nv)?;
-        Ok(extract_nv12_planes(&nv))
+        ensure_scratch(scratch, Pixel::NV12, dst_w, dst_h);
+        sws.run(frame, scratch)?;
+        Ok(extract_nv12_planes(scratch))
     }
 }
 
@@ -715,24 +850,29 @@ fn extract_nv12_planes(frame: &VideoFrame) -> Vec<u8> {
 /// decision 4).
 fn frame_to_i420p10(
     frame: &VideoFrame,
-    width: u32,
-    height: u32,
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    scratch: &mut VideoFrame,
 ) -> Result<Vec<u8>, ffmpeg_next::Error> {
-    if frame.format() == Pixel::YUV420P10LE {
+    let resize = (dst_w, dst_h) != (src_w, src_h);
+    if frame.format() == Pixel::YUV420P10LE && !resize {
         Ok(extract_i420p10_planes(frame))
     } else {
+        let flags = if resize { Flags::AREA } else { Flags::BILINEAR };
         let mut sws = SwsContext::get(
             frame.format(),
-            width,
-            height,
+            src_w,
+            src_h,
             Pixel::YUV420P10LE,
-            width,
-            height,
-            Flags::BILINEAR,
+            dst_w,
+            dst_h,
+            flags,
         )?;
-        let mut out = VideoFrame::empty();
-        sws.run(frame, &mut out)?;
-        Ok(extract_i420p10_planes(&out))
+        ensure_scratch(scratch, Pixel::YUV420P10LE, dst_w, dst_h);
+        sws.run(frame, scratch)?;
+        Ok(extract_i420p10_planes(scratch))
     }
 }
 
@@ -764,9 +904,279 @@ fn extract_i420p10_planes(frame: &VideoFrame) -> Vec<u8> {
     data
 }
 
+/// Perf bench for the ship-stage pack/scale cost — NOT a correctness gate, so
+/// every fn here is `#[ignore]`d and runs only on demand:
+///
+/// ```text
+/// cargo test --manifest-path native/decode/Cargo.toml --features test-noop \
+///   scale_bench -- --ignored --nocapture
+/// ```
+///
+/// It answers the question the playback-resolution ticket gates on: what does it
+/// cost to swscale a 4K frame DOWN on the decode thread, versus shipping it full
+/// size over IPC (~12.44 MB, ~12 ms at the measured ~1 GB/s ceiling)?
+///
+/// Synthetic frames, deliberately: swscale's cost is per-pixel and
+/// content-independent, so a real decode would only add noise and a fixture
+/// dependency. What matters is (src pix_fmt × src size × dst size × flags).
+#[cfg(test)]
+mod scale_bench {
+    use super::{extract_nv12_planes, Flags, OutScale, Pixel, SwsContext, VideoFrame};
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    const W: u32 = 3840;
+    const H: u32 = 2160;
+    const WARMUP: usize = 3;
+    const ITERS: usize = 20;
+
+    /// A frame of `fmt` at WxH filled with a deterministic ramp (a constant fill
+    /// would let a memory subsystem cheat; the ramp keeps every byte distinct).
+    fn synth(fmt: Pixel, w: u32, h: u32) -> VideoFrame {
+        let mut f = VideoFrame::new(fmt, w, h);
+        for p in 0..f.planes() {
+            let plane = f.data_mut(p);
+            for (i, b) in plane.iter_mut().enumerate() {
+                *b = (i % 251) as u8;
+            }
+        }
+        f
+    }
+
+    /// Median of `ITERS` timed runs after `WARMUP` untimed ones. Median, not mean:
+    /// one OS scheduling hiccup should not move the number we make a decision on.
+    fn median_ms(mut run: impl FnMut()) -> f64 {
+        for _ in 0..WARMUP {
+            run();
+        }
+        let mut samples: Vec<Duration> = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            let t = Instant::now();
+            run();
+            samples.push(t.elapsed());
+        }
+        samples.sort();
+        samples[ITERS / 2].as_secs_f64() * 1000.0
+    }
+
+    /// The production output-size policy, so the bench measures the dims the
+    /// ship stage actually produces.
+    fn scaled_dims(w: u32, h: u32, div: u32) -> (u32, u32) {
+        OutScale::from_divisor(div).dims_for(w, h)
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_pack_and_scale_cost() {
+        println!(
+            "\n=== ship-stage pack/scale bench — {W}x{H}, {} logical cores, median of {ITERS} ===",
+            std::thread::available_parallelism().map_or(0, |n| n.get())
+        );
+
+        // Yardstick: one full-size NV12 memcpy on this machine. The IPC crossing
+        // costs at least this much, and measured ~1 GB/s says it costs far more.
+        let bytes = (W * H + W * H / 2) as usize;
+        let src_buf = vec![7u8; bytes];
+        let memcpy_ms = median_ms(|| {
+            black_box(src_buf.clone());
+        });
+        println!(
+            "\n  yardstick: {:.2} MB memcpy            {memcpy_ms:>7.2} ms   (IPC ships this, then Nv12Ingest uploads it again)",
+            bytes as f64 / 1e6
+        );
+
+        for (label, fmt) in [
+            ("yuv420p     (H.264/MPEG-2/VC-1/DNxHD)", Pixel::YUV420P),
+            ("yuv422p10le (ProRes 422)             ", Pixel::YUV422P10LE),
+            ("nv12        (Linux NVDEC/VAAPI copy-back)", Pixel::NV12),
+        ] {
+            println!("\n  src {label}");
+            let src = synth(fmt, W, H);
+
+            // The NV12 fast path today's code takes when the decoder already
+            // emits NV12 (`frame_to_nv12`'s early return) — no swscale at all.
+            if fmt == Pixel::NV12 {
+                let ms = median_ms(|| {
+                    black_box(extract_nv12_planes(&src));
+                });
+                println!("    div 1  pack only, no sws (TODAY)      {ms:>7.2} ms");
+            }
+
+            for div in [1u32, 2, 4] {
+                let (dw, dh) = scaled_dims(W, H, div);
+                let out_mb = (dw * dh + dw * dh / 2) as f64 / 1e6;
+
+                // TODAY'S SHAPE: a fresh sws context per frame (`Context::get` is
+                // `sws_getContext`, not the cached variant) + scale + pack.
+                let ms_fresh = median_ms(|| {
+                    let mut sws =
+                        SwsContext::get(fmt, W, H, Pixel::NV12, dw, dh, Flags::BILINEAR).unwrap();
+                    let mut out = VideoFrame::empty();
+                    sws.run(&src, &mut out).unwrap();
+                    black_box(extract_nv12_planes(&out));
+                });
+
+                // Attribution: cached context but a FRESH output frame, so the
+                // fresh-vs-cached delta can be split between `sws_getContext`
+                // and the per-frame output allocation.
+                let mut sws_o =
+                    SwsContext::get(fmt, W, H, Pixel::NV12, dw, dh, Flags::BILINEAR).unwrap();
+                let ms_ctxonly = median_ms(|| {
+                    let mut out = VideoFrame::empty();
+                    sws_o.run(&src, &mut out).unwrap();
+                    black_box(extract_nv12_planes(&out));
+                });
+
+                // SHIPPABLE SHAPE: context built once, output frame reused.
+                let mut sws_c =
+                    SwsContext::get(fmt, W, H, Pixel::NV12, dw, dh, Flags::BILINEAR).unwrap();
+                let mut out_c = VideoFrame::new(Pixel::NV12, dw, dh);
+                let ms_cached = median_ms(|| {
+                    sws_c.run(&src, &mut out_c).unwrap();
+                    black_box(extract_nv12_planes(&out_c));
+                });
+
+                println!(
+                    "    div {div}  -> {dw}x{dh} ({out_mb:.2} MB)   fresh-ctx {ms_fresh:>7.2} ms   +cached-ctx {ms_ctxonly:>7.2} ms   +reused-out {ms_cached:>7.2} ms"
+                );
+
+                // AREA is the quality-correct downscale kernel; is it affordable?
+                if div > 1 {
+                    let mut sws_a =
+                        SwsContext::get(fmt, W, H, Pixel::NV12, dw, dh, Flags::AREA).unwrap();
+                    let mut out_a = VideoFrame::new(Pixel::NV12, dw, dh);
+                    let ms_area = median_ms(|| {
+                        sws_a.run(&src, &mut out_a).unwrap();
+                        black_box(extract_nv12_planes(&out_a));
+                    });
+                    println!("           (AREA kernel instead of BILINEAR)  cached-ctx {ms_area:>7.2} ms");
+                }
+            }
+        }
+        println!();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SwOutFormat, SwVideoStream};
+    use super::{OutScale, SwOutFormat, SwVideoStream};
+
+    #[test]
+    fn out_scale_divisor_one_is_the_identity() {
+        assert_eq!(OutScale::default(), OutScale::FULL);
+        assert_eq!(OutScale::FULL.divisor(), 1);
+        assert_eq!(OutScale::FULL.dims_for(3840, 2160), (3840, 2160));
+        // An ODD source ships odd at full res: even-rounding here would change
+        // the bytes full resolution has always produced.
+        assert_eq!(OutScale::FULL.dims_for(1921, 1081), (1921, 1081));
+        // A garbage divisor clamps into range rather than dividing by zero.
+        assert_eq!(OutScale::from_divisor(0), OutScale::FULL);
+        assert_eq!(OutScale::from_divisor(99).divisor(), 4);
+    }
+
+    #[test]
+    fn out_scale_rounds_down_to_even_on_both_axes() {
+        assert_eq!(OutScale::from_divisor(2).dims_for(3840, 2160), (1920, 1080));
+        assert_eq!(OutScale::from_divisor(4).dims_for(3840, 2160), (960, 540));
+        // 1922/2 = 961 and 1082/2 = 541 — both odd, both must round DOWN, or the
+        // NV12 packer's `h / 2` chroma walk silently drops a row.
+        assert_eq!(OutScale::from_divisor(2).dims_for(1922, 1082), (960, 540));
+        for (w, h) in [
+            OutScale::from_divisor(2).dims_for(1922, 1082),
+            OutScale::from_divisor(4).dims_for(3841, 2161),
+            OutScale::from_divisor(2).dims_for(1279, 719),
+        ] {
+            assert_eq!((w % 2, h % 2), (0, 0), "{w}x{h} is not even on both axes");
+        }
+    }
+
+    #[test]
+    fn out_scale_floors_the_long_edge_by_stepping_the_divisor_down() {
+        // 720p at ¼ lands exactly ON the floor — allowed.
+        assert_eq!(OutScale::from_divisor(4).dims_for(1280, 720), (320, 180));
+        // 640x360 at ¼ would be 160x90; step down to the largest divisor whose
+        // long edge still clears 320 (here ½).
+        assert_eq!(OutScale::from_divisor(4).dims_for(640, 360), (320, 180));
+        // 960x540 at ¼ is 240x134 (short); /3 gives 320x180, which clears.
+        assert_eq!(OutScale::from_divisor(4).dims_for(960, 540), (320, 180));
+        // A source at/under the floor can only ever ship full size.
+        assert_eq!(OutScale::from_divisor(4).dims_for(320, 240), (320, 240));
+        assert_eq!(OutScale::from_divisor(2).dims_for(320, 240), (320, 240));
+    }
+
+    #[test]
+    fn out_scale_handles_non_16_9_sources() {
+        // Vertical phone video: the floor reads the LONG edge, so ¼ is fine even
+        // though the short edge lands well below it.
+        assert_eq!(OutScale::from_divisor(4).dims_for(1080, 1920), (270, 480));
+        // 4:3 SD at ½ — 486/2 = 243 rounds down to 242.
+        assert_eq!(OutScale::from_divisor(2).dims_for(720, 486), (360, 242));
+        // Ultra-wide 2.39:1 at ¼.
+        assert_eq!(OutScale::from_divisor(4).dims_for(4096, 1716), (1024, 428));
+    }
+
+    #[test]
+    fn full_resolution_nv12_keeps_the_no_swscale_fast_path() {
+        // The safety property the whole knob rests on: at divisor 1 an
+        // already-NV12 frame is packed as-is, swscale never runs, and the reused
+        // scratch is never even allocated.
+        use ffmpeg_next::format::Pixel;
+        use ffmpeg_next::util::frame::video::Video as VideoFrame;
+        const W: u32 = 64;
+        const H: u32 = 48;
+        let mut src = VideoFrame::new(Pixel::NV12, W, H);
+        for p in 0..src.planes() {
+            for (i, b) in src.data_mut(p).iter_mut().enumerate() {
+                *b = (i % 251) as u8;
+            }
+        }
+        let mut scratch = VideoFrame::empty();
+        let packed = super::frame_to_nv12(&src, W, H, W, H, &mut scratch).unwrap();
+        assert_eq!(packed, super::extract_nv12_planes(&src));
+        assert_eq!(
+            scratch.width(),
+            0,
+            "the swscale destination was allocated — the fast path did not fire"
+        );
+    }
+
+    #[test]
+    fn scaled_pack_ships_the_target_dims_worth_of_bytes() {
+        // A downscale must be honest end-to-end: the packed length follows the
+        // TARGET dims, not the source's (a mismatch is what `nv12FrameFromBytes`
+        // rejects in the renderer).
+        use ffmpeg_next::format::Pixel;
+        use ffmpeg_next::util::frame::video::Video as VideoFrame;
+        const W: u32 = 1280;
+        const H: u32 = 720;
+        let mut src = VideoFrame::new(Pixel::YUV420P, W, H);
+        for p in 0..src.planes() {
+            for (i, b) in src.data_mut(p).iter_mut().enumerate() {
+                *b = (i % 251) as u8;
+            }
+        }
+        let (dw, dh) = OutScale::from_divisor(2).dims_for(W, H);
+        assert_eq!((dw, dh), (640, 360));
+        let mut scratch = VideoFrame::empty();
+        let scaled = super::frame_to_nv12(&src, W, H, dw, dh, &mut scratch).unwrap();
+        assert_eq!(scaled.len(), (dw * dh + dw * dh / 2) as usize);
+        // …and a quarter of the full-size pack's bytes, which is the whole point.
+        let full = super::frame_to_nv12(&src, W, H, W, H, &mut VideoFrame::empty()).unwrap();
+        assert_eq!(full.len(), scaled.len() * 4);
+    }
+
+    #[test]
+    fn open_defaults_to_full_output_size() {
+        // Every non-preview caller (`open`, `open_with_format`, the hw probe)
+        // takes this default; export depends on it.
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        let s = SwVideoStream::open(p).expect("open");
+        assert_eq!((s.out_width, s.out_height), (s.width, s.height));
+        assert_eq!((s.out_width, s.out_height), (320, 240));
+    }
 
     #[test]
     fn decodes_first_prores_frame_to_i420p10() {
@@ -818,6 +1228,51 @@ mod tests {
         let f = s.next_frame().expect("decode").expect("some frame");
         assert_eq!(f.width, 320);
         assert_eq!(f.height, 240);
+    }
+
+    #[test]
+    fn reused_scratch_packs_the_same_bytes_as_a_fresh_output_frame() {
+        // The hazard of pooling the swscale destination is a previous frame's
+        // content bleeding into the next one's packed bytes. Convert two
+        // deliberately different sources through ONE scratch and compare against
+        // the pre-pooling shape (a fresh `VideoFrame::empty()` per call).
+        use ffmpeg_next::format::Pixel;
+        use ffmpeg_next::util::frame::video::Video as VideoFrame;
+        const W: u32 = 64;
+        const H: u32 = 48;
+        let synth = |seed: u8| {
+            let mut f = VideoFrame::new(Pixel::YUV420P, W, H);
+            for p in 0..f.planes() {
+                for (i, b) in f.data_mut(p).iter_mut().enumerate() {
+                    *b = (i as u8).wrapping_mul(3).wrapping_add(seed);
+                }
+            }
+            f
+        };
+        let (a, b) = (synth(0), synth(199));
+
+        let mut scratch = VideoFrame::empty();
+        let reused_a = super::frame_to_nv12(&a, W, H, W, H, &mut scratch).unwrap();
+        let reused_b = super::frame_to_nv12(&b, W, H, W, H, &mut scratch).unwrap();
+        let fresh_a = super::frame_to_nv12(&a, W, H, W, H, &mut VideoFrame::empty()).unwrap();
+        let fresh_b = super::frame_to_nv12(&b, W, H, W, H, &mut VideoFrame::empty()).unwrap();
+
+        assert_ne!(fresh_a, fresh_b, "sources must differ for this to prove anything");
+        assert_eq!(reused_a, fresh_a);
+        assert_eq!(reused_b, fresh_b, "second frame through a reused scratch drifted");
+
+        // Same for the 10-bit lane, and through the SAME scratch the 8-bit lane
+        // just used — the format change must force a reallocation.
+        let ten_a = super::frame_to_i420p10(&a, W, H, W, H, &mut scratch).unwrap();
+        let ten_b = super::frame_to_i420p10(&b, W, H, W, H, &mut scratch).unwrap();
+        assert_eq!(
+            ten_a,
+            super::frame_to_i420p10(&a, W, H, W, H, &mut VideoFrame::empty()).unwrap()
+        );
+        assert_eq!(
+            ten_b,
+            super::frame_to_i420p10(&b, W, H, W, H, &mut VideoFrame::empty()).unwrap()
+        );
     }
 
     #[test]

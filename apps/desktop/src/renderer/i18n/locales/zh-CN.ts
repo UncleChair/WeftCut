@@ -705,6 +705,12 @@ const zhCN: Resources = {
     decode_engine_webcodecs_tag: "webcodecs",
     decode_engine_unavailable: "标准引擎不可用：{{reason}}",
     decode_engine_unavailable_suffix: "不可用",
+    playback_resolution: "播放分辨率",
+    playback_resolution_hint:
+      "以更低的细节绘制预览画面，让播放跟得上——标准引擎以软件方式解码时，解码细节也一并降低。只影响清晰度，画面构图不变。导出始终按完整分辨率渲染。",
+    playback_resolution_full: "完整",
+    playback_resolution_half: "二分之一（1/2）",
+    playback_resolution_quarter: "四分之一（1/4）",
     decode_unsupported_title: "不支持的格式",
     decode_unsupported_body: "轻量引擎无法解码该片段。切换到标准引擎即可播放。",
     decode_unsupported_switch: "切换到标准",

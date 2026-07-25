@@ -136,6 +136,38 @@ describe("SwTransport", () => {
     t.dispose();
   });
 
+  it("forwards a playback-resolution divisor into the native open call", async () => {
+    const { api } = installApi();
+    const t = new SwTransport(undefined, 2);
+    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    expect(api.open).toHaveBeenCalledWith({ streamId: "s1", path: "C:/x.mov", scaleDiv: 2 });
+    t.dispose();
+
+    // …and alongside a copy-back accel, which ships the same bytes over the
+    // same IPC and wants the divisor just as much.
+    const hw = installApi();
+    const t4 = new SwTransport({ lane: "nvdec", device: null }, 4);
+    await t4.open({ streamId: "s2", path: "/tmp/x.mov" });
+    expect(hw.api.open).toHaveBeenCalledWith({
+      streamId: "s2",
+      path: "/tmp/x.mov",
+      lane: "nvdec",
+      device: null,
+      scaleDiv: 4,
+    });
+    t4.dispose();
+  });
+
+  it("sends no divisor at full resolution, so an unscaled open is unchanged", async () => {
+    // Absent AND an explicit 1 must both produce today's exact payload — 1 is
+    // the wire default, and full resolution has to stay the untouched path.
+    const { api } = installApi();
+    const t = new SwTransport(undefined, 1);
+    await t.open({ streamId: "s1", path: "C:/x.mov" });
+    expect(api.open).toHaveBeenCalledWith({ streamId: "s1", path: "C:/x.mov" });
+    t.dispose();
+  });
+
   it("does not fire onError when disposed before a failing open() settles", async () => {
     let rejectOpen!: (e: Error) => void;
     const api = {

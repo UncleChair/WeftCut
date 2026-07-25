@@ -19,6 +19,11 @@ import type { NativeDecode } from '@weftcut/native-decode'
 /// transport as software — hw accel, then copy-back to the identical NV12
 /// frames. A null `lane` = software decode, matching today exactly; the frame
 /// contract the callback relays is unchanged either way.
+///
+/// `scaleDiv` is the playback-resolution divisor (1 | 2 | 4; null = 1 = full):
+/// native swscales each frame DOWN before packing, so a 4K frame crosses this
+/// IPC at a fraction of its 12.44 MB. The returned dimensions and every relayed
+/// frame report the SHIPPED size — native owns that math.
 export function openPreviewSw(
   backend: NativeDecode,
   win: BrowserWindow,
@@ -26,12 +31,13 @@ export function openPreviewSw(
   path: string,
   lane: string | null,
   device: string | null,
+  scaleDiv: number | null,
 ): { width: number; height: number } {
   const info = backend.previewSwOpen(streamId, path, (err: Error | null, frame) => {
     if (err) return
     if (win.isDestroyed()) return // renderer reloaded/closed mid-stream → webContents.send would throw
     win.webContents.send('previewSw:frame', frame)
-  }, lane, device)
+  }, lane, device, scaleDiv)
   return { width: info.width, height: info.height }
 }
 

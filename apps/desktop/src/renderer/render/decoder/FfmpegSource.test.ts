@@ -304,6 +304,108 @@ describe("FfmpegSource — HW open failure: capacity vs capability", () => {
   });
 });
 
+describe("FfmpegSource — live playback-resolution change", () => {
+  /// The streamId this transport was opened with. A fresh one per open is what
+  /// stops late frames from a swapped-out transport landing in the ring.
+  const streamIdOf = (t: ReturnType<typeof fakeTransport>): string =>
+    vi.mocked(t.t.open).mock.calls[0]![0].streamId;
+
+  /// A source on a lane that SHIPS BYTES (software here; the Linux copy-back
+  /// lanes ride the same transport), with `makeSw` handing out a FRESH fake per
+  /// open so the re-open is distinguishable from the original.
+  const swSource = () => {
+    const opened: ReturnType<typeof fakeTransport>[] = [];
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mov", codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true },
+      {
+        makeGpu: () => fakeTransport().t,
+        makeSw: () => { const t = fakeTransport(); opened.push(t); return t.t; },
+        pickLane: async () => ({ lane: "software" as const, hwLane: null, device: null }),
+      },
+    );
+    return { src, opened };
+  };
+
+  it("does nothing when the divisor is unchanged", async () => {
+    const { src, opened } = swSource();
+    await src.ensureReady();
+    expect(opened).toHaveLength(1);
+
+    src.setPlaybackScaleDiv(1); // already 1 (the init default)
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(opened).toHaveLength(1);
+    expect(opened[0]!.t.dispose).not.toHaveBeenCalled();
+  });
+
+  it("re-opens in place on the SAME lane with a fresh streamId, keeping the ring", async () => {
+    const { src, opened } = swSource();
+    await src.ensureReady();
+    await src.requestFrameAt(1_000_000);
+    opened[0]!.emitFrame(1_000_000);
+    expect(src.ring.size()).toBe(1);
+
+    src.setPlaybackScaleDiv(2);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(opened).toHaveLength(2);
+    expect(opened[0]!.t.dispose).toHaveBeenCalled();     // old transport torn down
+    expect(src.currentLane()).toBe("software");          // NOT a lane change
+    expect(streamIdOf(opened[1]!)).not.toBe(streamIdOf(opened[0]!));
+    expect(src.ring.size()).toBe(1);                     // SAME ring — no black frame
+    // The new transport resumes at the last target without the caller asking.
+    expect(opened[1]!.t.requestFrameAt).toHaveBeenCalledWith(1_000_000);
+    opened[1]!.emitFrame(1_033_333);
+    expect(src.ring.size()).toBe(2);                     // frames land in that same ring
+  });
+
+  it("leaves the Windows shared-texture lane alone (no IPC pixels to shrink)", async () => {
+    // d3d11va frames never cross IPC, so the divisor cannot help there — and a
+    // pointless close+re-open would gamble a scarce HW session slot.
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      {
+        makeGpu: () => gpu.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+      },
+    );
+    await src.ensureReady();
+
+    src.setPlaybackScaleDiv(4);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(gpu.t.dispose).not.toHaveBeenCalled();
+    expect(gpu.t.open).toHaveBeenCalledTimes(1);
+    expect(sw.t.open).not.toHaveBeenCalled();
+  });
+
+  it("carries a divisor set while on hardware into a later software fallback", async () => {
+    // The value is recorded even when the current lane can't use it, so the
+    // fallback transport opens at the user's setting rather than full res.
+    const gpu = fakeTransport();
+    const opened: ReturnType<typeof fakeTransport>[] = [];
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m-carry", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      {
+        makeGpu: () => gpu.t,
+        makeSw: () => { const t = fakeTransport(); opened.push(t); return t.t; },
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+      },
+    );
+    await src.ensureReady();
+    src.setPlaybackScaleDiv(4);
+    expect(opened).toHaveLength(0); // recorded only — no HW churn
+
+    gpu.fail("gpu-device-lost");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(src.currentLane()).toBe("software");
+    expect(opened).toHaveLength(1); // opened by the fallback, reading the live divisor
+  });
+});
+
 describe("FfmpegSource — backward seek", () => {
   const makeSrc = (t: ReturnType<typeof fakeTransport>) =>
     new FfmpegSource(

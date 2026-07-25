@@ -50,10 +50,12 @@ import {
 import {
   setAppSettings,
   useDecodeEngine,
+  usePlaybackResolution,
   usePrebakeMotifsEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "./appSettingsStore";
+import type { PlaybackResolution } from "../../shared/app-settings";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 
 const TAIL_SNAP_MIN_PX = 2;
@@ -254,6 +256,7 @@ export function SettingsPanel({
 
             <section className="settings-section">
               <DecodeEngineSection onError={setError} />
+              <PlaybackResolutionSection onError={setError} />
             </section>
           </div>
 
@@ -809,6 +812,46 @@ function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
             : t("settings.decode_engine_unavailable", {
                 reason: componentReason ?? "",
               })}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+/// Preview quality dial (Full / ½ / ¼), sitting with the decode engine because
+/// both describe how THIS machine plays back. Applying is a plain app-settings
+/// patch — `PixiPreview` subscribes to the store and re-opens the live decode
+/// transports in place, so the change is visible without a reload.
+function PlaybackResolutionSection({ onError }: { onError: (msg: string) => void }) {
+  const { t } = useTranslation();
+  const resolution = usePlaybackResolution();
+  return (
+    <label className="settings-toggle-row">
+      <AppSelect
+        value={resolution}
+        onValueChange={async (next) => {
+          onError("");
+          try {
+            await setAppSettings({
+              playback_resolution: next as PlaybackResolution,
+            });
+          } catch (err) {
+            onError(String(err));
+          }
+        }}
+        options={[
+          { value: "full", label: t("settings.playback_resolution_full") },
+          { value: "half", label: t("settings.playback_resolution_half") },
+          { value: "quarter", label: t("settings.playback_resolution_quarter") },
+        ]}
+        ariaLabel={t("settings.playback_resolution")}
+      />
+      <span>
+        <span className="settings-toggle-label">
+          {t("settings.playback_resolution")}
+        </span>
+        <span className="settings-toggle-hint">
+          {t("settings.playback_resolution_hint")}
         </span>
       </span>
     </label>

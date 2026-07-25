@@ -101,6 +101,19 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "decode_engine": "bogus" }' }).get().decode_engine).toBe('auto')
   })
 
+  it('playback_resolution defaults to full on a file written before the field existed', () => {
+    // The additive-field trap: an existing app_settings.json has no
+    // `playback_resolution` key at all, and the renderer feeds the value
+    // straight into a <select> — undefined there renders a blank control.
+    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().playback_resolution).toBe('full')
+    expect(store().get().playback_resolution).toBe('full')
+    expect(store().apply({ playback_resolution: 'half' }).playback_resolution).toBe('half')
+    expect(store().apply({ playback_resolution: 'quarter' }).playback_resolution).toBe('quarter')
+    // Hand-edited / wrong-typed values degrade the same way.
+    expect(store({ [PATH]: '{ "playback_resolution": "eighth" }' }).get().playback_resolution).toBe('full')
+    expect(store({ [PATH]: '{ "playback_resolution": 2 }' }).get().playback_resolution).toBe('full')
+  })
+
   it('data_root round-trips, and empty/missing/corrupt degrades to unset', () => {
     // No file → unset (resolver substitutes the default).
     expect(store().get().data_root).toBeUndefined()

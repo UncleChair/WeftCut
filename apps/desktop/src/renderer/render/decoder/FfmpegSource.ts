@@ -31,6 +31,12 @@ export interface FfmpegSourceInit {
   height?: number | null;
   componentAvailable: boolean;
   poolSize?: number;
+  /// Playback-resolution divisor (1 | 2 | 4) for the SOFTWARE transport: native
+  /// ships frames at `src / n`, cutting the per-frame IPC bytes a 4K source
+  /// spends. Preview only, and only on the byte-shipping lanes (software +
+  /// Linux copy-back); the Windows shared-texture lane has no IPC pixels to
+  /// reclaim. Omitted = 1 = full resolution.
+  playbackScaleDiv?: number;
   /// Bench-only: pin the lane (decode-bench Stage 3). Skips capability probing.
   forceLane?: FfmpegLane;
 }
@@ -69,12 +75,18 @@ export class FfmpegSource implements PreviewDecodeSession {
   private firedFirstFrame = false;
   private fatalCb: ((reason: string) => void) | null = null;
   private fatalFired = false;
+  /// LIVE playback-resolution divisor handed to every `SwTransport` this source
+  /// opens. Seeded from `init`, replaced by `setPlaybackScaleDiv`; every
+  /// `openLane` reads it fresh, so a later lane change (the HW→SW fallback)
+  /// picks up the current value rather than the one the source was born with.
+  private scaleDiv: number;
 
   constructor(init: FfmpegSourceInit, deps: FfmpegSourceDeps = {}) {
     this.init = init;
     this.deps = deps;
     this.mediaId = init.mediaId;
     this.layerId = init.layerId;
+    this.scaleDiv = init.playbackScaleDiv ?? 1;
   }
 
   get disposed(): boolean { return this._disposed; }
@@ -171,7 +183,7 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.eof = false; // a fresh transport can produce frames again
     const t = lane === "hardware"
       ? this.makeHardwareTransport()
-      : (this.deps.makeSw?.() ?? new SwTransport());
+      : (this.deps.makeSw?.() ?? new SwTransport(undefined, this.scaleDiv));
     t.onFrame((frame, ptsUs, durUs) => {
       if (this._disposed) { frame.close(); return; }
       this.ring.push(frame, ptsUs, durUs);
@@ -209,9 +221,46 @@ export class FfmpegSource implements PreviewDecodeSession {
   private makeHardwareTransport(): DecodeTransport {
     const hw = this.hwPlan;
     if (hw && (hw.lane === "nvdec" || hw.lane === "vaapi")) {
-      return this.deps.makeSw?.() ?? new SwTransport({ lane: hw.lane, device: hw.device });
+      // The copy-back lanes ship the same NV12 bytes over the same IPC, so they
+      // want the playback-resolution divisor just as much as software does.
+      return this.deps.makeSw?.()
+        ?? new SwTransport({ lane: hw.lane, device: hw.device }, this.scaleDiv);
     }
     return this.deps.makeGpu?.() ?? new GpuTransport();
+  }
+
+  /// True when the CURRENT lane ships frames through `SwTransport` — plain
+  /// software, or a Linux copy-back HW lane, both of which pack NV12 bytes
+  /// across IPC. Mirrors `makeHardwareTransport`'s routing, and is the only
+  /// place the playback-resolution divisor can change anything.
+  private usesSwTransport(): boolean {
+    if (this.lane === "software") return true;
+    const hw = this.hwPlan;
+    return hw !== null && (hw.lane === "nvdec" || hw.lane === "vaapi");
+  }
+
+  /// Adopt a new playback-resolution divisor on a LIVE source, without a
+  /// reload and without a lane change. The re-open reuses the HW→SW fallback's
+  /// mechanism — dispose the transport, `openLane` the SAME lane with a fresh
+  /// streamId, keep the SAME `FrameRing` — so the painter keeps drawing the
+  /// frames already cached (no black frame) and `openLane`'s tail re-requests
+  /// the last target on the new transport.
+  ///
+  /// Deliberately does NOT re-open the Windows shared-texture lane: its pixels
+  /// never cross IPC, so the divisor cannot shrink anything there, and closing
+  /// + re-opening a d3d11va session would spend a scarce HW session slot (the
+  /// budget is 3) for no gain — and risk losing it to another clip mid-swap.
+  /// The value is still recorded, so a later HW→SW fallback opens with it.
+  setPlaybackScaleDiv(div: number): void {
+    if (div === this.scaleDiv) return;
+    this.scaleDiv = div;
+    if (this._disposed || !this.transport || !this.usesSwTransport()) return;
+    const dead = this.transport;
+    this.transport = null;
+    dead.dispose();
+    void this.openLane(this.lane).catch((e) => {
+      this.fireFatal(`playback-resolution reopen failed: ${e instanceof Error ? e.message : String(e)}`);
+    });
   }
 
   /// Recovery. A hardware-transport failure is recoverable ONCE: swap to SW in

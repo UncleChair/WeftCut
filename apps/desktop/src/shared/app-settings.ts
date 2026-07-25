@@ -6,6 +6,12 @@
 
 export type DisplayMode = "AbRoll" | "ShowAll";
 
+/// Preview playback resolution — the user-owned quality/throughput dial every
+/// mainstream NLE carries (Premiere's Full / ½ / ¼). Names the FRACTION, not
+/// the divisor: `renderer/render/decoder/playbackResolution.ts` is the one
+/// place it becomes a number.
+export type PlaybackResolution = "full" | "half" | "quarter";
+
 export interface AppSettings {
   display_mode: DisplayMode;
   /// Half-width of the symmetric peek window in microseconds (default
@@ -25,6 +31,12 @@ export interface AppSettings {
   /// its component is present, else WebCodecs); `ffmpeg` (Standard) plays every
   /// format; `webcodecs` (Lite) is lightweight but supports fewer formats.
   decode_engine: "auto" | "ffmpeg" | "webcodecs";
+  /// Preview playback resolution. `full` ships every decoded frame at source
+  /// size; `half`/`quarter` have the native decoder downscale each frame
+  /// BEFORE it crosses IPC, which is where a 4K software-lane preview spends
+  /// 12.44 MB per frame. Preview only — export always decodes full size.
+  /// App-level, like `decode_engine`: it describes THIS machine's headroom.
+  playback_resolution: PlaybackResolution;
   /// Absolute path to the user-configurable data root that owns all large,
   /// app-managed, relocatable content (motifs/, cache/, downloads/). Empty /
   /// unset means "use the default" — the main-process resolver
@@ -55,6 +67,7 @@ export interface AppSettingsPatch {
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
+  playback_resolution?: PlaybackResolution;
   /// New data-root path. An empty string clears it back to unset (→ default).
   data_root?: string;
   /// New UI language (a SUPPORTED_LOCALES code). An empty string clears it back
@@ -70,6 +83,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",
+  playback_resolution: "full",
   // Unset by default: the resolver substitutes `<userData>/data`. Left
   // `undefined` so it is never serialized onto disk unless the user sets it.
   data_root: undefined,

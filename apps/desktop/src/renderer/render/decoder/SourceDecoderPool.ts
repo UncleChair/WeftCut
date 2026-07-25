@@ -540,6 +540,11 @@ export class SourceDecoderPool {
   private handles = new Map<string, SourceHandle | FfmpegSource>();
   private medias = new Map<string, MediaEntry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  /// Current playback-resolution divisor (1 | 2 | 4), stamped onto every
+  /// `FfmpegSource` this pool creates. 1 until the preview seeds it from the
+  /// app setting. `SourceHandle` (Lite/WebCodecs) has no such knob — it decodes
+  /// in the browser, with no IPC ship stage to shrink.
+  private playbackScaleDiv = 1;
 
   /// Acquire (or create) a handle for `layerId`. Multiple layers may
   /// share the same `mediaId`; each gets a distinct handle (decoder +
@@ -564,6 +569,10 @@ export class SourceDecoderPool {
         mediaId: init.mediaId,
         sourcePath: init.sourcePath ?? "",
         componentAvailable: init.componentAvailable ?? false,
+        // Pool-owned, not caller-supplied: the divisor is an app-level playback
+        // preference, so it belongs to the pool rather than to each `ensureClip`
+        // call site (and export's pool, which never sets one, can't inherit it).
+        playbackScaleDiv: this.playbackScaleDiv,
         // Conditional spreads, not direct assignment — exactOptionalPropertyTypes
         // rejects an explicit `undefined` for `FfmpegSourceInit`'s optional
         // fields (same idiom `FfmpegSource.ts` itself uses).
@@ -591,6 +600,19 @@ export class SourceDecoderPool {
     this.handles.set(init.layerId, h);
     this.startSweeperIfNeeded();
     return h;
+  }
+
+  /// Adopt a new playback-resolution divisor (1 | 2 | 4): future sources are
+  /// created with it, and every live `FfmpegSource` re-opens its transport in
+  /// place so the change lands without a reload (see
+  /// `FfmpegSource.setPlaybackScaleDiv`). `SourceHandle` is skipped — the Lite
+  /// engine has no equivalent knob.
+  setPlaybackScaleDiv(div: number): void {
+    if (div === this.playbackScaleDiv) return;
+    this.playbackScaleDiv = div;
+    for (const h of this.handles.values()) {
+      if (h instanceof FfmpegSource) h.setPlaybackScaleDiv(div);
+    }
   }
 
   /// Drop the handle for `layerId` if present. The handle's referenced
