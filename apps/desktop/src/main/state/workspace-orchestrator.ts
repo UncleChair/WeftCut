@@ -13,7 +13,7 @@ import type { Project } from './model'
 import { blankProject } from './model'
 import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE } from './persistence'
 import { relinkMissingMedia, type RelinkDeps, type RelinkReport } from './relink'
-import { serializeProject } from './serialize'
+import { serializeProject, type GridRepair } from './serialize'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
  *  commit_workspace / push_recent / set_last_new_project_parent). */
@@ -59,12 +59,18 @@ export interface OrchestratorDeps {
    *  the host turns it into a LogBus entry. Fired AFTER commitWorkspace
    *  (which rotates the per-workspace LogBus), never during the heal. */
   onRelink?: (report: RelinkReport) => void
+  /** Surfaced only when `parseProject`'s load pass actually moved a timeline field
+   *  (off-grid geometry, or a negative start) — the host turns it into a LogBus
+   *  row so a silently-migrated project is visible. Same timing constraint as
+   *  `onRelink`: fired AFTER commitWorkspace, never during the parse. */
+  onGridRepair?: (repairs: readonly GridRepair[]) => void
 }
 
 /** project_open (persistence.rs:50-108). Pre-check sentinels → load (3b) →
  *  delete stale quick proxies → relink heal → commit_workspace (pre-broadcast)
- *  → replace_state → onRelink report → push_recent → (deferred) derivative
- *  re-fan-out. */
+ *  → onGridRepair report → replace_state → onRelink report → push_recent →
+ *  (deferred) derivative re-fan-out. Both reports sit after commit_workspace
+ *  because it rotates the per-workspace LogBus. */
 export async function openProject(deps: OrchestratorDeps, dir: string): Promise<void> {
   const { actor, napi, fs, join } = deps
   // Typed sentinels for the two common failure modes (renderer matches them).
@@ -73,7 +79,15 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   if (!fs.exists(file)) throw new Error('NOT_PROJECT_FOLDER')
 
   const text = fs.readFile(file)
-  const loaded = loadProjectFromJson(text, { dir, join })
+  // CAPTURE the repair report, do not emit it here. The LogBus is per-workspace and
+  // `commitWorkspace` below ROTATES it, so a row emitted during the parse lands in
+  // the doomed pre-open bus (or nowhere at all on a fresh launch) and silently
+  // vanishes — the exact trap documented on the relink report further down. Object
+  // identity cannot carry the report instead: `reconcileMediaPaths` and
+  // `clearSessionQuickProxies` both spread into fresh objects, so a WeakMap keyed on
+  // the parsed project is already dead by the time `replaceState` runs.
+  let gridRepairs: readonly GridRepair[] = []
+  const loaded = loadProjectFromJson(text, { dir, join, onGridRepair: (r) => { gridRepairs = r } })
   let project = loaded.project
   const { quickProxiesToDelete } = loaded
   // Best-effort: never fail the open on a leftover proxy we couldn't remove.
@@ -93,6 +107,10 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // Re-point cache + workspace BEFORE the state swap, so project:changed
   // consumers see the workspace, not the boot fallback (persistence.rs:71-79).
   await napi.commitWorkspace(dir)
+  // Emitted BEFORE replace_state deliberately: the repair is what lets an older
+  // project satisfy the backstop at all, so if the swap STILL fails validation this
+  // row is the diagnostic that says what load already had to move.
+  if (gridRepairs.length > 0) { try { deps.onGridRepair?.(gridRepairs) } catch { /* best-effort, never blocks the open */ } }
   actor.replaceState(project)                 // throws CommandFailure on invalid; matches Rust replace_state Err
   // Surface the relink report only NOW: the LogBus is per-workspace and
   // commitWorkspace ROTATES it, so an emit during the heal lands in the doomed

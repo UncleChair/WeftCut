@@ -40,6 +40,24 @@ Opus-in-MP4/MOV playback is unreliable in Chromium/Electron. `mergeSettings` bac
 missing audio fields from `DEFAULT_AUDIO_SETTINGS` and snaps stale saved blobs
 back to AAC if the selected container cannot hold the saved audio codec.
 
+### Export fps need not equal composition fps
+
+The dialog offers its own frame rate, so an export can be resampled off the
+timeline's rate. This is the one place the frame-grid guarantee narrows: "the
+actor, the ruler, playback and export resolve the same canonical microsecond for
+every frame index" holds **at a single rate**. Export at a different rate is an
+output-sampling operation — the encoder samples the composition at its own
+frame times, `round(i × 1e6 × den / num)` on the *export* rate — and those
+instants generally do not coincide with edit points on the composition grid.
+
+The consequence to expect: a cut authored exactly on a composition frame can
+land mid-frame in the output and be quantised to the nearest export frame, up to
+half an export frame away. Nothing is silently corrupted — the composition is
+untouched and the operation is repeatable — but a frame-exact hand-off (a
+conform, a round-trip through another tool) should export at the composition
+rate. See [`docs/data-model.md`](data-model.md#timeline-field-alignment-composition-frame)
+for the grid itself.
+
 The export range is not persisted. `ExportSettingsDialog` keeps it as
 dialog-local state: full project, or a custom `[startUs, endUs)` selected with
 In/Out SMPTE timecode fields and "set to playhead" buttons. `clampExportRange`

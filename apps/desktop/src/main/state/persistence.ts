@@ -7,7 +7,7 @@
 // injected (`join` for path reconcile) or returned (quick-proxy files to
 // delete).
 import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
-import { serializeProject, parseProject } from './serialize'
+import { serializeProject, parseProject, type GridRepair, type ParseProjectOptions } from './serialize'
 
 /** io/mod.rs:19 — the on-disk project file name inside a workspace folder. */
 export const PROJECT_FILE = 'project.json'
@@ -40,10 +40,10 @@ export function schemaGate(project: unknown): void {
 /** io/mod.rs:57 — deserialize project.json text → Project, gated on schema version.
  *  JSON.parse throws on malformed text; schemaGate runs BEFORE the structural cast
  *  so the rich version-specific guidance wins over parseProject's generic check. */
-export function parseProjectJson(text: string): Project {
+export function parseProjectJson(text: string, opts: ParseProjectOptions = {}): Project {
   const json: unknown = JSON.parse(text)
   schemaGate(json)
-  return parseProject(json)
+  return parseProject(json, opts)
 }
 
 /** io/mod.rs:73-86 — on load, an item whose `path_rel` is populated has its
@@ -82,8 +82,10 @@ export function clearSessionQuickProxies(p: Project): { project: Project; quickP
  *  reconcile + quick-proxy clear. NOTE: stale-proxy invalidation (the Proxied
  *  route's format_version) is `#[cfg(feature = "jobs")]` in Rust and rides the
  *  jobs-callback re-point; it is deliberately NOT done here. */
-export function loadProjectFromJson(text: string, opts: { dir: string; join: (...parts: string[]) => string }): { project: Project; quickProxiesToDelete: string[] } {
-  const parsed = parseProjectJson(text)
+export function loadProjectFromJson(text: string, opts: { dir: string; join: (...parts: string[]) => string; onGridRepair?: (repairs: readonly GridRepair[]) => void }): { project: Project; quickProxiesToDelete: string[] } {
+  // Omitting the hook (tests) leaves `onGridRepair: undefined`, which parseProject
+  // falls back to its console default for — the reporting default is unchanged.
+  const parsed = parseProjectJson(text, { onGridRepair: opts.onGridRepair })
   const reconciled = reconcileMediaPaths(parsed, opts.dir, opts.join)
   return clearSessionQuickProxies(reconciled)
 }

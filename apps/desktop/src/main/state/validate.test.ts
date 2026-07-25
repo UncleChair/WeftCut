@@ -121,7 +121,7 @@ describe('validate', () => {
 })
 
 describe('validate — frame-grid backstop', () => {
-  it('rejects an off-grid t_start_us / t_end_us with the offending field, time and rate', () => {
+  it('rejects an off-grid t_start_us / t_end_us with the offending field, time, rate and the value to retry with', () => {
     // 2_999_999 µs is 1 µs below frame 90 at 30/1 — the exact shape the trim
     // source-duration clamp used to persist.
     const p = blankProject(seededGen(), 't')
@@ -129,14 +129,14 @@ describe('validate — frame-grid backstop', () => {
     try { validate(p); throw new Error('expected OffGridLayerBoundary, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' })
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame', snap_to: 3_000_000 })
     }
     const q = blankProject(seededGen(), 't')
     q.tracks[0].layers = [colorLayer('a', 0, 2_999_999)]
     try { validate(q); throw new Error('expected OffGridLayerBoundary, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' })
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame', snap_to: 3_000_000 })
     }
   })
 
@@ -172,7 +172,9 @@ describe('validate — frame-grid backstop', () => {
     try { validate(bad); throw new Error('expected OffGridLayerBoundary for frame-aligned audio at 29.97') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: FRAME_1, fps: { num: 48_000, den: 1 }, grid: 'sample' })
+      // `snap_to` is the OTHER constant: the two lattices are 8 µs apart here, so the
+      // repair the caller is told to make lands exactly on sample 1602.
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: FRAME_1, fps: { num: 48_000, den: 1 }, grid: 'sample', snap_to: SAMPLE_1602 })
     }
 
     // A VISUAL layer is the mirror image: the frame boundary passes, the sample
@@ -190,7 +192,8 @@ describe('validate — frame-grid backstop', () => {
     try { validate(visBad); throw new Error('expected OffGridLayerBoundary for sample-aligned video at 29.97') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'v', field: 't_end_us', t: SAMPLE_1602, fps: FPS, grid: 'frame' })
+      // ...and symmetrically back: the visual repair lands on frame 1.
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'v', field: 't_end_us', t: SAMPLE_1602, fps: FPS, grid: 'frame', snap_to: FRAME_1 })
     }
   })
 
@@ -229,13 +232,30 @@ describe('validate — frame-grid backstop', () => {
     expectRule(q, 'OffGridTime') // composition duration is checked first
   })
 
+  it('rejects a negative t_start_us as a BOUNDS failure, not an off-grid one', () => {
+    // -1_000_000 is frame -30 at 30/1 — perfectly canonical, so the grid predicate
+    // waves it through. This is the rule that catches it, and reporting it as
+    // "off grid" instead would point the caller at the wrong fix.
+    const p = blankProject(seededGen(), 't')
+    p.tracks[0].layers = [colorLayer('a', -1_000_000, 1_000_000)]
+    try { validate(p); throw new Error('expected NegativeLayerStart, but validate passed') }
+    catch (e) {
+      if (!isValidationFailure(e)) throw e
+      expect(e.err).toEqual({ rule: 'NegativeLayerStart', layer: 'a', t_start: -1_000_000 })
+    }
+    // A layer starting exactly at 0 is fine — the bound is inclusive.
+    const q = blankProject(seededGen(), 't')
+    q.tracks[0].layers = [colorLayer('a', 0, 1_000_000)]
+    expect(() => validate(q)).not.toThrow()
+  })
+
   it('rejects an off-grid composition.duration_us', () => {
     const p = blankProject(seededGen(), 't')
     p.composition.duration_us = 2_999_999
     try { validate(p); throw new Error('expected OffGridTime, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: 2_999_999, fps: { num: 30, den: 1 } })
+      expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: 2_999_999, fps: { num: 30, den: 1 }, snap_to: 3_000_000 })
     }
   })
 
@@ -245,7 +265,7 @@ describe('validate — frame-grid backstop', () => {
     try { validate(p); throw new Error('expected OffGridTime, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Marker', id: 'mk', field: 't_us', t: 2_999_999, fps: { num: 30, den: 1 } })
+      expect(e.err).toEqual({ rule: 'OffGridTime', entity: 'Marker', id: 'mk', field: 't_us', t: 2_999_999, fps: { num: 30, den: 1 }, snap_to: 3_000_000 })
     }
     const q = blankProject(seededGen(), 't')
     q.markers = [{ id: 'mk', t_us: 0, end_t_us: 2_999_999, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 }, metadata: {} }]

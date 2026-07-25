@@ -87,6 +87,15 @@ write but not enforced: trim and split rebase keys by a delta, and
 re-snapping the shifted set would dedupe-merge two keys that landed on one
 frame, losing authored data.
 
+Timeline time also starts at **zero**: a layer may not begin before the
+origin. This is a bounds rule (`NegativeLayerStart`) kept separate from the
+grid rules, because a negative time is usually perfectly canonical —
+`-1_000_000` is frame -30 at 30 fps — so reporting it as off-grid would point
+at the wrong fix. A move dragged toward the origin stops *as a set*: the
+clamp applies to the shared delta, so the earliest member of a group lands on
+0 and every other member keeps its spacing, rather than individual layers
+being shortened in place.
+
 Off-grid times already on disk **repair on load rather than reject**.
 `project_open` reaches the actor through `replace_state`, which runs that
 same validator, so a hard rule alone would make any project written by an
@@ -94,8 +103,18 @@ older build unopenable. `parseProject` snaps every grid-bound field inside
 its single normalize pass — beside the additive-field backfills, one pass in
 one place — re-derives each transition duration from the repaired geometry,
 and reports what it moved so a migrated project is visible rather than
-mysterious. The pass is idempotent: saving a repaired project and reopening
-it repairs nothing.
+mysterious. The same pass brings negative starts back: a layer straddling
+zero has its start lifted (its visible span is preserved exactly, and it can
+collide with nothing), while a layer lying *entirely* before zero is parked
+after everything else on its track with its duration intact — lifting that
+one would collapse it onto the head of the track and the "repair" would
+manufacture an overlap the project could not open with. The pass is
+idempotent: saving a repaired project and reopening it repairs nothing.
+
+The repair report reaches the status log. It is captured during the parse but
+emitted only after the workspace commit, because that commit rotates the
+per-workspace LogBus — a row emitted where the repair happens lands in the
+bus being discarded.
 
 Display format follows the same grid: timecode reads SMPTE `HH:MM:SS:FF`,
 NDF (non-drop-frame) at every fps. Project starting timecode is zero, with
@@ -696,7 +715,8 @@ struct ChangeEvent {
 | Invariant | Failure |
 |---|---|
 | `t_start_us < t_end_us` | reject |
-| Visual `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected |
+| `t_start_us >= 0` | clamped in the mutator (a group move stops as a set), then reject as a backstop (`NegativeLayerStart`); a project loaded from disk is repaired in `parseProject` instead of rejected |
+| Visual `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected. Both errors carry `snap_to`, the value the caller should have sent |
 | Audio `t_start_us`, `t_end_us` on the fixed 48 kHz sample lattice | same three-site enforcement, against the audio grid; the error carries `grid: "sample"` and `fps: 48000/1` |
 | `fps` immutable once any track holds a layer | reject (`FpsLockedByContent`) — set the rate on an empty timeline |
 | `transition.duration_us` == the geometric overlap of its participants | reject — this *is* the transition's grid rule; a duration is a distance, not a boundary time |

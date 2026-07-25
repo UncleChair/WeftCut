@@ -113,9 +113,19 @@ memory ratchet exists to catch). Node count went from 216 001 at one hour and
   holding a marker. `fps` is now immutable once a layer exists
   ([ADR 0038](0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md)), so
   that path serves layer-less projects only.
-- The grid repair's report is a callback seam, not yet routed to the LogBus;
-  it defaults to a `console.warn` so a migrated project is never fully
-  invisible.
+- The grid repair reports to the status log. The report is captured during the
+  parse and emitted only after the workspace commit, because that commit rotates
+  the per-workspace LogBus — emitting where the repair happens drops the row into
+  the bus being discarded.
+- Timeline time is bounded below by zero as a *separate* rule
+  (`NegativeLayerStart`), never folded into the grid predicate: a negative time is
+  usually perfectly canonical (`-1_000_000` is frame -30 at 30 fps), so reporting
+  it as off-grid points at the wrong fix. It repairs on load like the grid rules,
+  but the repair is not a uniform clamp — see `docs/data-model.md`, since lifting
+  an entirely-negative layer would collide with the head of its track and
+  manufacture the `LayerOverlap` that repair-on-load exists to prevent.
+- Both grid errors carry `snap_to`, the value the caller should have sent,
+  computed where the lattice is already in hand rather than by each consumer.
 - Timeline zoom (`pxPerSec`) remains React state on the timeline root, so a
   ctrl+wheel zoom still re-renders the tree — the same cost class as the
   scroll path this work fixed, and the remaining half of it.
@@ -137,3 +147,25 @@ memory ratchet exists to catch). Node count went from 216 001 at one hour and
   (the actor-wide property), `src/renderer/timeline/rulerModel.test.ts`
   (bounded count at 10 s / 1 h / 24 h), `e2e/scripts/ruler-node-count.mjs`
   (opt-in, `npm run e2e -- --ruler-gate`).
+
+## Industry baseline
+
+No single standard prescribes how an NLE timeline behaves. These interoperable
+and de-facto professional behaviours are the comparison points this decision and
+[ADR 0038](0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md) were
+measured against — comparison points, not a requirement to copy another editor's
+UI or storage model.
+
+- [SMPTE ST 12-1](https://pub.smpte.org/latest/st12-1/st0012-1-2014.pdf) —
+  timecode rates and time-address semantics.
+- [OpenTimelineIO `RationalTime` / `TimeRange`](https://opentimelineio.readthedocs.io/en/v0.17.0/api/python/opentimelineio.opentime.html)
+  — rational time and explicit exclusive-end ranges.
+- [Adobe sequence settings](https://helpx.adobe.com/premiere/desktop/edit-projects/change-clip-sequence/sequence-presets-and-settings.html)
+  — a sequence timebase fixed after creation.
+- [Adobe timecode settings](https://helpx.adobe.com/uk/premiere/desktop/edit-projects/change-clip-sequence/sequence-settings-reference.html)
+  — DF/NDF and sample-level audio display.
+- [Final Cut Pro project settings](https://support.apple.com/en-mide/guide/final-cut-pro/ver1b946a4ff/mac)
+  — locking project fps once a timeline is non-empty.
+- [Final Cut Pro trimming](https://support.apple.com/guide/final-cut-pro/trim-ver8e3f33db/mac)
+  and [subframes](https://support.apple.com/en-ca/guide/final-cut-pro/ver8e3f3850/mac)
+  — one-frame video precision, finer-than-frame audio precision.

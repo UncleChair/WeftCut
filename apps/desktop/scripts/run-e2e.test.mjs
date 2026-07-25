@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
-import { planE2ERuns, prepareE2EEnv } from './run-e2e.mjs'
+import { planE2ERuns, prepareE2EEnv, splitGateFlags } from './run-e2e.mjs'
 
 test('unscoped E2E runs machine-exclusive tests before the parallel project', () => {
   assert.deepEqual(planE2ERuns(['dock-workspace.spec.ts']), [
@@ -21,6 +21,51 @@ test('an explicit E2E project remains one targeted run', () => {
     planE2ERuns(['--project', 'parallel', '-g', 'edge drop']),
     [['--project', 'parallel', '-g', 'edge drop']],
   )
+})
+
+// ── splitGateFlags ─────────────────────────────────────────────────────────
+// The load-bearing property is negative: Playwright rejects unknown flags, so a
+// local gate flag that survives the split does not run an extra gate — it fails
+// the whole E2E run before a single spec executes.
+
+test('a gate flag is extracted and never reaches the Playwright argv', () => {
+  assert.deepEqual(
+    splitGateFlags(['--ruler-gate', 'dock-workspace.spec.ts']),
+    { gates: ['--ruler-gate'], args: ['dock-workspace.spec.ts'] },
+  )
+})
+
+test('non-gate argv passes through untouched and in order', () => {
+  const argv = ['--project', 'parallel', '-g', 'edge drop', '--workers=1']
+  assert.deepEqual(splitGateFlags(argv), { gates: [], args: argv })
+  // Order matters: `-g` and its value must stay adjacent, and `--project`'s
+  // separate-token form must not be re-joined.
+  assert.deepEqual(
+    splitGateFlags(['--ruler-gate', '--project', 'serial', '-g', 'ruler']).args,
+    ['--project', 'serial', '-g', 'ruler'],
+  )
+})
+
+test('a flag that merely looks like a gate is left for Playwright to reject', () => {
+  // Only keys of EXTRA_GATES are ours. Swallowing an unrecognized `--*-gate`
+  // would turn a typo into a silently skipped gate instead of a loud failure.
+  assert.deepEqual(
+    splitGateFlags(['--memory-gate', '--ruler-gate']),
+    { gates: ['--ruler-gate'], args: ['--memory-gate'] },
+  )
+})
+
+test('no gate flag survives into either planned Playwright run', () => {
+  // The composition `runE2E` actually performs — split first, then plan. This is
+  // the assertion that breaks if a future gate is added to EXTRA_GATES but the
+  // split is bypassed at the call site.
+  const { gates, args } = splitGateFlags(['--ruler-gate', 'dock-workspace.spec.ts'])
+  const runs = planE2ERuns(args)
+  assert.deepEqual(runs, [
+    ['--project=serial', '--pass-with-no-tests', 'dock-workspace.spec.ts'],
+    ['--project=parallel', '--pass-with-no-tests', 'dock-workspace.spec.ts'],
+  ])
+  for (const run of runs) for (const gate of gates) assert.ok(!run.includes(gate))
 })
 
 // ── prepareE2EEnv ──────────────────────────────────────────────────────────

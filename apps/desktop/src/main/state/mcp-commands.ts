@@ -198,7 +198,13 @@ export function shapeGetParamTrack(track: { mode: 'Static'; value: number } | { 
 export function dryRunErrorString(e: CommandError): string {
   if (e.error === 'InvalidArgument') return `${e.field}: ${e.detail}`
   if (e.error === 'Backend') return e.detail
-  if (e.error === 'ValidationFailed') return `validation failed: ${e.detail.rule}`
+  if (e.error === 'ValidationFailed') {
+    const d = e.detail
+    // The two grid rules carry the corrected value, so say it even in dry-run prose:
+    // an agent planning a batch can fix the op without a second round trip.
+    if (d.rule === 'OffGridLayerBoundary' || d.rule === 'OffGridTime') return `validation failed: ${d.rule} (${d.field} ${d.t} µs → send ${d.snap_to})`
+    return `validation failed: ${d.rule}`
+  }
   if (e.error === 'TransitionInsufficientHandle') return `insufficient tail media on the outgoing layer ${e.layer}: ${e.available_us} µs available`
   if (e.error === 'TransitionUnsupportedLayerKind') return `transitions are for visual layers only: layer ${e.layer} is ${e.kind}`
   return e.error
@@ -242,6 +248,39 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
         { action: 'trim_existing', layer_id: d.a, new_t_end_us: d.b_start },
         { action: 'split_at_t', layer_id: d.a, at_t_us: d.b_start },
       ],
+    } }
+  }
+  // ── Grid + bounds rules: the only ValidationErrors an agent can fix mechanically ──
+  // Every other rule needs the caller to re-think the edit; these three just need a
+  // corrected number, and `snap_to` already IS that number (computed in validate.ts,
+  // where the lattice is in hand). Letting them fall through to the generic
+  // `invalid_params: ValidationFailed` threw that away and left the agent to
+  // re-derive `round(i * 1e6 * den / num)` — which is precisely the arithmetic the
+  // whole frame-grid effort exists to keep in one place.
+  if (e.error === 'ValidationFailed' && e.detail.rule === 'OffGridLayerBoundary') {
+    const d = e.detail
+    // Name the lattice, not just the numbers: an Audio rejection reports fps 48000/1
+    // and would otherwise read as an absurd 48000 fps composition.
+    const lattice = d.grid === 'sample' ? `the ${d.fps.num} Hz audio sample lattice` : `the ${d.fps.num}/${d.fps.den} composition frame grid`
+    return { code: 'invalid_params', message: `layer ${d.layer} ${d.field} ${d.t} µs is not on ${lattice}; nearest is ${d.snap_to}`, data: {
+      error: 'OffGridLayerBoundary', layer: d.layer, field: d.field,
+      requested_us: d.t, snap_to_us: d.snap_to, grid: d.grid, rate: [d.fps.num, d.fps.den],
+      options: [{ action: 'retry_snapped', field: d.field, t_us: d.snap_to }],
+    } }
+  }
+  if (e.error === 'ValidationFailed' && e.detail.rule === 'OffGridTime') {
+    const d = e.detail
+    return { code: 'invalid_params', message: `${d.entity} ${d.field} ${d.t} µs is not on the ${d.fps.num}/${d.fps.den} composition frame grid; nearest is ${d.snap_to}`, data: {
+      error: 'OffGridTime', entity: d.entity, id: d.id, field: d.field,
+      requested_us: d.t, snap_to_us: d.snap_to, grid: 'frame', rate: [d.fps.num, d.fps.den],
+      options: [{ action: 'retry_snapped', field: d.field, t_us: d.snap_to }],
+    } }
+  }
+  if (e.error === 'ValidationFailed' && e.detail.rule === 'NegativeLayerStart') {
+    const d = e.detail
+    return { code: 'invalid_params', message: `layer ${d.layer} would start at ${d.t_start} µs; timeline time starts at 0`, data: {
+      error: 'NegativeLayerStart', layer: d.layer, requested_us: d.t_start,
+      options: [{ action: 'retry_clamped', t_start_us: 0 }],
     } }
   }
   if (e.error === 'MediaInUse') {

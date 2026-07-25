@@ -77,6 +77,10 @@ travel together).
 - **Move** propagates the time delta to every member's `t_start_us`/`t_end_us`;
   the track change applies only to the targeted layer. Rejects if any
   member's new range would overlap its track or leave the composition.
+  Dragged toward the origin the group **stops as a set**: the clamp applies to
+  the shared delta, so the earliest member lands on 0 and everyone keeps their
+  spacing — no member is shortened in place. Each member then re-snaps on *its
+  own* lattice, which is what preserves a slipped A/V sync offset.
 - **Trim** propagates only to members whose corresponding edge sits at the
   same exact `t` (alignment is recomputed per op — there is no stored
   "linked" state), with the delta clamped so no member crosses its source

@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
 import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
 import { canonicalize } from '../canonical'
-import { serializeProject } from '../serialize'
+import { serializeProject, type GridRepair } from '../serialize'
+import { applyAddLayer, colorParams } from '../mutations/add'
 import { blankProject } from '../model'
 import type { MediaItem } from '../model'
 import { seededGen } from '../ids'
@@ -66,6 +67,48 @@ describe('openProject', () => {
     d.actor.replaceState = vi.fn(() => { throw new Error('ValidationFailed') })
     await expect(openProject(d, '/ws')).rejects.toThrow('ValidationFailed')
     expect(d.napi.pushRecent).not.toHaveBeenCalled()
+  })
+
+  // ── Load-time grid repair report ───────────────────────────────────────────
+  /** A saved project whose only clip ends 1 µs below frame 90 at 30/1 — the shape
+   *  `parseProject`'s load pass repairs on the way in. */
+  function offGridJson(): string {
+    const g = seededGen()
+    const p = blankProject(g, 'Demo')
+    applyAddLayer(p, g, p.tracks[0].id, colorParams({ r: 255, g: 0, b: 0, a: 255 }, 16, 9), 0, 2_000_000)
+    const wire = serializeProject(p) as any
+    wire.tracks[0].layers[0].t_end_us = 2_999_999
+    return JSON.stringify(wire)
+  }
+
+  it('reports a load-time grid repair AFTER the workspace commit and BEFORE the state swap', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: offGridJson() }); fs.dirs.add('/ws')
+    const reports: GridRepair[][] = []
+    const d = deps({ fs })
+    d.onGridRepair = (r) => { reports.push([...r]); d.calls.push('gridLog') }
+    await openProject(d, '/ws')
+    // The parse happens before commitWorkspace, but commitWorkspace ROTATES the
+    // per-workspace LogBus — so emitting where the repair happened would drop the row
+    // into the doomed pre-open bus. It is captured and replayed here instead. Before
+    // replaceState, so a swap that still fails validation leaves the diagnostic behind.
+    expect(d.calls).toEqual(['commit:/ws', 'gridLog', 'replaceState', 'recent:/ws:Demo'])
+    expect(reports[0]).toContainEqual({ entity: 'Layer', id: expect.any(String), field: 't_end_us', from: 2_999_999, to: 3_000_000 })
+  })
+
+  it('does not report when the loaded project needs no repair', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: projectJson }); fs.dirs.add('/ws')
+    const d = deps({ fs })
+    const onGridRepair = vi.fn()
+    d.onGridRepair = onGridRepair
+    await openProject(d, '/ws')
+    expect(onGridRepair).not.toHaveBeenCalled()
+  })
+
+  it('never lets a throwing onGridRepair abort the open', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: offGridJson() }); fs.dirs.add('/ws')
+    const d = deps({ fs, onGridRepair: () => { throw new Error('emit failed') } })
+    await expect(openProject(d, '/ws')).resolves.toBeUndefined()
+    expect(d.actor.replaceState).toHaveBeenCalledOnce()
   })
 
   const managedItem: MediaItem = {

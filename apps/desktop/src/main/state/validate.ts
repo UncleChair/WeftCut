@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/validate.ts
 import type { Layer, LayerParams, Project, Transition, Uuid } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
-import { frameGrid, gridForLayerKind, isCanonicalOnGrid, type Grid } from './snap'
+import { frameGrid, gridForLayerKind, isCanonicalOnGrid, snapOnGrid, type Grid } from './snap'
 
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 
@@ -37,17 +37,22 @@ export function validate(project: Project): void {
  *  function, which is what stops the three sites from disagreeing about where audio
  *  lives (spec § Two data-loss dependencies).
  *
- *  Deliberately NOT `i >= 0` in the predicate below: a negative canonical time
- *  passes. `applyMoveLayer` can still reach one, and that is a clamp-policy defect
- *  with its own ticket — folding it in here would silently turn a grid rule into a
- *  bounds rule. */
+ *  Deliberately still NOT `i >= 0`: a negative canonical time passes this predicate
+ *  and is caught by `NegativeLayerStart` instead. Bounds and lattice stay separate
+ *  rules because they have different fixes — folding them together would report
+ *  "off grid" for a time that is exactly on it. */
 const layerEndpointGrid = gridForLayerKind
 
 /** Strip the `Grid` down to its wire shape for the error payload: `fps` carries the
  *  lattice rational, `grid` names which lattice it is. Built here rather than
- *  spreading the `Grid` so the extra field can never leak in unnoticed. */
+ *  spreading the `Grid` so the extra field can never leak in unnoticed.
+ *
+ *  `snap_to` is computed HERE, at the one site that already holds the `Grid`, rather
+ *  than by the MCP layer that reports it — which keeps the error self-describing for
+ *  every consumer (status log, renderer, tests) and keeps the wasm-backed leaf out of
+ *  `mcp-commands.ts`'s otherwise pure module graph. */
 function offGridBoundary(layer: Uuid, field: 't_start_us' | 't_end_us', t: number, grid: Grid): ValidationError {
-  return { rule: 'OffGridLayerBoundary', layer, field, t, fps: { num: grid.num, den: grid.den }, grid: grid.domain }
+  return { rule: 'OffGridLayerBoundary', layer, field, t, fps: { num: grid.num, den: grid.den }, grid: grid.domain, snap_to: snapOnGrid(t, grid) }
 }
 
 function validateComposition(p: Project): void {
@@ -58,8 +63,9 @@ function validateComposition(p: Project): void {
   // furthest is audio on the sample lattice — `applyDurationAutofit` rounds the
   // high-water mark UP to the enclosing frame, so a sub-frame audio tail still fits
   // inside the composition rather than pushing its duration off grid.
-  if (!isCanonicalOnGrid(c.duration_us, frameGrid(c.fps)))
-    fail({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: c.duration_us, fps: c.fps })
+  const compGrid = frameGrid(c.fps)
+  if (!isCanonicalOnGrid(c.duration_us, compGrid))
+    fail({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: c.duration_us, fps: c.fps, snap_to: snapOnGrid(c.duration_us, compGrid) })
 }
 
 /** Marker times are on the composition grid (`snapMarkerTimes` is the mutation
@@ -68,9 +74,9 @@ function validateMarkers(p: Project): void {
   const grid = frameGrid(p.composition.fps)
   for (const m of p.markers) {
     if (!isCanonicalOnGrid(m.t_us, grid))
-      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: p.composition.fps })
+      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: p.composition.fps, snap_to: snapOnGrid(m.t_us, grid) })
     if (m.end_t_us !== null && m.end_t_us !== undefined && !isCanonicalOnGrid(m.end_t_us, grid))
-      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 'end_t_us', t: m.end_t_us, fps: p.composition.fps })
+      fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 'end_t_us', t: m.end_t_us, fps: p.composition.fps, snap_to: snapOnGrid(m.end_t_us, grid) })
   }
 }
 
@@ -201,6 +207,11 @@ function validateTrack(p: Project, track: Project['tracks'][number], authorized:
     if (seenLayers.has(layer.id)) fail({ rule: 'DuplicateLayerId', layer: layer.id })
     seenLayers.add(layer.id)
     if (layer.t_start_us >= layer.t_end_us) fail({ rule: 'InvalidLayerRange', layer: layer.id, t_start: layer.t_start_us, t_end: layer.t_end_us })
+    // Bounds BEFORE lattice: a negative start is usually also off-grid, and
+    // "off grid" is the less actionable of the two reports (the caller's mistake was
+    // the sign, not the quantum). `t_end` needs no companion rule — start >= 0 and
+    // start < end together force it positive.
+    if (layer.t_start_us < 0) fail({ rule: 'NegativeLayerStart', layer: layer.id, t_start: layer.t_start_us })
     const grid = layerEndpointGrid(layer.params.kind, p.composition.fps)
     if (!isCanonicalOnGrid(layer.t_start_us, grid))
       fail(offGridBoundary(layer.id, 't_start_us', layer.t_start_us, grid))

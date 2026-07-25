@@ -17,18 +17,27 @@ export type ValidationError =
   | { rule: 'LayerInMultipleTransitions'; layer: Uuid }
   | { rule: 'DuplicateLayerId'; layer: Uuid }
   | { rule: 'InvalidLayerRange'; layer: Uuid; t_start: TimeUs; t_end: TimeUs }
+  // Timeline time starts at zero. Deliberately its OWN rule rather than a `i >= 0`
+  // clause folded into the grid predicate below: a negative time can be perfectly
+  // canonical (-1_000_000 is frame -30 at 30 fps), so reporting it as "off grid"
+  // would send a caller chasing the wrong fix. Repaired (lifted to 0) on load,
+  // rejected on edit — the same asymmetry the grid rules use and for the same
+  // reason: `replaceState` shares this validator with `project_open`, so a hard rule
+  // with no matching load repair makes an already-written project unopenable.
+  | { rule: 'NegativeLayerStart'; layer: Uuid; t_start: TimeUs }
   // ── Grid backstop (docs/data-model.md § Timeline-field alignment). `fps` rides
   // along because "off grid" is meaningless without the lattice it is off:
   // 2_999_999 is off grid at 30/1 and canonical at 1000000/1. A caller that hits
-  // either variant asked for a sub-quantum time; the fix is to snap and retry, and
-  // the value it should have sent is `round(i * 1e6 * den / num)`.
+  // either variant asked for a sub-quantum time, and `snap_to` is the nearest
+  // lattice point — the value it should have sent — so the retry is mechanical
+  // instead of the caller re-deriving `round(i * 1e6 * den / num)` from `fps`.
   //
   // On `OffGridLayerBoundary` there are TWO lattices (spec R2-D6): `grid` names
   // which one, and `fps` carries that lattice's rational — so for an Audio layer it
   // reads `48000/1`, the 48 kHz mix lattice, NOT a frame rate. Without `grid` a
   // caller could not tell a 48 kHz audio rejection from an absurd 48000 fps comp.
-  | { rule: 'OffGridLayerBoundary'; layer: Uuid; field: 't_start_us' | 't_end_us'; t: TimeUs; fps: Rational; grid: GridDomain }
-  | { rule: 'OffGridTime'; entity: 'Composition' | 'Marker'; id: Uuid | null; field: string; t: TimeUs; fps: Rational }
+  | { rule: 'OffGridLayerBoundary'; layer: Uuid; field: 't_start_us' | 't_end_us'; t: TimeUs; fps: Rational; grid: GridDomain; snap_to: TimeUs }
+  | { rule: 'OffGridTime'; entity: 'Composition' | 'Marker'; id: Uuid | null; field: string; t: TimeUs; fps: Rational; snap_to: TimeUs }
   | { rule: 'MissingMedia'; layer: Uuid; media: Uuid }
   | { rule: 'InvalidSrcRange'; layer: Uuid; src_in: TimeUs; src_out: TimeUs }
   | { rule: 'SrcRangeExceedsMedia'; layer: Uuid; src_in: TimeUs; src_out: TimeUs; media_duration: TimeUs }

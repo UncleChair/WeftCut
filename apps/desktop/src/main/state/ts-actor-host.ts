@@ -8,6 +8,7 @@ import { createAutosave, type AutosaveController, type AutosaveFs } from './auto
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
 import { serializeProjectToJson } from './persistence'
+import { describeGridRepairs, type GridRepair } from './serialize'
 import { agentSessionEnd } from './agent-session-seam'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
@@ -199,10 +200,26 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (relink)', err) }
   }
+  // Load-time grid repair: `parseProject` pulls legacy off-grid geometry onto its
+  // lattice (and lifts a negative start) so an older project OPENS instead of
+  // failing the backstop that `replaceState` shares with every mutation. The repair
+  // rewrites the user's timeline, so `warn`, not `info` — the failure mode worth
+  // designing against is a migration nobody was told about. Best-effort, like relink.
+  const onGridRepair = (repairs: readonly GridRepair[]): void => {
+    try {
+      deps.emitLog?.({
+        level: 'warn',
+        category: { kind: 'Project' },
+        source: { kind: 'System' },
+        message: `Repaired ${repairs.length} off-grid timeline field(s) on load`,
+        details: { kind: 'GridRepair', repairs: repairs.map((r) => ({ ...r })), summary: describeGridRepairs(repairs) },
+      })
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (grid repair)', err) }
+  }
   const relink = deps.relinkFs
     ? { fs: deps.relinkFs, join: deps.join, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
     : undefined
-  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink }
+  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and

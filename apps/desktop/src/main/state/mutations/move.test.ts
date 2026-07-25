@@ -57,6 +57,58 @@ describe('move group lock checks (not corpus-gated)', () => {
     expect(p.tracks[1].layers[0].t_start_us).toBe(0) // sibling unmoved
   })
 
+  // ── The zero boundary: a move stops, it does not deform ────────────────────
+  // The pre-fix code clamped each member's `t_start_us` independently and never
+  // floored the target at all, so dragging toward zero SHORTENED a group sibling
+  // (start lifted, end left behind) and let a lone layer land at a negative time.
+  // Clamping the shared delta instead is what makes "stops as a set" true.
+  it('stops a lone layer at 0 with its duration intact instead of writing a negative start', () => {
+    const p = blankProject(seededGen(), 't')
+    p.tracks[0].layers = [color('a', 1_000_000, 2_000_000)]
+    applyMoveLayer(p, 'a', p.tracks[0].id, -5_000_000, false)
+    const a = p.tracks[0].layers[0]
+    expect(a.t_start_us).toBe(0)
+    expect(a.t_end_us).toBe(1_000_000) // NOT clamped-in-place: the duration rides along
+  })
+
+  it('stops a group at 0 as a set — earliest member on 0, spacing kept, nobody shortened', () => {
+    const p = blankProject(seededGen(), 't')
+    p.tracks[0].layers = [color('a', 1_000_000, 2_000_000)] // target, 1 s duration
+    p.tracks[1].layers = [color('b', 500_000, 600_000)]     // earliest member, 100 ms
+    applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
+
+    // Asks for -1 000 000; the set can only travel -500 000 before `b` hits zero.
+    applyMoveLayer(p, 'a', p.tracks[0].id, 0, false)
+
+    const a = p.tracks[0].layers[0]
+    const b = p.tracks[1].layers[0]
+    expect(b.t_start_us).toBe(0)                    // earliest member lands exactly on 0
+    expect(a.t_start_us).toBe(500_000)              // ...and keeps its 500 ms lead
+    expect(b.t_end_us - b.t_start_us).toBe(100_000) // NEGATIVE CONTROL: the pre-fix code
+    expect(a.t_end_us - a.t_start_us).toBe(1_000_000) // left b at [0, -400_000)
+  })
+
+  it('lets a sample-aligned audio member decide where the group stops', () => {
+    // The stop is driven by whichever member is earliest, on WHICHEVER lattice — an
+    // `earliestStart` that only scanned the frame grid would walk the audio negative.
+    // 999_979 µs is sample 47 999 at 48 kHz; it is not a 30 fps frame boundary.
+    const p = blankProject(seededGen(), 't')
+    const au = color('au', 999_979, 1_999_979)
+    au.params = {
+      kind: 'Audio', media: 'm', src_in_us: 0, src_out_us: 1_000_000,
+      gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
+      fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue',
+    }
+    p.tracks[0].layers = [color('v', 1_000_000, 2_000_000)]
+    p.tracks[1].layers = [au]
+    applyGroupsCreate(p, seededGen(), ['v', 'au'], null, false)
+
+    applyMoveLayer(p, 'v', p.tracks[0].id, -3_000_000, false)
+
+    expect(p.tracks[1].layers[0].t_start_us).toBe(0)
+    expect(p.tracks[0].layers[0].t_start_us).toBeGreaterThanOrEqual(0)
+  })
+
   it('cross-track group move changes only the target track and shifts siblings in place', () => {
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [

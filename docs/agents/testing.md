@@ -10,12 +10,23 @@ not scattered by neglect.
 | Layer | Location | Runner | Command (cwd) |
 |---|---|---|---|
 | **Unit (TS)** | colocated next to source: `apps/desktop/src/{renderer,main,shared}/**/*.{test,spec}.{ts,tsx}` | Vitest | `npm test` (repo root) · `npm run test:watch` (`apps/desktop`) |
+| **Build scripts** | colocated: `apps/desktop/scripts/*.test.mjs` | `node:test` | `npm run test:scripts` (repo root or `apps/desktop`) |
 | **Rust** | `native/**` — inline `#[cfg(test)]` + `native/tests/` | cargo | see [Rust](#rust) (repo root) |
 | **E2E** | `apps/desktop/e2e/electron/*.spec.ts` | Playwright driving the **real Electron app** | `npm run e2e` (repo root or `apps/desktop`) |
 | **Mutation / PBT** | mutates `src/main/state/**` (config: `apps/desktop/stryker.config.json`) | StrykerJS (Vitest runner) | `npm run pbt:stryker` (`apps/desktop`) |
 
 The `apps/desktop` unit script excludes `**/*.browser.test.ts`; there are none
 today — it's a standing guard for a pattern that would need a browser runner.
+
+**Build-script tests are a separate command on purpose.** `vitest.config.ts`
+pins `include` to the three `src/` roots, so `scripts/*.test.mjs` is invisible to
+`npm test` — and they are `node:test`, not Vitest, so widening the glob would
+not help. They are *not* folded into `npm test` because that script forwards
+extra argv (`npm test -- src/foo.test.ts`), and a `&&`-chained second command
+would swallow those args. CI runs both as adjacent steps on the Windows leg.
+Note the quoted glob in the script: `node --test` expands it internally, so it
+behaves the same under `cmd.exe` and `sh` — an unquoted glob or a bare directory
+argument does not work.
 
 ### Rust
 

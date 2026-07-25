@@ -100,6 +100,8 @@ Notes:
 | MCP tool calls | `Mcp` | `Info`/`Error` | Two entries (Started + Ok/Err) sharing `op_id`. `details` carries args / return / error. Mutating tools' `project:changed` entry folds into the same `op_id`. |
 | MCP server lifecycle | `Mcp` | `Info` | `source = System`. Connect/disconnect/bind events. |
 | Project mutations | `Project` | `Info` | `source = User` or `Agent { client }` depending on origin. Replaces `ActivityPanel`'s feed. |
+| Load-time media relink | `Project` | `Info` healed / `Warn` missing | `source = System`. `details.kind = "Relink"`. Emitted after the workspace commit, never during the heal — the commit rotates the per-workspace bus. |
+| Load-time grid repair | `Project` | `Warn` | `source = System`. `details.kind = "GridRepair"` with one row per moved field. `Warn` because the repair rewrites the user's timeline. Same post-commit timing rule as relink. |
 | System errors | `System` | `Error` | Via a `tracing-subscriber` `Layer` scoped to our crate's spans only. |
 
 ## Frontend

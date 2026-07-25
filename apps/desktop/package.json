@@ -28,6 +28,7 @@
     "pretypecheck": "npm run build:wasm",
     "test": "vitest run --exclude '**/*.browser.test.ts'",
     "pretest": "npm run build:wasm",
+    "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
     "napi:build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "napi:build:decode": "node scripts/napi-build-decode.mjs",

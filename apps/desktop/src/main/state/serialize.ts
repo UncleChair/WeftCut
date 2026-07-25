@@ -14,7 +14,8 @@ export function serializeProject(p: Project): unknown {
   return { ...p, groups: p.groups.map(serializeGroup) }
 }
 
-/** One field the load pass pulled back onto the composition frame grid. */
+/** One timeline field the load pass had to move: onto its own lattice (the
+ *  composition frame grid, or the 48 kHz sample lattice for audio), or up to 0. */
 export interface GridRepair {
   entity: 'Layer' | 'Composition' | 'Marker' | 'Transition'
   /** Entity id, or null for the composition (a singleton). */
@@ -27,16 +28,21 @@ export interface GridRepair {
 export interface ParseProjectOptions {
   /** Called once, with every field the grid repair changed, when the load pass
    *  actually repaired something — so a silently-migrated project is visible
-   *  rather than mysterious. Defaults to a `console.warn` one-liner; pass a
-   *  status-log emitter to route it to the LogBus, or a no-op to silence it. */
+   *  rather than mysterious. Defaults to a `console.warn` one-liner; the live host
+   *  passes an emitter that turns it into a LogBus row (see
+   *  `workspace-orchestrator.ts`, which must CAPTURE these and emit only after
+   *  `commitWorkspace` has rotated the per-workspace bus), or a no-op to silence it. */
   onGridRepair?: (repairs: readonly GridRepair[]) => void
 }
 
+/** Human summary of a repair set — shared by the console default and the LogBus row
+ *  so the two can never describe the same migration differently. */
+export function describeGridRepairs(repairs: readonly GridRepair[]): string {
+  return repairs.map((r) => `${r.entity}${r.id ? `(${r.id})` : ''}.${r.field} ${r.from}→${r.to}`).join(', ')
+}
+
 function warnGridRepair(repairs: readonly GridRepair[]): void {
-  console.warn(
-    `[grid-repair] snapped ${repairs.length} off-grid timeline field(s) to the composition frame grid on load: ` +
-    repairs.map((r) => `${r.entity}${r.id ? `(${r.id})` : ''}.${r.field} ${r.from}→${r.to}`).join(', '),
-  )
+  console.warn(`[grid-repair] repaired ${repairs.length} timeline field(s) on load: ${describeGridRepairs(repairs)}`)
 }
 
 /** Pull every grid-bound timeline field of a WIRE project onto its own grid, in
@@ -82,6 +88,49 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     if (next !== cur) { holder[field] = next; repairs.push({ entity, id, field, from: cur, to: next }) }
     return next
   }
+  /** Bring a layer that starts before zero back into representable time — the other
+   *  half of the `NegativeLayerStart` rule (repair on load, reject on edit). A
+   *  negative start is a BOUNDS defect, not a grid one (`-1_000_000` is frame -30 at
+   *  30 fps, perfectly canonical), and it is what `move_layer` wrote before the delta
+   *  clamp landed, so projects holding one exist and must still open.
+   *
+   *  Two cases, split because they carry different COLLISION risk — and a repair that
+   *  manufactures a `LayerOverlap` is a project that will not open, the exact failure
+   *  repair-on-load exists to prevent:
+   *
+   *  PARTIALLY negative (`start < 0 < end`) → lift the start to 0. Provably safe:
+   *  `[0, end)` is a subset of the span the layer already occupied without
+   *  overlapping anything, so it can collide with nothing. At most one layer per
+   *  track can even be in this state — two disjoint spans cannot both straddle zero.
+   *
+   *  ENTIRELY negative (`end <= 0`) → shift the whole layer, duration intact, to past
+   *  everything else on its track. Lifting its start would collapse it onto
+   *  `[0, one quantum)`, and that CAN collide with whatever the track already holds
+   *  at the head. Parking is collision-free by construction, and it beats dropping
+   *  the layer because a drop cascades into `GroupMemberMissing` /
+   *  `TransitionLayerMissing`. The layer never occupied a renderable microsecond
+   *  either way; parked, it is at least visible and movable.
+   *
+   *  Runs BEFORE the snap, and writes already-snapped values, so one broken field
+   *  reports one repair row and the snap that follows is the identity. Returns the
+   *  next free park position so two parked layers do not stack. */
+  const repairNegativeStart = (id: string | null, layer: Record<string, unknown>, grid: Grid, parkAt: number): number => {
+    const start = layer.t_start_us
+    if (typeof start !== 'number' || !Number.isFinite(start) || start >= 0) return parkAt
+    const end = layer.t_end_us
+    if (typeof end === 'number' && Number.isFinite(end) && end <= 0) {
+      const at = snapUpOnGrid(parkAt, grid)
+      const movedEnd = snapOnGrid(at + (end - start), grid)
+      layer.t_start_us = at
+      layer.t_end_us = movedEnd
+      repairs.push({ entity: 'Layer', id, field: 't_start_us', from: start, to: at })
+      repairs.push({ entity: 'Layer', id, field: 't_end_us', from: end, to: movedEnd })
+      return movedEnd
+    }
+    layer.t_start_us = 0
+    repairs.push({ entity: 'Layer', id, field: 't_start_us', from: start, to: 0 })
+    return parkAt
+  }
   /** Push an end that the snap collapsed onto its own start out to the next lattice
    *  point, so the repair itself can never manufacture an `InvalidLayerRange` /
    *  zero-span region out of a legacy sub-quantum entity. */
@@ -97,11 +146,21 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
   // geometry below, so they must read the final values.
   const geometry = new Map<string, { start: number; end: number }>()
   for (const track of (o.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
-    for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
+    const layers = (track?.layers as Array<Record<string, unknown>> | undefined) ?? []
+    // Where an entirely-negative layer gets parked. Read from the RAW ends before any
+    // repair runs, so a parked layer can never land on a live one; advanced as each is
+    // placed. A negative end cannot raise it, which is what makes 0 the floor.
+    let parkAt = 0
+    for (const l of layers) {
+      const e = l === null || typeof l !== 'object' ? null : l.t_end_us
+      if (typeof e === 'number' && Number.isFinite(e) && e > parkAt) parkAt = e
+    }
+    for (const layer of layers) {
       if (layer === null || typeof layer !== 'object') continue
       const id = typeof layer.id === 'string' ? layer.id : null
       const kind = (layer.params as { kind?: unknown } | undefined)?.kind
       const grid = gridForLayerKind(typeof kind === 'string' ? kind : '', { num, den })
+      parkAt = repairNegativeStart(id, layer, grid, parkAt)
       const start = snapField('Layer', id, layer, 't_start_us', grid)
       let end = snapField('Layer', id, layer, 't_end_us', grid)
       if (start !== null && end !== null && end <= start) end = widenToOneQuantum('Layer', id, layer, 't_end_us', start, grid)

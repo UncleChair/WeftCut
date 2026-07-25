@@ -155,6 +155,15 @@ jobs:
         if: runner.os == 'Windows'
         run: npm test
 
+      # The build scripts' own node:test suite. Separate from `npm test` because
+      # Vitest's `include` is pinned to the three src/ roots — these live in
+      # apps/desktop/scripts/ and are a different runner, so nothing else picks
+      # them up. They gate pure argv/env planning (E2E gate-flag splitting,
+      # preflight wiring): fast, no build artifacts, OS-independent.
+      - name: Build-script tests (node:test)
+        if: runner.os == 'Windows'
+        run: npm run test:scripts
+
       # The committed rust-native MCP catalog snapshot must equal what the addon
       # advertises. The bijection gate reconstructs the live catalog from this
       # fixture, so a stale fixture is the one drift the suite can't catch itself —

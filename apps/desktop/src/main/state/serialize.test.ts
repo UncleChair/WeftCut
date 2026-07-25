@@ -60,6 +60,60 @@ describe('parseProject grid repair', () => {
     expect(() => validate(project)).not.toThrow()
   })
 
+  // ── The bounds half of the same asymmetry ──────────────────────────────────
+  // `NegativeLayerStart` is a hard rule on the edit side, so without this repair
+  // every project the pre-clamp `move_layer` wrote would refuse to OPEN.
+  /** One clip straddling zero — what the pre-clamp `move_layer` wrote when a layer
+   *  was dragged left past the origin. The head of the track is left EMPTY because
+   *  that is the only arrangement the buggy move could actually persist: validate ran
+   *  after the move, so the layer cannot have overlapped a neighbour where it landed. */
+  function negativeStartWire(startUs: number, endUs: number): Wire {
+    const g = seededGen()
+    const p = blankProject(g, 'legacy')
+    applyAddLayer(p, g, p.tracks[0].id, colorParams(RED, 16, 9), 6_000_000, 8_000_000)
+    const wire = serializeProject(p) as Wire
+    wire.tracks[0].layers[0].t_start_us = startUs
+    wire.tracks[0].layers[0].t_end_us = endUs
+    return wire
+  }
+
+  it('lifts a partially-negative t_start_us to 0 on load, in one repair row, and reports it', () => {
+    const wire = negativeStartWire(-1_000_000, 2_000_000) // canonical at 30/1, still illegal
+    const layerId = wire.tracks[0].layers[0].id as string
+    const reported: GridRepair[][] = []
+    const project = parseProject(wire, { onGridRepair: (r) => reported.push([...r]) })
+    // ONE row, not a lift followed by a snap: the lift runs before the snap and 0 is
+    // a lattice point on every grid, so the snap that follows is the identity.
+    expect(reported).toEqual([[{ entity: 'Layer', id: layerId, field: 't_start_us', from: -1_000_000, to: 0 }]])
+    expect(project.tracks[0].layers[0].t_start_us).toBe(0)
+    expect(project.tracks[0].layers[0].t_end_us).toBe(2_000_000) // end untouched — the visible part is preserved exactly
+    expect(() => validate(project)).not.toThrow()
+    // Idempotent: reopening the repaired project reports nothing.
+    const second: GridRepair[][] = []
+    parseProject(JSON.parse(serializeProjectToJson(project)), { onGridRepair: (r) => second.push([...r]) })
+    expect(second).toEqual([])
+  })
+
+  it('parks an ENTIRELY-negative layer past the track instead of colliding at the head', () => {
+    // Lifting this one's start would collapse it onto [0, one frame) — straight into
+    // the clip already sitting at the head of the track, so the "repair" would produce
+    // a LayerOverlap and the project would stop opening. Parking keeps its duration
+    // and cannot collide.
+    const g = seededGen()
+    const p = blankProject(g, 'legacy')
+    applyAddLayer(p, g, p.tracks[0].id, colorParams(RED, 16, 9), 0, 2_000_000) // head of track
+    applyAddLayer(p, g, p.tracks[0].id, colorParams(RED, 16, 9), 3_000_000, 5_000_000)
+    const wire = serializeProject(p) as Wire
+    wire.tracks[0].layers[1].t_start_us = -5_000_000
+    wire.tracks[0].layers[1].t_end_us = -4_000_000  // 1 s, entirely before zero
+
+    const project = parseProject(wire, silent)
+    const parked = project.tracks[0].layers.find((l) => l.id === (wire.tracks[0].layers[1].id as string))!
+    expect(parked.t_start_us).toBe(2_000_000)                     // past the head clip
+    expect(parked.t_end_us - parked.t_start_us).toBe(1_000_000)   // duration intact
+    expect(() => validate(project)).not.toThrow()
+  })
+
   it('replaceState accepts the repaired project and rejects the un-repaired one', () => {
     const g = seededGen()
     const actor = createActor({ initial: blankProject(g, 'x'), idGen: g })
@@ -69,7 +123,7 @@ describe('parseProject grid repair', () => {
       throw new Error('expected replaceState to reject the un-repaired project')
     } catch (e) {
       if (!isCommandFailure(e)) throw e
-      expect(e.err).toEqual({ error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer: expect.any(String), field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' } })
+      expect(e.err).toEqual({ error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer: expect.any(String), field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame', snap_to: 3_000_000 } })
     }
   })
 
@@ -83,7 +137,7 @@ describe('parseProject grid repair', () => {
     // update_layer is the one envelope patch that stores raw µs — the backstop is
     // what stops it, and the failure is structured rather than a silent write.
     const res = actor.dispatch('update_layer', { layer, patch: { t_end_us: 2_999_999 } })
-    expect(res).toEqual({ ok: false, error: { error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer, field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' } } })
+    expect(res).toEqual({ ok: false, error: { error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer, field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame', snap_to: 3_000_000 } } })
   })
 
   it('is idempotent: repaired → saved → reopened reports no second repair', () => {

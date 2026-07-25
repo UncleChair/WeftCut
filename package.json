@@ -13,6 +13,7 @@
     "build": "npm --workspace apps/desktop run build",
     "typecheck": "npm --workspace apps/desktop run typecheck",
     "test": "npm --workspace apps/desktop run test --",
+    "test:scripts": "npm --workspace apps/desktop run test:scripts",
     "e2e": "npm --workspace apps/desktop run e2e --",
     "build:e2e": "npm --workspace apps/desktop run build:e2e",
     "package": "npm --workspace apps/desktop run package",
