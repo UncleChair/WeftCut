@@ -443,6 +443,11 @@ function PerfDashboard({
                 <th className="perf-num">ring</th>
                 <th>span (ms)</th>
                 <th className="perf-num">LA</th>
+                {/* Hardware lane only: the synchronous cross-device read
+                    barrier the preload pays per frame, per session. */}
+                <th className="perf-num" title="Preload read-completion barrier, ms (p50/p95) — hardware lane only">
+                  barrier
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -496,6 +501,25 @@ function PerfDashboard({
                       >
                         {clip.lookaheadFull ? "✓" : "…"}
                       </span>
+                    </td>
+                    <td className="perf-num">
+                      {clip.handoff ? (
+                        <span
+                          className={clip.handoff.barrierP95 >= 2 ? "perf-warn" : undefined}
+                          title={
+                            `barrier p50 ${clip.handoff.barrierP50.toFixed(2)} / ` +
+                            `p95 ${clip.handoff.barrierP95.toFixed(2)} / ` +
+                            `max ${clip.handoff.barrierMax.toFixed(2)} ms · ` +
+                            `createImageBitmap p50 ${clip.handoff.cibP50.toFixed(2)} · ` +
+                            `whole handoff p50 ${clip.handoff.residentP50.toFixed(2)} · ` +
+                            `n=${clip.handoff.n}`
+                          }
+                        >
+                          {clip.handoff.barrierP50.toFixed(1)}/{clip.handoff.barrierP95.toFixed(1)}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                   </tr>
                 );

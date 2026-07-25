@@ -25,6 +25,7 @@ import {
 } from "./resolveView";
 import { SourceDecoderPool, SourceHandle } from "./decoder/SourceDecoderPool";
 import type { DecodeSession, DecoderPool } from "./decoder/session";
+import type { HandoffTimingSummary } from "./decoder/transports/handoffTimings";
 import { FfmpegSource } from "./decoder/FfmpegSource";
 import { markFfmpegUnusable } from "./decoder/ffmpegCapability";
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
@@ -120,6 +121,10 @@ export interface CompositorPerfSnapshot {
     /// (device loss, decode error, HW-session budget). Orthogonal to
     /// `sourceKind`: it is the transition, not the current state.
     downgraded: boolean;
+    /// Hardware lane only: the preload's per-frame handoff cost, whose
+    /// `barrier` component is the synchronous GPU drain each session pays
+    /// before its slot recycles. Null on every other path.
+    handoff: HandoffTimingSummary | null;
     /// True when the ring's lookahead window is satisfied (decoder not
     /// running behind the playhead).
     lookaheadFull: boolean;
@@ -1341,6 +1346,7 @@ export class Compositor {
         decodedFrameCount: c.source.decodedFrameCount?.() ?? 0,
         sourceKind: sourceKindOf(c.source),
         downgraded: c.source.isDowngraded?.() ?? false,
+        handoff: c.source.handoffTimings?.() ?? null,
         lookaheadFull: c.source.isLookaheadFull?.() ?? false,
       });
     }

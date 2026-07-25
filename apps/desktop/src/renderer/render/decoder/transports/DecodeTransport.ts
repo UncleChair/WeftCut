@@ -5,6 +5,7 @@
 // NativeNv12Frames (CPU planes convert in OUR shader, never the browser's —
 // see nv12Frame.ts / ADR 0032).
 import type { NativeNv12Frame } from "../nv12Frame";
+import type { HandoffTimingSummary } from "./handoffTimings";
 
 /// What a transport can push into the preview `FrameRing`.
 export type TransportFrame = ImageBitmap | NativeNv12Frame;
@@ -28,4 +29,7 @@ export interface DecodeTransport {
   onError(cb: (reason: string) => void): void;
   onEof(cb: () => void): void;
   dispose(): void;
+  /// Diagnostics: per-frame preload handoff timings. Hardware lane only — the
+  /// SW transport has no preload stage to stamp, so it does not implement this.
+  handoffTimings?(): HandoffTimingSummary | null;
 }

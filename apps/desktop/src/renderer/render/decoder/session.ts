@@ -4,6 +4,7 @@
 // session <-> ExportDecoderPool reference (ExportDecodeSession.ring) is not
 // a runtime cycle.
 import type { DecodedFrame } from "./decodedFrame";
+import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import type { ExportColorDiag, ExportFrameStore } from "./ExportDecoderPool";
 
 export interface SourceHandleInit {
@@ -128,6 +129,9 @@ export interface DecodeSession {
   decodeQueueSize?(): number;
   decodedFrameCount?(): number;
   isDowngraded?(): boolean;
+  /// Diagnostics: hardware-lane preload handoff timings (PerfHUD). Absent on
+  /// sessions with no preload stage.
+  handoffTimings?(): HandoffTimingSummary | null;
   isLookaheadFull?(): boolean;
   /// Terminal ffmpeg-engine failure (after in-place HW→SW fallback also fails).
   /// FfmpegSource-only; the Compositor wires it to `markFfmpegUnusable`.

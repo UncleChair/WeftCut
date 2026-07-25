@@ -8,6 +8,7 @@ import type { PreviewDecodeSession } from "./session";
 import type { FfmpegLane } from "./decodeEngine";
 import { FrameRing } from "./FrameRing";
 import type { DecodeTransport } from "./transports/DecodeTransport";
+import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
@@ -91,6 +92,12 @@ export class FfmpegSource implements PreviewDecodeSession {
 
   get disposed(): boolean { return this._disposed; }
   currentLane(): FfmpegLane { return this.lane; }
+
+  /// Diagnostics: the live transport's preload handoff timings, or null on the
+  /// software lane (no preload stage) / before the first instrumented frame.
+  handoffTimings(): HandoffTimingSummary | null {
+    return this.transport?.handoffTimings?.() ?? null;
+  }
   /// The resolved HW lane name (`nvdec`|`vaapi`|`d3d11va`) the current hardware
   /// attempt keyed its transport on, or null on the software lane / a forced-lane
   /// bench run. E2E-only: the lane-parameterized conformance spec reads this

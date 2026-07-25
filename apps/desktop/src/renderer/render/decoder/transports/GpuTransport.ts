@@ -14,6 +14,7 @@
 // which owns exactly one `DecodeTransport` at a time.
 import type { PreviewGpuColorSpace } from "../../../../shared/ipc";
 import type { DecodeTransport, DecodeTransportOpen } from "./DecodeTransport";
+import { HandoffTimings, type HandoffTimingSummary } from "./handoffTimings";
 
 /// How long to wait for the preload's port handoff before `open()` rejects.
 /// Generous — this is a one-time same-process `postMessage` round-trip, not a
@@ -73,6 +74,10 @@ export class GpuTransport implements DecodeTransport {
   private portReadyP: Promise<void> | null = null;
 
   private _disposed = false;
+
+  /// Rolling window over the preload's per-frame handoff stamps. The barrier
+  /// cost it derives is the one number this path never surfaced.
+  private readonly timings = new HandoffTimings();
 
   private frameCb: ((bitmap: ImageBitmap, ptsUs: number, durUs: number) => void) | null = null;
   private errorCb: ((reason: string) => void) | null = null;
@@ -165,12 +170,19 @@ export class GpuTransport implements DecodeTransport {
         data.bitmap?.close?.();
         return;
       }
+      this.timings.record(data.gvfMs, data.cibMs, data.residentMs);
       this.frameCb?.(data.bitmap, data.ptsUs, data.durUs);
     } else if (data.kind === "eof") {
       this.eofCb?.();
     } else if (data.kind === "error") {
       this.errorCb?.(data.message);
     }
+  }
+
+  /// Preload handoff timings for this session, or null before the first
+  /// instrumented frame. Diagnostics only — nothing decides on it.
+  handoffTimings(): HandoffTimingSummary | null {
+    return this.timings.summary();
   }
 
   onFrame(cb: (bitmap: ImageBitmap, ptsUs: number, durUs: number) => void): void {
