@@ -110,7 +110,15 @@ export interface CompositorPerfSnapshot {
     ringLastPtsUs: number | null;
     /// Cumulative frames decoded for this clip; the HUD diffs it into fps.
     decodedFrameCount: number;
-    /// True if this handle has downgraded to software decode.
+    /// Which decode path actually backs this clip right now — the same
+    /// discriminator `activeClipProbe` reports. NOT derivable from
+    /// `downgraded`: a clip that STARTED on software (10-bit, ProRes, DNx —
+    /// anything off the HW allow-list) never downgraded, so reading
+    /// `downgraded` as a lane prints "hardware" for the whole software lane.
+    sourceKind: ActiveClipProbe["sourceKind"];
+    /// True only if this handle STARTED on hardware and fell back at runtime
+    /// (device loss, decode error, HW-session budget). Orthogonal to
+    /// `sourceKind`: it is the transition, not the current state.
     downgraded: boolean;
     /// True when the ring's lookahead window is satisfied (decoder not
     /// running behind the playhead).
@@ -136,6 +144,17 @@ export interface UpcomingClipPrewarmSnapshot {
     ringSize: number;
     ringLastPtsUs: number | null;
   }>;
+}
+
+/// THE one place decode-path identity is derived, shared by `activeClipProbe`
+/// (E2E) and `getPerfSnapshot` (PerfHUD) so the two can never disagree about
+/// which lane a clip is on. Discriminated by `instanceof` + `currentLane()`,
+/// NOT `constructor.name` — the minified E2E renderer build mangles it.
+function sourceKindOf(source: DecodeSession): ActiveClipProbe["sourceKind"] {
+  if (source instanceof FfmpegSource) {
+    return source.currentLane() === "software" ? "sw" : "native-gpu";
+  }
+  return source instanceof SourceHandle ? "webcodecs" : "unknown";
 }
 
 /// E2E-only diagnostic snapshot of ONE active VideoClip's decode source plus
@@ -1320,6 +1339,7 @@ export class Compositor {
         ringFirstPtsUs: ring.firstPtsUs(),
         ringLastPtsUs: ring.lastPtsUs(),
         decodedFrameCount: c.source.decodedFrameCount?.() ?? 0,
+        sourceKind: sourceKindOf(c.source),
         downgraded: c.source.isDowngraded?.() ?? false,
         lookaheadFull: c.source.isLookaheadFull?.() ?? false,
       });
@@ -1361,12 +1381,7 @@ export class Compositor {
     }
     if (!clip) return null;
     const s = clip.source;
-    const sourceKind: ActiveClipProbe["sourceKind"] =
-      s instanceof FfmpegSource
-        ? (s.currentLane() === "software" ? "sw" : "native-gpu")
-        : s instanceof SourceHandle
-          ? "webcodecs"
-          : "unknown";
+    const sourceKind = sourceKindOf(s);
     const tex = clip.sprite.sprite.texture;
     const isEmpty = tex === Texture.EMPTY;
     return {

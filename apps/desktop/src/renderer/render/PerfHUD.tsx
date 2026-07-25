@@ -459,10 +459,24 @@ function PerfDashboard({
                     </td>
                     <td>
                       <span
-                        className={`perf-pill${clip.downgraded ? " is-sw" : ""}`}
-                        title={clip.downgraded ? "Software decode (downgraded)" : "Hardware decode"}
+                        className={`perf-pill${clip.sourceKind === "native-gpu" ? "" : " is-sw"}`}
+                        title={
+                          clip.sourceKind === "native-gpu"
+                            ? "ffmpeg hardware lane (d3d11va shared texture)"
+                            : clip.sourceKind === "sw"
+                              ? `ffmpeg software lane (NV12 over IPC)${clip.downgraded ? " — downgraded from hardware" : ""}`
+                              : clip.sourceKind === "webcodecs"
+                                ? "Lite engine (WebCodecs)"
+                                : "unknown decode source"
+                        }
                       >
-                        {clip.downgraded ? "SW" : "HW"}
+                        {clip.sourceKind === "native-gpu"
+                          ? "HW"
+                          : clip.sourceKind === "sw"
+                            ? `SW${clip.downgraded ? "↓" : ""}`
+                            : clip.sourceKind === "webcodecs"
+                              ? "WC"
+                              : "?"}
                       </span>
                     </td>
                     <td className="perf-num">{fpsV.toFixed(0)}</td>
