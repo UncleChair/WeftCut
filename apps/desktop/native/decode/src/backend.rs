@@ -48,6 +48,9 @@ pub struct PreviewGpuTimingReport {
     pub decode_copy: PreviewGpuTimingSummary,
     pub ack_to_emit: PreviewGpuTimingSummary,
     pub lookahead_gated_skips: u32,
+    /// Frames the pump discarded as already-late instead of delivering them (see
+    /// `preview_gpu::TimingReport::late_frame_drops`).
+    pub late_frame_drops: u32,
     // Round-2 thread time-budget probe (see `preview_gpu::TimingReport`).
     pub inter_emit: PreviewGpuTimingSummary,
     pub inter_ack: PreviewGpuTimingSummary,
@@ -536,6 +539,7 @@ impl NativeDecode {
             decode_copy: to_napi_timing_summary(rep.decode_copy),
             ack_to_emit: to_napi_timing_summary(rep.ack_to_emit),
             lookahead_gated_skips: clamp(rep.lookahead_gated_skips),
+            late_frame_drops: clamp(rep.late_frame_drops),
             inter_emit: to_napi_timing_summary(rep.inter_emit),
             inter_ack: to_napi_timing_summary(rep.inter_ack),
             recv_block: to_napi_timing_summary(rep.recv_block),

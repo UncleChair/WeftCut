@@ -39,13 +39,39 @@ export function hwSessionCount(): number {
   return sessions.size
 }
 
+/// Tail of the open-serialisation chain. `openPreviewGpu` awaits inside its
+/// per-slot announce→import→send loop, so two concurrent `previewGpu:open`
+/// invokes would interleave their loops — and the preload pairs receiver
+/// callbacks to announces through ONE positional FIFO queue, so interleaved
+/// opens mis-key each other's slot textures (wrong pixels, or a slot with no
+/// import at all). Chaining every open through here keeps at most one loop
+/// in flight. Cheap: opens are rare (once per session) and short.
+let openChain: Promise<unknown> = Promise.resolve()
+
 /// Open a native GPU-decode session and hand its whole shared-texture pool to
 /// the renderer up front. For each slot we announce the slot index, import the
 /// shared handle, and transfer it to the renderer's main frame — in that order,
 /// because the preload pairs each incoming receiver callback to a slot by the
 /// FIFO order of the `previewGpu:slot` announces, and each announce must be
 /// enqueued renderer-side before its sendSharedTexture makes the receiver fire.
-export async function openPreviewGpu(
+export function openPreviewGpu(
+  backend: NativeDecode,
+  win: BrowserWindow,
+  streamId: string,
+  path: string,
+  poolSize: number,
+  colorSpace: ColorSpace,
+): Promise<{ width: number; height: number; poolSize: number }> {
+  // Serialise: run after whatever open is already in flight, succeeded or not
+  // (hence the `.catch`, so one failed open doesn't poison the chain).
+  const mine = openChain
+    .catch(() => {})
+    .then(() => doOpenPreviewGpu(backend, win, streamId, path, poolSize, colorSpace))
+  openChain = mine
+  return mine
+}
+
+async function doOpenPreviewGpu(
   backend: NativeDecode,
   win: BrowserWindow,
   streamId: string,

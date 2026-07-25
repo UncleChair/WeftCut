@@ -169,15 +169,18 @@ const api: WeftcutApi = {
     close(args: { streamId: string }): Promise<void> {
       return closePreviewGpuStream(args.streamId)
     },
-    // Hand a MessagePort to the main world so it can receive decoded frames.
-    // A contextBridge function MAY be called from the main world and MAY itself
-    // call window.postMessage with a transfer list (only PASSING a port
+    // Hand a MessagePort to the main world so it can receive `streamId`'s decoded
+    // frames. A contextBridge function MAY be called from the main world and MAY
+    // itself call window.postMessage with a transfer list (only PASSING a port
     // as a bridge ARGUMENT fails). The renderer attaches its `message` listener
     // BEFORE calling this, then grabs `ev.ports[0]`.
-    requestPort(): void {
+    //
+    // `streamId` rides the handoff message so a listener can tell ITS port from
+    // another session's: the post is a broadcast every live transport hears.
+    requestPort(streamId: string): void {
       const ch = new MessageChannel()
-      mainPort = ch.port1
-      window.postMessage({ __weftcutPreviewGpu: 'port' }, '*', [ch.port2])
+      portByStream.set(streamId, ch.port1)
+      window.postMessage({ __weftcutPreviewGpu: 'port', streamId }, '*', [ch.port2])
     },
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport> {
       return ipcRenderer.invoke('previewGpu:takeTimings', { streamId }) as Promise<PreviewGpuTimingReport>
@@ -287,9 +290,22 @@ const importedByKey = new Map<string, SharedTextureImported>()
 // Slot announces awaiting their receiver callback. Main sends one announce
 // immediately before each slot's sendSharedTexture, so the announce is enqueued
 // here before the receiver fires for that slot — pair by shift() (FIFO).
+// Cross-stream soundness rests on main SERIALISING its opens (see
+// openPreviewGpu's queue): this one queue pairs positionally against a separate
+// channel's callbacks, so two interleaved opens would mis-key each other's
+// textures. Main guarantees at most one open is mid-loop.
 const announceQueue: { streamId: string; slot: number }[] = []
-// The renderer-main-world end of the frame channel, set by requestPort().
-let mainPort: MessagePort | null = null
+// The renderer-main-world end of each session's frame channel, keyed by streamId.
+//
+// LANDMINE: this was ONE global `mainPort` that every `requestPort()` overwrote.
+// Since `window.postMessage` is a broadcast, every live GpuTransport's listener
+// also grabbed the newest port — so with 2+ concurrent GPU sessions all of them
+// ended up sharing the last channel, one `onmessage` survived, and every frame
+// whose `streamId` didn't match that transport was silently dropped. Every
+// session but the newest went permanently dark: rings frozen, painter stuck on a
+// stale frame, and (because eof/error pokes ride the same port) FfmpegSource
+// never saw the failure so the HW→SW fallback never fired. One port per stream.
+const portByStream = new Map<string, MessagePort>()
 
 // Tear down a session from the PRELOAD side. Electron only frees a shared
 // texture's GPU pool slot once EVERY import of it is released — main's
@@ -320,6 +336,14 @@ async function closePreviewGpuStream(streamId: string): Promise<void> {
   }
   for (let i = announceQueue.length - 1; i >= 0; i--) {
     if (announceQueue[i].streamId === streamId) announceQueue.splice(i, 1)
+  }
+  // Drop this stream's frame channel in the same "before the await" batch: the
+  // frameReady handler's `if (!port) return` is what keeps a late poke from
+  // acking into a session main is mid-closing.
+  const port = portByStream.get(streamId)
+  if (port) {
+    portByStream.delete(streamId)
+    port.close()
   }
   await (ipcRenderer.invoke('previewGpu:close', { streamId }) as Promise<void>)
 }
@@ -388,10 +412,24 @@ ipcRenderer.on(
   'evt:previewGpu:frameReady',
   async (_e, { streamId, slot, ptsUs, durUs }: { streamId: string; slot: number; ptsUs: number; durUs: number }) => {
     const imp = importedByKey.get(`${streamId}:${slot}`)
-    // Snapshot mainPort into a const so its non-null narrowing survives the await
-    // below (a module-scoped `let` re-widens across await points).
-    const port = mainPort
-    if (!imp || !port) return
+    // Snapshot the port into a const so its non-null narrowing survives the await
+    // below (a fresh Map read after the await could see a closed session).
+    const port = portByStream.get(streamId)
+    // No port = the session is closed or mid-close (closePreviewGpuStream drops
+    // the port + imports BEFORE awaiting main's close, exactly so a late poke
+    // short-circuits here). Stay silent: acking into a mid-closing session is
+    // what that ordering exists to avoid, and native is being torn down anyway.
+    if (!port) return
+    // Port but no import = a LIVE session whose slot never got paired (see
+    // announceQueue). Nothing was read out of the slot, so native still owns it —
+    // but we must ack or it is stranded until native's finite AcquireSync times
+    // out, and pool_size stranded slots wedge the session for good. Same
+    // reasoning as the ack-on-error case below; `getVideoFrame` was never called,
+    // so there is no GPU hold to release first.
+    if (!imp) {
+      void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot }).catch(() => {})
+      return
+    }
     const tEntry = performance.now()
     try {
       let bmp: ImageBitmap
@@ -434,10 +472,10 @@ ipcRenderer.on(
 
 // End-of-stream / error pokes → forward to the main world over the same port.
 ipcRenderer.on('evt:previewGpu:eof', (_e, { streamId }: { streamId: string }) => {
-  mainPort?.postMessage({ kind: 'eof', streamId })
+  portByStream.get(streamId)?.postMessage({ kind: 'eof', streamId })
 })
 ipcRenderer.on('evt:previewGpu:error', (_e, { streamId, message }: { streamId: string; message: string }) => {
-  mainPort?.postMessage({ kind: 'error', streamId, message })
+  portByStream.get(streamId)?.postMessage({ kind: 'error', streamId, message })
 })
 
 contextBridge.exposeInMainWorld('api', api)

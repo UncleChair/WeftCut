@@ -231,6 +231,20 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.lastUseMs = performance.now();
     if (this._disposed) return;
     this.lastTargetUs = tUs;
+    // Backward seek past everything cached: the ring now holds ONLY future-dated
+    // frames, which `setAnchor` can never evict (front-only). Drop them, or the
+    // painter holds a wrong-region frame until playback grinds all the way back
+    // up to the cached span — measured at 12 s of frozen picture. This mirrors
+    // the WebCodecs lane, where `PacketPump.decideReset`'s backward arm flushes;
+    // the ffmpeg lane had no equivalent.
+    if (this.ring.strandedAheadOf(tUs)) {
+      this.ring.flush();
+      // EOF is not terminal for a backward seek: the native session re-arms
+      // decoding on the seek its `on_request` performs. Without clearing the
+      // latch, the `return` below would swallow every later request for the rest
+      // of this transport's life — the session would never produce again.
+      this.eof = false;
+    }
     this.ring.setAnchor(tUs);      // always — drives lookbehind eviction, even post-eof
     if (this.eof) return; // eof seen on the current transport — its own IPC is done,
     // but the anchor above must still advance so the ring keeps evicting stale frames.

@@ -83,6 +83,11 @@ pub struct TimingReport {
     /// pool-full (waiting on the renderer's ack cadence), not the gate. The only
     /// other early-return with a free slot is `eof`, excluded mid-stream.
     pub lookahead_gated_skips: u64,
+    /// Frames `pump` discarded as already-late (see `LATE_FRAME_DROP_US`) rather
+    /// than copying + delivering. This is the drop policy's own meter: 0 means the
+    /// pipeline kept up, sustained non-zero means decode fell behind and the drop
+    /// is what kept the delivery chain (and the displayed lag) bounded.
+    pub late_frame_drops: u64,
     /// Round-2 thread time-budget probe (the per-slot probes above found the ~22ms
     /// is NOT per-slot — it is whole-pipeline dead time). These characterise the
     /// session thread's cadence directly, in its own clock:
@@ -125,6 +130,7 @@ pub struct TimingAccum {
     decode_copy_ns: Vec<u64>,
     ack_to_emit_ns: Vec<u64>,
     lookahead_gated_skips: u64,
+    late_frame_drops: u64,
     inter_emit_ns: Vec<u64>,
     inter_ack_ns: Vec<u64>,
     recv_block_ns: Vec<u64>,
@@ -156,8 +162,22 @@ impl TimingAccum {
     /// A `pump` pass found a free slot but the lookahead gate stopped it decoding.
     /// Saturating so the runaway backstop matches the sample cap's intent (a 30s
     /// window can only tick the pump ~7.5k times via `RECV_TIMEOUT`, far under u64).
-    pub fn note_lookahead_gated_skip(&mut self) {
+    pub fn note_lookahead_gated_skip(&mut self, free_slots: u32, eof: bool) {
         self.lookahead_gated_skips = self.lookahead_gated_skips.saturating_add(1);
+        // Record the terminal snapshot here TOO. LANDMINE: this return used to be
+        // the only pump early-exit that left `final_free_slots` alone, so a
+        // gate-wedged session reported a stale `final_free_slots: 0` from some
+        // earlier pool-full return — reading as pool starvation when the pool was
+        // fine. That cost a diagnosis. Every early-exit must stamp the snapshot.
+        self.final_free_slots = free_slots;
+        self.final_eof = eof;
+    }
+    /// A decoded frame was discarded as already-late (`pump`'s late-frame drop)
+    /// instead of being copied + delivered. Non-zero means the drop policy is
+    /// actively protecting the delivery chain; a run with sustained non-zero here
+    /// is a run where decode could not keep up.
+    pub fn note_late_frame_drop(&mut self) {
+        self.late_frame_drops = self.late_frame_drops.saturating_add(1);
     }
     pub fn push_inter_emit(&mut self, ns: u64) {
         Self::push_capped(&mut self.inter_emit_ns, ns);
@@ -201,6 +221,7 @@ impl TimingAccum {
             decode_copy: summarize(&self.decode_copy_ns),
             ack_to_emit: summarize(&self.ack_to_emit_ns),
             lookahead_gated_skips: self.lookahead_gated_skips,
+            late_frame_drops: self.late_frame_drops,
             inter_emit: summarize(&self.inter_emit_ns),
             inter_ack: summarize(&self.inter_ack_ns),
             recv_block: summarize(&self.recv_block_ns),
@@ -217,6 +238,7 @@ impl TimingAccum {
         self.decode_copy_ns.clear();
         self.ack_to_emit_ns.clear();
         self.lookahead_gated_skips = 0;
+        self.late_frame_drops = 0;
         self.inter_emit_ns.clear();
         self.inter_ack_ns.clear();
         self.recv_block_ns.clear();
@@ -304,7 +326,101 @@ const LOOKAHEAD_US: i64 = 500_000;
 /// A forward jump larger than this (beyond the decoded frontier) seeks to a
 /// keyframe instead of decode-and-discarding the gap; smaller forward moves
 /// decode naturally. Any backward move always seeks.
+///
+/// Also the SEED for the measured keyframe interval (`key_interval_us`) until two
+/// keyframes have been seen — so behaviour before any measurement is exactly what
+/// it was when this was the only threshold.
 const SEEK_FORWARD_THRESHOLD_US: i64 = 1_000_000;
+
+/// Floor/ceiling on the measured-keyframe-interval resync threshold
+/// (`resync_threshold_us`). The floor keeps a short-GOP source (a 0.5 s-GOP quick
+/// proxy) from re-seeking on every few frames of drift — a seek still costs a
+/// decoder flush plus the re-approach. The ceiling keeps a pathological
+/// keyframe-once-per-minute source from disabling resync entirely.
+const MIN_RESYNC_US: i64 = 250_000;
+const MAX_RESYNC_US: i64 = 3_000_000;
+
+/// How far BEHIND the anchor a decoded frame's presentation interval must end
+/// before the pump discards it instead of delivering it (`pump`'s late-frame
+/// drop — ffplay's `framedrop`, mpv's `--framedrop=vo`).
+///
+/// Not zero: the margin is the A/V lag we are willing to SHOW rather than drop,
+/// so a decoder that is only slightly behind still presents its most recent
+/// frames instead of going blank. 100 ms matches ffplay's `AV_SYNC_THRESHOLD_MAX`
+/// and doubles as the renderer ring's own `CLAMP_TO_FIRST_GAP_US`, so a frame
+/// this pump keeps is a frame the ring can still serve.
+const LATE_FRAME_DROP_US: i64 = 100_000;
+
+/// How far the anchor must fall BEHIND the decoded frontier before that counts as
+/// a backward divergence worth a seek, independent of how the anchor got there.
+/// Must exceed `LOOKAHEAD_US`, or ordinary paused pre-buffering (frontier legally
+/// leads the anchor by up to one lookahead) would read as a backward jump and
+/// re-seek forever.
+const BACKWARD_DIVERGENCE_US: i64 = 2 * LOOKAHEAD_US;
+
+/// What a forward gap must exceed before seeking beats decoding through it.
+///
+/// A seek is not free: it flushes the decoder and must re-decode from the key
+/// packet at/before the target, so it costs up to one keyframe interval of decode.
+/// Decoding forward costs the gap. So seek when `gap > keyframe interval` —
+/// measured, not guessed, because the right answer differs by an order of
+/// magnitude between a 0.5 s-GOP proxy and a 3 s-GOP 4K original.
+///
+/// This prices the SEEK arm only. Bounding the A/V lag is [`is_late_frame`]'s job;
+/// dropping is what makes tolerating a long GOP affordable in the first place.
+fn resync_threshold_us(key_interval_us: i64) -> i64 {
+    key_interval_us.clamp(MIN_RESYNC_US, MAX_RESYNC_US)
+}
+
+/// Pure seek decision for one `request_frame_at`. `anchor` is the PREVIOUS anchor,
+/// `frontier_pts` the furthest pts decoded (`i64::MIN` = nothing since open/seek).
+fn needs_seek(t: i64, anchor: i64, frontier_pts: i64, key_interval_us: i64) -> bool {
+    if frontier_pts == i64::MIN {
+        // Nothing decoded yet: seek only if the very first target is far from the
+        // container start; a target near 0 is cheaper to reach by forward decode.
+        return t > SEEK_FORWARD_THRESHOLD_US;
+    }
+    // Playhead moved backward — forward decode can't rewind.
+    //
+    // The `frontier` arm is a STRUCTURAL backstop, not a restatement of the
+    // `anchor` one: it keys on what we actually DECODED rather than on where the
+    // anchor last was. Without it, any path that lands the anchor behind a
+    // far-ahead frontier WITHOUT passing through a successful seek (a seek that
+    // returned Err; a request stream resuming after the anchor was already reset)
+    // leaves `pump`'s lookahead gate permanently satisfied — `frontier >= anchor +
+    // LOOKAHEAD_US` forever — and the session never decodes another frame for the
+    // rest of its life. Live-observed: 178 requests, 0 emits, 329/329 pump
+    // attempts exiting via the gate.
+    if t < anchor || t.saturating_add(BACKWARD_DIVERGENCE_US) < frontier_pts {
+        return true;
+    }
+    // Forward move: seek only on a jump the decoder can't cheaply cover.
+    t > frontier_pts.saturating_add(resync_threshold_us(key_interval_us))
+}
+
+/// Whether a decoded frame is too late to be worth DELIVERING: its presentation
+/// interval ended more than [`LATE_FRAME_DROP_US`] before the playhead, so nothing
+/// downstream will ever show it (the renderer's `FrameRing` binds the newest frame
+/// at or before the anchor, and this is not it). ffplay's `framedrop`.
+///
+/// `.max(1)` on the duration guards a 0/unknown value so the frame COVERING the
+/// anchor is never mistaken for a past one.
+fn is_late_frame(pts_us: i64, dur_us: i64, anchor: i64) -> bool {
+    pts_us
+        .saturating_add(dur_us.max(1))
+        .saturating_add(LATE_FRAME_DROP_US)
+        <= anchor
+}
+
+/// Fold an observed keyframe pts into the interval average. EWMA 3:1 toward
+/// history — smooths an open-GOP source with irregular key spacing without
+/// pinning to a first outlier. A non-advancing or first-ever key is a no-op.
+fn fold_key_interval(key_interval_us: i64, last_key_pts: i64, pts_us: i64) -> i64 {
+    if last_key_pts == i64::MIN || pts_us <= last_key_pts {
+        return key_interval_us;
+    }
+    (key_interval_us * 3 + (pts_us - last_key_pts)) / 4
+}
 
 /// recv timeout so the pump makes progress (freed slot -> decode) between
 /// messages without busy-spinning.
@@ -400,6 +516,15 @@ struct SessionState {
     /// Set right after a seek: discard decoded frames whose pts is before the
     /// anchor until the first one at/after it.
     post_seek: bool,
+    /// pts of the last keyframe the pump decoded; `i64::MIN` until one is seen.
+    /// Paired with `key_interval_us` to price a resync seek.
+    last_key_pts: i64,
+    /// Measured interval between consecutive keyframes (µs) — the worst-case
+    /// decode cost of re-approaching a seek target from its key packet. Seeded to
+    /// `SEEK_FORWARD_THRESHOLD_US`, then an EWMA over observed gaps so a long-GOP
+    /// 4K source (3 s GOP measured on the Samsung UHD demo) stops paying ~90 4K
+    /// decodes to recover 1 s of drift, while a short-GOP proxy resyncs promptly.
+    key_interval_us: i64,
     /// Decoder is drained; the pump idles until a backward seek resets this.
     eof: bool,
     /// Shared with the registry so `take_timings` can drain from the Node thread.
@@ -474,22 +599,11 @@ impl SessionState {
         }
     }
 
-    /// Handle a `request_frame_at`: set the anchor and, if the target left the
-    /// current forward window, seek. A backward move always seeks; a forward
-    /// move seeks only when it jumps well past the decoded frontier.
+    /// Handle a `request_frame_at`: set the anchor and, if `needs_seek` says the
+    /// target left the reachable forward window, seek. Decision logic is the pure
+    /// [`needs_seek`] (unit-gated); this method owns only the state transition.
     fn on_request(&mut self, t: i64, poke: &PokeSink, stream_id: &str) {
-        let needs_seek = if self.frontier_pts == i64::MIN {
-            // Nothing decoded yet: seek only if the very first target is far from
-            // the container start; a target near 0 is cheaper to reach by
-            // natural forward decode.
-            t > SEEK_FORWARD_THRESHOLD_US
-        } else if t < self.anchor {
-            // Playhead moved backward — forward decode can't rewind.
-            true
-        } else {
-            // Forward move: seek only on a large jump beyond what we've decoded.
-            t > self.frontier_pts.saturating_add(SEEK_FORWARD_THRESHOLD_US)
-        };
+        let needs_seek = needs_seek(t, self.anchor, self.frontier_pts, self.key_interval_us);
         self.anchor = t;
         if needs_seek {
             match self.stream.seek(t) {
@@ -498,6 +612,10 @@ impl SessionState {
                     self.eof = false;
                     self.frontier_pts = i64::MIN;
                     self.last_delivered_pts = i64::MIN;
+                    // The next keyframe after a seek is the landing key, not the
+                    // natural successor of the one before the seek, so the gap
+                    // across it is not an interval. Keep the learned average.
+                    self.last_key_pts = i64::MIN;
                 }
                 Err(e) => {
                     // Non-fatal: leave the decode position as-is and report it;
@@ -545,8 +663,9 @@ impl SessionState {
             if self.frontier_pts != i64::MIN
                 && self.frontier_pts >= self.anchor.saturating_add(LOOKAHEAD_US)
             {
+                let free = self.free.iter().filter(|&&f| f).count() as u32;
                 if let Ok(mut t) = self.timing.lock() {
-                    t.note_lookahead_gated_skip();
+                    t.note_lookahead_gated_skip(free, self.eof);
                 }
                 return;
             }
@@ -579,6 +698,15 @@ impl SessionState {
                 }
             };
 
+            // Keyframe cadence, for `resync_threshold_us`. Folded before any
+            // discard below, because a discarded frame still tells us the GOP
+            // structure — and the discard paths are exactly when we need it.
+            if decoded.key {
+                self.key_interval_us =
+                    fold_key_interval(self.key_interval_us, self.last_key_pts, decoded.pts_us);
+                self.last_key_pts = decoded.pts_us;
+            }
+
             // Post-seek: drop frames before the anchor (the seek landed on a
             // keyframe at/<= the target) until the first one at/after it.
             if self.post_seek {
@@ -587,6 +715,28 @@ impl SessionState {
                     continue; // slot stays free
                 }
                 self.post_seek = false;
+            }
+
+            // Late-frame drop (ffplay `framedrop` / mpv `--framedrop=vo`).
+            //
+            // Discarding HERE is the whole point. Delivering an already-late frame
+            // would pay the keyed-mutex acquire, a full-frame
+            // `CopySubresourceRegion` (12.4 MB at 4K NV12), the napi/IPC hop,
+            // `importSharedTexture` + `createImageBitmap`, and a ring push +
+            // eviction — all for a frame nobody sees, while the playhead runs
+            // further ahead. That is what made a decode shortfall self-sustaining
+            // instead of self-correcting: decode itself has headroom (measured
+            // 193 fps on the 4K H.264 case, 6.5× realtime) and the delivery chain
+            // was spending it on stale frames. Skipping costs one decode, which a
+            // long GOP makes unavoidable anyway, and leaves the slot FREE —
+            // exactly like the post-seek discard above. Mirrors the software lane's
+            // `serve_request`, which has always discarded pre-target frames.
+            if is_late_frame(decoded.pts_us, decoded.dur_us, self.anchor) {
+                self.frontier_pts = decoded.pts_us;
+                if let Ok(mut t) = self.timing.lock() {
+                    t.note_late_frame_drop();
+                }
+                continue; // slot stays free
             }
 
             let copy = unsafe {
@@ -905,6 +1055,8 @@ fn init_session(
             frontier_pts: i64::MIN,
             last_delivered_pts: i64::MIN,
             post_seek: false,
+            last_key_pts: i64::MIN,
+            key_interval_us: SEEK_FORWARD_THRESHOLD_US,
             eof: false,
             timing,
             slot_emit,
@@ -1209,7 +1361,8 @@ mod timing_tests {
         let mut a = TimingAccum::default();
         a.push_decode_copy(5_000_000);
         a.push_ack_to_emit(7_000_000);
-        a.note_lookahead_gated_skip();
+        a.note_lookahead_gated_skip(2, false);
+        a.note_late_frame_drop();
         a.push_inter_emit(22_000_000);
         a.push_inter_ack(22_000_000);
         a.push_recv_block(4_000_000);
@@ -1223,6 +1376,7 @@ mod timing_tests {
         assert_eq!(r.decode_copy.count, 1);
         assert_eq!(r.ack_to_emit.count, 1);
         assert_eq!(r.lookahead_gated_skips, 1);
+        assert_eq!(r.late_frame_drops, 1);
         assert_eq!(r.inter_emit.count, 1);
         assert_eq!(r.inter_ack.count, 1);
         assert_eq!(r.recv_block.count, 1);
@@ -1240,6 +1394,7 @@ mod timing_tests {
         assert_eq!(r2.decode_copy.count, 0);
         assert_eq!(r2.ack_to_emit.count, 0);
         assert_eq!(r2.lookahead_gated_skips, 0);
+        assert_eq!(r2.late_frame_drops, 0);
         assert_eq!(r2.inter_emit.count, 0);
         assert_eq!(r2.recv_block.count, 0);
         assert_eq!(r2.recv_timeout_ticks, 0);
@@ -1258,7 +1413,7 @@ mod timing_tests {
             a.push_ack_to_emit(ms * 1_000_000);
         }
         for _ in 0..5 {
-            a.note_lookahead_gated_skip();
+            a.note_lookahead_gated_skip(1, false);
         }
         let r = a.drain();
         assert_eq!(r.ack_to_emit.count, 3);
@@ -1300,6 +1455,131 @@ mod timing_tests {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // --- Playback-load policy: the pure decisions `pump`/`on_request` delegate to.
+    // These are the whole behavioural contract of the late-frame drop + adaptive
+    // resync, so they are gated here rather than only through a live GPU session
+    // (which needs D3D11 + a real file and can't assert a counterfactual).
+
+    /// One frame interval at 29.97 fps — the measured stress case.
+    const F30: i64 = 33_367;
+
+    #[test]
+    fn late_frame_drop_keeps_the_covering_frame_and_the_tolerated_lag() {
+        // The frame COVERING the anchor is never late, however long its duration.
+        assert!(!is_late_frame(1_000_000, F30, 1_000_000));
+        assert!(!is_late_frame(1_000_000, F30, 1_000_000 + F30 - 1));
+        // A zero/unknown duration must not turn the covering frame into a past one
+        // (the `.max(1)` guard) — pts == anchor is still current.
+        assert!(!is_late_frame(1_000_000, 0, 1_000_000));
+        // Frames inside the A/V tolerance still get delivered: showing a slightly
+        // stale frame beats showing nothing, which is why the margin isn't zero.
+        assert!(!is_late_frame(1_000_000, F30, 1_000_000 + LATE_FRAME_DROP_US));
+        // Past the tolerance, drop: nothing downstream would ever bind it.
+        assert!(is_late_frame(
+            1_000_000,
+            F30,
+            1_000_000 + F30 + LATE_FRAME_DROP_US
+        ));
+        // A deep backlog (the sustained-shortfall case) drops wholesale.
+        assert!(is_late_frame(1_000_000, F30, 5_000_000));
+    }
+
+    #[test]
+    fn late_frame_drop_never_fires_while_pre_buffering_ahead() {
+        // Paused / healthy playback decodes AHEAD of the anchor. Every such frame
+        // must be delivered — a false positive here would blank the preview.
+        for ahead in [1, F30, LOOKAHEAD_US, 10 * LOOKAHEAD_US] {
+            assert!(
+                !is_late_frame(1_000_000 + ahead, F30, 1_000_000),
+                "frame {ahead}us ahead of the anchor must not be dropped"
+            );
+        }
+    }
+
+    #[test]
+    fn resync_threshold_tracks_the_measured_keyframe_interval_within_clamps() {
+        // A short-GOP quick proxy resyncs promptly...
+        assert_eq!(resync_threshold_us(500_000), 500_000);
+        // ...but never so promptly that it thrashes on a few frames of drift.
+        assert_eq!(resync_threshold_us(F30), MIN_RESYNC_US);
+        // A long-GOP 4K original (3 s GOP, measured) tolerates more drift, because
+        // a seek there costs re-decoding up to a whole GOP.
+        assert_eq!(resync_threshold_us(3_000_000), 3_000_000);
+        // A pathological keyframe-once-a-minute source can't disable resync.
+        assert_eq!(resync_threshold_us(60_000_000), MAX_RESYNC_US);
+    }
+
+    #[test]
+    fn key_interval_folds_gaps_and_ignores_non_advancing_keys() {
+        // First key ever: nothing to measure, seed survives.
+        assert_eq!(
+            fold_key_interval(SEEK_FORWARD_THRESHOLD_US, i64::MIN, 5_000_000),
+            SEEK_FORWARD_THRESHOLD_US
+        );
+        // A repeated / out-of-order key pts is not an interval.
+        assert_eq!(fold_key_interval(1_000_000, 5_000_000, 5_000_000), 1_000_000);
+        assert_eq!(fold_key_interval(1_000_000, 5_000_000, 4_000_000), 1_000_000);
+        // EWMA converges toward a real 3 s GOP from the 1 s seed rather than jumping.
+        let mut k = SEEK_FORWARD_THRESHOLD_US;
+        let mut last = 0;
+        for i in 1..=12 {
+            let pts = i * 3_000_000;
+            k = fold_key_interval(k, last, pts);
+            last = pts;
+        }
+        assert!(
+            (2_900_000..=3_000_000).contains(&k),
+            "expected convergence toward the 3s GOP, got {k}"
+        );
+    }
+
+    #[test]
+    fn needs_seek_covers_cold_start_backward_and_forward_jumps() {
+        const K: i64 = 3_000_000; // long-GOP source
+        // Cold start: a near-zero target is cheaper to reach by forward decode.
+        assert!(!needs_seek(0, i64::MIN, i64::MIN, K));
+        assert!(needs_seek(90_000_000, i64::MIN, i64::MIN, K));
+        // Backward move relative to the previous anchor.
+        assert!(needs_seek(1_000_000, 8_000_000, 8_500_000, K));
+        // Ordinary forward playback within the resync window: no seek. This is the
+        // arm the late-frame drop relies on — catch up by dropping, not by seeking.
+        assert!(!needs_seek(8_100_000, 8_000_000, 8_500_000, K));
+        assert!(!needs_seek(10_000_000, 8_000_000, 8_500_000, K));
+        // A forward jump past what a GOP re-decode would cost: seek.
+        assert!(needs_seek(20_000_000, 8_000_000, 8_500_000, K));
+        // Same gap on a SHORT-GOP source seeks much sooner (the adaptive part).
+        assert!(needs_seek(9_000_000, 8_000_000, 8_500_000, 400_000));
+        assert!(!needs_seek(9_000_000, 8_000_000, 8_500_000, K));
+    }
+
+    #[test]
+    fn needs_seek_backstops_an_anchor_stranded_behind_the_frontier() {
+        // THE WEDGE. If the anchor ends up far behind the decoded frontier without
+        // a successful seek in between, `pump`'s lookahead gate (`frontier >=
+        // anchor + LOOKAHEAD_US`) is satisfied forever and the session never
+        // decodes again. Live-observed as 178 requests / 0 emits / 329 gate exits.
+        // Re-requesting the SAME anchor must still be recognised as divergence.
+        assert!(needs_seek(0, 0, 12_500_000, 3_000_000));
+        // ...and must not depend on the anchor having moved backward this call.
+        assert!(needs_seek(1_000_000, 1_000_000, 12_500_000, 3_000_000));
+    }
+
+    #[test]
+    fn needs_seek_tolerates_legitimate_pre_buffer_lead() {
+        // Paused pre-buffering legally runs the frontier one LOOKAHEAD_US ahead of
+        // a held anchor. That must NOT read as backward divergence, or a parked
+        // playhead would re-seek on every idle tick.
+        let anchor = 5_000_000;
+        assert!(!needs_seek(
+            anchor,
+            anchor,
+            anchor + LOOKAHEAD_US,
+            3_000_000
+        ));
+        // The backstop only fires beyond the pre-buffer lead it must tolerate.
+        assert!(BACKWARD_DIVERGENCE_US > LOOKAHEAD_US);
+    }
 
     #[test]
     fn decode_panic_surfaces_as_error_poke_and_leaves_registry_usable() {

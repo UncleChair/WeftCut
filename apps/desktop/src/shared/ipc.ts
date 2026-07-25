@@ -101,6 +101,11 @@ export type PreviewGpuTimingReport = {
   decodeCopy: PreviewGpuTimingSummary
   ackToEmit: PreviewGpuTimingSummary
   lookaheadGatedSkips: number
+  /// Frames the pump discarded as already-late (past the playhead by more than the
+  /// A/V tolerance) instead of paying the GPU copy + IPC + ImageBitmap to deliver
+  /// one nothing would display. 0 = the pipeline kept up; sustained non-zero = a
+  /// decode shortfall the drop policy is absorbing.
+  lateFrameDrops: number
   /// Round-2 thread time-budget probe: production/ack cadence (interEmit/interAck),
   /// the session thread's recv_timeout block distribution (recvBlock — its sum ~=
   /// total thread idle), and wake-reason tallies (idle ticks / acks / anchor nudges).
@@ -289,9 +294,9 @@ export interface WeftcutApi {
   font: { resolve(family: string): Promise<Uint8Array | null> }
   /// Native GPU-decode preview (Windows). Session commands only — per-frame
   /// `ImageBitmap`s do NOT travel over this bridge (a MessagePort/frame can't
-  /// cross contextBridge). Instead `requestPort()` hands a MessagePort to the
-  /// main world via `window.postMessage`, over which the preload posts each
-  /// decoded frame; the renderer listens for the one-time port message
+  /// cross contextBridge). Instead `requestPort(streamId)` hands a MessagePort to
+  /// the main world via `window.postMessage`, over which the preload posts that
+  /// stream's decoded frames; the renderer listens for the one-time port message
   /// then reads frames off `port.onmessage`. consumeAck is preload-internal
   /// (fired after createImageBitmap), so it is deliberately NOT exposed here.
   previewGpu: {
@@ -303,7 +308,10 @@ export interface WeftcutApi {
     }): Promise<PreviewGpuOpenReply>
     requestFrameAt(args: { streamId: string; targetUs: number }): Promise<void>
     close(args: { streamId: string }): Promise<void>
-    requestPort(): void
+    /// One channel PER stream. The handoff post carries `streamId` so a listener
+    /// can tell its own port from another concurrent session's — the post is a
+    /// broadcast every live transport hears.
+    requestPort(streamId: string): void
     /// E2E/bench-only: drain this session's per-frame timing samples. Rejects
     /// for an unknown stream, or with "preview-gpu not built" off the native path.
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport>

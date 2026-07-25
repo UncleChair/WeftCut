@@ -244,3 +244,44 @@ describe("pushCount", () => {
     expect(ring.pushCount).toBe(2);
   });
 });
+
+describe("strandedAheadOf", () => {
+  // The backward-seek hole `setAnchor` structurally cannot close: it evicts from
+  // the FRONT only, so a jump back past everything cached leaves the whole ring
+  // in place and `frameAt` returning null forever. Measured symptom on the ffmpeg
+  // lane (which had no flush-on-backward-seek): 12 s of frozen picture while the
+  // ring held frames from the old playhead position.
+  const ringAt = (...pts: number[]) => {
+    const ring = new FrameRing();
+    for (const p of pts) ring.push(makeBitmap(p), p, 33_333);
+    return ring;
+  };
+
+  it("is false for an empty ring (nothing to strand)", () => {
+    expect(new FrameRing().strandedAheadOf(0)).toBe(false);
+  });
+
+  it("is false while the target is inside or behind the cached span", () => {
+    const ring = ringAt(11_700_000, 11_733_333, 11_766_666);
+    expect(ring.strandedAheadOf(11_733_333)).toBe(false);
+    expect(ring.strandedAheadOf(11_800_000)).toBe(false); // ahead of the ring
+  });
+
+  it("is false within the clamp gap — a CTS / edit-list offset must not flush", () => {
+    // A source whose first decoded frame carries a positive CTS offset asks for
+    // t=0 against a ring starting at +50ms every tick. `frameAt` clamps to the
+    // first entry there, so treating it as stranded would flush a perfectly good
+    // ring on every tick and never let one accumulate.
+    const ring = ringAt(50_000, 83_333);
+    expect(ring.strandedAheadOf(0)).toBe(false);
+  });
+
+  it("is true once the target falls before the ring by more than the clamp gap", () => {
+    const ring = ringAt(11_700_000, 11_733_333);
+    expect(ring.strandedAheadOf(0)).toBe(true);
+    expect(ring.strandedAheadOf(1_000_000)).toBe(true);
+    // Exactly the boundary case the clamp still rescues vs. the first one past it.
+    expect(ring.strandedAheadOf(11_600_000)).toBe(false); // 100ms gap → clamped
+    expect(ring.strandedAheadOf(11_599_000)).toBe(true);
+  });
+});

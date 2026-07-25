@@ -248,3 +248,56 @@ describe("FfmpegSource — hardware transport routing by HW lane (C2.2)", () => 
     expect(sw.t.open).not.toHaveBeenCalled();
   });
 });
+
+describe("FfmpegSource — backward seek", () => {
+  const makeSrc = (t: ReturnType<typeof fakeTransport>) =>
+    new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => t.t, makeSw: () => t.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
+    );
+
+  it("drops a ring stranded ahead of the new target", async () => {
+    // `ring.setAnchor` evicts from the FRONT only, so without this flush the ring
+    // keeps every future-dated frame, `frameAt` returns null past the clamp gap,
+    // and the painter holds a 12-second-stale frame until playback grinds back up
+    // to the cached span. The WebCodecs lane flushes via `PacketPump.decideReset`;
+    // this lane had no equivalent.
+    const gpu = fakeTransport();
+    const src = makeSrc(gpu);
+    await src.ensureReady();
+    for (const p of [11_700_000, 11_733_333, 11_766_666]) gpu.emitFrame(p);
+    expect(src.ring.size()).toBe(3);
+
+    await src.requestFrameAt(0);
+    expect(src.ring.size()).toBe(0);
+    // The decoder is still asked for the new target — flushing must not swallow it.
+    expect(gpu.t.requestFrameAt).toHaveBeenLastCalledWith(0);
+  });
+
+  it("keeps the ring on a backward move the clamp can still serve", async () => {
+    const gpu = fakeTransport();
+    const src = makeSrc(gpu);
+    await src.ensureReady();
+    for (const p of [1_000_000, 1_033_333]) gpu.emitFrame(p);
+    await src.requestFrameAt(990_000); // inside the clamp gap
+    expect(src.ring.size()).toBe(2);
+  });
+
+  it("clears the eof latch so a post-eof backward seek still reaches the decoder", async () => {
+    // EOF is not terminal for a backward seek — the native session re-arms decoding
+    // on the seek its `on_request` performs. While the latch held, the early
+    // `return` swallowed every later request for the transport's whole life, so a
+    // session that ever hit eof could never produce another frame.
+    const gpu = fakeTransport();
+    const src = makeSrc(gpu);
+    await src.ensureReady();
+    for (const p of [11_700_000, 11_733_333]) gpu.emitFrame(p);
+    gpu.finishEof();
+
+    await src.requestFrameAt(11_733_333); // forward/at eof: still gated, as before
+    expect(gpu.t.requestFrameAt).not.toHaveBeenCalledWith(11_733_333);
+
+    await src.requestFrameAt(0); // backward past the ring: must re-arm
+    expect(gpu.t.requestFrameAt).toHaveBeenLastCalledWith(0);
+  });
+});

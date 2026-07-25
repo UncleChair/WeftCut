@@ -94,9 +94,20 @@ export class GpuTransport implements DecodeTransport {
     this.streamId = o.streamId;
     // Attach BEFORE requestPort() — the preload's handoff post is one-time
     // and un-replayable; a listener attached after the call could miss it.
+    //
+    // LANDMINE: `window.postMessage` is a BROADCAST, so every live transport's
+    // listener sees every handoff. Without the `data.streamId` match below, a
+    // second session opening would make THIS transport adopt that session's port
+    // (and re-point its `onmessage`), so our frames would arrive on a port whose
+    // handler filters them out by streamId — a silent, permanent freeze of every
+    // session but the newest. Match our own id; ignore the rest.
     this.messageListener = (ev: MessageEvent) => {
-      const data = ev.data as { __weftcutPreviewGpu?: string } | null | undefined;
+      const data = ev.data as
+        | { __weftcutPreviewGpu?: string; streamId?: string }
+        | null
+        | undefined;
       if (!data || data.__weftcutPreviewGpu !== "port") return;
+      if (data.streamId !== this.streamId) return;
       const port = ev.ports?.[0];
       if (!port) return;
       this.port = port;
@@ -105,7 +116,7 @@ export class GpuTransport implements DecodeTransport {
       this.portReadyResolve = null;
     };
     window.addEventListener("message", this.messageListener);
-    window.api.previewGpu.requestPort();
+    window.api.previewGpu.requestPort(this.streamId);
     await this.waitForPort();
     if (this._disposed) return;
     // The configured poolSize (default 3) mirrors the WebCodecs path's
@@ -139,11 +150,14 @@ export class GpuTransport implements DecodeTransport {
   }
 
   /// Handle one message off the preload's port. Filters by `streamId` —
-  /// defensive: the preload's port channel may in principle carry another
-  /// stream's traffic, and a stray message must not reach this transport's
-  /// callbacks.
+  /// defensive: the port is now per-stream, so a foreign message shouldn't
+  /// arrive at all; if one does, drop it WITHOUT leaking its bitmap (a 4K
+  /// ImageBitmap per frame is not a survivable leak).
   private handlePortMessage(data: PortMsg): void {
-    if (!data || data.streamId !== this.streamId) return;
+    if (!data || data.streamId !== this.streamId) {
+      if (data && data.kind === "frame") data.bitmap?.close?.();
+      return;
+    }
     if (data.kind === "frame") {
       if (this._disposed) {
         // Late frame after teardown — drop it, returning the bitmap's

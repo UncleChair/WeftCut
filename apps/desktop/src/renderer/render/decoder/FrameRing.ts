@@ -167,6 +167,19 @@ export class FrameRing {
     return idx === -1 ? null : this.entries[idx]!;
   }
 
+  /// True when the ring holds frames but NONE of them can ever serve `tUs`,
+  /// because they all sit too far in the FUTURE. This is the backward-seek case
+  /// `setAnchor` structurally cannot fix: it evicts from the FRONT only (older
+  /// than `anchor - lookbehind`), so a jump back past everything cached leaves
+  /// the whole ring in place, `frameAt` returning null forever (the gap exceeds
+  /// `CLAMP_TO_FIRST_GAP_US`), and the painter pinned to a wrong-region frame.
+  /// The caller's remedy is `flush()`. Same threshold as `entryAt`'s clamp, so
+  /// this is exactly "the clamp can't rescue this target".
+  strandedAheadOf(tUs: number): boolean {
+    const first = this.entries[0];
+    return first !== undefined && first.ptsUs - tUs > CLAMP_TO_FIRST_GAP_US;
+  }
+
   /// Drop everything. Use on seek beyond the lookahead window.
   flush(): void {
     for (const e of this.entries) e.frame.close();

@@ -363,6 +363,11 @@ pub struct StreamFrame {
     /// Frame duration in microseconds (a delta, not a timestamp — no start
     /// subtraction).
     pub dur_us: i64,
+    /// Whether this is a keyframe. The session's pump tracks the interval between
+    /// consecutive keyframes to price a resync seek (a seek must re-decode from
+    /// the key packet at/before its target, so the keyframe interval IS the seek's
+    /// worst-case cost) — see `SessionState::resync_threshold_us`.
+    pub key: bool,
 }
 
 impl VideoStream {
@@ -486,6 +491,7 @@ impl VideoStream {
                     src_index,
                     pts_us,
                     dur_us,
+                    key: self.frame.is_key(),
                 }));
             }
 
