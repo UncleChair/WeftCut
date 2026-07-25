@@ -415,15 +415,69 @@ describe('dispatch: set_composition full', () => {
     actor.dispatch('add_layer', { track: initial.tracks[1].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     return actor
   }
-  it('fps change re-snaps layers + autofits duration (recorded; undoable)', () => {
+  // ── The rate lock (spec R2-D1/R2-D2) ─────────────────────────────────────────
+  it('fps is locked once any track holds a layer', () => {
     const actor = withTwoLayers()
     const before = JSON.stringify(actor.snapshot())
-    expect(actor.dispatch('set_composition', { fps: { num: 24, den: 1 } }).ok).toBe(true)
-    expect(actor.snapshot().composition.fps).toEqual({ num: 24, den: 1 })
-    // unpinned: duration follows the (re-snapped) layer high-water mark
-    expect(actor.snapshot().composition.duration_us).toBe(2_000_000)
+    const historyBefore = actor.historyStatus().len
+    const events: string[] = []
+    actor.subscribe((e) => events.push(e.summary))
+
+    const r = actor.dispatch('set_composition', { fps: { num: 24, den: 1 } })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      // Structured, self-correcting: the caller learns the rate it is stuck with,
+      // what it asked for, and WHY — without a second round trip.
+      expect(r.error).toEqual({
+        error: 'FpsLockedByContent',
+        current: { num: 30, den: 1 },
+        requested: { num: 24, den: 1 },
+        layer_count: 2,
+      })
+    }
+    // Mints no op_id, records nothing, emits nothing, changes nothing.
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.historyStatus().len).toBe(historyBefore)
+    expect(events).toEqual([])
+  })
+
+  it('a locked fps patch consumes no op_id', () => {
+    // The seeded idGen makes this directly observable: run the same script with and
+    // without the rejected patch in the middle. If the failure had reached commit()
+    // — or minted an id anywhere else — the ids would diverge from here on.
+    const nextLayerId = (withFailedPatch: boolean): string => {
+      const actor = withTwoLayers()
+      if (withFailedPatch) {
+        expect(actor.dispatch('set_composition', { fps: { num: 24, den: 1 } }).ok).toBe(false)
+      }
+      const r = actor.dispatch('add_layer', { track: actor.snapshot().tracks[0].id, kind: 'color', t_start_us: 2_000_000, t_end_us: 3_000_000 })
+      expect(r.ok).toBe(true)
+      return r.ok ? (r.value as string) : ''
+    }
+    expect(nextLayerId(true)).toBe(nextLayerId(false))
+  })
+
+  it('fps change on a LAYER-LESS project succeeds, re-snaps markers + duration, and is undoable', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc-empty')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    // Markers and a pinned duration do NOT lock the rate (R2-D2) — and both must
+    // land canonical on the new grid or the grid backstop rejects the whole change.
+    expect(actor.dispatch('add_marker', { t_us: 100_000, end_t_us: 400_000, label: 'm' }).ok).toBe(true)
+    expect(actor.dispatch('set_composition', { duration_us: 5_000_000 }).ok).toBe(true)
+    const before = JSON.stringify(actor.snapshot())
+
+    expect(actor.dispatch('set_composition', { fps: { num: 30_000, den: 1001 } }).ok).toBe(true)
+    const after = actor.snapshot()
+    expect(after.composition.fps).toEqual({ num: 30_000, den: 1001 })
+    expect(after.composition.duration_pinned).toBe(true)
+    // 5_000_000 µs at 29.97 → frame 149.85 → 150 → 150 * 1e6 * 1001 / 30000.
+    expect(after.composition.duration_us).toBe(5_005_000)
+    expect(after.markers[0].t_us).toBe(100_100) // frame 3
+    expect(after.markers[0].end_t_us).toBe(400_400) // frame 12
     expect(actor.dispatch('undo', {}).ok).toBe(true) // recorded → undoable
     expect(JSON.stringify(actor.snapshot())).toBe(before)
+    expect(actor.dispatch('redo', {}).ok).toBe(true) // snapshots, not commands
+    expect(actor.snapshot().composition.fps).toEqual({ num: 30_000, den: 1001 })
   })
   it('canvas-only change is unrecorded and survives undo of a prior edit', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'sc2')
@@ -461,12 +515,26 @@ describe('dispatch: set_composition full', () => {
     expect(actor.snapshot().composition.duration_pinned).toBe(false)
   })
   it('fps + duration combined pins duration at the frame-snapped value', () => {
-    const actor = withTwoLayers()
+    // Layer-less: the rate lock rejects a combined patch too, and it rejects the
+    // WHOLE patch — so the duration half must not land either (tested below).
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc-fps-dur')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
     const r = actor.dispatch('set_composition', { fps: { num: 24, den: 1 }, duration_us: 3_000_000 })
     expect(r.ok).toBe(true)
     expect(actor.snapshot().composition.fps).toEqual({ num: 24, den: 1 })
     expect(actor.snapshot().composition.duration_pinned).toBe(true)
     expect(actor.snapshot().composition.duration_us).toBe(3_000_000)
+  })
+
+  it('the lock rejects the whole patch — a bundled duration/canvas write does not slip through', () => {
+    const actor = withTwoLayers()
+    const before = actor.snapshot().composition
+    const r = actor.dispatch('set_composition', { fps: { num: 24, den: 1 }, duration_us: 9_000_000, width: 1280 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.error).toBe('FpsLockedByContent')
+    expect(actor.snapshot().composition.duration_us).toBe(before.duration_us)
+    expect(actor.snapshot().composition.duration_pinned).toBe(before.duration_pinned)
+    expect(actor.snapshot().composition.width).toBe(before.width)
   })
 })
 

@@ -177,7 +177,11 @@ Groups (see [features.md §Groups](features.md#groups)):
 Markers + composition:
 - `add_marker { t_us, label, color, end_t_us? }` → `MarkerId`
 - `update_marker { marker_id, patch }` / `remove_marker { marker_id }`
-- `set_composition { patch }`
+- `set_composition { patch }` — `fps` is locked once any track holds a layer
+  (`FpsLockedByContent`, carrying the current rate, the requested rate and the
+  layer count). Set the rate on an empty timeline; markers, a pinned duration and
+  unplaced media do not lock it. `sample_rate` is an export target, not a grid, and
+  is never locked.
 
 Catalog:
 - `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, content_hash, target_id? }, ...]`. `status` is `builtin | installed | draft`; drafts may carry `target_id` (the Motif they update). Inspect `props_schema` before calling `add_motif`. Drafts are placeable immediately for preview.

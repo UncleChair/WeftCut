@@ -1,6 +1,6 @@
 import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextParams, Uuid, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
-import { snapFrameRound, snapFrameFloor, snapFrameCeil } from '../snap'
+import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
 import { checkTrackLock, locateLayer, applyDurationAutofit } from './helpers'
 import { normalizeKeyframes } from './animated'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
@@ -231,12 +231,21 @@ export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStart
  *  t_start/t_end). Keyframe param-tracks are Animated<f64> only. */
 export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: string, track: Animated<number>): void {
   checkTrackLock(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
-  const fps = p.composition.fps
-  if (!normalizeKeyframes(track, (t) => snapFrameRound(t, fps.num, fps.den))) {
-    throw new CommandFailure({ error: 'EmptyKeyframeTrack', layer: id, param_key: paramKey })
-  }
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
   const layer = p.tracks[loc[0]].layers[loc[1]]
+  // Located BEFORE normalize (not after, as it used to be) because the write-time
+  // grid depends on the layer's kind: an audio envelope — gain_db, pan, and the
+  // audio-role automation — quantizes on the 48 kHz lattice, so audio automation is
+  // no longer coarser than the mixer that renders it (spec R2-D6). Error ordering is
+  // unchanged: EmptyKeyframeTrack still precedes UnknownKeyframeParam.
+  //
+  // This changes the WRITE grid only. Keyframe times remain deliberately unenforced
+  // by validate (see validate.ts's validateLayerParams note): trim/split rebase keys
+  // by a delta, and re-snapping the shifted set would dedupe-merge two keys that
+  // landed on one quantum — authored data lost.
+  if (!normalizeKeyframes(track, (t) => snapOnGrid(t, gridForLayerKind(layer.params.kind, p.composition.fps)))) {
+    throw new CommandFailure({ error: 'EmptyKeyframeTrack', layer: id, param_key: paramKey })
+  }
   if (f64Lens(layer, paramKey) === null) {
     const eff = parseEffectParamKey(paramKey)
     if (eff) {

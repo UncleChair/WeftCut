@@ -32,7 +32,7 @@ import {
 } from "../ipc";
 import { listen, type UnlistenFn } from "@/bridge/events";
 import { open as openFileDialog } from "@/bridge/dialog";
-import { formatTimecode, parseTimecode } from "../frames";
+import { formatTimecode, parseTimecode, wallClockAside } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -850,6 +850,17 @@ function CompositionSection({
     composition === null
       ? ""
       : formatTimecode(composition.layersMaxEndUs, composition.fpsNum, composition.fpsDen);
+  // Both readouts here are DURATIONS, so at 23.976/29.97/59.94 their NDF digits
+  // under-report real time by ~0.1% and the wall-clock figure says so. Null at
+  // integer rates — the two figures would be identical (spec R2-D3).
+  const durationWallClock =
+    composition === null
+      ? null
+      : wallClockAside(composition.durationUs, composition.fpsNum, composition.fpsDen);
+  const floorWallClock =
+    composition === null
+      ? null
+      : wallClockAside(composition.layersMaxEndUs, composition.fpsNum, composition.fpsDen);
 
   /// Pure validator — runs on every keystroke so the user sees feedback
   /// while typing rather than only on commit. Returns the localized
@@ -966,6 +977,17 @@ function CompositionSection({
           className="settings-toggle-hint"
         >
           {t("settings.pin_composition_duration_hint", { floor: floorDisplay })}
+        </p>
+      )}
+      {durationWallClock !== null && (
+        <p className="settings-toggle-hint">
+          {t("settings.duration_wall_clock", {
+            tc: displayValue,
+            wall: durationWallClock,
+          })}
+          {floorWallClock !== null
+            ? ` ${t("settings.content_end_wall_clock", { tc: floorDisplay, wall: floorWallClock })}`
+            : ""}
         </p>
       )}
     </>

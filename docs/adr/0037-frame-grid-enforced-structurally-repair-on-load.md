@@ -52,9 +52,10 @@ readout — never as a time step.
 `validate` rejects any layer endpoint, `composition.duration_us`, or marker
 time that is not canonical, so a mutator that forgets to snap fails loudly
 instead of quietly persisting a sub-frame time. The endpoint predicate is
-keyed by layer kind — every kind, audio included, resolves to the composition
-rate today, and both arms exist so that moving audio to a sample/subframe grid
-is a one-line change rather than a sweep over call sites.
+**keyed by layer kind**, so a kind can have its own grid without a sweep over
+call sites. [ADR 0038](0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md)
+takes that seam live: audio moved to the 48 kHz sample lattice, and the lookup
+grew from one predicate to a shared function with three call sites.
 
 Two fields are deliberately outside the rule:
 
@@ -109,8 +110,9 @@ memory ratchet exists to catch). Node count went from 216 001 at one hour and
   below half a frame is rejected rather than rounded to nothing.
 - Composition `fps` changes re-snap marker times along with layer endpoints;
   without that the new marker rule would fail every fps change on any project
-  holding a marker. (Locking `fps` once temporal content exists is separate,
-  still-unbuilt work.)
+  holding a marker. `fps` is now immutable once a layer exists
+  ([ADR 0038](0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md)), so
+  that path serves layer-less projects only.
 - The grid repair's report is a callback seam, not yet routed to the LogBus;
   it defaults to a `console.warn` so a migrated project is never fully
   invisible.
@@ -124,9 +126,10 @@ memory ratchet exists to catch). Node count went from 216 001 at one hour and
   scalars-only ABI), `src/renderer/eval/index.ts` (the ABI twin — a missing
   entry is a runtime `undefined`), `src/renderer/frames.ts` (the surface),
   `src/main/state/snap.ts` (the main-process re-export).
-- `src/main/state/validate.ts` (the backstop + `isCanonicalOn` +
-  `layerEndpointGrid`), `src/main/state/serialize.ts` (`repairGrid` inside
-  `parseProject`), `src/main/state/mutations/{trim,transitions,markers,duplicate}.ts`.
+- `src/main/state/validate.ts` (the backstop + the kind-keyed endpoint
+  predicate), `src/main/state/serialize.ts` (`repairGrid` inside `parseProject`),
+  `src/main/state/mutations/{trim,transitions,markers,duplicate}.ts`. The grid
+  lookup itself is `gridForLayerKind` in `src/main/state/snap.ts` (ADR 0038).
 - `src/renderer/timeline/{rulerModel.ts,TimelineRuler.tsx}`,
   `src/renderer/state/timelineScrollStore.ts`.
 - Gates: `src/renderer/snapFrameGolden.fixture.json` (cross-language golden,

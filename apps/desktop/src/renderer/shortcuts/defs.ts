@@ -28,6 +28,11 @@ export type ActionId =
   | "restoreMaximizedPanel"
   | "groupSelected"
   | "dissolveSelectedGroup"
+  | "nudgeAudioSampleBack"
+  | "nudgeAudioSampleForward"
+  | "nudgeAudioMsBack"
+  | "nudgeAudioMsForward"
+  | "resyncAudioToVideo"
   | "seekFrameBack"
   | "seekFrameForward"
   | "seekSecondBack"
@@ -119,6 +124,19 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // Shortcuts panel shows them and the user can rebind.
   groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected" },
   dissolveSelectedGroup:  { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.dissolve_selected_group" },
+  // Sub-frame audio slip (ADR 0038). Two tiers because ONE SAMPLE is 0.042 px at the
+  // 2000 px/s zoom ceiling — sample precision is unreachable by dragging, so keys and
+  // numbers are the entry points, and a single-sample step alone would be unusable
+  // for a real ~ms sync fix. Alt+Arrow is free (bare arrows are the playhead seek).
+  // Repeatable so holding the key walks; each press steps by an INDEX, so 10 000
+  // presses out and back land on the original sample exactly.
+  nudgeAudioSampleBack:    { defaultKeys: ["Alt+ArrowLeft"],        labelKey: "actions.nudge_audio_sample_back",    repeatable: true },
+  nudgeAudioSampleForward: { defaultKeys: ["Alt+ArrowRight"],       labelKey: "actions.nudge_audio_sample_forward", repeatable: true },
+  nudgeAudioMsBack:        { defaultKeys: ["Alt+Shift+ArrowLeft"],  labelKey: "actions.nudge_audio_ms_back",        repeatable: true },
+  nudgeAudioMsForward:     { defaultKeys: ["Alt+Shift+ArrowRight"], labelKey: "actions.nudge_audio_ms_forward",     repeatable: true },
+  // Zero the derived sync offset — the companion to the nudges, since the offset is
+  // geometry with no field to reset.
+  resyncAudioToVideo:      { defaultKeys: ["Alt+Shift+S"],          labelKey: "actions.resync_audio_to_video" },
   // Playhead movement — composition-frame grid. Repeatable so holding
   // the arrow steps continuously.
   seekFrameBack:     { defaultKeys: ["ArrowLeft"],         labelKey: "actions.seek_frame_back",     repeatable: true },

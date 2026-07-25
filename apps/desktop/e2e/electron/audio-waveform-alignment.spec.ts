@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   importAndPlaceMedia,
+  invokeCmd,
   launchApp,
   newProject,
   summary,
@@ -145,6 +146,78 @@ test.describe('timeline waveform ↔ preview PCM alignment (Electron)', () => {
       }
     })
   }
+
+  // A sub-frame slip must not desynchronize the WAVEFORM from the PCM (ADR 0038).
+  // Extends this gate rather than adding a parallel one, per ticket 11: the waveform
+  // is addressed in MEDIA time (`sampleWaveformRms` takes source µs), so slipping the
+  // layer on the timeline must leave the waveform↔PCM relationship untouched — if the
+  // slip had leaked into media addressing, these markers would move.
+  test('a sub-frame timeline slip leaves waveform ↔ PCM addressing untouched', async () => {
+    test.setTimeout(120_000)
+    const c = CASES[0]!
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-e2e-waveform-slip-proj-'),
+      name: `e2e-waveform-slip-${Date.now()}`,
+      // 30 fps: a frame is 1600 samples, so 800 samples IS half a frame — a slip that
+      // simply cannot be expressed on the composition grid.
+      canvas: { width: 320, height: 180, fpsNum: 30, fpsDen: 1 },
+    })
+    const { mediaId, layerId } = await importAndPlaceMedia(page, { mediaAbsPath: fixture(c.file) })
+    const conformPath = await waitForConformPath(page, mediaId)
+
+    const trackOf = async (id: string): Promise<string> => {
+      const s = (await summary(page)) as unknown as {
+        tracks: Array<{ id: string; layers: Array<{ id: string }> }>
+      }
+      return s.tracks.find((t) => t.layers.some((l) => l.id === id))!.id
+    }
+    const startOf = async (id: string): Promise<number> => {
+      const s = (await summary(page)) as unknown as {
+        tracks: Array<{ layers: Array<{ id: string; t_start_us: number }> }>
+      }
+      return s.tracks.flatMap((t) => t.layers).find((l) => l.id === id)!.t_start_us
+    }
+    // The AV source auto-pairs, so the Audio member is the one to slip.
+    const audioLayer = ((await summary(page)) as unknown as {
+      tracks: Array<{ layers: Array<{ id: string; params: { kind: string } }> }>
+    }).tracks
+      .flatMap((t) => t.layers)
+      .find((l) => l.params.kind === 'Audio')?.id
+    expect(audioLayer, 'the AV source should have auto-paired an Audio layer').toBeTruthy()
+
+    // 16_667 µs is sample 800 — exactly half a 30 fps frame, so it is only reachable
+    // because audio no longer shares the video grid. Production `command` channel, so
+    // the wire args are camelCase.
+    const SLIP_US = 16_667
+    await invokeCmd(page, 'move_layer', {
+      layerId: audioLayer,
+      newTrackId: await trackOf(audioLayer!),
+      newTStartUs: SLIP_US,
+      escapeGroup: true,
+    })
+    expect(await startOf(audioLayer!), 'the slip must be stored verbatim').toBe(SLIP_US)
+    expect(await startOf(layerId), 'the video member must not move').toBe(0)
+
+    // The waveform is keyed on MEDIA time, so every known marker must read exactly as
+    // it did before the timeline edit — and still agree with the conform PCM.
+    const allTimesS = [...SOUND_TIMES_S, ...SILENT_TIMES_S]
+    const waveform = (await page.evaluate(
+      ({ id, timesUs }) => (window as any).__weftcutTest.sampleWaveformRms({ mediaId: id, timesUs }),
+      { id: mediaId, timesUs: allTimesS.map((t) => t * 1_000_000) },
+    )) as { peaksPerSecond: number; rms: number[] }
+
+    for (const [index, timeS] of SOUND_TIMES_S.entries()) {
+      expect(conformRmsAt(conformPath, timeS), `preview PCM sound at ${timeS}s`).toBeGreaterThan(0.05)
+      expect(waveform.rms[index], `waveform sound at ${timeS}s after a slip`).toBeGreaterThan(0.05)
+    }
+    for (const [index, timeS] of SILENT_TIMES_S.entries()) {
+      expect(conformRmsAt(conformPath, timeS), `preview PCM silence at ${timeS}s`).toBeLessThan(0.005)
+      expect(
+        waveform.rms[SOUND_TIMES_S.length + index],
+        `waveform flat at ${timeS}s after a slip`,
+      ).toBeLessThan(0.005)
+    }
+  })
 
   test('125 s sparse markers stay aligned across coarse waveform LODs', async () => {
     test.setTimeout(180_000)

@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze } from '../lib/analyze.mjs'
-import { launchApp, newProject, waitForHook, driveExport, importAndPlaceMedia, tmpDir } from './helpers/driver'
+import { launchApp, newProject, waitForHook, driveExport, importAndPlaceMedia, invokeCmd, summary, tmpDir } from './helpers/driver'
 
 // Runtime smoke for the export-range + audio-settings feature, end-to-end
 // through the real renderer + real ffmpeg mux. Reuses the per-second
@@ -64,6 +64,30 @@ function goertzelPower(samples: Float32Array, freq: number, sr: number): number 
     s1 = s
   }
   return s1 * s1 + s2 * s2 - coeff * s1 * s2
+}
+
+/// Dominant candidate tone over an arbitrary `[startS, endS)` window. Needed when
+/// the layer's start is NOT on a whole second — a sub-frame audio slip puts every
+/// source-second boundary at a fractional output time, so no integer-second window
+/// sits inside one tone.
+function dominantToneIn(
+  pcm: Float32Array,
+  startS: number,
+  endS: number,
+  candidates: number[],
+  sr = 48000,
+): number {
+  const seg = pcm.subarray(Math.round(startS * sr), Math.round(endS * sr))
+  let bestF = candidates[0]!
+  let bestP = -Infinity
+  for (const f of candidates) {
+    const p = goertzelPower(seg, f, sr)
+    if (p > bestP) {
+      bestP = p
+      bestF = f
+    }
+  }
+  return bestF
 }
 
 /// Dominant candidate tone in the 1-second window at `second`.
@@ -184,6 +208,88 @@ test.describe('export range + audio settings (Electron)', () => {
     const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3)] // 400/520/640/760
     expect(dominantTone(pcm, 0, cands)).toBe(toneHz(1)) // source 1 s -> 520 Hz
     expect(dominantTone(pcm, 1, cands)).toBe(toneHz(2)) // source 2 s -> 640 Hz
+  })
+
+  // ── Sub-frame audio: the slipped-sync case (spec R2-D6 / ADR 0038) ──────────
+  // An audio layer authored to a 48 kHz sample boundary that is deliberately HALF A
+  // FRAME off the composition frame grid, driven through the real renderer → actor
+  // IPC and the real persistence round trip. Both data-loss dependencies live here at
+  // integration level: a kind-blind group fan-out would re-sync the slip on the group
+  // move, and a kind-blind load repair would erase it on reopen.
+  //
+  // Deliberately NOT asserted: the exported PCM's sub-frame start offset. AAC encoder
+  // delay/priming is 1024–2048 samples (21–43 ms) and is not removed by a
+  // decode-to-PCM, so it swamps the ≤16.7 ms sub-frame signal being measured — an
+  // assertion on it would be flaky rather than wrong-detecting. What is asserted is
+  // that the sub-frame geometry survives every seam AND that the export still produces
+  // faithful audio from it (the mixer places at `us_to_frame(t_start_us, 48000)`, so a
+  // sub-frame start must not break the mux). Sample-exact placement is proven in
+  // `main/state/__tests__/audio-grid.test.ts` against the same leaf math the mixer uses.
+  test('a sub-frame audio slip survives the group move, save/reopen, and export', async () => {
+    test.setTimeout(300000)
+    const projectDir = await bootProject('e2e-audio-slip-')
+    const { layerId: videoLayer } = await importAndPlaceMedia(page, { mediaAbsPath: SOURCE })
+
+    // `add_media_layer` auto-pairs an AV source: video + Audio layer on the same
+    // track, grouped. Find the audio half.
+    const s0 = await summary(page)
+    const audioLayer = s0.tracks
+      .flatMap((t) => t.layers)
+      .find((l) => l.params.kind === 'Audio')?.id
+    expect(audioLayer, 'the AV source should have auto-paired an Audio layer').toBeTruthy()
+
+    // 350_000 µs is exactly sample 16800 and exactly frame 10.5 — on the audio
+    // lattice, half a frame off the composition grid, so it is only expressible
+    // because audio no longer shares the video grid.
+    // NOTE: this is the production `command` channel, whose wire args are camelCase
+    // (`commands.ts`), not the snake_case MCP dispatch names.
+    const SLIP_US = 350_000
+    await invokeCmd(page, 'move_layer', {
+      layerId: audioLayer,
+      newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === audioLayer))!.id,
+      newTStartUs: SLIP_US,
+      escapeGroup: true,
+    })
+    const startOf = async (id: string | undefined) =>
+      ((await summary(page)) as unknown as {
+        tracks: Array<{ layers: Array<{ id: string; t_start_us: number }> }>
+      }).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!.t_start_us
+
+    expect(await startOf(audioLayer), 'the slip must be stored verbatim, not re-snapped to a frame').toBe(SLIP_US)
+    const videoStart = await startOf(videoLayer)
+    const offsetBefore = SLIP_US - videoStart
+
+    // A whole-group move must shift both members by the same delta. A kind-blind
+    // fan-out would drag the audio back onto the nearest video frame here.
+    const MOVE_TO_US = 1_000_000 // frame 30 at 30 fps
+    await invokeCmd(page, 'move_layer', {
+      layerId: videoLayer,
+      newTrackId: s0.tracks.find((t) => t.layers.some((l) => l.id === videoLayer))!.id,
+      newTStartUs: MOVE_TO_US,
+      escapeGroup: false,
+    })
+    const movedOffset = (await startOf(audioLayer)) - (await startOf(videoLayer))
+    expect(movedOffset, 'a whole-group move must preserve the slip exactly').toBe(offsetBefore)
+    const slippedAfterMove = await startOf(audioLayer)
+
+    // Save + reopen: the load repair must report nothing and move nothing.
+    await invokeCmd(page, 'project_save')
+    await invokeCmd(page, 'project_open', { path: projectDir })
+    await waitForHook(page, 'exportTimeline')
+    expect(await startOf(audioLayer), 'reopening must not repair a sample-aligned audio layer').toBe(slippedAfterMove)
+
+    // …and the export still runs and stays audio-faithful from that geometry.
+    const output = path.join(tmpDir('weftcut-e2e-audio-slip-'), 'slip.mp4')
+    const r = await driveExport(page, { outputAbsPath: output }, { hook: 'exportTimeline' })
+    if (!r.done.ok) throw new Error(`export failed: ${r.done.error} | kind=${r.lastKind} detail=${r.lastDetail}`)
+    const pcm = extractPcm(output)
+    const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3)]
+    // The audio layer now starts at 1.35 s (1 s group position + the 350 ms slip), so
+    // source second k occupies output [1.35 + k, 2.35 + k). Windows are inset 50 ms
+    // from each boundary so the assertion reads ONE tone rather than a blend.
+    const audioStartS = (MOVE_TO_US + SLIP_US) / 1_000_000
+    expect(dominantToneIn(pcm, audioStartS + 0.05, audioStartS + 0.95, cands)).toBe(toneHz(0))
+    expect(dominantToneIn(pcm, audioStartS + 1.05, audioStartS + 1.95, cands)).toBe(toneHz(1))
   })
 
   test('Opus-in-MKV export is produced and stays audio-faithful', async () => {

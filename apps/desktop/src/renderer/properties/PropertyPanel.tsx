@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { useTranslation } from "react-i18next";
 import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
+import {
+  AUDIO_UNITS_ORDER,
+  formatAudioTime,
+  parseAudioTime,
+  setAudioUnits,
+  useAudioUnits,
+  type AudioUnits,
+} from "../state/audioUnitsStore";
 import { AppColorField } from "../components/AppColorField";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -163,20 +171,35 @@ function EnvelopeFields({
   const selectionCount = useSelectedLayerIds().size;
   const group = summary?.groups.find((g) => g.layer_ids.includes(layer.id)) ?? null;
 
+  // ── Audio-layer timing reads and writes on the SAMPLE lattice (ADR 0038) ────
+  // Sample precision is unreachable by dragging (0.042 px per sample at the zoom
+  // ceiling), so these fields — together with the nudge commands — ARE the
+  // fine-authoring surface. The unit is a reading preference scoped to audio
+  // readouts; the ruler, the playhead and every visual layer stay frame-based.
+  const units = useAudioUnits();
+  const isAudio = layer.kind === "Audio";
+  const fmtTime = (us: number): string =>
+    isAudio ? formatAudioTime(us, units, fpsNum, fpsDen) : formatTimecode(us, fpsNum, fpsDen);
+  const parseTime = (s: string): number | null =>
+    isAudio ? parseAudioTime(s, units, fpsNum, fpsDen) : parseTimecode(s, fpsNum, fpsDen);
+
   const [label, setLabel] = useState(layer.label ?? "");
-  const [startTc, setStartTc] = useState(() => formatTimecode(layer.t_start_us, fpsNum, fpsDen));
-  const [endTc, setEndTc] = useState(() => formatTimecode(layer.t_end_us, fpsNum, fpsDen));
-  const [durTc, setDurTc] = useState(() => formatTimecode(layer.t_end_us - layer.t_start_us, fpsNum, fpsDen));
+  const [startTc, setStartTc] = useState(() => fmtTime(layer.t_start_us));
+  const [endTc, setEndTc] = useState(() => fmtTime(layer.t_end_us));
+  const [durTc, setDurTc] = useState(() => fmtTime(layer.t_end_us - layer.t_start_us));
   // Resync from the authoritative snapshot whenever the committed envelope
-  // changes (own commit round-trip, group fan-out, undo). Primitive deps —
+  // changes (own commit round-trip, group fan-out, undo) — or when the audio unit
+  // flips, which re-renders the same times in the new unit. Primitive deps —
   // not the layer object — so unrelated project refreshes can't clobber a
   // field mid-typing.
   useEffect(() => {
     setLabel(layer.label ?? "");
-    setStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
-    setEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
-    setDurTc(formatTimecode(layer.t_end_us - layer.t_start_us, fpsNum, fpsDen));
-  }, [layer.id, layer.label, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen]);
+    setStartTc(fmtTime(layer.t_start_us));
+    setEndTc(fmtTime(layer.t_end_us));
+    setDurTc(fmtTime(layer.t_end_us - layer.t_start_us));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fmtTime is derived from
+    // exactly the primitives listed here; including it would re-run every render.
+  }, [layer.id, layer.label, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen, isAudio, units]);
 
   // Timeline gesture suppression parity: a locked Layer (or a Layer on a
   // locked Track) can't be moved/trimmed from the Timeline, so the
@@ -216,14 +239,17 @@ function EnvelopeFields({
   // Start edits move the whole Layer (group-aware); the command snaps to
   // the comp frame grid and autofits the composition.
   const commitStart = async (): Promise<void> => {
-    const us = parseTimecode(startTc, fpsNum, fpsDen);
+    const us = parseTime(startTc);
     if (us === null) {
-      setStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
+      setStartTc(fmtTime(layer.t_start_us));
       return;
     }
     if (us === layer.t_start_us || !track) return;
     try {
-      await moveLayer(layer.id, track.id, us);
+      // `escapeGroup` on an audio layer: a sub-frame start edit is a SLIP, so it must
+      // move this member alone. Dragging the whole group to a sample boundary would
+      // put the video member off its own grid (ADR 0038 / R2-D7).
+      await moveLayer(layer.id, track.id, us, isAudio);
       await onMutated();
     } catch (e) {
       console.warn("move_layer failed:", e);
@@ -232,9 +258,9 @@ function EnvelopeFields({
 
   // End edits trim the out-edge (group-aware, aligned-edge coupling).
   const commitEnd = async (): Promise<void> => {
-    const us = parseTimecode(endTc, fpsNum, fpsDen);
+    const us = parseTime(endTc);
     if (us === null) {
-      setEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
+      setEndTc(fmtTime(layer.t_end_us));
       return;
     }
     if (us === layer.t_end_us) return;
@@ -249,9 +275,9 @@ function EnvelopeFields({
   // Duration edits are an out-edge trim to t_start + duration; the command
   // clamps against the minimum Layer duration and media bounds.
   const commitDuration = async (): Promise<void> => {
-    const us = parseTimecode(durTc, fpsNum, fpsDen);
+    const us = parseTime(durTc);
     if (us === null || us <= 0) {
-      setDurTc(formatTimecode(layer.t_end_us - layer.t_start_us, fpsNum, fpsDen));
+      setDurTc(fmtTime(layer.t_end_us - layer.t_start_us));
       return;
     }
     const newEnd = layer.t_start_us + us;
@@ -307,6 +333,23 @@ function EnvelopeFields({
           onCheckedChange={(next) => commitFlag({ locked: next })}
         />
       </Field>
+      {isAudio ? (
+        // Premiere's "audio units" equivalent, placed with the readouts it governs.
+        // Scoped to audio times only: the ruler stays frame-based, because there is no
+        // zoom at which a sample ruler is legible and it would put a second grid on
+        // screen (ADR 0038).
+        <Field label={t("timeline.audio_units")} hint={t("property_panel.audio_units_hint")}>
+          <AppSelect
+            value={units}
+            ariaLabel={t("timeline.audio_units")}
+            onValueChange={(v) => setAudioUnits(v as AudioUnits)}
+            options={AUDIO_UNITS_ORDER.map((u) => ({
+              value: u,
+              label: t(`timeline.audio_units_${u}`),
+            }))}
+          />
+        </Field>
+      ) : null}
       <Field label={t("property_panel.t_start")} hint={t("property_panel.t_start_hint")}>
         <AppInput
           value={startTc}

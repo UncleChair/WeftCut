@@ -3,16 +3,19 @@ import {
   adjacentFrameBoundaryUs,
   approxFrameDurUs,
   formatTimecode,
+  formatWallClock,
   frameCount,
   frameIndexCeil,
   frameIndexFloor,
   frameIndexInLayer,
   frameIndexRound,
+  isFractionalRate,
   lastFrameAnchorUs,
   snapFrameCeil,
   snapFrameFloor,
   snapFrameRound,
   timeUsAtFrame,
+  wallClockAside,
 } from "./frames";
 
 // Every primitive here is wasm-backed; the wasm is loaded by the global test
@@ -303,6 +306,60 @@ describe("formatTimecode", () => {
 
   it("handles 29.97 NDF: rolls past frame :29 the same as integer 30fps", () => {
     expect(formatTimecode(30 * 33_367, 30_000, 1001)).toBe("00:00:01:00");
+  });
+});
+
+describe("wall-clock honesty beside NDF durations", () => {
+  it("formats wall clock as HH:MM:SS.mmm, truncating ms", () => {
+    expect(formatWallClock(0)).toBe("00:00:00.000");
+    expect(formatWallClock(999_900)).toBe("00:00:00.999"); // truncate, never 1.000
+    expect(formatWallClock(3_600_000_000)).toBe("01:00:00.000");
+    expect(formatWallClock(-5)).toBe("00:00:00.000");
+  });
+
+  it("classifies only the NTSC family as fractional", () => {
+    for (const [num, den] of [
+      [24, 1],
+      [25, 1],
+      [30, 1],
+      [50, 1],
+      [60, 1],
+      [60_000, 1000], // 60/1 written as a reducible pair — still integer fps
+    ] as const) {
+      expect(isFractionalRate(num, den)).toBe(false);
+    }
+    for (const [num, den] of [
+      [24_000, 1001],
+      [30_000, 1001],
+      [60_000, 1001],
+    ] as const) {
+      expect(isFractionalRate(num, den)).toBe(true);
+    }
+    expect(isFractionalRate(0, 1)).toBe(false); // degenerate — nothing to claim
+  });
+
+  it("shows nothing at integer rates and the real duration at 29.97", () => {
+    // One displayed NDF hour at 29.97 is 108000 frames = 3603.6 s of real time.
+    const oneNdfHourUs = timeUsAtFrame(108_000, 30_000, 1001);
+    expect(formatTimecode(oneNdfHourUs, 30_000, 1001)).toBe("01:00:00:00");
+    expect(wallClockAside(oneNdfHourUs, 30_000, 1001)).toBe("01:00:03.600");
+    // Integer rate: the aside would just repeat the timecode, so there is none.
+    expect(wallClockAside(3_600_000_000, 30, 1)).toBeNull();
+  });
+
+  it("is the ~1.001 NDF factor, at every fractional rate in the matrix", () => {
+    for (const [num, den] of [
+      [24_000, 1001],
+      [30_000, 1001],
+      [60_000, 1001],
+    ] as const) {
+      const framesPerNdfHour = Math.round(num / den) * 3600;
+      const us = timeUsAtFrame(framesPerNdfHour, num, den);
+      expect(formatTimecode(us, num, den)).toBe("01:00:00:00");
+      // The digits read one hour; the real elapsed time is 1001/1000 of it.
+      expect(us / 3_600_000_000).toBeCloseTo(1001 / 1000, 6);
+      expect(wallClockAside(us, num, den)).toBe("01:00:03.600");
+    }
   });
 });
 

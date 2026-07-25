@@ -107,6 +107,31 @@ deterministically from `group_id` plus a small chain-link icon. `Ctrl+G`
 creates from the selection, `Ctrl+Shift+G` dissolves — rebindable via the
 TS keybindings store.
 
+**A/V sync offset.** An audio member can be slipped off its video partner
+(audio lives on the 48 kHz sample lattice — see [audio.md](audio.md)), and the
+resulting offset is **derived from the geometry, never stored**: it is
+`audio.t_start_us − video.t_start_us`, measured in sample indices so the
+~10 µs residue between the two lattices at 29.97 / 59.94 does not read as a
+slip. With no field, nothing can disagree with where the clips actually are.
+
+A non-zero offset shows as a badge on the audio clip (`+3 smp`, `−2.00 ms`).
+The two existing fan-out rules already behave correctly for it, and this is
+worth stating because it looks like an inconsistency and is not: a
+**whole-group move preserves the offset** (every member shifts by the same
+delta, then lands on its own lattice), while a **video trim does not drag
+slipped audio** (the aligned set requires coinciding edges — which is the
+right outcome for a deliberately slipped track).
+
+`Alt+←/→` nudges a selected audio layer one sample, `Alt+Shift+←/→` one
+millisecond (48 samples), and `Alt+Shift+S` re-syncs it to its video. All five
+are real commands, so the search palette lists them, Settings → Keyboard
+rebinds them, and an agent can call them. **Pointer drags never reach sample
+precision** and are not meant to: one sample is 0.042 px at the 2000 px/s zoom
+ceiling, so dragging keeps snapping to the visible quantum. Sample precision
+arrives through the nudges and through the inspector's numeric fields, whose
+unit (timecode / milliseconds / samples) is switchable per the audio-units
+selector — audio readouts only; the ruler and playhead stay frame-based.
+
 Mutations live in `apps/desktop/src/main/state/mutations/groups.ts`, with
 fan-out enforcement in `move.ts` / `trim.ts` / `split.ts`. MCP tools
 (`groups_create` … `groups_rename`, plus `escape_group` on the structural

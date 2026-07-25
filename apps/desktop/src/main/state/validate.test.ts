@@ -5,6 +5,7 @@ import { blankProject } from './model'
 import type { Project, Layer, LayerParams } from './model'
 import { validate } from './validate'
 import { isValidationFailure } from './errors'
+import { timeUsAtFrame } from './snap'
 
 function colorLayer(id: string, t0: number, t1: number): Layer {
   const params: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 255, g: 0, b: 0, a: 255 } }, width: 1920, height: 1080 }
@@ -128,22 +129,89 @@ describe('validate — frame-grid backstop', () => {
     try { validate(p); throw new Error('expected OffGridLayerBoundary, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 } })
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' })
     }
     const q = blankProject(seededGen(), 't')
     q.tracks[0].layers = [colorLayer('a', 0, 2_999_999)]
     try { validate(q); throw new Error('expected OffGridLayerBoundary, but validate passed') }
     catch (e) {
       if (!isValidationFailure(e)) throw e
-      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 } })
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' })
     }
   })
 
-  it('checks Audio layers against the composition grid too (kind-aware predicate, one grid today)', () => {
+  // ── The two grids, asserted against each other ──────────────────────────────
+  // Both halves in one test on purpose (ticket 10 acceptance): a predicate that
+  // accepted everything for audio, or that had quietly stayed frame-only, would pass
+  // one half and fail the other.
+  it('holds Audio to the 48 kHz sample lattice and visual kinds to the composition frame grid', () => {
+    const audioMedia = (p: Project) => {
+      p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 10_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
+    }
+    // 29.97, where the two lattices genuinely differ: frame 1 is 33_367 µs and
+    // sample 1602 is 33_375 µs, so each grid rejects the other's boundary.
+    const FPS = { num: 30000, den: 1001 }
+    const FRAME_1 = 33_367
+    const SAMPLE_1602 = 33_375
+
+    // Audio ACCEPTS a sample boundary the frame grid would reject...
+    const ok = blankProject(seededGen(), 't')
+    ok.composition.fps = FPS
+    ok.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den) // encloses the tail
+    audioMedia(ok)
+    ok.tracks[0].layers = [audioLayer('a', 'm', 0, SAMPLE_1602)]
+    expect(() => validate(ok)).not.toThrow()
+
+    // ...and REJECTS a frame boundary that is not a sample boundary, with the
+    // lattice it was measured against named in the error.
+    const bad = blankProject(seededGen(), 't')
+    bad.composition.fps = FPS
+    bad.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
+    audioMedia(bad)
+    bad.tracks[0].layers = [audioLayer('a', 'm', 0, FRAME_1)]
+    try { validate(bad); throw new Error('expected OffGridLayerBoundary for frame-aligned audio at 29.97') }
+    catch (e) {
+      if (!isValidationFailure(e)) throw e
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'a', field: 't_end_us', t: FRAME_1, fps: { num: 48_000, den: 1 }, grid: 'sample' })
+    }
+
+    // A VISUAL layer is the mirror image: the frame boundary passes, the sample
+    // boundary does not. This is the assertion that fails if the predicate ever
+    // collapses back to one grid for both kinds.
+    const vis = blankProject(seededGen(), 't')
+    vis.composition.fps = FPS
+    vis.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
+    vis.tracks[0].layers = [colorLayer('v', 0, FRAME_1)]
+    expect(() => validate(vis)).not.toThrow()
+    const visBad = blankProject(seededGen(), 't')
+    visBad.composition.fps = FPS
+    visBad.composition.duration_us = timeUsAtFrame(2, FPS.num, FPS.den)
+    visBad.tracks[0].layers = [colorLayer('v', 0, SAMPLE_1602)]
+    try { validate(visBad); throw new Error('expected OffGridLayerBoundary for sample-aligned video at 29.97') }
+    catch (e) {
+      if (!isValidationFailure(e)) throw e
+      expect(e.err).toEqual({ rule: 'OffGridLayerBoundary', layer: 'v', field: 't_end_us', t: SAMPLE_1602, fps: FPS, grid: 'frame' })
+    }
+  })
+
+  it('does not flag two audio layers whose edges differ by one sample as overlapping', () => {
+    // The half-open `[t_start, t_end)` comparison gives this for free at 20.83 µs
+    // precision — the regression exists so nobody "fixes" it with a tolerance.
     const p = blankProject(seededGen(), 't')
+    p.composition.fps = { num: 30000, den: 1001 }
     p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 10_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
-    p.tracks[0].layers = [audioLayer('a', 'm', 0, 2_999_999)]
-    expectRule(p, 'OffGridLayerBoundary')
+    const s = (i: number) => timeUsAtFrame(i, 48_000, 1)
+    p.composition.duration_us = timeUsAtFrame(1, 30000, 1001)
+    // Abutting at sample 480, then one more layer starting exactly one sample later.
+    p.tracks[0].layers = [audioLayer('a', 'm', s(0), s(480)), audioLayer('b', 'm', s(480), s(960))]
+    expect(() => validate(p)).not.toThrow()
+    // And a one-sample genuine overlap IS still caught.
+    const q = blankProject(seededGen(), 't')
+    q.composition.fps = { num: 30000, den: 1001 }
+    q.media_pool['m'] = p.media_pool['m']
+    q.composition.duration_us = timeUsAtFrame(1, 30000, 1001)
+    q.tracks[0].layers = [audioLayer('a', 'm', s(0), s(481)), audioLayer('b', 'm', s(480), s(960))]
+    expectRule(q, 'LayerOverlap')
   })
 
   it('accepts canonical endpoints at a fractional rate and rejects the neighbouring µs', () => {

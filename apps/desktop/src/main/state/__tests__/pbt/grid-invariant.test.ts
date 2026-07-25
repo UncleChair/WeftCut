@@ -76,16 +76,33 @@ function isCanonical(tUs: number, num: number, den: number): boolean {
   return timeUsAtFrame(frameIndexRound(tUs, num, den), num, den) === tUs
 }
 
+// The audio lattice, stated INDEPENDENTLY of `snap.ts`'s `AUDIO_GRID` so this file
+// is a real cross-check rather than a tautology: a sample boundary is the frame
+// grid at 48000/1, which is `round(i * 1e6 / 48000)` (spec R2-D6).
+const AUDIO_RATE = 48_000
+function layerRate(kind: string, fps: { num: number; den: number }): { num: number; den: number } {
+  return kind === 'Audio' ? { num: AUDIO_RATE, den: 1 } : fps
+}
+
 function offGridFields(p: WireProject): string[] {
   const { num, den } = p.composition.fps
   const bad: string[] = []
-  const check = (what: string, t: number) => { if (!isCanonical(t, num, den)) bad.push(`${what}=${t}`) }
+  const check = (what: string, t: number, rate = { num, den }) => {
+    if (!isCanonical(t, rate.num, rate.den)) bad.push(`${what}=${t}`)
+  }
+  // The composition duration stays a FRAME count even when the furthest-reaching
+  // content is audio — `applyDurationAutofit` rounds the high-water mark up.
   check('composition.duration_us', p.composition.duration_us)
   const geometry = new Map<string, WireLayer>()
   for (const t of p.tracks) for (const l of t.layers) {
     geometry.set(l.id, l)
-    check(`layer ${l.id} (${l.params.kind}).t_start_us`, l.t_start_us)
-    check(`layer ${l.id} (${l.params.kind}).t_end_us`, l.t_end_us)
+    // Per-KIND lattice. This is the assertion that fails if ANY of the three
+    // enforcement sites — validate's predicate, a mutation snap (incl. move's group
+    // fan-out), or serialize's load repair — is left frame-only for audio, or
+    // conversely starts letting a visual layer off the frame grid.
+    const rate = layerRate(l.params.kind, { num, den })
+    check(`layer ${l.id} (${l.params.kind}).t_start_us`, l.t_start_us, rate)
+    check(`layer ${l.id} (${l.params.kind}).t_end_us`, l.t_end_us, rate)
   }
   for (const m of p.markers) {
     check(`marker ${m.id}.t_us`, m.t_us)
@@ -247,13 +264,16 @@ describe('frame-grid invariant over the actor command matrix', () => {
     }
   })
 
-  // `set_composition { fps }` re-snaps every layer endpoint AND every marker onto
-  // the new grid inside one commit. Miss either and the backstop rejects the fps
-  // change outright, which is how a structural rule turns into a broken feature.
-  it.each(RATES)('changing fps to %s/%s re-snaps layers and markers in the same commit', (num, den) => {
-    const actor = seedTimeline(actorAt(30, 1))
+  // `set_composition { fps }` on a LAYER-LESS project re-snaps every marker time and
+  // the duration onto the new grid inside one commit. Miss either and the backstop
+  // rejects the fps change outright, which is how a structural rule turns into a
+  // broken feature. Markers deliberately do not lock the rate (spec R2-D2) —
+  // re-snapping them is lossless — so this path stays live and must stay correct.
+  it.each(RATES)('changing fps to %s/%s re-snaps markers and duration in the same commit', (num, den) => {
+    const actor = actorAt(30, 1)
     expect(actor.dispatch('add_marker', { t_us: 100_000, end_t_us: 400_000, label: 'm' }).ok).toBe(true)
     expect(actor.dispatch('add_marker', { t_us: 1_700_000, end_t_us: null, label: 'n' }).ok).toBe(true)
+    expect(actor.dispatch('set_composition', { duration_us: 2_400_007 }).ok).toBe(true)
     const res = actor.dispatch('set_composition', { fps: { num, den } })
     expect(offGridRejection(res)).toBeNull()
     expect(res.ok).toBe(true)
@@ -262,6 +282,60 @@ describe('frame-grid invariant over the actor command matrix', () => {
     expect(offGridFields(after)).toEqual([])
     // Region markers stay non-degenerate: an fps change must not collapse one.
     for (const m of after.markers) if (m.end_t_us !== null) expect(m.end_t_us).toBeGreaterThan(m.t_us)
+  })
+
+  // The rate lock is what keeps the fps re-snap from ever having to move a layer
+  // (spec R2-D1). Asserted here rather than only in actor.test.ts because THIS file
+  // owns "no command may fail on the backstop": the rejection must be the lock, not
+  // an off-grid rule — a project whose fps change was blocked is still canonical.
+  it.each(RATES)('fps is locked by content at %s/%s, and the rejection is the lock not the backstop', (num, den) => {
+    const actor = seedTimeline(actorAt(30, 1))
+    const before = JSON.stringify(wire(actor))
+    const res = actor.dispatch('set_composition', { fps: { num, den } })
+    expect(offGridRejection(res)).toBeNull()
+
+    if (num === 30 && den === 1) {
+      // The seeding rate: an identical fps patch is not a CHANGE, so there is
+      // nothing to lock and it must still no-op cleanly rather than reject.
+      expect(res.ok).toBe(true)
+    } else {
+      expect(res.ok).toBe(false)
+      if (!res.ok && res.error.error === 'FpsLockedByContent') {
+        expect(res.error.current).toEqual({ num: 30, den: 1 })
+        expect(res.error.requested).toEqual({ num, den })
+        expect(res.error.layer_count).toBe(6)
+      } else if (!res.ok) {
+        expect.fail(`expected FpsLockedByContent, got ${JSON.stringify(res.error)}`)
+      }
+    }
+    // Either way the project is untouched and still canonical.
+    expect(JSON.stringify(wire(actor))).toBe(before)
+    expect(offGridFields(wire(actor))).toEqual([])
+  })
+
+  // A new-project preset is an IRREVERSIBLE rate choice once the lock lands, so the
+  // acceptance "every preset creates a project whose first layer is canonical on that
+  // rate" is proven in two halves that meet at the spec's rate matrix:
+  //   here      — at every matrix rate, the FIRST layer lands canonical and the rate
+  //               is locked from that moment on;
+  //   renderer  — `startup/canvasPresets.test.ts` asserts the picker offers exactly
+  //               the matrix rates, and that their SMPTE labels round-trip.
+  // Split rather than importing the preset list, because `tsconfig.main.json` must not
+  // depend on renderer UI (the one deliberate exception is the shared eval leaf).
+  it.each(RATES)('at %s/%s the first layer lands canonical and the rate locks from then on', (num, den) => {
+    const actor = actorAt(num, den)
+    const track = actor.snapshot().tracks[0]!.id
+    // Off grid at every fractional rate — the mutator's snap must fix it, not the caller.
+    expect(actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 100_003, t_end_us: 1_700_007 }).ok).toBe(true)
+    expect(offGridFields(wire(actor))).toEqual([])
+
+    // 25/1 is itself in the matrix, so for that one row the patch below is an identity
+    // and there is nothing to lock; every other row must reject.
+    const res = actor.dispatch('set_composition', { fps: { num: 25, den: 1 } })
+    if (num === 25 && den === 1) expect(res.ok).toBe(true)
+    else if (!res.ok) expect(res.error.error).toBe('FpsLockedByContent')
+    else expect.fail('an fps change must be locked once a layer exists')
+    expect(offGridFields(wire(actor))).toEqual([])
   })
 
   // commit() order is recipe → reconcileTransitions → validate (actor.ts), so a

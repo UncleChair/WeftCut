@@ -1,5 +1,5 @@
 import { SCHEMA_VERSION, defaultSettings, type Group, type Project } from './model'
-import { snapFrameCeil, snapFrameRound } from './snap'
+import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from './snap'
 
 function serializeGroup(g: Group): unknown {
   const out: Record<string, unknown> = { id: g.id, members: [...g.members].sort() }
@@ -39,8 +39,8 @@ function warnGridRepair(repairs: readonly GridRepair[]): void {
   )
 }
 
-/** Pull every grid-bound timeline field of a WIRE project onto the composition
- *  frame grid, in place, reporting what moved.
+/** Pull every grid-bound timeline field of a WIRE project onto its own grid, in
+ *  place, reporting what moved.
  *
  *  THE reason this is a load-time repair and not a validation rule: `replaceState`
  *  runs the mutation validator, and `project_open` goes through `replaceState`, so
@@ -48,6 +48,14 @@ function warnGridRepair(repairs: readonly GridRepair[]): void {
  *  off-grid endpoint — written by a historical `set_composition { fps }`, or by a
  *  trim clamped against an arbitrary media duration — refuse to OPEN. Repair on
  *  load, reject on edit (spec D4).
+ *
+ *  KIND-KEYED, and that is load-bearing (spec § Two data-loss dependencies, #2):
+ *  it asks the same `gridForLayerKind` the mutators and validate ask, so an Audio
+ *  layer is repaired onto the 48 kHz lattice. A kind-BLIND version would snap
+ *  sample-aligned audio back onto the composition frame grid on EVERY open,
+ *  destroying every sync offset the user authored — silently, since a repair that
+ *  "succeeds" looks like a no-op. It runs on the wire shape, so it reads
+ *  `layer.params.kind` defensively rather than a typed union.
  *
  *  Idempotent by construction: every write is a snap, and a snapped value snaps to
  *  itself, so a repaired project that is saved and reopened reports nothing.
@@ -62,23 +70,24 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
   const den = fps?.den
   // A degenerate rate has no grid to snap to; `InvalidFps` is the right report.
   if (comp === undefined || typeof num !== 'number' || typeof den !== 'number' || num <= 0 || den <= 0) return []
+  const compGrid = frameGrid({ num, den })
 
   const repairs: GridRepair[] = []
-  /** Snap `holder[field]`, recording the move. Returns the value now in place, or
-   *  null when the field is absent/non-numeric (validate owns that shape). */
-  const snapField = (entity: GridRepair['entity'], id: string | null, holder: Record<string, unknown>, field: string): number | null => {
+  /** Snap `holder[field]` onto `grid`, recording the move. Returns the value now in
+   *  place, or null when the field is absent/non-numeric (validate owns that shape). */
+  const snapField = (entity: GridRepair['entity'], id: string | null, holder: Record<string, unknown>, field: string, grid: Grid): number | null => {
     const cur = holder[field]
     if (typeof cur !== 'number' || !Number.isFinite(cur)) return null
-    const next = snapFrameRound(cur, num, den)
+    const next = snapOnGrid(cur, grid)
     if (next !== cur) { holder[field] = next; repairs.push({ entity, id, field, from: cur, to: next }) }
     return next
   }
-  /** Push an end that the snap collapsed onto its own start out to the next frame
-   *  boundary, so the repair itself can never manufacture an `InvalidLayerRange` /
-   *  zero-span region out of a legacy sub-frame entity. */
-  const widenToOneFrame = (entity: GridRepair['entity'], id: string | null, holder: Record<string, unknown>, field: string, startUs: number): number => {
+  /** Push an end that the snap collapsed onto its own start out to the next lattice
+   *  point, so the repair itself can never manufacture an `InvalidLayerRange` /
+   *  zero-span region out of a legacy sub-quantum entity. */
+  const widenToOneQuantum = (entity: GridRepair['entity'], id: string | null, holder: Record<string, unknown>, field: string, startUs: number, grid: Grid): number => {
     const cur = holder[field] as number
-    const next = snapFrameCeil(startUs + 1, num, den)
+    const next = snapUpOnGrid(startUs + 1, grid)
     holder[field] = next
     repairs.push({ entity, id, field, from: cur, to: next })
     return next
@@ -91,9 +100,11 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
       if (layer === null || typeof layer !== 'object') continue
       const id = typeof layer.id === 'string' ? layer.id : null
-      const start = snapField('Layer', id, layer, 't_start_us')
-      let end = snapField('Layer', id, layer, 't_end_us')
-      if (start !== null && end !== null && end <= start) end = widenToOneFrame('Layer', id, layer, 't_end_us', start)
+      const kind = (layer.params as { kind?: unknown } | undefined)?.kind
+      const grid = gridForLayerKind(typeof kind === 'string' ? kind : '', { num, den })
+      const start = snapField('Layer', id, layer, 't_start_us', grid)
+      let end = snapField('Layer', id, layer, 't_end_us', grid)
+      if (start !== null && end !== null && end <= start) end = widenToOneQuantum('Layer', id, layer, 't_end_us', start, grid)
       if (id !== null && start !== null && end !== null) geometry.set(id, { start, end })
     }
   }
@@ -116,16 +127,33 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
     }
   }
 
-  snapField('Composition', null, comp, 'duration_us')
+  // The composition duration is a FRAME count regardless of which kind reaches
+  // furthest (validateComposition), so it snaps on the composition grid even when
+  // the content that defines it is audio on the sample lattice.
+  const snappedDuration = snapField('Composition', null, comp, 'duration_us', compGrid)
+  // Repairing an audio endpoint can push it up to one sample PAST the stored
+  // duration, so grow the duration to enclose the repaired content — the same
+  // overflow guard `applyDurationAutofit` applies, and for the same reason: a
+  // composition shorter than its content silently drops the tail. Grow-only, so a
+  // deliberately pinned longer duration is never shortened here.
+  if (snappedDuration !== null) {
+    let maxEnd = 0
+    for (const g of geometry.values()) if (g.end > maxEnd) maxEnd = g.end
+    const needed = snapUpOnGrid(maxEnd, compGrid)
+    if (needed > snappedDuration) {
+      repairs.push({ entity: 'Composition', id: null, field: 'duration_us', from: snappedDuration, to: needed })
+      comp.duration_us = needed
+    }
+  }
 
-  // Markers stay sorted: `snapFrameRound` is monotonic, so a snapped `t_us` never
-  // crosses its neighbours.
+  // Markers stay sorted: the snap is monotonic, so a snapped `t_us` never crosses
+  // its neighbours.
   for (const m of (o.markers as Array<Record<string, unknown>> | undefined) ?? []) {
     if (m === null || typeof m !== 'object') continue
     const id = typeof m.id === 'string' ? m.id : null
-    const t = snapField('Marker', id, m, 't_us')
-    const end = snapField('Marker', id, m, 'end_t_us')
-    if (t !== null && end !== null && end <= t) widenToOneFrame('Marker', id, m, 'end_t_us', t)
+    const t = snapField('Marker', id, m, 't_us', compGrid)
+    const end = snapField('Marker', id, m, 'end_t_us', compGrid)
+    if (t !== null && end !== null && end <= t) widenToOneQuantum('Marker', id, m, 'end_t_us', t, compGrid)
   }
 
   return repairs

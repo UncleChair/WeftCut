@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/validate.ts
-import type { Composition, Layer, LayerParams, Project, Rational, Transition, Uuid } from './model'
+import type { Layer, LayerParams, Project, Transition, Uuid } from './model'
 import { ValidationFailure, type ValidationError } from './errors'
-import { snapFrameRound } from './snap'
+import { frameGrid, gridForLayerKind, isCanonicalOnGrid, type Grid } from './snap'
 
 function fail(err: ValidationError): never { throw new ValidationFailure(err) }
 
@@ -32,46 +32,44 @@ export function validate(project: Project): void {
 // off-grid project unopenable. `parseProject` repairs on load instead, in one
 // pass, so validate only ever sees canonical input.
 
-/** The grid a layer's timeline endpoints must land on, keyed by kind. */
-function layerEndpointGrid(kind: LayerParams['kind'], c: Composition): Rational {
-  // Audio is the kind that will diverge (a sample / subframe grid), and it is on
-  // the composition grid TODAY — so both arms answer the same rate on purpose.
-  // Keeping them apart is the whole point: the divergence becomes a one-line
-  // change here instead of a sweep over every call site.
-  switch (kind) {
-    case 'Audio': return c.fps
-    default: return c.fps
-  }
-}
-
-/** A time is canonical on `grid` when it is `round(i * 1e6 * den / num)` for an
- *  integer frame index `i` — equivalently, when snapping is the identity. Asked
- *  of the shared leaf, never re-derived in TS: the grid has exactly one
- *  implementation (ADR 0025) and a second one would drift.
+/** The grid a layer's timeline endpoints must land on. Delegates to the ONE lookup
+ *  in `snap.ts` — the mutation snaps and `serialize.ts`'s load repair ask the same
+ *  function, which is what stops the three sites from disagreeing about where audio
+ *  lives (spec § Two data-loss dependencies).
  *
- *  Deliberately NOT `i >= 0`: a negative canonical time passes. `applyMoveLayer`
- *  can still reach one, and that is a clamp-policy defect with its own ticket —
- *  folding it in here would silently turn a grid rule into a bounds rule. */
-function isCanonicalOn(tUs: number, grid: Rational): boolean {
-  if (grid.num <= 0 || grid.den <= 0) return true // degenerate rate — InvalidFps owns it
-  return snapFrameRound(tUs, grid.num, grid.den) === tUs
+ *  Deliberately NOT `i >= 0` in the predicate below: a negative canonical time
+ *  passes. `applyMoveLayer` can still reach one, and that is a clamp-policy defect
+ *  with its own ticket — folding it in here would silently turn a grid rule into a
+ *  bounds rule. */
+const layerEndpointGrid = gridForLayerKind
+
+/** Strip the `Grid` down to its wire shape for the error payload: `fps` carries the
+ *  lattice rational, `grid` names which lattice it is. Built here rather than
+ *  spreading the `Grid` so the extra field can never leak in unnoticed. */
+function offGridBoundary(layer: Uuid, field: 't_start_us' | 't_end_us', t: number, grid: Grid): ValidationError {
+  return { rule: 'OffGridLayerBoundary', layer, field, t, fps: { num: grid.num, den: grid.den }, grid: grid.domain }
 }
 
 function validateComposition(p: Project): void {
   const c = p.composition
   if (c.width === 0 || c.height === 0) fail({ rule: 'InvalidCanvas', width: c.width, height: c.height })
   if (c.fps.num === 0 || c.fps.den === 0) fail({ rule: 'InvalidFps', num: c.fps.num, den: c.fps.den })
-  if (!isCanonicalOn(c.duration_us, c.fps))
+  // The composition duration is a FRAME count even when the content reaching
+  // furthest is audio on the sample lattice — `applyDurationAutofit` rounds the
+  // high-water mark UP to the enclosing frame, so a sub-frame audio tail still fits
+  // inside the composition rather than pushing its duration off grid.
+  if (!isCanonicalOnGrid(c.duration_us, frameGrid(c.fps)))
     fail({ rule: 'OffGridTime', entity: 'Composition', id: null, field: 'duration_us', t: c.duration_us, fps: c.fps })
 }
 
 /** Marker times are on the composition grid (`snapMarkerTimes` is the mutation
  *  side). Checked last so this rule never pre-empts an existing structural one. */
 function validateMarkers(p: Project): void {
+  const grid = frameGrid(p.composition.fps)
   for (const m of p.markers) {
-    if (!isCanonicalOn(m.t_us, p.composition.fps))
+    if (!isCanonicalOnGrid(m.t_us, grid))
       fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 't_us', t: m.t_us, fps: p.composition.fps })
-    if (m.end_t_us !== null && m.end_t_us !== undefined && !isCanonicalOn(m.end_t_us, p.composition.fps))
+    if (m.end_t_us !== null && m.end_t_us !== undefined && !isCanonicalOnGrid(m.end_t_us, grid))
       fail({ rule: 'OffGridTime', entity: 'Marker', id: m.id, field: 'end_t_us', t: m.end_t_us, fps: p.composition.fps })
   }
 }
@@ -203,14 +201,19 @@ function validateTrack(p: Project, track: Project['tracks'][number], authorized:
     if (seenLayers.has(layer.id)) fail({ rule: 'DuplicateLayerId', layer: layer.id })
     seenLayers.add(layer.id)
     if (layer.t_start_us >= layer.t_end_us) fail({ rule: 'InvalidLayerRange', layer: layer.id, t_start: layer.t_start_us, t_end: layer.t_end_us })
-    const grid = layerEndpointGrid(layer.params.kind, p.composition)
-    if (!isCanonicalOn(layer.t_start_us, grid))
-      fail({ rule: 'OffGridLayerBoundary', layer: layer.id, field: 't_start_us', t: layer.t_start_us, fps: grid })
-    if (!isCanonicalOn(layer.t_end_us, grid))
-      fail({ rule: 'OffGridLayerBoundary', layer: layer.id, field: 't_end_us', t: layer.t_end_us, fps: grid })
+    const grid = layerEndpointGrid(layer.params.kind, p.composition.fps)
+    if (!isCanonicalOnGrid(layer.t_start_us, grid))
+      fail(offGridBoundary(layer.id, 't_start_us', layer.t_start_us, grid))
+    if (!isCanonicalOnGrid(layer.t_end_us, grid))
+      fail(offGridBoundary(layer.id, 't_end_us', layer.t_end_us, grid))
     validateLayerParams(p, layer)
     const cls = layerOverlapClass(layer.params)
     const prev = cls === 'visual' ? prevVisual : prevAudio
+    // Half-open `[t_start, t_end)`, which is what makes this correct at the audio
+    // lattice's 20.83 µs quantum for free: two audio layers whose edges differ by
+    // ONE SAMPLE do not overlap, and abutting ones (start === prev end) do not
+    // either. No sample-aware special case is wanted here — a tolerance would be
+    // the bug, not the fix.
     if (prev && layer.t_start_us < prev.t_end_us) {
       const overlap = prev.t_end_us - layer.t_start_us
       const allowed = authorized.get(pairKey(prev.id, layer.id)) ?? 0

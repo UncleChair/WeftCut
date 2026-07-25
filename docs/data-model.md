@@ -35,10 +35,48 @@ so a marker dropped mid-frame moves up to half a frame.
 
 Alignment is **structural**, not merely per-mutation. The commit validator
 rejects any layer endpoint, `composition.duration_us`, or marker time that
-is not `round(i × 1e6 × den / num)` for an integer frame index, so a
-mutator that forgets to snap fails loudly instead of quietly persisting a
-sub-frame time. The endpoint predicate is keyed by layer kind; every kind,
-audio included, is on the composition grid.
+is not `round(i × 1e6 × den / num)` for an integer index on that field's own
+grid, so a mutator that forgets to snap fails loudly instead of quietly
+persisting a sub-quantum time.
+
+### Two grids: composition frames, and the 48 kHz audio lattice
+
+Visual layer endpoints are on the composition frame grid. **Audio layer
+endpoints are on the fixed 48 kHz mix lattice** — `round(i × 1e6 / 48000)`,
+~20.83 µs apart — because the mixer already converts `t_start_us` /
+`src_in_us` / `src_out_us` to 48 kHz sample frames. Choosing samples makes the
+authoring grid and the render grid *literally the same lattice*, so there is no
+rounding at the seam: the authoring index is the mixer's sample index.
+
+The rate is a **constant**, not `composition.sample_rate`. That field is read
+only as the export target, so it is a delivery parameter — it moves no edit and
+is never locked. Raising the video fps used to silently change the available
+audio precision; it no longer does.
+
+One function, `gridForLayerKind(kind, fps)` in
+`apps/desktop/src/main/state/snap.ts`, picks the lattice, and all three
+enforcement sites ask it: the validator's predicate, every mutation snap
+(including `move`'s group fan-out), and the load repair. That single seam is not
+tidiness — a kind-blind fan-out drags a slipped audio member back onto the
+nearest video frame on any unrelated group move, and a kind-blind load repair
+does it on *every open*. Both destroy authored sync silently, because a snap
+that "succeeds" looks like a no-op.
+
+A frame boundary is exactly a sample boundary at 24, 25, 30, 50, 60 and
+23.976 fps (integer samples per frame), so a co-aligned A/V pair is exact
+there. At 29.97 and 59.94 it is not — 1601.6 and 800.8 samples per frame — so a
+paired audio layer sits on the sample boundary nearest the video frame, up to
+~10 µs away. That is where the mixer would have played it regardless; storing it
+means the file now says what renders.
+
+`composition.duration_us` stays a frame count in all cases: the autofit rounds
+the layer high-water mark **up** to the enclosing frame, so a sub-frame audio
+tail is contained rather than clipped.
+
+Audio automation (`gain_db`, `pan`, the audio-role envelopes) quantizes on the
+sample lattice at write time too, so an audio envelope is no longer coarser than
+the mixer that renders it. Keyframe times remain unenforced by the validator for
+the reason below.
 
 Two fields are deliberately outside that rule. `transition.duration_us` is
 a *distance* between two canonical boundaries, and at 29.97 / 23.976 a
@@ -59,10 +97,30 @@ and reports what it moved so a migrated project is visible rather than
 mysterious. The pass is idempotent: saving a repaired project and reopening
 it repairs nothing.
 
-Display format follows the same grid: timecode reads SMPTE
-`HH:MM:SS:FF`, NDF (non-drop-frame) at every fps — at 29.97/59.94 the
-displayed timecode drifts vs. wall-clock by ~3.6s/hour. v1 is
-consumer-NLE territory; DF is reserved for a future per-project flag.
+Display format follows the same grid: timecode reads SMPTE `HH:MM:SS:FF`,
+NDF (non-drop-frame) at every fps. Project starting timecode is zero, with
+no persisted offset. At 23.976 / 29.97 / 59.94 an NDF label therefore spans
+more wall-clock time than its digits suggest — a displayed hour is 3603.6 s,
+~3.6 s per hour. That is correct NDF counting, not a rounding error, and it
+is invisible while reading a *position*: a position makes no claim about
+elapsed time.
+
+Where a **duration** is displayed, it does make that claim, so at fractional
+rates the wall-clock figure is shown beside the timecode — the export
+dialog's range duration and the composition duration / content-end floor in
+Settings. Integer rates show one figure only, because the second would be
+the same instant twice.
+
+Drop-frame is **declined, not deferred**. DF changes no stored microsecond;
+it is purely a relabelling, and its consumers are interchange formats
+(EDL / AAF / OTIO / FCPXML) that do not exist here — export writes no
+timecode track. Building it would cost a persisted field, a schema
+migration, `;` parsing, and skipped-label rejection to relabel numbers that
+are already correct. If interchange is ever built, DF and a non-zero
+starting timecode are revisited **together**: they share one migration and
+one insertion point (`formatTimecode` / `parseTimecode` in
+`apps/desktop/src/renderer/frames.ts`, the choke point all 14 timecode
+consumers already go through).
 
 Changing `composition.fps` re-snaps every layer's timeline fields
 atomically in the same patch transaction.
@@ -638,7 +696,9 @@ struct ChangeEvent {
 | Invariant | Failure |
 |---|---|
 | `t_start_us < t_end_us` | reject |
-| `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected |
+| Visual `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected |
+| Audio `t_start_us`, `t_end_us` on the fixed 48 kHz sample lattice | same three-site enforcement, against the audio grid; the error carries `grid: "sample"` and `fps: 48000/1` |
+| `fps` immutable once any track holds a layer | reject (`FpsLockedByContent`) — set the rate on an empty timeline |
 | `transition.duration_us` == the geometric overlap of its participants | reject — this *is* the transition's grid rule; a duration is a distance, not a boundary time |
 | `0 ≤ src_in_us < src_out_us ≤ media.duration_us` | reject |
 | No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |

@@ -1,6 +1,7 @@
 import { current, isDraft } from 'immer'
 import type { Layer, LayerParams, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
+import { frameGrid, snapUpOnGrid } from '../snap'
 import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
 
 /** Deep-clone a layer whether it came from an Immer recipe or plain test data. */
@@ -16,12 +17,24 @@ export function locateLayer(p: Project, id: Uuid): [number, number] | null {
   return null
 }
 
-/** Reconcile composition.duration_us with the layer high-water mark. */
+/** Reconcile composition.duration_us with the layer high-water mark (ADR 0005).
+ *
+ *  The high-water mark is rounded UP to the enclosing composition frame, which
+ *  matters only once audio lives on the 48 kHz lattice (spec R2-D6): an audio
+ *  `t_end_us` is a sample boundary and at 29.97 / 59.94 that is generally NOT a
+ *  frame boundary, so copying it verbatim would put `duration_us` off the frame grid
+ *  and validate would reject the edit that caused it (`OffGridTime`). Up, not
+ *  nearest: content ending mid-frame occupies that frame, and rounding down would
+ *  make the composition shorter than its own content. Identity for frame-aligned
+ *  content, which is every visual layer and all audio at the six rates where the
+ *  frame lattice is an exact sublattice of the sample lattice. */
 export function applyDurationAutofit(p: Project): void {
   let maxEnd = 0
   for (const t of p.tracks) for (const l of t.layers) if (l.t_end_us > maxEnd) maxEnd = l.t_end_us
-  if (p.composition.duration_pinned) { if (maxEnd > p.composition.duration_us) p.composition.duration_us = maxEnd }
-  else p.composition.duration_us = maxEnd
+  const grid = frameGrid(p.composition.fps)
+  const fitted = maxEnd > 0 ? snapUpOnGrid(maxEnd, grid) : 0
+  if (p.composition.duration_pinned) { if (fitted > p.composition.duration_us) p.composition.duration_us = fitted }
+  else p.composition.duration_us = fitted
 }
 
 /** Drop empty transient (import-spawned) tracks. */

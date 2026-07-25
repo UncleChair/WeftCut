@@ -1,4 +1,7 @@
 import type { Rational, TimeUs, Uuid } from './model'
+// Type-only: erased at compile time, so this does NOT pull the wasm-backed eval
+// module into every consumer of errors.ts.
+import type { GridDomain } from './snap'
 
 // ── ValidationError — mirrors native/src/state/validate.rs variants ──
 export type ValidationError =
@@ -14,12 +17,17 @@ export type ValidationError =
   | { rule: 'LayerInMultipleTransitions'; layer: Uuid }
   | { rule: 'DuplicateLayerId'; layer: Uuid }
   | { rule: 'InvalidLayerRange'; layer: Uuid; t_start: TimeUs; t_end: TimeUs }
-  // ── Frame-grid backstop (docs/data-model.md § Timeline-field alignment). `fps`
-  // rides along because "off grid" is meaningless without the rate it is off:
+  // ── Grid backstop (docs/data-model.md § Timeline-field alignment). `fps` rides
+  // along because "off grid" is meaningless without the lattice it is off:
   // 2_999_999 is off grid at 30/1 and canonical at 1000000/1. A caller that hits
-  // either variant asked for a sub-frame time; the fix is to snap and retry, and
+  // either variant asked for a sub-quantum time; the fix is to snap and retry, and
   // the value it should have sent is `round(i * 1e6 * den / num)`.
-  | { rule: 'OffGridLayerBoundary'; layer: Uuid; field: 't_start_us' | 't_end_us'; t: TimeUs; fps: Rational }
+  //
+  // On `OffGridLayerBoundary` there are TWO lattices (spec R2-D6): `grid` names
+  // which one, and `fps` carries that lattice's rational — so for an Audio layer it
+  // reads `48000/1`, the 48 kHz mix lattice, NOT a frame rate. Without `grid` a
+  // caller could not tell a 48 kHz audio rejection from an absurd 48000 fps comp.
+  | { rule: 'OffGridLayerBoundary'; layer: Uuid; field: 't_start_us' | 't_end_us'; t: TimeUs; fps: Rational; grid: GridDomain }
   | { rule: 'OffGridTime'; entity: 'Composition' | 'Marker'; id: Uuid | null; field: string; t: TimeUs; fps: Rational }
   | { rule: 'MissingMedia'; layer: Uuid; media: Uuid }
   | { rule: 'InvalidSrcRange'; layer: Uuid; src_in: TimeUs; src_out: TimeUs }
@@ -64,6 +72,21 @@ export type CommandError =
   | { error: 'UnknownKeyframeParam'; layer: Uuid; param_key: string }
   | { error: 'EffectNotFound'; effect: Uuid }
   | { error: 'EffectIndexOutOfRange'; index: number; len: number }
+  // ── Composition rate lock (spec R2-D1) ──
+  // An fps change re-snaps every layer edge, Motif `src_in_us`, the composition
+  // duration and every marker: each edit point moves by up to half a new frame and
+  // a short layer can collapse and reject the whole operation. So the rate is
+  // immutable once the timeline holds a layer.
+  //
+  // Deliberately a hard rejection, not a confirmation flag or a convert workflow.
+  // There is NO UI caller — `SettingsPanel` only reads fps to format timecode — so
+  // the lock removes no existing user capability; it turns an MCP patch that looked
+  // like an ordinary setting into an actionable error. `layer_count` is the blocking
+  // condition made legible, and `current` tells the caller what rate it is stuck
+  // with without a second round trip. Rate conversion, if ever wanted, is
+  // `duplicate timeline → convert` with the rounding previewed — a feature of its
+  // own, not a settings patch. A LAYER-LESS project is still freely re-rateable.
+  | { error: 'FpsLockedByContent'; current: Rational; requested: Rational; layer_count: number }
   | { error: 'InvalidArgument'; field: string; detail: string }
   | { error: 'Backend'; detail: string }
 

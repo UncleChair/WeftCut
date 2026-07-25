@@ -2,7 +2,7 @@ import type { Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { applyDurationAutofit, cloneLayer, locateLayer } from './helpers'
 import { CommandFailure } from '../errors'
-import { snapFrameRound } from '../snap'
+import { gridForLayerKind, snapOnGrid } from '../snap'
 
 /** Shallow-clone the layer with one fresh id (nested keyframe/effect ids are
  *  NOT regenerated), offset by tOffsetUs, insert t-start-sorted on the same
@@ -36,18 +36,21 @@ export interface PasteLayerInterval {
   tEndUs: number
 }
 
-/** Resolve the exact frame-snapped interval used when a copied layer is pasted.
- *  The source layer's duration is shifted the same way as a normal move, which
- *  preserves its frame span on fractional frame-rate grids. */
+/** Resolve the exact snapped interval used when a copied layer is pasted, on the
+ *  SOURCE layer's own grid (spec R2-D6) — so a duplicated audio clip keeps its
+ *  sample alignment instead of being pulled onto the video frame grid. The source
+ *  layer's duration is shifted the same way as a normal move, which preserves its
+ *  quantum span on fractional frame-rate grids. */
 export function pasteLayerInterval(p: Project, id: Uuid, tStartUs: number): PasteLayerInterval {
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const source = p.tracks[loc[0]].layers[loc[1]]
-  const snappedStart = snapFrameRound(tStartUs, p.composition.fps.num, p.composition.fps.den)
+  const grid = gridForLayerKind(source.params.kind, p.composition.fps)
+  const snappedStart = snapOnGrid(tStartUs, grid)
   const delta = snappedStart - source.t_start_us
   return {
     tStartUs: snappedStart,
-    tEndUs: snapFrameRound(source.t_end_us + delta, p.composition.fps.num, p.composition.fps.den),
+    tEndUs: snapOnGrid(source.t_end_us + delta, grid),
   }
 }
 

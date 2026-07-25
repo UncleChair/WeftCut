@@ -12,6 +12,12 @@
 /// indices that cross the wasm ABI as f64 are far below that bound; the
 /// intermediate products are not.
 ///
+/// This module is the COMPOSITION-frame surface. Audio geometry lives on a second
+/// lattice (the fixed 48 kHz mix rate, ADR 0038), and which lattice a given layer
+/// uses is decided in exactly one place — `gridForLayerKind` in `./grid.ts`. Reach
+/// for that when the answer depends on layer kind; reach for this when you already
+/// know you mean composition frames (the ruler, the playhead, timecode).
+///
 /// `initEval()` must have resolved before any call (the renderer bootstrap and
 /// the main-process boot both await it; vitest does it in `testSetup.ts`).
 export {
@@ -81,10 +87,26 @@ export function lastFrameAnchorUs(
 }
 
 /// Format `us` as SMPTE-style `HH:MM:SS:FF` against the given comp fps.
-/// NDF (non-drop-frame): uniform frame intervals; at 29.97 the displayed
-/// timecode drifts vs wall-clock (~3.6 s/hour) — that's the v1 policy.
-/// Frame field zero-pads to two digits (correct up to 99 fps; bump to
-/// three when 100+ fps comps are authored).
+///
+/// NDF (non-drop-frame) at EVERY rate, deliberately and permanently: frame
+/// intervals are uniform and the label counts them, so at 29.97 a displayed hour
+/// spans 3603.6 s of wall clock (~3.6 s/hour of "drift"). That is correct NDF
+/// behaviour, not a rounding bug.
+///
+/// Drop-frame was DECLINED, not deferred (spec R2-D3): DF never changes a stored
+/// microsecond — it is purely a label — and its value chain needs an interchange
+/// consumer (EDL / AAF / OTIO / FCPXML) that does not exist here, while export
+/// writes no timecode track. It would cost a persisted field, a schema migration,
+/// `;` parsing, and skipped-label rejection to relabel numbers that are already
+/// right. The honest fix for the one thing that actually misleads a user — reading
+/// a DURATION and assuming wall clock — is `wallClockAside` below, shown beside
+/// duration readouts. Starting timecode is fixed at zero for schema v1 (R2-D4);
+/// this function and `parseTimecode` are the single insertion point if that is
+/// ever revisited, and DF + a start offset must then be revisited TOGETHER
+/// (they share one migration). See ADR 0038.
+///
+/// Frame field zero-pads to two digits, which stays correct because there is no
+/// custom-rate entry — the preset ceiling is 60 fps (R2-D5).
 ///
 /// totalFrames comes from the grid, not `us / approxFrameDurUs` — the nominal
 /// duration accumulates ~1 frame of error per hour at 30 fps.
@@ -105,6 +127,51 @@ export function formatTimecode(
   const h = Math.floor(totalSec / 3600);
   const pad = (n: number, w: number) => n.toString().padStart(w, "0");
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}:${pad(f, 2)}`;
+}
+
+/// Format `us` as real elapsed time, `HH:MM:SS.mmm`. No frame rate in it at all —
+/// that is the point: this is what a stopwatch would read, so it is the honest
+/// companion to an NDF timecode whose digits do not.
+///
+/// Milliseconds truncate rather than round so the label never reads one step past
+/// the value it describes (a 999_900 µs duration shows `00:00:00.999`, not `1.000`).
+export function formatWallClock(us: number): string {
+  const clamped = Math.max(0, Math.floor(us));
+  const ms = Math.floor(clamped / 1_000) % 1_000;
+  const totalSec = Math.floor(clamped / US_PER_SEC);
+  const s = totalSec % 60;
+  const m = Math.floor(totalSec / 60) % 60;
+  const h = Math.floor(totalSec / 3600);
+  const pad = (n: number, w: number) => n.toString().padStart(w, "0");
+  return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}.${pad(ms, 3)}`;
+}
+
+/// True when the rate is not a whole number of frames per second — i.e. the NTSC
+/// family (24000/1001, 30000/1001, 60000/1001). Only here do an NDF timecode's
+/// digits disagree with wall clock, because `formatTimecode` divides by the
+/// ROUNDED `fpsNum/fpsDen` to fill the seconds field.
+export function isFractionalRate(fpsNum: number, fpsDen: number): boolean {
+  if (fpsNum <= 0 || fpsDen <= 0) return false;
+  return fpsNum % fpsDen !== 0;
+}
+
+/// The wall-clock figure to show beside a DURATION readout, or `null` when there
+/// is nothing worth saying.
+///
+/// Positions deliberately have no caller here: a playhead readout or a ruler label
+/// makes no wall-clock claim, so a second figure there is noise. A duration does
+/// make one — "01:00:00:00 long" reads as an hour and at 29.97 it is 3.6 s more —
+/// and that is the only place NDF actually misleads (spec R2-D3).
+///
+/// Returns null at integer rates BECAUSE the two figures are then the same instant
+/// rendered twice; showing it anyway would train the user to ignore it.
+export function wallClockAside(
+  us: number,
+  fpsNum: number,
+  fpsDen: number,
+): string | null {
+  if (!isFractionalRate(fpsNum, fpsDen)) return null;
+  return formatWallClock(us);
 }
 
 /// Given an in-layer playhead position `tInLayerUs` (µs from the layer's

@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/mutations/trim.ts
 import type { Layer, Project, Uuid } from '../model'
-import { snapFrameCeil, snapFrameFloor, snapFrameRound } from '../snap'
+import { gridForLayerKind, snapDownOnGrid, snapOnGrid, snapUpOnGrid, type Grid } from '../snap'
 import { applyDurationAutofit, locateLayer, shiftLayerKeyframes } from './helpers'
 import { CommandFailure } from '../errors'
 import { groupSiblingsExcluding, checkGroupLock } from './groups'
@@ -51,31 +51,33 @@ export function trimDeltaBounds(
   }
 }
 
-/** The absolute window the trimmed edge may land in, as canonical composition
- *  frame boundaries: `trimDeltaBounds` snapped INWARD (ceil the low end, floor the
- *  high end). Because both ends come out of the grid, a clamp can only ever
- *  persist a canonical `t_start_us` / `t_end_us` — the endpoint invariant in
- *  `docs/data-model.md` (Timeline-field alignment).
+/** The absolute window the trimmed edge may land in, as canonical points of the
+ *  LAYER'S OWN grid — the composition frame grid for a visual kind, the 48 kHz
+ *  sample lattice for Audio (spec R2-D6): `trimDeltaBounds` snapped INWARD (ceil the
+ *  low end, floor the high end). Because both ends come out of that grid, a clamp
+ *  can only ever persist a canonical `t_start_us` / `t_end_us` — the endpoint
+ *  invariant in `docs/data-model.md` (Timeline-field alignment).
  *
  *  Inward is the load-bearing half. A source-derived bound is arbitrary µs (a
- *  media duration is not a frame boundary), so the layer gives up to one frame of
+ *  media duration is not a frame boundary), so the layer gives up to one quantum of
  *  media back rather than persisting an off-grid endpoint, and the strict µs
- *  exclusions become a one-composition-frame minimum duration. `hi < lo` means no
- *  legal frame is left — `applyTrimLayer` reports `TrimEdgeOutOfRange` instead of
- *  committing a sub-frame sliver. `INF` stays a sentinel: an OUT trim with no
- *  source cap has no upper bound to put on the grid. */
+ *  exclusions become a one-quantum minimum duration — one composition frame for
+ *  visual kinds, ONE SAMPLE (~20.83 µs) for audio, which is what makes sample-level
+ *  audio trims reachable at all. `hi < lo` means no legal point is left —
+ *  `applyTrimLayer` reports `TrimEdgeOutOfRange` instead of committing a sub-quantum
+ *  sliver. `INF` stays a sentinel: an OUT trim with no source cap has no upper bound
+ *  to put on the grid. */
 export function trimEdgeWindowUs(
   layer: Layer,
   edge: LayerEdge,
-  fpsNum: number,
-  fpsDen: number,
+  grid: Grid,
   sourceDurationUs: number | null = null,
 ): { lo: number; hi: number } {
   const b = trimDeltaBounds(layer, edge, null, sourceDurationUs)
   const edgeT = edge === 'In' ? layer.t_start_us : layer.t_end_us
   return {
-    lo: snapFrameCeil(Math.max(0, edgeT + b.min), fpsNum, fpsDen),
-    hi: b.max >= INF ? INF : snapFrameFloor(edgeT + b.max, fpsNum, fpsDen),
+    lo: snapUpOnGrid(Math.max(0, edgeT + b.min), grid),
+    hi: b.max >= INF ? INF : snapDownOnGrid(edgeT + b.max, grid),
   }
 }
 
@@ -87,13 +89,13 @@ function sourceDurationForLayer(p: Project, layer: Layer): number | null {
 
 /** No Motif duration cap is implemented. */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeGroup: boolean): void {
-  const fpsN = p.composition.fps.num, fpsD = p.composition.fps.den
-  const snapped = snapFrameRound(newTUs, fpsN, fpsD)
+  const fps = p.composition.fps
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
   if (p.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[ti].id })
   const target = p.tracks[ti].layers[li]
+  const snapped = snapOnGrid(newTUs, gridForLayerKind(target.params.kind, fps))
   const curStart = target.t_start_us, curEnd = target.t_end_us
   const curEdgeT = edge === 'In' ? curStart : curEnd
 
@@ -123,7 +125,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   for (const mid of aligned) {
     const ml = locateLayer(p, mid)!
     const m = p.tracks[ml[0]].layers[ml[1]]
-    const w = trimEdgeWindowUs(m, edge, fpsN, fpsD, sourceDurationForLayer(p, m))
+    const w = trimEdgeWindowUs(m, edge, gridForLayerKind(m.params.kind, fps), sourceDurationForLayer(p, m))
     lo = Math.max(lo, w.lo)
     hi = Math.min(hi, w.hi)
   }
@@ -134,13 +136,22 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
     const ml = locateLayer(p, mid)!
     const m = p.tracks[ml[0]].layers[ml[1]]
     const params = m.params
+    // Re-derive the delta on each member's OWN grid. Aligned members share one
+    // `curEdgeT` (that is what "aligned" means), so at the six rates where the frame
+    // lattice is an exact sublattice of 48 kHz this is exactly `clamped`. It differs
+    // only when a video and an audio edge coincide at 29.97 / 59.94, where the shared
+    // time is a frame boundary that is NOT a sample boundary: then the audio member
+    // adjusts by ≤ half a sample so its endpoint stays canonical instead of the whole
+    // trim being rejected by the grid backstop. `src_*` shifts by the SAME per-member
+    // delta, so content stays glued to the edge.
+    const delta = snapOnGrid(curEdgeT + clamped, gridForLayerKind(params.kind, fps)) - curEdgeT
     if (edge === 'In') {
-      m.t_start_us += clamped
-      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_in_us += clamped
-      shiftLayerKeyframes(params, -clamped) // keyframes glued to content
+      m.t_start_us += delta
+      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_in_us += delta
+      shiftLayerKeyframes(params, -delta) // keyframes glued to content
     } else {
-      m.t_end_us += clamped
-      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_out_us += clamped
+      m.t_end_us += delta
+      if (params.kind === 'VideoClip' || params.kind === 'Audio') params.src_out_us += delta
     }
   }
 

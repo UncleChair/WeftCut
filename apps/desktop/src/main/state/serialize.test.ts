@@ -69,7 +69,7 @@ describe('parseProject grid repair', () => {
       throw new Error('expected replaceState to reject the un-repaired project')
     } catch (e) {
       if (!isCommandFailure(e)) throw e
-      expect(e.err).toEqual({ error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer: expect.any(String), field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 } } })
+      expect(e.err).toEqual({ error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer: expect.any(String), field: 't_start_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' } })
     }
   })
 
@@ -83,7 +83,7 @@ describe('parseProject grid repair', () => {
     // update_layer is the one envelope patch that stores raw µs — the backstop is
     // what stops it, and the failure is structured rather than a silent write.
     const res = actor.dispatch('update_layer', { layer, patch: { t_end_us: 2_999_999 } })
-    expect(res).toEqual({ ok: false, error: { error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer, field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 } } } })
+    expect(res).toEqual({ ok: false, error: { error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer, field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame' } } })
   })
 
   it('is idempotent: repaired → saved → reopened reports no second repair', () => {

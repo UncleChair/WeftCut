@@ -29,9 +29,9 @@ import {
   recentsLastNewProjectParent,
   recentsList,
   recentsRemove,
-  type CanvasPreset,
   type RecentEntry,
 } from "../ipc";
+import { CANVAS_PRESETS } from "./canvasPresets";
 import { LogoPulsePaths } from "./LogoPulsePaths";
 import { describeOpenError, isDeadRecentError } from "./openError";
 
@@ -306,14 +306,6 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 /// "expanded" view reveals at most 7 additional entries.
 const COLLAPSED_RECENT_COUNT = 3;
 
-const CANVAS_PRESETS: { key: string; preset: CanvasPreset }[] = [
-  { key: "hd1080p30", preset: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } },
-  { key: "hd1080p60", preset: { width: 1920, height: 1080, fpsNum: 60, fpsDen: 1 } },
-  { key: "uhd4k30", preset: { width: 3840, height: 2160, fpsNum: 30, fpsDen: 1 } },
-  // 29.97 — broadcast-standard NTSC fractional rate. Rational handling
-  // matters because 30000/1001 != 29.97 to ffmpeg.
-  { key: "ntsc1080p", preset: { width: 1920, height: 1080, fpsNum: 30000, fpsDen: 1001 } },
-];
 
 /// Reserved file/folder names that are illegal on Windows regardless of
 /// extension. We block the full set so projects stay portable. NUL and

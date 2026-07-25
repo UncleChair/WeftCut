@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/mutations/split.ts
 import type { Animated, Keyframe, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { snapFrameRound } from '../snap'
+import { gridForLayerKind, snapOnGrid } from '../snap'
 import { CommandFailure } from '../errors'
 import { cloneLayer, locateLayer } from './helpers'
 import { groupSiblingsExcluding, checkGroupLock, indexGroups } from './groups'
@@ -21,11 +21,14 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
 /** Single-layer split (group-unaware). Returns {left,right};
  *  left reuses the original id, right gets a fresh one and is inserted at li+1. */
 function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number): { left: Uuid; right: Uuid } {
-  const atTUs = snapFrameRound(atTUsRaw, p.composition.fps.num, p.composition.fps.den)
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
   const original = p.tracks[ti].layers[li]
+  // The cut resolves on THIS layer's grid, not the composition's — so a grouped A/V
+  // split cuts the audio on the nearest sample boundary while the video cuts on the
+  // frame boundary (spec R2-D6). Locate first: the grid depends on `params.kind`.
+  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(original.params.kind, p.composition.fps))
   if (atTUs <= original.t_start_us || atTUs >= original.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
   const splitOffset = atTUs - original.t_start_us
 
@@ -55,13 +58,15 @@ function splitSingleLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number):
 
 /** Split with group spanning fan-out. */
 export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: number, escapeGroup: boolean): { left: Uuid; right: Uuid } {
-  const atTUs = snapFrameRound(atTUsRaw, p.composition.fps.num, p.composition.fps.den)
   // Pre-flight on the target.
   const loc = locateLayer(p, id)
   if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
   const [ti, li] = loc
   if (p.tracks[ti].locked) throw new CommandFailure({ error: 'TrackLocked', track: p.tracks[ti].id })
   const tgt = p.tracks[ti].layers[li]
+  // Snapped on the TARGET's grid for the pre-flight + containment tests; each
+  // spanning sibling then re-snaps `atTUs` on its own grid inside splitSingleLayer.
+  const atTUs = snapOnGrid(atTUsRaw, gridForLayerKind(tgt.params.kind, p.composition.fps))
   if (atTUs <= tgt.t_start_us || atTUs >= tgt.t_end_us) throw new CommandFailure({ error: 'SplitOutsideLayer', layer: id, at_t: atTUs })
 
   // Spanning siblings: members whose interval strictly contains atTUs (sorted order).

@@ -15,6 +15,51 @@ audio-bearing source as canonical PCM, produced once at import. The
 preview never decodes audio; the export never decodes audio; decode
 variance between Chromium/Electron and ffmpeg is out of the picture entirely.
 
+## The authoring grid
+
+Audio layer edges — `t_start_us` and `t_end_us` — are quantized to **exact
+48 kHz sample boundaries**, `round(i × 1e6 / 48000)`, ~20.83 µs apart. Video
+layers stay on the composition frame grid; audio does not, and that asymmetry is
+the point.
+
+It is the same lattice the mixer renders on. `mix.rs` already converts
+`t_start_us` / `src_in_us` / `src_out_us` to 48 kHz sample frames, so choosing
+samples for authoring makes the two *literally one lattice* — **there is no
+rounding at the render seam**. The stored microsecond is the sample that plays.
+Before this, the authoring model was strictly coarser than the engine beneath it,
+and raising the video fps silently changed how precisely audio could be placed.
+
+The rate is the fixed mix rate, not `composition.sample_rate`: that field is only
+the export target, a delivery parameter that moves no edit. An FCP-style
+1/80-frame subframe was rejected for the same reason — at 29.97 one subframe is
+20.02 samples, so a subframe edit would land *between* mix samples and be rounded
+again at render, re-creating the two-grid problem this removed.
+
+Audio automation (`gain_db`, `pan`, role envelopes) quantizes on the same lattice
+at write time, so an envelope is never coarser than the mixer reading it. (The
+10 ms coefficient grid in "The envelope contract" below is a separate thing: it
+is how a *rendered* ramp is sampled, not where an authored keyframe may sit.)
+
+Consequences worth stating:
+
+- **Sample precision is not reachable by dragging.** At the 2000 px/s zoom
+  ceiling one sample is 0.042 px, so pointer drags keep snapping to a visible
+  quantum; sample accuracy arrives through nudge keys and numeric entry.
+- **A grouped A/V pair carries its sync offset implicitly**, in each member's own
+  `t_start_us`. There is no stored offset field, so nothing can disagree with the
+  geometry. A whole-group move shifts every member by the same delta and each
+  lands on its own lattice, so the offset survives exactly; a video trim does
+  *not* drag slipped audio, because the trim's aligned set requires coinciding
+  edges.
+- At 24, 25, 30, 50, 60 and 23.976 fps a frame boundary *is* a sample boundary
+  (integer samples per frame), so a co-aligned pair is exact. At 29.97 and 59.94
+  it is not, so a paired audio layer sits up to ~10 µs from the video frame —
+  where the mixer would have played it either way.
+
+The lattice is selected by one function, `gridForLayerKind` in
+`main/state/snap.ts`, shared by the commit validator, every mutation snap, and
+the load repair. See [data-model.md](data-model.md) for the enforcement contract.
+
 ## The conform cache
 
 Every imported media with an audio stream gets a conform file —

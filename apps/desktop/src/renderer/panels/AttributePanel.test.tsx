@@ -18,6 +18,7 @@ vi.mock("../ipc", async (importActual) => {
 import { updateLayer, updateLayerParams, moveLayer, trimLayer } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
+import { setAudioUnits } from "../state/audioUnitsStore";
 
 // Mock AppSwitch to a plain button so jsdom never hits Base UI's PointerEvent
 // constructor (which jsdom doesn't implement) — same convention as
@@ -225,10 +226,63 @@ describe("AttributePanel envelope command routing", () => {
     fireEvent.change(start, { target: { value: "00:00:01:00" } });
     fireEvent.blur(start);
     await vi.waitFor(() =>
-      expect(moveLayer).toHaveBeenCalledWith("layer-1", "track-1", 1_000_000),
+      // escapeGroup=false: a VISUAL start edit moves the whole group, as it always
+      // has. Only an audio edit escapes, because a sub-frame audio start is a SLIP
+      // (ADR 0038) and dragging the video member with it would put that member off
+      // its own grid.
+      expect(moveLayer).toHaveBeenCalledWith("layer-1", "track-1", 1_000_000, false),
     );
     expect(trimLayer).not.toHaveBeenCalled();
     expect(onMutated).toHaveBeenCalledOnce();
+  });
+
+  // ── Sub-frame audio entry (ADR 0038 / ticket 11) ─────────────────────────────
+  it("offers the audio-units selector on an audio layer only", () => {
+    summaryWithGroups([]);
+    renderPanel(audioTrack(), "layer-a1");
+    expect(within(envelope()).getByLabelText("Audio units")).toBeTruthy();
+    cleanup();
+    summaryWithGroups([]);
+    renderPanel(colorTrack());
+    expect(within(envelope()).queryByLabelText("Audio units")).toBeNull();
+  });
+
+  it("round-trips a sample-grid position through the Start field in samples", async () => {
+    summaryWithGroups([]);
+    setAudioUnits("samples");
+    const onMutated = renderPanel(audioTrack(), "layer-a1");
+    const start = within(envelope()).getByLabelText("Start");
+    // The field READS the mixer's sample index for the stored µs…
+    expect(start).toHaveProperty("value", "0");
+    // …and a typed index commits the exact µs of THAT sample. 1608 → 33_500 µs, which
+    // is half a frame off the 30 fps grid (frame 1 is 33_333) — the whole point: this
+    // position is unreachable by dragging and unrepresentable on the frame grid.
+    fireEvent.change(start, { target: { value: "1608" } });
+    fireEvent.blur(start);
+    await vi.waitFor(() =>
+      // escapeGroup=true — a sub-frame audio start is a SLIP, so the video member must
+      // not follow (it would land off its own grid).
+      expect(moveLayer).toHaveBeenCalledWith("layer-a1", "track-a", 33_500, true),
+    );
+    expect(onMutated).toHaveBeenCalledOnce();
+    setAudioUnits("frames");
+  });
+
+  it("reads the same audio time in milliseconds when the unit is switched", () => {
+    summaryWithGroups([]);
+    setAudioUnits("ms");
+    renderPanel(audioTrack(), "layer-a1");
+    const env = envelope();
+    expect(within(env).getByLabelText("Start")).toHaveProperty("value", "00:00:00.000");
+    expect(within(env).getByLabelText("End")).toHaveProperty("value", "00:00:04.000");
+    setAudioUnits("frames");
+    // …and the visual layer's readouts are untouched by the mode.
+    cleanup();
+    setAudioUnits("ms");
+    summaryWithGroups([]);
+    renderPanel(colorTrack());
+    expect(within(envelope()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
+    setAudioUnits("frames");
   });
 
   it("routes End and duration through the group-aware trim command", async () => {

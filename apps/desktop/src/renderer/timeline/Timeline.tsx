@@ -15,6 +15,7 @@ import {
   groupsCreate,
   groupsDissolve,
   logEmit,
+  moveLayer,
   removeTransition,
   separateAudioToNewTrack,
   splitLayerGrouped,
@@ -40,6 +41,15 @@ import {
 import { useShortcuts, type OverrideMap } from "../shortcuts/useShortcuts";
 import { ACTION_DEFS } from "../shortcuts/defs";
 import { useCommandProvider } from "../commands/registry";
+import {
+  NUDGE_MS,
+  NUDGE_SAMPLE,
+  nudgedStartUs,
+  resyncStartUs,
+  slippableAudioLayers,
+  type SlipLayer,
+} from "./audioSlip";
+import { deriveAudioSyncOffsets, setAudioSyncOffsets } from "./audioSyncOffsetStore";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
@@ -270,6 +280,18 @@ export function Timeline({
 
   const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
 
+  // The derived A/V sync offset (R2-D7). Published to a store rather than threaded as
+  // a prop so only the badged clip re-renders; `setAudioSyncOffsets` no-ops when the
+  // map is unchanged, so an unrelated project update costs nothing.
+  useLayoutEffect(() => {
+    setAudioSyncOffsets(
+      deriveAudioSyncOffsets(
+        tracks.flatMap((t) => t.layers),
+        groups,
+      ),
+    );
+  }, [tracks, groups]);
+
   // A/B-roll display mode comes from the app-level settings store
   // (`docs/data-model.md`). The store hydrates on app mount via
   // `wireAppSettingsStream`. Atomic selector — never include the rest of
@@ -385,11 +407,86 @@ export function Timeline({
     }
   }, []);
 
+  // ── Sub-frame audio slip (ADR 0038) ────────────────────────────────────────
+  // Sample precision cannot be reached by dragging — one sample is 0.042 px at the
+  // 2000 px/s zoom ceiling — so these commands ARE the fine-authoring surface.
+  // Registered as real actions (not local key handling) so the search palette lists
+  // them, Settings → Keyboard can rebind them, and an agent can call them.
+  //
+  // `escapeGroup: true` on every one of them: the whole point is to move the audio
+  // WITHOUT its video partner. That is also what creates the implicit sync offset
+  // R2-D7 surfaces as the clip badge — there is no field to write.
+  const layersByIdRef = useRef(new Map<string, LayerSummary>());
+  const groupsRef = useRef(groups);
+  const trackOfLayerRef = useRef(new Map<string, string>());
+  useLayoutEffect(() => {
+    const byId = new Map<string, LayerSummary>();
+    const trackOf = new Map<string, string>();
+    for (const t of tracks) {
+      for (const l of t.layers) {
+        byId.set(l.id, l);
+        trackOf.set(l.id, t.id);
+      }
+    }
+    layersByIdRef.current = byId;
+    trackOfLayerRef.current = trackOf;
+    groupsRef.current = groups;
+  }, [tracks, groups]);
+
+  /// Move every selected audio layer to `nextStart(layer)`, or skip it when that
+  /// resolves to null / no movement. One `move_layer` per layer, then one refresh.
+  const slipSelectedAudio = useCallback(
+    async (nextStart: (l: SlipLayer, members: SlipLayer[]) => number | null) => {
+      const byId = layersByIdRef.current;
+      const targets = slippableAudioLayers(selectedLayerIdsRef.current, [...byId.values()]);
+      if (targets.length === 0) return;
+      let moved = false;
+      for (const audio of targets) {
+        const gid = groupByLayerIdRef.current.get(audio.id);
+        const members = gid
+          ? (groupsRef.current.find((g) => g.id === gid)?.layer_ids ?? [])
+              .map((id) => byId.get(id))
+              .filter((l): l is LayerSummary => l !== undefined)
+          : [];
+        const next = nextStart(audio, members);
+        if (next === null || next === audio.t_start_us) continue;
+        const trackId = trackOfLayerRef.current.get(audio.id);
+        if (trackId === undefined) continue;
+        try {
+          await moveLayer(audio.id, trackId, next, true);
+          moved = true;
+        } catch (err) {
+          console.error("audio slip move_layer failed:", err);
+        }
+      }
+      if (moved) await onMutatedRef.current();
+    },
+    [],
+  );
+
+  const nudgeAudio = useCallback(
+    (steps: number) => () => void slipSelectedAudio((l) => nudgedStartUs(l, steps)),
+    [slipSelectedAudio],
+  );
+  const handleNudgeAudioSampleBack = useMemo(() => nudgeAudio(-NUDGE_SAMPLE), [nudgeAudio]);
+  const handleNudgeAudioSampleForward = useMemo(() => nudgeAudio(NUDGE_SAMPLE), [nudgeAudio]);
+  const handleNudgeAudioMsBack = useMemo(() => nudgeAudio(-NUDGE_MS), [nudgeAudio]);
+  const handleNudgeAudioMsForward = useMemo(() => nudgeAudio(NUDGE_MS), [nudgeAudio]);
+  const handleResyncAudioToVideo = useCallback(
+    () => void slipSelectedAudio((l, members) => resyncStartUs(l, members)),
+    [slipSelectedAudio],
+  );
+
   useShortcuts({
     overrides: shortcutOverrides,
     handlers: {
       groupSelected: handleGroupSelected,
       dissolveSelectedGroup: handleDissolveSelectedGroup,
+      nudgeAudioSampleBack: handleNudgeAudioSampleBack,
+      nudgeAudioSampleForward: handleNudgeAudioSampleForward,
+      nudgeAudioMsBack: handleNudgeAudioMsBack,
+      nudgeAudioMsForward: handleNudgeAudioMsForward,
+      resyncAudioToVideo: handleResyncAudioToVideo,
     },
   });
 
@@ -405,6 +502,36 @@ export function Timeline({
       actionId: "dissolveSelectedGroup",
       labelKey: ACTION_DEFS.dissolveSelectedGroup.labelKey,
       run: handleDissolveSelectedGroup,
+    },
+    {
+      id: "nudgeAudioSampleBack",
+      actionId: "nudgeAudioSampleBack",
+      labelKey: ACTION_DEFS.nudgeAudioSampleBack.labelKey,
+      run: handleNudgeAudioSampleBack,
+    },
+    {
+      id: "nudgeAudioSampleForward",
+      actionId: "nudgeAudioSampleForward",
+      labelKey: ACTION_DEFS.nudgeAudioSampleForward.labelKey,
+      run: handleNudgeAudioSampleForward,
+    },
+    {
+      id: "nudgeAudioMsBack",
+      actionId: "nudgeAudioMsBack",
+      labelKey: ACTION_DEFS.nudgeAudioMsBack.labelKey,
+      run: handleNudgeAudioMsBack,
+    },
+    {
+      id: "nudgeAudioMsForward",
+      actionId: "nudgeAudioMsForward",
+      labelKey: ACTION_DEFS.nudgeAudioMsForward.labelKey,
+      run: handleNudgeAudioMsForward,
+    },
+    {
+      id: "resyncAudioToVideo",
+      actionId: "resyncAudioToVideo",
+      labelKey: ACTION_DEFS.resyncAudioToVideo.labelKey,
+      run: handleResyncAudioToVideo,
     },
   ]);
 

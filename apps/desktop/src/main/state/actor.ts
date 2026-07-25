@@ -6,7 +6,7 @@ import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
-import { snapFrameCeil, snapFrameRound } from './snap'
+import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
 import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
 import { applyMoveLayer } from './mutations/move'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
@@ -187,15 +187,35 @@ export function createActor(opts: ActorOptions): ActorHandle {
     emit({ op_id: opId, actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: { kind: 'Coarse' } })
   }
 
-  // ── set_composition — atomic combined
-  //    probe validate; fps re-snaps every layer + Motif src_in_us + duration; the
-  //    non-fps canvas path replaces canvas in EVERY snapshot (survives undo). ──
+  // ── set_composition — atomic combined probe validate; an fps change is LOCKED
+  //    once the timeline holds a layer and otherwise re-snaps duration + markers;
+  //    the non-fps canvas path replaces canvas in EVERY snapshot (survives undo). ──
   function setComposition(patch: Record<string, unknown>): void {
     const cur = current()
     const CANVAS_KEYS = ['width', 'height', 'fps', 'sample_rate', 'channels', 'color_space', 'background']
     const canvasChanges = CANVAS_KEYS.some((k) => patch[k] !== undefined)
     const newFps = (patch.fps as Rational | undefined) ?? cur.composition.fps
     const fpsChanged = patch.fps !== undefined && (newFps.num !== cur.composition.fps.num || newFps.den !== cur.composition.fps.den)
+
+    // ── The rate lock (spec R2-D1/R2-D2) ─────────────────────────────────────
+    // Reject BEFORE any draft work, so a locked project mints no op_id, records no
+    // history entry and emits nothing (the `commit` contract at :148 covers a
+    // failed validate; this failure never reaches commit at all).
+    //
+    // "Temporal content" is deliberately ONE LAYER ON ANY TRACK — not markers, not
+    // a pinned duration, not imported-but-unplaced media. `blankProject` mints two
+    // tracks and no layers, so a fresh project stays freely re-rateable; marker
+    // re-snapping is lossless, so a stray marker must not brick the rate. The layer
+    // threshold is also what keeps a future "dropping the first clip offers to match
+    // the sequence rate" flow reachable — it sets fps while the timeline is still
+    // layer-less, then adds.
+    if (fpsChanged) {
+      const layerCount = cur.tracks.reduce((n, t) => n + t.layers.length, 0)
+      if (layerCount > 0) {
+        throw new CommandFailure({ error: 'FpsLockedByContent', current: cur.composition.fps, requested: newFps, layer_count: layerCount })
+      }
+    }
+
     const durationChange = typeof patch.duration_us === 'number'
       ? snapFrameRound(patch.duration_us, newFps.num, newFps.den) : undefined
 
@@ -205,9 +225,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
       if (durationChange !== undefined) { d.composition.duration_us = durationChange; d.composition.duration_pinned = true }
       if (fpsChanged) {
         const nf = d.composition.fps
+        // The layer loop is unreachable BY CONSTRUCTION now that the rate lock
+        // above rejects any fps change on a project holding a layer — and it stays
+        // on purpose, as the correctness backstop for the two ways that can change:
+        // a future "match the sequence to the first clip" flow (which sets the rate
+        // while still layer-less, then adds), and any relaxation of the lock. The
+        // marker + duration re-snap below is NOT dead: a layer-less project can hold
+        // both, and validate's grid backstop rejects the whole fps change without it.
         for (const t of d.tracks) for (const l of t.layers) {
-          l.t_start_us = snapFrameRound(l.t_start_us, nf.num, nf.den)
-          l.t_end_us = snapFrameRound(l.t_end_us, nf.num, nf.den)
+          // Per-KIND grid: an audio layer lives on the fixed 48 kHz lattice, which
+          // does not move when fps does, so re-snapping it here would be wrong twice
+          // over — it would drop a sample-precise edit AND put the endpoint off the
+          // audio grid the backstop now checks it against (spec R2-D6).
+          const g = gridForLayerKind(l.params.kind, nf)
+          l.t_start_us = snapOnGrid(l.t_start_us, g)
+          l.t_end_us = snapOnGrid(l.t_end_us, g)
           // Motif src_in_us lives on the COMPOSITION grid (re-snap); VideoClip/
           // Audio src_in_us is normalized source content time (left untouched).
           if (l.params.kind === 'Motif') l.params.src_in_us = snapFrameRound(l.params.src_in_us, nf.num, nf.den)
@@ -233,7 +265,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
 
     if (fpsChanged) {
       // Layer geometry changed → one recorded commit of the probe.
-      commit('Updated composition fps + re-snapped layers', [], { kind: 'Composition' }, buildProbe)
+      commit('Updated composition fps', [], { kind: 'Composition' }, buildProbe)
       return
     }
 
@@ -528,17 +560,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const ats = (a.at_t_us_list as number[]) ?? []
           const dropShortUs = parseNumOpt(a.drop_short_us, 'drop_short_us') ?? null
           return { ok: true, value: commit('Split layer by shots', [{ kind: 'Layer', id: layer }], { kind: 'Coarse' }, (d) => {
-            const { num, den } = d.composition.fps
             let currentId = layer
             const ids: Uuid[] = []
             for (const at of ats) {
-              // Re-snap to the split's own grid and skip a cut that no longer
-              // falls strictly inside the current right-half — defensive against
-              // a redundant cut so applySplitLayer never rejects mid-batch.
-              const atSnapped = snapFrameRound(parseNum(at, 'at_t_us'), num, den)
+              // Re-snap on the CURRENT SEGMENT's own grid and skip a cut that no
+              // longer falls strictly inside it — defensive against a redundant cut so
+              // applySplitLayer never rejects mid-batch. The segment must be located
+              // first because the grid depends on its kind (spec R2-D6); shot splits
+              // target video, but this op is reachable for any kind.
               const loc = locateLayer(d, currentId)
               const seg = loc ? d.tracks[loc[0]].layers[loc[1]] : null
-              if (!seg || atSnapped <= seg.t_start_us || atSnapped >= seg.t_end_us) continue
+              if (!seg) continue
+              const atSnapped = snapOnGrid(parseNum(at, 'at_t_us'), gridForLayerKind(seg.params.kind, d.composition.fps))
+              if (atSnapped <= seg.t_start_us || atSnapped >= seg.t_end_us) continue
               const { left, right } = applySplitLayer(d, idGen, currentId, atSnapped, false)
               ids.push(left)
               currentId = right

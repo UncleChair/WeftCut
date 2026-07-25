@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir, type MediaSummary } from "../ipc";
+import { formatTimecode, wallClockAside } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -248,6 +249,16 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
         : clampExportRange(rangeStartUs, rangeEndUs, durationUs),
     [rangeMode, rangeStartUs, rangeEndUs, durationUs],
   );
+  /// How long the written file will be, from the SAME resolver as the run so the
+  /// readout cannot drift from it. Read as a DURATION, which is the one place NDF
+  /// timecode misleads — at 23.976/29.97/59.94 the digits under-report real time
+  /// by ~0.1%, so `wallClockAside` supplies the honest figure (spec R2-D3). Null
+  /// at integer rates, where the two would be the same number twice.
+  const rangeDurationUs = useMemo(() => {
+    const { startUs, endUs } = chosenRange();
+    return Math.max(0, endUs - startUs);
+  }, [chosenRange]);
+  const rangeWallClock = wallClockAside(rangeDurationUs, comp.fps_num, comp.fps_den);
   /// Spec decision 10's honesty line: same resolver, same inputs as the run
   /// (see routingSourceCounts). Recomputed on range/engine/depth edits, not
   /// just at dialog open, so it stays truthful while the user works.
@@ -508,6 +519,18 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     </div>
                   </>
                 )}
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.range_duration")}
+                  </span>
+                  <span className="settings-toggle-hint">
+                    {formatTimecode(rangeDurationUs, comp.fps_num, comp.fps_den)}
+                    {rangeWallClock !== null
+                      ? ` · ${t("export_dialog.range_duration_wall_clock", { wall: rangeWallClock })}`
+                      : ""}
+                  </span>
+                </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">

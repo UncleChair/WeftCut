@@ -21,6 +21,8 @@ import {
 } from "./geometry";
 import { TimelineVisualPreview } from "./TimelineVisualPreview";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
+import { formatSyncOffset } from "./audioSlip";
+import { useAudioSyncOffset } from "./audioSyncOffsetStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
 import { useEditingLayerId, beginRename, endRename } from "./renameStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
@@ -103,6 +105,29 @@ function MotifBakeDot({ layerId }: { layerId: string }) {
           ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
           : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
   return <span className={`motif-bake-dot is-${phase}`} title={label} aria-label={label} />;
+}
+
+/// The derived A/V sync-offset badge on a slipped audio clip (ADR 0038 / R2-D7).
+/// Renders nothing when the offset is zero or the layer has no visual partner —
+/// which is the normal case, so the badge's presence IS the signal that something was
+/// deliberately slipped. Discoverability is the whole job here: the offset lives
+/// implicitly in each member's own `t_start_us`, with no field to inspect.
+function AudioSyncBadge({ layerId }: { layerId: string }) {
+  const { t } = useTranslation();
+  const offset = useAudioSyncOffset(layerId);
+  const text = formatSyncOffset(offset);
+  if (text === null) return null;
+  const label = t("timeline.audio_slipped", { offset: text });
+  return (
+    <span
+      data-testid="audio-sync-offset-badge"
+      className="pointer-events-none absolute bottom-1 right-1 z-[4] rounded bg-sky-600/90 px-1 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm"
+      title={label}
+      aria-label={label}
+    >
+      {text}
+    </span>
+  );
 }
 
 function shortLayerLabel(label: string): string {
@@ -616,6 +641,7 @@ export function LayerBlock({
           aria-hidden="true"
         />
       )}
+      {layer.params.kind === "Audio" && !previewOnly && <AudioSyncBadge layerId={layer.id} />}
       {isEditing && showLabel ? (
         <AppInput
           ref={inputRef}

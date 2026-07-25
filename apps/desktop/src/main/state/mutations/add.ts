@@ -1,6 +1,6 @@
 import type { Layer, LayerParams, Marker, Project, Rgba, TrackRole, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { snapFrameRound } from '../snap'
+import { gridForLayerKind, snapOnGrid } from '../snap'
 import { applyDurationAutofit } from './helpers'
 import { snapMarkerTimes } from './markers'
 import { CommandFailure } from '../errors'
@@ -24,11 +24,22 @@ export function defaultTransform() {
   return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5] as [number, number] }
 }
 
-/** Snaps both edges, inserts t-start-sorted, autofits.
+/** Snaps both edges onto the new layer's OWN grid — the 48 kHz sample lattice for an
+ *  Audio layer, the composition frame grid otherwise (spec R2-D6) — inserts
+ *  t-start-sorted, autofits.
+ *
+ *  An auto-paired A/V drop therefore gives the two members the same REQUESTED time
+ *  resolved on two lattices. At the six rates where the frame lattice is an exact
+ *  sublattice of 48 kHz they land identically; at 29.97 / 59.94 the audio lands on
+ *  the sample boundary nearest the video frame — which is where the mixer would have
+ *  played it anyway (`mix.rs` rounds `t_start_us` to a sample), so this stores what
+ *  renders instead of a value that renders as something else.
+ *
  *  Allocates the layer id only AFTER the track-existence check (id contract). */
 export function applyAddLayer(p: Project, idGen: IdGen, trackId: Uuid, params: LayerParams, tStartUs: number, tEndUs: number): Uuid {
-  const t0 = snapFrameRound(tStartUs, p.composition.fps.num, p.composition.fps.den)
-  const t1 = snapFrameRound(tEndUs, p.composition.fps.num, p.composition.fps.den)
+  const grid = gridForLayerKind(params.kind, p.composition.fps)
+  const t0 = snapOnGrid(tStartUs, grid)
+  const t1 = snapOnGrid(tEndUs, grid)
   const trackIdx = p.tracks.findIndex((t) => t.id === trackId)
   if (trackIdx < 0) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
   const layerId = idGen()
