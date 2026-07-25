@@ -1,37 +1,60 @@
-import { useMemo } from "react";
-import { formatTimecode, frameDurUs } from "../frames";
-import { formatRulerLabel } from "./geometry";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  timelineScrollLeftPx,
+  useTimelineScrollStore,
+} from "../state/timelineScrollStore";
+import { RULER_SCROLL_QUANTUM_PX, computeRulerModel } from "./rulerModel";
 
-/// Time ruler at the top of the scrollable timeline root. Width matches
-/// the canvas so horizontal scroll keeps ticks aligned with the layers
-/// below, and tick density scales with `pxPerSec`.
+/// Time ruler at the top of the scrollable timeline root. Width matches the
+/// canvas so horizontal scroll keeps ticks aligned with the layers below.
 ///
-/// Two regimes:
-///   - Below `pxPerFrame >= FRAME_MODE_THRESHOLD_PX`: classic
-///     second-level NICE_STEPS_SEC ladder, mm:ss labels.
-///   - At/above the threshold: switch to frame-grid mode. Major-tick
-///     stride is the largest of `NICE_STEPS_FRAMES` where
-///     `stride * pxPerFrame >= TARGET_MAJOR_PX_FRAME_MODE`, labels read
-///     SMPTE `HH:MM:SS:FF`, and minor ticks land at every single frame
-///     regardless of major stride so the user has a visible frame
-///     grid to align edits against.
+/// This component paints `rulerModel.ts`'s view model and nothing else: which
+/// ticks exist, where, and what they read all live there, bounded by the
+/// viewport rather than by project length.
 
-// Major-tick candidates: classic 1/2/5 decade ladder extended into
-// sub-second territory for high-zoom cases. Anything above 600 s
-// falls off the top of the ladder and clamps to 600.
-const NICE_STEPS_SEC = [
-  0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600,
-] as const;
-const NICE_STEPS_FRAMES = [1, 2, 5, 10, 30] as const;
-const TARGET_MAJOR_PX = 100;
-const TARGET_MAJOR_PX_FRAME_MODE = 80;
-const SUBDIVISIONS = 5;
-const FRAME_MODE_THRESHOLD_PX = 12;
+const quantizeScroll = (px: number): number =>
+  Math.floor(Math.max(0, px) / RULER_SCROLL_QUANTUM_PX) *
+  RULER_SCROLL_QUANTUM_PX;
+
+/// Scroll offset for the tick window, stepped in `RULER_SCROLL_QUANTUM_PX`
+/// blocks.
+///
+/// The ruler subscribes to the scroll store itself instead of taking
+/// `scrollLeft` as a prop, because a prop would mean React state on the timeline
+/// root and a full-tree re-render per wheel event (timelineScrollStore.ts states
+/// the rule; `Timeline.tsx`'s TimelinePlayhead is the same pattern one step
+/// cheaper). Quantizing bounds the cost further: the ruler commits at most once
+/// per block of scrolling, not once per event, and the window built from a
+/// lagging offset still covers the viewport because the overscan is at least one
+/// quantum wide (see `RULER_OVERSCAN_PX`).
+function useRulerScrollBlockPx(): number {
+  const [blockPx, setBlockPx] = useState(() =>
+    quantizeScroll(timelineScrollLeftPx()),
+  );
+  // The committed block, read from the subscription — `setBlockPx` is called
+  // only when the block actually changes, so intra-block scrolling costs zero
+  // React work rather than a bailed-out render.
+  const committedRef = useRef(blockPx);
+  useEffect(() => {
+    const apply = (px: number) => {
+      const next = quantizeScroll(px);
+      if (next === committedRef.current) return;
+      committedRef.current = next;
+      setBlockPx(next);
+    };
+    // Re-sync on mount: the store may have moved while the timeline was
+    // unmounted (dock panel switch), with no future event to correct it.
+    apply(timelineScrollLeftPx());
+    return useTimelineScrollStore.subscribe((s) => apply(s.scrollLeftPx));
+  }, []);
+  return blockPx;
+}
 
 export function TimelineRuler({
   pxPerSec,
   totalSec,
   widthPx,
+  viewportWidthPx,
   fpsNum,
   fpsDen,
   onScrub,
@@ -39,6 +62,9 @@ export function TimelineRuler({
   pxPerSec: number;
   totalSec: number;
   widthPx: number;
+  /// Visible lane-area width (viewport minus the sticky header column) — with
+  /// the scroll offset, the interval the painted tick set has to cover.
+  viewportWidthPx: number;
   fpsNum: number;
   fpsDen: number;
   /// Begin a playhead scrub at the given client X. The ruler is the sole
@@ -46,62 +72,19 @@ export function TimelineRuler({
   /// loop via this callback.
   onScrub: (clientX: number) => void;
 }) {
-  const { items, majorSec, isFrameMode } = useMemo(() => {
-    const fDur = frameDurUs(fpsNum, fpsDen);
-    const pxPerFrame = (fDur / 1_000_000) * pxPerSec;
-    const frameMode = pxPerFrame >= FRAME_MODE_THRESHOLD_PX;
-
-    if (frameMode) {
-      // Pick the largest stride from [1, 2, 5, 10, 30] where the
-      // major-tick spacing meets the target px. Fall back to the
-      // largest if none meet the target (very low zoom for a
-      // high-fps comp — rare).
-      // Annotated `number` (not the `as const` literal `1`) so the loop can
-      // assign any element of NICE_STEPS_FRAMES below.
-      let stride: number = NICE_STEPS_FRAMES[0]!;
-      for (let i = NICE_STEPS_FRAMES.length - 1; i >= 0; i--) {
-        if (NICE_STEPS_FRAMES[i]! * pxPerFrame >= TARGET_MAJOR_PX_FRAME_MODE) {
-          stride = NICE_STEPS_FRAMES[i]!;
-        }
-      }
-      // Minor ticks at every frame; majors at every `stride` frames.
-      const totalFrames =
-        Math.ceil(totalSec * 1_000_000 / fDur) + 1;
-      const out: { i: number; x: number; t: number; isMajor: boolean }[] = [];
-      for (let f = 0; f <= totalFrames; f++) {
-        const tUs = f * fDur;
-        out.push({
-          i: f,
-          x: (tUs / 1_000_000) * pxPerSec,
-          t: tUs / 1_000_000,
-          isMajor: f % stride === 0,
-        });
-      }
-      return { items: out, majorSec: 0, isFrameMode: true };
-    }
-
-    const targetSec = TARGET_MAJOR_PX / pxPerSec;
-    let major = NICE_STEPS_SEC[NICE_STEPS_SEC.length - 1] ?? 1;
-    for (const s of NICE_STEPS_SEC) {
-      if (s >= targetSec) {
-        major = s;
-        break;
-      }
-    }
-    const minor = major / SUBDIVISIONS;
-    const out: { i: number; x: number; t: number; isMajor: boolean }[] = [];
-    // Allow a half-step over `totalSec` so the trailing major lands on
-    // a clean number if the timeline ends mid-interval — visually it
-    // gets clipped by the canvas width, but the major label stays on
-    // its grid until the very end.
-    const limit = totalSec + minor * 0.5;
-    for (let i = 0; ; i++) {
-      const t = i * minor;
-      if (t > limit) break;
-      out.push({ i, x: t * pxPerSec, t, isMajor: i % SUBDIVISIONS === 0 });
-    }
-    return { items: out, majorSec: major, isFrameMode: false };
-  }, [pxPerSec, totalSec, fpsNum, fpsDen]);
+  const scrollLeftPx = useRulerScrollBlockPx();
+  const { ticks } = useMemo(
+    () =>
+      computeRulerModel({
+        fpsNum,
+        fpsDen,
+        pxPerSec,
+        totalSec,
+        scrollLeftPx,
+        viewportWidthPx,
+      }),
+    [fpsNum, fpsDen, pxPerSec, totalSec, scrollLeftPx, viewportWidthPx],
+  );
 
   return (
     /* Sizing notes:
@@ -114,10 +97,9 @@ export function TimelineRuler({
          so the rightmost major's label would spill past widthPx and
          inflate the parent's scrollWidth, leaving a few px of phantom
          horizontal scroll at fit-zoom that the user can't get rid of by
-         zooming further. Same for the trailing-frame tick deliberately
-         rendered past `totalSec` ("visually it gets clipped by the
-         canvas width" below — this overflow clip is what actually
-         clips it). */
+         zooming further. Same for the trailing tick the model
+         deliberately emits past `totalSec` (rulerModel.ts) — this
+         overflow clip is what actually clips it. */
     <div
       data-testid="timeline-ruler"
       className="sticky top-0 z-[3] h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
@@ -127,21 +109,19 @@ export function TimelineRuler({
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      {items.map((tk) => (
+      {ticks.map((tk) => (
         <div
-          key={tk.i}
+          key={tk.frame}
           className={`pointer-events-none absolute top-0 h-full w-0 after:absolute after:bottom-0 after:left-0 after:w-px after:content-[''] ${
             tk.isMajor
               ? "after:h-2 after:bg-foreground/55"
               : "after:h-1 after:bg-muted-foreground/55"
           }`}
-          style={{ left: tk.x }}
+          style={{ left: tk.xPx }}
         >
-          {tk.isMajor && (
+          {tk.label !== undefined && (
             <span className="absolute left-[3px] top-px whitespace-nowrap leading-3">
-              {isFrameMode
-                ? formatTimecode(Math.round(tk.t * 1_000_000), fpsNum, fpsDen)
-                : formatRulerLabel(tk.t, majorSec)}
+              {tk.label}
             </span>
           )}
         </div>

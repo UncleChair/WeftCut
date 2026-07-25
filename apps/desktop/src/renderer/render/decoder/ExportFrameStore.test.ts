@@ -230,6 +230,10 @@ describe("ExportFrameStore frame identity", () => {
     async (fpsNum, fpsDen) => {
       const store = new ExportFrameStore();
       const frameCount = 300;
+      // `Math.trunc` (not the grid's half-up round) is deliberate: these are
+      // synthesized DEMUXER PTS, and a real demuxer truncates. The test's point
+      // is that the store still selects the right frame when the container PTS
+      // sits below the composition-grid target `frameTimeUs` asks for.
       const durationUs = Math.trunc((1_000_000 * fpsDen) / fpsNum);
       const sourcePtsUs = (i: number): number =>
         Math.trunc((i * 1_000_000 * fpsDen) / fpsNum);

@@ -166,6 +166,1037 @@
           "expect": 3599996400
         }
       ]
+    },
+    {
+      "name": "50/1",
+      "fps_num": 50,
+      "fps_den": 1,
+      "samples": [
+        {
+          "t_us": 0,
+          "expect": 0
+        },
+        {
+          "t_us": 9999,
+          "expect": 0
+        },
+        {
+          "t_us": 10000,
+          "expect": 20000
+        },
+        {
+          "t_us": 10001,
+          "expect": 20000
+        },
+        {
+          "t_us": 20000,
+          "expect": 20000
+        },
+        {
+          "t_us": 20001,
+          "expect": 20000
+        },
+        {
+          "t_us": 1000000,
+          "expect": 1000000
+        },
+        {
+          "t_us": 3600000000,
+          "expect": 3600000000
+        }
+      ]
+    },
+    {
+      "name": "60000/1001",
+      "fps_num": 60000,
+      "fps_den": 1001,
+      "samples": [
+        {
+          "t_us": 0,
+          "expect": 0
+        },
+        {
+          "t_us": 8340,
+          "expect": 0
+        },
+        {
+          "t_us": 8341,
+          "expect": 0
+        },
+        {
+          "t_us": 8342,
+          "expect": 16683
+        },
+        {
+          "t_us": 16683,
+          "expect": 16683
+        },
+        {
+          "t_us": 16684,
+          "expect": 16683
+        },
+        {
+          "t_us": 1000000,
+          "expect": 1001000
+        },
+        {
+          "t_us": 3600000000,
+          "expect": 3599996400
+        }
+      ]
+    },
+    {
+      "name": "24000/1001",
+      "fps_num": 24000,
+      "fps_den": 1001,
+      "samples": [
+        {
+          "t_us": 0,
+          "expect": 0
+        },
+        {
+          "t_us": 20853,
+          "expect": 0
+        },
+        {
+          "t_us": 20854,
+          "expect": 0
+        },
+        {
+          "t_us": 20855,
+          "expect": 41708
+        },
+        {
+          "t_us": 41708,
+          "expect": 41708
+        },
+        {
+          "t_us": 41709,
+          "expect": 41708
+        },
+        {
+          "t_us": 1000000,
+          "expect": 1001000
+        },
+        {
+          "t_us": 3600000000,
+          "expect": 3600013083
+        }
+      ]
+    }
+  ],
+  "grid_cases": [
+    {
+      "name": "24000/1001",
+      "fps_num": 24000,
+      "fps_den": 1001,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 41708
+        },
+        {
+          "frame": 2,
+          "expect": 83417
+        },
+        {
+          "frame": 3,
+          "expect": 125125
+        },
+        {
+          "frame": 1000,
+          "expect": 41708333
+        },
+        {
+          "frame": 2071528,
+          "expect": 86399980333
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 41708
+        },
+        {
+          "t_us": 41707,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 41708,
+          "ceil_us": 41708
+        },
+        {
+          "t_us": 41708,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 41708,
+          "round_us": 41708,
+          "ceil_us": 41708
+        },
+        {
+          "t_us": 41709,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 41708,
+          "round_us": 41708,
+          "ceil_us": 83417
+        },
+        {
+          "t_us": 83417,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 83417,
+          "round_us": 83417,
+          "ceil_us": 83417
+        },
+        {
+          "t_us": 20854,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 41708
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 86313,
+          "round_frame": 86314,
+          "ceil_frame": 86314,
+          "floor_us": 3599971375,
+          "round_us": 3600013083,
+          "ceil_us": 3600013083
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 2071528,
+          "round_frame": 2071528,
+          "ceil_frame": 2071529,
+          "floor_us": 86399980333,
+          "round_us": 86399980333,
+          "ceil_us": 86400022042
+        }
+      ]
+    },
+    {
+      "name": "24/1",
+      "fps_num": 24,
+      "fps_den": 1,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 41667
+        },
+        {
+          "frame": 2,
+          "expect": 83333
+        },
+        {
+          "frame": 3,
+          "expect": 125000
+        },
+        {
+          "frame": 1000,
+          "expect": 41666667
+        },
+        {
+          "frame": 2073599,
+          "expect": 86399958333
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 41667
+        },
+        {
+          "t_us": 41666,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 41667,
+          "ceil_us": 41667
+        },
+        {
+          "t_us": 41667,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 41667,
+          "round_us": 41667,
+          "ceil_us": 41667
+        },
+        {
+          "t_us": 41668,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 41667,
+          "round_us": 41667,
+          "ceil_us": 83333
+        },
+        {
+          "t_us": 83333,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 83333,
+          "round_us": 83333,
+          "ceil_us": 83333
+        },
+        {
+          "t_us": 20833,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 41667
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 86400,
+          "round_frame": 86400,
+          "ceil_frame": 86400,
+          "floor_us": 3600000000,
+          "round_us": 3600000000,
+          "ceil_us": 3600000000
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 2073600,
+          "round_frame": 2073600,
+          "ceil_frame": 2073600,
+          "floor_us": 86400000000,
+          "round_us": 86400000000,
+          "ceil_us": 86400000000
+        }
+      ]
+    },
+    {
+      "name": "25/1",
+      "fps_num": 25,
+      "fps_den": 1,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 40000
+        },
+        {
+          "frame": 2,
+          "expect": 80000
+        },
+        {
+          "frame": 3,
+          "expect": 120000
+        },
+        {
+          "frame": 1000,
+          "expect": 40000000
+        },
+        {
+          "frame": 2159999,
+          "expect": 86399960000
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 40000
+        },
+        {
+          "t_us": 39999,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 40000,
+          "ceil_us": 40000
+        },
+        {
+          "t_us": 40000,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 40000,
+          "round_us": 40000,
+          "ceil_us": 40000
+        },
+        {
+          "t_us": 40001,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 40000,
+          "round_us": 40000,
+          "ceil_us": 80000
+        },
+        {
+          "t_us": 80000,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 80000,
+          "round_us": 80000,
+          "ceil_us": 80000
+        },
+        {
+          "t_us": 20000,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 40000,
+          "ceil_us": 40000
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 90000,
+          "round_frame": 90000,
+          "ceil_frame": 90000,
+          "floor_us": 3600000000,
+          "round_us": 3600000000,
+          "ceil_us": 3600000000
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 2160000,
+          "round_frame": 2160000,
+          "ceil_frame": 2160000,
+          "floor_us": 86400000000,
+          "round_us": 86400000000,
+          "ceil_us": 86400000000
+        }
+      ]
+    },
+    {
+      "name": "30000/1001",
+      "fps_num": 30000,
+      "fps_den": 1001,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 33367
+        },
+        {
+          "frame": 2,
+          "expect": 66733
+        },
+        {
+          "frame": 3,
+          "expect": 100100
+        },
+        {
+          "frame": 1000,
+          "expect": 33366667
+        },
+        {
+          "frame": 2589410,
+          "expect": 86399980333
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 33367
+        },
+        {
+          "t_us": 33366,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 33367,
+          "ceil_us": 33367
+        },
+        {
+          "t_us": 33367,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 33367,
+          "round_us": 33367,
+          "ceil_us": 33367
+        },
+        {
+          "t_us": 33368,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 33367,
+          "round_us": 33367,
+          "ceil_us": 66733
+        },
+        {
+          "t_us": 66733,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 66733,
+          "round_us": 66733,
+          "ceil_us": 66733
+        },
+        {
+          "t_us": 16683,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 33367
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 107892,
+          "round_frame": 107892,
+          "ceil_frame": 107893,
+          "floor_us": 3599996400,
+          "round_us": 3599996400,
+          "ceil_us": 3600029767
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 2589410,
+          "round_frame": 2589411,
+          "ceil_frame": 2589411,
+          "floor_us": 86399980333,
+          "round_us": 86400013700,
+          "ceil_us": 86400013700
+        }
+      ]
+    },
+    {
+      "name": "30/1",
+      "fps_num": 30,
+      "fps_den": 1,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 33333
+        },
+        {
+          "frame": 2,
+          "expect": 66667
+        },
+        {
+          "frame": 3,
+          "expect": 100000
+        },
+        {
+          "frame": 1000,
+          "expect": 33333333
+        },
+        {
+          "frame": 2591999,
+          "expect": 86399966667
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 33333
+        },
+        {
+          "t_us": 33332,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 33333,
+          "ceil_us": 33333
+        },
+        {
+          "t_us": 33333,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 33333,
+          "round_us": 33333,
+          "ceil_us": 33333
+        },
+        {
+          "t_us": 33334,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 33333,
+          "round_us": 33333,
+          "ceil_us": 66667
+        },
+        {
+          "t_us": 66667,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 66667,
+          "round_us": 66667,
+          "ceil_us": 66667
+        },
+        {
+          "t_us": 16666,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 33333
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 108000,
+          "round_frame": 108000,
+          "ceil_frame": 108000,
+          "floor_us": 3600000000,
+          "round_us": 3600000000,
+          "ceil_us": 3600000000
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 2592000,
+          "round_frame": 2592000,
+          "ceil_frame": 2592000,
+          "floor_us": 86400000000,
+          "round_us": 86400000000,
+          "ceil_us": 86400000000
+        }
+      ]
+    },
+    {
+      "name": "50/1",
+      "fps_num": 50,
+      "fps_den": 1,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 20000
+        },
+        {
+          "frame": 2,
+          "expect": 40000
+        },
+        {
+          "frame": 3,
+          "expect": 60000
+        },
+        {
+          "frame": 1000,
+          "expect": 20000000
+        },
+        {
+          "frame": 4319999,
+          "expect": 86399980000
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 20000
+        },
+        {
+          "t_us": 19999,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 20000,
+          "ceil_us": 20000
+        },
+        {
+          "t_us": 20000,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 20000,
+          "round_us": 20000,
+          "ceil_us": 20000
+        },
+        {
+          "t_us": 20001,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 20000,
+          "round_us": 20000,
+          "ceil_us": 40000
+        },
+        {
+          "t_us": 40000,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 40000,
+          "round_us": 40000,
+          "ceil_us": 40000
+        },
+        {
+          "t_us": 10000,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 20000,
+          "ceil_us": 20000
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 180000,
+          "round_frame": 180000,
+          "ceil_frame": 180000,
+          "floor_us": 3600000000,
+          "round_us": 3600000000,
+          "ceil_us": 3600000000
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 4320000,
+          "round_frame": 4320000,
+          "ceil_frame": 4320000,
+          "floor_us": 86400000000,
+          "round_us": 86400000000,
+          "ceil_us": 86400000000
+        }
+      ]
+    },
+    {
+      "name": "60000/1001",
+      "fps_num": 60000,
+      "fps_den": 1001,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 16683
+        },
+        {
+          "frame": 2,
+          "expect": 33367
+        },
+        {
+          "frame": 3,
+          "expect": 50050
+        },
+        {
+          "frame": 1000,
+          "expect": 16683333
+        },
+        {
+          "frame": 5178821,
+          "expect": 86399997017
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 16683
+        },
+        {
+          "t_us": 16682,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 16683,
+          "ceil_us": 16683
+        },
+        {
+          "t_us": 16683,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 16683,
+          "round_us": 16683,
+          "ceil_us": 16683
+        },
+        {
+          "t_us": 16684,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 16683,
+          "round_us": 16683,
+          "ceil_us": 33367
+        },
+        {
+          "t_us": 33367,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 33367,
+          "round_us": 33367,
+          "ceil_us": 33367
+        },
+        {
+          "t_us": 8341,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 16683
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 215784,
+          "round_frame": 215784,
+          "ceil_frame": 215785,
+          "floor_us": 3599996400,
+          "round_us": 3599996400,
+          "ceil_us": 3600013083
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 5178821,
+          "round_frame": 5178821,
+          "ceil_frame": 5178822,
+          "floor_us": 86399997017,
+          "round_us": 86399997017,
+          "ceil_us": 86400013700
+        }
+      ]
+    },
+    {
+      "name": "60/1",
+      "fps_num": 60,
+      "fps_den": 1,
+      "frame_times": [
+        {
+          "frame": 0,
+          "expect": 0
+        },
+        {
+          "frame": 1,
+          "expect": 16667
+        },
+        {
+          "frame": 2,
+          "expect": 33333
+        },
+        {
+          "frame": 3,
+          "expect": 50000
+        },
+        {
+          "frame": 1000,
+          "expect": 16666667
+        },
+        {
+          "frame": 5183999,
+          "expect": 86399983333
+        }
+      ],
+      "samples": [
+        {
+          "t_us": 0,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 0,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 0
+        },
+        {
+          "t_us": 1,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 16667
+        },
+        {
+          "t_us": 16666,
+          "floor_frame": 0,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 16667,
+          "ceil_us": 16667
+        },
+        {
+          "t_us": 16667,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 1,
+          "floor_us": 16667,
+          "round_us": 16667,
+          "ceil_us": 16667
+        },
+        {
+          "t_us": 16668,
+          "floor_frame": 1,
+          "round_frame": 1,
+          "ceil_frame": 2,
+          "floor_us": 16667,
+          "round_us": 16667,
+          "ceil_us": 33333
+        },
+        {
+          "t_us": 33333,
+          "floor_frame": 2,
+          "round_frame": 2,
+          "ceil_frame": 2,
+          "floor_us": 33333,
+          "round_us": 33333,
+          "ceil_us": 33333
+        },
+        {
+          "t_us": 8333,
+          "floor_frame": 0,
+          "round_frame": 0,
+          "ceil_frame": 1,
+          "floor_us": 0,
+          "round_us": 0,
+          "ceil_us": 16667
+        },
+        {
+          "t_us": 3600000000,
+          "floor_frame": 216000,
+          "round_frame": 216000,
+          "ceil_frame": 216000,
+          "floor_us": 3600000000,
+          "round_us": 3600000000,
+          "ceil_us": 3600000000
+        },
+        {
+          "t_us": 86400000000,
+          "floor_frame": 5184000,
+          "round_frame": 5184000,
+          "ceil_frame": 5184000,
+          "floor_us": 86400000000,
+          "round_us": 86400000000,
+          "ceil_us": 86400000000
+        }
+      ]
     }
   ]
 }

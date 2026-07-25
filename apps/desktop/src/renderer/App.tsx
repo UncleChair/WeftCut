@@ -14,7 +14,7 @@ import {
   projectUndo,
   type ProjectSummary,
 } from "./ipc";
-import { frameDurUs } from "./frames";
+import { adjacentFrameBoundaryUs } from "./frames";
 import {
   playheadTimeUs,
   setPlayheadTimeUs,
@@ -568,18 +568,36 @@ export function App({ onCloseProject }: AppProps) {
             workspaceController?.restoreMaximizedPanel(),
         }
       : {}),
-    // Playhead movement. The clock's setPosition snap (clock.ts) absorbs
-    // any sub-frame drift back to the canonical frame; `seekTo` clamps
-    // to [0, lastFrameAnchorUs]. Callers just hand it raw deltas.
+    // Playhead movement. `seekTo` clamps to [0, lastFrameAnchorUs] and the
+    // clock's setPosition snap (clock.ts) absorbs sub-frame drift, so the
+    // second-jumps below can hand it a raw delta.
+    //
+    // Frame stepping relies on neither: it moves the frame INDEX and asks the
+    // grid for that frame's time (`adjacentFrameBoundaryUs`, the derivation
+    // trim also uses), so N steps land on frame N exactly. Adding a rounded
+    // frame duration instead would land off-grid at fractional rates and only
+    // look right because the snap corrects it.
     seekFrameBack: () => {
       const fps = summary?.composition;
-      const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
-      void seekTo(playheadTimeUs() - step);
+      void seekTo(
+        adjacentFrameBoundaryUs(
+          playheadTimeUs(),
+          -1,
+          fps?.fps_num ?? 30,
+          fps?.fps_den ?? 1,
+        ),
+      );
     },
     seekFrameForward: () => {
       const fps = summary?.composition;
-      const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
-      void seekTo(playheadTimeUs() + step);
+      void seekTo(
+        adjacentFrameBoundaryUs(
+          playheadTimeUs(),
+          1,
+          fps?.fps_num ?? 30,
+          fps?.fps_den ?? 1,
+        ),
+      );
     },
     seekSecondBack: () => {
       void seekTo(playheadTimeUs() - 1_000_000);

@@ -182,19 +182,15 @@ describe("motifLayersToBake", () => {
   test("frame-parity: off-grid startUs maps to the same firstFrame the Worker visits", () => {
     // Regression guard for the frame-parity bug: when the export range's
     // `startUs` is NOT on the composition-frame grid (reachable via "set range
-    // to playhead" — `currentTimeUs` is not snapped), the bake must snap
-    // `startUs` the same way the Worker does before computing `firstFrame`.
+    // to playhead" — `currentTimeUs` is not snapped), the bake must derive
+    // `firstFrame` through the SAME snap the Worker applies, or the worker's
+    // first request has no baked bitmap → blank leading frame.
     //
-    // Setup: 5 s Motif layer at t_start=0, comp fps = 30/1.
-    // At 30 fps a frame is 33_333 µs (floor of 33_333.333…). startUs=50_000 µs
-    // falls inside frame 1's interval [33_333, 66_666) by the raw index math
-    // (`Math.floor(50_000 * 30 / 1_000_000) = 1`), but the Worker's
-    // `snapFrameFloor(50_000, 30, 1)` snaps DOWN to 0 µs (frame 0), so the
-    // worker WILL request frame 0. Without the snap fix, `firstFrame` would
-    // be 1, leaving `injectedFrames[0]` undefined → blank leading frame.
+    // Setup: 5 s Motif layer at t_start=0, comp fps = 30/1, export starting at
+    // 50_000 µs — inside frame 1's cell [33_333, 66_667).
     const FPS_NUM = 30;
     const FPS_DEN = 1;
-    const START_US = 50_000; // deliberately off-grid; between frame 0 (0µs) and frame 1 (~33_333µs)
+    const START_US = 50_000; // deliberately off-grid; inside frame 1's cell
 
     const summary = summaryWith([motifLayer("L1", 0, 5_000_000)]);
     const specs = motifLayersToBake(summary, START_US, 5_000_000, FPS_NUM, FPS_DEN);
@@ -208,21 +204,17 @@ describe("motifLayersToBake", () => {
       FPS_NUM,
       FPS_DEN,
     );
-    // `snapFrameFloor(50_000, 30, 1) = 0` → frameIndexInLayer(0, …) = 0.
-    expect(expectedFirstFrame).toBe(0);
+    expect(expectedFirstFrame).toBe(1);
 
-    // The bake's firstFrame must match the worker's first request — frame 0
-    // must be baked so `injectedFrames[0]` is defined, not a hole.
+    // The bake's firstFrame must match the worker's first request — frame 1
+    // must be baked so its `injectedFrames` slot is defined, not a hole.
     expect(s.firstFrame).toBe(expectedFirstFrame);
 
-    // Demonstrate what the OLD (unsnapped) code would have returned, to prove
-    // this test genuinely guards the regression: raw index of 50_000 µs into a
-    // layer starting at 0 is frame 1 — one frame AHEAD of what the worker
-    // requests, causing a blank leading frame.
-    const rawFirstFrame = frameIndexInLayer(START_US - 0, FPS_NUM, FPS_DEN);
-    expect(rawFirstFrame).toBe(1); // confirms the old code would have been wrong
-    // And the fixed code does NOT return the stale raw value.
-    expect(s.firstFrame).not.toBe(rawFirstFrame);
+    // At t_start_us = 0 the snap is now provably redundant: floor-then-index and
+    // index-directly agree because the grid floor is idempotent on the canonical
+    // grid. It stops being redundant once `t_start_us` is subtracted (the
+    // parity suites below cover that at /1001 rates).
+    expect(frameIndexInLayer(START_US - 0, FPS_NUM, FPS_DEN)).toBe(expectedFirstFrame);
   });
 });
 

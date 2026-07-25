@@ -7,6 +7,25 @@ import { fileURLToPath } from 'node:url'
 const require = createRequire(import.meta.url)
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url))) // apps/desktop
 
+/** Local-only measurement gates that run AFTER the Playwright projects, each
+ * behind its own flag. They drive the built app and measure, so they stay
+ * opt-in: CI's per-PR matrix must not pay for them (the playback memory ratchet
+ * is opt-in for the same reason, and additionally needs a dev server, so it has
+ * no flag here). */
+const EXTRA_GATES = {
+  '--ruler-gate': {
+    script: 'e2e/scripts/ruler-node-count.mjs',
+    why: 'ruler tick/DOM count stays bounded by the viewport',
+  },
+}
+
+/** Split the extra-gate flags out of the Playwright argv — Playwright rejects
+ * unknown flags, so they must never reach it. */
+export function splitGateFlags(args) {
+  const requested = args.filter((arg) => arg in EXTRA_GATES)
+  return { gates: requested, args: args.filter((arg) => !(arg in EXTRA_GATES)) }
+}
+
 /** Full runs execute the machine-exclusive project first, then the parallel
  * project. An explicitly selected project remains a single targeted run. */
 export function planE2ERuns(args) {
@@ -128,9 +147,13 @@ export function prepareE2EEnv(
   return { env, errors, notes }
 }
 
-export function runE2E(args = process.argv.slice(2)) {
+export function runE2E(argv = process.argv.slice(2)) {
+  const { gates, args } = splitGateFlags(argv)
   const { env, errors, notes } = prepareE2EEnv({ ...process.env })
   for (const note of notes) console.log(`[e2e preflight] ${note}`)
+  for (const [flag, gate] of Object.entries(EXTRA_GATES))
+    if (!gates.includes(flag))
+      console.log(`[e2e preflight] ${flag} not requested — skipping the local gate for ${gate.why}`)
   if (errors.length) {
     for (const error of errors) console.error(`[e2e preflight] ${error}`)
     return 1
@@ -142,6 +165,16 @@ export function runE2E(args = process.argv.slice(2)) {
       [cli, 'test', '-c', 'playwright.config.ts', ...runArgs],
       { cwd: ROOT, env, stdio: 'inherit' },
     )
+    if (result.error) throw result.error
+    if (result.status !== 0) return result.status ?? 1
+  }
+  for (const flag of gates) {
+    const gate = EXTRA_GATES[flag]
+    const result = spawnSync(process.execPath, [path.join(ROOT, gate.script)], {
+      cwd: ROOT,
+      env,
+      stdio: 'inherit',
+    })
     if (result.error) throw result.error
     if (result.status !== 0) return result.status ?? 1
   }

@@ -8,6 +8,12 @@ import { EVAL_WASM_BASE64 } from './evalWasm.generated'
 interface Exports {
   snap_round(tUs: number, num: number, den: number): number
   snap_floor(tUs: number, num: number, den: number): number
+  snap_ceil(tUs: number, num: number, den: number): number
+  time_us_at_frame(frame: number, num: number, den: number): number
+  frame_index_floor(tUs: number, num: number, den: number): number
+  frame_index_round(tUs: number, num: number, den: number): number
+  frame_index_ceil(tUs: number, num: number, den: number): number
+  frame_count(startUs: number, endUs: number, num: number, den: number): number
   us_to_frame(us: number, rate: number): number
   set_n(n: number): void
   set_kf(
@@ -70,17 +76,61 @@ function E(): Exports {
   return ex
 }
 
-/** Round `tUs` to the nearest frame boundary. Degenerate fps is a no-op (the
- * actor never stores one, but seek/UI may pass a transient 0). */
+// ---------------------------------------------------------------------------
+// Frame grid. One wrapper per leaf primitive; `renderer/frames.ts` is the
+// surface the app imports (it adds the composition-level helpers). Degenerate
+// fps (a transient 0 from seek/UI — the actor never stores one) short-circuits
+// HERE rather than in the leaf, which contracts for a valid rate: a snap returns
+// its input untouched, an index/count answers 0.
+// ---------------------------------------------------------------------------
+
+/** Round `tUs` to the nearest frame boundary (half-up). */
 export function snapFrameRound(tUs: number, num: number, den: number): number {
   if (num <= 0 || den <= 0) return tUs
   return E().snap_round(tUs, num, den)
 }
 
-/** Floor `tUs` to the frame boundary at or below. Degenerate fps is a no-op. */
+/** Floor `tUs` to the canonical start of the frame containing it. */
 export function snapFrameFloor(tUs: number, num: number, den: number): number {
   if (num <= 0 || den <= 0) return tUs
   return E().snap_floor(tUs, num, den)
+}
+
+/** Ceil `tUs` to the next canonical frame start (identity when already on one). */
+export function snapFrameCeil(tUs: number, num: number, den: number): number {
+  if (num <= 0 || den <= 0) return tUs
+  return E().snap_ceil(tUs, num, den)
+}
+
+/** Canonical µs of frame index `frame` — the ONLY frame-index-to-time policy
+ * (half-up). Every grid time in the project traces back to this. */
+export function timeUsAtFrame(frame: number, num: number, den: number): number {
+  if (num <= 0 || den <= 0) return 0
+  return E().time_us_at_frame(frame, num, den)
+}
+
+/** Index of the frame containing `tUs`. */
+export function frameIndexFloor(tUs: number, num: number, den: number): number {
+  if (num <= 0 || den <= 0) return 0
+  return E().frame_index_floor(tUs, num, den)
+}
+
+/** Index of the frame boundary nearest `tUs` (half-up). */
+export function frameIndexRound(tUs: number, num: number, den: number): number {
+  if (num <= 0 || den <= 0) return 0
+  return E().frame_index_round(tUs, num, den)
+}
+
+/** Index of the first frame at or after `tUs`. */
+export function frameIndexCeil(tUs: number, num: number, den: number): number {
+  if (num <= 0 || den <= 0) return 0
+  return E().frame_index_ceil(tUs, num, den)
+}
+
+/** Grid frames in the half-open range `[startUs, endUs)`. */
+export function frameCount(startUs: number, endUs: number, num: number, den: number): number {
+  if (num <= 0 || den <= 0) return 0
+  return E().frame_count(startUs, endUs, num, den)
 }
 
 /** µs → sample-frame index at `rate` Hz (half-up). Shared with the export mixer

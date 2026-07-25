@@ -16,8 +16,11 @@
 // `crate::eval::<Rgba8>` fully-qualified to dodge the name collision.
 use crate::{
     db_to_linear as db_to_linear_impl, eval_f64, fade_multiplier as fade_multiplier_impl,
-    pan_coeffs as pan_coeffs_impl, role_audible as role_audible_impl, snap_frame_floor,
-    snap_frame_round, us_to_frame as us_to_frame_impl, Interpolation, Kf, Rgba8,
+    frame_count as frame_count_impl, frame_index_ceil as frame_index_ceil_impl,
+    frame_index_floor as frame_index_floor_impl, frame_index_round as frame_index_round_impl,
+    pan_coeffs as pan_coeffs_impl, role_audible as role_audible_impl, snap_frame_ceil,
+    snap_frame_floor, snap_frame_round, time_us_at_frame as time_us_at_frame_impl,
+    us_to_frame as us_to_frame_impl, Interpolation, Kf, Rgba8,
 };
 
 /// Max keyframes held resident for ONE animated property (an `Animated<T>` /
@@ -53,6 +56,45 @@ pub extern "C" fn snap_round(t_us: f64, num: i32, den: i32) -> f64 {
 #[no_mangle]
 pub extern "C" fn snap_floor(t_us: f64, num: i32, den: i32) -> f64 {
     snap_frame_floor(t_us as i64, num as u32, den as u32) as f64
+}
+
+/// `snap_frame_ceil(t_us, num/den)` — ceil to the frame boundary at or above.
+#[no_mangle]
+pub extern "C" fn snap_ceil(t_us: f64, num: i32, den: i32) -> f64 {
+    snap_frame_ceil(t_us as i64, num as u32, den as u32) as f64
+}
+
+/// `time_us_at_frame(frame, num/den)` — canonical µs of a frame index. Frame
+/// indices and µs both stay far inside f64's exact-integer range at 24 h
+/// (`i * 1e6 * den` peaks near 5.2e15, 1.7x under 2^53), so the f64 ABI is
+/// lossless for every rate the app authors.
+#[no_mangle]
+pub extern "C" fn time_us_at_frame(frame: f64, num: i32, den: i32) -> f64 {
+    time_us_at_frame_impl(frame as i64, num as u32, den as u32) as f64
+}
+
+/// `frame_index_floor(t_us, num/den)` — index of the frame containing `t_us`.
+#[no_mangle]
+pub extern "C" fn frame_index_floor(t_us: f64, num: i32, den: i32) -> f64 {
+    frame_index_floor_impl(t_us as i64, num as u32, den as u32) as f64
+}
+
+/// `frame_index_round(t_us, num/den)` — index of the nearest frame (half-up).
+#[no_mangle]
+pub extern "C" fn frame_index_round(t_us: f64, num: i32, den: i32) -> f64 {
+    frame_index_round_impl(t_us as i64, num as u32, den as u32) as f64
+}
+
+/// `frame_index_ceil(t_us, num/den)` — index of the first frame at or after `t_us`.
+#[no_mangle]
+pub extern "C" fn frame_index_ceil(t_us: f64, num: i32, den: i32) -> f64 {
+    frame_index_ceil_impl(t_us as i64, num as u32, den as u32) as f64
+}
+
+/// `frame_count(start_us, end_us, num/den)` — grid frames in `[start, end)`.
+#[no_mangle]
+pub extern "C" fn frame_count(start_us: f64, end_us: f64, num: i32, den: i32) -> f64 {
+    frame_count_impl(start_us as i64, end_us as i64, num as u32, den as u32) as f64
 }
 
 /// `us_to_frame(us, rate)` — µs → sample-frame index at `rate` Hz (half-up).

@@ -1244,7 +1244,7 @@ export class Compositor {
     // Use the same exact-rational snap as `compositeFrame` so the
     // decoder's anchor matches the frame we're actually painting.
     // See `snapFrameFloor` and the long comment in `compositeFrame`
-    // for why the pre-rounded `frameDurUs` is not safe here.
+    // for why the pre-rounded `approxFrameDurUs` is not safe here.
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
     for (const c of this.clips.values()) {
       const layer = this.layerById.get(c.layerId);

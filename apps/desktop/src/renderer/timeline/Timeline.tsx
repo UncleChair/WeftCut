@@ -61,6 +61,7 @@ import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
+import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import { registerScrollToTime } from "../state/navigation";
 import {
   clearLayerSelection,
@@ -219,9 +220,47 @@ export function Timeline({
         // Center the target time in the lane area (the first HEADER_COL_PX
         // of the viewport is the sticky track-header column).
         root.scrollLeft = Math.max(0, x - viewport / 2);
+        // Publish now rather than waiting for the scroll event's rAF, so the
+        // ruler's tick window lands with the jump instead of one frame later.
+        setTimelineScrollLeftPx(root.scrollLeft);
       }),
     [],
   );
+
+  // Publish horizontal scroll for the ruler's tick window. Deliberately NOT
+  // React state here: this component is the whole timeline tree, and a
+  // per-wheel-event re-render of it is the regression the memory ratchet
+  // guards (see state/timelineScrollStore.ts). rAF-coalesced so a scroll
+  // burst collapses to one store write per frame.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    let raf = 0;
+    const publish = () => {
+      raf = 0;
+      setTimelineScrollLeftPx(root.scrollLeft);
+    };
+    const onScroll = () => {
+      if (raf === 0) raf = requestAnimationFrame(publish);
+    };
+    // Seed: a remount (dock panel switch) starts at scrollLeft 0 without
+    // firing a scroll event.
+    setTimelineScrollLeftPx(root.scrollLeft);
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      if (raf !== 0) cancelAnimationFrame(raf);
+      root.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+
+  // Cursor-anchored zoom re-writes `scrollLeft` in a layout effect inside
+  // `useTimelineView`, which is registered BEFORE this one — so by the time this
+  // runs the re-anchored offset is final, and publishing it here (rather than
+  // waiting for the scroll event's rAF) is what keeps the ruler's window from
+  // painting the pre-zoom region for one frame.
+  useLayoutEffect(() => {
+    if (rootRef.current) setTimelineScrollLeftPx(rootRef.current.scrollLeft);
+  }, [pxPerSec]);
 
   const { totalSec, widthPx } = computeTimelineExtent({
     durationUs,
@@ -798,6 +837,7 @@ export function Timeline({
             pxPerSec={pxPerSec}
             totalSec={totalSec}
             widthPx={widthPx}
+            viewportWidthPx={viewportWidthPx}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
             onScrub={beginRulerScrub}

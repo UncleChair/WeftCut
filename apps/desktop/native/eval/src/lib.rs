@@ -26,91 +26,152 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 mod wasm;
 
 // ===========================================================================
-// Frame snap. Time is `i64` microseconds (the napi crate aliases `TimeUs = i64`
+// Frame grid. Time is `i64` microseconds (the napi crate aliases `TimeUs = i64`
 // and wraps these). Frame rate crosses as the primitive pair `(num, den)`: the
 // actor's `Rational` carries serde + schemars derives for the project schema and
 // so stays in the napi crate (`state/time.rs`); the wasm/TS sides pass the same
-// two integers. Only the i128 snap ALGORITHM is shared here — that is the value
+// two integers. Only the i128 ALGORITHM is shared here — that is the value
 // that must never drift across the renderer↔Rust boundary. Pure integer math;
 // no std needed. Callers pass a valid rate (den/num != 0); degenerate-fps guards
-// live in the wrappers (TS `snapFrameRound`).
+// live in the wrappers (TS `renderer/frames.ts`).
+//
+// Two orthogonal policies, deliberately split into separate functions: an INDEX
+// policy (`frame_index_floor` / `_round` / `_ceil`) picks *which* frame, and the
+// single OUTPUT policy (`time_us_at_frame`) turns an index into µs. The `snap_*`
+// functions are just the compositions. See `docs/data-model.md` — Timeline-field
+// alignment.
 // ===========================================================================
 
 pub const US_PER_SEC: i64 = 1_000_000;
 pub const US_PER_MS: i64 = 1_000;
 
-/// Round `t_us` DOWN to the nearest `num/den`-fps frame boundary.
+/// Canonical µs of frame `frame` on the `num/den` grid: half-up
+/// `round(frame * US_PER_SEC * den / num)`.
 ///
-/// Math (in `i128` to avoid overflow at hour-plus timelines):
+/// THE output policy — a grid time is canonical iff it came from here, and there
+/// is no truncating variant. Half-up (not truncation) because it matches the
+/// demuxer's source-PTS rounding (`render/decoder/PacketPump.ts`:
+/// `Math.round(pts * 1e6)`), so a composition frame and the source frame it
+/// displays agree on the same integer µs.
 ///
-/// ```text
-/// frame_index   = floor(t_us * num / (US_PER_SEC * den))
-/// snapped_t_us  = frame_index * US_PER_SEC * den / num
-/// ```
-///
-/// 29.97 fps (30000/1001) doesn't yield integer-us frame boundaries; the
-/// final divide truncates. The asymmetry is harmless as long as every
-/// caller snaps with the same function. See `docs/data-model.md` —
-/// Timeline-field alignment.
-pub fn snap_frame_floor(t_us: i64, num: u32, den: u32) -> i64 {
-    let prod = (t_us as i128) * (num as i128);
-    let div = (US_PER_SEC as i128) * (den as i128);
-    let frame_index = prod.div_euclid(div);
-    let snapped = frame_index * (US_PER_SEC as i128) * (den as i128) / (num as i128);
-    snapped as i64
+/// LANDMINE: this expression is golden-pinned through `snap_frame_round`
+/// (`src/renderer/snapFrameGolden.fixture.json`, asserted from both languages).
+/// `+ num / 2` IS exact half-up for odd `num` as well as even — the floor of the
+/// halved divisor cannot cross a tie, since an odd divisor has no exact tie.
+pub fn time_us_at_frame(frame: i64, num: u32, den: u32) -> i64 {
+    let num = num as i128;
+    let numer = (frame as i128) * (US_PER_SEC as i128) * (den as i128);
+    (numer + num / 2).div_euclid(num) as i64
 }
 
-/// Round `t_us` UP to the nearest `num/den`-fps frame boundary. Symmetric
-/// to `snap_frame_floor`; see its docs.
-pub fn snap_frame_ceil(t_us: i64, num: u32, den: u32) -> i64 {
+/// Index of the frame `t_us` falls in: the largest `i` with
+/// `time_us_at_frame(i) <= t_us`.
+///
+/// Resolved against the CANONICAL grid, not the exact rational one. The two
+/// disagree by up to 1 µs, and pairing an exact-rational index with the half-up
+/// output would not be idempotent — re-flooring a canonical value that rounded
+/// DOWN below its exact boundary drops a whole frame. The exact quotient only
+/// seeds the search; the corrections settle in at most one step each way.
+pub fn frame_index_floor(t_us: i64, num: u32, den: u32) -> i64 {
     let prod = (t_us as i128) * (num as i128);
     let div = (US_PER_SEC as i128) * (den as i128);
-    let frame_index = prod.div_euclid(div);
-    let rem = prod.rem_euclid(div);
-    let frame_index = if rem > 0 {
-        frame_index + 1
+    let mut i = prod.div_euclid(div) as i64;
+    while time_us_at_frame(i + 1, num, den) <= t_us {
+        i += 1;
+    }
+    while time_us_at_frame(i, num, den) > t_us {
+        i -= 1;
+    }
+    i
+}
+
+/// Index of the frame boundary NEAREST `t_us` (half-up: an exact half-frame
+/// picks the later frame). Resolved on the exact rational grid — unlike
+/// floor/ceil there is no idempotence pressure (a canonical value is always
+/// nearest to its own index), and this is the expression the golden fixture
+/// pins through `snap_frame_round`.
+pub fn frame_index_round(t_us: i64, num: u32, den: u32) -> i64 {
+    let prod = (t_us as i128) * (num as i128);
+    let div = (US_PER_SEC as i128) * (den as i128);
+    (prod + div / 2).div_euclid(div) as i64
+}
+
+/// Index of the first frame at or after `t_us`: the smallest `i` with
+/// `time_us_at_frame(i) >= t_us`. Canonical-grid, mirroring
+/// `frame_index_floor`.
+pub fn frame_index_ceil(t_us: i64, num: u32, den: u32) -> i64 {
+    let i = frame_index_floor(t_us, num, den);
+    if time_us_at_frame(i, num, den) < t_us {
+        i + 1
     } else {
-        frame_index
-    };
-    let snapped = frame_index * (US_PER_SEC as i128) * (den as i128) / (num as i128);
-    snapped as i64
+        i
+    }
+}
+
+/// Frames of the `num/den` grid inside the half-open range
+/// `[start_us, end_us)`: the count of `i >= 0` with
+/// `start_us + time_us_at_frame(i) < end_us`.
+///
+/// The count MUST come from the same predicate as the times it counts, or the
+/// tail disagrees: a `ceil(span / frame_dur)` estimate over-counts the full
+/// composition and a `round` one drops or adds a trailing frame on an arbitrary
+/// `end_us`. The export worker reads this as its output-frame total
+/// (`render/worker/frameGrid.ts`).
+pub fn frame_count(start_us: i64, end_us: i64, num: u32, den: u32) -> i64 {
+    let span = end_us - start_us;
+    if span <= 0 {
+        return 0;
+    }
+    let prod = (span as i128) * (num as i128);
+    let div = (US_PER_SEC as i128) * (den as i128);
+    let mut n = prod.div_euclid(div) as i64;
+    while n > 0 && time_us_at_frame(n - 1, num, den) >= span {
+        n -= 1;
+    }
+    while time_us_at_frame(n, num, den) < span {
+        n += 1;
+    }
+    n
+}
+
+/// Snap `t_us` DOWN to the canonical start of the frame containing it.
+pub fn snap_frame_floor(t_us: i64, num: u32, den: u32) -> i64 {
+    time_us_at_frame(frame_index_floor(t_us, num, den), num, den)
+}
+
+/// Snap `t_us` UP to the canonical start of the next frame (identity when
+/// `t_us` is already canonical).
+pub fn snap_frame_ceil(t_us: i64, num: u32, den: u32) -> i64 {
+    time_us_at_frame(frame_index_ceil(t_us, num, den), num, den)
 }
 
 /// Round `t_us` to the NEAREST `num/den`-fps frame boundary (half-up).
-/// Same i128 arithmetic as `snap_frame_floor`/`snap_frame_ceil`. For
-/// `t_us` exactly at a half-frame, snaps UP to the later frame.
 ///
-/// Use this for round-to-nearest snap of timeline mutations (move,
-/// trim, split, seek). Floor/ceil exist for the rare cases where
-/// asymmetric snap is needed.
+/// Use this for round-to-nearest snap of timeline mutations (move, trim, split,
+/// seek). Floor/ceil exist for the rare cases where asymmetric snap is needed.
 ///
-/// The OUTPUT value is also half-up rounded, matching the demuxer's
-/// source-PTS rounding (`apps/desktop/src/renderer/render/decoder/PacketPump.ts`:
-/// `Math.round(pts * 1e6)`). Without this, per-frame splits
-/// at frame indices where `N * 1_000_000 * den / num` has fractional
-/// > 0.5 (e.g. frames 2, 5, 8 at 30 fps) store `src_in_us` 1 µs below
-/// the demuxer's source PTS for the same frame, so `FrameRing.frameAt`
-/// falls into source frame N−1. The mismatch is masked at the un-moved
-/// position by `snapFrameFloor`'s half-up output (which yields a +1 µs
-/// `layerLocalUs` that cancels the offset) but surfaces the moment the
-/// layer is moved to a destination whose `t_start_us` has no truncation
-/// gap to subtract. Fixed by aligning this output rounding with the
-/// demuxer's.
+/// LANDMINE — the half-up OUTPUT (`time_us_at_frame`, not truncation) is what
+/// keeps a moved layer painting the right source frame: at frame indices where
+/// `N * 1_000_000 * den / num` has fractional > 0.5 (e.g. frames 2, 5, 8 at
+/// 30 fps) a truncating output stores `src_in_us` 1 µs below the demuxer's
+/// source PTS for that frame, so `FrameRing.frameAt` falls into source frame
+/// N−1. At the un-moved position the error is masked (the `t_start_us`
+/// truncation gap cancels it in `layerLocalUs`); it surfaces the moment the
+/// layer moves to a destination with no such gap.
+///
+/// TWIN: `renderer/frames.ts::snapFrameRound` re-exports this through wasm, and
+/// `snapFrameGolden.fixture.json` is asserted from both languages. An
+/// intentional math change means recomputing the fixture in the same turn.
 pub fn snap_frame_round(t_us: i64, num: u32, den: u32) -> i64 {
-    let prod = (t_us as i128) * (num as i128);
-    let div = (US_PER_SEC as i128) * (den as i128);
-    // Half-up: floor((prod + div/2) / div).
-    let frame_index = (prod + div / 2).div_euclid(div);
-    let num = num as i128;
-    let numer = frame_index * (US_PER_SEC as i128) * (den as i128);
-    let snapped = (numer + num / 2).div_euclid(num);
-    snapped as i64
+    time_us_at_frame(frame_index_round(t_us, num, den), num, den)
 }
 
-/// µs → sample-frame index at `rate` Hz, round half-up. The frames-per-µs ratio
-/// (48 000 / 1 000 000 = 48/1000 at 48 kHz) is exact on the grid; `i128`
-/// internally so hour-plus timelines don't overflow. Shared by the export mixer
-/// (`audio/mix.rs`) and the renderer's preview scheduler
+/// µs → AUDIO sample-frame index at `rate` Hz, round half-up. NOT a member of
+/// the video frame grid above: `rate` is an integer Hz, not a rational fps, and
+/// the frames-per-µs ratio (48 000 / 1 000 000 = 48/1000 at 48 kHz) is exact on
+/// the grid, so it needs no separate output policy. Do not overload it with video
+/// frame indices. `i128` internally so hour-plus timelines don't overflow. Shared
+/// by the export mixer (`audio/mix.rs`) and the renderer's preview scheduler
 /// (`render/audio/chunkSchedule.ts`) so both place audio on one frame grid.
 pub fn us_to_frame(us: i64, rate: u32) -> i64 {
     let prod = (us as i128) * (rate as i128);
@@ -836,31 +897,76 @@ mod tests {
         assert_eq!(mid.a, 255);
     }
 
-    // 30 fps = (30, 1); 29.97 fps = (30_000, 1001).
+    // ---- frame grid ----
+    // 30 fps = (30, 1); 29.97 fps = (30_000, 1001). At 30 fps the canonical
+    // boundaries are 0, 33_333, 66_667, 100_000, … — half-up, so consecutive
+    // integer-µs widths alternate 33_333/33_334 and NO pre-rounded frame
+    // duration reproduces them.
+
+    /// The rate matrix every grid property below is checked against: the four
+    /// broadcast fractional rates and their integer twins.
+    const RATES: [(u32, u32); 8] = [
+        (24_000, 1001),
+        (24, 1),
+        (25, 1),
+        (30_000, 1001),
+        (30, 1),
+        (50, 1),
+        (60_000, 1001),
+        (60, 1),
+    ];
+
+    const US_24H: i64 = 86_400_000_000;
+
     #[test]
-    fn snap_floor_integer_fps_at_frame_boundary() {
-        // 30 fps → frame duration ~33333.33 us. The function uses i128
-        // integer math throughout, so the asymmetry around the
-        // non-integer frame boundary lands as:
-        //   * t=0       → frame 0 starts at 0
-        //   * t=33332   → still in frame 0 (33332*30 < 1_000_000)
-        //   * t=33333   → still in frame 0 (33333*30 = 999990 < 1e6)
-        //   * t=33334   → snaps DOWN to frame 1's snapped start = 33333
-        // The asymmetry doesn't matter as long as every caller snaps
-        // with the same function (and they do).
-        assert_eq!(snap_frame_floor(0, 30, 1), 0);
-        assert_eq!(snap_frame_floor(33_332, 30, 1), 0);
-        assert_eq!(snap_frame_floor(33_333, 30, 1), 0);
-        assert_eq!(snap_frame_floor(33_334, 30, 1), 33_333);
+    fn time_us_at_frame_is_half_up() {
+        assert_eq!(time_us_at_frame(0, 30, 1), 0);
+        assert_eq!(time_us_at_frame(1, 30, 1), 33_333); // 33_333.333 → down
+        assert_eq!(time_us_at_frame(2, 30, 1), 66_667); // 66_666.667 → up
+        assert_eq!(time_us_at_frame(3, 30, 1), 100_000);
+        assert_eq!(time_us_at_frame(1, 30_000, 1001), 33_367); // 33_366.667 → up
+        assert_eq!(time_us_at_frame(2, 30_000, 1001), 66_733); // 66_733.333 → down
     }
 
     #[test]
-    fn snap_ceil_integer_fps_at_frame_boundary() {
+    fn frame_index_policies_split_the_canonical_cell() {
+        // Frame 1 at 30 fps starts at canonical 33_333. 33_332 is still frame 0
+        // for floor, already frame 1 for ceil, and frame 1 for round (past the
+        // 16_667 half-frame).
+        assert_eq!(frame_index_floor(33_332, 30, 1), 0);
+        assert_eq!(frame_index_ceil(33_332, 30, 1), 1);
+        assert_eq!(frame_index_round(33_332, 30, 1), 1);
+        // Exactly on the canonical boundary all three agree.
+        for f in [
+            frame_index_floor(33_333, 30, 1),
+            frame_index_round(33_333, 30, 1),
+            frame_index_ceil(33_333, 30, 1),
+        ] {
+            assert_eq!(f, 1);
+        }
+        // Half-frame rounds UP; one µs below it does not.
+        assert_eq!(frame_index_round(16_666, 30, 1), 0);
+        assert_eq!(frame_index_round(16_667, 30, 1), 1);
+    }
+
+    #[test]
+    fn snap_floor_lands_on_the_canonical_start_of_its_own_cell() {
+        assert_eq!(snap_frame_floor(0, 30, 1), 0);
+        assert_eq!(snap_frame_floor(33_332, 30, 1), 0);
+        assert_eq!(snap_frame_floor(33_333, 30, 1), 33_333);
+        assert_eq!(snap_frame_floor(33_334, 30, 1), 33_333);
+        // Frame 2's canonical start rounds UP from 66_666.667; a truncating
+        // output policy returned 66_666 here and left the value off-grid.
+        assert_eq!(snap_frame_floor(66_667, 30, 1), 66_667);
+        assert_eq!(snap_frame_floor(99_999, 30, 1), 66_667);
+    }
+
+    #[test]
+    fn snap_ceil_lands_on_the_next_canonical_start() {
         assert_eq!(snap_frame_ceil(0, 30, 1), 0);
-        // Just past the first frame boundary should snap to the next frame.
         assert_eq!(snap_frame_ceil(1, 30, 1), 33_333);
         assert_eq!(snap_frame_ceil(33_333, 30, 1), 33_333);
-        assert_eq!(snap_frame_ceil(33_334, 30, 1), 66_666);
+        assert_eq!(snap_frame_ceil(33_334, 30, 1), 66_667);
     }
 
     #[test]
@@ -873,18 +979,6 @@ mod tests {
         // <= one_hour by construction.
         assert!(snapped <= one_hour);
         assert!(snapped > one_hour - 50_000); // within one frame
-    }
-
-    #[test]
-    fn snap_floor_then_ceil_brackets_input() {
-        // For any t_us in the middle of a frame, floor < t_us <= ceil
-        // (or floor == t_us == ceil when on a boundary).
-        let t = 17_000_i64; // middle of frame 0 at 30 fps
-        let lo = snap_frame_floor(t, 30, 1);
-        let hi = snap_frame_ceil(t, 30, 1);
-        assert!(lo <= t);
-        assert!(t <= hi);
-        assert!(hi - lo <= 33_334); // one frame at 30 fps
     }
 
     #[test]
@@ -903,25 +997,6 @@ mod tests {
     }
 
     #[test]
-    fn snap_round_brackets_floor_and_ceil() {
-        // For any t_us, floor <= round <= ceil — within 1 µs slack on the
-        // upper bound. The slack exists because `snap_frame_round` now
-        // half-up rounds its OUTPUT (matching the demuxer) while
-        // `snap_frame_ceil` still truncates: for fractional > 0.5 frame
-        // boundaries (e.g. frame 2 at 30 fps is 66666.667 µs), ceil
-        // returns 66666 and round returns 66667. Bracket invariant holds
-        // on the FRAME INDEX; the µs output value can land 1 µs above
-        // ceil at those grid points.
-        for t in [0_i64, 10_000, 17_000, 33_333, 50_000, 99_999] {
-            let lo = snap_frame_floor(t, 30, 1);
-            let mid = snap_frame_round(t, 30, 1);
-            let hi = snap_frame_ceil(t, 30, 1);
-            assert!(lo <= mid, "floor {lo} <= round {mid} (t={t})");
-            assert!(mid <= hi + 1, "round {mid} <= ceil {hi} + 1 (t={t})");
-        }
-    }
-
-    #[test]
     fn snap_round_29_97_doesnt_overflow_at_hour_scale() {
         let one_hour = 3_600_000_000_i64;
         let snapped = snap_frame_round(one_hour, 30_000, 1001);
@@ -930,32 +1005,143 @@ mod tests {
         assert!((snapped - one_hour).abs() <= half_frame_us);
     }
 
+    /// Frame indices to probe: a dense head (where index-policy off-by-ones
+    /// live) plus a coprime stride out to 24 h, the far end of the range the
+    /// i128 math exists to keep exact.
+    fn probe_frames(num: u32, den: u32) -> Vec<i64> {
+        let last = frame_count(0, US_24H, num, den) - 1;
+        let mut out: Vec<i64> = (0..10_000_i64.min(last)).collect();
+        let mut i = 10_000_i64;
+        while i < last {
+            out.push(i);
+            i += 9973;
+        }
+        out.push(last);
+        out
+    }
+
+    #[test]
+    fn frame_index_round_trips_and_time_is_strictly_monotonic() {
+        for (num, den) in RATES {
+            let mut prev: Option<(i64, i64)> = None;
+            for i in probe_frames(num, den) {
+                let t = time_us_at_frame(i, num, den);
+                assert_eq!(
+                    frame_index_round(t, num, den),
+                    i,
+                    "{num}/{den} frame {i} → {t} did not round-trip"
+                );
+                assert_eq!(frame_index_floor(t, num, den), i, "{num}/{den} floor at {t}");
+                assert_eq!(frame_index_ceil(t, num, den), i, "{num}/{den} ceil at {t}");
+                if let Some((pi, pt)) = prev {
+                    assert!(t > pt, "{num}/{den}: frame {i} ({t}) <= frame {pi} ({pt})");
+                }
+                prev = Some((i, t));
+            }
+        }
+    }
+
+    #[test]
+    fn snap_is_idempotent_and_floor_le_round_le_ceil() {
+        for (num, den) in RATES {
+            // Canonical boundaries, their ±1 µs neighbours, cell midpoints, and
+            // hour/24 h scale — the places a policy mismatch shows up.
+            let mut probes = vec![0_i64, 1, US_24H];
+            for i in [0_i64, 1, 2, 3, 107_892, 5_183_999] {
+                let t = time_us_at_frame(i, num, den);
+                probes.extend([t - 1, t, t + 1, t + (US_PER_SEC * den as i64) / (2 * num as i64)]);
+            }
+            for t in probes.into_iter().filter(|t| *t >= 0) {
+                let lo = snap_frame_floor(t, num, den);
+                let mid = snap_frame_round(t, num, den);
+                let hi = snap_frame_ceil(t, num, den);
+                assert!(lo <= mid && mid <= hi, "{num}/{den} t={t}: {lo}/{mid}/{hi}");
+                assert!(lo <= t && t <= hi, "{num}/{den} t={t} not bracketed");
+                assert_eq!(snap_frame_floor(lo, num, den), lo, "{num}/{den} floor t={t}");
+                assert_eq!(snap_frame_round(mid, num, den), mid, "{num}/{den} round t={t}");
+                assert_eq!(snap_frame_ceil(hi, num, den), hi, "{num}/{den} ceil t={t}");
+            }
+        }
+    }
+
+    #[test]
+    fn frame_count_agrees_with_its_own_predicate() {
+        for (num, den) in RATES {
+            assert_eq!(frame_count(1_000_000, 1_000_000, num, den), 0);
+            assert_eq!(frame_count(2_000_000, 1_000_000, num, den), 0); // reversed range
+            for end in [1_i64, 999_999, 1_000_000, 10_000_000, 3_600_000_000, US_24H] {
+                let start = 500_000;
+                let n = frame_count(start, start + end, num, den);
+                if n > 0 {
+                    assert!(
+                        time_us_at_frame(n - 1, num, den) < end,
+                        "{num}/{den} end={end}: frame {} not inside",
+                        n - 1
+                    );
+                }
+                assert!(
+                    time_us_at_frame(n, num, den) >= end,
+                    "{num}/{den} end={end}: frame {n} should be past the range"
+                );
+            }
+            // A 24 h count fits well inside f64's exact-integer range, which is
+            // what lets the TS wrapper hand these across the wasm ABI as f64.
+            assert!((frame_count(0, US_24H, num, den) as f64) < 9_007_199_254_740_992.0);
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GoldenSample {
+        t_us: i64,
+        expect: i64,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenCase {
+        name: String,
+        fps_num: u32,
+        fps_den: u32,
+        samples: Vec<GoldenSample>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenFrameTime {
+        frame: i64,
+        expect: i64,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenGridSample {
+        t_us: i64,
+        floor_frame: i64,
+        round_frame: i64,
+        ceil_frame: i64,
+        floor_us: i64,
+        round_us: i64,
+        ceil_us: i64,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenGridCase {
+        name: String,
+        fps_num: u32,
+        fps_den: u32,
+        frame_times: Vec<GoldenFrameTime>,
+        samples: Vec<GoldenGridSample>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenFixture {
+        cases: Vec<GoldenCase>,
+        grid_cases: Vec<GoldenGridCase>,
+    }
+
     /// Cross-language golden vectors. The SAME fixture is asserted by
-    /// `apps/desktop/src/renderer/frames.golden.test.ts` against the TS
-    /// `snapFrameRound`; a value that passes one side and fails the other is
-    /// snap-math drift, which is exactly what this test exists to catch. On an
-    /// INTENTIONAL math change, recompute the affected `expect` values (i128
-    /// integer math) and mirror the edit in `frames.ts` the same turn.
+    /// `apps/desktop/src/renderer/frames.golden.test.ts` against the wasm-backed
+    /// TS wrappers; a value that passes one side and fails the other is snap-math
+    /// drift, which is exactly what this test exists to catch. `cases` pins
+    /// `snap_frame_round`, `grid_cases` pins `time_us_at_frame` plus the three
+    /// index policies and their µs outputs. On an INTENTIONAL math change,
+    /// recompute the affected `expect` values (i128 integer math) and mirror the
+    /// edit in `frames.ts` the same turn.
     #[test]
     fn golden_vectors_match_fixture() {
-        #[derive(serde::Deserialize)]
-        struct Sample {
-            t_us: i64,
-            expect: i64,
-        }
-        #[derive(serde::Deserialize)]
-        struct Case {
-            name: String,
-            fps_num: u32,
-            fps_den: u32,
-            samples: Vec<Sample>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Fixture {
-            cases: Vec<Case>,
-        }
-
-        let fixture: Fixture = serde_json::from_str(include_str!(
+        let fixture: GoldenFixture = serde_json::from_str(include_str!(
             "../../../src/renderer/snapFrameGolden.fixture.json"
         ))
         .expect("snap golden fixture parses");
@@ -968,6 +1154,28 @@ mod tests {
                     "case `{}` t_us={}: got {got}, expect {}",
                     case.name, s.t_us, s.expect
                 );
+            }
+        }
+        assert!(!fixture.grid_cases.is_empty());
+        for case in &fixture.grid_cases {
+            let (n, d) = (case.fps_num, case.fps_den);
+            let at = |label: &str, got: i64, expect: i64, key: i64| {
+                assert_eq!(
+                    got, expect,
+                    "grid case `{}` {label} @{key}: got {got}, expect {expect}",
+                    case.name
+                );
+            };
+            for f in &case.frame_times {
+                at("time_us_at_frame", time_us_at_frame(f.frame, n, d), f.expect, f.frame);
+            }
+            for s in &case.samples {
+                at("floor_frame", frame_index_floor(s.t_us, n, d), s.floor_frame, s.t_us);
+                at("round_frame", frame_index_round(s.t_us, n, d), s.round_frame, s.t_us);
+                at("ceil_frame", frame_index_ceil(s.t_us, n, d), s.ceil_frame, s.t_us);
+                at("floor_us", snap_frame_floor(s.t_us, n, d), s.floor_us, s.t_us);
+                at("round_us", snap_frame_round(s.t_us, n, d), s.round_us, s.t_us);
+                at("ceil_us", snap_frame_ceil(s.t_us, n, d), s.ceil_us, s.t_us);
             }
         }
     }

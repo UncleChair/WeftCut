@@ -35,6 +35,7 @@ import {
   isIntermediateCodec,
   resolveOutputDims,
 } from "../render/exportSettings";
+import { approxFrameDurUs } from "../frames";
 import { rendererOS } from "../platform";
 import {
   exportVideoSinkStart,
@@ -672,8 +673,11 @@ export function useExportFlow(deps: {
       if (total <= 0) return;
       const elapsedSec = (performance.now() - startedAtMs) / 1000;
       const fps = elapsedSec > 0 ? encoded / elapsedSec : 0;
-      const fdUs = Math.round((1_000_000 * fpsDen) / fpsNum);
-      const currentTimeUs = encoded * fdUs;
+      // `encoded * nominal` is exactly the accumulating product frames.ts warns
+      // against — fine here because nothing reads it as a grid time: it feeds
+      // the progress/speed readout, where lagging ~1 frame per hour of output
+      // is invisible.
+      const currentTimeUs = encoded * approxFrameDurUs(fpsNum, fpsDen);
       const speed = elapsedSec > 0 ? currentTimeUs / 1e6 / elapsedSec : 0;
       setExportState({
         kind: "progress",

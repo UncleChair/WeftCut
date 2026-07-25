@@ -31,6 +31,7 @@
 import { Application, Container, DOMAdapter, RenderTexture, TexturePool, WebWorkerAdapter } from "pixi.js";
 import type { WebGLRenderer } from "pixi.js";
 
+import { approxFrameDurUs } from "../../frames";
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { selectActiveVideoLayers } from "../activeVideoLayers";
 import { gopFrames } from "../exportSettings";
@@ -298,9 +299,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const endUs = Math.min(req.project.durationUs, req.endUs);
   const frameTimeUs = (i: number): number =>
     gridFrameTimeUs(startUs, i, outFpsNum, outFpsDen);
-  // Per-frame duration for the captured VideoFrame / encoder cadence only — an
-  // approximation is fine here; it never feeds the source-time grid above.
-  const frameDurUs = Math.round((1_000_000 * outFpsDen) / outFpsNum);
+  // Per-frame duration for the captured VideoFrame / encoder cadence only — the
+  // nominal value is fine here; it never feeds the source-time grid above.
+  const frameDurUs = approxFrameDurUs(outFpsNum, outFpsDen);
   const totalFrames = exportFrameCount(startUs, endUs, outFpsNum, outFpsDen);
   // Forced-keyframe cadence at the OUTPUT fps, from the caller's keyframe
   // interval (seconds); defaults to 1 second. Shared formula with the ffmpeg
