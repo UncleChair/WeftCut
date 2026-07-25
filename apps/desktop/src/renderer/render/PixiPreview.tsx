@@ -636,6 +636,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       { width: compositionWidth, height: compositionHeight },
       useAppSettingsStore.getState().settings.playback_resolution,
     );
+    // The renderer alone is not enough: the Compositor sizes the transition RT
+    // pool and each ImageOverlaySprite's decode cap off its own copy.
+    compositorRef.current?.setCompositionSize(compositionWidth, compositionHeight);
   }, [compositionWidth, compositionHeight]);
 
   // Forward summary updates to the Compositor without remounting the

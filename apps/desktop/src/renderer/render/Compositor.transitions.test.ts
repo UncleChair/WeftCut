@@ -105,6 +105,10 @@ describe("Compositor transition divert", () => {
   let renderCalls: RenderCall[];
 
   beforeEach(() => {
+    // `setCompositionSize` schedules a repaint; node has no rAF. Collect the
+    // callbacks rather than running them — these tests drive `compositeFrame`
+    // themselves (same stub as Compositor.presentation.test.ts).
+    vi.stubGlobal("requestAnimationFrame", () => 1);
     renderCalls = [];
     const renderer = {
       // "gl" selects the WebGL RT format branch; render records side bakes.
@@ -196,6 +200,32 @@ describe("Compositor transition divert", () => {
       nodes: 0,
       rt: { outstanding: 0, free: 2 },
     });
+  });
+
+  // `compositionWidth/Height` were constructor-only, so a canvas change while
+  // the project was open left the pool handing out OLD-size RTs forever.
+  it("a composition resize drains the transition RT pool", () => {
+    compositor.compositeFrame(1_500_000);
+    compositor.compositeFrame(2_500_000); // node released, both RTs back free
+    expect(compositor.getPerfSnapshot().transitions).toMatchObject({
+      rt: { free: 2, outstanding: 0 },
+    });
+
+    compositor.setCompositionSize(1280, 720);
+    expect(compositor.getPerfSnapshot().transitions).toMatchObject({
+      rt: { free: 0, outstanding: 0, destroyed: 2 },
+    });
+
+    const after = compositor.getPerfSnapshot().transitions;
+    compositor.setCompositionSize(1280, 720); // same size → no-op
+    expect(compositor.getPerfSnapshot().transitions).toEqual(after);
+  });
+
+  it("a composition resize before any transition node exists is safe", () => {
+    compositor.setCompositionSize(1280, 720);
+    expect(compositor.getPerfSnapshot().transitions).toBeNull();
+    compositor.compositeFrame(1_500_000);
+    expect(compositor.stage.children[0]).toBeInstanceOf(Mesh);
   });
 
   it("the exact window start diverts; the exact end does not", () => {

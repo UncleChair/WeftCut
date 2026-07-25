@@ -651,6 +651,31 @@ export class Compositor {
     this.pool.setPlaybackScaleDiv?.(div);
   }
 
+  /// Adopt a new composition size mid-session.
+  ///
+  /// `compositionWidth`/`compositionHeight` used to be constructor-only, so a
+  /// project whose canvas changed while open kept sizing two things for the
+  /// OLD composition: the transition RT pool, and every `ImageOverlaySprite`
+  /// already built (it bakes `maxWidth`/`maxHeight` into its animated-image
+  /// cache key at construction). Neither self-corrects — the transition pool
+  /// only re-sizes when told, and the image sweep only rebuilds a sprite whose
+  /// LAYER went away.
+  setCompositionSize(width: number, height: number): void {
+    if (width === this.compositionWidth && height === this.compositionHeight) return;
+    this.compositionWidth = width;
+    this.compositionHeight = height;
+    // Stale-size RTs are destroyed as they come back (see TransitionRtPool).
+    this.transitionNodes?.setSize(width, height);
+    // Evict image sprites so the next composite re-creates them at the new
+    // cap; same dispose pair the per-frame sweep uses.
+    for (const [layerId, i] of this.images) {
+      i.sprite.dispose();
+      i.effects.dispose();
+      this.images.delete(layerId);
+    }
+    this.scheduleRepaint();
+  }
+
   setPresentationVisible(visible: boolean): void {
     if (this.presentationVisible === visible) return;
     this.presentationVisible = visible;
