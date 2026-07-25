@@ -10,10 +10,23 @@
 // in the ring, asking for frame 9 deterministically returned frame 7
 // — the "stuck on frame N" symptom the user saw in preview.
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { FrameRing } from "./FrameRing";
+import {
+  frameRingByteBudget,
+  liveFrameRingCount,
+  resetFrameRingBudgetForTest,
+} from "./frameRingBudget";
 import { nv12FrameFromBytes } from "./nv12Frame";
+
+// Rings register themselves against a SHARED byte budget, so a ring left
+// undisposed by an earlier test would shrink every later ring's share and make
+// the byte arm of `isLookaheadFull` fire where the test never intended it to.
+// Reset the divisor per test rather than disposing 18 rings by hand.
+beforeEach(() => {
+  resetFrameRingBudgetForTest();
+});
 
 /// Stub `ImageBitmap` carrying only the fields `FrameRing` and its
 /// consumers touch. We tag each stub with `ptsUs` so the assertions
@@ -283,5 +296,161 @@ describe("strandedAheadOf", () => {
     // Exactly the boundary case the clamp still rescues vs. the first one past it.
     expect(ring.strandedAheadOf(11_600_000)).toBe(false); // 100ms gap → clamped
     expect(ring.strandedAheadOf(11_599_000)).toBe(true);
+  });
+});
+
+// The ring's retention policy is a TIME window, so it spends wildly different
+// amounts of GPU memory per source: an ImageBitmap is ~8 MB at 1080p and ~33 MB
+// at 4K. Measured, one 4K clip pinned ~1.9 GB and two asked for ~4 GB, at which
+// point three of four decoders stopped producing usable frames. These lock the
+// byte arm that bounds it — and the floors that stop it degrading into thrash.
+/// Mirrors the module's private floors. Not exported from `FrameRing` because
+/// they are policy the tests below assert, not configuration a caller sets.
+const MIN_LOOKAHEAD_FRAMES = 10;
+const BYTES_4K = 3840 * 2160 * 4;
+const BYTES_1080P = 1920 * 1080 * 4;
+
+describe("FrameRing byte budget", () => {
+  function make4k(): ImageBitmap {
+    return {
+      width: 3840,
+      height: 2160,
+      close: () => undefined,
+    } as unknown as ImageBitmap;
+  }
+
+  function make1080p(): ImageBitmap {
+    return {
+      width: 1920,
+      height: 1080,
+      close: () => undefined,
+    } as unknown as ImageBitmap;
+  }
+
+  /// Push `count` 4K frames at 30 fps, continuing from what's already there.
+  function push4k(ring: FrameRing, count: number): void {
+    const from = ring.size();
+    for (let i = from; i < from + count; i++) {
+      const ptsUs = Math.round((i * 1_000_000) / 30);
+      ring.push(make4k(), ptsUs, 33_333);
+    }
+  }
+
+  it("tallies retained bytes by frame kind, not by what JS can reach", () => {
+    const ring = new FrameRing();
+    // An ImageBitmap is GPU-backed RGBA — width × height × 4 is the real cost.
+    ring.push(make4k(), 0, 33_333);
+    expect(ring.retainedBytes).toBe(BYTES_4K);
+    // An NV12 CPU plane costs exactly its buffer.
+    const nv12 = nv12FrameFromBytes({
+      data: new Uint8Array(1920 * 1080 * 1.5),
+      width: 1920,
+      height: 1080,
+      colorSpace: null,
+      timestamp: 100_000,
+      duration: 33_333,
+    });
+    ring.push(nv12, 100_000, 33_333);
+    expect(ring.retainedBytes).toBe(BYTES_4K + 1920 * 1080 * 1.5);
+  });
+
+  it("pauses the pump on bytes before the time window is satisfied", () => {
+    // TWO rings, because the budget is sized so a SINGLE 4K clip's whole 1 s
+    // window fits under it — the byte arm is a ceiling for the multi-clip
+    // pathology, not a clamp on the cases that already measure well.
+    const rings = [new FrameRing(), new FrameRing()];
+    const ring = rings[0]!;
+    const perRing = frameRingByteBudget();
+    const untilFull = Math.floor(perRing / BYTES_4K);
+
+    push4k(ring, untilFull);
+    expect(ring.retainedBytes).toBeLessThan(perRing);
+    expect(ring.isLookaheadFull()).toBe(false);
+
+    push4k(ring, 1);
+    expect(ring.retainedBytes).toBeGreaterThan(perRing);
+    // The gap this exists to close: bytes run out while the 1 s TIME window is
+    // barely half satisfied, so without the byte arm the pump keeps filling.
+    expect(ring.lastPtsUs()!).toBeLessThan(1_000_000);
+    expect(ring.isLookaheadFull()).toBe(true);
+  });
+
+  it("never pauses below the lookahead floor, even far over budget", () => {
+    // Four rings divide the budget, so each gets 128 MB — under four 4K frames.
+    const rings = [new FrameRing(), new FrameRing(), new FrameRing(), new FrameRing()];
+    expect(liveFrameRingCount()).toBe(4);
+    const ring = rings[0]!;
+    push4k(ring, MIN_LOOKAHEAD_FRAMES - 1);
+    // Way over its 128 MB share, but starving the pump here would break the
+    // warm-up gate, which needs ~150 ms of ring before it releases the clock.
+    expect(ring.retainedBytes).toBeGreaterThan(frameRingByteBudget());
+    expect(ring.isLookaheadFull()).toBe(false);
+    push4k(ring, 1);
+    expect(ring.isLookaheadFull()).toBe(true);
+  });
+
+  it("does NOT trim lookbehind on byte pressure — only its time window evicts", () => {
+    // Measured regression guard: an earlier version trimmed lookbehind to
+    // reclaim the ~0.5 GB a 4K one holds, and the frames it dropped were
+    // immediately re-requested — decode throughput rose 40 % and drops went
+    // 7.2 % → 55.5 %, because a re-seek on a long GOP re-decodes its prefix.
+    const rings = [new FrameRing(), new FrameRing(), new FrameRing(), new FrameRing()];
+    const ring = rings[0]!;
+    push4k(ring, 30); // 1 s of 4K ≈ 995 MB against a 256 MiB share
+    expect(ring.retainedBytes).toBeGreaterThan(frameRingByteBudget());
+
+    // Anchor at the last frame. Lookbehind is 0.5 s, so the time window keeps
+    // the trailing ~15 frames and byte pressure must not take them.
+    ring.setAnchor(Math.round((29 * 1_000_000) / 30));
+    expect(ring.size()).toBeGreaterThan(MIN_LOOKAHEAD_FRAMES);
+    expect(ring.retainedBytes).toBeGreaterThan(frameRingByteBudget());
+  });
+
+  it("keeps a single 1080p clip's window intact — the case that measures well today", () => {
+    const ring = new FrameRing();
+    // 47 frames is what a smooth 1080p single-clip session held before the
+    // budget existed; it must still fit or this change trades a 4K fix for a
+    // 1080p regression.
+    for (let i = 0; i < 47; i++) {
+      const ptsUs = Math.round((i * 1_000_000) / 30);
+      ring.push(make1080p(), ptsUs, 33_333);
+    }
+    // 47 × 8.3 MB = 390 MB, comfortably inside the 512 MiB budget, so the byte
+    // arm never fires and eviction is still driven purely by the time window.
+    // (`isLookaheadFull` is true here on the TIME arm — 47 frames at 30 fps
+    // spans 1.53 s past a 1 s lookahead — which is pre-existing behaviour.)
+    expect(ring.retainedBytes).toBe(47 * BYTES_1080P);
+    expect(ring.retainedBytes).toBeLessThan(frameRingByteBudget());
+    expect(ring.size()).toBe(47);
+    ring.setAnchor(Math.round((15 * 1_000_000) / 30));
+    expect(ring.size()).toBe(47); // nothing trimmed: not over budget
+  });
+
+  it("dispose is idempotent, so a double call can't shrink every other ring", () => {
+    const soleShare = frameRingByteBudget(); // no rings live yet → the whole total
+    const a = new FrameRing();
+    const b = new FrameRing();
+    expect(liveFrameRingCount()).toBe(2);
+    expect(frameRingByteBudget()).toBe(soleShare / 2);
+    a.dispose();
+    a.dispose();
+    expect(liveFrameRingCount()).toBe(1);
+    // `b` is back to the whole budget, not a third of it.
+    expect(frameRingByteBudget()).toBe(soleShare);
+    b.dispose();
+    expect(liveFrameRingCount()).toBe(0);
+  });
+
+  it("flush and eviction keep the tally honest", () => {
+    const ring = new FrameRing();
+    push4k(ring, 5);
+    expect(ring.retainedBytes).toBe(5 * BYTES_4K);
+    // Anchor past everything: all five fall outside the lookbehind window.
+    ring.setAnchor(10_000_000);
+    expect(ring.size()).toBe(0);
+    expect(ring.retainedBytes).toBe(0);
+    push4k(ring, 3);
+    ring.flush();
+    expect(ring.retainedBytes).toBe(0);
   });
 });

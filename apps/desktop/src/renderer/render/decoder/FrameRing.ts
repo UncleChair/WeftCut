@@ -8,10 +8,31 @@
 //
 // Plan: docs/render.md §Decoder pool — 1 s lookahead / 0.5 s lookbehind per clip
 
+import {
+  frameRingByteBudget,
+  registerFrameRing,
+  unregisterFrameRing,
+} from "./frameRingBudget";
+import { isNativeNv12Frame } from "./nv12Frame";
 import type { TransportFrame } from "./transports/DecodeTransport";
 
 const DEFAULT_LOOKAHEAD_US = 1_000_000;
 const DEFAULT_LOOKBEHIND_US = 500_000;
+
+/// Frames ahead of the anchor the byte budget may NEVER pause the pump below.
+/// The window is what degrades under memory pressure, but not to the point of
+/// thrash: `PlaybackEngine`'s warm-up gate needs ~150 ms of ring past the play
+/// position before it releases the clock, which is 10 frames at 60 fps content.
+/// This floor OVERRIDES the budget — see frameRingBudget.ts.
+const MIN_LOOKAHEAD_FRAMES = 10;
+
+/// LANDMINE: lookbehind is evicted by its TIME window only — the byte budget
+/// deliberately does not trim it. An earlier version did, to reclaim the ~0.5 GB
+/// a 4K lookbehind holds, and it measurably backfired: the shallower ring got
+/// its trimmed frames re-requested, and on a long-GOP source a single re-seek
+/// re-decodes the whole GOP prefix. Decode throughput rose 40 % and drops went
+/// 7.2 % → 55.5 %. Byte pressure is expressed on the FORWARD fill only
+/// (`isLookaheadFull`), where pausing costs nothing already decoded.
 
 /// Maximum gap (microseconds) between requested `tUs` and the ring's
 /// first entry's PTS for `frameAt` to clamp to the first entry. Within
@@ -41,10 +62,42 @@ export class FrameRing {
   private lookaheadUs: number;
   private lookbehindUs: number;
   private _pushCount = 0;
+  private _retainedBytes = 0;
+  private disposed = false;
 
   constructor(init: FrameRingInit = {}) {
     this.lookaheadUs = init.lookaheadUs ?? DEFAULT_LOOKAHEAD_US;
     this.lookbehindUs = init.lookbehindUs ?? DEFAULT_LOOKBEHIND_US;
+    registerFrameRing();
+  }
+
+  /// Decoded-frame bytes this ring is holding. An `ImageBitmap` is GPU-backed
+  /// RGBA, so its cost is not `byteLength` of anything reachable from JS —
+  /// width × height × 4 is the honest figure.
+  get retainedBytes(): number {
+    return this._retainedBytes;
+  }
+
+  private static bytesOf(frame: TransportFrame): number {
+    return isNativeNv12Frame(frame)
+      ? frame.data.byteLength
+      : frame.width * frame.height * 4;
+  }
+
+  /// Drop the oldest entry, keeping the byte tally in step.
+  private evictFirst(): void {
+    const first = this.entries.shift();
+    if (!first) return;
+    this._retainedBytes -= FrameRing.bytesOf(first.frame);
+    first.frame.close();
+  }
+
+  /// Count of entries at or after the anchor. `entries` also holds lookbehind,
+  /// so this — not `entries.length` — is what a lookahead floor must compare.
+  private framesAhead(): number {
+    if (this.entries.length === 0) return 0;
+    if (this.entries[0]!.ptsUs >= this.anchorUs) return this.entries.length;
+    return this.entries.length - 1 - this.findLatestAtOrBefore(this.anchorUs);
   }
 
   /// Monotonic count of frames accepted into the ring since construction.
@@ -62,8 +115,7 @@ export class FrameRing {
     while (this.entries.length > 0) {
       const first = this.entries[0]!;
       if (first.ptsUs + first.durationUs <= minKeepUs) {
-        first.frame.close();
-        this.entries.shift();
+        this.evictFirst();
       } else {
         break;
       }
@@ -80,11 +132,20 @@ export class FrameRing {
     );
   }
 
-  /// True if the decode pump should pause — the lookahead is full.
+  /// True if the decode pump should pause — the lookahead is full, EITHER in
+  /// time or in retained bytes.
+  ///
+  /// The byte arm is the backpressure that keeps a 4K timeline from pinning
+  /// gigabytes of GPU-backed bitmaps: pausing here stops the decode *before*
+  /// the bytes are allocated, rather than decoding and then evicting. It is
+  /// floored on frames AHEAD of the anchor so the pump can never be starved
+  /// into thrash and the warm-up gate still clears.
   isLookaheadFull(): boolean {
     const last = this.entries[this.entries.length - 1];
     if (!last) return false;
-    return last.ptsUs >= this.anchorUs + this.lookaheadUs;
+    if (last.ptsUs >= this.anchorUs + this.lookaheadUs) return true;
+    if (this._retainedBytes < frameRingByteBudget()) return false;
+    return this.framesAhead() >= MIN_LOOKAHEAD_FRAMES;
   }
 
   /// Push a decoded frame. Caller transfers ownership; we close the frame on
@@ -98,6 +159,7 @@ export class FrameRing {
       return;
     }
     this._pushCount += 1;
+    this._retainedBytes += FrameRing.bytesOf(frame);
     // Fast path: append in order. The proxy disables B-frames
     // (`-bf 0`, see proxy.rs) so the decoder emits frames in PTS
     // order; the async `createImageBitmap` step is sequenced via
@@ -184,6 +246,7 @@ export class FrameRing {
   flush(): void {
     for (const e of this.entries) e.frame.close();
     this.entries = [];
+    this._retainedBytes = 0;
   }
 
   size(): number {
@@ -244,7 +307,12 @@ export class FrameRing {
     return lo;
   }
 
+  /// Idempotent: a second call must not unregister twice, or every OTHER live
+  /// ring silently gets a smaller share of the byte budget.
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.flush();
+    unregisterFrameRing();
   }
 }
