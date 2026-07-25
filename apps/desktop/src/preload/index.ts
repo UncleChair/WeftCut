@@ -381,22 +381,13 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 // landed. Once this returns, the read is done, so the slot is safe to recycle.
 // One reused 1×1 canvas; the readback is a pipeline flush, not a frame-sized
 // transfer.
-//
-// LANDMINE: the 9-argument `drawImage` is load-bearing. The 5-argument form
-// (`drawImage(bmp, 0, 0, 1, 1)`) means "minify the WHOLE 8.3 MP bitmap into a
-// 1×1 destination" — a full-frame resample nobody needs, measured at ~17 ms p50
-// per session at 4K, which made this barrier the dominant per-frame cost on the
-// hardware lane (three concurrent sessions ⇒ ~52 ms against a 33 ms budget).
-// The source-rect form copies ONE texel and is equally sound as a barrier: an
-// ImageBitmap is produced by a single copy, so reading any part of it still
-// requires that copy to have completed.
 let readBarrierCtx: OffscreenCanvasRenderingContext2D | null | undefined
 function forceSharedTextureReadComplete(bmp: ImageBitmap): void {
   if (readBarrierCtx === undefined) {
     readBarrierCtx = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true })
   }
   if (!readBarrierCtx) return // no 2D context available — barrier unavailable
-  readBarrierCtx.drawImage(bmp, 0, 0, 1, 1, 0, 0, 1, 1)
+  readBarrierCtx.drawImage(bmp, 0, 0, 1, 1)
   readBarrierCtx.getImageData(0, 0, 1, 1)
 }
 
