@@ -13,7 +13,7 @@
 import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
-import type { PreviewGpuTimingReport } from '../shared/ipc'
+import { HW_BUDGET_EXCEEDED, type PreviewGpuTimingReport } from '../shared/ipc'
 import { clearMainPendingFor } from './previewGpuTiming.js'
 
 interface GpuSession {
@@ -82,7 +82,7 @@ async function doOpenPreviewGpu(
   // Budget gate FIRST — before any native allocation. The throw rejects the
   // `previewGpu:open` invoke; the renderer's resolver treats 'hw-budget-exceeded'
   // as a sticky downgrade off tier 1 rather than a hard failure.
-  if (sessions.size >= MAX_HW_SESSIONS) throw new Error('hw-budget-exceeded')
+  if (sessions.size >= MAX_HW_SESSIONS) throw new Error(HW_BUDGET_EXCEEDED)
   const info = backend.previewGpuOpen(streamId, path, poolSize)
   const imported: SharedTextureImported[] = []
   try {

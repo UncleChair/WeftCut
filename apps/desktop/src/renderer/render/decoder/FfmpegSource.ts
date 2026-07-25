@@ -12,6 +12,7 @@ import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
 import type { FfmpegLaneResolution } from "./ffmpegCapability";
+import { HW_BUDGET_EXCEEDED } from "../../../shared/ipc";
 
 const IDLE_DISPOSE_MS = 5_000;
 let nextStreamSeq = 0;
@@ -130,12 +131,22 @@ export class FfmpegSource implements PreviewDecodeSession {
       await this.openLane(this.lane);
     } catch (err) {
       if (this._disposed) return;
-      // A HARDWARE open failure (hw-budget-exceeded, device lost at open) is
-      // recoverable the same way a runtime HW error is — fall to SW in place,
-      // keeping the ring. Not for a forced lane (bench) or a software open
-      // (that IS total failure).
+      // A HARDWARE open failure (budget full, device lost at open) is recoverable
+      // the same way a runtime HW error is — fall to SW in place, keeping the ring.
+      // Not for a forced lane (bench) or a software open (that IS total failure).
+      const reason = err instanceof Error ? err.message : String(err);
       if (this.startedHardware && this.lane === "hardware" && !this.init.forceLane) {
-        markHwUnusable(this.mediaId, err instanceof Error ? err.message : String(err));
+        // LANDMINE: only a CAPABILITY failure may be recorded. `markHwUnusable` is
+        // a sticky per-MEDIA, session-lifetime verdict, and the HW-session budget
+        // is a transient CAPACITY limit — so marking it pinned the source to
+        // software for the rest of the app session the moment it ever had more
+        // than MAX_HW_SESSIONS overlapping clips, and kept it there after the
+        // extra clips were deleted. Symptom: a single 4K clip that had been fine
+        // suddenly previews through the software lane (12.4 MB NV12 per frame over
+        // IPC instead of a shared texture) and stutters, with nothing on the
+        // timeline to explain it. Fall back for THIS open only; the next open
+        // re-probes and takes hardware again once a session frees up.
+        if (!reason.includes(HW_BUDGET_EXCEEDED)) markHwUnusable(this.mediaId, reason);
         this.transport?.dispose();
         this.transport = null;
         try {
@@ -146,7 +157,7 @@ export class FfmpegSource implements PreviewDecodeSession {
           throw swErr;
         }
       } else {
-        this.fireFatal(err instanceof Error ? err.message : String(err));
+        this.fireFatal(reason);
         throw err;
       }
     }

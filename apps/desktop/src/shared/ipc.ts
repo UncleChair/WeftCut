@@ -82,6 +82,16 @@ export type PreviewGpuColorSpace = {
 /// size (native may hand back fewer slots than requested).
 export type PreviewGpuOpenReply = { width: number; height: number; poolSize: number }
 
+/// Reason `previewGpu:open` rejects with when the concurrent-HW-session budget is
+/// full. A CAPACITY condition, not a capability one: the same media on the same
+/// machine opens on hardware again as soon as a session frees up. Callers must
+/// treat it as "software for THIS open" and must NOT record it as a per-media
+/// hardware verdict (see `FfmpegSource`'s open-failure branch — doing so pinned a
+/// source to software for the rest of the app session the first time it ever had
+/// more than MAX_HW_SESSIONS overlapping clips, and kept it there after the extra
+/// clips were deleted). Shared so main and the renderer can't drift on the string.
+export const HW_BUDGET_EXCEEDED = 'hw-budget-exceeded'
+
 /// Per-metric ms summary from the native preview timing accumulator (decode-bench
 /// Stage 3). Field names are the napi camelCase of the Rust `TimingSummary`.
 export type PreviewGpuTimingSummary = {

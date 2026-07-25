@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FfmpegSource } from "./FfmpegSource";
+import { pickInitialLane, resetFfmpegCapabilitySession } from "./ffmpegCapability";
+import { HW_BUDGET_EXCEEDED } from "../../../shared/ipc";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 
 function fakeTransport(opts?: { openRejects?: string }) {
@@ -246,6 +248,59 @@ describe("FfmpegSource — hardware transport routing by HW lane (C2.2)", () => 
     expect(src.currentLane()).toBe("hardware");
     expect(gpu.t.open).toHaveBeenCalled();
     expect(sw.t.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("FfmpegSource — HW open failure: capacity vs capability", () => {
+  // `markHwUnusable` is a sticky per-MEDIA, session-lifetime verdict. The
+  // concurrent-HW-session budget is a transient CAPACITY limit, so recording it
+  // pinned a source to the software lane for the rest of the app session the
+  // moment it ever had more than MAX_HW_SESSIONS overlapping clips — and kept it
+  // there after the extra clips were deleted. Symptom: a single 4K clip that had
+  // been fine suddenly stutters through the SW lane with nothing on the timeline
+  // to explain it.
+  const openFails = (reason: string) => {
+    const gpu = fakeTransport({ openRejects: reason });
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m-cap", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
+    );
+    return { src, gpu, sw };
+  };
+
+  /// Ask the REAL resolver what the next open for this media would pick, with a
+  /// probe stub that always reports hardware available. A marked media short-
+  /// circuits to software WITHOUT probing, so `probed` distinguishes the two
+  /// states without needing the marker set exported.
+  const nextOpenLane = async (mediaId: string) => {
+    let probed = false;
+    const res = await pickInitialLane(
+      { mediaId, codec: "h264", pixFmt: "yuv420p", width: 3840, height: 2160, componentAvailable: true },
+      async () => { probed = true; return { ok: true, lane: "d3d11va", device: null }; },
+      "C:/x.mp4",
+    );
+    return { lane: res.lane, probed };
+  };
+
+  beforeEach(() => resetFfmpegCapabilitySession());
+
+  it("falls back to software for a budget failure WITHOUT marking the media", async () => {
+    const { src, sw } = openFails(HW_BUDGET_EXCEEDED);
+    await src.ensureReady();
+    expect(src.currentLane()).toBe("software"); // this open degrades…
+    expect(sw.t.open).toHaveBeenCalled();
+    // …but the media's verdict is untouched, so the NEXT open re-probes and takes
+    // hardware again once a session frees up.
+    expect(await nextOpenLane("m-cap")).toEqual({ lane: "hardware", probed: true });
+  });
+
+  it("still records a genuine capability failure (device lost at open)", async () => {
+    const { src } = openFails("d3d11 device creation failed");
+    await src.ensureReady();
+    expect(src.currentLane()).toBe("software");
+    // Sticky, as intended: the next open skips hardware without even probing.
+    expect(await nextOpenLane("m-cap")).toEqual({ lane: "software", probed: false });
   });
 });
 
