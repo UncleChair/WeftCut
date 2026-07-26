@@ -183,15 +183,29 @@ means for licensing.
 - **HW transport** — Windows d3d11va: a pooled shared GPU texture reaches the
   compositor with zero pixel bytes crossing IPC. The preload isolated world
   builds each `ImageBitmap` from the shared slot and forwards it over a
-  MessagePort. A **cross-device read-completion barrier** guards correctness:
-  before a slot recycles, the preload rasterizes a 1px sample of the bitmap to
-  force Chromium to materialize its `createImageBitmap` copy — which cannot
-  finish until the GPU-process read of ffmpeg's own-device texture has landed.
-  Without it, the producer could overwrite a slot mid-read and deliver a later
-  frame's pixels tagged with an earlier PTS (the B-frame reorder that
-  `preview-gpu-order.spec.ts` locks: each frame carries a barcode of its index
-  and every delivered bitmap must match its PTS-derived index). It is
-  codec-agnostic and the readback is a pipeline flush, not a frame transfer.
+  MessagePort. Codec-agnostic — nothing on the path inspects the bitstream.
+- **A slot's recycling waits for the GPU read; its delivery doesn't.** ffmpeg
+  overwrites a slot in place as soon as it is acked, on its own D3D11 device,
+  while Chromium reads that texture on the GPU process's — a cross-device
+  dependency Chromium cannot track, so `await createImageBitmap` resolving is
+  not the read having landed. Ack too early and the producer overwrites the slot
+  mid-read, delivering a later frame's pixels tagged with an earlier PTS
+  (`preview-gpu-order.spec.ts` locks this: every frame carries a barcode of its
+  index and every delivered bitmap must match its PTS-derived index, on one
+  session and on three concurrent ones). What has to wait is **recycling**, not
+  **delivery** — treating the two as one costs a display interval on the
+  renderer thread for every frame of every session. So the preload submits the
+  copy on the GPU, takes a fence, hands the bitmap to the renderer immediately,
+  and acks the slot only once that fence signals, polled off the critical path.
+  A fence still unsignalled at its deadline is force-waited and then acked
+  regardless: one possibly-torn frame is the smaller harm, since `pool_size`
+  stranded slots wedge the session for good. On an idle GPU nothing forces the
+  pipeline along, so fences signal late there and a single quiet track
+  force-waits a meaningful share of its frames — about what a synchronous
+  barrier costs on the same clip, and it recedes as soon as a second track keeps
+  the queue moving. `HwBarrierMode` (`shared/ipc.ts`) names the strategies; the
+  synchronous 1px readback — a pipeline flush, not a frame transfer — stays
+  available as the fallback and the A/B control.
 - **SW transport** — libavcodec decodes the original in the main process and
   ships NV12 bytes over classic IPC ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
   The bytes ring as `NativeNv12Frame`s and convert to RGB in the compositor's
