@@ -13,7 +13,12 @@
 import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
-import { HW_BUDGET_EXCEEDED, type PreviewGpuBudget, type PreviewGpuTimingReport } from '../shared/ipc'
+import {
+  HW_BUDGET_EXCEEDED,
+  type HwBarrierMode,
+  type PreviewGpuBudget,
+  type PreviewGpuTimingReport,
+} from '../shared/ipc'
 import { clearMainPendingFor } from './previewGpuTiming.js'
 
 interface GpuSession {
@@ -33,6 +38,23 @@ const sessions = new Map<string, GpuSession>()
 /// steady-state. Over-budget opens throw the typed reason the renderer's
 /// resolver maps to a per-source downgrade to the next tier.
 const MAX_HW_SESSIONS = 3
+
+/// Barrier strategy the preload applies before acking a slot, read ONCE from
+/// `WEFTCUT_HW_BARRIER` and reported on every open reply (see `HwBarrierMode`
+/// for what each mode does). Main owns the decision rather than the preload so
+/// one process reads the environment and every session agrees on the answer.
+///
+/// Anything unset or unrecognised is `fence`, the shipped default — it cleared
+/// the order gate (pool 1/3/5, and three concurrent sessions) and takes 1080p
+/// hardware from 2 smooth tracks to 4. Silent defaulting stays deliberate: a
+/// typo'd mode must degrade to a mode that ORDERS CORRECTLY, so the fall-through
+/// can only ever be `fence` or `readback`, never the reordering `none`/`gpuflush`.
+const HW_BARRIER_MODE: HwBarrierMode =
+  process.env.WEFTCUT_HW_BARRIER === 'readback' ||
+  process.env.WEFTCUT_HW_BARRIER === 'gpuflush' ||
+  process.env.WEFTCUT_HW_BARRIER === 'none'
+    ? process.env.WEFTCUT_HW_BARRIER
+    : 'fence'
 
 /// Live HW-session count (for the renderer's budget-aware resolution + tests).
 export function hwSessionCount(): number {
@@ -73,7 +95,7 @@ export function openPreviewGpu(
   path: string,
   poolSize: number,
   colorSpace: ColorSpace,
-): Promise<{ width: number; height: number; poolSize: number }> {
+): Promise<{ width: number; height: number; poolSize: number; barrierMode: HwBarrierMode }> {
   // Serialise: run after whatever open is already in flight, succeeded or not
   // (hence the `.catch`, so one failed open doesn't poison the chain).
   const mine = openChain
@@ -90,11 +112,28 @@ async function doOpenPreviewGpu(
   path: string,
   poolSize: number,
   colorSpace: ColorSpace,
-): Promise<{ width: number; height: number; poolSize: number }> {
+): Promise<{ width: number; height: number; poolSize: number; barrierMode: HwBarrierMode }> {
   // Budget gate FIRST — before any native allocation. The throw rejects the
   // `previewGpu:open` invoke; the renderer's resolver treats 'hw-budget-exceeded'
   // as a sticky downgrade off tier 1 rather than a hard failure.
   if (sessions.size >= MAX_HW_SESSIONS) throw new Error(HW_BUDGET_EXCEEDED)
+  // Latch the barrier mode in the preload. WHERE THIS SITS IS THE CONTRACT:
+  // after the budget gate (a refused open must not latch a stream that will
+  // never produce a frame) and before `previewGpuOpen` (which starts the decode
+  // thread — the first thing that can emit a frameReady poke).
+  //
+  // `evt:previewGpu:barrier` and `evt:previewGpu:frameReady` are the SAME
+  // ordered webContents channel, so sending here — before the producer exists —
+  // is what guarantees the preload has the mode before any frame of this stream
+  // arrives. Move this below the native open and the race silently returns: an
+  // early frame finds no latch, stamps the preload's unlatched fallback, later
+  // frames stamp the configured mode, and the session reports two applied modes.
+  // That reads as an INVALID bench cell, not a slow one.
+  //
+  // The open reply can't carry this job (though it still carries the value, as
+  // the configured label to check the observed one against): an invoke reply is
+  // a separate channel, and it loses to frameReady once 2+ sessions are opening.
+  win.webContents.send('evt:previewGpu:barrier', { streamId, mode: HW_BARRIER_MODE })
   const info = backend.previewGpuOpen(streamId, path, poolSize)
   const imported: SharedTextureImported[] = []
   try {
@@ -135,7 +174,7 @@ async function doOpenPreviewGpu(
     throw err
   }
   sessions.set(streamId, { imported, width: info.width, height: info.height })
-  return { width: info.width, height: info.height, poolSize: info.slots.length }
+  return { width: info.width, height: info.height, poolSize: info.slots.length, barrierMode: HW_BARRIER_MODE }
 }
 
 /// Move the session's decode anchor. targetUs is source microseconds; the addon

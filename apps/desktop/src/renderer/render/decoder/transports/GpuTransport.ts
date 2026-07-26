@@ -12,9 +12,13 @@
 // This is the transport half only — no FrameRing, no first-frame/fatal-error
 // hooks, no idle bookkeeping. Those stay with `FfmpegSource` (the caller),
 // which owns exactly one `DecodeTransport` at a time.
-import type { PreviewGpuColorSpace } from "../../../../shared/ipc";
+import type { HwBarrierMode, PreviewGpuColorSpace } from "../../../../shared/ipc";
 import type { DecodeTransport, DecodeTransportOpen } from "./DecodeTransport";
-import { HandoffTimings, type HandoffTimingSummary } from "./handoffTimings";
+import {
+  HandoffTimings,
+  type FenceHandoffStats,
+  type HandoffTimingSummary,
+} from "./handoffTimings";
 
 /// How long to wait for the preload's port handoff before `open()` rejects.
 /// Generous — this is a one-time same-process `postMessage` round-trip, not a
@@ -35,8 +39,24 @@ interface PortFrameMsg {
   cibMs?: number;
   residentMs?: number;
   /// The read-completion barrier, stamped directly around the drain rather than
-  /// derived from the other three.
+  /// derived from the other three. `barrierMs` is the TOTAL for whichever
+  /// barrier mode the preload ran; the other two split it into its GPU-copy and
+  /// CPU-read phases (see `BarrierCost` in preload/index.ts — the readback's two
+  /// halves are not separable from the total alone).
   barrierMs?: number;
+  barrierDrawMs?: number;
+  barrierReadMs?: number;
+  /// The barrier that actually RAN for this frame, which is not always the one
+  /// configured: the preload falls back from `gpuflush` to `readback` when
+  /// WebGL2 is missing. A bench leg labelled by intent instead of by outcome
+  /// silently reports the wrong variant's cost.
+  barrierApplied?: HwBarrierMode;
+  /// Health of the deferred-ack fence path, present only while it is running.
+  /// The wait it defers is NOT in `barrierMs` — that stays the blocking cost, so
+  /// a mechanism that MOVED the cost can't read as one that removed it. The one
+  /// exception is `forcedWaitMsTotal`: a deadline spin IS blocking, and reading
+  /// barrier cost without it understates the path to near zero.
+  fence?: FenceHandoffStats;
 }
 interface PortEofMsg {
   kind: "eof";
@@ -173,7 +193,16 @@ export class GpuTransport implements DecodeTransport {
         data.bitmap?.close?.();
         return;
       }
-      this.timings.record(data.gvfMs, data.cibMs, data.residentMs, data.barrierMs);
+      this.timings.record(
+        data.gvfMs,
+        data.cibMs,
+        data.residentMs,
+        data.barrierMs,
+        data.barrierDrawMs,
+        data.barrierReadMs,
+        data.barrierApplied,
+        data.fence,
+      );
       this.frameCb?.(data.bitmap, data.ptsUs, data.durUs);
     } else if (data.kind === "eof") {
       this.eofCb?.();

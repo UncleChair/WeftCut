@@ -78,9 +78,54 @@ export type PreviewGpuColorSpace = {
   range: 'limited' | 'full' | 'derived' | 'invalid'
 }
 
+/// Which read-completion barrier the preload runs between snapshotting a slot's
+/// shared texture and acking it back to the native pool. The product ships one
+/// of these (`fence`); the others exist so a bench can A/B against it. Main
+/// resolves the mode from an env var (`WEFTCUT_HW_BARRIER`, see
+/// src/main/previewGpu.ts) and every session reports the one it applied.
+///
+///   fence    — THE DEFAULT. Submit the copy on the GPU, then defer the slot's
+///              ack until a fence reports COMPLETION, polled off the critical
+///              path. Same hard completion signal `readback` gives, without the
+///              wait on the loop: 1080p hardware goes from 2 smooth tracks to 4,
+///              tick p99 at 3 tracks 39.8 → 17.0ms, and 4K single-track stops
+///              dropping 21% of its frames. What it does NOT fix: a single IDLE
+///              track still force-spins ~2s per 20s window (tick p99 23.7 vs
+///              `readback`'s 22.6 — no worse than what it replaces, but not
+///              clean). That is GPU-process scheduling latency on an idle
+///              context, where a fence barely signals on its own; tracked
+///              separately, and NOT fixable by widening the spin deadline (see
+///              `FENCE_DEADLINE_MS` — the wider bound measured worse).
+///   readback — no longer the default, but still CORRECT and shipped for years:
+///              rasterize + read back 1px, which blocks until Chromium's
+///              cross-device read has GPU-completed. ~20ms of renderer-thread
+///              time per frame — the wall that capped hardware preview at 2
+///              smooth 1080p tracks. Now the A/B control and the safe fallback.
+///   gpuflush — force the copy on the GPU only (texImage2D + flush), no CPU
+///              readback. MEASURED AND REJECTED: reorders exactly as `none`
+///              does, so submitting the copy is not what the ack was waiting
+///              for — completion is. Kept only to re-run that comparison, and
+///              it is the finding `fence` is built on.
+///   none     — no barrier. KNOWN-INCORRECT: the lane presents frames pool_size
+///              out of order (see the block comment in src/preload/index.ts).
+///              It exists to measure the barrier's cost ceiling, nothing else.
+export type HwBarrierMode = 'readback' | 'fence' | 'gpuflush' | 'none'
+
 /// Reply of `previewGpu.open`: decoded stream dimensions + the realized pool
 /// size (native may hand back fewer slots than requested).
-export type PreviewGpuOpenReply = { width: number; height: number; poolSize: number }
+export type PreviewGpuOpenReply = {
+  width: number
+  height: number
+  poolSize: number
+  /// Barrier strategy main resolved for this session (see `HwBarrierMode`).
+  /// The CONFIGURED value, for a caller that wants to cross-check what it got.
+  /// It is NOT how the preload learns the mode — a reply can be overtaken by
+  /// the frames it describes, which cost a bench run: frames landing first
+  /// missed the latch, ran the fallback, and invalidated every multi-track
+  /// cell. The latch rides `evt:previewGpu:barrier`, sent before the native
+  /// session exists on the same ordered channel as the frames themselves.
+  barrierMode: HwBarrierMode
+}
 
 /// Reason `previewGpu:open` rejects with when the concurrent-HW-session budget is
 /// full. A CAPACITY condition, not a capability one: the same media on the same
