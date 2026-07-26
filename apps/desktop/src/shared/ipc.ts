@@ -92,6 +92,13 @@ export type PreviewGpuOpenReply = { width: number; height: number; poolSize: num
 /// clips were deleted). Shared so main and the renderer can't drift on the string.
 export const HW_BUDGET_EXCEEDED = 'hw-budget-exceeded'
 
+/// Live concurrent-HW-session budget: sessions currently registered in main
+/// (`used`) against the cap that makes the next open throw `HW_BUDGET_EXCEEDED`
+/// (`max`). Read-only diagnostics — nothing decides a lane on it; the authority
+/// is still main's gate inside `previewGpu:open`. It exists so a lane readout
+/// (PerfHUD, e2e) can say WHY a clip is on software rather than only that it is.
+export type PreviewGpuBudget = { used: number; max: number }
+
 /// Per-metric ms summary from the native preview timing accumulator (decode-bench
 /// Stage 3). Field names are the napi camelCase of the Rust `TimingSummary`.
 export type PreviewGpuTimingSummary = {
@@ -327,6 +334,10 @@ export interface WeftcutApi {
     /// can tell its own port from another concurrent session's — the post is a
     /// broadcast every live transport hears.
     requestPort(streamId: string): void
+    /// Live concurrent-HW-session budget (see `PreviewGpuBudget`). Diagnostics —
+    /// the open gate in main is still the authority; a caller must not pre-check
+    /// this and skip the open.
+    budget(): Promise<PreviewGpuBudget>
     /// E2E/bench-only: drain this session's per-frame timing samples. Rejects
     /// for an unknown stream, or with "preview-gpu not built" off the native path.
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport>

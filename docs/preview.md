@@ -241,9 +241,26 @@ not a verdict about the source.
 **Sticky, per-source, no re-promotion.** A HW *failure* marks this source
 software-only for the rest of the session; a total ffmpeg failure under `auto`
 marks the source `webcodecs` for the session. Neither re-promotes — reopening
-the source (reload / re-import) is what clears it. The budget throw above is the
-one exception, and deliberately so: it is per-open, so the next open re-probes
-and takes hardware again once a session frees up.
+the source (reload / re-import) is what clears it.
+
+The budget throw is different in kind but not in effect. It records no verdict,
+so it does not spread: a *different* clip on the same media probes normally and
+takes hardware while the over-budget one sits on software. What it also does not
+do is come back. Lane selection runs once per decode session, at
+`pickInitialLane`, and a decode session outlives the timeline edit that would
+free a slot — `SourceDecoderPool` keys sources by layer id and drops one only on
+its idle sweep (the clip stops being requested for several seconds), a
+resolver-key change (a proxy landing, an engine flip), or a pool teardown
+(reload, re-import, export suspend). So deleting the other clips does not
+re-promote the clip that lost the race, and neither does reopening the project:
+the same layer id gets the same, already-downgraded source handed back. The
+budget is per-open; the *asking* is per-source-lifetime, and that is what
+decides.
+
+The live budget is readable — `previewGpu:budget` returns main's session count
+and the cap, and the PerfHUD shows it as `HW sessions used/max` beside the
+per-clip lane pills. A clip reading `SW↓` next to a budget with slots free is
+this behaviour, not a capability verdict.
 
 **Two trails, logged separately.** `noteResolution` emits one LogBus row per
 media per change of the resolved key, so an engine or source change (the
@@ -254,9 +271,10 @@ putting it there would make hardware-vs-software an engine-level fact:
 transition, naming the layer, the media, the lane left, the lane taken and the
 reason — the `hw-budget-exceeded` overflow, a device loss, a capability failure.
 Both trails log per *change*, never per frame: a first open, and a same-lane
-re-open such as a playback-resolution change, are silent. The return trip logs
-too — the budget is per-open and never sticky, so an over-budget clip re-promotes
-to hardware once a session frees up.
+re-open such as a playback-resolution change, are silent. A return trip would
+log the same way, but on the budget path there is nothing to log while the
+source lives: an over-budget clip does not re-promote inside its own decode
+session (above), so the overflow row is the only row that clip emits.
 
 **Capability cache.** `<userData>/decode_capability.json` persists per-machine
 probe verdicts across restarts, keyed by lane (`sw`/`hw`) and a

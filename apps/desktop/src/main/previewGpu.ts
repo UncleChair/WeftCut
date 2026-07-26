@@ -13,7 +13,7 @@
 import { sharedTexture } from 'electron'
 import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
-import { HW_BUDGET_EXCEEDED, type PreviewGpuTimingReport } from '../shared/ipc'
+import { HW_BUDGET_EXCEEDED, type PreviewGpuBudget, type PreviewGpuTimingReport } from '../shared/ipc'
 import { clearMainPendingFor } from './previewGpuTiming.js'
 
 interface GpuSession {
@@ -37,6 +37,18 @@ const MAX_HW_SESSIONS = 3
 /// Live HW-session count (for the renderer's budget-aware resolution + tests).
 export function hwSessionCount(): number {
   return sessions.size
+}
+
+/// The budget as the renderer sees it (`previewGpu:budget`). The count alone is
+/// unreadable without the cap it is compared against, so both travel together —
+/// a lane readout wants "2/3", not "2". Whether an open would be REFUSED is the
+/// only decision this supports, and `used >= max` is that predicate.
+///
+/// A sample is a point in time, not a promise: the count falls asynchronously
+/// (a renderer teardown fires `previewGpu:close` without awaiting it), so
+/// `used < max` at read time does not guarantee the next open succeeds.
+export function hwBudget(): PreviewGpuBudget {
+  return { used: sessions.size, max: MAX_HW_SESSIONS }
 }
 
 /// Tail of the open-serialisation chain. `openPreviewGpu` awaits inside its

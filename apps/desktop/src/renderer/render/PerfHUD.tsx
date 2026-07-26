@@ -22,7 +22,12 @@ import { SecondaryWindow } from "@/bridge/window";
 import { WindowControls } from "@/components/WindowControls";
 import { RotateCcwIcon } from "lucide-react";
 
-import { getSystemStats, type SystemStats } from "../ipc";
+import {
+  getPreviewGpuBudget,
+  getSystemStats,
+  type PreviewGpuBudget,
+  type SystemStats,
+} from "../ipc";
 import type { Compositor, CompositorPerfSnapshot } from "./Compositor";
 import type { PlaybackEngine, WarmupStats } from "./PlaybackEngine";
 import { throughputFps, type ThroughputSample } from "./perfHudStats";
@@ -146,6 +151,11 @@ export interface PerfHudSample {
   fpsByLayer: Array<[string, number]>;
   sys: SystemStats | null;
   aud: { rmsDb: number; peakDb: number } | null;
+  /// Main's live concurrent-HW-session budget. The per-clip lane pill says which
+  /// lane a clip is on; this says whether hardware was available to be asked for
+  /// — the missing half of the story when a clip reads SW and nothing explains it.
+  /// Null before the first poll resolves.
+  hwBudget: PreviewGpuBudget | null;
 }
 
 /// One point of the monitor's frame-interval sparkline.
@@ -305,7 +315,8 @@ function PerfDashboard({
   history: HistPoint[];
   onReset: () => void;
 }) {
-  const { snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud } = sample;
+  const { snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud, hwBudget } =
+    sample;
   const fpsLookup = new Map(fpsByLayer);
   const fps = fpsFromMs(rafP50);
   const heapCapRatio = heapCapRatioOf(memory);
@@ -430,6 +441,20 @@ function PerfDashboard({
             meta={`${formatMb(sys.rss_bytes)} MB RSS · ${sys.process_count}p · ${sys.logical_cores}c`}
             warn={sys.cpu_percent > 80}
             title={`${sys.process_count} processes across the Electron/Chromium tree · ${sys.logical_cores} logical cores`}
+          />
+        ) : null}
+        {hwBudget ? (
+          <StatTile
+            label="HW sessions"
+            value={
+              <>
+                {hwBudget.used}
+                <span className="perf-tile-unit">/{hwBudget.max}</span>
+              </>
+            }
+            meta={hwBudget.used >= hwBudget.max ? "at cap — next open falls to SW" : "slots free"}
+            warn={hwBudget.used >= hwBudget.max}
+            title="Concurrent native GPU decode sessions registered in main, against the cap. At the cap, the next clip's hardware open throws hw-budget-exceeded and that clip opens on the software lane instead — and stays there for the life of that decode session."
           />
         ) : null}
       </div>
@@ -671,6 +696,9 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
   // Process-tree resource snapshot (CPU%/RSS) from Electron's app.getAppMetrics()
   // via the main process. Null only until the first poll resolves.
   const [sys, setSys] = useState<SystemStats | null>(null);
+  // Main's HW-session budget, polled on the same slow cadence as the process
+  // stats: it changes only when a session opens or closes, never per frame.
+  const [hwBudget, setHwBudget] = useState<PreviewGpuBudget | null>(null);
   // Master audio bus meter (rms/peak dBFS). Null in export mode or before
   // the graph exists.
   const [aud, setAud] = useState<{ rmsDb: number; peakDb: number } | null>(null);
@@ -779,6 +807,11 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
           if (!cancelled) setSys(s);
         })
         .catch(() => {});
+      getPreviewGpuBudget()
+        .then((b) => {
+          if (!cancelled) setHwBudget(b);
+        })
+        .catch(() => {});
     }, 1000);
     return () => {
       cancelled = true;
@@ -874,8 +907,9 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
       fpsByLayer: Array.from(fpsByLayer.entries()),
       sys,
       aud: aud ? { rmsDb: jsonSafeDb(aud.rmsDb), peakDb: jsonSafeDb(aud.peakDb) } : null,
+      hwBudget,
     }),
-    [snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud],
+    [snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud, hwBudget],
   );
 
   useEffect(() => {

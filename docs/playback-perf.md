@@ -188,10 +188,10 @@ into later cells.
 
 **The hardware leg goes impure past three tracks by design.** Concurrent GPU
 sessions are capped at `MAX_HW_SESSIONS` (3); clips 4..N take a
-`hw-budget-exceeded` and fall to the software transport in place, with no event
-and no log. The sweep records the per-cell lane mix instead of rejecting those
-cells — that degradation is production behaviour and is one of the things the
-matrix exists to surface.
+`hw-budget-exceeded` and fall to the software transport in place, leaving only a
+`decode-lane` LogBus row behind. The sweep records the per-cell lane mix instead
+of rejecting those cells — that degradation is production behaviour and is one of
+the things the matrix exists to surface.
 
 ## Conditions the run enforces
 

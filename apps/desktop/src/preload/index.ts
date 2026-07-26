@@ -10,6 +10,7 @@ import type {
   DialogSaveOpts,
   DirEntry,
   NotificationOpts,
+  PreviewGpuBudget,
   PreviewGpuColorSpace,
   PreviewGpuMainTiming,
   PreviewGpuOpenReply,
@@ -181,6 +182,9 @@ const api: WeftcutApi = {
       const ch = new MessageChannel()
       portByStream.set(streamId, ch.port1)
       window.postMessage({ __weftcutPreviewGpu: 'port', streamId }, '*', [ch.port2])
+    },
+    budget(): Promise<PreviewGpuBudget> {
+      return ipcRenderer.invoke('previewGpu:budget') as Promise<PreviewGpuBudget>
     },
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport> {
       return ipcRenderer.invoke('previewGpu:takeTimings', { streamId }) as Promise<PreviewGpuTimingReport>

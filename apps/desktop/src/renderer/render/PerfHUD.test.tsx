@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   emit: vi.fn<() => Promise<void>>(),
   getByLabel: vi.fn<() => Promise<unknown>>(),
   getSystemStats: vi.fn<() => Promise<unknown>>(),
+  getPreviewGpuBudget: vi.fn<() => Promise<unknown>>(),
 }));
 
 vi.mock("@/bridge/events", () => ({
@@ -30,6 +31,7 @@ vi.mock("@/bridge/window", () => ({
 
 vi.mock("../ipc", () => ({
   getSystemStats: mocks.getSystemStats,
+  getPreviewGpuBudget: mocks.getPreviewGpuBudget,
 }));
 
 import { PerfTelemetryBridge } from "./PerfHUD";
@@ -57,6 +59,7 @@ describe("PerfTelemetryBridge", () => {
       process_count: 1,
       logical_cores: 8,
     });
+    mocks.getPreviewGpuBudget.mockReset().mockResolvedValue({ used: 2, max: 3 });
     let nextRaf = 1;
     requestAnimationFrame.mockReset().mockImplementation(() => nextRaf++);
     cancelAnimationFrame.mockReset();
@@ -93,6 +96,7 @@ describe("PerfTelemetryBridge", () => {
     expect(requestAnimationFrame).not.toHaveBeenCalled();
     expect(compositor.getPerfSnapshot).not.toHaveBeenCalled();
     expect(mocks.getSystemStats).not.toHaveBeenCalled();
+    expect(mocks.getPreviewGpuBudget).not.toHaveBeenCalled();
     expect(mocks.emit).not.toHaveBeenCalled();
     expect(mocks.listeners.has("weftcut://perf-hud-reset")).toBe(false);
   });
@@ -131,9 +135,13 @@ describe("PerfTelemetryBridge", () => {
     });
     expect(compositor.getPerfSnapshot).toHaveBeenCalledTimes(2);
     expect(mocks.getSystemStats).toHaveBeenCalledOnce();
+    // The HW-session budget rides the same slow poll as the process stats, and
+    // reaches the monitor on the broadcast — a lane column with no budget beside
+    // it cannot say WHY a clip is on software.
+    expect(mocks.getPreviewGpuBudget).toHaveBeenCalledOnce();
     expect(mocks.emit).toHaveBeenCalledWith(
       "weftcut://perf-hud-snapshot",
-      expect.objectContaining({ playheadUs: 123 }),
+      expect.objectContaining({ playheadUs: 123, hwBudget: { used: 2, max: 3 } }),
     );
 
     await act(async () => {
@@ -145,6 +153,7 @@ describe("PerfTelemetryBridge", () => {
 
     const compositorPolls = compositor.getPerfSnapshot.mock.calls.length;
     const systemPolls = mocks.getSystemStats.mock.calls.length;
+    const budgetPolls = mocks.getPreviewGpuBudget.mock.calls.length;
     const broadcasts = mocks.emit.mock.calls.length;
     await act(async () => {
       mocks.listeners.get(PERF_MONITOR_WINDOW_CLOSED_EVENT)?.({
@@ -161,6 +170,7 @@ describe("PerfTelemetryBridge", () => {
     });
     expect(compositor.getPerfSnapshot).toHaveBeenCalledTimes(compositorPolls);
     expect(mocks.getSystemStats).toHaveBeenCalledTimes(systemPolls);
+    expect(mocks.getPreviewGpuBudget).toHaveBeenCalledTimes(budgetPolls);
     expect(mocks.emit).toHaveBeenCalledTimes(broadcasts);
   });
 });

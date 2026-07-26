@@ -79,6 +79,7 @@ import {
 } from "../render/decoder/decodeBench";
 import { probeBothModes, type BothModesResult } from "../render/decoder/importProbe";
 import type { ActiveClipProbe, CompositorPerfSnapshot } from "../render/Compositor";
+import { getPreviewGpuBudget, type PreviewGpuBudget } from "@/bridge/previewGpu";
 import {
   ensureWaveformWindow,
   registerWaveformProducer,
@@ -441,6 +442,12 @@ export interface E2EHook {
   /// `lookaheadFull`/`downgraded`, `compositeMsLast`/`compositeMsMax`, and the
   /// hardware lane's `handoff` barrier percentiles. Null until the preview mounts.
   compositorPerfSnapshot(): CompositorPerfSnapshot | null;
+  /// Live concurrent-HW-session budget from main (`used`/`max`). The lane mix a
+  /// perf snapshot reports says WHICH lane each clip took; this says whether
+  /// hardware was even available at the moment it was asked. Sampling it around
+  /// a teardown/reopen is how a stale-session race is told apart from a sticky
+  /// per-media verdict — the two are indistinguishable from the lane alone.
+  previewGpuBudget(): Promise<PreviewGpuBudget>;
   /// Turn the preview loop's per-stage timing on/off (`render/perf/stageTimers`).
   /// Off by default — production must not pay for it — and clears the window.
   stageProfilingSet(on: boolean): void;
@@ -620,6 +627,10 @@ export function installPlaybackBenchHooks(): void {
   hookSlot().transportPause = () => transportPause();
   hookSlot().transportSeekUs = (us: number) => transportSeek(us);
   hookSlot().compositorPerfSnapshot = () => previewBridge?.perfSnapshot() ?? null;
+  // Straight to main — no preview bridge. The budget is main's, and it must stay
+  // readable while NO preview is mounted (that is exactly the window where a
+  // reopen's stale sessions are still registered).
+  hookSlot().previewGpuBudget = () => getPreviewGpuBudget();
   // `stageTimers` is a module singleton shared with the playback loop, so these
   // need no bridge. LANDMINE: it is a PER-REALM singleton — this controls the
   // renderer main thread's preview loop, never the export Worker's copy.
