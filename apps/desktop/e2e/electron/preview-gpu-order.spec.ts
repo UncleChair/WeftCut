@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, waitForHook } from './helpers/driver'
+import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 
 // Frame-CONTENT-order regression guard for the ffmpeg engine's HARDWARE
 // (d3d11va GPU) lane preview. The Phase-D manual HW smoke found that this
@@ -36,6 +36,43 @@ const CLIP_META = {
   bits: 12,
 }
 
+/// Enter the editor so a PREVIEW SURFACE exists before any hardware session runs.
+///
+/// A bare `launchApp()` sits on the project picker with zero canvases, so the
+/// Pixi Application — and therefore the device the shipped barrier takes its
+/// completion signal on — never initializes. The probes below drive a PRIVATE
+/// decoder pool and do not need the Compositor, which is exactly how a run in
+/// that state used to pass: every session quietly took the readback fallback and
+/// the gate certified a barrier nobody had exercised. The product never decodes
+/// on the hardware lane without a preview surface up; this makes the gate run in
+/// that same state, and the per-session barrier assertion is what proves it.
+async function enterEditorWithPreview(page: Page): Promise<void> {
+  await newProject(page, {
+    parentFolder: tmpDir('weftcut-order-'),
+    name: `order-${Date.now()}`,
+    canvas: { width: 1280, height: 720, fpsNum: 30, fpsDen: 1 },
+  })
+  // A layer is what mounts the surface: an empty project shows "preview starts
+  // after you add a layer" and never creates the Application. A colour layer is
+  // the cheapest one and has nothing to decode, so it cannot compete with the
+  // probes' own hardware sessions.
+  await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 1_000_000 })
+  // Non-null `previewResourceProbe` == PixiPreview's onInit ran (it installs the
+  // bridge the probe reads), which is also where the device is registered.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (window as unknown as {
+              __weftcutTest?: { previewResourceProbe?: () => unknown }
+            }).__weftcutTest?.previewResourceProbe?.() ?? null,
+        ),
+      { timeout: 60_000, message: 'preview surface never mounted' },
+    )
+    .not.toBeNull()
+}
+
 interface OrderCheckMismatch { ptsUs: number; expectedIdx: number; decodedIdx: number }
 interface OrderCheckResult {
   strategy: string
@@ -43,7 +80,27 @@ interface OrderCheckResult {
   checked: number
   missing: number
   mismatches: OrderCheckMismatch[]
+  barrierApplied?: string | null
   error?: string
+}
+
+/// The barrier a hardware-lane run must be able to prove it ran. A barcode check
+/// passes under every CORRECT barrier, so green says nothing about WHICH one was
+/// exercised: a variant that could not get the context it needs falls back — by
+/// design and without a word — and the run then certifies the fallback under the
+/// pinned variant's name. Held to the product default when the env is unset, so
+/// keep this in step with `HW_BARRIER_DEFAULT` in src/main/previewGpu.ts.
+const EXPECTED_BARRIER = process.env.WEFTCUT_HW_BARRIER ?? 'rendererFence'
+
+function expectBarrierRan(applied: string | null | undefined, where: string): void {
+  expect(
+    applied,
+    `${where}: no barrier observed — the run cannot say which variant it exercised`,
+  ).not.toBeNull()
+  expect(
+    applied,
+    `${where}: ran the "${applied}" barrier, not the pinned "${EXPECTED_BARRIER}" — this run did not test the thing`,
+  ).toBe(EXPECTED_BARRIER)
 }
 
 async function runOrderCheck(
@@ -62,7 +119,7 @@ async function runOrderCheck(
 }
 
 function report(r: OrderCheckResult): string {
-  const head = `strategy=${r.strategy} pool=${r.poolSize} checked=${r.checked} missing=${r.missing} mismatches=${r.mismatches.length}${r.error ? ` error=${r.error}` : ''}`
+  const head = `strategy=${r.strategy} pool=${r.poolSize} barrier=${r.barrierApplied ?? 'none-observed'} checked=${r.checked} missing=${r.missing} mismatches=${r.mismatches.length}${r.error ? ` error=${r.error}` : ''}`
   const ex = r.mismatches
     .slice(0, 12)
     .map((m) => `  pts=${m.ptsUs} expected=${m.expectedIdx} decoded=${m.decodedIdx} (Δ=${m.decodedIdx - m.expectedIdx})`)
@@ -77,6 +134,7 @@ interface ConcurrentOrderSession {
   missing: number
   mismatches: OrderCheckMismatch[]
   timedOut: boolean
+  barrierApplied?: string | null
   error?: string
 }
 interface ConcurrentOrderResult {
@@ -97,7 +155,7 @@ async function runConcurrentOrderCheck(page: Page, sessions: number): Promise<Co
 }
 
 function reportSession(s: ConcurrentOrderSession): string {
-  const head = `  session ${s.index}: lane=${s.lane} checked=${s.checked} missing=${s.missing} mismatches=${s.mismatches.length}${s.timedOut ? ' TIMED-OUT' : ''}${s.error ? ` error=${s.error}` : ''}`
+  const head = `  session ${s.index}: lane=${s.lane} barrier=${s.barrierApplied ?? 'none-observed'} checked=${s.checked} missing=${s.missing} mismatches=${s.mismatches.length}${s.timedOut ? ' TIMED-OUT' : ''}${s.error ? ` error=${s.error}` : ''}`
   const ex = s.mismatches
     .slice(0, 6)
     .map((m) => `    pts=${m.ptsUs} expected=${m.expectedIdx} decoded=${m.decodedIdx} (Δ=${m.decodedIdx - m.expectedIdx})`)
@@ -157,6 +215,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
       test.setTimeout(180_000)
       const { app, page } = await launchApp()
       try {
+        await enterEditorWithPreview(page)
         const r = await runOrderCheck(page, 'native', poolSize)
         // eslint-disable-next-line no-console
         console.log(`[preview-gpu-order] hardware lane pool=${poolSize} ->\n` + report(r))
@@ -164,6 +223,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
         // The clip has 300 frames; a functioning lane reads essentially all of
         // them. A near-empty run means decode failed, not that order is "fine".
         expect(r.checked, 'too few frames checked — hardware-lane decode did not run').toBeGreaterThan(200)
+        expectBarrierRan(r.barrierApplied, `hardware lane pool=${poolSize}`)
         expect(
           r.mismatches.length,
           `hardware lane (pool=${poolSize}) presented ${r.mismatches.length} frame(s) whose pixels did not match their PTS (reorder):\n${report(r)}`,
@@ -191,6 +251,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     test.setTimeout(240_000)
     const { app, page } = await launchApp()
     try {
+      await enterEditorWithPreview(page)
       const r = await runConcurrentOrderCheck(page, 3)
       // eslint-disable-next-line no-console
       console.log('[preview-gpu-order] 3 concurrent hardware sessions ->\n' + reportConcurrent(r))
@@ -204,6 +265,9 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
           s.lane,
           `session ${s.index} ran on "${s.lane}", not hardware — this run did not test the thing:\n${reportConcurrent(r)}`,
         ).toBe('hardware')
+        // Per session: the barrier latch is per stream, so one session running a
+        // different variant than its siblings is drift this must not bury.
+        expectBarrierRan(s.barrierApplied, `session ${s.index}`)
         // Short `checked` under contention is a CAPACITY finding, not a reason
         // to lower the bar — the message carries every session's numbers so the
         // shortfall can be read directly.

@@ -194,18 +194,29 @@ means for licensing.
   index and every delivered bitmap must match its PTS-derived index, on one
   session and on three concurrent ones). What has to wait is **recycling**, not
   **delivery** — treating the two as one costs a display interval on the
-  renderer thread for every frame of every session. So the preload submits the
-  copy on the GPU, takes a fence, hands the bitmap to the renderer immediately,
-  and acks the slot only once that fence signals, polled off the critical path.
-  A fence still unsignalled at its deadline is force-waited and then acked
-  regardless: one possibly-torn frame is the smaller harm, since `pool_size`
-  stranded slots wedge the session for good. On an idle GPU nothing forces the
-  pipeline along, so fences signal late there and a single quiet track
-  force-waits a meaningful share of its frames — about what a synchronous
-  barrier costs on the same clip, and it recedes as soon as a second track keeps
-  the queue moving. `HwBarrierMode` (`shared/ipc.ts`) names the strategies; the
-  synchronous 1px readback — a pipeline flush, not a frame transfer — stays
-  available as the fallback and the A/B control.
+  renderer thread for every frame of every session. So the preload hands the
+  bitmap over immediately and delegates the ack to the renderer, which copies one
+  pixel out of the delivered bitmap on Pixi's WebGPU queue, waits for that
+  queue's submitted work, and acks the slot back up the same port.
+- **Waiting must be free, which is why the signal is a promise.** The same
+  deferral expressed with a WebGL2 `fenceSync` needs a context of its own, and on
+  an idle GPU such a fence does not signal by itself at any bound — the drain's
+  flush-and-poll spin is what completes it, and WebGL2 cannot express a blocking
+  wait, so that spin is busy work on the renderer thread. It cost a quiet 1080p
+  track ~2 s per 20 s window and made 4K fail outright. WebGPU's
+  `onSubmittedWorkDone` is a promise, so a slot that is not ready yet costs
+  nothing to keep waiting for.
+- **The ack is independent of paint, and bounded.** A frame the ring evicts, or
+  one that arrives while nothing is compositing, still holds a slot, and
+  `pool_size` stranded slots wedge a session for good — so the signal is taken on
+  delivery and never waits on anything downstream. A signal still absent at its
+  deadline acks regardless: one possibly-torn frame is the smaller harm. That
+  deadline is a real compromise rather than a formality, because the WebGPU signal
+  arrives well after it; the constant carries the measurements and the reason
+  (`slotFenceQueue.ts`). `HwBarrierMode` (`shared/ipc.ts`) names the strategies;
+  the preload-side fence and the synchronous 1px readback — a pipeline flush, not
+  a frame transfer — stay available as A/B controls, the readback also as the
+  fallback where the renderer has no device to fence on.
 - **SW transport** — libavcodec decodes the original in the main process and
   ships NV12 bytes over classic IPC ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
   The bytes ring as `NativeNv12Frame`s and convert to RGB in the compositor's

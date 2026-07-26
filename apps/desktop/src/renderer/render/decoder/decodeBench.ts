@@ -138,6 +138,12 @@ export interface OrderCheckResult {
   /// budget (a genuine dropped/undelivered frame — distinct from a mispairing).
   missing: number;
   mismatches: OrderCheckMismatch[];
+  /// The read-completion barrier this session actually RAN (`HwBarrierMode`, or
+  /// `'mixed'`), null off the hardware lane. Reported because a barcode check
+  /// passes under EVERY correct barrier: a run whose configured variant silently
+  /// fell back to another one is green and proves nothing about the variant it
+  /// was launched for. The caller compares this against what it pinned.
+  barrierApplied?: string | null;
   error?: string;
 }
 
@@ -252,7 +258,17 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
       checked++;
       if (decodedIdx !== i) mismatches.push({ ptsUs: pts, expectedIdx: i, decodedIdx });
     }
-    return { strategy, poolSize, checked, missing, mismatches };
+    return {
+      strategy,
+      poolSize,
+      checked,
+      missing,
+      mismatches,
+      // `in`, because the pool's return union includes the WebCodecs handle,
+      // which has no preload stage and therefore no barrier to report.
+      barrierApplied:
+        "handoffTimings" in h ? (h.handoffTimings()?.barrierModeObserved ?? null) : null,
+    };
   } catch (e) {
     return { strategy, poolSize, checked, missing, mismatches, error: String(e) };
   } finally {
@@ -305,6 +321,10 @@ export interface ConcurrentOrderSessionResult {
   /// A capacity finding, NOT a pass: `checked` will be short and the caller must
   /// treat that as a result to report, never as a bar to lower.
   timedOut: boolean;
+  /// The barrier this session actually RAN — see `OrderCheckResult`. Per session,
+  /// because the fallback is per stream: one session missing its latch while the
+  /// others got theirs is exactly the drift this reports.
+  barrierApplied?: string | null;
   error?: string;
 }
 
@@ -454,6 +474,7 @@ export async function decodeBenchConcurrentOrderCheck(
         out.checked++;
         if (decodedIdx !== n) out.mismatches.push({ ptsUs: pts, expectedIdx: n, decodedIdx });
       }
+      out.barrierApplied = h.handoffTimings?.()?.barrierModeObserved ?? null;
     };
 
     // The whole point: all N read loops in flight at once. `allSettled` so one

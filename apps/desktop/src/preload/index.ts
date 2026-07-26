@@ -15,6 +15,7 @@ import type {
   PreviewGpuColorSpace,
   PreviewGpuMainTiming,
   PreviewGpuOpenReply,
+  PreviewGpuSlotAck,
   PreviewGpuTimingReport,
   PreviewSwFrameMsg,
   ExportSwMsg,
@@ -186,6 +187,10 @@ const api: WeftcutApi = {
     requestPort(streamId: string): void {
       const ch = new MessageChannel()
       portByStream.set(streamId, ch.port1)
+      // The channel is bidirectional and under `rendererFence` the renderer sends
+      // slot acks back up it (see receiveSlotAck). Setting `onmessage` also
+      // starts the port, which is why nothing else has to.
+      ch.port1.onmessage = (ev: MessageEvent) => { receiveSlotAck(ch.port1, ev.data) }
       window.postMessage({ __weftcutPreviewGpu: 'port', streamId }, '*', [ch.port2])
     },
     budget(): Promise<PreviewGpuBudget> {
@@ -327,9 +332,10 @@ const portByStream = new Map<string, MessagePort>()
 // latch first. So a MISSING entry no longer means "the reply hasn't landed yet";
 // it means the stream is unknown (never opened, or already closed).
 //
-// The unlatched fallback is `readback`, NOT the shipped default `fence`, and the
+// The unlatched fallback is `readback`, NOT the shipped default, and the
 // difference is deliberate twice over: readback is the barrier that needs no GL
-// context and no fence support, so it is the one that cannot itself fail; and
+// context, no fence support and no renderer cooperation, so it is the one that
+// cannot itself fail; and
 // because it differs from the default, an unlatched frame shows up as a second
 // applied mode (`barrierModeObserved: 'mixed'`) instead of blending in. A
 // fallback that silently matched the default would hide the very race the latch
@@ -434,14 +440,16 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 //
 // This readback is correct but NOT free: it is synchronous renderer-thread time
 // once per delivered frame PER SESSION, which is why `HwBarrierMode` exists — a
-// switch between this readback, a GPU-side flush, a deferred fence, and no
-// barrier at all.
+// switch between this readback, a GPU-side flush, a deferred fence on either
+// side of the port, and no barrier at all.
 //
-// WHAT ACTUALLY RUNS TODAY IS `fence`, not this readback: the same GPU copy, but
-// the ack waits on a fence off the critical path instead of on a synchronous
-// drain here. The readback above stays the fallback and the A/B control, and it
-// is still the clearest statement of WHY any barrier is needed at all — which is
-// why the race is documented here rather than at the fence.
+// WHAT ACTUALLY RUNS TODAY IS `rendererFence`, and it runs in the RENDERER — the
+// preload posts the bitmap and delegates the ack, because the completion signal
+// belongs on a context that is presented every frame and this process has none
+// (renderer/render/decoder/transports/slotFenceQueue.ts). The readback below
+// stays the fallback and the A/B control, and it is still the clearest statement
+// of WHY any barrier is needed at all — which is why the race is documented here
+// rather than beside either fence.
 //
 // What the switch measured, and what it means for anyone changing this code:
 // submitting the copy costs ~0.1ms and WAITING for it costs ~19.9ms, and a
@@ -718,16 +726,39 @@ function dropPendingFencesFor(streamId: string): void {
   fenceStatsByStream.delete(streamId)
 }
 
+/// Release a slot the RENDERER says is done with (`rendererFence`). The only
+/// message that travels back up a frame port: under that mode the preload runs no
+/// barrier and no fence, so the renderer both takes the completion signal on its
+/// presented device and returns the slot here.
+///
+/// Two guards, and both are the teardown ordering seen from this side:
+///   - the ack must name the stream whose port carried it, so a message can never
+///     free another session's slot;
+///   - that stream must still be live. `closePreviewGpuStream` drops the port
+///     before awaiting main's close, so a late ack usually cannot arrive at all —
+///     this catches the one already dispatched, rather than acking into a session
+///     main is mid-closing.
+function receiveSlotAck(port: MessagePort, data: unknown): void {
+  const msg = data as PreviewGpuSlotAck | null | undefined
+  if (!msg || msg.kind !== 'consumeAck' || typeof msg.slot !== 'number') return
+  if (portByStream.get(msg.streamId) !== port) return
+  void ipcRenderer.invoke('previewGpu:consumeAck', { streamId: msg.streamId, slot: msg.slot }).catch(() => {})
+}
+
 // Per-frame loop — this is where the ACK-AFTER-READ discipline lives. On a
 // frameReady poke: snapshot the slot's shared texture into an ImageBitmap, post
-// it to the main world over the MessagePort, and ONLY THEN consumeAck. The ack
-// must fire after the snapshot's cross-device read has GPU-COMPLETED (forced by
-// `forceSharedTextureReadComplete` — `createImageBitmap` resolving is NOT that
-// guarantee across devices, see above), so native may safely reuse the slot.
-// Acking earlier lets native overwrite the slot mid-read (reorder/tearing).
-// Native's AcquireSync on a still-held slot now times out (finite, Error-poke +
-// skip) rather than hanging, but an early ack would still corrupt a frame, so
-// the ordering stays load-bearing.
+// it to the main world over the MessagePort, and consumeAck only once the
+// snapshot's cross-device read has GPU-COMPLETED (`createImageBitmap` resolving
+// is NOT that guarantee across devices, see above), so native may safely reuse
+// the slot. Acking earlier lets native overwrite the slot mid-read
+// (reorder/tearing). Native's AcquireSync on a still-held slot now times out
+// (finite, Error-poke + skip) rather than hanging, but an early ack would still
+// corrupt a frame, so the ordering stays load-bearing.
+//
+// WHERE the ack happens depends on the mode, and exactly one place does it per
+// delivered bitmap: here (the synchronous barriers), in the fence queue above, or
+// in the RENDERER under `rendererFence`, which is what ships — `ackDelegated`
+// hands the obligation over with the frame and `receiveSlotAck` brings it back.
 //
 // The ack must ALSO fire if createImageBitmap (or the port post) throws — once
 // getVideoFrame() has been called, the slot is spoken for, and vf.close() in
@@ -762,10 +793,12 @@ ipcRenderer.on(
       return
     }
     const tEntry = performance.now()
-    // Set once this frame's slot is handed to the fence queue; the finally below
-    // reads it to decide whether the ack is still its job. Declared out here so
-    // a throw after the hand-off can't double-ack the slot.
+    // Set once this frame's slot is handed off — to the local fence queue, or
+    // (under `rendererFence`) to the renderer with the delivered bitmap. The
+    // finally below reads both to decide whether the ack is still its job.
+    // Declared out here so a throw after a hand-off can't double-ack the slot.
     let fenceOwnsAck = false
+    let rendererOwnsAck = false
     try {
       let bmp: ImageBitmap
       let gvfMs = 0
@@ -816,13 +849,22 @@ ipcRenderer.on(
       // defers is real but is not cost on the loop, so it is reported apart, in
       // `fence` — conflating the two is how a mechanism that moved the cost
       // would look like one that removed it.
+      //
+      // `rendererFence` runs NOTHING here. The whole point of that mode is that
+      // this process has no context worth fencing on, so it delegates: the copy,
+      // the completion signal and the ack all happen on the renderer's presented
+      // device (renderer/render/decoder/transports/slotFenceQueue.ts). It also
+      // owns the `barrierApplied` stamp — only it knows which rung of its own
+      // fallback ladder ran — so this side leaves the stamp off rather than
+      // guessing, and `ackDelegated` is what carries the obligation across.
       const mode = barrierModeByStream.get(streamId) ?? 'readback'
-      let barrierApplied: HwBarrierMode = 'none'
+      const delegateToRenderer = mode === 'rendererFence'
+      let barrierApplied: HwBarrierMode | undefined = delegateToRenderer ? undefined : 'none'
       let barrierMs = 0
       let barrierDrawMs = 0
       let barrierReadMs = 0
       let fenceSync: WebGLSync | null = null
-      if (mode !== 'none') {
+      if (!delegateToRenderer && mode !== 'none') {
         const tBarrier = performance.now()
         let cost: BarrierCost | null = null
         if (mode === 'fence') {
@@ -872,9 +914,14 @@ ipcRenderer.on(
       }
       const residentMs = performance.now() - tEntry
       port.postMessage(
-        { kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs, barrierMs, barrierDrawMs, barrierReadMs, barrierApplied, fence },
+        { kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs, barrierMs, barrierDrawMs, barrierReadMs, barrierApplied, fence, ...(delegateToRenderer ? { ackDelegated: true } : {}) },
         [bmp],
       )
+      // AFTER the post, not before it: the obligation travels WITH the message,
+      // and `postMessage` can throw. A message that never arrived leaves the ack
+      // here — unlike the fence queue above, which takes ownership before the
+      // post because the transfer leaves the sync as the only handle on the copy.
+      if (delegateToRenderer) rendererOwnsAck = true
     } catch (err) {
       port.postMessage({ kind: 'error', streamId, message: err instanceof Error ? err.message : String(err) })
     } finally {
@@ -883,10 +930,11 @@ ipcRenderer.on(
       // and closed the session first, the ack lands on an already-closed
       // session and napi rejects — that's expected, not an error to surface.
       //
-      // Skipped only when this frame's slot was handed to the fence queue, which
-      // owns the ack from that point. Everything else — including a throw after
-      // the queue push — still acks here or there exactly once.
-      if (!fenceOwnsAck) {
+      // Skipped only when this frame's slot was handed off — to the fence queue,
+      // or to the renderer with the delivered bitmap — which owns the ack from
+      // that point. Everything else, including a throw after either hand-off,
+      // still acks here or there exactly once.
+      if (!fenceOwnsAck && !rendererOwnsAck) {
         void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot }).catch(() => {})
       }
     }

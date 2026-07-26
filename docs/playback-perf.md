@@ -129,16 +129,25 @@ own pool?"
 
 ### The hardware lane's read barrier
 
-The hardware lane pays a synchronous GPU drain per delivered frame per session
-(`forceSharedTextureReadComplete` in the preload) so a pool slot cannot recycle
-mid-read. It is load-bearing for correctness — without it the lane presents
-frames `pool_size` out of order — and it is the prime suspect for judder the
-dropped-frame counter cannot see.
+A pool slot cannot recycle until Chromium's read of it has GPU-completed, or the
+lane presents frames `pool_size` out of order. The barrier that guarantees that
+is selectable (`--barrier`, `HwBarrierMode`) because the choice is a performance
+question with a correctness floor: a synchronous drain in the preload
+(`readback`) costs ~20 ms of renderer thread per delivered frame per session,
+while the deferred variants pay only a submit and let the ack ride a completion
+signal off the critical path. Which context that signal is taken on is what
+separates them — the shipped one takes it on the device the compositor presents
+from, so it is serviced every frame.
 
-The report carries its `p50`/`p95`/`max`, its **sample count**, and the derived
-**thread-seconds of barrier per wall-second** summed across sessions. That last
-figure is the one that decides whether the barrier is on the critical path: a
-20 ms drain at 2 fps is free, the same drain at 30 fps is not.
+The report carries the barrier's `p50`/`p95`/`max`, its **sample count**, and the
+derived **thread-seconds of barrier per wall-second** summed across sessions.
+That last figure is the one that decides whether the barrier is on the critical
+path: a 20 ms drain at 2 fps is free, the same drain at 30 fps is not. Two
+columns exist because of the deferred variants: `fence forced waits` counts
+deadline fallbacks, and `spin thread-s/s` prices them — a deferred barrier that
+force-waits every frame is the synchronous one wearing a hat, and the p50 alone
+cannot see it. Do not difference a `readback` p50 against a deferred one; they
+are not the same quantity.
 
 The barrier is stamped **directly** around the drain. It used to be derived as
 `residentMs - gvfMs - cibMs`, which also absorbs `vf.close()` and the scheduling

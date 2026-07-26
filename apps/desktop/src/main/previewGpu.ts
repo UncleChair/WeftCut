@@ -39,22 +39,29 @@ const sessions = new Map<string, GpuSession>()
 /// resolver maps to a per-source downgrade to the next tier.
 const MAX_HW_SESSIONS = 3
 
-/// Barrier strategy the preload applies before acking a slot, read ONCE from
+/// Barrier strategy applied before a slot is acked, read ONCE from
 /// `WEFTCUT_HW_BARRIER` and reported on every open reply (see `HwBarrierMode`
-/// for what each mode does). Main owns the decision rather than the preload so
-/// one process reads the environment and every session agrees on the answer.
+/// for what each mode does, and note that under `rendererFence` the barrier runs
+/// in the RENDERER, not the preload). Main owns the decision rather than either
+/// of them so one process reads the environment and every session agrees on the
+/// answer.
 ///
-/// Anything unset or unrecognised is `fence`, the shipped default — it cleared
-/// the order gate (pool 1/3/5, and three concurrent sessions) and takes 1080p
-/// hardware from 2 smooth tracks to 4. Silent defaulting stays deliberate: a
-/// typo'd mode must degrade to a mode that ORDERS CORRECTLY, so the fall-through
-/// can only ever be `fence` or `readback`, never the reordering `none`/`gpuflush`.
-const HW_BARRIER_MODE: HwBarrierMode =
-  process.env.WEFTCUT_HW_BARRIER === 'readback' ||
-  process.env.WEFTCUT_HW_BARRIER === 'gpuflush' ||
-  process.env.WEFTCUT_HW_BARRIER === 'none'
-    ? process.env.WEFTCUT_HW_BARRIER
-    : 'fence'
+/// Silent defaulting is deliberate: a typo'd mode must degrade to a mode that
+/// ORDERS CORRECTLY, so the fall-through can only ever be one of the deferred
+/// fences or `readback`, never the reordering `none`/`gpuflush`.
+const HW_BARRIER_MODES: readonly HwBarrierMode[] = [
+  'readback',
+  'fence',
+  'gpuflush',
+  'none',
+  'rendererFence',
+]
+const HW_BARRIER_DEFAULT: HwBarrierMode = 'rendererFence'
+const HW_BARRIER_MODE: HwBarrierMode = HW_BARRIER_MODES.includes(
+  (process.env.WEFTCUT_HW_BARRIER ?? '') as HwBarrierMode,
+)
+  ? (process.env.WEFTCUT_HW_BARRIER as HwBarrierMode)
+  : HW_BARRIER_DEFAULT
 
 /// Live HW-session count (for the renderer's budget-aware resolution + tests).
 export function hwSessionCount(): number {

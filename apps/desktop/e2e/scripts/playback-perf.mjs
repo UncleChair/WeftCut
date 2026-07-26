@@ -34,18 +34,29 @@
 //
 // Crossed with those routes is the read-barrier axis — `--barrier`, pinned by
 // WEFTCUT_HW_BARRIER, and meaningful on the hardware route ONLY, since it
-// selects what the preload waits on between snapshotting a shared texture and
-// acking the slot back to the native pool (see `HwBarrierMode` in
-// `src/shared/ipc.ts` for the mechanism):
-//   fence    — the shipped default: submit the copy, take a `fenceSync`, hand
-//              the bitmap over at once, and ack the slot asynchronously when the
-//              fence signals. Still a hard completion signal — just not one the
-//              renderer's critical path waits on. Its deadline fallback is a
-//              flush-and-poll SPIN bounded by wall clock rather than a blocking
-//              wait, because WebGL2 cannot express one: Chromium reports
-//              `MAX_CLIENT_WAIT_TIMEOUT_WEBGL` as 0.
-//   readback — the barrier `fence` replaced: correct, shipped for years, and now
-//              the control every other variant is read against
+// selects what is waited on between snapshotting a shared texture and acking the
+// slot back to the native pool (see `HwBarrierMode` in `src/shared/ipc.ts` for
+// the mechanism):
+//   rendererFence — the shipped default: the preload runs no barrier and hands
+//              the ack obligation to the renderer with the bitmap; the renderer
+//              takes the completion signal on Pixi's WebGPU device and acks back
+//              over the same port. Both fence variants defer the ack; what
+//              separates them is that WebGPU's signal is a promise, so waiting
+//              costs nothing, while WebGL2's has to be spun for. Compare them
+//              inside ONE sitting — that is what this axis is for.
+//   fence    — the same deferral on a PRIVATE offscreen 1×1 WebGL2 context in
+//              the preload. Still a hard completion signal and still off the
+//              critical path, but on an idle GPU that fence does not signal on
+//              its own at any bound: its deadline fallback is a flush-and-poll
+//              SPIN (WebGL2 cannot express a blocking wait — Chromium reports
+//              `MAX_CLIENT_WAIT_TIMEOUT_WEBGL` as 0) and the spin is what
+//              completes it. `spin thread-s/s` is where that shows up.
+//              `rendererFence` reports 0 there because it has nothing to poll —
+//              read its `fence forced waits` instead, which is saturated by
+//              design at low track counts (see `DEADLINE_MS` in
+//              renderer/render/decoder/transports/slotFenceQueue.ts).
+//   readback — the barrier the fences replaced: correct, shipped for years, and
+//              now the control every other variant is read against
 //   gpuflush — a GPU-side drain with no CPU readback. INCORRECT on the same
 //              ground as `none`: submitting the copy is not what the ack waits
 //              for, COMPLETION is, so it reorders too. Kept only to re-run that
@@ -213,7 +224,7 @@ if (!fs.existsSync(MAIN)) {
   process.exit(2);
 }
 
-const BARRIER_MODES = ["readback", "fence", "gpuflush", "none"];
+const BARRIER_MODES = ["readback", "fence", "gpuflush", "none", "rendererFence"];
 for (const b of BARRIERS) {
   if (b !== null && !BARRIER_MODES.includes(b)) {
     console.error(`[playback-perf] unknown barrier ${b} (${BARRIER_MODES.join("|")})`);
@@ -703,10 +714,11 @@ async function runCell(leg, tracks) {
     // variant it is not named after. That failure is worse than a missing cell:
     // a `none` leg secretly running `readback` publishes "removing the barrier
     // buys nothing" and retires the question on an artefact. An unpinned leg is
-    // held to `fence` because that is what main resolves an unset env to — keep
-    // this in step with `HW_BARRIER_MODE` in src/main/previewGpu.ts or every
-    // unpinned cell invalidates itself on a stale expectation.
-    const expectedBarrier = leg.barrier ?? "fence";
+    // held to the product default because that is what main resolves an unset env
+    // to — keep this in step with `HW_BARRIER_DEFAULT` in
+    // src/main/previewGpu.ts or every unpinned cell invalidates itself on a
+    // stale expectation.
+    const expectedBarrier = leg.barrier ?? "rendererFence";
     const barrierObserved = perClip.map((p) => p.barrierModeObserved).filter(Boolean);
     const barrierDrift = perClip
       .filter((p) => p.barrierModeObserved && p.barrierModeObserved !== expectedBarrier)

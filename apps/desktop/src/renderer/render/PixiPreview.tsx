@@ -36,6 +36,10 @@ import {
   type PreviewSampler,
 } from "../colorpick/previewSamplerRegistry";
 import { quickProxyPath } from "./decodeRoute";
+import {
+  setSlotFenceBackend,
+  slotFenceBackendForRenderer,
+} from "./decoder/transports/slotFenceQueue";
 import { proxyIntent } from "../state/proxyPreferenceStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import {
@@ -195,6 +199,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         `${LOG} application init: canvas=${app.canvas.width}×${app.canvas.height} ` +
           `renderer=${app.renderer.type}`,
       );
+      // Hardware-lane slot acks: the read-completion signal is taken on THIS
+      // device, because it is presented every frame and therefore serviced every
+      // frame (see slotFenceQueue.ts — an unpresented context signals ~2 display
+      // intervals late on an idle GPU). Registered from the host rather than
+      // reached for by the transport: the device belongs to the Application's
+      // lifecycle, not to any one decode session.
+      setSlotFenceBackend(slotFenceBackendForRenderer(app.renderer));
       // @pixi/react renders a bare <canvas> with no CSS sizing.
       // Inline-replaced canvas elements default to their intrinsic
       // pixel size (here 1920×1080), which overflows the preview
@@ -718,6 +729,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       compositorRef.current = null;
       engineRef.current = null;
       applicationRef.current = null;
+      // The device goes with the Application. Slots already pending keep their
+      // own probes and still ack — see `SlotFenceQueue.setBackend`.
+      setSlotFenceBackend(null);
       clearMasterMeter();
       if (meterTimerRef.current !== null) {
         window.clearInterval(meterTimerRef.current);

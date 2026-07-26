@@ -1,7 +1,13 @@
-// Rolling window over the preload's per-frame handoff timings for the hardware
-// lane. The preload already stamps every frame message with `gvfMs` / `cibMs` /
+// Rolling window over the per-frame handoff timings for the hardware lane. The
+// preload already stamps every frame message with `gvfMs` / `cibMs` /
 // `residentMs`; nothing consumed them, so the one cost we most want to see was
 // invisible.
+//
+// "Handoff" spans both sides of the port: under the shipped barrier the preload
+// runs none and the renderer takes the completion signal itself, so
+// `GpuTransport` records ITS OWN barrier stamps and fence health for those
+// frames. The fields mean the same thing either way — what ran, what it cost,
+// what it deferred — which is what lets one window compare the two.
 //
 // The number this exists for is `barrier`: `residentMs - gvfMs - cibMs`, the
 // SYNCHRONOUS GPU drain `forceSharedTextureReadComplete` performs before the
@@ -76,12 +82,17 @@ export interface HandoffTimingSummary {
   fencePendingQueuePeak: number;
   fenceForcedWaits: number;
   /// Wall-clock ms burned inside forced spins, SUMMED over the session — the
-  /// fence path's only blocking cost, and the one `barrierP50` cannot show,
-  /// since that stays submit-only here. A sum and not a percentile on purpose:
+  /// preload fence's only blocking cost, and the one `barrierP50` cannot show,
+  /// since that stays submit-only there. A sum and not a percentile on purpose:
   /// spins are a minority of frames, so every percentile reports them as zero.
   /// That is how a cell doing 223 spins came back at 0.01 barrier thread-s/s and
   /// passed an acceptance criterion while burning the main thread. Divide by the
   /// measurement window to fold it back into a real thread-seconds figure.
+  ///
+  /// Structurally 0 under `rendererFence`: a promise-based completion signal has
+  /// nothing to poll, so its deadline is a bare "ack and count it". Read
+  /// `fenceForcedWaits` there — a zero here means no spin EXISTS, not that no
+  /// deadline was blown.
   fenceForcedWaitMsTotal: number;
   /// `createImageBitmap` — an enqueue, so cheap; it is the barrier that waits
   /// for the copy this call schedules.
