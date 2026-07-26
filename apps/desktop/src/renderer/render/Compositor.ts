@@ -882,6 +882,21 @@ export class Compositor {
         this.abandonSwap(layerId);
         this.tenBitIngest?.release(layerId);
         this.nv12Ingest?.release(layerId);
+        // Release the decode session too, not just the sprite. Without this the
+        // pool holds the handle — and on the ffmpeg hardware lane its GPU
+        // session — until the idle sweep notices seconds later, so a clip
+        // resolving in that window is measured against layers the user already
+        // deleted and can lose the `MAX_HW_SESSIONS` race to a ghost. That loss
+        // is permanent: the lane is picked once per source (docs/preview.md).
+        // It costs the idle sweep's undo grace, which is the better trade — a
+        // warm re-decode is a second, a phantom downgrade lasts the session.
+        // LANDMINE: release BOTH pool keys. `abandonSwap` above covers a swap
+        // still in flight, but a COMPLETED one left `clip.source` under
+        // `${layerId}#swap` with the base key already released, so asking only
+        // for `layerId` would leak the handle that is actually decoding.
+        // `release` no-ops on a miss, so asking for both is safe in either state.
+        this.pool.release(layerId);
+        this.pool.release(swapKeys(layerId, c.mediaId).swapLayerId);
         c.sprite.dispose();
         c.effects.dispose();
         this.clips.delete(layerId);
@@ -1812,6 +1827,11 @@ export class Compositor {
           this.abandonSwap(layer.id);
           this.tenBitIngest?.release(layer.id);
           this.nv12Ingest?.release(layer.id);
+          // Same release the `setProject` teardown does, for the same reason —
+          // the orphaned handle can be holding a scarce GPU session. Keep the
+          // two in step; this comment claims they mirror each other.
+          this.pool.release(layer.id);
+          this.pool.release(swapKeys(layer.id, existing.mediaId).swapLayerId);
           existing.sprite.dispose();
           existing.effects.dispose();
           this.clips.delete(layer.id);
