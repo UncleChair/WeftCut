@@ -409,6 +409,8 @@ const zhCN: Resources = {
     timecode_edit_hint: "点击编辑 · 回车跳转 · Esc 取消",
     dropped_frames_one: "播放期间丢帧 {{count}} 帧——解码速度未跟上",
     dropped_frames_other: "播放期间丢帧 {{count}} 帧——解码速度未跟上",
+    late_frames_one: "播放期间有 {{count}} 帧渲染超时——渲染循环卡顿",
+    late_frames_other: "播放期间有 {{count}} 帧渲染超时——渲染循环卡顿",
   },
   export: {
     title: "导出",

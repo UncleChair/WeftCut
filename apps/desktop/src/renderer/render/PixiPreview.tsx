@@ -335,22 +335,38 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       engine.onPlayStateChange(setTransportPlaying);
       registerTransport(engine);
 
-      // Session-end dropped-frame summary → status log. FCP-style "warn
-      // after playback": the transport indicator shows drops live; this
-      // row makes them durable + explains the cause. `takeUnderrun
+      // Session-end underrun summary → status log. FCP-style "warn after
+      // playback": the transport indicator shows the counts live; this row
+      // makes them durable + explains the cause. `takeUnderrun
       // SessionSummary` is once-per-session, so a pause-during-warmup
       // (which also fires playing=false) can't re-log a stale count.
+      //
+      // The two counts stay separate phrases: "dropped" is a decoder that
+      // fell behind, "late" is a composite loop that stalled with a full
+      // ring. Merging them would point the reader at the wrong subsystem.
       engine.onPlayStateChange((playing) => {
         if (playing) return;
-        const dropped = compositor.takeUnderrunSessionSummary();
-        if (dropped === 0) return;
+        const { droppedFrames, lateFrames } =
+          compositor.takeUnderrunSessionSummary();
+        if (droppedFrames === 0 && lateFrames === 0) return;
+        const causes: string[] = [];
+        if (droppedFrames > 0) {
+          causes.push(
+            `${droppedFrames} frame${droppedFrames === 1 ? "" : "s"} dropped (decoding fell behind)`,
+          );
+        }
+        if (lateFrames > 0) {
+          causes.push(
+            `${lateFrames} frame${lateFrames === 1 ? "" : "s"} late (the render loop stalled)`,
+          );
+        }
         void logEmit({
           level: "warn",
           category: { kind: "System" },
           source: { kind: "System" },
-          message: `Playback dropped ${dropped} frame${dropped === 1 ? "" : "s"} — decoding fell behind`,
+          message: `Playback couldn't keep up — ${causes.join("; ")}`,
           i18n_key: "log.playback_dropped_frames",
-          i18n_args: { count: dropped },
+          i18n_args: { dropped: droppedFrames, late: lateFrames },
         });
       });
 

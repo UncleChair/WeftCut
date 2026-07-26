@@ -67,6 +67,7 @@ import { STAGE, stageAdd, stageNow, stageRecord } from "./perf/stageTimers";
 import {
   judgeFrameSelection,
   UnderrunTracker,
+  type UnderrunSessionSummary,
   type UnderrunSnapshot,
 } from "./underrunTracker";
 
@@ -304,8 +305,8 @@ export interface CompositorInit {
   /// (feedback_playhead_gate_and_tiers). See `compositeFrame`'s
   /// reset/diff/fire around its layer sweep.
   onUnsupported?: (unsupported: ReadonlySet<string>) => void;
-  /// Preview-only: playback underrun (dropped-frame) state changes for the
-  /// transport-bar indicator. Edge-triggered + throttled by
+  /// Preview-only: playback underrun (dropped + late-tick) state changes for
+  /// the transport-bar indicator. Edge-triggered + throttled by
   /// `UnderrunTracker` (never per-frame — feedback_playhead_gate_and_tiers);
   /// safe to feed straight into React state. Export omits it.
   onUnderrun?: (snapshot: UnderrunSnapshot) => void;
@@ -622,9 +623,11 @@ export class Compositor {
   private compositeMsLast = 0;
   private compositeMsMax = 0;
   private upcomingPrewarm: UpcomingClipPrewarmSnapshot | null = null;
-  /// Dropped-frame accounting (preview only; inert in export mode where
-  /// `playing` never goes true). Sweep verdicts come from `updateClip`
-  /// via `sweepLateLayers`; session lifecycle from `setMasterPlayState`.
+  /// Underrun accounting — dropped frames and late composite ticks
+  /// (preview only; inert in export mode where `playing` never goes true).
+  /// Sweep verdicts come from `updateClip` via `sweepLateLayers`; session
+  /// lifecycle from `setMasterPlayState`; the tick interval is read off
+  /// the tracker's own clock.
   private underrun: UnderrunTracker;
   /// Visible VideoClip layers judged late during the CURRENT composite
   /// sweep. Reset before the layer loop, read after it — same
@@ -771,9 +774,9 @@ export class Compositor {
     this.underrun.noteSeekWhilePlaying();
   }
 
-  /// Session-end dropped-frame count for the LogBus summary row; at most
+  /// Session-end dropped + late counts for the LogBus summary row; at most
   /// once per play session (see `UnderrunTracker.takeSessionSummary`).
-  takeUnderrunSessionSummary(): number {
+  takeUnderrunSessionSummary(): UnderrunSessionSummary {
     return this.underrun.takeSessionSummary();
   }
 
@@ -861,6 +864,8 @@ export class Compositor {
     if (c.fps_num > 0 && c.fps_den > 0) {
       this.fpsNum = c.fps_num;
       this.fpsDen = c.fps_den;
+      // Same fps drives the underrun tracker's late-tick threshold.
+      this.underrun.bindFrameBudgetMs((1_000 * this.fpsDen) / this.fpsNum);
     }
     const livingLayerIds = new Set<string>();
     for (const t of summary.tracks) {
@@ -1194,6 +1199,11 @@ export class Compositor {
     // clock is running and not scrubbing (a scrub deliberately paints
     // approximate frames); decay ticks unconditionally so the indicator
     // dims after pause too (the engine's rAF tick keeps compositing).
+    //
+    // `tickDecay` must stay on the unconditional path: it also stamps the
+    // tracker's tick clock, and moving it under the `playing && !scrubbing`
+    // guard would make a whole scrub or pause difference into one giant
+    // late tick when judging resumes.
     if (this.mode === "preview") {
       if (this.playing && !this.scrubbing) {
         this.underrun.judgeSweep(this.sweepLateLayers > 0, tUsSnapped);

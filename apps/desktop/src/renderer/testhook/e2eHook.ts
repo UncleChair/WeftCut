@@ -436,7 +436,8 @@ export interface E2EHook {
   /// bridge's `engine.seek`.
   transportSeekUs(us: number): void;
   /// The product's OWN per-frame preview accounting off the live Compositor:
-  /// `underrun.droppedFrames`, per-clip `decodedFrameCount`/`ringSize`/
+  /// `underrun.droppedFrames`/`underrun.lateFrames`, per-clip
+  /// `decodedFrameCount`/`ringSize`/
   /// `lookaheadFull`/`downgraded`, `compositeMsLast`/`compositeMsMax`, and the
   /// hardware lane's `handoff` barrier percentiles. Null until the preview mounts.
   compositorPerfSnapshot(): CompositorPerfSnapshot | null;
