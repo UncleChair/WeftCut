@@ -353,11 +353,12 @@ perfect — which is what the *pure*-hardware 3-track cell does too (p99 40.3 ms
 0.00 % drops, barrier 0.47 thread-s/s). The remaining cost at four tracks is the
 read barrier and the tick tail, not the lane the overflow lands on.
 
-**Nothing fires an event or a log when the overflow happens**, and now that it no
-longer announces itself as a stutter, that silence is the actual defect. The
-transition is invisible to the product; the bench can only see it by diffing
+**Nothing fired an event or a log when the overflow happened**, and since it no
+longer announces itself as a stutter, that silence — not the routing — was the
+defect this cell exposed. The bench could see the transition only by diffing
 `activeClipProbe().sourceKind` per layer, which is why this matrix has a lane-mix
-column at all.
+column at all. It is now also a `decode-lane` LogBus row per transition
+([preview.md](preview.md#decode-engine)).
 
 That cell is also the internal check on the software pin: this `sw` clip was
 produced *organically* by the session budget, not by the `WEFTCUT_FORCE_HW_LANE`

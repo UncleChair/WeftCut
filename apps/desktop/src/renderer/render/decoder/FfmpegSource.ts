@@ -13,6 +13,7 @@ import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
 import type { FfmpegLaneResolution } from "./ffmpegCapability";
+import { noteLaneOpen } from "./ffmpegLaneTrail";
 import { HW_BUDGET_EXCEEDED } from "../../../shared/ipc";
 
 const IDLE_DISPOSE_MS = 5_000;
@@ -174,7 +175,7 @@ export class FfmpegSource implements PreviewDecodeSession {
         this.transport?.dispose();
         this.transport = null;
         try {
-          await this.openLane("software");
+          await this.openLane("software", { from: "hardware", reason });
         } catch (swErr) {
           if (this._disposed) return;
           this.fireFatal(swErr instanceof Error ? swErr.message : String(swErr));
@@ -191,7 +192,15 @@ export class FfmpegSource implements PreviewDecodeSession {
 
   /// Open a transport for `lane`, wiring frames into the ring and errors into
   /// the recovery path. Used by initial ready AND the in-place fallback.
-  private async openLane(lane: FfmpegLane): Promise<void> {
+  ///
+  /// `transition` is passed only by the two in-place HW→SW fallbacks, and only
+  /// so the lane trail can name what was left and why: the hardware open that
+  /// preceded them may have THROWN, in which case nothing recorded "hardware"
+  /// and the trail would otherwise read this as a first open.
+  private async openLane(
+    lane: FfmpegLane,
+    transition?: { from: FfmpegLane; reason: string },
+  ): Promise<void> {
     this.eof = false; // a fresh transport can produce frames again
     const t = lane === "hardware"
       ? this.makeHardwareTransport()
@@ -221,6 +230,10 @@ export class FfmpegSource implements PreviewDecodeSession {
       ...(this.init.sourceColor !== undefined ? { sourceColor: this.init.sourceColor } : {}),
       ...(this.init.poolSize !== undefined ? { poolSize: this.init.poolSize } : {}),
     });
+    // Only a lane CHANGE emits — the success tail is reached by every open
+    // (initial, both fallbacks, and the same-lane playback-resolution re-open),
+    // so the trail, not this call site, is what keeps it once-per-transition.
+    noteLaneOpen({ layerId: this.layerId, mediaId: this.mediaId, lane, ...(transition ?? {}) });
     if (this.lastTargetUs !== null) t.requestFrameAt(this.lastTargetUs);
   }
 
@@ -286,7 +299,8 @@ export class FfmpegSource implements PreviewDecodeSession {
       const dead = this.transport;
       this.transport = null;
       dead.dispose();
-      void this.openLane("software").catch((e) => this.fireFatal(`${reason}; sw recovery failed: ${String(e)}`));
+      void this.openLane("software", { from: "hardware", reason })
+        .catch((e) => this.fireFatal(`${reason}; sw recovery failed: ${String(e)}`));
       return;
     }
     this.fireFatal(reason);

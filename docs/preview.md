@@ -233,22 +233,30 @@ probe is even kicked — but never overrules a probe's negative verdict. (The
 underlying D3D11 backward-seek hang is a separate pre-existing gap the
 allow-list routes around, not a fix — a tracked follow-up.) Concurrent GPU
 sessions are capped at a conservative `MAX_HW_SESSIONS` (3); an open past the
-cap throws a typed `hw-budget-exceeded` that the engine handles exactly like a
-runtime HW death — the over-budget clip falls to the SW transport rather than
-erroring.
+cap throws a typed `hw-budget-exceeded` that the engine *recovers* from exactly
+like a runtime HW death — the over-budget clip falls to the SW transport rather
+than erroring — but records nothing, because the cap is transient capacity and
+not a verdict about the source.
 
-**Sticky, per-source, no re-promotion.** A HW failure marks this source
+**Sticky, per-source, no re-promotion.** A HW *failure* marks this source
 software-only for the rest of the session; a total ffmpeg failure under `auto`
 marks the source `webcodecs` for the session. Neither re-promotes — reopening
-the source (reload / re-import) is what clears it.
+the source (reload / re-import) is what clears it. The budget throw above is the
+one exception, and deliberately so: it is per-open, so the next open re-probes
+and takes hardware again once a session frees up.
 
-**Only ENGINE transitions are logged.** `noteResolution` emits one LogBus row per
-media per change of the resolved key, never per frame — so an engine or source
-change (the total-ffmpeg-failure case above, a proxy landing) leaves a trail. A
-**lane** change does not: the lane is deliberately absent from the swap key
-(ADR 0030), so a HW→SW fallback and a `hw-budget-exceeded` overflow both happen
-in place with no row, no event, and no state to read afterwards. That gap is
-tracked; do not read the resolution trail as a record of which lane played.
+**Two trails, logged separately.** `noteResolution` emits one LogBus row per
+media per change of the resolved key, so an engine or source change (the
+total-ffmpeg-failure case above, a proxy landing) leaves a trail. The lane needs
+its own channel, because it is deliberately absent from that key (ADR 0030) and
+putting it there would make hardware-vs-software an engine-level fact:
+`noteLaneOpen` emits one `decode-lane` row per clip per hardware↔software
+transition, naming the layer, the media, the lane left, the lane taken and the
+reason — the `hw-budget-exceeded` overflow, a device loss, a capability failure.
+Both trails log per *change*, never per frame: a first open, and a same-lane
+re-open such as a playback-resolution change, are silent. The return trip logs
+too — the budget is per-open and never sticky, so an over-budget clip re-promotes
+to hardware once a session frees up.
 
 **Capability cache.** `<userData>/decode_capability.json` persists per-machine
 probe verdicts across restarts, keyed by lane (`sw`/`hw`) and a
