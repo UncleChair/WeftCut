@@ -304,12 +304,27 @@ milliseconds (see Reproducibility below).
 
 | leg | max smooth | what stopped the next track |
 |---|---|---|
-| 1080p ffmpeg-hw | **4** | the concurrent-session cap, not smoothness: the 4th clip spills to the software lane and every cell from 1 to 4 tracks holds tick p99 ≤ 18.9 ms. Pure-hardware ceiling is 3. Was 2, capped by the read barrier's synchronous drain and then by its deadline spin |
+| 1080p ffmpeg-hw | **5** | not reached. Every cell from 1 to 5 tracks holds tick p99 ≤ 23.7 ms with 0.00 % drops and 30.0 fps per clip, the last two of them with the 4th and 5th clip spilled to the software lane. Pure-hardware ceiling is 3 only because that is where the session cap sits, not where smoothness ends. Was 2, capped by the read barrier's synchronous drain and then by its deadline spin |
 | 1080p ffmpeg-sw | **2** | tick p99 119.4 ms at 3 tracks, with all three clips delivering ~29 fps and 5.88 % drops — the lane was 0 until it stopped re-seeking per request |
-| 1080p webcodecs | **3** | drops 4.66 % at 4, with `flushes` 0 and every ring healthy — real decode capacity, not the livelock that used to cap this leg at 2 |
+| 1080p webcodecs | **2** | drops 28.33 % at 3, with `flushes` 0, `stale` 318 and decode running 31.6–32.5 fps — real decode capacity, not the livelock that used to cap this leg at 2. Recorded as **3** before, on a 3-track cell that measured 0.00 %; see Reproducibility |
+| 1080p HEVC ffmpeg-hw | **4** | the session cap's software spill, not the lane: at 5 tracks the two spilled clips take main CPU to 8.7 % and `nv12Ingest` to 61.7 ms per wall-second, and the cell fails on all three criteria (43.69 % drops, 48.6 fps presented, tick p99 45.1 ms). The same five clips all on hardware hold tick p99 18.2 ms with 0.00 % drops. Was 1, capped by the barrier |
+| 1080p HEVC webcodecs | **≥5** | not reached — 0.00 % drops and tick p99 ≤ 25.2 ms from one track to five. The best result in the matrix |
 | 4K ffmpeg-hw | **2** | nothing yet — both cells of the 2-track leg pass (tick p99 17.4 ms, 0.00 % drops, 60.0 fps presented) and match the barrier-less control exactly. Was 0: the whole cliff was the read barrier, first its synchronous drain and then its deadline spin. Not probed past 2 |
 | 4K ffmpeg-sw | **0** | drops 94.0 % at one track |
 | 4K webcodecs | **0** | tick p99 75–82 ms at one track — with **zero** drops |
+
+The two 1080p H.264 legs are what decided the decode-engine default: with the
+barrier gone the hardware lane wins the sustained axis 5 tracks to 2, and it
+already held the seek axis ([decode-bench](decode-bench.md)), so `auto`
+preferring the Standard engine is correct on both. See
+[the roadmap](roadmap.md).
+
+**The hardware route is also the quieter one where the two score the same.** It
+records zero long animation frames and zero 8 ms-timer gaps over 50 ms in every
+1080p cell of both codecs. WebCodecs records 2–5 of each in **every** cell, the
+smooth ones included, with no script over the reporting floor and tick maxima of
+83–109 ms — [the per-`ImageBitmap` allocation stall](#a-tick-gap-is-the-main-thread-stopping-not-the-loop-being-starved)
+at 1080p intensity. Too few events to move a p99, so it costs no verdict here.
 
 ### Reproducibility
 
@@ -329,6 +344,24 @@ failures, and a 1.4-second stall is not a capacity curve; that scatter is itself
 evidence for resource exhaustion and thrash rather than a steady throughput
 limit. Treat every WebCodecs multi-track *magnitude* as one sample, and the
 ceiling as the reproducible part.
+
+**One WebCodecs *ceiling* has moved, which that rule does not cover.** The 1080p
+H.264 3-track cell measured 0.00 % drops when the re-seek livelock was fixed, and
+28.33 % on a later sitting — so this leg's ceiling reads 3 in one sitting and 2 in
+another. `flushes` is **0** in the failing run, so the livelock has not returned;
+the shortfall is `stale` 318 and `missEmpty` 772 against decode running
+31.6–32.5 fps, i.e. capacity. Read this leg as "2, marginally 3" rather than
+either number: it is the one leg whose ceiling is not reproducible, and the
+HEVC WebCodecs leg beside it — five tracks at 0.00 % — shows the instability is
+about this codec on this route, not about the route.
+
+**And 28.33 % is not a new number.** The same cell is recorded below at 7.2 %,
+28.5 %, 50.5 % and 73.5 % across four runs, from before the livelock fix — where
+the note is that the *ceiling* was the hard part (always 2) and only the magnitude
+moved. A later sitting landing mid-spread is that same behaviour, not a
+regression; what it does say is that the 3 this leg was credited with rested on
+one favourable sitting, and a ceiling change on this one leg needs repeats before
+it is worth writing down.
 
 (The repeat swept `1,3,4`, so its own "max smooth" column reads 1 for want of a
 2-track cell — an artifact of the explicit track list, not a different ceiling.)
@@ -484,6 +517,33 @@ column at all. It is now also a `decode-lane` LogBus row per transition
 That cell is also the internal check on the software pin: this `sw` clip was
 produced *organically* by the session budget, not by the `WEFTCUT_FORCE_HW_LANE`
 pin, and shows the same signature (`nv12Ingest` appears, main-process CPU rises).
+
+**The cap of 3 was rationing the barrier, and the barrier is now free.** With
+that cost gone the cap can be measured directly rather than argued about — the
+same fixtures on the hardware route at a cap of 3 against a cap of 5:
+
+| 1080p hw route | cap 3 | cap 5 |
+|---|---|---|
+| HEVC 4 tracks | smooth · 3 gpu + 1 sw · p99 23.5 ms · main 4.7 % | smooth · 4 gpu · p99 24.7 ms · main **1.0 %** |
+| HEVC 5 tracks | **STUTTER** · 43.69 % drops · 48.6 fps · p99 45.1 ms · main 8.7 % | **SMOOTH** · 0.00 % · 60.1 fps · p99 **18.2 ms** · main **1.0 %** |
+| H.264 4 tracks | smooth · 3 gpu + 1 sw · p99 19.2 ms · main 3.6 % | smooth · 4 gpu · p99 **17.2 ms** · main **0.9 %** |
+| H.264 5 tracks | smooth · 3 gpu + 2 sw · p99 23.7 ms · main 6.8 % | smooth · 5 gpu · p99 **17.1 ms** · main **0.8 %** |
+
+More hardware sessions **help and cost nothing measurable**: one failing cell
+becomes passing, two tick tails come down to the flat ~17 ms the pure lane holds
+everywhere, and `nv12Ingest` drops from 57–62 ms per wall-second to zero because
+the spill stops happening. Five pure hardware tracks leave the GPU's VideoDecode
+engine at 24.2 % (H.264) and 11.5 % (HEVC), confirming the cap never rationed
+decode capacity.
+
+The cap stays at 3 regardless, because the constant is not the change. The
+[order gate](preview.md#decode-engine) asserts that the *fourth* concurrent open
+takes `hw-budget-exceeded`, and its concurrent-ordering probe is pinned at three
+sessions — the count whose per-session barrier slack the gate was extended to
+cover. Ordering is the failure mode on this transport that produces wrong pixels
+rather than a slow cell, so five sessions needs the probe before the constant.
+4K is a second unknown: a slot is ~12.4 MB there against ~4.5 MB at 1080p, so the
+pool would grow ~56 → ~186 MB on a leg whose own ceiling is 2 tracks.
 
 ### The software lane re-seeked on every request
 
@@ -725,8 +785,8 @@ constraint.
 
 | material | route | max smooth | character |
 |---|---|---|---|
-| HEVC 8-bit 1080p | webcodecs | **≥4** (never reached) | drops 0.0 % and tick p95 17.2 ms at four tracks — the best result in the matrix |
-| HEVC 8-bit 1080p | ffmpeg-hw | 1 | tick p99 84.8 ms at two tracks |
+| HEVC 8-bit 1080p | webcodecs | **≥5** (never reached) | drops 0.0 % and tick p99 ≤ 25.2 ms from one track to five — the best result in the matrix |
+| HEVC 8-bit 1080p | ffmpeg-hw | **4** | 0.00 % drops and tick p99 ≤ 23.7 ms through four tracks. Was 1 (tick p99 84.8 ms at two), and the whole of that was the read barrier. What stops the fifth is the session cap's software spill, not the lane |
 | HEVC 8-bit 4K | ffmpeg-hw | 0 | barrier reaches **1.01 thread-s/s**; tick p50 95.8 ms, presented 11.2 fps |
 | HEVC 8-bit 4K | webcodecs | 0 | drops 0.0 %, tick p50/p95 16.6/17.4 ms, p99 106.2 ms — the same 1 %-tail shape as 4K H.264 |
 | ProRes 422 1080p | ffmpeg-sw (only route) | **1** | 30.0 fps, 0.00 % drops, tick p50 16.7 ms at one track; 2 tracks keep 30.0 fps each and fail on the tick tail alone |

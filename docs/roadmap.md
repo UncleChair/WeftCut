@@ -243,118 +243,141 @@ from the pinned source tarball — see `fetch-ffmpeg-lgpl.mjs`). Where the
 runtime is absent, the Standard engine is simply unavailable (`auto` resolves
 to Lite) rather than broken.
 
-### Preview playback smoothness — measured, five levers ranked
+### Preview playback smoothness — the walls are measured, and all but one are gone
 
 [playback-perf](playback-perf.md) profiles the whole preview loop under N
 tracks across 1080p/4K × ffmpeg-hw / ffmpeg-sw / WebCodecs. The headline is
 that **the compositor is not the problem**: `PlaybackEngine.tick` plus the
 Pixi present run 2–6 % of a 16.7 ms budget in every cell measured, while the
-tick *interval* p99 reaches 38–140 ms. Every wall is in frame delivery or in
-retained memory, and each lever below is named by a measurement, not a guess.
-Ranked by measured payoff per unit of work.
+tick *interval* p99 reached 38–140 ms. Every wall was in frame delivery, in
+retained memory, or outside the loop entirely, and each one below was named by a
+measurement rather than a guess — which is also why all but the last turned out to
+be ours rather than a platform limit.
 
-1. **Budget the `FrameRing` in bytes, not in time.** `DEFAULT_LOOKAHEAD_US`
-   1 s + `DEFAULT_LOOKBEHIND_US` 0.5 s is resolution-blind, and the
-   `ImageBitmap`s it retains are GPU-backed: ~8 MB each at 1080p, ~33 MB at 4K.
-   One 4K clip pins ~1.9 GB and two ask for ~4 GB, at which point drops go
-   0.0 % → 83.5 % *with the tick still clean at p95 17.6 ms*. Cap the retained
-   bytes globally and divide the budget across active clips (falling back to a
-   shorter window rather than a shallower one), so a 4K timeline degrades its
-   lookahead instead of its decoders.
+Where the 1080p hardware lane carried 2 simultaneous tracks and 4K carried
+none, they now carry 5 and 2. What each fix bought, and the landmine it left:
 
-   **Partly landed** (`decoder/frameRingBudget.ts`): a 1 GiB total shared across
-   live rings, expressed as backpressure on the FORWARD fill only. 4K retention
-   fell 38 % at one clip and 55 % at two, and 4K two-track drops 83.5 % → 55.3 %,
-   with the 1080p ceiling unchanged. Three results bound what is left: a budget
-   tight enough to clamp 1080p makes things **worse** (512 MiB drove decode
-   throughput +40 % and drops 7.2 % → 55.5 %, because evicted frames get
-   re-requested and one re-seek re-decodes an 8 s GOP); trimming *lookbehind* on
-   byte pressure fails the same way; and halving retained bytes left the 4K tick
-   tail untouched, so **retention is not the dominant 4K cause**. The 1080p
-   3–4 track collapse is decoders dying rather than buffers overflowing — rings
-   read empty while delivery reports full rate — and is now its own ticket.
-2. **Get the hardware lane's read barrier off the renderer's main thread.**
-   `forceSharedTextureReadComplete` costs a flat **19–21 ms per delivered frame
-   per session** — 0.29–1.01 thread-seconds per wall-second, roughly 20× the
-   entire composite-plus-present CPU. It is **size-independent** (1080p 19.3 ms
-   vs 4K 20.8 ms; 4K at ¼ still 20.8 ms) and `createImageBitmap` beside it is
-   0.20 ms, so it is a fixed synchronous wait, not a transfer — which also
-   supersedes the reading recorded in the revert of `e8371231`. It is what caps
-   the Standard engine at 2 tracks (1080p) and 0 (4K). Directions: satisfy the
-   ack with a GPU fence / the keyed mutex the transport already holds instead of
-   a rasterize-to-force-flush, or move receive+barrier to a worker so the wait
-   stops blocking the loop that consumes the frames. Do NOT re-try shrinking the
-   sampled region — that was measured and is noise.
-3. **Say something when a clip changes lane.** Past `MAX_HW_SESSIONS` (3) the
-   fourth clip opens on the ffmpeg software transport in place. This used to be
-   announced by the symptom: the overflow clip took the session with it (tick p50
-   82.6 ms, main CPU 28.7 %, drops 39.8 %). It no longer does — the same cell
-   now measures tick p50 16.6 ms, main CPU 3.6 %, every clip delivering 30 fps —
-   so nothing about the transition is felt.
+- **The hardware lane's read barrier was the whole multi-track wall** — and it
+  took two passes to remove, because the first one only moved it. The lane blocks
+  until Chromium's cross-device read of a shared-texture slot has GPU-completed,
+  or native overwrites the slot mid-read; spelled as a synchronous 1px readback
+  that cost a flat **19–21 ms per delivered frame per session**, roughly 20× the
+  entire composite-plus-present CPU. Deferring the ack behind a `fenceSync` freed
+  delivery (2 → 4 tracks at 1080p), and then the fence's own deadline **spin** —
+  WebGL2 offers no blocking wait, so the drain had to flush-and-poll, and on an
+  idle GPU that poll was what *completed* the fence — turned out to cost the
+  remaining tail. Taking the completion signal on the renderer's presented WebGPU
+  device removed the spin entirely: 4K went 0 → 2 tracks and one track's tick p99
+  23.5 → 17.3 ms, matching a barrier-less control. Landmines it leaves:
+  the barrier is **size-independent**, so do not re-try shrinking the sampled
+  region; the WebGPU completion signal lands ~90 ms out regardless of load, so a
+  wider deadline buys a slot-hold throughput ceiling instead of correctness; and
+  the ack must be released on the deadline anyway, because `pool_size` stranded
+  slots wedge a session for good. See [preview](preview.md).
+- **The software lane seeked on every request**, re-walking the GOP prefix — 137×
+  decode amplification on a 240-frame GOP — which is why long-GOP and 10-bit
+  sources were unusable rather than merely slow. A forward-continuation cursor
+  plus a lookahead horizon in the native pump took 1080p 0 → 2 tracks, ProRes and
+  10-bit HEVC 0 → 1, and main-process CPU 31.7 % → 2.6 %. The transferable part:
+  **a renderer-side counter cannot see producer-side waste** — the fate table read
+  clean on a starved cell because the waste was spent inside libavcodec and
+  discarded before any frame reached the ring.
+- **The WebCodecs multi-track collapse was a re-seek livelock in our own reset
+  policy**, not decoders dying: a clip falling 1 s behind triggered a
+  far-forward reset that flushed the ring and seeked up to 8 s back, which
+  guaranteed the next reset. The latch that should have stopped it was keyed to an
+  exact target, and under playback the target changes every frame — so it only
+  ever protected the paused case. Re-keying it onto the key packet took 3 tracks
+  from 73.5 % drops to 0.00 % with 254 ring flushes → 0.
+- **`FrameRing` is budgeted in bytes** (`decoder/frameRingBudget.ts`): a 1 GiB
+  total shared across live rings, as backpressure on the FORWARD fill only. It is
+  a ceiling for the pathological case, **never a tuning knob** — three measured
+  don't-redos: a budget tight enough to clamp 1080p makes things *worse* (512 MiB
+  drove drops 7.2 % → 55.5 %, because evicted frames get re-requested and one
+  re-seek re-decodes an 8 s GOP), trimming *lookbehind* on byte pressure fails the
+  same way, and halving retained bytes left the 4K tick tail untouched — retention
+  was never the 4K cause.
+- **The dropped-frame indicator can see judder.** The tracker judged whether the
+  ring *had* a fresh frame, so a stalled loop read **zero drops while looking
+  jerky**. It now counts a second cause beside drops — a composite tick arriving
+  past the frame budget — free on the playing path. The threshold is additive
+  (`budget + 4 ms`) and bounded on both sides on purpose: a multiplicative 1.25×
+  lands at 41.7 ms and silently misses the 38.8 ms cell it exists to catch.
+- **A clip that changes lane says so** (`decoder/ffmpegLaneTrail.ts`): one
+  `decode-lane` LogBus row per clip per hardware↔software transition — the lane
+  left, the lane taken, and the reason. The one transition it never reports is the
+  return *from* a budget overflow, because that return does not happen: lane
+  selection runs once per decode session and the session outlives the timeline edit
+  that would free a slot, so an over-budget clip stays on software until its source
+  is rebuilt — a reload, a re-import, or the pool's idle sweep.
+  [preview](preview.md) records that as a documented limit, and the live session
+  count is readable beside the lane pill so the state is at least legible. It is a
+  separate channel rather than a field on the resolved key, for the same reason
+  routing the overflow to WebCodecs was rejected: either would make
+  hardware-vs-software an engine-level fact, and
+  [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md) makes it
+  private to the Standard engine.
 
-   **Landed** (`decoder/ffmpegLaneTrail.ts`): a lane trail beside the resolution
-   trail, emitting one `decode-lane` LogBus row per clip per hardware↔software
-   transition — the lane left, the lane taken, and the reason. The one transition
-   it never reports is the return *from* a budget overflow, because that return
-   does not happen: lane selection runs once per decode session and the session
-   outlives the timeline edit that would free a slot, so an over-budget clip stays
-   on software until its source is rebuilt — a reload, a re-import, or the pool's
-   idle sweep. [preview](preview.md) records that as a documented limit, and the
-   live session count is readable beside the lane pill so the state is at least
-   legible. It is a separate channel rather than a
-   field on the resolved key, for the same reason the routing half of this item
-   was dropped: sending an over-budget clip to WebCodecs, or keying the swap on
-   the lane, would make hardware-vs-software an engine-level fact, and
-   [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md) makes it
-   private to the Standard engine. Whether the cap itself should be higher is a
-   barrier question and belongs to item 2.
-4. **Find what stops the renderer's main thread while delivery is perfect.** Two
-   cells still fail on the tick tail alone with 0.00 % drops: 4K WebCodecs at one
-   track (tick p99 75 ms) and 1080p ffmpeg-software at three (p99 67 ms). The
-   loop is not overrunning its budget and it is not being starved of frames —
-   **the whole thread stops.** An 8 ms `setInterval` loses its cadence with the
-   tick, 85–107 ms at a stretch, in exactly those cells and holds a perfect
-   p50 8.0 ms in every passing one, so nothing about rAF delivery or ticker
-   scheduling can explain it. Nor can our JS: across 96 long animation frames
-   there is not one script over the reporting floor, `longtask` never fires, and
-   89–99 % of each long frame is spent *before* the frame reaches its rendering
-   steps — outside Chromium's task accounting entirely, at 1.5–8.1 % of one core,
-   so the thread is waiting rather than computing.
+**Still open — what stops the renderer's main thread while delivery is perfect.**
+Two cells fail on the tick tail alone with 0.00 % drops: 4K WebCodecs at one track
+(tick p99 75 ms) and 1080p ffmpeg-software at three (p99 67 ms). The loop is not
+overrunning its budget and it is not being starved of frames — **the whole thread
+stops.** An 8 ms `setInterval` loses its cadence with the tick, 85–107 ms at a
+stretch, in exactly those cells and holds a perfect p50 8.0 ms in every passing
+one, so nothing about rAF delivery or ticker scheduling can explain it. Nor can
+our JS: across 96 long animation frames there is not one script over the reporting
+floor, `longtask` never fires, and 89–99 % of each long frame is spent *before* the
+frame reaches its rendering steps — outside Chromium's task accounting entirely, at
+1.5–8.1 % of one core, so the thread is waiting rather than computing.
 
-   Each cell is now bound to a different half of the per-frame resource path, by
-   control rather than by suspicion. The **software** stall follows the bytes: the
-   same three-layer 1080p composition is smooth on ffmpeg-hardware and on
-   WebCodecs and stutters only on the route that ships decoded NV12 across the
-   process boundary (~280 MB/s), and shrinking those bytes 16× makes the cell
-   perfect. The **WebCodecs** stall follows the size of each `ImageBitmap`: 4K
-   hardware is smooth on the same canvas with the same decoder load, and the stall
-   count scales with the allocation (4.0×) rather than the bandwidth (1.34×).
-   Excluded by matched pairs: the canvas, the raster, the composite, retained
-   bytes, GPU-process memory, GPU engine saturation and Pixi's GC. The next
-   instrument is a `toplevel` trace of `CrRendererMain` — collectable from the
-   harness through `contentTracing`, no `chrome://tracing` needed — asking what
-   covers the 100 ms hole. Not a GPU-process trace: the GPU's engine counters are
-   identical between the matched smooth and stuttering cells.
-5. **Teach the dropped-frame indicator to see judder.** The tracker judges
-   whether the ring *had* a fresh frame, so a loop stalled by a synchronous
-   drain reads **zero drops while looking jerky**: 1080p hardware at 3 tracks
-   reports 0.00 % drops with tick p99 38.8 ms, and 4K WebCodecs reports 0.00 %
-   with p99 74.3 ms. A late-tick / late-present counter beside the existing one
-   would make the indicator reflect what the user sees.
+Each cell is bound to a different half of the per-frame resource path, by control
+rather than by suspicion. The **software** stall follows the bytes: the same
+three-layer 1080p composition is smooth on ffmpeg-hardware and on WebCodecs and
+stutters only on the route that ships decoded NV12 across the process boundary
+(~280 MB/s), and shrinking those bytes 16× makes the cell perfect. The
+**WebCodecs** stall follows the size of each `ImageBitmap`: 4K hardware is smooth
+on the same canvas with the same decoder load, and the stall count scales with the
+allocation (4.0×) rather than the bandwidth (1.34×). Excluded by matched pairs: the
+canvas, the raster, the composite, retained bytes, GPU-process memory, GPU engine
+saturation and Pixi's GC. The next instrument is a `toplevel` trace of
+`CrRendererMain` — collectable from the harness through `contentTracing`, no
+`chrome://tracing` needed — asking what covers the 100 ms hole. Not a GPU-process
+trace: the GPU's engine counters are identical between the matched smooth and
+stuttering cells.
 
-Two decisions this data informs but does not settle:
+**Next, and small — raise the concurrent hardware-session cap.** `MAX_HW_SESSIONS`
+is 3 because each session used to cost a synchronous read barrier; it never
+rationed decode capacity (five pure hardware tracks leave the GPU's VideoDecode
+engine at 11–24 %). Measured at a cap of 5 in one sitting, more sessions help and
+cost nothing: the one failing cell in the 1080p sweep (HEVC at five tracks) goes
+43.69 % drops → 0.00 %, two tick tails come down to the flat ~17 ms the pure lane
+holds everywhere, main-process CPU drops to ~1 %, and `nv12Ingest` falls to zero
+because the software spill stops happening. The constant is not the work, though:
+the order gate asserts that the *fourth* concurrent open is refused, and its
+ordering probe is pinned at three sessions — so the gate has to be re-pinned first,
+and 4K measured, since a slot is ~12.4 MB there against ~4.5 MB at 1080p.
 
-- **The `auto` default.** WebCodecs measurably out-plays the Standard engine on
-  8-bit ≤1080p — HEVC 1080p sustains ≥4 tracks at tick p95 17.2 ms and H.264 2,
-  against 1–2 for ffmpeg-hw — because it pays no barrier. But
-  [decode-bench](decode-bench.md) gives ffmpeg the decisive **seek** advantage,
-  which is what scrubbing feels. Sustained playback and scrub latency want
-  different engines; picking per-interaction rather than per-source is the
-  design question. Fix lever 2 first — it may remove the tradeoff.
-- **10-bit ingest.** `TenBitIngest` never fires on the software route (the
-  transport ships NV12 by ADR 0029), so the 10-bit preview path is 8-bit and
-  slow. Whether that is worth a 10-bit ship format is a colour-fidelity
-  question, not a performance one.
+One decision this data settles and one it does not:
+
+- **Settled — the `auto` default stays `ffmpeg`.** WebCodecs used to out-play the
+  Standard engine on 8-bit ≤1080p, and the whole of that was the read barrier.
+  With the barrier off the critical path the ordering reverses: measured in one
+  sitting, 1080p max smooth tracks are H.264 **5** on ffmpeg-hw against 2 on
+  WebCodecs, and HEVC **4** against ≥5. That lone remaining HEVC cell is the
+  session cap's software spill rather than the hardware lane — the same five
+  clips all on hardware hold tick p99 18.2 ms with 0.00 % drops. Since
+  [decode-bench](decode-bench.md) already gave ffmpeg the decisive **seek**
+  advantage, `auto` now wins both axes, and picking per-*interaction* has lost
+  its motive while keeping its cost: the swap key is
+  `${engine}:${source}:${target}`, so flipping engine on a play/scrub transition
+  is a visible swap by construction. Reopening this needs a second box that loses
+  on sustained playback **and** loses on seek; one without the other is what
+  reopened it before.
+- **Open — 10-bit ingest.** `TenBitIngest` never fires on the software route (the
+  transport ships NV12 by ADR 0029), so the 10-bit preview path is 8-bit. It is
+  no longer slow — that leg plays one track at content rate since the lane
+  stopped re-seeking per request — so what remains is purely whether the fidelity
+  gap is worth a 10-bit ship format. A colour question, not a performance one.
 
 Measured non-levers — do not spend time here: the snapshot blit
 (`blitDrawImage` mean 0.02–0.03 ms), `ringLookup`, the audio sweep,
