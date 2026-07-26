@@ -285,17 +285,18 @@ Ranked by measured payoff per unit of work.
    a rasterize-to-force-flush, or move receive+barrier to a worker so the wait
    stops blocking the loop that consumes the frames. Do NOT re-try shrinking the
    sampled region — that was measured and is noise.
-3. **Make the over-budget hardware clip fall to WebCodecs, not to the ffmpeg
-   software lane.** Past `MAX_HW_SESSIONS` (3) the fourth clip opens on the
-   software transport in place, and that single clip takes the session with it:
-   tick p50 15.1 → 82.6 ms, presented 59.9 → 13.0 fps, main-process CPU
-   0.7 % → 28.7 %, drops 0 → 39.8 %. Routing the over-budget clip to WebCodecs
-   instead would turn that cliff into a slope. **Re-measure before building it**:
-   those numbers are from before item 4 landed, and the lane the clip falls onto
-   now carries two 1080p tracks at 30 fps each on 5.8 % CPU, so the cliff may
-   already be a slope. At minimum, make the transition observable — it currently
-   fires no event and no LogBus row, contrary to what [preview.md](preview.md)
-   claims.
+3. **Say something when a clip changes lane.** Past `MAX_HW_SESSIONS` (3) the
+   fourth clip opens on the ffmpeg software transport in place, and nothing
+   anywhere records it — no event, no LogBus row — though
+   [preview.md](preview.md) claims each transition logs once. This used to be
+   masked by the symptom: the overflow clip took the session with it (tick p50
+   82.6 ms, main CPU 28.7 %, drops 39.8 %). It no longer does — the same cell
+   now measures tick p50 16.6 ms, main CPU 3.6 %, every clip delivering 30 fps —
+   so the transition is silent in every sense. The routing half of this item is
+   dropped: sending an over-budget clip to WebCodecs would make hardware-vs-
+   software an engine-level fact, and [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)
+   makes it private to the Standard engine. Whether the cap itself should be
+   higher is a barrier question and belongs to item 2.
 4. **Find what stalls the renderer's tick while delivery is perfect.** The
    software lane's own wall is gone — it stopped seeking per request, and 1080p
    went 0 → 2 smooth tracks, ProRes and 10-bit HEVC 0 → 1, with 0 wasted frames

@@ -334,26 +334,34 @@ The WebCodecs leg is the control that isolates it: same fixture, same
 compositor, same track counts, no barrier — and tick p95 stays 17.4–17.8 ms from
 one track to four.
 
-### `MAX_HW_SESSIONS = 3` degrades off a cliff
+### `MAX_HW_SESSIONS = 3` overflows silently, and that is now the whole problem
 
 The fourth 1080p clip takes a `hw-budget-exceeded` and opens on the ffmpeg
-software transport in place. That one clip takes the whole session with it:
+software transport in place. It used to take the whole session with it; since
+that lane stopped re-seeking per request, it does not:
 
-| | 3 tracks | 4 tracks |
+| 4 tracks (3 × `native-gpu` + 1 × `sw`) | before | after |
 |---|---|---|
-| lane mix | 3 × `native-gpu` | 3 × `native-gpu` + 1 × `sw` |
-| tick p50 | 15.1 ms | **82.6 ms** |
-| presented | 59.9 fps | **13.0 fps** |
-| main-process CPU | 0.7 % | **28.7 %** |
-| drops | 0.0 % | 39.8 % |
+| tick p50 | **82.6 ms** | **16.6 ms** |
+| presented | **13.0 fps** | **43.7 fps** |
+| main-process CPU | **28.7 %** | **3.6 %** |
+| drops | 39.8 % | 3.96 % |
+| per-clip delivery | — | 30.2 / 30.2 / 30.2 / 30.0 |
 
-The tick body still only costs 0.9 ms there — the collapse is the software
-lane's NV12 delivery arriving on the renderer's main thread. Nothing fires an
-event or a log when this happens.
+The cell still misses the verdict, but on `tick p99` 103.1 ms with delivery
+perfect — which is what the *pure*-hardware 3-track cell does too (p99 40.3 ms,
+0.00 % drops, barrier 0.47 thread-s/s). The remaining cost at four tracks is the
+read barrier and the tick tail, not the lane the overflow lands on.
+
+**Nothing fires an event or a log when the overflow happens**, and now that it no
+longer announces itself as a stutter, that silence is the actual defect. The
+transition is invisible to the product; the bench can only see it by diffing
+`activeClipProbe().sourceKind` per layer, which is why this matrix has a lane-mix
+column at all.
 
 That cell is also the internal check on the software pin: this `sw` clip was
 produced *organically* by the session budget, not by the `WEFTCUT_FORCE_HW_LANE`
-pin, and shows the same signature (`nv12Ingest` appears, main-process CPU jumps).
+pin, and shows the same signature (`nv12Ingest` appears, main-process CPU rises).
 
 ### The software lane re-seeked on every request
 

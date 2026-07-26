@@ -240,8 +240,15 @@ erroring.
 **Sticky, per-source, no re-promotion.** A HW failure marks this source
 software-only for the rest of the session; a total ffmpeg failure under `auto`
 marks the source `webcodecs` for the session. Neither re-promotes — reopening
-the source (reload / re-import) is what clears it. Each transition logs to
-LogBus once, not per frame.
+the source (reload / re-import) is what clears it.
+
+**Only ENGINE transitions are logged.** `noteResolution` emits one LogBus row per
+media per change of the resolved key, never per frame — so an engine or source
+change (the total-ffmpeg-failure case above, a proxy landing) leaves a trail. A
+**lane** change does not: the lane is deliberately absent from the swap key
+(ADR 0030), so a HW→SW fallback and a `hw-budget-exceeded` overflow both happen
+in place with no row, no event, and no state to read afterwards. That gap is
+tracked; do not read the resolution trail as a record of which lane played.
 
 **Capability cache.** `<userData>/decode_capability.json` persists per-machine
 probe verdicts across restarts, keyed by lane (`sw`/`hw`) and a
