@@ -294,8 +294,14 @@ Ranked by measured payoff per unit of work.
 
    **Landed** (`decoder/ffmpegLaneTrail.ts`): a lane trail beside the resolution
    trail, emitting one `decode-lane` LogBus row per clip per hardware↔software
-   transition — the lane left, the lane taken, and the reason — including the
-   return trip when the clip re-promotes. It is a separate channel rather than a
+   transition — the lane left, the lane taken, and the reason. The one transition
+   it never reports is the return *from* a budget overflow, because that return
+   does not happen: lane selection runs once per decode session and the session
+   outlives the timeline edit that would free a slot, so an over-budget clip stays
+   on software until its source is rebuilt — a reload, a re-import, or the pool's
+   idle sweep. [preview](preview.md) records that as a documented limit, and the
+   live session count is readable beside the lane pill so the state is at least
+   legible. It is a separate channel rather than a
    field on the resolved key, for the same reason the routing half of this item
    was dropped: sending an over-budget clip to WebCodecs, or keying the swap on
    the lane, would make hardware-vs-software an engine-level fact, and
