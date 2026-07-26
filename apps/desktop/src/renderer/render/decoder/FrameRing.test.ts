@@ -461,7 +461,7 @@ describe("FrameRing byte budget", () => {
 // their own delivery counter BEFORE calling `push`, so nothing in the old
 // instrumentation could distinguish "pushed and painted" from "pushed and
 // binned" — or from "offered and refused at the door".
-// See `.scratch/playback-perf/issues/07-webcodecs-multitrack-decoder-collapse.md`.
+// What it turned out to be, and what the counters found: docs/playback-perf.md.
 describe("FrameRing.fate", () => {
   it("starts at zero on every counter", () => {
     const ring = new FrameRing();

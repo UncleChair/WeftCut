@@ -96,10 +96,45 @@ So the A/B recipe is:
 2. Restore the change, `npm run build:e2e`, run the same leg with `--tag cand`.
 3. Compare. If the two runs are hours apart, they are not comparable.
 
-**WebCodecs magnitudes are one sample each.** The same 1080p 3-track cell
-measured 7.2 %, 28.5 % and 50.5 % drops across three runs while its *ceiling*
-stayed at 2 tracks. Read WebCodecs ceilings, not WebCodecs magnitudes. The
-ffmpeg-hw judder reproduces closely within a session.
+**WebCodecs magnitudes are one sample each.** The same 1080p H.264 3-track cell
+has measured 0.00 %, 7.2 %, 28.3 %, 28.5 %, 50.5 % and 73.5 % drops across runs.
+Read WebCodecs ceilings rather than magnitudes — with the caveat that on *this*
+leg even the ceiling moves (2 in one sitting, 3 in another), so it is the one
+place where a ceiling needs repeats before it is written down. The ffmpeg legs
+reproduce closely within a session, and the HEVC WebCodecs leg is stable at ≥5
+tracks, so the instability is codec-specific rather than route-wide.
+
+## Traps that have produced a wrong conclusion here
+
+Every one of these shipped a false reading at least once in this spec.
+
+- **A green gate is not evidence that it exercised the thing.** The hardware
+  order gate ran a full session green while silently taking the `readback`
+  fallback on every session, because a bare `launchApp()` sits on the project
+  picker with no Pixi Application and therefore no device — and a barcode check
+  passes under *every* correct barrier. Any run that pins a variant must report
+  what it **applied**, and a mismatch invalidates the cell the way `routeDrift`
+  does. Same class: `preview-hw-conformance` skips entirely on Windows, and a gate
+  that always skips looks identical to one that passes.
+- **A negative control has to go red in the right SHAPE.** `--barrier none` fails
+  with every Δ an integer multiple of `pool_size` — the producer lapping the
+  consumer by whole pool cycles. Red for another reason is not the control.
+- **A scripted `transportPlay()` that no-ops reads as a perfect cell** — 0 drops,
+  0 late ticks, 0 profiler frames. Assert the playhead advanced before trusting
+  anything downstream of it.
+- **An acceptance metric that predates a mechanism cannot measure it.** A cell
+  force-spinning 2 s per 20 s reported `barrier thread-s/s` 0.01 because the share
+  derived from a percentile of the *submit* cost. Price a minority-of-frames cost
+  with a SUM — any percentile hides it — and re-derive the metric when the
+  mechanism changes.
+- **A renderer-side counter cannot see producer-side waste.** A starved software
+  cell's frame-fate table reads clean because the waste was spent inside
+  libavcodec and discarded before any frame reached the ring. The discriminator is
+  a native-level probe of decoded-vs-delivered, and driving `SwVideoStream` from a
+  `#[ignore]` test A/B'd two policies in 90 s where the matrix took 20 minutes.
+- **Two similar magnitudes are not evidence of a shared cause when there are only
+  two of them.** Take the suspected cause away and re-measure instead; it is
+  nearly always the cheaper experiment.
 
 **`--playback-resolution` is a diagnostic, never a comparison.** Sweeping it
 answers whether a lane's wall is latency-bound (a smaller frame changes nothing)

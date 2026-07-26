@@ -66,9 +66,8 @@ export interface FrameRingInit {
 /// Why counters and not just `size()`: `decodeFps` is a `pushCount` diff, so it
 /// reads identically whether frames are pushed and painted or pushed and
 /// discarded. The measured failure this exists to explain is a ring reading
-/// EMPTY while its decoder reports full-rate delivery
-/// (`.scratch/playback-perf/issues/07-…`), and telling those apart needs to know
-/// a frame's fate, not the ring's depth.
+/// EMPTY while its decoder reports full-rate delivery (docs/playback-perf.md),
+/// and telling those apart needs to know a frame's fate, not the ring's depth.
 ///
 /// Conservation identity, useful as a self-check when reading a report:
 ///   `pushed === size() + evicted + flushed`
