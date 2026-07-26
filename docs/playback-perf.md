@@ -68,6 +68,65 @@ Per clip, off the product's own `Compositor.getPerfSnapshot()`: `decodedFrameCou
 diffed into a delivery fps, `ringSize`, `lookaheadFull`, `decodeQueueSize`, the
 resolved `sourceKind`, and whether the handle `downgraded` at runtime.
 
+### Frame fate
+
+A delivery fps says how many frames arrived. It does **not** say whether any of
+them were painted — and the two come apart, hard enough that a cell can report
+full-rate delivery with an empty ring. So `FrameRing` also counts where every
+frame it was offered actually went (`FrameRingFate`), and the report renders those
+counters as a flow:
+
+| in | out unpainted | painted |
+|---|---|---|
+| `pushed` | `stale` (refused on arrival, already behind `anchor - lookbehind`) | `hit` |
+| | `evict✗` (aged out of the window unpainted) | `clamp` (CTS / edit-list offset) |
+| | `flush✗` (thrown away by a seek or resync, over `flushes` calls) | `repeat` (same frame again — a HELD frame) |
+
+plus `miss empty` / `miss gap` for selections the ring could not serve at all.
+Counters are cumulative on the ring and **diffed across the measured window** by
+the harness, so warm-up churn is excluded the same way the stage timers exclude it.
+One consequence: `pushed === size + evicted + flushed` holds on the ring's own
+absolute counters but *not* on a window delta, because a frame pushed just before
+the window can be evicted inside it. A 4K 1-track cell reading 600 pushed and 601
+evicted is that, not a leak.
+
+Why this is not redundant with `decode fps/clip`: **both engines increment their
+own delivery counter before calling `FrameRing.push`**, and `push` silently
+discards a frame that arrives already behind the window. The two engines then
+diverge in how that shows up, which is worth knowing before reading a report:
+
+- `FfmpegSource.decodedFrameCount()` is `ring.pushCount` — frames the ring
+  *accepted*. A refused frame there presents as a **low** delivery fps.
+- The WebCodecs handle's is `outputFrameCount` — frames delivered to the ring's
+  *door*. A refused frame there presents as **full-rate delivery into an empty
+  ring**.
+
+`stale` is the counter that reads the same on both, and it is the one that
+distinguishes "the decoder is slow" from "the decoder is fast and its output is
+being thrown away" — a re-seek churn loop on a long-GOP source re-decodes the
+whole GOP prefix, and every prefix frame older than the window lands there.
+
+`repeat` deserves separate attention because it is the judder the product's own
+dropped-frame indicator is structurally blind to: `judgeFrameSelection` asks only
+whether the bound frame is *stale*, so painting the same frame twice reads as two
+successful selections and zero drops.
+
+**Calibrate `repeat` before reading it.** It is not an error count. A 60 Hz
+display running a 30 fps composition paints every composition frame twice by
+design, so the healthy baseline is ~50 %: the measured 1-track cell shows 596
+repeats against 1190 hits with 0.00 % drops and a passing verdict. Read it against
+`presented fps ÷ comp fps` — that ratio is the expected repeat share, and only the
+excess over it is judder.
+
+### Conversion backlog (WebCodecs only)
+
+Outputs waiting on `createImageBitmap`, current and lifetime peak. Each one holds
+an **open `VideoFrame`**, so it pins a slot in the ~13-entry hardware decode pool
+(ADR 0004) — and overrunning that pool stalls the decoder silently. The pump caps
+the decoder's *input* queue via `decodeQueueSize`; nothing caps this output side,
+which makes the pair the two halves of "is the decoder starved, or blocked on its
+own pool?"
+
 ### The hardware lane's read barrier
 
 The hardware lane pays a synchronous GPU drain per delivered frame per session
@@ -197,7 +256,7 @@ cell.
 |---|---|---|
 | 1080p ffmpeg-hw | **2** | tick p99 38.8 ms — the read barrier, *not* decode (delivery held 30 fps on all three clips, zero drops) |
 | 1080p ffmpeg-sw | **0** | 88.9 % of comp frames showed a late frame at ONE track |
-| 1080p webcodecs | **2** | drops 7.2 % at 3 — decoder/VRAM, while ticks stayed at p95 17.5 ms |
+| 1080p webcodecs | **3** | drops 4.66 % at 4, with `flushes` 0 and every ring healthy — real decode capacity, not the livelock that used to cap this leg at 2 |
 | 4K ffmpeg-hw | **0** | drops 26.5 % *and* tick p99 71.3 ms at one track |
 | 4K ffmpeg-sw | **0** | drops 94.0 % at one track |
 | 4K webcodecs | **0** | tick p99 74.3 ms at one track — with **zero** drops |
@@ -325,10 +384,19 @@ are GPU-backed, so the bill lands in GPU memory:
 | 4K webcodecs, 1 track | 58 | **~1.9 GB** | **2.91 GB** | 0.0 % |
 | 4K webcodecs, 2 tracks | 64 / 61 | **~4.0 GB** asked for | 1.63 GB delivered | 83.5 % |
 
-At four 1080p tracks three of the four rings are **empty** — the decoders died
-rather than merely fell behind. At 4K two tracks ask for ~4 GB and get 1.6 GB.
-This is why the WebCodecs legs fail with clean ticks and zero paint cost: the
-wall is retained memory, not decode throughput or compositing.
+At four 1080p tracks three of the four rings are **empty**, and at 4K two tracks
+ask for ~4 GB and get 1.6 GB. Both fail with clean ticks and zero paint cost, so
+neither is decode throughput or compositing.
+
+The empty rings are **not** dead decoders, which is what this table looked like
+before frame-fate counters existed. The frame-fate instrument shows those clips
+decoding at 40 fps — faster than the healthy 1-track cell — with every frame
+refused at `push` as already behind the window, and their rings flushed ~6 times
+a second. That is a re-seek livelock in `PacketPump`'s reset policy, described
+under [Multi-track collapse](#multi-track-collapse-is-a-re-seek-livelock-not-a-buffer-size).
+Bounding retained bytes (`frameRingBudget.ts`) was the first attempt at this cell
+and did not fix it; a *tighter* bound made it much worse, because starving the
+forward fill is one of the ways to trigger the same livelock.
 
 ### What the ¼-resolution control ruled out
 
@@ -362,6 +430,82 @@ The software lane is the one thing ¼ helps, and only partly: 1080p delivery ros
 closer to 16×; a purely latency-bound one would not have moved at all. It is
 mostly serialization with a real size term on top — which is why ¼ rescues its
 *tick* (18.7 ms, clean) while leaving it decode-starved (62.6 % drops).
+
+### Multi-track collapse is a re-seek livelock, not a buffer size
+
+At 3–4 concurrent 1080p H.264 WebCodecs clips, playback does not degrade — it
+falls off a cliff and never recovers. Frame-fate counters name the mechanism:
+
+| tracks | pushed | stale on arrival | ring flushes | wasted | conversion peak | drops |
+|---|---|---|---|---|---|---|
+| 1 | 616 | **0** | **0** | 1.1 % | 1 | 0.00 % |
+| 2 | 1236 | **0** | **0** | 1.5 % | 1 | 0.00 % |
+| 3 | 158 | **1722** | **254** | **94.9 %** | 1 | 73.50 % |
+| 4 | 1549 | **2137** | **231** | 62.3 % | 1 | 58.07 % |
+
+At three tracks two of the clips push **zero** frames into their rings across a
+20 s window while decoding at **40 fps** — faster than the healthy single-track
+cell's 30.8. Every frame they produce is refused as already behind the window, and
+their rings are flushed ~6 times a second.
+
+The loop, between two policies each defensible alone:
+
+1. A clip falls more than `FORWARD_SEEK_RESET_US` (1 s) behind. `decideReset`'s
+   far-forward arm fires.
+2. The reset flushes the ring and seeks to the nearest key packet — up to 8 s
+   earlier on a 240-frame GOP.
+3. The frontier is now ~8 s behind the target, so the far-forward arm is *still*
+   true. `PacketPump` knows this; the `seekResolvedForTargetUs` latch exists for
+   it.
+4. That latch is scoped to *"have I already seeked for this exact target"*, and
+   **under playback the target changes every frame** — so it never holds. Every
+   pump pass re-seeks and re-flushes, discarding the prefix it just decoded.
+
+One transient lag latched it and nothing unlatched it, which is why the ceiling
+was hard (always 2 tracks) while the magnitude was erratic (3 tracks measured
+7.2 %, 28.5 %, 50.5 %, 73.5 % across runs) and why **4 tracks measured better than
+3**. At 1–2 tracks no clip ever falls a full second behind, and `flushes` is
+exactly 0.
+
+**Fixed** in two parts, both in `PacketPump`:
+
+- The latch is keyed on the **key packet** (`seekedKeyTimestamp`) instead of the
+  target, so it holds under a moving playhead. A seek that would land on the key
+  the pump is already decoding forward from is a no-op and is skipped. Scoped to
+  `far-forward`: a *backward* target inside the same GOP genuinely needs the
+  re-seek, since the pump only moves forward.
+- `resetReason()` replaces the boolean reset decision, so the flush can depend on
+  which condition fired. `ring.flush()` now happens only on
+  `backward-beyond-ring`, where the cached frames really are the wrong region. On
+  a far-forward reset they are not — `requestFrameAt`'s `setAnchor` has already
+  evicted whatever fell outside the new window.
+
+| tracks | flushes | stale | drops | tick p99 | verdict |
+|---|---|---|---|---|---|
+| 1 | 0 → 0 | 0 → 0 | 0.00 → 0.00 % | 18.6 → 18.3 ms | smooth → smooth |
+| 2 | 0 → 0 | 0 → 0 | 0.00 → 0.00 % | 20.0 → 18.0 ms | smooth → smooth |
+| 3 | **254 → 0** | **1722 → 0** | **73.50 → 0.00 %** | **96.4 → 18.3 ms** | STUTTER → **smooth** |
+| 4 | **231 → 0** | **2137 → 38** | **58.07 → 4.66 %** | **52.5 → 17.9 ms** | STUTTER → STUTTER |
+
+Max smooth tracks **2 → 3**. Three corroborating details: per-clip delivery
+normalised from 39.4 fps back to 29.5 (the excess *was* the churn); tick p99 came
+down to 17.9–18.3 ms in **all four** cells, which is why this is a fix and not
+session drift; and the `decoder … error: Decoding error.` lines that appeared only
+in the collapsing cell went to zero, so those errors were an **effect** of
+hammering `reset()` + `configure()` every pass, not a cause of the lag.
+
+Four tracks still misses the 1 % drop budget at 4.66 %, but it now fails on that
+criterion alone with `flushes` 0 and every ring holding frames — genuine decode
+capacity, which is flow control's problem (`04-sw-lane-flow-control`), not a
+livelock.
+
+Two things this rules out. **The ADR-0004 hardware pool is not involved**:
+`conversionBacklog.peak` is 1 in every cell, so at most one `VideoFrame` is ever
+pinned awaiting `createImageBitmap` — the preview path's snapshot-and-close really
+does exempt it, concurrency included. **GOP length is not what separates H.264
+from HEVC**: both fixtures are `keyint=240 min-keyint=240 scenecut=0`, so the
+remaining question is the narrower "what makes a clip fall a full second behind
+even once".
 
 ### Preview rasterizes at composition resolution, not panel resolution
 
