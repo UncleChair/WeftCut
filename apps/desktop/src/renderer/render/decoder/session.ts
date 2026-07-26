@@ -99,6 +99,14 @@ export interface FrameStore {
   lastPtsUs(): number | null;
   /// Number of cached entries, for the dev `PerfHUD`.
   size(): number;
+  /// Cumulative frame-fate accounting — where each offered frame went and how
+  /// each selection resolved (see `FrameRing`'s `FrameRingFate`). Honestly
+  /// optional in the same sense as `DecodeSession`'s trailing members: only
+  /// preview's `FrameRing` has a retention WINDOW that can lose a frame, so
+  /// only it can account for one. Export pre-stages frames against explicit
+  /// targets and evicts on the consumer's cutoff, so the same counters there
+  /// would measure nothing.
+  readonly fate?: import("./FrameRing").FrameRingFate;
 }
 
 export interface FrameSelection {
@@ -129,6 +137,14 @@ export interface DecodeSession {
   decodeQueueSize?(): number;
   decodedFrameCount?(): number;
   isDowngraded?(): boolean;
+  /// WebCodecs only: decoder outputs awaiting `createImageBitmap`. Each one
+  /// holds an OPEN `VideoFrame`, so it pins a slot in the ~13-entry hardware
+  /// decode pool ADR 0004 describes — and overrunning that pool stalls the
+  /// decoder silently. `decodeQueueSize` caps the INPUT side; nothing caps this
+  /// output side, which makes it the missing half of "is the decoder starved or
+  /// is it blocked on its own pool?". `peak` is monotonic over the handle's
+  /// life (a peak is not a rate, so it cannot be diffed across two samples).
+  conversionBacklog?(): { inFlight: number; peak: number };
   /// Diagnostics: hardware-lane preload handoff timings (PerfHUD). Absent on
   /// sessions with no preload stage.
   handoffTimings?(): HandoffTimingSummary | null;

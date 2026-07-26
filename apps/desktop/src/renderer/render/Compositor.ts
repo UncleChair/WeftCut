@@ -129,6 +129,19 @@ export interface CompositorPerfSnapshot {
     /// True when the ring's lookahead window is satisfied (decoder not
     /// running behind the playhead).
     lookaheadFull: boolean;
+    /// Where this clip's decoded frames went — see `FrameRingFate`. Null on the
+    /// export store, which has no retention window to lose one to.
+    ///
+    /// This is the counter set that separates "never decoded" from "decoded and
+    /// thrown away": `decodedFrameCount` is incremented by BOTH engines before
+    /// they call `ring.push`, so a frame the ring then rejects as stale is
+    /// counted as delivered and never held. Diff two snapshots for rates; read
+    /// `serveRepeat` absolutely, since a held frame is a judder event the
+    /// dropped-frame counter is blind to.
+    ringFate: import("./decoder/FrameRing").FrameRingFate | null;
+    /// WebCodecs only: decoder outputs awaiting `createImageBitmap`, each
+    /// pinning a hardware decode-pool slot (ADR 0004). Null on every other lane.
+    conversionBacklog: { inFlight: number; peak: number } | null;
   }>;
 }
 
@@ -194,6 +207,13 @@ export interface ActiveClipProbe {
   /// seeked frame rather than an earlier one the ring surfaced while catching up.
   ringFirstPtsUs: number | null;
   ringLastPtsUs: number | null;
+  /// Where this clip's decoded frames went (see `FrameRingFate`), null on a
+  /// store without a retention window. Carried here as well as on
+  /// `CompositorPerfSnapshot` because the playback bench reads the two probes at
+  /// different points — the perf snapshot brackets the measured window, while
+  /// this one is also sampled during the pre-window route verification, where a
+  /// clip already churning before the window opens is worth seeing.
+  ringFate: import("./decoder/FrameRing").FrameRingFate | null;
   /// True once a real (non-EMPTY) texture is bound to the sprite. A VideoClip
   /// snapshots the ring's ImageBitmap into its own canvas, so "the bitmap
   /// reached the sprite" shows up as a bound, correctly-sized texture rather
@@ -1361,6 +1381,8 @@ export class Compositor {
         downgraded: c.source.isDowngraded?.() ?? false,
         handoff: c.source.handoffTimings?.() ?? null,
         lookaheadFull: c.source.isLookaheadFull?.() ?? false,
+        ringFate: ring.fate ?? null,
+        conversionBacklog: c.source.conversionBacklog?.() ?? null,
       });
     }
     return {
@@ -1412,6 +1434,7 @@ export class Compositor {
       ringSize: s.ring.size(),
       ringFirstPtsUs: s.ring.firstPtsUs(),
       ringLastPtsUs: s.ring.lastPtsUs(),
+      ringFate: s.ring.fate ?? null,
       spriteBound: !isEmpty,
       spriteWidth: isEmpty ? 0 : tex.orig.width,
       spriteHeight: isEmpty ? 0 : tex.orig.height,

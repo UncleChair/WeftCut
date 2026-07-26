@@ -163,6 +163,32 @@ function heapCapRatioOf(memory: PerfMemory | null): number | null {
     : null;
 }
 
+type RingFate = NonNullable<CompositorPerfSnapshot["clips"][number]["ringFate"]>;
+type ConversionBacklog = CompositorPerfSnapshot["clips"][number]["conversionBacklog"];
+
+/// Decoded frames the ring took delivery of (or was offered) and then discarded
+/// without ever handing them to the compositor. The three terms are distinct
+/// mechanisms — arrived too late to be worth keeping, aged out of the window
+/// unpainted, thrown away by a seek/resync — but any of them climbing during
+/// steady playback means decode work is being paid for and binned.
+function wasteOf(f: RingFate): number {
+  return f.staleDropped + f.evictedUnserved + f.flushedUnserved;
+}
+
+function fateTitle(f: RingFate, conv: ConversionBacklog): string {
+  const lines = [
+    `pushed ${f.pushed} · stale-on-arrival ${f.staleDropped}`,
+    `evicted ${f.evicted} (${f.evictedUnserved} never painted)`,
+    `flushed ${f.flushed} over ${f.flushes} seek/resync (${f.flushedUnserved} never painted)`,
+    `serves: ${f.serveHit} hit · ${f.serveClamp} clamp · ${f.serveRepeat} REPEAT`,
+    `misses: ${f.serveMissEmpty} empty · ${f.serveMissGap} out-of-window`,
+  ];
+  // Only the WebCodecs lane has an output-side conversion queue, and each entry
+  // in it holds an open VideoFrame — i.e. a pinned hardware decode-pool slot.
+  if (conv) lines.push(`createImageBitmap in flight ${conv.inFlight} (peak ${conv.peak})`);
+  return lines.join("\n");
+}
+
 /// True when any tracked metric is in its warn band — drives the monitor's
 /// titlebar health dot.
 function sampleHot(s: PerfHudSample): boolean {
@@ -448,6 +474,16 @@ function PerfDashboard({
                 <th className="perf-num" title="Preload read-completion barrier, ms (p50/p95) — hardware lane only">
                   barrier
                 </th>
+                {/* Cumulative, not a rate: what a human watches here is whether
+                    it CLIMBS during steady playback. A ring that is filling and
+                    painting leaves this flat; churn (re-seek loops, a decoder
+                    delivering frames the window has already passed) is the only
+                    thing that moves it. `fps` and `ring` both read healthy
+                    while this runs away — that combination is the measured
+                    signature of the multi-track collapse. */}
+                <th className="perf-num" title="Decoded frames the ring discarded without ever painting them (stale-on-arrival + evicted/flushed unserved)">
+                  waste
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -516,6 +552,18 @@ function PerfDashboard({
                           }
                         >
                           {clip.handoff.barrierP50.toFixed(1)}/{clip.handoff.barrierP95.toFixed(1)}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="perf-num">
+                      {clip.ringFate ? (
+                        <span
+                          className={wasteOf(clip.ringFate) > 0 ? "perf-warn" : undefined}
+                          title={fateTitle(clip.ringFate, clip.conversionBacklog)}
+                        >
+                          {wasteOf(clip.ringFate)}
                         </span>
                       ) : (
                         "—"

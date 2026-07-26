@@ -454,3 +454,151 @@ describe("FrameRing byte budget", () => {
     expect(ring.retainedBytes).toBe(0);
   });
 });
+
+// The measured failure these exist for: at 3–4 concurrent 1080p clips the rings
+// read EMPTY while every decoder reported full-rate delivery, so frames were
+// produced and lost. `decodeFps` is a `pushCount` diff and both engines bump
+// their own delivery counter BEFORE calling `push`, so nothing in the old
+// instrumentation could distinguish "pushed and painted" from "pushed and
+// binned" — or from "offered and refused at the door".
+// See `.scratch/playback-perf/issues/07-webcodecs-multitrack-decoder-collapse.md`.
+describe("FrameRing.fate", () => {
+  it("starts at zero on every counter", () => {
+    const ring = new FrameRing();
+    for (const [, v] of Object.entries(ring.fate)) expect(v).toBe(0);
+  });
+
+  it("returns a copy, so a held snapshot cannot drift under the caller", () => {
+    const ring = new FrameRing();
+    const before = ring.fate;
+    ring.push(makeBitmap(0), 0, 33_333);
+    expect(before.pushed).toBe(0);
+    expect(ring.fate.pushed).toBe(1);
+  });
+
+  it("counts a frame the ring refuses at the door as staleDropped, not pushed", () => {
+    // THE hypothesis this instrumentation was built to test. A long-GOP source
+    // re-seeking to serve the playhead re-decodes the whole GOP prefix; every
+    // prefix frame older than `anchor - lookbehind` lands here. The producer
+    // counts all of them as delivered, the ring holds none, and before this
+    // counter existed the discard left no trace anywhere.
+    const ring = new FrameRing();
+    ring.setAnchor(10_000_000);
+    ring.push(makeBitmap(0), 0, 33_333);
+    ring.push(makeBitmap(1_000_000), 1_000_000, 33_333);
+    expect(ring.fate.staleDropped).toBe(2);
+    expect(ring.fate.pushed).toBe(0);
+    expect(ring.size()).toBe(0);
+  });
+
+  it("separates evicted frames that were painted from those that never were", () => {
+    const ring = new FrameRing();
+    pushFrames(ring, 4, 33_333, 30);
+    // Paint the second frame only.
+    expect(ring.selectFrame(33_333)).not.toBeNull();
+    // Anchor past everything → all four leave by the time window.
+    ring.setAnchor(10_000_000);
+    expect(ring.fate.evicted).toBe(4);
+    expect(ring.fate.evictedUnserved).toBe(3);
+  });
+
+  it("attributes flushed frames the same way, and counts the flushes themselves", () => {
+    const ring = new FrameRing();
+    pushFrames(ring, 3, 33_333, 30);
+    expect(ring.selectFrame(0)).not.toBeNull();
+    ring.flush();
+    expect(ring.fate.flushes).toBe(1);
+    expect(ring.fate.flushed).toBe(3);
+    expect(ring.fate.flushedUnserved).toBe(2);
+    // A flush with nothing in the ring is still a seek/resync event — the churn
+    // signal is the CALL count, which must not depend on what happened to be held.
+    ring.flush();
+    expect(ring.fate.flushes).toBe(2);
+    expect(ring.fate.flushed).toBe(3);
+  });
+
+  it("holds the conservation identity: pushed === size + evicted + flushed", () => {
+    // The reason to assert this rather than each counter alone: it is what makes
+    // a report readable as a flow. If it ever breaks, a frame is leaving the ring
+    // by a path nothing accounts for.
+    const ring = new FrameRing();
+    pushFrames(ring, 20, 33_333, 30); // pts 0 … 633ms
+    ring.setAnchor(900_000); // lookbehind 0.5 s → evicts everything ending ≤ 400ms
+    ring.push(makeBitmap(700_000), 700_000, 33_333);
+    ring.flush();
+    pushFrames(ring, 5, 33_333, 30);
+    const f = ring.fate;
+    // Both removal paths must have fired, or the identity is vacuous on one arm.
+    expect(f.evicted).toBeGreaterThan(0);
+    expect(f.flushed).toBeGreaterThan(0);
+    expect(f.pushed).toBe(ring.size() + f.evicted + f.flushed);
+  });
+
+  it("counts a hit, a clamp, and both kinds of miss apart", () => {
+    const ring = new FrameRing();
+    // Empty ring.
+    expect(ring.selectFrame(0)).toBeNull();
+    expect(ring.fate.serveMissEmpty).toBe(1);
+
+    // First entry at +50ms: a CTS / edit-list offset. Asking for 0 clamps.
+    ring.push(makeBitmap(50_000), 50_000, 33_333);
+    ring.push(makeBitmap(83_333), 83_333, 33_333);
+    expect(ring.selectFrame(0)).not.toBeNull();
+    expect(ring.fate.serveClamp).toBe(1);
+    expect(ring.fate.serveHit).toBe(0);
+
+    // Inside the span: a plain hit.
+    expect(ring.selectFrame(83_333)).not.toBeNull();
+    expect(ring.fate.serveHit).toBe(1);
+
+    // Further before the ring than the clamp can rescue — the backward-seek
+    // shape, distinct from an empty ring because the frames exist, just not
+    // these ones.
+    expect(ring.selectFrame(-5_000_000)).toBeNull();
+    expect(ring.fate.serveMissGap).toBe(1);
+    expect(ring.fate.serveMissEmpty).toBe(1);
+  });
+
+  it("counts a re-selected frame as a repeat — the judder the drop counter can't see", () => {
+    // `judgeFrameSelection` asks only whether the bound frame is STALE, so a
+    // compositor painting the same frame twice reads as two successful
+    // selections and zero drops. Measured shape: presented 26.7 fps against a
+    // 29.97 grid with dropped=0 throughout.
+    const ring = new FrameRing();
+    ring.push(makeBitmap(0), 0, 33_333);
+    ring.push(makeBitmap(33_333), 33_333, 33_333);
+    ring.selectFrame(10_000);
+    expect(ring.fate.serveRepeat).toBe(0);
+    ring.selectFrame(20_000); // same entry again → held frame
+    expect(ring.fate.serveRepeat).toBe(1);
+    ring.selectFrame(40_000); // advances to the next entry
+    expect(ring.fate.serveRepeat).toBe(1);
+  });
+
+  it("does not call a re-push after a flush a repeat", () => {
+    // Re-decoding the same PTS after a seek and painting it again is a genuine
+    // new selection; carrying the old PTS across the flush would report the
+    // recovery from a seek as judder.
+    const ring = new FrameRing();
+    ring.push(makeBitmap(0), 0, 33_333);
+    ring.selectFrame(0);
+    ring.flush();
+    ring.push(makeBitmap(0), 0, 33_333);
+    ring.selectFrame(0);
+    expect(ring.fate.serveRepeat).toBe(0);
+  });
+
+  it("does not count or mark-served the readiness probes", () => {
+    // `frameAt` is polled per tick by the Compositor's source-swap path and
+    // `containsPts` by the decoder's seek decision. Counting either would
+    // inflate hits with selections nothing painted, and marking entries served
+    // would erase the evidence of a frame that was decoded and never shown.
+    const ring = new FrameRing();
+    pushFrames(ring, 3, 33_333, 30);
+    expect(ring.frameAt(33_333)).not.toBeNull();
+    expect(ring.containsPts(33_333)).toBe(true);
+    expect(ring.fate.serveHit).toBe(0);
+    ring.setAnchor(10_000_000);
+    expect(ring.fate.evictedUnserved).toBe(3);
+  });
+});

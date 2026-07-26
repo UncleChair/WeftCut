@@ -11,6 +11,13 @@
 // `compositeMsLast` structurally cannot see (`setAnchorTime` and the Pixi
 // present) plus the per-layer sub-stages inside the composite.
 //
+// The "Frame fate" table answers the other half — not how long a stage took but
+// where each decoded frame WENT. It exists because `decode fps/clip` is a
+// `decodedFrameCount` diff and both engines bump that counter before calling
+// `FrameRing.push`, so a clip that decodes at full rate into a ring that discards
+// every frame is indistinguishable from a healthy one by throughput alone. The
+// counters come from `FrameRing`'s `fate` (see `FrameRingFate`).
+//
 // The three decode paths are pinned on ONE fixture, so a route comparison is
 // never codec-confounded:
 //   ffmpeg hardware — decode_engine=ffmpeg + WEFTCUT_FORCE_HW_LANE=d3d11va
@@ -242,6 +249,41 @@ function aggregateMetrics(samples) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/// Per-window deltas of a clip's cumulative `FrameRing` fate counters.
+///
+/// Deltas, not absolutes: warm-up legitimately churns (the first seek flushes,
+/// the decoder walks a GOP prefix to reach the play position), so absolutes
+/// would fold cold-start cost into a steady-state measurement. The same reason
+/// `stageProfilingReset()` runs after the warm-up sleep.
+///
+/// `before` missing means the clip was not in the opening snapshot, which for
+/// this harness would itself be a finding — the route gate waits for every layer
+/// to resolve AND fill a ring before the window opens. Treated as 0 so the row
+/// still prints rather than vanishing.
+function fateDelta(before, after) {
+  if (!after) return null;
+  const out = {};
+  for (const k of Object.keys(after)) out[k] = after[k] - (before?.[k] ?? 0);
+  return out;
+}
+
+/// Sum every fate counter across a cell's clips. The per-clip spread matters too
+/// (see `wastePerClip`), but the cell-level total is what compares two cells.
+function fateSum(perClip) {
+  const fates = perClip.map((p) => p.ringFate).filter(Boolean);
+  if (fates.length === 0) return null;
+  const out = {};
+  for (const f of fates) for (const [k, v] of Object.entries(f)) out[k] = (out[k] ?? 0) + v;
+  return out;
+}
+
+/// Frames decoded and then discarded without ever being painted. Three distinct
+/// mechanisms, deliberately summed: whichever one dominates, the meaning is the
+/// same — decode work paid for and binned. `decodeFps` cannot see any of it.
+function wasteOf(f) {
+  return f.staleDropped + f.evictedUnserved + f.flushedUnserved;
+}
 
 // ── Environment block ───────────────────────────────────────────────────────
 async function envBlock() {
@@ -520,6 +562,17 @@ async function runCell(leg, tracks) {
         barrierMax: c.handoff?.barrierMax ?? null,
         cibP50: c.handoff?.cibP50 ?? null,
         residentP50: c.handoff?.residentP50 ?? null,
+        // Where this clip's frames went during the window. `decodeFps` above is
+        // a `decodedFrameCount` diff, and BOTH engines bump that counter before
+        // calling `ring.push` — so a clip whose frames all arrive too late to
+        // keep reports full-rate delivery with an empty ring. These counters are
+        // what tell the two apart.
+        ringFate: fateDelta(s?.ringFate, c.ringFate),
+        // WebCodecs only: outputs waiting on `createImageBitmap`, each holding
+        // an open VideoFrame and therefore a hardware decode-pool slot (ADR
+        // 0004). The peak is a lifetime max, so it is read absolute, not diffed.
+        conversionInFlight: c.conversionBacklog?.inFlight ?? null,
+        conversionPeak: c.conversionBacklog?.peak ?? null,
       };
     });
     // The barrier is a per-DELIVERED-FRAME synchronous drain, so its p50 alone
@@ -661,7 +714,9 @@ for (const leg of legs) {
     entry.cells.push(cell);
     fs.writeFileSync(outFile, JSON.stringify(report, null, 2));
     if (cell.kind === "ok") {
-      log(`  → ${v.pass ? "SMOOTH" : "STUTTER"} · drops ${(cell.dropRatio * 100).toFixed(2)}% · presented ${cell.presentedFps.toFixed(1)}fps · lanes ${JSON.stringify(cell.laneMix)}${cell.routeDrift.length ? ` · DRIFT ${cell.routeDrift.join("; ")}` : ""}`);
+      const fs_ = fateSum(cell.perClip ?? []);
+      const waste = fs_ ? ` · waste ${wasteOf(fs_)}/${fs_.pushed + fs_.staleDropped} frames` : "";
+      log(`  → ${v.pass ? "SMOOTH" : "STUTTER"} · drops ${(cell.dropRatio * 100).toFixed(2)}% · presented ${cell.presentedFps.toFixed(1)}fps${waste} · lanes ${JSON.stringify(cell.laneMix)}${cell.routeDrift.length ? ` · DRIFT ${cell.routeDrift.join("; ")}` : ""}`);
     } else {
       log(`  → ${cell.kind.toUpperCase()}: ${cell.error}`);
     }
@@ -741,6 +796,63 @@ function printTables(report) {
           `${name === "tickInterval" ? "—" : pctOf(st.totalMs, tickTotal)} | ${f(st.totalMs / c.wallS, 1)} |`,
         );
       }
+    }
+  }
+
+  // Where the frames went. This table answers a question the sweep table
+  // structurally cannot: `decode fps/clip` reads full-rate whether a frame was
+  // painted or binned, because both engines count a frame as decoded on the line
+  // before `ring.push`. Read it as a flow — `pushed` in, `stale`/`evict✗`/
+  // `flush✗` out, `hit`/`clamp` painted — and the collapsing cells show
+  // themselves: delivery high, waste high, ring empty.
+  console.log("\n### Frame fate (deltas over the measured window, summed across clips)\n");
+  console.log("| leg | tracks | pushed | stale | evicted | evict✗ | flushes | flush✗ | wasted% | hit | clamp | repeat | miss empty | miss gap | conv peak | waste per clip |");
+  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+  for (const leg of report.legs) {
+    for (const c of leg.cells) {
+      if (c.kind !== "ok") continue;
+      const sum = fateSum(c.perClip ?? []);
+      if (!sum) {
+        console.log(`| ${leg.label} | ${c.tracks} | — | | | | | | | | | | | | | ring fate absent (pre-instrumentation report) |`);
+        continue;
+      }
+      // Per-clip, because the measured signature of the collapse is UNEVEN: one
+      // clip keeps its ring while the others read empty. A cell-level sum hides
+      // exactly that.
+      const perClipWaste = (c.perClip ?? [])
+        .map((p) => (p.ringFate ? wasteOf(p.ringFate) : "—"))
+        .join(" / ");
+      const convPeak = max((c.perClip ?? []).map((p) => p.conversionPeak).filter((x) => x !== null));
+      console.log(
+        `| ${leg.label} | ${c.tracks} | ${sum.pushed} | ${sum.staleDropped} | ${sum.evicted} | ${sum.evictedUnserved} | ${sum.flushes} | ${sum.flushedUnserved} | ` +
+        `${pctOf(wasteOf(sum), sum.pushed + sum.staleDropped)} | ${sum.serveHit} | ${sum.serveClamp} | ${sum.serveRepeat} | ${sum.serveMissEmpty} | ${sum.serveMissGap} | ` +
+        `${f(convPeak, 0)} | ${perClipWaste} |`,
+      );
+    }
+  }
+
+  // Collected since the matrix was built, but never printed until now — which
+  // made ticket 07's step 4 ("watch for a silent internal downgrade") unanswerable
+  // from a report. `decoderFallback.ts` reconfigures with `prefer-software` on a
+  // zero-output first-frame error and only `console.error`s; no state anywhere
+  // else records it, so these lines are the ONLY trace that a cell labelled
+  // hardware silently finished on software.
+  const withLines = report.legs.flatMap((leg) =>
+    leg.cells
+      .filter((c) => c.kind === "ok" && (c.consoleErrors?.length ?? 0) > 0)
+      .map((c) => ({ leg, c })),
+  );
+  if (withLines.length > 0) {
+    console.log("\n### Renderer decoder/budget console lines\n");
+    console.log("| leg | tracks | n | lines (deduped) |");
+    console.log("|---|---|---|---|");
+    for (const { leg, c } of withLines) {
+      const counts = new Map();
+      for (const line of c.consoleErrors) counts.set(line, (counts.get(line) ?? 0) + 1);
+      const rendered = [...counts.entries()]
+        .map(([line, n]) => `${n}× ${line.replace(/\|/g, "¦")}`)
+        .join("<br>");
+      console.log(`| ${leg.label} | ${c.tracks} | ${c.consoleErrors.length} | ${rendered} |`);
     }
   }
 

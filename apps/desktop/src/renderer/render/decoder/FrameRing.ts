@@ -49,11 +49,69 @@ interface RingEntry {
   ptsUs: number;
   durationUs: number;
   frame: TransportFrame;
+  /// Whether `selectFrame` ever returned this entry. Read on removal to
+  /// separate "held long enough to be painted" from "decoded and thrown away".
+  served: boolean;
 }
 
 export interface FrameRingInit {
   lookaheadUs?: number;
   lookbehindUs?: number;
+}
+
+/// Where every decoded frame this ring was offered actually WENT, and how every
+/// selection resolved. Cumulative since construction; unaffected by eviction or
+/// flush (a counter that reset on flush could not measure churn).
+///
+/// Why counters and not just `size()`: `decodeFps` is a `pushCount` diff, so it
+/// reads identically whether frames are pushed and painted or pushed and
+/// discarded. The measured failure this exists to explain is a ring reading
+/// EMPTY while its decoder reports full-rate delivery
+/// (`.scratch/playback-perf/issues/07-…`), and telling those apart needs to know
+/// a frame's fate, not the ring's depth.
+///
+/// Conservation identity, useful as a self-check when reading a report:
+///   `pushed === size() + evicted + flushed`
+/// and separately `offered === pushed + staleDropped`. If the first does not
+/// hold, a frame left the ring by a path that is not accounted for here.
+export interface FrameRingFate {
+  /// Frames accepted into the ring. Same value as `pushCount`.
+  pushed: number;
+  /// Frames REJECTED by `push` because they arrived already behind
+  /// `anchor - lookbehind`. Decode produced them and the ring never held them,
+  /// so a decoder can report full-rate delivery while this climbs and the ring
+  /// stays empty. That is the exact signature of a re-seek churn loop: on a
+  /// long-GOP source, serving the playhead re-decodes the whole GOP prefix, and
+  /// every prefix frame older than the window lands here.
+  staleDropped: number;
+  /// Frames removed by `setAnchor`'s lookbehind time window.
+  evicted: number;
+  /// Of `evicted`, those `selectFrame` never returned — decoded, retained, and
+  /// discarded without ever reaching the compositor. Work paid for and wasted.
+  evictedUnserved: number;
+  /// `flush()` calls. Each is a seek or an adaptive resync; a rising count
+  /// during steady playback IS the churn, whatever the frame numbers say.
+  flushes: number;
+  /// Frames destroyed by `flush()`, and of those the ones never served.
+  flushed: number;
+  flushedUnserved: number;
+  /// `selectFrame` returned an entry found by the binary search.
+  serveHit: number;
+  /// `selectFrame` clamped to the first entry (a CTS / edit-list offset within
+  /// `CLAMP_TO_FIRST_GAP_US`). A hit, counted apart because a steady stream of
+  /// clamps means the ring is persistently starting later than asked.
+  serveClamp: number;
+  /// `selectFrame` returned the SAME PTS as the previous call — the compositor
+  /// painted a HELD frame. This is the judder the dropped-frame indicator is
+  /// blind to: `judgeFrameSelection` only asks whether the bound frame is stale,
+  /// so a repeated frame reads as a successful selection.
+  serveRepeat: number;
+  /// `selectFrame` found nothing because the ring was empty.
+  serveMissEmpty: number;
+  /// `selectFrame` found nothing because every entry sat further ahead than
+  /// `CLAMP_TO_FIRST_GAP_US` — the `strandedAheadOf` shape, a backward seek the
+  /// window cannot serve.
+  serveMissGap: number;
 }
 
 export class FrameRing {
@@ -64,6 +122,25 @@ export class FrameRing {
   private _pushCount = 0;
   private _retainedBytes = 0;
   private disposed = false;
+  /// See `FrameRingFate`. Counted in one object so a snapshot is one spread.
+  private _fate: FrameRingFate = {
+    pushed: 0,
+    staleDropped: 0,
+    evicted: 0,
+    evictedUnserved: 0,
+    flushes: 0,
+    flushed: 0,
+    flushedUnserved: 0,
+    serveHit: 0,
+    serveClamp: 0,
+    serveRepeat: 0,
+    serveMissEmpty: 0,
+    serveMissGap: 0,
+  };
+  /// PTS of the entry `selectFrame` last returned, for `serveRepeat`. A PTS and
+  /// not the entry reference on purpose: holding the reference would keep one
+  /// evicted entry (and its closed frame) alive past its eviction.
+  private lastServedPtsUs: number | null = null;
 
   constructor(init: FrameRingInit = {}) {
     this.lookaheadUs = init.lookaheadUs ?? DEFAULT_LOOKAHEAD_US;
@@ -84,11 +161,19 @@ export class FrameRing {
       : frame.width * frame.height * 4;
   }
 
+  /// Where every frame went — see `FrameRingFate`. A copy, so a caller holding
+  /// a snapshot across ticks reads a fixed sample rather than a live object.
+  get fate(): FrameRingFate {
+    return { ...this._fate };
+  }
+
   /// Drop the oldest entry, keeping the byte tally in step.
   private evictFirst(): void {
     const first = this.entries.shift();
     if (!first) return;
     this._retainedBytes -= FrameRing.bytesOf(first.frame);
+    this._fate.evicted += 1;
+    if (!first.served) this._fate.evictedUnserved += 1;
     first.frame.close();
   }
 
@@ -153,12 +238,18 @@ export class FrameRing {
   /// `VideoFrame.timestamp` / `.duration` (saved before the source frame was
   /// closed, since `ImageBitmap` itself carries no PTS metadata).
   push(frame: TransportFrame, ptsUs: number, durationUs: number): void {
-    // If this frame is already behind the lookbehind window, drop it.
+    // If this frame is already behind the lookbehind window, drop it. COUNTED:
+    // this is decode output the ring refuses, and it is invisible in
+    // `pushCount` (deliberately — that is a throughput measure of frames the
+    // ring accepted) and in the producers' own `decodedFrameCount`, which both
+    // engines increment before calling here.
     if (ptsUs + durationUs < this.anchorUs - this.lookbehindUs) {
+      this._fate.staleDropped += 1;
       frame.close();
       return;
     }
     this._pushCount += 1;
+    this._fate.pushed += 1;
     this._retainedBytes += FrameRing.bytesOf(frame);
     // Fast path: append in order. The proxy disables B-frames
     // (`-bf 0`, see proxy.rs) so the decoder emits frames in PTS
@@ -170,7 +261,7 @@ export class FrameRing {
     // sources, async-bitmap races on closely-spaced frames) hit the
     // safety-net sort.
     const prevLast = this.entries[this.entries.length - 1];
-    this.entries.push({ ptsUs, durationUs, frame });
+    this.entries.push({ ptsUs, durationUs, frame, served: false });
     if (prevLast && prevLast.ptsUs > ptsUs) {
       this.entries.sort((a, b) => a.ptsUs - b.ptsUs);
     }
@@ -205,28 +296,55 @@ export class FrameRing {
   /// Same selection rule as `frameAt`, plus the presentation identity retained
   /// by the ring. ImageBitmap carries no timing metadata of its own, so callers
   /// that need to prove what was painted must read it here atomically.
+  ///
+  /// This is also the ONLY lookup that counts towards `fate`, and the only one
+  /// that marks an entry served. `frameAt` and `containsPts` are readiness
+  /// probes — the Compositor's swap path polls `frameAt` per tick
+  /// (`Compositor.ts:1991`) — so counting them would inflate hits with
+  /// selections nothing ever painted, and would mark entries served that never
+  /// reached a sprite. "Served" here means exactly "handed to the compositor's
+  /// paint path".
   selectFrame(tUs: number): { frame: TransportFrame; ptsUs: number; durationUs: number } | null {
-    const selected = this.entryAt(tUs);
-    if (!selected) return null;
+    const { entry, how } = this.lookup(tUs);
+    if (!entry) {
+      if (how === "empty") this._fate.serveMissEmpty += 1;
+      else this._fate.serveMissGap += 1;
+      return null;
+    }
+    if (how === "clamp") this._fate.serveClamp += 1;
+    else this._fate.serveHit += 1;
+    if (this.lastServedPtsUs === entry.ptsUs) this._fate.serveRepeat += 1;
+    this.lastServedPtsUs = entry.ptsUs;
+    entry.served = true;
     return {
-      frame: selected.frame,
-      ptsUs: selected.ptsUs,
-      durationUs: selected.durationUs,
+      frame: entry.frame,
+      ptsUs: entry.ptsUs,
+      durationUs: entry.durationUs,
     };
   }
 
   private entryAt(tUs: number): RingEntry | null {
-    if (this.entries.length === 0) return null;
+    return this.lookup(tUs).entry;
+  }
+
+  /// The single selection implementation, plus WHY it resolved that way so
+  /// `selectFrame` can attribute a miss without re-deriving the conditions.
+  private lookup(tUs: number): {
+    entry: RingEntry | null;
+    how: "hit" | "clamp" | "empty" | "gap";
+  } {
+    if (this.entries.length === 0) return { entry: null, how: "empty" };
     const firstPts = this.entries[0]!.ptsUs;
     if (tUs < firstPts) {
       // Clamp to first only when the gap is small (CTS / edit-list
       // offset); otherwise the painter should hold its previous
       // frame rather than flash a wrong-region frame.
-      if (firstPts - tUs > CLAMP_TO_FIRST_GAP_US) return null;
-      return this.entries[0]!;
+      if (firstPts - tUs > CLAMP_TO_FIRST_GAP_US) return { entry: null, how: "gap" };
+      return { entry: this.entries[0]!, how: "clamp" };
     }
     const idx = this.findLatestAtOrBefore(tUs);
-    return idx === -1 ? null : this.entries[idx]!;
+    if (idx === -1) return { entry: null, how: "empty" };
+    return { entry: this.entries[idx]!, how: "hit" };
   }
 
   /// True when the ring holds frames but NONE of them can ever serve `tUs`,
@@ -244,9 +362,17 @@ export class FrameRing {
 
   /// Drop everything. Use on seek beyond the lookahead window.
   flush(): void {
-    for (const e of this.entries) e.frame.close();
+    this._fate.flushes += 1;
+    for (const e of this.entries) {
+      this._fate.flushed += 1;
+      if (!e.served) this._fate.flushedUnserved += 1;
+      e.frame.close();
+    }
     this.entries = [];
     this._retainedBytes = 0;
+    // A flushed ring can re-push the same PTS, and the compositor painting it
+    // again is a genuine new selection rather than a held frame.
+    this.lastServedPtsUs = null;
   }
 
   size(): number {
