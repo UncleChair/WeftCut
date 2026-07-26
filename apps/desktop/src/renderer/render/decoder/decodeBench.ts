@@ -5,6 +5,7 @@
 // there, so prod bundles tree-shake it out with the rest of the hook surface.
 // Spec: docs/decode-bench.md
 import { convertFileSrc } from "@/bridge/ipc";
+import { getPreviewGpuBudget } from "@/bridge/previewGpu";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { FfmpegSource } from "./FfmpegSource";
 import type { FfmpegLane } from "./decodeEngine";
@@ -254,6 +255,217 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
     return { strategy, poolSize, checked, missing, mismatches };
   } catch (e) {
     return { strategy, poolSize, checked, missing, mismatches, error: String(e) };
+  } finally {
+    pool.dispose();
+  }
+}
+
+// ── Concurrent frame-CONTENT-order check (N hardware sessions at once) ───────
+// `decodeBenchOrderCheck` above drives ONE session, and a single session is not
+// the case we ship: production runs up to MAX_HW_SESSIONS hardware clips at
+// once, and the barrier's safety margin is not a constant across that. The
+// synchronous readback barrier measures ~19ms of drain at one session but ~5ms at
+// three — the sessions share one flush, so per-session slack COLLAPSES as
+// sessions are added, and any barrier whose correctness depends on how deep the
+// GPU command queue is when it submits (the deferred-ack fence path especially)
+// can pass alone and reorder in company. A reorder that only appears at three
+// sessions would clear every other gate in this repo.
+//
+// Every session is checked independently and reported separately: one merged
+// count would let three sessions' worth of passes bury a single session's
+// defect, and "which session reordered" is the first question a failure raises.
+
+export interface ConcurrentOrderCheckArgs {
+  sourcePath: string; // absolute fixture path; served via weftcut-media://
+  /// Concurrent hardware sessions to open. Must be <= the live HW-session cap
+  /// (MAX_HW_SESSIONS) or the surplus sessions are budget-rejected — which this
+  /// driver reports as an error rather than letting them run on software.
+  sessions: number;
+  /// Native pool size (slot count) per session. Default 3 (the product default).
+  poolSize?: number;
+  fpsNum: number;
+  fpsDen: number;
+  /// Total frames in the clip; each session walks [0, frameCount-1).
+  frameCount: number;
+  width: number;
+  height: number;
+  /// Barcode stripe count (12 in the standard fixture).
+  bits: number;
+}
+
+export interface ConcurrentOrderSessionResult {
+  index: number;
+  /// The lane this session actually resolved to. Anything but "hardware" means
+  /// the run did not test the thing (see `error`).
+  lane: string;
+  checked: number;
+  missing: number;
+  mismatches: OrderCheckMismatch[];
+  /// True when this session ran out of overall budget before walking the clip.
+  /// A capacity finding, NOT a pass: `checked` will be short and the caller must
+  /// treat that as a result to report, never as a bar to lower.
+  timedOut: boolean;
+  error?: string;
+}
+
+export interface ConcurrentOrderCheckResult {
+  poolSize: number | null;
+  sessions: ConcurrentOrderSessionResult[];
+  /// Set for a whole-run failure (bad session count, pool teardown). A
+  /// per-session failure lives on that session instead.
+  error?: string;
+}
+
+/// Open `sessions` hardware-lane sources on the SAME fixture and verify the
+/// barcode↔PTS pairing on every one of them (see the block comment above).
+///
+/// Opens are sequential, drives are CONCURRENT. Sequential opens are not a
+/// concession: main chains every `previewGpu:open` through one promise
+/// (`openPreviewGpu`'s `openChain`) precisely so the preload's positional
+/// slot-announce FIFO can pair imports safely, so concurrent opens would be
+/// serialised there anyway — doing it here just keeps "which session failed to
+/// open" unambiguous. The concurrency that matters is the drive: N read loops
+/// interleaved on one thread, contending one GPU command queue, which is what
+/// builds the queue depth a single-session run never reaches.
+export async function decodeBenchConcurrentOrderCheck(
+  args: ConcurrentOrderCheckArgs,
+): Promise<ConcurrentOrderCheckResult> {
+  const { sourcePath, fpsNum, fpsDen, frameCount, width, height, bits } = args;
+  const poolSize = args.poolSize ?? null;
+  const pool = new SourceDecoderPool();
+  const results: ConcurrentOrderSessionResult[] = [];
+  const PER_FRAME_BUDGET_MS = 5_000;
+  // Deliberately the single-session budget, NOT a scaled-up one. If N sessions
+  // cannot walk the clip in the time one session needs, that is the capacity
+  // answer the run exists to produce; stretching the budget would hide it.
+  const OVERALL_BUDGET_MS = 90_000;
+  try {
+    if (args.sessions < 1) throw new Error(`sessions must be >= 1, got ${args.sessions}`);
+    // Refuse a run that cannot put every session on hardware. Over the cap the
+    // surplus opens trip `hw-budget-exceeded`, and with the lane forced that is
+    // a hard fatal — but saying so up front names the cause instead of leaving
+    // it to be inferred from N identical open failures.
+    const budget = await getPreviewGpuBudget();
+    if (args.sessions > budget.max) {
+      throw new Error(
+        `sessions=${args.sessions} exceeds the concurrent-HW cap (${budget.max}); the surplus cannot be on hardware`,
+      );
+    }
+
+    const url = convertFileSrc(sourcePath);
+    const handles: FfmpegSource[] = [];
+    for (let i = 0; i < args.sessions; i++) {
+      const h = pool.acquire({
+        layerId: `concurrent-order-${i}`,
+        mediaId: `concurrent-order:${i}:${sourcePath}`,
+        proxyAssetUrl: url,
+        engine: "ffmpeg" as const,
+        forceLane: "hardware" as const,
+        sourcePath,
+        componentAvailable: true,
+        ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
+      }) as FfmpegSource;
+      handles.push(h);
+      results.push({ index: i, lane: "unopened", checked: 0, missing: 0, mismatches: [], timedOut: false });
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await h.ensureReady();
+        results[i]!.lane = h.currentLane();
+      } catch (e) {
+        results[i]!.error = String(e);
+        results[i]!.lane = h.currentLane();
+      }
+    }
+
+    const frameDurUs = (1_000_000 * fpsDen) / fpsNum;
+    const ptsOf = (n: number) => Math.round(n * frameDurUs);
+    const t0 = performance.now();
+
+    /// One session's read loop — the single-session discipline verbatim: nudge
+    /// the anchor forward so the pump never idles between slot fills (keeping
+    /// the read/ack race live), then read each frame's barcode before the
+    /// lookbehind evicts it. The `await sleep(1)` is what lets the N loops
+    /// interleave; with several running, each session's real nudge cadence is
+    /// set by the contention itself.
+    const driveOne = async (i: number): Promise<void> => {
+      const out = results[i]!;
+      const h = handles[i]!;
+      // A session that never opened on hardware has nothing to verify, and
+      // driving it would report a SOFTWARE lane's ordering under a hardware
+      // label — the same refusal `copybackFallbackError` makes for benchmarks.
+      if (out.error) return;
+      if (out.lane !== "hardware") {
+        out.error = `session ${i} resolved to lane "${out.lane}", not hardware — this run did not test the hardware path`;
+        return;
+      }
+      // Per-session canvas: `drawImage` + `getImageData` are synchronous so a
+      // shared one would not corrupt, but a private one keeps each session's
+      // read independent of the others' interleaving by construction.
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) {
+        out.error = `session ${i}: no 2d context`;
+        return;
+      }
+      void h.requestFrameAt(0);
+      for (let n = 0; n < frameCount - 1; n++) {
+        if (performance.now() - t0 > OVERALL_BUDGET_MS) {
+          out.timedOut = true;
+          break;
+        }
+        const pts = ptsOf(n);
+        h.ring.setAnchor(pts);
+        const wStart = performance.now();
+        while (!h.ring.containsPts(pts)) {
+          void h.requestFrameAt(pts);
+          if (performance.now() - wStart > PER_FRAME_BUDGET_MS) break;
+          // eslint-disable-next-line no-await-in-loop
+          await sleep(1);
+        }
+        const ringFrame = h.ring.frameAt(pts);
+        if (!ringFrame || !h.ring.containsPts(pts)) {
+          out.missing++;
+          continue;
+        }
+        if (isNativeNv12Frame(ringFrame)) {
+          // Only reachable if a session silently landed on the CPU-plane lane;
+          // the guard above should have stopped that. Handled the same way the
+          // single-session check does rather than throwing.
+          const vf = new VideoFrame(ringFrame.data as BufferSource, {
+            format: "NV12",
+            codedWidth: ringFrame.width,
+            codedHeight: ringFrame.height,
+            timestamp: ringFrame.timestamp,
+          });
+          try {
+            ctx.drawImage(vf, 0, 0);
+          } finally {
+            vf.close();
+          }
+        } else {
+          ctx.drawImage(ringFrame, 0, 0);
+        }
+        const decodedIdx = decodeBarcodeIndex(
+          ctx.getImageData(0, 0, width, height).data,
+          width,
+          height,
+          bits,
+        );
+        out.checked++;
+        if (decodedIdx !== n) out.mismatches.push({ ptsUs: pts, expectedIdx: n, decodedIdx });
+      }
+    };
+
+    // The whole point: all N read loops in flight at once. `allSettled` so one
+    // session throwing still yields the others' verdicts — a partial answer
+    // localises the defect, a rejected Promise.all loses it.
+    const settled = await Promise.allSettled(results.map((_, i) => driveOne(i)));
+    settled.forEach((s, i) => {
+      if (s.status === "rejected" && !results[i]!.error) results[i]!.error = String(s.reason);
+    });
+    return { poolSize, sessions: results };
+  } catch (e) {
+    return { poolSize, sessions: results, error: String(e) };
   } finally {
     pool.dispose();
   }

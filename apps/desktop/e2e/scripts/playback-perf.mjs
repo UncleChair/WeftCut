@@ -32,6 +32,56 @@
 // the measured window and reports the run invalid on drift, so a silently
 // downgraded lane can never be published under a hardware label.
 //
+// Crossed with those routes is the read-barrier axis — `--barrier`, pinned by
+// WEFTCUT_HW_BARRIER, and meaningful on the hardware route ONLY, since it
+// selects what the preload waits on between snapshotting a shared texture and
+// acking the slot back to the native pool (see `HwBarrierMode` in
+// `src/shared/ipc.ts` for the mechanism):
+//   fence    — the shipped default: submit the copy, take a `fenceSync`, hand
+//              the bitmap over at once, and ack the slot asynchronously when the
+//              fence signals. Still a hard completion signal — just not one the
+//              renderer's critical path waits on. Its deadline fallback is a
+//              flush-and-poll SPIN bounded by wall clock rather than a blocking
+//              wait, because WebGL2 cannot express one: Chromium reports
+//              `MAX_CLIENT_WAIT_TIMEOUT_WEBGL` as 0.
+//   readback — the barrier `fence` replaced: correct, shipped for years, and now
+//              the control every other variant is read against
+//   gpuflush — a GPU-side drain with no CPU readback. INCORRECT on the same
+//              ground as `none`: submitting the copy is not what the ack waits
+//              for, COMPLETION is, so it reorders too. Kept only to re-run that
+//              comparison, never as a candidate.
+//   none     — no barrier at all. KNOWINGLY INCORRECT — the lane presents
+//              frames out of order — and here only to price the ceiling: what
+//              the loop would cost if the wait were free. A `none` number
+//              therefore BOUNDS a possible win; it never reports one, because
+//              no shippable lane can run that way.
+// `barrier p50` is NOT one quantity across variants, and two of them must never
+// be differenced: under `readback` it is the whole wait, under `fence` only the
+// submit that still blocks (~0.1 ms) — the rest of the wait moved off the
+// critical path and is reported apart from it. A `fence` row is therefore not a
+// like-for-like reduction of a `readback` row; it is a different cost. What
+// decides whether that cost was MOVED or merely renamed is the deadline
+// fallback, and nothing in `barrier p50` will say it: a forced wait costs
+// roughly what the old barrier cost in DURATION and burns CPU spinning for it.
+// Occasional is fine; ROUTINE is strictly worse than the `readback` it replaces
+// — the same stall, now paid for twice. Two columns price it: `fence forced
+// waits` is how often, `spin thread-s/s` is how much thread time, and only the
+// second separates 200 harmless spins from 200 ruinous ones. `spin thread-s/s`
+// is also already INSIDE `barrier thread-s/s`, so the total stays the one
+// number an acceptance criterion can be written against.
+// The pin is verified per clip, not trusted, exactly as the route pin is: a
+// variant that cannot get the GL context it needs falls back to `readback`, by
+// design and without a word, so each cell compares the mode its clips actually
+// ran (`barrierModeObserved`) against the one its label claims and invalidates
+// itself on a mismatch. A cell that reached the tables therefore ran the
+// variant it is named after, or ran with the env unset and the product default.
+// It is a leg axis rather than something flipped between invocations because
+// absolute numbers on this box drift 15–25% across sittings — wider than the
+// effect being measured — so only variants run back to back inside one sitting
+// compare. With `--barrier` absent the variable is left unset: main resolves
+// unset to `fence` anyway, but the leg then measures the untouched path rather
+// than one that took the env branch.
+//
 // Requirements 3 of the experiment brief are enforced, not assumed: the
 // composition is created at the fixture's own resolution, `playback_resolution`
 // is pinned `full` (½/¼ would shrink both the raster target AND the shipped
@@ -85,6 +135,12 @@ const arg = (name, dflt) => {
 const CODECS = arg("codec", "h264").split(",");
 const RESOLUTIONS = arg("resolution", "1080,2160").split(",");
 const ROUTES = arg("route", "hw,sw,webcodecs").split(",");
+/// `null` — the single element when the flag is absent — means "launch with
+/// WEFTCUT_HW_BARRIER unset", which is not the same leg as an explicit `fence`
+/// even though both resolve to it: this is the path the app takes with nobody
+/// experimenting on it.
+const BARRIER_FLAG = arg("barrier", "");
+const BARRIERS = BARRIER_FLAG ? BARRIER_FLAG.split(",") : [null];
 const MAX_TRACKS = Number(arg("max-tracks", "8"));
 const EXPLICIT_TRACKS = arg("tracks", "") ? arg("tracks", "").split(",").map(Number) : null;
 const WINDOW_S = Number(arg("window-s", "20"));
@@ -157,6 +213,29 @@ if (!fs.existsSync(MAIN)) {
   process.exit(2);
 }
 
+const BARRIER_MODES = ["readback", "fence", "gpuflush", "none"];
+for (const b of BARRIERS) {
+  if (b !== null && !BARRIER_MODES.includes(b)) {
+    console.error(`[playback-perf] unknown barrier ${b} (${BARRIER_MODES.join("|")})`);
+    process.exit(2);
+  }
+}
+// An ambient value would ride into the leg labelled as the unset control and be
+// published under a label that does not name it — the same dishonesty the
+// per-layer route verification exists to prevent, one level up.
+if (!BARRIER_FLAG && process.env.WEFTCUT_HW_BARRIER) {
+  console.error(
+    `[playback-perf] WEFTCUT_HW_BARRIER=${process.env.WEFTCUT_HW_BARRIER} is set in this shell — pass it as --barrier so the leg labels name it, or unset it.`,
+  );
+  process.exit(2);
+}
+// Sweeping the barrier across the software and WebCodecs routes would spend a
+// second sitting-slot per cell re-measuring an identical lane under two labels:
+// nothing outside the hardware transport reads the variable.
+const nonHwRoutes = ROUTES.filter((r) => r !== "hw" && ROUTE_SPEC[r]);
+if (BARRIER_FLAG && nonHwRoutes.length > 0)
+  log(`note: the barrier axis exists on the hw route only — ${nonHwRoutes.join(", ")} run once each with WEFTCUT_HW_BARRIER unset, not once per --barrier value.`);
+
 const legs = [];
 for (const codec of CODECS) {
   for (const res of RESOLUTIONS) {
@@ -177,7 +256,8 @@ for (const codec of CODECS) {
         console.error(`[playback-perf] unknown route ${route} (hw|sw|webcodecs)`);
         process.exit(2);
       }
-      legs.push({ codec, res: Number(res), route, fixture, file });
+      for (const barrier of route === "hw" ? BARRIERS : [null])
+        legs.push({ codec, res: Number(res), route, fixture, file, barrier });
     }
   }
 }
@@ -268,6 +348,19 @@ function fateDelta(before, after) {
   return out;
 }
 
+/// Window delta of one cumulative per-session counter, for the same reason
+/// `fateDelta` exists — an absolute bills the measured window for work paid
+/// during warm-up. Null when the counter is absent, so a build or a transport
+/// that never reports it reads as "not measured" rather than as zero cost.
+///
+/// Clamped at 0 because a session re-opened mid-window restarts its counter, and
+/// a negative term would silently DISCOUNT the cost the counter exists to
+/// expose.
+function counterDelta(before, after) {
+  if (after === undefined || after === null) return null;
+  return Math.max(0, after - (before ?? 0));
+}
+
 /// Sum every fate counter across a cell's clips. The per-clip spread matters too
 /// (see `wastePerClip`), but the cell-level total is what compares two cells.
 function fateSum(perClip) {
@@ -341,7 +434,10 @@ async function runCell(leg, tracks) {
   const app = await electron.launch({
     executablePath: fs.existsSync(ELECTRON_EXE) ? ELECTRON_EXE : undefined,
     args: [`--user-data-dir=${userData}`, MAIN],
-    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1", ...spec.env },
+    env: {
+      ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: "1", ...spec.env,
+      ...(leg.barrier ? { WEFTCUT_HW_BARRIER: leg.barrier } : {}),
+    },
   });
   const consoleErrors = [];
   let gpuSampler = null;
@@ -378,7 +474,7 @@ async function runCell(leg, tracks) {
 
     await page.evaluate(
       (o) => window.__weftcutTest.newProjectAndEnter(o),
-      { parentFolder: projectParent, name: `pbperf-${leg.fixture}-${leg.route}-${tracks}t`,
+      { parentFolder: projectParent, name: `pbperf-${leg.fixture}-${leg.route}${leg.barrier ? `-${leg.barrier}` : ""}-${tracks}t`,
         canvas: { width, height, fpsNum: COMP_FPS, fpsDen: 1 } },
     );
     await page.waitForSelector('[data-testid="timeline-ruler"]', { timeout: 60_000 });
@@ -556,10 +652,35 @@ async function runCell(leg, tracks) {
         ringSize: c.ringSize,
         lookaheadFull: c.lookaheadFull,
         decodeQueueSize: c.decodeQueueSize,
+        // Which barrier this clip's frames ACTUALLY took, as opposed to the one
+        // the leg pinned. Null until an instrumented frame lands, and on every
+        // transport that has no barrier at all. Checked below.
+        barrierModeObserved: c.handoff?.barrierModeObserved ?? null,
         barrierN: c.handoff?.n ?? null,
         barrierP50: c.handoff?.barrierP50 ?? null,
         barrierP95: c.handoff?.barrierP95 ?? null,
         barrierMax: c.handoff?.barrierMax ?? null,
+        // The barrier split into the work it forces and the wait it imposes.
+        // Null on any route or build that does not instrument it — the same
+        // absent-means-no-column treatment the fields above get.
+        barrierDrawP50: c.handoff?.barrierDrawP50 ?? null,
+        barrierReadP50: c.handoff?.barrierReadP50 ?? null,
+        // `fence` only: the wait it deferred rather than removed. `fenceWaitP50`
+        // rides its own sample ring — only some frames carry a wait — so it is
+        // NOT aligned with the frame window the percentiles above cover and the
+        // two cannot be added. `fencePendingQueuePeak` nearing the pool size
+        // means the deferral has starved the producer of slots; it is a
+        // high-water mark over the session, so it is read absolute like
+        // `conversionPeak` below and never diffed.
+        fenceWaitP50: c.handoff?.fenceWaitP50 ?? null,
+        fencePendingQueuePeak: c.handoff?.fencePendingQueuePeak ?? null,
+        // Both forced-spin counters are CUMULATIVE over the session —
+        // `HandoffTimings` keeps them as maxima so they survive ring eviction —
+        // so both are diffed against the window open, like `decodeFps` and
+        // `ringFate`. Read absolute they would bill this window for spins paid
+        // while the first frames primed the ring, before the window existed.
+        fenceForcedWaits: counterDelta(s?.handoff?.fenceForcedWaits, c.handoff?.fenceForcedWaits),
+        fenceForcedWaitMs: counterDelta(s?.handoff?.fenceForcedWaitMsTotal, c.handoff?.fenceForcedWaitMsTotal),
         cibP50: c.handoff?.cibP50 ?? null,
         residentP50: c.handoff?.residentP50 ?? null,
         // Where this clip's frames went during the window. `decodeFps` above is
@@ -575,12 +696,51 @@ async function runCell(leg, tracks) {
         conversionPeak: c.conversionBacklog?.peak ?? null,
       };
     });
-    // The barrier is a per-DELIVERED-FRAME synchronous drain, so its p50 alone
-    // says nothing about whether it is on the critical path — 20 ms at 2 fps is
-    // free, 20 ms at 30 fps is not. This is the honest figure: thread-seconds of
-    // barrier per wall-second, summed over every hardware session (each session
-    // drains independently, on the same thread).
-    const barrierWallShare = perClip.reduce(
+    // ── Barrier verification ───────────────────────────────────────────────
+    // Held to the same standard as the route pin, and invalid on the same
+    // terms: a variant that cannot get the GL context it needs degrades to
+    // `readback` — deliberately, correctly, and silently — so a leg can run a
+    // variant it is not named after. That failure is worse than a missing cell:
+    // a `none` leg secretly running `readback` publishes "removing the barrier
+    // buys nothing" and retires the question on an artefact. An unpinned leg is
+    // held to `fence` because that is what main resolves an unset env to — keep
+    // this in step with `HW_BARRIER_MODE` in src/main/previewGpu.ts or every
+    // unpinned cell invalidates itself on a stale expectation.
+    const expectedBarrier = leg.barrier ?? "fence";
+    const barrierObserved = perClip.map((p) => p.barrierModeObserved).filter(Boolean);
+    const barrierDrift = perClip
+      .filter((p) => p.barrierModeObserved && p.barrierModeObserved !== expectedBarrier)
+      .map((p) => `${p.layerId}: ${p.barrierModeObserved}`);
+    if (barrierDrift.length > 0)
+      throw new InvalidRun(`barrier pin did not hold, expected ${expectedBarrier} — ${barrierDrift.join("; ")}`);
+    // Distinct from a mismatch: a clip with no observation never delivered an
+    // instrumented frame, or sits on a transport with no barrier (the software
+    // clips a hardware leg grows past MAX_HW_SESSIONS), and neither is drift.
+    // Nothing observed ANYWHERE under a pin is the case that must not pass — the
+    // cell cannot say which variant produced it, and an unattributable cell in a
+    // variant comparison is the artefact this whole check exists to exclude.
+    if (leg.barrier && barrierObserved.length === 0)
+      throw new InvalidRun(`barrier ${leg.barrier} pinned but no clip reported one — the pin cannot be confirmed`);
+
+    // Thread-seconds the renderer spends held up by the barrier, per
+    // wall-second, summed over every hardware session (each blocks
+    // independently, on the same thread). The p50 alone cannot say whether the
+    // barrier is on the critical path — 20 ms at 2 fps is free, 20 ms at 30 fps
+    // is not — and this is the figure that can.
+    //
+    // It spans TWO mechanisms, so a `fence` row and a `readback` row reaching
+    // the same value do NOT mean the same thing: the synchronous per-frame drain
+    // (priced from `barrierP50`, which on the `fence` path is submit-only), plus
+    // the wall-clock the deferred path spent spinning in its deadline fallback.
+    // The second term is not optional bookkeeping — a forced spin blocks the
+    // main thread and contributes nothing to `barrierP50`, so without it this
+    // number reads near zero for a `fence` leg that is burning the loop, which
+    // is precisely the direction that flatters the candidate.
+    const fenceSpinShare = perClip.reduce(
+      (s, p) => s + (p.fenceForcedWaitMs !== null ? p.fenceForcedWaitMs / 1000 / wallS : 0),
+      0,
+    );
+    const barrierWallShare = fenceSpinShare + perClip.reduce(
       (s, p) => s + (p.barrierP50 !== null ? (p.barrierP50 * p.decodeFps) / 1000 : 0),
       0,
     );
@@ -623,6 +783,7 @@ async function runCell(leg, tracks) {
       stages,
       perClip,
       barrierWallShare,
+      fenceSpinShare,
       metrics,
       gpu: {
         videoDecodeMean: mean(gpu.videoDecode),
@@ -676,14 +837,14 @@ function verdict(cell, baseline) {
 // ── Main ────────────────────────────────────────────────────────────────────
 const env = await envBlock();
 log(`env: Electron ${env.electron} / Chromium ${env.chrome} · ${env.gpuNames ?? env.gpu.join(",")} · ${env.cpus}`);
-log(`legs: ${legs.map((l) => `${l.fixture}/${l.route}`).join(", ")} · window ${WINDOW_S}s warmup ${WARMUP_S}s`);
+log(`legs: ${legs.map((l) => `${l.fixture}/${l.route}${l.barrier ? `+${l.barrier}` : ""}`).join(", ")} · window ${WINDOW_S}s warmup ${WARMUP_S}s`);
 
 fs.mkdirSync(RESULTS_DIR, { recursive: true });
 const report = {
   env,
   config: { windowS: WINDOW_S, warmupS: WARMUP_S, maxTracks: MAX_TRACKS, compFps: COMP_FPS,
     dropBudget: DROP_BUDGET, presentFloor: PRESENT_FLOOR, tracks: EXPLICIT_TRACKS,
-    playbackResolution: PLAYBACK_RESOLUTION },
+    playbackResolution: PLAYBACK_RESOLUTION, barriers: BARRIERS },
   legs: [],
 };
 // `--tag` keeps chunked runs (one invocation per codec, say) from overwriting
@@ -694,8 +855,12 @@ const outFile = path.join(RESULTS_DIR, `playback-perf-${env.date.slice(0, 10)}-$
 
 for (const leg of legs) {
   const spec = ROUTE_SPEC[leg.route];
+  // The label is what every table row is keyed by, so the variant has to live
+  // IN it: two legs differing only by barrier are otherwise indistinguishable
+  // once the run is read back from JSON.
   const entry = { fixture: leg.fixture, codec: leg.codec, res: leg.res, route: leg.route,
-    label: `${leg.fixture} · ${spec.label}`, cells: [] };
+    barrier: leg.barrier,
+    label: `${leg.fixture} · ${spec.label}${leg.barrier ? ` · barrier=${leg.barrier}` : ""}`, cells: [] };
   report.legs.push(entry);
   let baseline = null;
   let failStreak = 0;
@@ -754,21 +919,31 @@ function printTables(report) {
   const pctOf = (part, whole) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
 
   console.log("\n### Track sweep\n");
-  console.log("| leg | tracks | verdict | drop% | presented fps | decode fps/clip | tick p50 | tick p99 | composite p50 | present p50 | present p95 | anchor p50 | barrier p50 | barrier n | barrier thread-s/s | CPU main | CPU rend | CPU gpu | GPU vdec% | GPU 3d% | lanes |");
-  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+  console.log("| leg | tracks | verdict | drop% | presented fps | decode fps/clip | tick p50 | tick p99 | composite p50 | present p50 | present p95 | anchor p50 | barrier p50 | fence forced waits | barrier draw p50 | barrier read p50 | fence wait p50 | fence queue peak | barrier n | barrier thread-s/s | spin thread-s/s | CPU main | CPU rend | CPU gpu | GPU vdec% | GPU 3d% | lanes |");
+  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const leg of report.legs) {
     for (const c of leg.cells) {
       if (c.kind !== "ok") {
-        console.log(`| ${leg.label} | ${c.tracks} | ${c.kind} | | | | | | | | | | | | | | | | | | ${c.error ?? ""} |`);
+        console.log(`| ${leg.label} | ${c.tracks} | ${c.kind} | | | | | | | | | | | | | | | | | | | | | | | | ${c.error ?? ""} |`);
         continue;
       }
       const s = c.stages?.byStage ?? {};
       const dec = median(c.perClip.map((p) => p.decodeFps));
       const bar = median(c.perClip.map((p) => p.barrierP50).filter((x) => x !== null));
+      const barDraw = median(c.perClip.map((p) => p.barrierDrawP50).filter((x) => x !== null));
+      const barRead = median(c.perClip.map((p) => p.barrierReadP50).filter((x) => x !== null));
+      const fenceWait = median(c.perClip.map((p) => p.fenceWaitP50).filter((x) => x !== null));
+      // Both aggregated as the WORST clip, not the median one, and for the same
+      // reason the frame-fate table reports `conversionPeak` with `max`: these
+      // are the columns that reject the variant, and one session spinning every
+      // frame or sitting at the pool ceiling IS the rejection — a median across
+      // sessions would dilute exactly the clip that carries the finding.
+      const fenceQPeak = max(c.perClip.map((p) => p.fencePendingQueuePeak).filter((x) => x !== null));
+      const fenceForced = max(c.perClip.map((p) => p.fenceForcedWaits).filter((x) => x !== null));
       const barN = median(c.perClip.map((p) => p.barrierN).filter((x) => x !== null));
       console.log(
         `| ${leg.label} | ${c.tracks} | ${c.verdict.pass ? "smooth" : "STUTTER"} | ${f(c.dropRatio * 100, 2)} | ${f(c.presentedFps)} | ${f(dec)} | ` +
-        `${f(s.tickInterval?.p50Ms, 2)} | ${f(s.tickInterval?.p99Ms, 2)} | ${f(s.composite?.p50Ms, 2)} | ${f(s.present?.p50Ms, 2)} | ${f(s.present?.p95Ms, 2)} | ${f(s.anchor?.p50Ms, 2)} | ${f(bar, 2)} | ${f(barN, 0)} | ${f(c.barrierWallShare, 2)} | ` +
+        `${f(s.tickInterval?.p50Ms, 2)} | ${f(s.tickInterval?.p99Ms, 2)} | ${f(s.composite?.p50Ms, 2)} | ${f(s.present?.p50Ms, 2)} | ${f(s.present?.p95Ms, 2)} | ${f(s.anchor?.p50Ms, 2)} | ${f(bar, 2)} | ${f(fenceForced, 0)} | ${f(barDraw, 2)} | ${f(barRead, 2)} | ${f(fenceWait, 2)} | ${f(fenceQPeak, 0)} | ${f(barN, 0)} | ${f(c.barrierWallShare, 2)} | ${f(c.fenceSpinShare, 2)} | ` +
         `${f(c.metrics.cpu.Browser?.mean)} | ${f(c.metrics.cpu.Tab?.mean)} | ${f(c.metrics.cpu.GPU?.mean)} | ${f(c.gpu.videoDecodeMean)} | ${f(c.gpu.gpu3dMean)} | ${JSON.stringify(c.laneMix)} |`,
       );
     }

@@ -70,6 +70,45 @@ function report(r: OrderCheckResult): string {
   return ex ? `${head}\n${ex}` : head
 }
 
+interface ConcurrentOrderSession {
+  index: number
+  lane: string
+  checked: number
+  missing: number
+  mismatches: OrderCheckMismatch[]
+  timedOut: boolean
+  error?: string
+}
+interface ConcurrentOrderResult {
+  poolSize: number | null
+  sessions: ConcurrentOrderSession[]
+  error?: string
+}
+
+async function runConcurrentOrderCheck(page: Page, sessions: number): Promise<ConcurrentOrderResult> {
+  await waitForHook(page, 'decodeBenchConcurrentOrderCheck')
+  return (await page.evaluate(
+    (args) =>
+      (window as unknown as {
+        __weftcutTest: { decodeBenchConcurrentOrderCheck(a: unknown): Promise<ConcurrentOrderResult> }
+      }).__weftcutTest.decodeBenchConcurrentOrderCheck(args),
+    { sourcePath: CLIP, sessions, ...CLIP_META },
+  )) as ConcurrentOrderResult
+}
+
+function reportSession(s: ConcurrentOrderSession): string {
+  const head = `  session ${s.index}: lane=${s.lane} checked=${s.checked} missing=${s.missing} mismatches=${s.mismatches.length}${s.timedOut ? ' TIMED-OUT' : ''}${s.error ? ` error=${s.error}` : ''}`
+  const ex = s.mismatches
+    .slice(0, 6)
+    .map((m) => `    pts=${m.ptsUs} expected=${m.expectedIdx} decoded=${m.decodedIdx} (Δ=${m.decodedIdx - m.expectedIdx})`)
+    .join('\n')
+  return ex ? `${head}\n${ex}` : head
+}
+
+function reportConcurrent(r: ConcurrentOrderResult): string {
+  return `pool=${r.poolSize}${r.error ? ` error=${r.error}` : ''}\n${r.sessions.map(reportSession).join('\n')}`
+}
+
 interface HwFallbackSessionOutcome {
   index: number
   ready: boolean
@@ -134,6 +173,57 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
       }
     })
   }
+
+  // The single-session sweep above cannot speak for the case we ship. Three
+  // concurrent hardware sessions is production's problem shape, and the barrier
+  // behaves differently there: the synchronous readback measures ~19ms of drain at
+  // one session but ~5ms at three, because the sessions share one flush and
+  // per-session slack collapses as sessions are added. Any strategy whose
+  // ordering depends on GPU command-queue depth when it submits can therefore
+  // pass alone and reorder in company — and would ship green, since every other
+  // gate in this repo drives one session.
+  //
+  // Each session is asserted on its own: a merged count would let two passes
+  // bury one session's reorder, and "which session" is the first thing a
+  // failure has to answer. Barrier mode comes from WEFTCUT_HW_BARRIER, same as
+  // every test here.
+  test('ffmpeg hardware lane: 3 concurrent sessions each present frames in order (no reorder under contention)', async () => {
+    test.setTimeout(240_000)
+    const { app, page } = await launchApp()
+    try {
+      const r = await runConcurrentOrderCheck(page, 3)
+      // eslint-disable-next-line no-console
+      console.log('[preview-gpu-order] 3 concurrent hardware sessions ->\n' + reportConcurrent(r))
+      expect(r.error, `concurrent order check errored: ${r.error}`).toBeUndefined()
+      expect(r.sessions.length, 'expected 3 session results').toBe(3)
+      for (const s of r.sessions) {
+        expect(s.error, `session ${s.index} errored: ${s.error}\n${reportConcurrent(r)}`).toBeUndefined()
+        // A session on software has not tested the hardware path. Fail rather
+        // than report its ordering under a hardware label.
+        expect(
+          s.lane,
+          `session ${s.index} ran on "${s.lane}", not hardware — this run did not test the thing:\n${reportConcurrent(r)}`,
+        ).toBe('hardware')
+        // Short `checked` under contention is a CAPACITY finding, not a reason
+        // to lower the bar — the message carries every session's numbers so the
+        // shortfall can be read directly.
+        expect(
+          s.checked,
+          `session ${s.index} checked only ${s.checked} frames${s.timedOut ? ' (ran out of budget)' : ''} — 3 concurrent sessions did not sustain throughput:\n${reportConcurrent(r)}`,
+        ).toBeGreaterThan(200)
+        expect(
+          s.missing,
+          `session ${s.index} never received ${s.missing} frame(s):\n${reportConcurrent(r)}`,
+        ).toBeLessThan(30)
+        expect(
+          s.mismatches.length,
+          `session ${s.index} presented ${s.mismatches.length} frame(s) whose pixels did not match their PTS (reorder under 3-session contention):\n${reportConcurrent(r)}`,
+        ).toBe(0)
+      }
+    } finally {
+      await app.close()
+    }
+  })
 
   // Smoke item b — HW session budget → downgrade (runtime seam), FORCED lane.
   // The main process caps concurrent hardware-lane sessions at MAX_HW_SESSIONS (3);

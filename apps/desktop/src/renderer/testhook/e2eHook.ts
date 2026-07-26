@@ -67,12 +67,15 @@ import {
   decodeBenchRun,
   decodeBenchPhase,
   decodeBenchOrderCheck,
+  decodeBenchConcurrentOrderCheck,
   decodeBenchBudgetProbe,
   decodeBenchHwFallbackProbe,
   type BenchArgs,
   type BenchResult,
   type OrderCheckArgs,
   type OrderCheckResult,
+  type ConcurrentOrderCheckArgs,
+  type ConcurrentOrderCheckResult,
   type BudgetProbeResult,
   type HwFallbackProbeArgs,
   type HwFallbackProbeResult,
@@ -394,6 +397,12 @@ export interface E2EHook {
   /// non-empty ⇒ the strategy presented frames out of order (pixels↔pts
   /// mispaired). See decodeBench.decodeBenchOrderCheck. Dev/e2e only.
   decodeBenchOrderCheck(args: OrderCheckArgs): Promise<OrderCheckResult>;
+  /// The same content-order guard run on N CONCURRENT hardware sessions, which
+  /// is the shipped case the single-session check above cannot speak for: the
+  /// barrier's per-session slack collapses as sessions are added, so a strategy
+  /// can order correctly alone and reorder in company. Reports each session
+  /// separately — a merged count would bury one session's defect. Dev/e2e only.
+  decodeBenchConcurrentOrderCheck(args: ConcurrentOrderCheckArgs): Promise<ConcurrentOrderCheckResult>;
   /// HW session-budget runtime probe (smoke item b): open `count` native-hw
   /// sessions and report each open's outcome. The (MAX_HW_SESSIONS+1)th must
   /// reject with `hw-budget-exceeded` and surface it via onFatalError (the
@@ -578,6 +587,7 @@ export function installDecodeBenchHooks(): void {
   hookSlot().decodeBenchRun = decodeBenchRun;
   hookSlot().decodeBenchPhase = decodeBenchPhase;
   hookSlot().decodeBenchOrderCheck = decodeBenchOrderCheck;
+  hookSlot().decodeBenchConcurrentOrderCheck = decodeBenchConcurrentOrderCheck;
   hookSlot().decodeBenchBudgetProbe = decodeBenchBudgetProbe;
   hookSlot().decodeBenchHwFallbackProbe = decodeBenchHwFallbackProbe;
   installPlaybackBenchHooks();
