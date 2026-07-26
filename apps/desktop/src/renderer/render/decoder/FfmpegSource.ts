@@ -320,6 +320,13 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.ring.setAnchor(tUs);      // always — drives lookbehind eviction, even post-eof
     if (this.eof) return; // eof seen on the current transport — its own IPC is done,
     // but the anchor above must still advance so the ring keeps evicting stale frames.
+    // Backpressure. Until this line `isLookaheadFull` was consulted only by the
+    // WebCodecs pump, so on this lane the ring's byte ceiling bounded what was
+    // RETAINED and never what the decoder produced. It cannot starve the lane:
+    // the byte arm is floored at `MIN_LOOKAHEAD_FRAMES` ahead and the time arm
+    // wants a full second — deeper than the native pump's own 500 ms horizon, so
+    // steady playback never reaches here and the native cursor sets the pace.
+    if (this.ring.isLookaheadFull()) return;
     this.transport?.requestFrameAt(tUs);
   }
 

@@ -289,22 +289,23 @@ Ranked by measured payoff per unit of work.
    software lane.** Past `MAX_HW_SESSIONS` (3) the fourth clip opens on the
    software transport in place, and that single clip takes the session with it:
    tick p50 15.1 → 82.6 ms, presented 59.9 → 13.0 fps, main-process CPU
-   0.7 % → 28.7 %, drops 0 → 39.8 %. WebCodecs carries 1080p far better than
-   that lane does, so routing the over-budget clip there turns a cliff into a
-   slope. At minimum, make the transition observable — it currently fires no
-   event and no LogBus row, contrary to what [preview.md](preview.md) claims.
-4. **Give the software lane flow control.** It fails in both directions for one
-   reason. Starved: H.264 1080p delivers 28 fps for 30 fps content, and two
-   clips split a fixed budget (15.0 + 15.4) while the main process never reaches
-   half a core — a serialized per-frame round-trip, not a compute limit
-   (¼ resolution buys only 1.6× for 16× fewer shipped pixels). Flooded: ProRes
-   all-intra decodes at **3.1× realtime**, pushes its ring to 66 frames past the
-   45 the window should hold, and starves the renderer's main thread with NV12
-   IPC — 93 fps delivered, yet tick p50 41.7 ms and presented 27.1 fps. So:
-   honor `isLookaheadFull` as real backpressure, and pipeline the request path
-   (decode ahead per session) instead of demand-driving one frame at a time.
-   This lane is mandatory for ProRes / DNxHR / MPEG-2 / 10-bit, so it is not an
-   edge case — 10-bit HEVC 1080p currently previews at **3.3 fps**.
+   0.7 % → 28.7 %, drops 0 → 39.8 %. Routing the over-budget clip to WebCodecs
+   instead would turn that cliff into a slope. **Re-measure before building it**:
+   those numbers are from before item 4 landed, and the lane the clip falls onto
+   now carries two 1080p tracks at 30 fps each on 5.8 % CPU, so the cliff may
+   already be a slope. At minimum, make the transition observable — it currently
+   fires no event and no LogBus row, contrary to what [preview.md](preview.md)
+   claims.
+4. **Find what stalls the renderer's tick while delivery is perfect.** The
+   software lane's own wall is gone — it stopped seeking per request, and 1080p
+   went 0 → 2 smooth tracks, ProRes and 10-bit HEVC 0 → 1, with 0 wasted frames
+   and main-process CPU 31.7 % → 2.6 %. What that uncovered is the same shape as
+   the 4K single-track stall, now at 1080p: every clip decodes at ~30 fps with
+   0.00 % drops while `tickInterval` p99 reaches 67–119 ms against a `tickTotal`
+   p50 of 3.6 ms. The loop is not overrunning its budget, it is not being
+   called. Prime suspect is the NV12 IPC receive path (~190 MB/s at two 1080p
+   tracks), which no stage timer brackets; the instrument has to be a GPU/IPC
+   trace, not more renderer JS.
 5. **Teach the dropped-frame indicator to see judder.** The tracker judges
    whether the ring *had* a fresh frame, so a loop stalled by a synchronous
    drain reads **zero drops while looking jerky**: 1080p hardware at 3 tracks

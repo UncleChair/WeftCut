@@ -255,7 +255,7 @@ cell.
 | leg | max smooth | what stopped the next track |
 |---|---|---|
 | 1080p ffmpeg-hw | **2** | tick p99 38.8 ms — the read barrier, *not* decode (delivery held 30 fps on all three clips, zero drops) |
-| 1080p ffmpeg-sw | **0** | 88.9 % of comp frames showed a late frame at ONE track |
+| 1080p ffmpeg-sw | **2** | tick p99 119.4 ms at 3 tracks, with all three clips delivering ~29 fps and 5.88 % drops — the lane was 0 until it stopped re-seeking per request |
 | 1080p webcodecs | **3** | drops 4.66 % at 4, with `flushes` 0 and every ring healthy — real decode capacity, not the livelock that used to cap this leg at 2 |
 | 4K ffmpeg-hw | **0** | drops 26.5 % *and* tick p99 71.3 ms at one track |
 | 4K ffmpeg-sw | **0** | drops 94.0 % at one track |
@@ -355,20 +355,76 @@ That cell is also the internal check on the software pin: this `sw` clip was
 produced *organically* by the session budget, not by the `WEFTCUT_FORCE_HW_LANE`
 pin, and shows the same signature (`nv12Ingest` appears, main-process CPU jumps).
 
-### The software lane's ceiling is serialization, not compute
+### The software lane re-seeked on every request
 
 | 1080p ffmpeg-sw | delivery | ring | main CPU |
 |---|---|---|---|
 | 1 track | 28.0 fps | 11 frames, lookahead never full | 32.8 % |
 | 2 tracks | 15.0 + 15.4 fps | 5 + 6 | 51.6 % |
 
-Total delivery is pinned near **30 frames of 1080p per second regardless of clip
-count** — two clips each get half, not each get their own — while the main
-process never reaches half of one core on a 16-thread box. A compute-bound lane
-would saturate a core and scale with clips; this one splits a fixed budget, which
-is the shape of a serialized per-frame request/deliver round-trip. Because
-ProRes, DNxHR, MPEG-2 and every 10-bit source *must* use this lane, it is not an
-edge case.
+Delivery was pinned near 30 frames of 1080p per second *regardless of clip
+count* — two clips each got half rather than each getting their own. That shape
+reads like a serialized round-trip, and this doc said so; it was wrong, and the
+correction is worth keeping because of how the wrong reading was reachable.
+**Every renderer-side counter agrees the lane is healthy.** `stale` 0,
+`flushes` 0, ring shallow but non-empty. The waste was spent inside libavcodec
+and discarded in Rust *before any frame reached the ring*, so no instrument
+above the addon could see it.
+
+`preview_sw`'s `serve_request` seeked on **every** request and then emitted a
+fixed 4-frame burst. The renderer issues one request per tick with the target
+advanced one frame, so each tick paid `av_seek_frame` plus a decode-forward from
+the landing keyframe to the target — and on a long GOP that prefix grows as the
+playhead walks through it. Replaying a 30 fps playback cadence against
+`SwVideoStream` directly, 150 ticks (5 s of content):
+
+| fixture | seek per request | forward continuation |
+|---|---|---|
+| prores-1080 (all-intra) | 2.72× realtime · **4.0× duplicate delivery** | 10.05× · 1 seek |
+| mpeg2-1080 (GOP 15) | 5.31× realtime · 4.0× | 25.4× · 1 seek |
+| h264-1080 (GOP 240) | **0.17× realtime** · 20 629 frames decoded to deliver 150 | 15.4× · 1 seek |
+| hi10p-1080 (GOP 240) | **0.09× realtime** · same 137× amplification | 8.76× · 1 seek |
+
+Both of the lane's failures fall out of that one table. An intra source has no
+prefix, so the fixed burst is pure duplication — 3 of every 4 frames re-decoded
+and re-shipped, which is the 93 fps flood and (since `FrameRing.push` accepts
+duplicate PTS) the 66-frame ring that looked like a window overrun. A long-GOP
+source pays the prefix instead: ~700 fps of raw H.264 decode ÷ 137 frames per
+request ≈ 5 served requests per second × 4 frames = the 28 fps observed, and
+~385 fps for 10-bit HEVC gives its 3.3.
+
+**Fixed** in two places:
+
+- The native session carries a cursor across requests (position, the frame it
+  stopped on, the decode frontier, an EOF latch). A target at/after the previous
+  one and within `FORWARD_CONTINUE_US` (1 s — the twin of the WebCodecs lane's
+  `FORWARD_SEEK_RESET_US`) resumes the same decode pass; only a backward scrub or
+  a long jump seeks. It decodes until 500 ms past the target and stops, so at
+  30 fps exactly one new frame falls inside the horizon per tick and the lane
+  self-paces to content rate with no feedback channel.
+- `FfmpegSource.requestFrameAt` now honours `isLookaheadFull()`. Until then that
+  signal was computed on every ffmpeg source and consulted by nobody, so the byte
+  ceiling could bound what the ring *retained* but never what the decoder
+  *produced*.
+
+| 1080p ffmpeg-sw, 1 track | before | after |
+|---|---|---|
+| H.264 — drops · delivery · ring · tick p99 · main CPU | 88.35 % · 27.8 fps · 10 · 30.0 ms · 31.7 % | **0.00 % · 30.0 fps · 31 · 17.8 ms · 2.6 %** |
+| ProRes — drops · delivery · ring · tick p50 · presented | 0.50 % · 93.6 fps · 70 · 41.7 ms · 27.1 fps | **0.00 % · 30.0 fps · 31 · 16.7 ms · 60.1 fps** |
+| HEVC 10-bit — drops · delivery · ring | 99.50 % · 4.0 fps · 0 | **0.00 % · 30.0 fps · 31** |
+
+Max smooth tracks on this route: **H.264 0 → 2** (two tracks deliver 30.0 fps
+*each*, against 13.5 + 14.5, at 5.8 % main CPU against 51.4 %), **ProRes 0 → 1**,
+**10-bit HEVC 0 → 1**. Wasted frames are **0** in every smooth cell; ProRes alone
+had been binning 1302 of 1884.
+
+What remains is a different wall with a different shape: at 3 tracks (H.264) and
+2 (ProRes / 10-bit) every clip still decodes at ~30 fps with 0.00 % drops while
+`tickInterval` p99 reaches 67–119 ms against a `tickTotal` p50 of 3.6 ms. The
+loop is not overrunning its budget, it is not being called — the same signature
+as the 4K single-track stall, now reproducible at 1080p on a route where nothing
+is 4K, and pointing at the NV12 IPC receive path (~190 MB/s of frame bytes at two
+1080p tracks) that no stage timer brackets.
 
 ### The FrameRing's lookahead is resolution-blind, and that is the 4K wall
 
@@ -426,10 +482,12 @@ identical to full. Together with 1080p ≈ 4K at full, this closes the question:
 the drain is a fixed wait, and no amount of shrinking the frame will pay it down.
 
 The software lane is the one thing ¼ helps, and only partly: 1080p delivery rose
-1.6× for 16× fewer shipped pixels. A throughput-bound lane would have scaled far
-closer to 16×; a purely latency-bound one would not have moved at all. It is
-mostly serialization with a real size term on top — which is why ¼ rescues its
-*tick* (18.7 ms, clean) while leaving it decode-starved (62.6 % drops).
+1.6× for 16× fewer shipped pixels. Read against the re-seek finding above, that
+ratio makes sense — the divisor shrinks the swscale output and the IPC payload,
+but not the decode of the GOP prefix, which is where the work was going. It is
+why ¼ rescued the lane's *tick* (18.7 ms, clean) while leaving it decode-starved
+(62.6 % drops). These numbers predate the cursor fix; the control is kept because
+it is still the decisive test for whether a lane's wall is size-bound.
 
 ### Multi-track collapse is a re-seek livelock, not a buffer size
 
@@ -528,28 +586,31 @@ constraint.
 | HEVC 8-bit 1080p | ffmpeg-hw | 1 | tick p99 84.8 ms at two tracks |
 | HEVC 8-bit 4K | ffmpeg-hw | 0 | barrier reaches **1.01 thread-s/s**; tick p50 95.8 ms, presented 11.2 fps |
 | HEVC 8-bit 4K | webcodecs | 0 | drops 0.0 %, tick p50/p95 16.6/17.4 ms, p99 106.2 ms — the same 1 %-tail shape as 4K H.264 |
-| ProRes 422 1080p | ffmpeg-sw (only route) | 0 | delivers **93 fps** for 30 fps content, drops 0.2 % — and still juddered: tick p50 41.7 ms, presented 27.1 fps |
-| HEVC 10-bit 1080p | ffmpeg-sw (only route) | 0 | delivers **3.3 fps**, 100 % drops, ring permanently empty |
+| ProRes 422 1080p | ffmpeg-sw (only route) | **1** | 30.0 fps, 0.00 % drops, tick p50 16.7 ms at one track; 2 tracks keep 30.0 fps each and fail on the tick tail alone |
+| HEVC 10-bit 1080p | ffmpeg-sw (only route) | **1** | 30.0 fps, 0.00 % drops — was the matrix's worst cell at 3.3 fps and 100 % drops |
 
-Two of these are shape-changing rather than just slower:
+One of these was shape-changing rather than just slower:
 
-**ProRes inverts the software lane's failure.** H.264 on that lane is starved
-(28 fps for 30 fps content); ProRes is the opposite — an all-intra codec decodes
-at 3.1× realtime and floods the renderer's main thread with NV12 over IPC. Its
-ring reached 66 frames, past the 45 the 1.5 s window should hold, so the
-`isLookaheadFull` backpressure is not stopping the pump. Same root cause in both
-directions: the lane has no flow control. The 3.1× overshoot also matches the
-redundant-re-decode pattern [decode-bench](decode-bench.md) records for the
-copy-back lane, where a frontier re-request re-decodes the GOP prefix.
-`nv12Ingest` is the largest in-loop stage cost measured anywhere at 1080p here
-(p50 1.4 ms, 36 ms per wall-second) — a distant second to the delivery problem.
+**ProRes inverted the software lane's failure**, and that is how the lane's real
+bug was found. H.264 on that route was starved (28 fps for 30 fps content) while
+ProRes was the opposite — an all-intra codec delivering at 3.1× realtime and
+flooding the renderer's main thread with NV12 over IPC, its ring at 66 frames
+past the 45 the 1.5 s window should hold. One mechanism produced both: a seek and
+a fixed 4-frame burst per request, which is duplication with no prefix to walk
+and prefix-thrash with one. See
+[the software lane](#the-software-lane-re-seeked-on-every-request).
+`nv12Ingest` is the largest in-loop stage cost measured anywhere at 1080p
+(p50 1.4 ms, 36 ms per wall-second) — it was a distant second to the delivery
+problem, and is now the lane's largest *in-loop* cost outright.
 
 **10-bit sources reach the compositor as 8-bit NV12.** `tenBitIngest` never
 fired on the `hi10p-1080` leg; `nv12Ingest` did. That follows from
 [ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md) — the
-software transport ships NV12 — but it means the 10-bit preview path is both the
-slowest in the matrix (3.3 fps) and bit-depth-lossy, and that `TenBitIngest` is
-unreachable from this route.
+software transport ships NV12 — and it means the 10-bit preview path is
+bit-depth-lossy, and that `TenBitIngest` is unreachable from this route. It was
+also the slowest cell in the whole matrix (3.3 fps) until the lane stopped
+re-seeking per request; it now plays one track at content rate, so what is left
+here is a fidelity gap, not a speed one.
 
 ## What it deliberately is not
 

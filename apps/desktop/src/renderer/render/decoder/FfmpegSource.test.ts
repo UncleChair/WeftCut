@@ -87,6 +87,29 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(1);
   });
 
+  it("stops nudging while the ring's lookahead is full, and resumes as it drains", async () => {
+    // The lane's brake. Before this, `isLookaheadFull` was computed on every
+    // ffmpeg source and consulted by nobody, so nothing bounded what the decoder
+    // PRODUCED — only what the ring kept.
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
+    );
+    await src.ensureReady();
+
+    gpu.emitFrame(0);
+    gpu.emitFrame(1_500_000);          // a full second of lookahead past the anchor below
+    await src.requestFrameAt(100_000); // target inside the ring, so no stranded-flush
+    expect(src.isLookaheadFull()).toBe(true);
+    expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(0);
+
+    // Playhead advances; the same cached tail is no longer a full window ahead.
+    await src.requestFrameAt(600_000);
+    expect(gpu.t.requestFrameAt).toHaveBeenCalledWith(600_000);
+  });
+
   it("keeps evicting via the ring anchor after eof, even though the transport is no longer nudged", async () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();

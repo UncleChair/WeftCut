@@ -200,6 +200,17 @@ means for licensing.
   never via `createImageBitmap`, whose buffer-frame conversion is always
   BT.601 ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)).
   Gate: `preview-sw-color.spec.ts` (saturated charts, 709 + 601 legs).
+- **SW requests continue, they don't re-seek.** The native session keeps a
+  cursor (position + the frame it stopped on) across requests, so a target that
+  moves forward — every playback tick — resumes the same decode pass, and only a
+  backward scrub or a jump more than a second past the frontier pays a seek.
+  It stops once half a second past the target is decoded, which is what paces
+  delivery to content rate: one new frame per tick, no duplicates. The renderer
+  adds the second brake, skipping the request entirely while
+  `FrameRing.isLookaheadFull()` (time OR byte budget). Seeking per request
+  instead costs the whole GOP prefix every tick — measured 137× decode
+  amplification on a 240-frame GOP, which is what made this lane unusable for
+  long-GOP and 10-bit sources.
 - **HW→SW fallback is internal.** A HW decode error, device loss, or the
   budget throw disposes the GPU transport and opens the SW transport **into
   the same `FrameRing`** — a fresh `streamId` so no stale GPU frame lands, the

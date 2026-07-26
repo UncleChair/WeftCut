@@ -13,12 +13,17 @@
 //! the next `next_frame`, so the renderer must ack before the slot is reused. Here
 //! the frame bytes ARE the payload: [`SwFrame`] is fully owned and `Send`, so it
 //! travels through the sink and outlives the stream — no coherence protocol
-//! needed, and no background refill pump. One SERVED request = one seek + a
-//! small, bounded forward decode burst — but requests are coalesced
-//! latest-wins at the loop top: before serving, the thread drains everything
-//! already queued, so a scrub storm's superseded targets are dropped unserved
-//! (their pokes simply never fire) and only the newest target pays a
-//! seek+burst. A drained `Close` wins over any pending request.
+//! needed, and no background refill pump.
+//!
+//! A served request decodes FORWARD FROM WHERE THE LAST ONE STOPPED and keeps
+//! [`LOOKAHEAD_HORIZON_US`] of frames ready past the target — see
+//! [`serve_request`] and [`PumpCursor`]. Only a request that moves backward, or
+//! lands further than [`FORWARD_CONTINUE_US`] past the frontier, pays a seek.
+//! Requests are additionally coalesced latest-wins at the loop top: before
+//! serving, the thread drains everything already queued, so a scrub storm's
+//! superseded targets are dropped unserved (their pokes simply never fire) and
+//! only the newest target is served. A drained `Close` wins over any pending
+//! request.
 //!
 //! Thread ownership: [`SwVideoStream`] is `!Send`-in-spirit (raw ffmpeg
 //! pointers; marked `Send` forward-compat) but it is created, driven, and
@@ -41,13 +46,38 @@ use std::time::Duration;
 use super::decoder::{DecodeAccel, OutScale, SwFrame, SwOutFormat, SwVideoStream};
 use crate::recover::{panic_message, LockExt};
 
-/// How many frames a single `request_frame_at` emits, starting at the frame that
-/// covers the seek target. A "handful" pre-buffers a little playback smoothness
-/// without decode-and-discarding a long tail; kept small so a rapid re-scrub
-/// isn't stuck finishing a stale burst. `serve_request` decodes forward from the
-/// seek's keyframe to the covering frame first (correct for both intra and
-/// long-GOP), then emits up to this many frames.
-const LOOKAHEAD_FRAMES: usize = 4;
+/// How far PAST the request target this lane keeps frames decoded before it
+/// stops. This — not a frame count — is the lane's flow control: during playback
+/// the target advances one frame per tick, so exactly one new frame falls inside
+/// the horizon per request and the lane delivers at content rate instead of
+/// racing ahead of its consumer.
+///
+/// Sized under `FrameRing`'s 1 s lookahead (renderer side) so a full horizon can
+/// never overflow the ring's window. A fixed burst count cannot do this job: with
+/// one, every request re-emits frames the ring already holds — measured at 4×
+/// duplicate delivery on an all-intra source, 93 fps of NV12 pushed across IPC
+/// for 30 fps of content.
+const LOOKAHEAD_HORIZON_US: i64 = 500_000;
+
+/// Furthest a request may sit PAST the decode frontier and still be served by
+/// decoding through the gap rather than seeking to it. Twin of the WebCodecs
+/// lane's `FORWARD_SEEK_RESET_US` (`PacketPump.ts`) — same value, same reasoning:
+/// a seek costs a keyframe landing plus the entire GOP prefix, so it only wins
+/// once the gap is longer than the walk would be.
+///
+/// LANDMINE: this is what makes forward playback cheap on a long-GOP source.
+/// Seeking per request re-walks the GOP prefix every tick, and the prefix grows
+/// as the playhead moves through the GOP — measured 137× decode amplification on
+/// the 240-frame-GOP H.264 bench fixture (20 629 frames decoded to deliver 150),
+/// which is 0.17× realtime where a linear walk is 15×. Anyone re-adding an
+/// unconditional seek here re-creates that.
+const FORWARD_CONTINUE_US: i64 = 1_000_000;
+
+/// Hard cap on the frames one request may emit. Bounds cold start and horizon
+/// re-fill after a long pause: without it a single request could hold the thread
+/// away from the next command, and dump an unbounded NV12 burst across IPC in one
+/// go. Steady playback never reaches it (one frame per request).
+const MAX_BURST_FRAMES: usize = 16;
 
 /// Largest number of backward re-seek attempts when a container's seek overshoots
 /// the target. Index-less MPEG-PS/TS estimate the seek byte-offset and can land
@@ -157,50 +187,71 @@ fn emit(sink: &FrameSink, poke: SwFramePoke) {
     }
 }
 
-/// Service one `request_frame_at`: robustly seek to a keyframe at/before
-/// `target_us` (re-seeking earlier with a growing margin if an index-less
-/// container's BACKWARD seek overshoots), decode forward to the frame that
-/// covers `target_us` (discarding earlier frames), then poke that covering
-/// frame plus a short forward lookahead (up to [`LOOKAHEAD_FRAMES`] total).
-/// Stops early on EOF (an `Eof` poke) or a decode error (an `Error` poke). A
-/// seek failure is reported as `Error` and skips the burst — the session
-/// stays open for retry. Once `shutdown` is observed set, returns without
-/// emitting anything further — no `Error` poke, this is a normal teardown,
-/// not a failure.
-fn serve_request(
+/// Where the decoder is, carried ACROSS `request_frame_at` calls. This is the
+/// whole of the lane's flow control; without it every request is a fresh seek
+/// and a fixed burst, which starves long-GOP sources and floods intra ones.
+/// Owned by the session thread, never crosses a boundary.
+#[derive(Default)]
+struct PumpCursor {
+    /// A frame decoded past the previous request's horizon, held so the next
+    /// forward request resumes ON it rather than decoding it a second time.
+    pending: Option<SwFrame>,
+    /// Target of the last request served. A request at or after it is FORWARD;
+    /// anything earlier is a backward seek. `None` before the first request.
+    last_target_us: Option<i64>,
+    /// PTS of the newest frame decoded so far — the frontier a forward request
+    /// measures its gap against ([`FORWARD_CONTINUE_US`]).
+    frontier_us: i64,
+    /// EOF reached, and not yet re-armed by a backward seek. Without this, every
+    /// tick past the end of a clip re-seeks and re-decodes the tail to rediscover
+    /// the same EOF.
+    ended: bool,
+}
+
+impl PumpCursor {
+    /// Forget where the decoder is, so the next request — forward or not — seeks
+    /// before it decodes. Used after a seek/decode failure: the stream's position
+    /// is undefined at that point, and continuing from it would deliver frames
+    /// from the wrong place. (The pre-cursor code got this for free by seeking
+    /// unconditionally.)
+    fn invalidate(&mut self) {
+        self.pending = None;
+        self.last_target_us = None;
+        self.ended = false;
+    }
+}
+
+/// Robustly seek to a keyframe at/before `target_us` and return the first frame
+/// decoded there — the initial candidate for the forward scan.
+///
+/// ffmpeg's BACKWARD seek is only approximate on index-less containers
+/// (MPEG-PS/TS): it estimates a byte offset and can overshoot, landing AFTER the
+/// target. Probe the first decoded frame; if it is past the target, re-seek
+/// earlier with a growing margin until it lands at/before (or we reach the file
+/// start, always a valid at-or-before landing). Indexed containers (MOV/MP4) land
+/// correctly on the first try — zero retries. Mirrors `export_sw`'s
+/// `robust_seek_and_probe`.
+///
+/// `Ok(None)` = the seek landed at EOF. Returns early with `Ok(None)` on
+/// teardown too; the caller checks `shutdown` itself before emitting anything.
+fn robust_seek_and_probe(
     stream: &mut SwVideoStream,
     target_us: i64,
-    sink: &FrameSink,
-    stream_id: &str,
     shutdown: &AtomicBool,
-) {
-    // --- Robust seek: land on a keyframe AT/BEFORE the target ---
-    // ffmpeg's BACKWARD seek is only approximate on index-less containers
-    // (MPEG-PS/TS): it estimates a byte offset and can overshoot, landing AFTER
-    // the target. Probe the first decoded frame; if it's past the target, re-seek
-    // earlier with a growing margin until it lands at/before (or we reach the file
-    // start, always a valid at-or-before landing). Indexed containers (MOV/MP4)
-    // land correctly on the first try — zero retries.
+) -> Result<Option<SwFrame>, String> {
     let mut seek_target = target_us;
     let mut margin = SEEK_RETRY_MARGIN_US;
     let mut attempt = 0u32;
-    let first_frame: SwFrame = loop {
-        // Teardown preempts: each seek attempt is itself a seek + decode probe.
+    loop {
+        // Teardown preempts: each attempt is itself a seek + a decode probe.
         if shutdown.load(Ordering::Acquire) {
-            return;
+            return Ok(None);
         }
-        if let Err(e) = stream.seek(seek_target) {
-            emit(
-                sink,
-                SwFramePoke::Error {
-                    stream_id: stream_id.to_string(),
-                    message: format!("seek to {seek_target}us failed: {e}"),
-                },
-            );
-            return;
-        }
-        match stream.next_frame() {
-            Ok(Some(f)) => {
+        stream
+            .seek(seek_target)
+            .map_err(|e| format!("seek to {seek_target}us failed: {e}"))?;
+        match stream.next_frame()? {
+            Some(f) => {
                 if f.pts_us > target_us && seek_target > 0 && attempt < MAX_SEEK_RETRIES {
                     // Overshoot — step the seek target back and retry.
                     seek_target = (target_us - margin).max(0);
@@ -208,39 +259,90 @@ fn serve_request(
                     attempt += 1;
                     continue;
                 }
-                break f; // landed at/before target (or can't/needn't retry further)
+                return Ok(Some(f)); // landed at/before target (or can't retry further)
+            }
+            None => return Ok(None),
+        }
+    }
+}
+
+/// Service one `request_frame_at`: make sure everything from `target_us` to
+/// `target_us + LOOKAHEAD_HORIZON_US` has been poked, decoding only what is not
+/// already delivered.
+///
+/// A FORWARD request (target at/after the last one, and no further than
+/// [`FORWARD_CONTINUE_US`] past the decode frontier) resumes on the cursor's
+/// stashed frame and walks the stream — no seek, no re-decode, so a playing
+/// timeline costs exactly the frames it displays. Anything else (backward scrub,
+/// a long forward jump, the first request) seeks to the keyframe at/before the
+/// target and discards the GOP prefix as references.
+///
+/// Stops on the horizon (stashing the frame that crossed it), on
+/// [`MAX_BURST_FRAMES`], on EOF (an `Eof` poke) or on a decode error (an `Error`
+/// poke). A seek failure is reported as `Error` and skips the burst — the session
+/// stays open for retry. Once `shutdown` is observed set, returns without
+/// emitting anything further — no `Error` poke, this is a normal teardown, not a
+/// failure.
+fn serve_request(
+    stream: &mut SwVideoStream,
+    cursor: &mut PumpCursor,
+    target_us: i64,
+    sink: &FrameSink,
+    stream_id: &str,
+    shutdown: &AtomicBool,
+) {
+    let forward = cursor
+        .last_target_us
+        .is_some_and(|lt| target_us >= lt && target_us - cursor.frontier_us <= FORWARD_CONTINUE_US);
+
+    // Forward past a drained stream: there is nothing left to decode and the
+    // consumer was already told. Re-seeking to rediscover EOF is the tail cost
+    // this avoids on every tick that sits past the end of a clip.
+    if forward && cursor.ended {
+        return;
+    }
+
+    if !forward {
+        match robust_seek_and_probe(stream, target_us, shutdown) {
+            Ok(Some(f)) => {
+                cursor.frontier_us = f.pts_us;
+                cursor.pending = Some(f);
+                cursor.ended = false;
             }
             Ok(None) => {
+                // Teardown wins silently; a real EOF landing is still an EOF.
+                if shutdown.load(Ordering::Acquire) {
+                    return;
+                }
+                cursor.pending = None;
+                cursor.ended = true;
                 emit(
                     sink,
                     SwFramePoke::Eof {
                         stream_id: stream_id.to_string(),
                     },
                 );
+                cursor.last_target_us = Some(target_us);
                 return;
             }
-            Err(e) => {
+            Err(message) => {
+                cursor.invalidate();
                 emit(
                     sink,
                     SwFramePoke::Error {
                         stream_id: stream_id.to_string(),
-                        message: e,
+                        message,
                     },
                 );
                 return;
             }
         }
-    };
+    }
+    cursor.last_target_us = Some(target_us);
 
-    // --- Forward-decode from the landing to the frame covering target_us, then
-    // emit the covering frame + a small forward lookahead. For intra families the
-    // landing IS the covering frame (zero discards). The probed `first_frame` is
-    // the first candidate, so it is never lost. ---
     let mut emitted = 0usize;
-    let mut reached = false;
-    let mut pending: Option<SwFrame> = Some(first_frame);
     loop {
-        let frame = match pending.take() {
+        let frame = match cursor.pending.take() {
             Some(f) => f,
             None => {
                 // Teardown preempts the (potentially slow) decode of the next
@@ -249,37 +351,46 @@ fn serve_request(
                     return;
                 }
                 match stream.next_frame() {
-                    Ok(Some(f)) => f,
+                    Ok(Some(f)) => {
+                        cursor.frontier_us = f.pts_us;
+                        f
+                    }
                     Ok(None) => {
+                        cursor.ended = true;
                         emit(
                             sink,
                             SwFramePoke::Eof {
                                 stream_id: stream_id.to_string(),
                             },
                         );
-                        break;
+                        return;
                     }
-                    Err(e) => {
+                    Err(message) => {
+                        cursor.invalidate();
                         emit(
                             sink,
                             SwFramePoke::Error {
                                 stream_id: stream_id.to_string(),
-                                message: e,
+                                message,
                             },
                         );
-                        break;
+                        return;
                     }
                 }
             }
         };
-        if !reached {
-            // A frame whose interval ends at/before the target is in the past.
-            // `.max(1)` guards a 0/unknown duration so the covering frame
-            // (pts ≈ target) is never skipped.
-            if frame.pts_us + frame.dur_us.max(1) <= target_us {
-                continue;
-            }
-            reached = true;
+        // A frame whose interval ends at/before the target is in the past — a GOP
+        // prefix decoded only as a reference, or (on a forward continuation) a
+        // frame the consumer already holds. `.max(1)` guards a 0/unknown duration
+        // so the covering frame (pts ≈ target) is never skipped.
+        if frame.pts_us + frame.dur_us.max(1) <= target_us {
+            continue;
+        }
+        // Past the horizon: enough is ready. Stash it, so the next forward
+        // request resumes here and this frame is never decoded twice.
+        if frame.pts_us > target_us + LOOKAHEAD_HORIZON_US {
+            cursor.pending = Some(frame);
+            return;
         }
         // No Frame poke may fire once teardown is observed — the consumer side
         // is being torn down and must not receive late frames.
@@ -294,8 +405,8 @@ fn serve_request(
             },
         );
         emitted += 1;
-        if emitted >= LOOKAHEAD_FRAMES {
-            break;
+        if emitted >= MAX_BURST_FRAMES {
+            return;
         }
     }
 }
@@ -338,6 +449,10 @@ fn session_thread(
         // `open` gave up waiting; drop `stream` and exit.
         return;
     }
+
+    // Lives for the whole session, beside the stream it describes: it is what
+    // lets consecutive requests share one forward decode pass.
+    let mut cursor = PumpCursor::default();
 
     while let Ok(first) = rx.recv() {
         // Teardown preempts the queued backlog: the channel is FIFO, so `Close`
@@ -389,7 +504,14 @@ fn session_thread(
         // again — which is exactly what makes the `AssertUnwindSafe`
         // (needed for the `&mut stream` capture) sound here.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            serve_request(&mut stream, target_us, &sink, &stream_id, &shutdown);
+            serve_request(
+                &mut stream,
+                &mut cursor,
+                target_us,
+                &sink,
+                &stream_id,
+                &shutdown,
+            );
         }));
         if let Err(payload) = outcome {
             emit(
@@ -842,19 +964,21 @@ mod tests {
         // "exactly one burst" cannot be asserted — the thread may legitimately
         // pick up the first request (and a few drain generations) while sends
         // are still queueing. What CANNOT legitimately happen under the drain
-        // is full FIFO service: each target-0 burst is a real ffmpeg seek +
-        // LOOKAHEAD_FRAMES decode (>= hundreds of microseconds), while an mpsc
-        // send is sub-microsecond — for EVERY request to be served, the drain
-        // would have to find the queue empty N-1 consecutive times against a
-        // tight send loop, which the orders-of-magnitude speed gap rules out.
-        // So the test asserts the two invariants that hold under every
-        // interleaving: (a) the LAST target's burst IS emitted, and (b) at
-        // least one intermediate target was skipped (low-pts poke count <
-        // LOOKAHEAD_FRAMES * (N-1); strict FIFO would emit exactly that many
-        // before the final burst ever runs, since target 0 never hits
-        // EOF/error). A test-only seam gating the thread's start would buy
-        // exact determinism but needs a wedge inside the message loop —
-        // rejected as not trivially small.
+        // is full FIFO service: each target-0 burst is a real ffmpeg seek + a
+        // decode burst (>= hundreds of microseconds), while an mpsc send is
+        // sub-microsecond — for EVERY request to be served, the drain would have
+        // to find the queue empty N-1 consecutive times against a tight send
+        // loop, which the orders-of-magnitude speed gap rules out. So the test
+        // asserts the two invariants that hold under every interleaving: (a) the
+        // LAST target's burst IS emitted, and (b) target 0 was served at most
+        // once (its low-pts pokes fit inside a single burst). A test-only seam
+        // gating the thread's start would buy exact determinism but needs a
+        // wedge inside the message loop — rejected as not trivially small.
+        //
+        // Note the horizon backs the drain up here: a repeat of an
+        // already-served target finds the cursor's pending frame past
+        // `target + LOOKAHEAD_HORIZON_US` and emits nothing at all. Both
+        // mechanisms have to fail for this to trip.
         let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
         let g2 = got.clone();
         let reg = PreviewSwRegistry::new();
@@ -897,9 +1021,173 @@ mod tests {
         );
         let low = pts.iter().filter(|&&v| v < 500_000).count();
         assert!(
-            low < LOOKAHEAD_FRAMES * (N - 1),
-            "all {} superseded requests were served ({low} low-pts pokes); the latest-wins drain is not coalescing",
+            low <= MAX_BURST_FRAMES,
+            "target 0 was served more than once ({low} low-pts pokes, one burst is at most {MAX_BURST_FRAMES}); the {} superseded requests are not being coalesced",
             N - 1
+        );
+    }
+
+    #[test]
+    fn forward_playback_never_re_emits_a_frame() {
+        // THE flow-control invariant (issue 04). Playback issues one request per
+        // tick with the target advancing one frame; each must continue the
+        // previous decode pass, never re-seek and re-deliver frames the consumer
+        // already holds. Before the cursor existed, every request seeked and
+        // emitted a fixed 4-frame burst, so consecutive requests overlapped by
+        // three frames — 4× the NV12 across IPC, and a ring that filled with
+        // duplicate PTS.
+        //
+        // Duplicates are the assertion because they are interleaving-proof: the
+        // latest-wins drain may skip targets (fewer pokes), but no scheduling can
+        // make a strictly-forward walk emit one PTS twice.
+        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
+        let g2 = got.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { frame, .. } = poke {
+                g2.lock().unwrap().push(frame.pts_us);
+            }
+        }));
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
+        reg.open("fw1".into(), p.into()).expect("open");
+        const TICKS: i64 = 30;
+        const STEP_US: i64 = 1_000_000 / 30;
+        for i in 0..TICKS {
+            reg.request_frame_at("fw1".into(), i * STEP_US)
+                .expect("request");
+            // Space the ticks so most are served rather than coalesced away —
+            // this is a playback cadence, not a scrub storm.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let _ = reg.close("fw1".into());
+        let pts = got.lock().unwrap();
+        assert!(!pts.is_empty(), "no frames delivered");
+        let mut sorted = pts.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            pts.len(),
+            "a PTS was delivered twice — the lane re-seeked and re-decoded: {pts:?}"
+        );
+        assert!(
+            pts.windows(2).all(|w| w[0] < w[1]),
+            "delivery is not monotonic; a forward tick re-seeked: {pts:?}"
+        );
+        // Nothing beyond the last target's horizon: the burst is bounded by the
+        // horizon, not by how fast the decoder can run.
+        let last_target = (TICKS - 1) * STEP_US;
+        assert!(
+            *pts.last().unwrap() <= last_target + LOOKAHEAD_HORIZON_US,
+            "delivered {} us, past the {} us horizon of the last target",
+            pts.last().unwrap(),
+            last_target + LOOKAHEAD_HORIZON_US
+        );
+    }
+
+    #[test]
+    fn one_request_fills_exactly_the_horizon() {
+        // The fixture is 8 frames at 8 fps (125 ms each), so a 500 ms horizon from
+        // target 0 is frames 0..=4 and nothing more — an exact count, no timing
+        // slack. Intra, so the seek lands on the covering frame with no prefix.
+        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
+        let g2 = got.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { frame, .. } = poke {
+                g2.lock().unwrap().push(frame.pts_us);
+            }
+        }));
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        reg.open("hz1".into(), p.into()).expect("open");
+        let _ = reg.request_frame_at("hz1".into(), 0);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let _ = reg.close("hz1".into());
+        let pts = got.lock().unwrap();
+        assert_eq!(
+            *pts,
+            vec![0, 125_000, 250_000, 375_000, 500_000],
+            "one request must deliver exactly the horizon"
+        );
+    }
+
+    #[test]
+    fn backward_request_reseeks_and_redelivers() {
+        // The continuation must not swallow a backward scrub: a target behind the
+        // last one re-seeks, and the earlier frames are delivered AGAIN (the
+        // consumer's ring has evicted them by then — that is why it asked).
+        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
+        let g2 = got.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { frame, .. } = poke {
+                g2.lock().unwrap().push(frame.pts_us);
+            }
+        }));
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        reg.open("bw1".into(), p.into()).expect("open");
+        let _ = reg.request_frame_at("bw1".into(), 750_000);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let after_forward = got.lock().unwrap().len();
+        let _ = reg.request_frame_at("bw1".into(), 0);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = reg.close("bw1".into());
+        let pts = got.lock().unwrap();
+        assert_eq!(
+            pts[..after_forward].first().copied(),
+            Some(750_000),
+            "forward request should start at its target: {pts:?}"
+        );
+        assert_eq!(
+            pts.get(after_forward).copied(),
+            Some(0),
+            "backward request must re-seek and re-deliver from 0: {pts:?}"
+        );
+    }
+
+    #[test]
+    fn ticking_past_eof_stays_quiet() {
+        // Past the end of the material the renderer keeps ticking (it has no eof
+        // signal on this transport). Each of those ticks used to re-seek, re-walk
+        // the tail and re-emit the final frame; now the drained cursor absorbs
+        // them — one Eof, and no repeat of the last frame.
+        let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
+        let eofs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let f2 = frames.clone();
+        let e2 = eofs.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| match poke {
+            SwFramePoke::Frame { frame, .. } => f2.lock().unwrap().push(frame.pts_us),
+            SwFramePoke::Eof { .. } => {
+                e2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            SwFramePoke::Error { .. } => {}
+        }));
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        reg.open("eof1".into(), p.into()).expect("open");
+        // 875_000 is the last frame of the 1 s fixture; the three ticks after it
+        // are past the material.
+        for t in [875_000, 908_000, 941_000, 974_000] {
+            let _ = reg.request_frame_at("eof1".into(), t);
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        let _ = reg.close("eof1".into());
+        let pts = frames.lock().unwrap();
+        assert_eq!(*pts, vec![875_000], "the tail frame was re-delivered: {pts:?}");
+        assert_eq!(
+            eofs.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "each post-eof tick re-discovered eof instead of short-circuiting"
         );
     }
 

@@ -31,9 +31,11 @@
 /// from 18.9 to 53.3 ms, while **decode throughput ROSE 40 %** (32 → 45 fps per
 /// clip). A shallower ring means frames are evicted and immediately
 /// re-requested, and on the bench's 240-frame (8 s) GOP a single re-seek
-/// re-decodes the whole GOP prefix. Clamping bytes without flow control
-/// (`.scratch/playback-perf/issues/04-sw-lane-flow-control.md`) buys memory and
-/// pays for it in churn.
+/// re-decodes the whole GOP prefix. Clamping bytes without flow control buys
+/// memory and pays for it in churn. (The software lane has that flow control now
+/// — its native pump continues forward instead of re-seeking, and `FfmpegSource`
+/// honours `isLookaheadFull` — so this ceiling could be re-tuned against a
+/// re-measured churn cost. The WebCodecs lane's re-seek cost is unchanged.)
 ///
 /// So: sized to leave the cases that measure well ALONE and only bound the
 /// multi-gigabyte ones, at 30 fps (1080p frame = 8.29 MB, 4K = 33.2 MB):
