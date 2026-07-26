@@ -59,6 +59,16 @@ export const STAGE = {
   Transitions: 14,
   /// Pixi `app.render()` — the present. Outside `compositeMsLast`.
   Present: 15,
+  /// Gap between the rAF frame timestamps Pixi was handed — the cadence the
+  /// browser DELIVERED, as opposed to `TickInterval`, which is wall time on this
+  /// thread. A gap that shows up here was never offered to us.
+  RafInterval: 16,
+  /// Wall ms from this frame's rAF timestamp to the tick body starting. The
+  /// discriminator for a `TickInterval` gap no stage explains: large here means
+  /// the callback was delivered and ran LATE (something else held the thread),
+  /// large in `RafInterval` with this small means the frame never came at all.
+  /// Those point at different subsystems.
+  RafLag: 17,
 } as const;
 
 export type StageId = (typeof STAGE)[keyof typeof STAGE];
@@ -80,6 +90,8 @@ export const STAGE_NAMES: readonly string[] = [
   "effects",
   "transitions",
   "present",
+  "rafInterval",
+  "rafLag",
 ];
 
 const N_STAGES = STAGE_NAMES.length;
@@ -129,6 +141,7 @@ let frames = 0;
 let firstFrameAt = 0;
 let lastFrameAt = 0;
 let lastTickStart = 0;
+let lastRafFrameTime = 0;
 
 /// Turn recording on/off and clear the window. Bench/HUD only.
 export function setStageProfiling(on: boolean): void {
@@ -151,6 +164,7 @@ export function resetStageTimers(): void {
   firstFrameAt = 0;
   lastFrameAt = 0;
   lastTickStart = 0;
+  lastRafFrameTime = 0;
 }
 
 /// Timestamp for a stage bracket — 0 (and no clock read) while disabled.
@@ -178,10 +192,23 @@ export function stageRecord(id: StageId, ms: number): void {
 /// Open a frame. Stamps `TickInterval` from the previous frame's start, so the
 /// cadence is measured tick-start to tick-start and can't be skewed by however
 /// long the body took.
-export function stageFrameBegin(): number {
+///
+/// `rafFrameTimeMs` is the rAF timestamp the browser handed this frame (0 when
+/// the caller has none — a manually driven ticker in a unit test). It splits
+/// `TickInterval` into the part the browser chose (`RafInterval`) and the part
+/// this thread added on top (`RafLag`): a stall is in exactly one of them, and
+/// each names a different subsystem.
+export function stageFrameBegin(rafFrameTimeMs = 0): number {
   if (!enabled) return 0;
   const now = performance.now();
   if (lastTickStart !== 0) stageRecord(STAGE.TickInterval, now - lastTickStart);
+  if (rafFrameTimeMs > 0) {
+    stageRecord(STAGE.RafLag, now - rafFrameTimeMs);
+    if (lastRafFrameTime !== 0) {
+      stageRecord(STAGE.RafInterval, rafFrameTimeMs - lastRafFrameTime);
+    }
+    lastRafFrameTime = rafFrameTimeMs;
+  }
   lastTickStart = now;
   return now;
 }

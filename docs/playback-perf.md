@@ -31,6 +31,8 @@ sub-stages inside it:
 | stage | what it covers |
 |---|---|
 | `tickInterval` | wall gap between successive tick starts — the judder signal at the source |
+| `rafInterval` | gap between the rAF frame timestamps the browser handed Pixi — the cadence it *delivered* |
+| `rafLag` | from this frame's rAF timestamp to the tick body starting — the lateness this thread added |
 | `tickTotal` | the whole `PlaybackEngine.tick` body |
 | `clockTick` | `clock.tick()` |
 | `anchor` | `Compositor.setAnchorTime` |
@@ -52,6 +54,14 @@ tracks pay the cost eight times. Stages that did not fire in a frame record
 nothing rather than a zero, so an inactive stage cannot dilute its own
 percentiles.
 
+`rafInterval` and `rafLag` decompose `tickInterval` rather than adding to it:
+`tickInterval ≈ rafInterval + Δ rafLag`, so a gap sits in exactly one of them and
+each names a different subsystem. The rAF timestamp comes from
+`ticker.lastTime + ticker.elapsedMS` — `Ticker.update` assigns `lastTime` only
+after its listeners run, so during the tick those two sum to the stamp the browser
+handed this frame, and that value is equal to `document.timeline.currentTime`
+inside the callback.
+
 Profiling is **off by default**: every entry point returns on a monomorphic
 boolean and `stageNow()` hands back 0 rather than reading a clock, so a
 production session pays a branch. The bench turns it on through
@@ -61,6 +71,36 @@ production session pays a branch. The bench turns it on through
 `PlaybackEngine`'s HIGH tick already closed the frame, so its sample accumulates
 into the next frame's bucket. Percentiles and totals are valid; only the
 "stages sum to *this* frame" reading is off by one for that row.
+
+### Where a tick gap went
+
+The stage timers can prove the loop was not slow. They cannot say what the thread
+was doing instead, because a gap between two ticks is by definition outside every
+bracket. Two harness-side probes cover that, installed over the measured window
+from `playback-perf.mjs` rather than from `stageTimers.ts` — a
+`PerformanceObserver` allocates per entry and a timer is a task, and that module
+is allocation-free while recording.
+
+- **`long-animation-frame` + `longtask`.** Both fire only above 50 ms, which is
+  below every gap worth chasing. A long *frame* carries the internal split —
+  `startTime` → `renderStart` (everything before the rendering steps, where every
+  rAF callback including `PlaybackEngine.tick` lives) → `styleAndLayoutStart` →
+  end — plus per-script attribution for any script over the API's own 5 ms floor.
+  A stall inside our JS therefore names itself; a long frame with no scripts and
+  no long task says the time was not spent in script or in any Blink task at all.
+- **A plain `setInterval` on the same main thread.** This is the one that
+  separates a *blocked* thread from one Chromium simply did not give a rendering
+  opportunity to: a timer cannot fire while the thread is blocked, and fires right
+  through a withheld `BeginMainFrame`. Its baseline is exact — a passing cell
+  measures p50 8.0 ms with zero gaps over 50 ms — so a lost fire is a signal, not
+  noise.
+
+The report prints them as one table, written to be read as a decision tree: no
+long frames under a large tick p99 means the gap never reached this thread; a
+script attribution means it is our JS outside the tick bracket; long frames with
+no script and a stalled timer mean the thread was blocked in something that is
+not script; long frames with no script and a healthy timer mean the thread was
+alive and what it lost was a rendering opportunity.
 
 ### Decode and delivery
 
@@ -255,20 +295,21 @@ two consecutive non-smooth cells, since a single cell can fail on a transient.
 ## What this box measured
 
 RTX 3050 + i5-13400 (16 threads), Electron 42.4.1 / Chromium 148, 60 Hz display,
-30 fps compositions, git `4a874fa2`. H.264 `yuv420p`, GOP 240, proxies off,
+30 fps compositions. H.264 `yuv420p`, GOP 240, proxies off,
 `playback_resolution: full`, one media shared across N tracks. Single run per
-cell.
+cell, and rows measured in different sittings are not comparable in absolute
+milliseconds (see Reproducibility below).
 
 ### Max smooth tracks
 
 | leg | max smooth | what stopped the next track |
 |---|---|---|
-| 1080p ffmpeg-hw | **2** | tick p99 38.8 ms — the read barrier, *not* decode (delivery held 30 fps on all three clips, zero drops) |
+| 1080p ffmpeg-hw | **4** | the concurrent-session cap, not smoothness: the 4th clip spills to the software lane and every cell from 1 to 4 tracks holds tick p99 ≤ 18.9 ms. Pure-hardware ceiling is 3. Was 2, capped by the read barrier's synchronous drain and then by its deadline spin |
 | 1080p ffmpeg-sw | **2** | tick p99 119.4 ms at 3 tracks, with all three clips delivering ~29 fps and 5.88 % drops — the lane was 0 until it stopped re-seeking per request |
 | 1080p webcodecs | **3** | drops 4.66 % at 4, with `flushes` 0 and every ring healthy — real decode capacity, not the livelock that used to cap this leg at 2 |
-| 4K ffmpeg-hw | **0** | drops 26.5 % *and* tick p99 71.3 ms at one track |
+| 4K ffmpeg-hw | **2** | nothing yet — both cells of the 2-track leg pass (tick p99 17.4 ms, 0.00 % drops, 60.0 fps presented) and match the barrier-less control exactly. Was 0: the whole cliff was the read barrier, first its synchronous drain and then its deadline spin. Not probed past 2 |
 | 4K ffmpeg-sw | **0** | drops 94.0 % at one track |
-| 4K webcodecs | **0** | tick p99 74.3 ms at one track — with **zero** drops |
+| 4K webcodecs | **0** | tick p99 75–82 ms at one track — with **zero** drops |
 
 ### Reproducibility
 
@@ -316,7 +357,78 @@ Consistent with that, every candidate inside the loop measured negligible at
 1080p: `ringLookup`, `audio`, `sceneRebuild` and `effects` each ≤ 3 % of a
 sub-ms tick; `nv12Ingest` p95 1.3 ms. The one in-loop cost that does become real
 is `nv12Ingest` at 4K — p95 9.0 ms, p99 12.1 ms — i.e. the YUV→RGB pass matters
-only once the frame is 4K.
+only once the frame is 4K. What the thread is doing during the gap instead is the
+next section.
+
+### A tick gap is the main thread STOPPING, not the loop being starved
+
+"The loop is not being called" was the right reading of the stage timers and the
+wrong conclusion. **The whole main thread stops.** An independent 8 ms
+`setInterval` — nothing to do with rAF, Pixi, or the ticker — loses its cadence in
+exactly the cells whose tick tail blows out, and holds it exactly in the cells
+that pass:
+
+| cell | verdict | tick p99 | 8 ms timer: fires / p50 / max / gaps >50 ms | long frames | long **tasks** |
+|---|---|---|---|---|---|
+| 1080p sw, 3 tracks | STUTTER | 67.30 ms | **903** / **23.6** / **107.3** / **40** | 27 | 0 |
+| 1080p hw, 3 tracks | smooth | 17.40 ms | 2501 / 8.0 / 18.0 / 0 | 0 | 0 |
+| 1080p webcodecs, 3 tracks | smooth | 17.50 ms | 2469 / 8.0 / 77.7 / 4 | 4 | 0 |
+| 4K webcodecs, 1 track | STUTTER | 75.00 ms | 2402 / 8.0 / **85.4** / **12** | 17 | 0 |
+| 4K hw, 1 track | smooth | 17.60 ms | 2502 / 8.0 / 14.5 / 0 | 0 | 0 |
+
+A withheld `BeginMainFrame` cannot stop a timer, so nothing about rAF delivery or
+ticker scheduling explains this. For 85–107 ms at a time the thread runs **no task
+at all** — while drawing 1.5–8.1 % of one core, so it is waiting, not computing.
+
+`rafInterval` and `rafLag` locate the gap inside the frame, and the *2*-track
+software cell — one below the failure — is the cleanest read of them: its
+`rafInterval` max is **16.90 ms**, a perfect 60 Hz delivery with no gap anywhere,
+while `tickInterval` reaches 26.80 ms and every millisecond of the excess is
+`rafLag`. The stall starts as pure lateness before a single vsync is lost. In the
+cells that fail, both blow out
+together, and every large `rafInterval` is an **integer multiple of the 16.67 ms
+vsync** (50.1 = 3×, 66.7 = 4×, 116.9 = 7×, 166.7 = 10×): the compositor keeps
+time, and k−1 vsyncs go unserved because the thread is not there to serve them.
+
+It is not our JS. Across 96 long animation frames in the failing cells there is
+**not one script** over the API's 5 ms reporting floor, `longtask` never fires at
+all, and **89–99 % of each long frame is spent before `renderStart`** — before the
+frame reaches its rendering steps, which is where every rAF callback lives. The
+rendering steps themselves cost 0.4–1.3 ms (4K webcodecs) and 5–14 ms (1080p sw
+×3), matching `tickTotal`. So the time is neither in one long JS task nor in one
+long Blink task: it is outside Chromium's task accounting.
+
+What the two failing cells do *not* share is a cause. They fail on different axes
+and with different shapes — the software cell in bursts (30+ consecutive long
+frames 0.11 s apart, then quiet for seconds), the WebCodecs cell periodically
+(modal gap 0.88 s with clean 2× harmonics):
+
+- **1080p ffmpeg-sw follows the per-frame bytes.** The route differential above is
+  the control: the same three-layer 1920×1080 composition is smooth on hardware
+  (p99 17.40) and on WebCodecs (p99 17.50) and stutters on software (p99 67.30),
+  which excludes the raster, the canvas, the track count and the composite, and
+  leaves the one thing only this route does — ship decoded NV12 across the process
+  boundary (3 × 9.33 MB per composition frame ≈ 280 MB/s) and upload it from CPU
+  memory. Shrinking those bytes 16× makes the cell perfect — see the
+  ¼-resolution control below.
+- **4K WebCodecs follows the size of each `ImageBitmap`.** 4K hardware is smooth on
+  the same canvas with the same decoder load, so what differs is what the frame
+  *is*: an imported shared texture versus a 33.2 MB GPU-backed bitmap created and
+  closed 30×/s. The long-frame count on that route scales with the allocation
+  rather than the throughput — 4 events at 8.29 MB/frame (~746 MB/s) against 17–25
+  at 33.2 MB/frame (~1000 MB/s), so 4.0× the allocation for 1.34× the bandwidth
+  gives 4–6× the stalls. The 1080p cell shows the same signature four times in
+  20 s and still passes, so this is one phenomenon at two intensities, not a
+  4K-only cliff.
+
+Excluded by matched pairs rather than by argument: **the GPU is not saturated** —
+4K hardware and 4K WebCodecs put the VideoDecode engine at 49.1 % vs 48.9–53.6 %
+and 3D at 15.0 % vs 14.6–15.7 %, identical, and one of them is smooth. **GPU-process
+memory does not order the cells** either: the software cell stalls holding 0.36 GB
+while the smooth 1080p WebCodecs cell holds 2.14 GB. And **Pixi's GC is not
+involved**: `GCSystem`/`RenderableGCSystem` run at `gcFrequency` 30 s with
+`gcMaxUnusedTime` 60 s (and `TextureGCSystem` is deprecated into them), which is
+30–250× slower than the observed stall rate.
 
 ### The hardware lane's read barrier is a fixed sync wait, not a transfer
 
@@ -438,11 +550,10 @@ had been binning 1302 of 1884.
 
 What remains is a different wall with a different shape: at 3 tracks (H.264) and
 2 (ProRes / 10-bit) every clip still decodes at ~30 fps with 0.00 % drops while
-`tickInterval` p99 reaches 67–119 ms against a `tickTotal` p50 of 3.6 ms. The
-loop is not overrunning its budget, it is not being called — the same signature
-as the 4K single-track stall, now reproducible at 1080p on a route where nothing
-is 4K, and pointing at the NV12 IPC receive path (~190 MB/s of frame bytes at two
-1080p tracks) that no stage timer brackets.
+`tickInterval` p99 reaches 67–119 ms against a `tickTotal` p50 of 2.9–3.6 ms. The
+loop is not overrunning its budget — and it is not being starved of frames
+either. What stops is the whole main thread; see
+[the tick gap](#a-tick-gap-is-the-main-thread-stopping-not-the-loop-being-starved).
 
 ### The FrameRing's lookahead is resolution-blind, and that is the 4K wall
 
@@ -499,13 +610,27 @@ compositing being done.
 identical to full. Together with 1080p ≈ 4K at full, this closes the question:
 the drain is a fixed wait, and no amount of shrinking the frame will pay it down.
 
-The software lane is the one thing ¼ helps, and only partly: 1080p delivery rose
-1.6× for 16× fewer shipped pixels. Read against the re-seek finding above, that
-ratio makes sense — the divisor shrinks the swscale output and the IPC payload,
-but not the decode of the GOP prefix, which is where the work was going. It is
-why ¼ rescued the lane's *tick* (18.7 ms, clean) while leaving it decode-starved
-(62.6 % drops). These numbers predate the cursor fix; the control is kept because
-it is still the decisive test for whether a lane's wall is size-bound.
+**The software lane's own wall IS size-bound**, and ¼ is what proves it. The
+1-track rows above predate the cursor fix and were still decode-starved (¼ rescued
+the tick at 18.7 ms while leaving 62.6 % drops), so re-read at the track count
+that fails today — 3 × 1080p H.264 — where nothing is starved on either side:
+
+| 1080p ffmpeg-sw, 3 tracks | full | ¼ |
+|---|---|---|
+| tick p50 / p99 / max | 16.60 / **67.30** / 116.50 ms | 16.70 / **17.10** / 17.80 ms |
+| `rafInterval` max · `rafLag` max | 116.90 · 112.80 ms | 16.90 · **1.20** ms |
+| long frames >50 ms · timer gaps >50 ms | 27 · 40 | **0** · **0** |
+| delivery per clip · drops · presented | 29.9 fps · 0.00 % · 52.1 fps | 30.0 fps · 0.00 % · **60.0 fps** |
+| `nv12Ingest` p50 · CPU main / renderer | 2.50 ms · 9.4 / 8.1 % | 0.10 ms · 4.5 / 1.6 % |
+
+Sixteen times fewer bytes shipped and uploaded is a *completely* clean cell. That
+is attributable to the bytes rather than to the raster only because the route
+differential below already excludes the raster at this resolution and track
+count — the hardware and WebCodecs routes rasterize the same full-size canvas with
+the same three layers and are both smooth.
+
+`--playback-resolution` stays a diagnostic and never a comparison axis; this is
+what the diagnostic is for.
 
 ### Multi-track collapse is a re-seek livelock, not a buffer size
 

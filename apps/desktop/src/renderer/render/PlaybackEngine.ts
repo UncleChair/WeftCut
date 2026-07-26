@@ -332,7 +332,13 @@ export class PlaybackEngine {
   /// Ticker invokes it, and so reference identity is stable for
   /// `ticker.remove(this.tick, this)` in dispose.
   private tick = (): void => {
-    const t0 = stageFrameBegin();
+    // The rAF timestamp Pixi was handed for THIS frame, reconstructed because
+    // `Ticker.update` assigns `lastTime = currentTime` only AFTER its listeners
+    // run — so during the tick `lastTime` is still the previous frame's stamp
+    // and `elapsedMS` is the (uncapped) gap to this one. Verified equal to
+    // `document.timeline.currentTime` inside the callback. Gives the profiler
+    // the split between "the frame arrived late" and "the frame never arrived".
+    const t0 = stageFrameBegin(this.ticker.lastTime + this.ticker.elapsedMS);
     try {
       const tClock = stageNow();
       const { tUs } = this.clock.tick();

@@ -111,11 +111,12 @@ matrix is pinned `full`.
 
 Each run writes
 `apps/desktop/e2e/bench-results/playback-perf-<date>-<gitsha>[-<tag>].json`
-(gitignored — a local artifact, not review material) and prints three markdown
-tables: the track sweep, the per-stage hotspots at one track and at the last
-measured count, and the max smooth track count per leg with what limited it. The
-JSON is rewritten after every cell, so a crash late in a long sweep keeps
-everything already measured — recover it with `--report`.
+(gitignored — a local artifact, not review material) and prints the track sweep,
+the per-stage hotspots at one track and at the last measured count, frame fate,
+where the tick gap went, any renderer decoder/budget console lines, and the max
+smooth track count per leg with what limited it. The JSON is rewritten after every
+cell, so a crash late in a long sweep keeps everything already measured — recover
+it with `--report`.
 
 Read the columns in this order:
 
@@ -126,17 +127,29 @@ Read the columns in this order:
 2. **`tick p50` vs `tick p99`** — p50 near the display interval with a p99
    several times it means the loop is being *stalled*, not overloaded. Look for a
    synchronous cost, not an expensive stage.
-3. **`ms per wall-sec` BEFORE `share of tickTotal`.** A stage can own most of a
+3. **`rafInterval` vs `rafLag`** — they decompose that gap. All of it in
+   `rafLag` means the frame arrived on its vsync and this thread was late to it;
+   `rafInterval` blowing out to an integer multiple of the vsync means vsyncs went
+   unserved. Then **Where the tick gap went**, as a decision tree: no long frames
+   under a large tick p99 means the gap never reached this thread; a `script (top)`
+   entry means it is our JS outside the tick bracket; long frames with no script
+   and a stalled `timer max` mean the thread was blocked in something that is not
+   script; long frames with no script and a healthy timer (p50 8.0 ms, nothing over
+   50 ms) mean the thread was alive and lost only a rendering opportunity.
+4. **`ms per wall-sec` BEFORE `share of tickTotal`.** A stage can own most of a
    tiny tick and still be irrelevant: `tickTotal` has measured 0.2–0.9 ms against
    a 16.7 ms budget in every cell so far, so no share of it has ever been the
    wall. This is the single easiest way to misread the report.
-4. **`barrier thread-s/s`**, the per-process CPU split, and ring depth — where
+5. **`barrier thread-s/s`**, the per-process CPU split, and ring depth — where
    the time and the memory go when they are not in the tick.
 
 For the deeper JSON fields — `ringAtEnd` (ring bounds against the playhead at
 window close, which separates "never decoded" from "decoded and evicted"),
-`perClip[].barrierN`, `proxyState`, `consoleErrors` — read the cell object
-directly; the markdown is a summary, not the whole record.
+`perClip[].barrierN`, `proxyState`, `consoleErrors`, and `longFrames.frames[]`
+(each long frame's `startTime`/`renderStart`/`styleAndLayoutStart` split, plus
+`timerCadence.worst` with timestamps so a timer stall can be lined up against
+one) — read the cell object directly; the markdown is a summary, not the whole
+record.
 
 ## Extending the harness
 
@@ -151,3 +164,8 @@ directly; the markdown is a summary, not the whole record.
 - **Keep probes inert in production.** `stageNow()` returns 0 and every entry
   point returns on a monomorphic boolean while profiling is off; never call
   `performance.now()` directly in a hot path you are instrumenting.
+- **A probe that allocates or posts tasks belongs in the harness, not in
+  `stageTimers.ts`.** The long-frame `PerformanceObserver` and the timer-cadence
+  interval are installed from `playback-perf.mjs` over the measured window for
+  exactly that reason — one allocates per entry, the other *is* a task, and
+  neither may exist in a production session at all.

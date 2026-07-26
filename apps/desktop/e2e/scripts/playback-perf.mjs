@@ -372,6 +372,139 @@ function counterDelta(before, after) {
   return Math.max(0, after - (before ?? 0));
 }
 
+// ── Stall probes ────────────────────────────────────────────────────────────
+// Two instruments for a `tickInterval` gap that no stage timer explains, run
+// together because the pair is what attributes it.
+//
+// 1. `long-animation-frame` / `longtask`. Both fire only above 50 ms, and every
+//    gap of interest here is 50–170 ms. A long *frame* carries the internal
+//    split — `startTime` → `renderStart` (everything before the rendering steps,
+//    which is where the rAF callbacks live) → `styleAndLayoutStart` → end — plus
+//    per-script attribution for any script over the API's own 5 ms floor. So a
+//    stall inside our JS names itself, and a stall with zero scripts and zero
+//    long tasks says the time went somewhere that is not script at all.
+//
+// 2. A plain `setInterval` on the same main thread. This is what separates a
+//    BLOCKED thread from one Chromium simply did not give a rendering
+//    opportunity to: a timer cannot fire while the thread is blocked, and fires
+//    right through a withheld `BeginMainFrame`. The period is coarse enough to
+//    see a 50 ms+ stall and the callback is a single timestamp push, so it does
+//    not become the thing being measured.
+//
+// Installed from the harness rather than from `stageTimers.ts` on purpose: a
+// PerformanceObserver allocates per entry and a timer is a task, and that module
+// is allocation-free while recording and has no business scheduling work.
+const TIMER_PROBE_MS = 8;
+
+async function installStallProbes(page, periodMs) {
+  return page.evaluate((period) => {
+    const w = window;
+    const st = { supported: [], frames: [], tasks: [], nFrames: 0, nTasks: 0, error: null };
+    w.__pbperfLongFrames = st;
+    w.__pbperfObservers = [];
+    const tc = { periodMs: period, samples: [], last: 0 };
+    w.__pbperfTimer = tc;
+    tc.handle = setInterval(() => {
+      const now = performance.now();
+      if (tc.last !== 0 && tc.samples.length < 20_000) {
+        tc.samples.push([now, now - tc.last]);
+      }
+      tc.last = now;
+    }, period);
+    st.supported = PerformanceObserver.supportedEntryTypes.filter(
+      (t) => t === "long-animation-frame" || t === "longtask",
+    );
+    const CAP = 400;
+    for (const type of st.supported) {
+      try {
+        const po = new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) {
+            if (e.entryType === "long-animation-frame") {
+              st.nFrames += 1;
+              if (st.frames.length >= CAP) continue;
+              st.frames.push({
+                startTime: e.startTime,
+                duration: e.duration,
+                // `renderStart` 0 means the frame never reached rendering.
+                renderStart: e.renderStart,
+                styleAndLayoutStart: e.styleAndLayoutStart,
+                blockingDuration: e.blockingDuration,
+                scripts: (e.scripts ?? []).map((s) => ({
+                  name: s.name,
+                  invoker: s.invoker,
+                  invokerType: s.invokerType,
+                  sourceURL: s.sourceURL,
+                  sourceFunctionName: s.sourceFunctionName,
+                  startTime: s.startTime,
+                  duration: s.duration,
+                  forcedStyleAndLayoutDuration: s.forcedStyleAndLayoutDuration,
+                  pauseDuration: s.pauseDuration,
+                })),
+              });
+            } else {
+              st.nTasks += 1;
+              if (st.tasks.length >= CAP) continue;
+              st.tasks.push({
+                name: e.name,
+                startTime: e.startTime,
+                duration: e.duration,
+                attribution: (e.attribution ?? []).map((a) => ({
+                  containerType: a.containerType,
+                  containerName: a.containerName,
+                  containerSrc: a.containerSrc,
+                })),
+              });
+            }
+          }
+        });
+        po.observe({ type });
+        w.__pbperfObservers.push(po);
+      } catch (e) {
+        st.error = `${type}: ${String(e)}`;
+      }
+    }
+    return { supported: st.supported, error: st.error, timerPeriodMs: period };
+  }, periodMs);
+}
+
+async function drainStallProbes(page) {
+  return page.evaluate(() => {
+    const w = window;
+    for (const po of w.__pbperfObservers ?? []) {
+      try { po.disconnect(); } catch { /* already gone */ }
+    }
+    w.__pbperfObservers = [];
+    const tc = w.__pbperfTimer ?? null;
+    let timer = null;
+    if (tc) {
+      clearInterval(tc.handle);
+      const gaps = tc.samples.map((s) => s[1]).sort((a, b) => a - b);
+      const at = (q) =>
+        gaps.length === 0
+          ? 0
+          : gaps[Math.min(gaps.length - 1, Math.max(0, Math.ceil(q * gaps.length) - 1))];
+      timer = {
+        periodMs: tc.periodMs,
+        n: gaps.length,
+        p50Ms: at(0.5),
+        p95Ms: at(0.95),
+        p99Ms: at(0.99),
+        maxMs: gaps.length ? gaps[gaps.length - 1] : 0,
+        nOver33: gaps.filter((g) => g > 33.3).length,
+        nOver50: gaps.filter((g) => g > 50).length,
+        // Kept with their timestamps so a timer stall can be lined up against a
+        // long animation frame's `startTime`.
+        worst: tc.samples
+          .slice()
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([t, g]) => ({ atMs: t, gapMs: g })),
+      };
+    }
+    return { longFrames: w.__pbperfLongFrames ?? null, timer };
+  });
+}
+
 /// Sum every fate counter across a cell's clips. The per-clip spread matters too
 /// (see `wastePerClip`), but the cell-level total is what compares two cells.
 function fateSum(perClip) {
@@ -613,6 +746,7 @@ async function runCell(leg, tracks) {
     // Reset AFTER the warm-up so cold-start decoder init and the first-frame
     // texture allocations stay out of the distribution.
     await page.evaluate(() => window.__weftcutTest.stageProfilingReset());
+    const stallProbeSupport = await installStallProbes(page, TIMER_PROBE_MS);
     const t0 = Date.now();
     const startRes = await probeRes();
     const startPerf = await page.evaluate(() => window.__weftcutTest.compositorPerfSnapshot());
@@ -633,6 +767,7 @@ async function runCell(leg, tracks) {
     const endRes = await probeRes();
     const endPerf = await page.evaluate(() => window.__weftcutTest.compositorPerfSnapshot());
     const stages = await page.evaluate(() => window.__weftcutTest.stageProfilingSnapshot());
+    const { longFrames, timer: timerCadence } = await drainStallProbes(page);
     const post = await probeAll();
     await page.evaluate(() => window.__weftcutTest.transportPause());
     await page.evaluate(() => window.__weftcutTest.stageProfilingSet(false));
@@ -793,6 +928,9 @@ async function runCell(leg, tracks) {
       compositeMsMax: endPerf?.compositeMsMax ?? null,
       swapsInFlight: endPerf?.swapsInFlight ?? null,
       stages,
+      stallProbeSupport,
+      longFrames,
+      timerCadence,
       perClip,
       barrierWallShare,
       fenceSpinShare,
@@ -962,9 +1100,13 @@ function printTables(report) {
   }
 
   console.log("\n### Stage hotspots (ms per frame, and share of the tick)\n");
-  const HOT = ["tickTotal", "tickInterval", "clockTick", "anchor", "composite", "audio", "sceneRebuild",
+  const HOT = ["tickTotal", "tickInterval", "rafInterval", "rafLag", "clockTick", "anchor",
+    "composite", "audio", "sceneRebuild",
     "layerSweep", "ringLookup", "bitmapUpload", "blitDrawImage", "nv12Ingest", "tenBitIngest",
     "effects", "transitions", "present"];
+  /// Cadence measures, not per-frame costs — a share of `tickTotal` is
+  /// meaningless for them and reads as a wildly dominant stage.
+  const CADENCE = new Set(["tickInterval", "rafInterval", "rafLag"]);
   console.log("| leg | tracks | stage | p50 | p95 | p99 | max | mean | calls/frame | share of tickTotal | ms per wall-sec |");
   console.log("|---|---|---|---|---|---|---|---|---|---|---|");
   for (const leg of report.legs) {
@@ -980,7 +1122,7 @@ function printTables(report) {
         if (!st || st.frames === 0) continue;
         console.log(
           `| ${leg.label} | ${c.tracks} | ${name} | ${f(st.p50Ms, 2)} | ${f(st.p95Ms, 2)} | ${f(st.p99Ms, 2)} | ${f(st.maxMs, 2)} | ${f(st.meanMs, 2)} | ${f(st.callsPerFrame)} | ` +
-          `${name === "tickInterval" ? "—" : pctOf(st.totalMs, tickTotal)} | ${f(st.totalMs / c.wallS, 1)} |`,
+          `${CADENCE.has(name) ? "—" : pctOf(st.totalMs, tickTotal)} | ${f(st.totalMs / c.wallS, 1)} |`,
         );
       }
     }
@@ -1014,6 +1156,58 @@ function printTables(report) {
         `| ${leg.label} | ${c.tracks} | ${sum.pushed} | ${sum.staleDropped} | ${sum.evicted} | ${sum.evictedUnserved} | ${sum.flushes} | ${sum.flushedUnserved} | ` +
         `${pctOf(wasteOf(sum), sum.pushed + sum.staleDropped)} | ${sum.serveHit} | ${sum.serveClamp} | ${sum.serveRepeat} | ${sum.serveMissEmpty} | ${sum.serveMissGap} | ` +
         `${f(convPeak, 0)} | ${perClipWaste} |`,
+      );
+    }
+  }
+
+  // Where a `tickInterval` gap the stage timers cannot explain actually went.
+  // Read the columns as a decision tree:
+  //   `frames >50ms` 0 with a large tick p99 → the gap never reached this thread
+  //     at all; look at `rafInterval` and then outside the renderer.
+  //   `script (top)` non-empty → it is our JS, outside the tick bracket.
+  //   long frames with no script, and `timer max` ALSO blown out → the main
+  //     thread was blocked in something that is not script (V8, a sync wait).
+  //   long frames with no script and `timer max` near its period → the thread
+  //     was alive and running tasks the whole time; what it did not get was a
+  //     rendering opportunity, which is a compositor/GPU-side decision.
+  // `pre-render share` is the fraction of the long frame spent BEFORE the
+  // rendering steps began — i.e. before any rAF callback, which is where
+  // `PlaybackEngine.tick` lives.
+  const withLong = report.legs.flatMap((leg) =>
+    leg.cells.filter((c) => c.kind === "ok" && c.longFrames).map((c) => ({ leg, c })),
+  );
+  if (withLong.length > 0) {
+    console.log("\n### Where the tick gap went (measured window)\n");
+    console.log("| leg | tracks | frames >50ms | tasks >50ms | frame dur p50 | frame dur max | pre-render share | blocking total ms | timer p50 | timer p99 | timer max | timer gaps >50ms | script (top) |");
+    console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for (const { leg, c } of withLong) {
+      const lf = c.longFrames;
+      const tm = c.timerCadence;
+      const durs = lf.frames.map((x) => x.duration);
+      const blocking = lf.frames.reduce((s, x) => s + (x.blockingDuration ?? 0), 0);
+      const preRender = lf.frames.length
+        ? median(lf.frames.map((x) => ((x.renderStart || x.startTime) - x.startTime) / x.duration))
+        : NaN;
+      // Which script the browser blames, summed by function. An empty cell with
+      // a non-zero frame count is itself informative: the long frame contained
+      // no script over the API's reporting floor, so the time went to
+      // style/layout, to V8, or to renderer-internal work.
+      const byScript = new Map();
+      for (const fr of lf.frames) {
+        for (const s of fr.scripts ?? []) {
+          const key = `${s.invoker ?? s.name ?? "?"} ${s.sourceFunctionName ?? ""}`.trim();
+          byScript.set(key, (byScript.get(key) ?? 0) + (s.duration ?? 0));
+        }
+      }
+      const top = [...byScript.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([k, v]) => `${k} ${f(v, 0)}ms`)
+        .join("<br>") || (lf.frames.length > 0 ? "*no script over the floor*" : "—");
+      console.log(
+        `| ${leg.label} | ${c.tracks} | ${lf.nFrames} | ${lf.nTasks} | ${f(median(durs), 1)} | ${f(max(durs), 1)} | ` +
+        `${Number.isFinite(preRender) ? `${(preRender * 100).toFixed(0)}%` : "—"} | ${f(blocking, 0)} | ` +
+        `${f(tm?.p50Ms, 1)} | ${f(tm?.p99Ms, 1)} | ${f(tm?.maxMs, 1)} | ${tm ? tm.nOver50 : "—"} | ${top} |`,
       );
     }
   }

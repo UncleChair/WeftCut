@@ -308,16 +308,33 @@ Ranked by measured payoff per unit of work.
    [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md) makes it
    private to the Standard engine. Whether the cap itself should be higher is a
    barrier question and belongs to item 2.
-4. **Find what stalls the renderer's tick while delivery is perfect.** The
-   software lane's own wall is gone — it stopped seeking per request, and 1080p
-   went 0 → 2 smooth tracks, ProRes and 10-bit HEVC 0 → 1, with 0 wasted frames
-   and main-process CPU 31.7 % → 2.6 %. What that uncovered is the same shape as
-   the 4K single-track stall, now at 1080p: every clip decodes at ~30 fps with
-   0.00 % drops while `tickInterval` p99 reaches 67–119 ms against a `tickTotal`
-   p50 of 3.6 ms. The loop is not overrunning its budget, it is not being
-   called. Prime suspect is the NV12 IPC receive path (~190 MB/s at two 1080p
-   tracks), which no stage timer brackets; the instrument has to be a GPU/IPC
-   trace, not more renderer JS.
+4. **Find what stops the renderer's main thread while delivery is perfect.** Two
+   cells still fail on the tick tail alone with 0.00 % drops: 4K WebCodecs at one
+   track (tick p99 75 ms) and 1080p ffmpeg-software at three (p99 67 ms). The
+   loop is not overrunning its budget and it is not being starved of frames —
+   **the whole thread stops.** An 8 ms `setInterval` loses its cadence with the
+   tick, 85–107 ms at a stretch, in exactly those cells and holds a perfect
+   p50 8.0 ms in every passing one, so nothing about rAF delivery or ticker
+   scheduling can explain it. Nor can our JS: across 96 long animation frames
+   there is not one script over the reporting floor, `longtask` never fires, and
+   89–99 % of each long frame is spent *before* the frame reaches its rendering
+   steps — outside Chromium's task accounting entirely, at 1.5–8.1 % of one core,
+   so the thread is waiting rather than computing.
+
+   Each cell is now bound to a different half of the per-frame resource path, by
+   control rather than by suspicion. The **software** stall follows the bytes: the
+   same three-layer 1080p composition is smooth on ffmpeg-hardware and on
+   WebCodecs and stutters only on the route that ships decoded NV12 across the
+   process boundary (~280 MB/s), and shrinking those bytes 16× makes the cell
+   perfect. The **WebCodecs** stall follows the size of each `ImageBitmap`: 4K
+   hardware is smooth on the same canvas with the same decoder load, and the stall
+   count scales with the allocation (4.0×) rather than the bandwidth (1.34×).
+   Excluded by matched pairs: the canvas, the raster, the composite, retained
+   bytes, GPU-process memory, GPU engine saturation and Pixi's GC. The next
+   instrument is a `toplevel` trace of `CrRendererMain` — collectable from the
+   harness through `contentTracing`, no `chrome://tracing` needed — asking what
+   covers the 100 ms hole. Not a GPU-process trace: the GPU's engine counters are
+   identical between the matched smooth and stuttering cells.
 5. **Teach the dropped-frame indicator to see judder.** The tracker judges
    whether the ring *had* a fresh frame, so a loop stalled by a synchronous
    drain reads **zero drops while looking jerky**: 1080p hardware at 3 tracks
