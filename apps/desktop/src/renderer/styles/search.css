@@ -27,7 +27,12 @@
   letter-spacing: 0.04em;
   opacity: 0.55;
 }
-.search-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; }
+/* Rows use the body size (12px, same as menu items) — without it the
+   rows would inherit the UA default 16px and dwarf the rest of the app. */
+.search-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  font-size: var(--font-size-body); cursor: pointer;
+}
 .search-row.is-active { background: var(--hover-neutral-strong); }
 .search-row.is-disabled { opacity: 0.4; cursor: default; }
 .search-row-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -47,4 +52,4 @@
   opacity: 0.6; cursor: pointer;
 }
 .search-show-more:hover { opacity: 1; }
-.search-empty { padding: 18px 12px; text-align: center; opacity: 0.55; }
+.search-empty { padding: 18px 12px; font-size: var(--font-size-body); text-align: center; opacity: 0.55; }
