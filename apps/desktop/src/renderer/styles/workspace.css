@@ -12,7 +12,8 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  /* Tonal ladder: strip → hidden tab → visible Panel + its tab. The Panel
+  /* Tonal ladder: strip → hidden tab → visible Panel, with the visible
+     Panel's tab lifted one half-step above the Panel surface. The Panel
      surface matches the Timeline's scroll-area base (--background) so every
      Panel shares the same editing surface. */
   --weft-dock-strip: var(--surface-sunken);
@@ -22,19 +23,27 @@
     var(--surface-sunken)
   );
   --weft-dock-panel-surface: var(--background);
+  /* Neutral lift (no hue shift, same family as --hover-neutral) so the
+     selected tab reads as a solid block without breaking the connected
+     silhouette. */
+  --weft-dock-tab-visible: color-mix(
+    in srgb,
+    var(--foreground) 5%,
+    var(--weft-dock-panel-surface)
+  );
   --weft-dock-border: var(--border);
   --dv-tabs-and-actions-container-height: 28px;
   --dv-tabs-and-actions-container-background-color: var(--weft-dock-strip);
-  /* Connected tab: the visible Panel's tab takes the Panel surface color so
-     it reads as one continuous region with the content below. */
+  /* Connected tab: the visible Panel's tab sits on the lifted surface so it
+     reads as one continuous region with the content below. */
   --dv-activegroup-visiblepanel-tab-background-color: var(
-    --weft-dock-panel-surface
+    --weft-dock-tab-visible
   );
   --dv-activegroup-visiblepanel-tab-color: var(--foreground);
   --dv-activegroup-hiddenpanel-tab-background-color: var(--weft-dock-tab-hidden);
   --dv-activegroup-hiddenpanel-tab-color: var(--muted-foreground);
   --dv-inactivegroup-visiblepanel-tab-background-color: var(
-    --weft-dock-panel-surface
+    --weft-dock-tab-visible
   );
   --dv-inactivegroup-visiblepanel-tab-color: var(--foreground);
   --dv-inactivegroup-hiddenpanel-tab-background-color: var(
@@ -64,21 +73,17 @@
   min-height: 0;
 }
 
-/* Hairline under every strip; the visible tab's opaque background paints
-   over its own stretch, completing the connected-tab silhouette. */
-.weft-dockview .dv-tabs-and-actions-container {
-  box-shadow: inset 0 -1px 0 0 var(--weft-dock-border);
-}
-
-/* No accent line on the selected tab: selection reads from the connected
-   silhouette alone, and groups carry no focus-group marker. */
+/* No hairline under the strip and no accent line on the selected tab:
+   selection reads from the lifted surface + label weight, and region
+   boundaries come from the tonal ladder alone. Groups carry no focus-group
+   marker. */
 
 /* The selector chain must out-specify Dockview's group-scoped base rules
    (six classes). */
-.weft-dockview .dv-groupview .dv-tabs-container > .dv-tab.dv-inactive-tab {
+.weft-dockview .dv-groupview .dv-tabs-container > .dv-tab {
   transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
+    background-color var(--transition-base),
+    color var(--transition-base);
 }
 
 .weft-dockview
@@ -107,8 +112,8 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  /* Must match --weft-dock-panel-surface so the visible tab and the Panel
-     body stay one continuous surface. */
+  /* Anchors the bottom of the tonal ladder; the visible tab lifts half a
+     step above it via --weft-dock-tab-visible. */
   background: var(--weft-dock-panel-surface);
 }
 
@@ -201,6 +206,15 @@
 .weft-dockview .dv-tabs-and-actions-container .dv-tab {
   height: 28px;
   padding: 0 8px 0 12px;
+  /* Top corners only: the bottom edge must stay flat so the selected tab
+     keeps its connected silhouette with the Panel below. */
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+}
+
+/* Label layer of selection: the active tab's title carries the weight,
+   hidden tabs stay on --muted-foreground. */
+.weft-dockview .dv-tabs-container > .dv-tab.dv-active-tab .weft-dock-tab-label {
+  font-weight: 500;
 }
 
 .weft-dockview .dv-drop-target-selection {
