@@ -145,6 +145,8 @@ const zhCN: Resources = {
     reset: "重置工作区",
     move_panel: "移动{{title}}",
     close_panel: "关闭{{title}}",
+    overflow_tooltip: "隐藏面板：{{names}}",
+    overflow_tooltip_empty: "显示隐藏面板",
     menu: {
       close: "关闭",
       close_others: "关闭其他",
@@ -219,6 +221,7 @@ const zhCN: Resources = {
     focus_previous_panel: "聚焦上一个面板",
     toggle_maximize_panel: "最大化 / 还原面板",
     restore_maximized_panel: "还原最大化面板",
+    open_tabs_overflow_menu: "显示隐藏的面板标签",
     group_selected: "将所选图层编组",
     dissolve_selected_group: "解散所选图层所在的编组",
     nudge_audio_sample_back: "音频前移 1 个采样",

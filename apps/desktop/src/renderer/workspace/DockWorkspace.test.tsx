@@ -11,6 +11,7 @@ const dockHarness = vi.hoisted(() => ({
   readyCalls: 0,
   renderWatermark: false,
   headerApi: null as unknown,
+  headerTabLocation: "header" as "header" | "headerOverflow",
   contentApi: null as unknown,
   contentKind: null as string | null,
 }));
@@ -36,7 +37,13 @@ vi.mock("dockview-react", async () => {
         | ComponentType
         | undefined;
       const tabComponents = props.tabComponents as
-        | Record<string, ComponentType<{ api: unknown }>>
+        | Record<
+            string,
+            ComponentType<{
+              api: unknown;
+              tabLocation: "header" | "headerOverflow";
+            }>
+          >
         | undefined;
       const Tab = tabComponents?.["weftcut-tab"];
       const components = props.components as
@@ -47,7 +54,10 @@ vi.mock("dockview-react", async () => {
         <div data-testid="dockview">
           {dockHarness.renderWatermark && Watermark ? <Watermark /> : null}
           {dockHarness.headerApi && Tab ? (
-            <Tab api={dockHarness.headerApi} />
+            <Tab
+              api={dockHarness.headerApi}
+              tabLocation={dockHarness.headerTabLocation}
+            />
           ) : null}
           {dockHarness.contentApi && dockHarness.contentKind && Content ? (
             <Content
@@ -302,6 +312,7 @@ beforeEach(() => {
   dockHarness.readyCalls = 0;
   dockHarness.renderWatermark = false;
   dockHarness.headerApi = null;
+  dockHarness.headerTabLocation = "header";
   dockHarness.contentApi = null;
   dockHarness.contentKind = null;
   previewHarness.sequence = 0;
@@ -403,6 +414,74 @@ describe("DockWorkspace React integration", () => {
     view.unmount();
     expect(visibility.listenerCount()).toBe(0);
     expect(previewHarness.unmounts).toBe(previewHarness.mounts);
+  });
+
+  it("renders overflow rows as menu items, closing via capture-phase click or middle-click", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "effect",
+      title: "Effect",
+      group: { panels: [{ id: "attribute" }, { id: "effect" }] },
+    };
+    dockHarness.headerTabLocation = "headerOverflow";
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    // Menu-row variant: no move tooltip, plain title only.
+    expect(screen.queryByTitle("Move Effect")).toBeNull();
+
+    const effect = dock.panels.get("effect");
+    fireEvent.click(screen.getByRole("button", { name: "Close Effect" }));
+    expect(effect?.api.close).toHaveBeenCalledOnce();
+  });
+
+  it("closes an overflow row's Panel on middle-click", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "effect",
+      title: "Effect",
+      group: { panels: [{ id: "attribute" }, { id: "effect" }] },
+    };
+    dockHarness.headerTabLocation = "headerOverflow";
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    const effect = dock.panels.get("effect");
+    fireEvent(
+      screen.getByTitle("Effect"),
+      new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
+    );
+    expect(effect?.api.close).toHaveBeenCalledOnce();
+  });
+
+  it("walks an open overflow dropdown with arrow keys and activates on Enter", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    const section = document.querySelector(".dock-workspace");
+    expect(section).toBeTruthy();
+    const popover = document.createElement("div");
+    popover.className = "dv-tabs-overflow-container";
+    const rowA = document.createElement("div");
+    const rowB = document.createElement("div");
+    rowA.className = "dv-tab";
+    rowB.className = "dv-tab";
+    const onRowBClick = vi.fn();
+    rowB.addEventListener("click", onRowBClick);
+    popover.append(rowA, rowB);
+    section!.appendChild(popover);
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(rowA.classList.contains("weft-overflow-row--kb-focus")).toBe(true);
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(rowA.classList.contains("weft-overflow-row--kb-focus")).toBe(false);
+    expect(rowB.classList.contains("weft-overflow-row--kb-focus")).toBe(true);
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(onRowBClick).toHaveBeenCalledOnce();
   });
 
   it("closes and maximizes from the tab chrome", () => {

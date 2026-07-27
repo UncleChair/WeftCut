@@ -141,6 +141,8 @@ const enUS = {
     reset: "Reset Workspace",
     move_panel: "Move {{title}}",
     close_panel: "Close {{title}}",
+    overflow_tooltip: "Hidden panels: {{names}}",
+    overflow_tooltip_empty: "Show hidden panels",
     menu: {
       close: "Close",
       close_others: "Close Others",
@@ -221,6 +223,7 @@ const enUS = {
     focus_previous_panel: "Focus previous Panel",
     toggle_maximize_panel: "Maximize / restore Panel",
     restore_maximized_panel: "Restore maximized Panel",
+    open_tabs_overflow_menu: "Show hidden Panel tabs",
     group_selected: "Group selected layers",
     dissolve_selected_group: "Dissolve group of selected layer",
     nudge_audio_sample_back: "Nudge audio 1 sample earlier",

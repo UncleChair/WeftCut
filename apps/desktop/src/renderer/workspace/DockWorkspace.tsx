@@ -19,7 +19,7 @@ import {
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
 } from "dockview-react";
-import { GripVerticalIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "dockview-react/dist/styles/dockview.css";
 
@@ -339,16 +339,266 @@ export function WeftCutPanelRenderer({
   );
 }
 
+/** Remove the popover row of a just-closed Panel: the dropdown isn't rebuilt
+ *  while it's open, and a stale row would point at a dead Panel. */
+function removeOverflowRow(target: EventTarget | null): void {
+  if (target instanceof HTMLElement) target.closest(".dv-tab")?.remove();
+}
+
+/** Right-click on an overflow-dropdown row is re-targeted at the real header
+ *  tab, so Dockview's own tab context menu (close / close others / close all)
+ *  opens — one menu implementation, two entry points. The overflow popover
+ *  only dismisses on an outside pointerdown, so it is closed first to keep
+ *  the two from stacking. */
+function forwardOverflowContextMenu(
+  kind: PanelKind,
+  x: number,
+  y: number,
+): void {
+  document.body.dispatchEvent(
+    new PointerEvent("pointerdown", { bubbles: true }),
+  );
+  const content = document.querySelector(
+    `.weft-dockview .dv-tabs-container .weft-dock-tab[data-panel-kind="${kind}"]`,
+  );
+  content?.closest(".dv-tab")?.dispatchEvent(
+    new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+    }),
+  );
+}
+
+/** Behavior layer over Dockview's built-in overflow popover: the chevron's
+ *  tooltip previews the hidden Panel names, clicks open the list anchored
+ *  under the chevron (not at the mouse point), and once open Arrow/Home/End
+ *  move a highlight and Enter activates it (Esc already closes via Dockview). */
+function useTabsOverflowA11y(
+  containerRef: RefObject<HTMLElement | null>,
+): void {
+  const { t } = useTranslation();
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const KB_FOCUS_CLASS = "weft-overflow-row--kb-focus";
+
+    const onPointerOver = (event: PointerEvent) => {
+      const target = event.target;
+      // Element, not HTMLElement: the chevron is an SVG, and SVG targets are
+      // not HTMLElements — matching on Element catches clicks/hovers on the
+      // icon and walks up to the root the same way.
+      if (!(target instanceof Element)) return;
+      const root = target.closest(".dv-tabs-overflow-dropdown-root");
+      const handle = root?.querySelector<HTMLElement>(
+        ".dv-tabs-overflow-dropdown-default",
+      );
+      if (!root || !handle) return;
+      const list = root
+        .closest(".dv-tabs-and-actions-container")
+        ?.querySelector(".dv-tabs-container");
+      if (!list) return;
+      const listRect = list.getBoundingClientRect();
+      const names: string[] = [];
+      for (const tab of list.querySelectorAll(".dv-tab")) {
+        const rect = tab.getBoundingClientRect();
+        if (rect.left < listRect.left - 1 || rect.right > listRect.right + 1) {
+          const label = tab.querySelector(".weft-dock-tab-label")?.textContent;
+          if (label) names.push(label);
+        }
+      }
+      handle.title = names.length
+        ? t("dock_workspace.overflow_tooltip", { names: names.join(", ") })
+        : t("dock_workspace.overflow_tooltip_empty");
+    };
+
+    /* Dockview opens the popover at the mouse point, so its position drifts
+     * with the click. Swallow trusted chevron clicks in the capture phase and
+     * re-dispatch a synthetic click carrying the chevron's own geometry —
+     * the popover then always opens anchored directly under the button.
+     * Synthetic events report isTrusted=false and pass straight through, but
+     * still record the chevron so the right-alignment below knows which
+     * button opened the list (the keyboard shortcut path is synthetic too). */
+    let lastChevronRoot: HTMLElement | null = null;
+    const onClickCapture = (event: MouseEvent) => {
+      const target = event.target;
+      // Element, not HTMLElement: the chevron icon is an SVG, so clicks that
+      // land on it have an SVGElement target — intercept at the parent root
+      // regardless of which child the click actually hit.
+      if (!(target instanceof Element)) return;
+      const root = target.closest<HTMLElement>(
+        ".dv-tabs-overflow-dropdown-root",
+      );
+      if (!root || !container.contains(root)) return;
+      lastChevronRoot = root;
+      if (!event.isTrusted) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = root.getBoundingClientRect();
+      root.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.bottom + 2,
+        }),
+      );
+    };
+
+    /* Right-align the popover under its chevron (the VS Code overflow-menu
+     * geometry): panel's right edge flush with the button's right edge.
+     * Dockview positions the wrapper from click coordinates and then nudges
+     * it into view on a rAF, so alignment runs both synchronously and on the
+     * following frame to have the final say. */
+    const alignPopover = () => {
+      const root = lastChevronRoot;
+      const popover = container.querySelector<HTMLElement>(
+        ".dv-tabs-overflow-container",
+      );
+      const wrapper = popover?.parentElement ?? null;
+      const anchor = wrapper?.parentElement ?? null;
+      if (!root || !popover || !wrapper || !anchor) return;
+      const anchorRect = anchor.getBoundingClientRect();
+      const width = popover.getBoundingClientRect().width;
+      const clientLeft = root.getBoundingClientRect().right - width;
+      wrapper.style.left = `${Math.max(0, clientLeft - anchorRect.left)}px`;
+    };
+    const popoverObserver = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (
+            node instanceof HTMLElement &&
+            node.firstElementChild?.classList.contains(
+              "dv-tabs-overflow-container",
+            )
+          ) {
+            alignPopover();
+            requestAnimationFrame(alignPopover);
+            return;
+          }
+        }
+      }
+    });
+    popoverObserver.observe(container, { childList: true, subtree: true });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const popover = container.querySelector(".dv-tabs-overflow-container");
+      if (!popover) return;
+      const rows = Array.from(popover.querySelectorAll<HTMLElement>(".dv-tab"));
+      if (rows.length === 0) return;
+      const current = rows.findIndex((row) =>
+        row.classList.contains(KB_FOCUS_CLASS),
+      );
+      const highlight = (index: number) => {
+        rows.forEach((row, i) =>
+          row.classList.toggle(KB_FOCUS_CLASS, i === index),
+        );
+        // Optional call: jsdom (tests) doesn't implement scrollIntoView.
+        rows[index]?.scrollIntoView?.({ block: "nearest" });
+      };
+      switch (event.key) {
+        case "ArrowDown":
+          highlight(current < 0 ? 0 : (current + 1) % rows.length);
+          break;
+        case "ArrowUp":
+          highlight(
+            current < 0
+              ? rows.length - 1
+              : (current - 1 + rows.length) % rows.length,
+          );
+          break;
+        case "Home":
+          highlight(0);
+          break;
+        case "End":
+          highlight(rows.length - 1);
+          break;
+        case "Enter":
+          // No highlight yet: leave Enter to Dockview (it closes the popover).
+          if (current < 0) return;
+          rows[current]?.click();
+          break;
+        default:
+          return;
+      }
+      // Capture-phase listener: swallow the key before both Dockview's
+      // popover (which dismisses on Enter) and the tab strip's roving focus.
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    container.addEventListener("pointerover", onPointerOver);
+    container.addEventListener("click", onClickCapture, { capture: true });
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => {
+      popoverObserver.disconnect();
+      container.removeEventListener("pointerover", onPointerOver);
+      container.removeEventListener("click", onClickCapture, { capture: true });
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+    };
+  }, [containerRef, t]);
+}
+
 export function WeftCutDockTab({
   api,
+  tabLocation,
 }: IDockviewPanelHeaderProps<DockPanelParams>) {
   const { t } = useTranslation();
   const kind = isPanelKind(api.id) ? api.id : null;
   const title = kind ? t(PANEL_REGISTRY[kind].titleKey) : (api.title ?? api.id);
   const chrome = useWorkspaceChrome();
+
+  /* Overflow-dropdown rows are menu items, not drag sources: no grab cursor,
+   * no maximize-on-double-click. Click activation stays with Dockview's row
+   * wrapper; the close button must beat that wrapper's native listener, so
+   * it stops the click in the capture phase. Closing a Panel from the list
+   * also removes the row — the popover isn't rebuilt while open, and a stale
+   * row would point at a dead Panel. */
+  if (tabLocation === "headerOverflow") {
+    return (
+      <div
+        className="weft-dock-tab weft-dock-tab--overflow"
+        title={title}
+        onAuxClick={(event) => {
+          if (!kind || event.button !== 1) return;
+          event.preventDefault();
+          event.stopPropagation();
+          removeOverflowRow(event.currentTarget);
+          chrome.closePanel(kind);
+        }}
+        onContextMenu={(event) => {
+          if (!kind) return;
+          event.preventDefault();
+          event.stopPropagation();
+          forwardOverflowContextMenu(kind, event.clientX, event.clientY);
+        }}
+      >
+        <span className="weft-dock-tab-label">{title}</span>
+        {kind ? (
+          <button
+            type="button"
+            className="weft-dock-tab-close"
+            aria-label={t("dock_workspace.close_panel", { title })}
+            title={t("dock_workspace.close_panel", { title })}
+            onClickCapture={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              removeOverflowRow(event.currentTarget);
+              chrome.closePanel(kind);
+            }}
+          >
+            <XIcon size={12} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div
       className="weft-dock-tab"
+      data-panel-kind={kind ?? undefined}
       title={t("dock_workspace.move_panel", { title })}
       onPointerEnter={() => chrome.setHoveredPanel(kind)}
       onPointerLeave={() => chrome.setHoveredPanel(null)}
@@ -359,9 +609,9 @@ export function WeftCutDockTab({
         chrome.toggleMaximize(kind);
       }}
     >
-      <span className="weft-dock-grip" aria-hidden="true">
-        <GripVerticalIcon size={14} />
-      </span>
+      {/* Grip slot kept for geometry: the drag-dots icon was removed for a
+          flatter look, but the empty span preserves the original spacing. */}
+      <span className="weft-dock-grip" aria-hidden="true" />
       <span className="weft-dock-tab-label">{title}</span>
       {kind ? (
         <button
@@ -452,6 +702,8 @@ export function DockWorkspace({
 }: DockWorkspaceProps) {
   const { t, i18n } = useTranslation();
   const adapterRef = useRef<DockWorkspaceAdapter | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  useTabsOverflowA11y(sectionRef);
   const messages = useMemo<Partial<DockviewMessages>>(
     () => ({
       panelOpened: (title) => t("dock_workspace.announce.opened", { title }),
@@ -556,6 +808,7 @@ export function DockWorkspace({
     <ContractsContext.Provider value={contracts}>
       <WorkspaceChromeContext.Provider value={chrome}>
         <section
+          ref={sectionRef}
           className="dock-workspace"
           aria-label={t("dock_workspace.editing_label")}
         >

@@ -94,6 +94,8 @@
   cursor: grab;
 }
 
+/* The drag-dots icon was removed for a flatter look, but its slot stays as
+   empty space so the tab's geometry is unchanged from when it was shown. */
 .weft-dock-grip {
   width: 14px;
   height: 14px;
@@ -101,7 +103,6 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  opacity: 0.72;
 }
 
 .weft-dock-tab-label {
@@ -129,6 +130,29 @@
 .weft-dock-tab-close:hover {
   color: var(--foreground);
   background: var(--muted);
+}
+
+/* The close affordance only appears while its tab is hovered — active tabs
+   and single-Panel tabs included; an always-on X on every tab reads as
+   noise. Keyboard focus still forces it visible, and while hidden it
+   swallows no clicks. */
+.weft-dockview .dv-tabs-and-actions-container .weft-dock-tab-close {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.weft-dockview .dv-tabs-and-actions-container .dv-tab:hover .weft-dock-tab-close,
+.weft-dockview
+  .dv-tabs-and-actions-container
+  .weft-dock-tab-close:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Wheel-scrolled tab strips show no scrollbar: Dockview's custom scrollbar
+   is hover chrome that flashes on every wheel tick. */
+.weft-dockview .dv-tabs-and-actions-container .dv-scrollbar {
+  display: none;
 }
 
 /* Every group keeps its 28px tab header — so the drag handle, Panel title,
@@ -175,4 +199,86 @@
   color: var(--foreground);
   background: var(--card);
   cursor: pointer;
+}
+
+/* ---- Tabs-overflow dropdown ----------------------------------------------
+   Dockview's built-in overflow popover (the chevron at the tab strip's right
+   end), themed to match the app's own menus (`.app-menu-list`): same border,
+   radius, shadow, hover tone, and body-size labels. */
+.weft-dockview .dv-tabs-overflow-container {
+  min-width: 220px;
+  max-width: 320px;
+  padding: 4px;
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-menu);
+  /* A long list still wheels; the scrollbar is chrome noise. */
+  scrollbar-width: none;
+}
+
+.weft-dockview .dv-tabs-overflow-container::-webkit-scrollbar {
+  display: none;
+}
+
+.weft-dockview .dv-tabs-overflow-container .dv-tab {
+  height: 28px;
+  margin: 0;
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: default;
+}
+
+.weft-dockview .dv-tabs-overflow-container .dv-tab:hover,
+.weft-dockview .dv-tabs-overflow-container .dv-tab.weft-overflow-row--kb-focus {
+  background: var(--hover-neutral-strong);
+}
+
+.weft-dockview .dv-tabs-overflow-container .weft-dock-tab-label {
+  font-size: var(--font-size-body);
+}
+
+/* Active Panel's row: accent spine, mirroring the active group's strip
+   underline so "where am I" reads the same in both places. */
+.weft-dockview .dv-tabs-overflow-container .dv-tab.dv-active-tab {
+  box-shadow: inset 2px 0 0 var(--ring);
+  color: var(--foreground);
+}
+
+/* Menu-row variant of the Panel tab (WeftCutDockTab with
+   tabLocation="headerOverflow"): no drag affordances, full-width label, and
+   the close button only appears on row hover / keyboard highlight — the
+   VS Code overflow-menu pattern. */
+.weft-dock-tab--overflow {
+  width: 100%;
+  cursor: default;
+}
+
+.weft-dock-tab--overflow .weft-dock-tab-close {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.weft-dockview .dv-tabs-overflow-container .dv-tab:hover .weft-dock-tab-close,
+.weft-dockview
+  .dv-tabs-overflow-container
+  .dv-tab.weft-overflow-row--kb-focus
+  .weft-dock-tab-close,
+.weft-dock-tab--overflow .weft-dock-tab-close:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The chevron trigger itself: no hidden-count badge (the tooltip already
+   lists the hidden Panels by name), just a compact strip button. */
+.weft-dockview .dv-tabs-overflow-dropdown-default {
+  gap: 2px;
+  padding: 0 6px;
+  font-size: var(--font-size-caption);
+}
+
+.weft-dockview .dv-tabs-overflow-dropdown-default > span {
+  display: none;
 }

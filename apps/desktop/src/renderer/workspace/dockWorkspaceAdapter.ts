@@ -64,6 +64,7 @@ export interface DockWorkspaceController {
   closeActivePanel(): void;
   focusNextPanel(): void;
   focusPreviousPanel(): void;
+  openTabsOverflowMenu(): void;
   setHoveredPanel(kind: PanelKind | null): void;
   toggleMaximize(kind?: PanelKind): void;
   restoreMaximizedPanel(): void;
@@ -290,6 +291,27 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     if (this.api.totalPanels === 0) return;
     this.api.moveToPrevious({ includePanel: true });
     this.emitChange();
+  }
+
+  /** Open the active group's tabs-overflow dropdown (Dockview's chevron).
+   *  No public Dockview API exposes the overflow control, so this clicks the
+   *  button's DOM node with its own geometry — the popover then opens exactly
+   *  where a mouse click would put it, and `useTabsOverflowA11y` in
+   *  DockWorkspace.tsx takes over for arrow-key navigation. */
+  openTabsOverflowMenu(): void {
+    const button = this.api.activeGroup?.element.querySelector<HTMLElement>(
+      ".dv-tabs-overflow-dropdown-root",
+    );
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    button.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.bottom + 2,
+      }),
+    );
   }
 
   setHoveredPanel(kind: PanelKind | null): void {
