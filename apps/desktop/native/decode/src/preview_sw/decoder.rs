@@ -362,6 +362,53 @@ impl OutScale {
     }
 }
 
+/// Preview-only producer cadence: decode every source frame (references stay
+/// intact), but only pack and ship one out of every `divisor` frames. The phase
+/// advances immediately after `receive_frame`, before hardware copy-back,
+/// swscale, output packing, and IPC allocation. Export never sets this policy
+/// and therefore retains the identity cadence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutputCadence {
+    divisor: u32,
+    phase: u32,
+}
+
+impl Default for OutputCadence {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
+impl OutputCadence {
+    pub const FULL: OutputCadence = OutputCadence {
+        divisor: 1,
+        phase: 0,
+    };
+
+    /// The budget-spill policy currently requests 2 (~15fps from a 30fps
+    /// source). Clamp the wire to the same defensive range as output scale.
+    pub fn from_divisor(divisor: u32) -> Self {
+        Self {
+            divisor: divisor.clamp(1, MAX_OUT_DIVISOR),
+            phase: 0,
+        }
+    }
+
+    pub fn divisor(self) -> u32 {
+        self.divisor
+    }
+
+    fn should_ship(&mut self) -> bool {
+        let ship = self.phase == 0;
+        self.phase = (self.phase + 1) % self.divisor;
+        ship
+    }
+
+    fn reset(&mut self) {
+        self.phase = 0;
+    }
+}
+
 /// One software-decoded frame, tightly packed per `format` (layouts on
 /// [`SwOutFormat`]) plus its source-normalized timing and color tags. Fully
 /// owned (unlike the GPU path's borrowed texture handle), so it can outlive
@@ -420,6 +467,9 @@ pub struct SwVideoStream {
     pub thread_count: i32,
     /// Target format every decoded frame is packed into, fixed at open.
     out_format: SwOutFormat,
+    /// Producer-side preview cadence. Identity by default; when reduced, the
+    /// skipped decoded frames never reach copy-back/swscale/packing.
+    output_cadence: OutputCadence,
     /// The hw device context when this stream decodes on a hardware lane
     /// (`DecodeAccel::Nvdec`/`Vaapi`), else null. Owned here; unref'd on drop.
     /// Must outlive the decoder (which holds a ref via `hw_device_ctx`).
@@ -574,8 +624,15 @@ impl SwVideoStream {
             color,
             thread_count,
             out_format,
+            output_cadence: OutputCadence::FULL,
             hw_ctx,
         })
+    }
+
+    /// Preview sessions may reduce producer cadence after open. Every other
+    /// caller keeps [`OutputCadence::FULL`], including export and probes.
+    pub fn set_output_cadence(&mut self, output_cadence: OutputCadence) {
+        self.output_cadence = output_cadence;
     }
 
     /// Read codec/pix_fmt identity off the already-open decoder context, without
@@ -622,6 +679,12 @@ impl SwVideoStream {
                         dur_us,
                     )
                 };
+                // Decode is never skipped — long-GOP reference state remains
+                // correct — but an unselected frame stops HERE, before hardware
+                // copy-back, swscale, output packing, and the IPC byte buffer.
+                if !self.output_cadence.should_ship() {
+                    continue;
+                }
                 // A hardware lane decodes to a GPU surface; copy it back to system
                 // memory before packing so the bytes feed the same transport as
                 // software. The software lane's frame is already in system memory
@@ -707,6 +770,10 @@ impl SwVideoStream {
             ffs::avcodec_flush_buffers(self.decoder.as_mut_ptr());
         }
         self.eof_sent = false;
+        // A new seek anchor must always yield its first decoded candidate.
+        // Besides deterministic scrub, robust_seek_and_probe depends on seeing
+        // that candidate to detect an approximate-seek overshoot.
+        self.output_cadence.reset();
         Ok(())
     }
 
@@ -1059,7 +1126,35 @@ mod scale_bench {
 
 #[cfg(test)]
 mod tests {
-    use super::{OutScale, SwOutFormat, SwVideoStream};
+    use super::{OutScale, OutputCadence, SwOutFormat, SwVideoStream};
+
+    #[test]
+    fn output_cadence_clamps_ships_first_and_every_other_frame_then_resets() {
+        assert_eq!(OutputCadence::from_divisor(0), OutputCadence::FULL);
+        assert_eq!(
+            OutputCadence::from_divisor(99).divisor(),
+            4,
+            "wire values above the supported bound must clamp"
+        );
+
+        let mut cadence = OutputCadence::from_divisor(2);
+        assert_eq!(
+            [
+                cadence.should_ship(),
+                cadence.should_ship(),
+                cadence.should_ship(),
+                cadence.should_ship(),
+                cadence.should_ship(),
+            ],
+            [true, false, true, false, true]
+        );
+        cadence.reset();
+        assert!(
+            cadence.should_ship(),
+            "the first decoded frame after seek must ship"
+        );
+        assert!(!cadence.should_ship());
+    }
 
     #[test]
     fn out_scale_divisor_one_is_the_identity() {

@@ -158,17 +158,29 @@ export type PreviewGpuOpenReply = {
 /// machine opens on hardware again as soon as a session frees up. Callers must
 /// treat it as "software for THIS open" and must NOT record it as a per-media
 /// hardware verdict (see `FfmpegSource`'s open-failure branch — doing so pinned a
-/// source to software for the rest of the app session the first time it ever had
-/// more than MAX_HW_SESSIONS overlapping clips, and kept it there after the extra
-/// clips were deleted). Shared so main and the renderer can't drift on the string.
+/// source to software for the rest of the app session the first time concurrent
+/// load exceeded admission, and kept it there after the extra clips were
+/// deleted). Shared so main and the renderer can't drift on the string.
 export const HW_BUDGET_EXCEEDED = 'hw-budget-exceeded'
 
-/// Live concurrent-HW-session budget: sessions currently registered in main
-/// (`used`) against the cap that makes the next open throw `HW_BUDGET_EXCEEDED`
-/// (`max`). Read-only diagnostics — nothing decides a lane on it; the authority
-/// is still main's gate inside `previewGpu:open`. It exists so a lane readout
-/// (PerfHUD, e2e) can say WHY a clip is on software rather than only that it is.
-export type PreviewGpuBudget = { used: number; max: number }
+/// The native session opened at dimensions different from the coded size main
+/// reserved. Treat this as a transient admission mismatch for THIS open: main
+/// closes the native session and releases its lease, and the renderer falls to
+/// software without poisoning the per-media hardware capability cache.
+export const HW_BUDGET_RESERVATION_MISMATCH = 'hw-budget-reservation-mismatch'
+
+/// Live preview-GPU admission snapshot. Main greedily reserves BOTH a hard
+/// session slot and the source's coded width×height before native open.
+///
+/// `codedPixelArea` is calibrated from the measured 30 fps fixtures. It is
+/// deliberately NOT called pixel-rate: fps is not yet carried into admission,
+/// and multiplying this number by an assumed rate would overstate the model.
+/// `calibratedFps` makes that empirical boundary visible to diagnostics.
+export type PreviewGpuBudgetSnapshot = {
+  currency: 'coded-pixel-area'
+  sessions: { used: number; max: number }
+  codedPixelArea: { used: number; max: number; calibratedFps: 30 }
+}
 
 /// Per-metric ms summary from the native preview timing accumulator (decode-bench
 /// Stage 3). Field names are the napi camelCase of the Rust `TimingSummary`.
@@ -400,6 +412,9 @@ export interface WeftcutApi {
       path: string
       poolSize: number
       colorSpace: PreviewGpuColorSpace
+      /// Renderer-probed coded dimensions reserved by main before native open.
+      codedWidth: number
+      codedHeight: number
     }): Promise<PreviewGpuOpenReply>
     requestFrameAt(args: { streamId: string; targetUs: number }): Promise<void>
     close(args: { streamId: string }): Promise<void>
@@ -409,10 +424,11 @@ export interface WeftcutApi {
     /// `rendererFence` the renderer sends slot acks back up it
     /// (`PreviewGpuSlotAck`), the only traffic that flows that way.
     requestPort(streamId: string): void
-    /// Live concurrent-HW-session budget (see `PreviewGpuBudget`). Diagnostics —
+    /// Live preview-GPU admission budget (see `PreviewGpuBudgetSnapshot`).
+    /// Diagnostics —
     /// the open gate in main is still the authority; a caller must not pre-check
     /// this and skip the open.
-    budget(): Promise<PreviewGpuBudget>
+    budget(): Promise<PreviewGpuBudgetSnapshot>
     /// E2E/bench-only: drain this session's per-frame timing samples. Rejects
     /// for an unknown stream, or with "preview-gpu not built" off the native path.
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport>
@@ -435,7 +451,11 @@ export interface WeftcutApi {
     /// full): native downscales each frame BEFORE it crosses IPC, so the reply
     /// and every `PreviewSwFrameMsg` carry the SHIPPED dimensions, which can be
     /// smaller than the media's.
-    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null }): Promise<{ width: number; height: number }>
+    ///
+    /// `cadenceDiv` is preview-only (absent = 1 = every frame). Native decodes
+    /// every frame for reference correctness, then skips unselected frames
+    /// before copy-back/scale/packing and IPC.
+    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null }): Promise<{ width: number; height: number }>
     requestFrameAt(args: { streamId: string; targetUs: number }): void
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void

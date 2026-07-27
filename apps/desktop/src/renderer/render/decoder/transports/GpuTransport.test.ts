@@ -114,6 +114,31 @@ afterEach(() => {
 });
 
 describe("GpuTransport", () => {
+  it("forwards renderer-probed coded dimensions to main admission", async () => {
+    const { api } = installFakePreviewGpu();
+    const t = new GpuTransport();
+    await t.open({
+      streamId: "budget-size",
+      path: "C:/x.mp4",
+      codedWidth: 3840,
+      codedHeight: 2160,
+    });
+    expect(api.open).toHaveBeenCalledWith({
+      streamId: "budget-size",
+      path: "C:/x.mp4",
+      poolSize: 3,
+      colorSpace: {
+        primaries: "bt709",
+        transfer: "bt709",
+        matrix: "bt709",
+        range: "limited",
+      },
+      codedWidth: 3840,
+      codedHeight: 2160,
+    });
+    t.dispose();
+  });
+
   it("requests its port BY streamId and delivers only its own frames", async () => {
     const { api, getPort } = installFakePreviewGpu();
     const t = new GpuTransport();

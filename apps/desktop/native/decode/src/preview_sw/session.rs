@@ -43,7 +43,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use super::decoder::{DecodeAccel, OutScale, SwFrame, SwOutFormat, SwVideoStream};
+use super::decoder::{
+    DecodeAccel, OutScale, OutputCadence, SwFrame, SwOutFormat, SwVideoStream,
+};
 use crate::recover::{panic_message, LockExt};
 
 /// How far PAST the request target this lane keeps frames decoded before it
@@ -425,6 +427,7 @@ fn session_thread(
     path: String,
     accel: DecodeAccel,
     out_scale: OutScale,
+    output_cadence: OutputCadence,
     rx: Receiver<SwSessionMsg>,
     init_tx: Sender<Result<PreviewSwOpenInfo, String>>,
     sink: FrameSink,
@@ -438,6 +441,7 @@ fn session_thread(
                 return;
             }
         };
+    stream.set_output_cadence(output_cadence);
     // Dimensions come from the stream's public fields (set at open) — do NOT
     // decode a frame just to learn them. The SHIPPED pair, not the source's:
     // every frame this session emits carries these.
@@ -587,6 +591,26 @@ impl PreviewSwRegistry {
         accel: DecodeAccel,
         out_scale: OutScale,
     ) -> Result<PreviewSwOpenInfo, String> {
+        self.open_with_accel_and_cadence(
+            stream_id,
+            path,
+            accel,
+            out_scale,
+            OutputCadence::FULL,
+        )
+    }
+
+    /// Preview-only extension of [`open_with_accel`](Self::open_with_accel):
+    /// `output_cadence` selects which decoded frames are packed and shipped.
+    /// The identity cadence preserves every existing caller exactly.
+    pub fn open_with_accel_and_cadence(
+        &self,
+        stream_id: &str,
+        path: &str,
+        accel: DecodeAccel,
+        out_scale: OutScale,
+        output_cadence: OutputCadence,
+    ) -> Result<PreviewSwOpenInfo, String> {
         let mut sessions = self.sessions.lock_recover();
         if sessions.contains_key(stream_id) {
             return Err(format!("preview-sw session '{stream_id}' is already open"));
@@ -613,6 +637,7 @@ impl PreviewSwRegistry {
                     path_owned,
                     accel,
                     out_scale,
+                    output_cadence,
                     cmd_rx,
                     init_tx,
                     sink,

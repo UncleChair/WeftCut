@@ -751,10 +751,19 @@ app.whenReady().then(async () => {
   // than hanging, but the ack ordering still exists to avoid paying that cost.
   ipcMain.handle(
     'previewGpu:open',
-    (e, a: { streamId: string; path: string; poolSize: number; colorSpace: Electron.ColorSpace }) => {
+    (e, a: { streamId: string; path: string; poolSize: number; colorSpace: Electron.ColorSpace; codedWidth: number; codedHeight: number }) => {
       const win = BrowserWindow.fromWebContents(e.sender) ?? mainWindow
       if (!win) throw new Error('previewGpu:open — no window for sender')
-      return openPreviewGpu(ndBackend(), win, a.streamId, a.path, a.poolSize, a.colorSpace)
+      return openPreviewGpu(
+        ndBackend(),
+        win,
+        a.streamId,
+        a.path,
+        a.poolSize,
+        a.colorSpace,
+        a.codedWidth,
+        a.codedHeight,
+      )
     },
   )
   ipcMain.handle('previewGpu:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
@@ -857,10 +866,10 @@ app.whenReady().then(async () => {
   // WebCodecs-blind-format path). Frames flow out of band on the dedicated
   // `previewSw:frame` channel (see ./previewSw), not through the generic
   // `evt:*` EventSink relay above.
-  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null }) => {
+  ipcMain.handle('previewSw:open', (e, a: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null }) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) throw new Error('previewSw:open — no window for sender')
-    return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null, a.scaleDiv ?? null)
+    return openPreviewSw(ndBackend(), win, a.streamId, a.path, a.lane ?? null, a.device ?? null, a.scaleDiv ?? null, a.cadenceDiv ?? null)
   })
   ipcMain.on('previewSw:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) => {
     // napi can throw Err (e.g. an unknown/already-closed streamId from a renderer

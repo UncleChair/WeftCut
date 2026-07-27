@@ -59,7 +59,11 @@ describe("PerfTelemetryBridge", () => {
       process_count: 1,
       logical_cores: 8,
     });
-    mocks.getPreviewGpuBudget.mockReset().mockResolvedValue({ used: 2, max: 3 });
+    mocks.getPreviewGpuBudget.mockReset().mockResolvedValue({
+      currency: "coded-pixel-area",
+      sessions: { used: 2, max: 5 },
+      codedPixelArea: { used: 4_147_200, max: 24_883_200, calibratedFps: 30 },
+    });
     let nextRaf = 1;
     requestAnimationFrame.mockReset().mockImplementation(() => nextRaf++);
     cancelAnimationFrame.mockReset();
@@ -141,7 +145,14 @@ describe("PerfTelemetryBridge", () => {
     expect(mocks.getPreviewGpuBudget).toHaveBeenCalledOnce();
     expect(mocks.emit).toHaveBeenCalledWith(
       "weftcut://perf-hud-snapshot",
-      expect.objectContaining({ playheadUs: 123, hwBudget: { used: 2, max: 3 } }),
+      expect.objectContaining({
+        playheadUs: 123,
+        hwBudget: {
+          currency: "coded-pixel-area",
+          sessions: { used: 2, max: 5 },
+          codedPixelArea: { used: 4_147_200, max: 24_883_200, calibratedFps: 30 },
+        },
+      }),
     );
 
     await act(async () => {

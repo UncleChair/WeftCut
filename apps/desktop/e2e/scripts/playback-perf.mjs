@@ -156,6 +156,11 @@ const MAX_TRACKS = Number(arg("max-tracks", "8"));
 const EXPLICIT_TRACKS = arg("tracks", "") ? arg("tracks", "").split(",").map(Number) : null;
 const WINDOW_S = Number(arg("window-s", "20"));
 const WARMUP_S = Number(arg("warmup-s", "5"));
+// Optional heavy-cell replay: warm the decoder/texture path, seek back to a
+// stable early position, re-prove clock progress AND consecutive live ring
+// coverage, then reset counters. Off by default, so the ordinary benchmark
+// shape is unchanged.
+const REPLAY_AFTER_WARMUP = argv.includes("--replay-after-warmup");
 /// The matrix pins `full` — anything else shrinks BOTH the raster target and the
 /// NV12 the native lane ships, so it is not comparable. Exposed only because
 /// sweeping it is the decisive diagnostic for whether a lane's wall is
@@ -586,6 +591,7 @@ async function runCell(leg, tracks) {
   const consoleErrors = [];
   let gpuSampler = null;
   let metricsTimer = null;
+  let replayGate = { used: false };
   try {
     const page = await app.firstWindow({ timeout: 60_000 });
     await page.waitForLoadState("domcontentloaded");
@@ -716,14 +722,31 @@ async function runCell(leg, tracks) {
     const quietStart = Date.now();
     let quietRuns = 0;
     let quietReached = false;
+    let quietPolls = 0;
+    let quietCpuBusyPolls = 0;
+    let quietDerivativeBusyPolls = 0;
     while (Date.now() - quietStart < 300_000) {
-      const m = await readMetrics().catch(() => null);
+      const [m, derivativeJobsPending] = await Promise.all([
+        readMetrics().catch(() => null),
+        page.evaluate(() => document.querySelector(".derivatives-pill") !== null),
+      ]);
       const total = (m ?? []).reduce((s, p) => s + (p.cpu?.percentCPUUsage ?? 0), 0);
-      quietRuns = total < 20 ? quietRuns + 1 : 0;
+      quietPolls++;
+      if (total >= 20) quietCpuBusyPolls++;
+      if (derivativeJobsPending) quietDerivativeBusyPolls++;
+      // CPU can dip between ffmpeg jobs while the derivative queue is still
+      // active. The status pill is driven directly by job started/complete/error
+      // events, so both signals must stay quiet for the full consecutive window.
+      quietRuns = total < 20 && !derivativeJobsPending ? quietRuns + 1 : 0;
       if (quietRuns >= 4) { quietReached = true; break; }
       await sleep(500);
     }
     const quietWaitS = (Date.now() - quietStart) / 1000;
+    if (!quietReached) {
+      throw new InvalidRun(
+        `quiet gate never reached within 300s (polls=${quietPolls}, cpuBusy=${quietCpuBusyPolls}, derivativeBusy=${quietDerivativeBusyPolls})`,
+      );
+    }
 
     // ── Play ───────────────────────────────────────────────────────────────
     // Start 2 s in so the window never straddles the clip head, and end well
@@ -747,6 +770,75 @@ async function runCell(leg, tracks) {
     }
 
     await sleep(WARMUP_S * 1000);
+
+    if (REPLAY_AFTER_WARMUP) {
+      await page.evaluate(() => window.__weftcutTest.transportPause());
+      await page.evaluate(() => window.__weftcutTest.transportSeekUs(2_000_000));
+      await page.evaluate(() => window.__weftcutTest.transportPlay());
+
+      let replayLast = (await probeRes())?.positionUs ?? 0;
+      const replayDeadline = Date.now() + 30_000;
+      for (;;) {
+        await sleep(200);
+        const p = await probeRes();
+        if (p && p.positionUs > replayLast) break;
+        replayLast = p?.positionUs ?? replayLast;
+        if (Date.now() > replayDeadline)
+          throw new InvalidRun("clock never advanced after replay-after-warmup");
+      }
+
+      // A single advancing clock sample proves transport intent, not decoder
+      // recovery. A backward replay flushes rings and re-seeks every source; if
+      // the measurement opens immediately, that bounded first-frame refill can
+      // be mislabeled as steady-state load. Require every ring to bracket the
+      // LIVE play position for four consecutive polls. This is state-based (and
+      // reported), not a fixed sleep that could hide a decoder which never
+      // catches up.
+      const gateStart = Date.now();
+      const stablePollsRequired = 4;
+      let stablePolls = 0;
+      let polls = 0;
+      let lastCoverage = null;
+      while (Date.now() - gateStart < 30_000) {
+        const [resource, clips] = await Promise.all([probeRes(), probeAll()]);
+        const positionUs = resource?.positionUs ?? null;
+        lastCoverage = clips.map((p) => ({
+          layerId: p?.layerId ?? null,
+          ringSize: p?.ringSize ?? 0,
+          ringFirstPtsUs: p?.ringFirstPtsUs ?? null,
+          ringLastPtsUs: p?.ringLastPtsUs ?? null,
+          boundFramePtsUs: p?.boundFramePtsUs ?? null,
+        }));
+        const covered = positionUs !== null && clips.every(
+          (p) =>
+            p &&
+            p.ringSize > 0 &&
+            p.ringFirstPtsUs !== null &&
+            p.ringLastPtsUs !== null &&
+            p.ringFirstPtsUs <= positionUs &&
+            p.ringLastPtsUs >= positionUs,
+        );
+        polls++;
+        stablePolls = covered ? stablePolls + 1 : 0;
+        if (stablePolls >= stablePollsRequired) {
+          replayGate = {
+            used: true,
+            waitS: (Date.now() - gateStart) / 1000,
+            polls,
+            stablePollsRequired,
+            positionUs,
+            coverage: lastCoverage,
+          };
+          break;
+        }
+        await sleep(250);
+      }
+      if (!replayGate.used) {
+        throw new InvalidRun(
+          `replay rings never covered the live position for ${stablePollsRequired} consecutive polls: ${JSON.stringify(lastCoverage)}`,
+        );
+      }
+    }
 
     // Reset AFTER the warm-up so cold-start decoder init and the first-frame
     // texture allocations stay out of the distribution.
@@ -928,6 +1020,12 @@ async function runCell(leg, tracks) {
       consoleErrors,
       quietReached,
       quietWaitS,
+      quietGate: {
+        polls: quietPolls,
+        cpuBusyPolls: quietCpuBusyPolls,
+        derivativeBusyPolls: quietDerivativeBusyPolls,
+      },
+      replayGate,
       proxyState,
       compositeMsLast: endPerf?.compositeMsLast ?? null,
       compositeMsMax: endPerf?.compositeMsMax ?? null,
@@ -993,13 +1091,16 @@ function verdict(cell, baseline) {
 const env = await envBlock();
 log(`env: Electron ${env.electron} / Chromium ${env.chrome} · ${env.gpuNames ?? env.gpu.join(",")} · ${env.cpus}`);
 log(`legs: ${legs.map((l) => `${l.fixture}/${l.route}${l.barrier ? `+${l.barrier}` : ""}`).join(", ")} · window ${WINDOW_S}s warmup ${WARMUP_S}s`);
+if (REPLAY_AFTER_WARMUP)
+  log("replay-after-warmup: enabled (seek 2s, re-prove clock + four consecutive ring-coverage polls, then reset counters)");
 
 fs.mkdirSync(RESULTS_DIR, { recursive: true });
 const report = {
   env,
   config: { windowS: WINDOW_S, warmupS: WARMUP_S, maxTracks: MAX_TRACKS, compFps: COMP_FPS,
     dropBudget: DROP_BUDGET, presentFloor: PRESENT_FLOOR, tracks: EXPLICIT_TRACKS,
-    playbackResolution: PLAYBACK_RESOLUTION, barriers: BARRIERS },
+    playbackResolution: PLAYBACK_RESOLUTION, barriers: BARRIERS,
+    replayUsed: REPLAY_AFTER_WARMUP },
   legs: [],
 };
 // `--tag` keeps chunked runs (one invocation per codec, say) from overwriting

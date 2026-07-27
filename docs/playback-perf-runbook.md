@@ -72,7 +72,7 @@ second copy of the app.
 |---|---|
 | `lanes` | not the route you asked for. Past `MAX_HW_SESSIONS` the hardware leg is *legitimately* mixed — that is a finding, not a fault — but a 1-track cell on the wrong lane is a broken pin |
 | `routeDrift` (JSON) | non-empty means the lane, HW lane, or resolver key changed mid-window. The cell measured two different things |
-| `quietReached` / `quietWaitS` (JSON) | `false` means background work (quick-proxy encode, decodability sweep, filmstrip tiles) was still running inside the window |
+| `quietReached` / `quietWaitS` / `quietGate` (JSON) | `false` means the app never held both quiet conditions: total Electron CPU below 20% **and** no active derivative-job pill for four consecutive polls. `quietGate` records how many polls were blocked by CPU and by derivative jobs |
 | `barrier n` | on a hardware leg, a small sample count means the window caught few delivered frames |
 
 A cell that errored reports `{kind: "error"}` or `{kind: "invalid"}` inline and
@@ -135,6 +135,13 @@ Every one of these shipped a false reading at least once in this spec.
 - **Two similar magnitudes are not evidence of a shared cause when there are only
   two of them.** Take the suspected cause away and re-measure instead; it is
   nearly always the cheaper experiment.
+- **Low CPU is not proof the derivative queue is empty.** ffmpeg jobs can leave
+  four low-CPU polls in the gaps between work while quick-proxy, thumbnail, or
+  waveform jobs are still active. The quiet gate must also see the renderer's
+  derivative-job pill absent for the whole consecutive window. The
+  `quietGate.derivativeBusyPolls` count is the audit trail; a fresh 4K import on
+  this box has needed ~15 s to clear even though the old CPU-only gate returned
+  after ~1.55 s.
 
 **`--playback-resolution` is a diagnostic, never a comparison.** Sweeping it
 answers whether a lane's wall is latency-bound (a smaller frame changes nothing)
@@ -180,7 +187,7 @@ Read the columns in this order:
 
 For the deeper JSON fields — `ringAtEnd` (ring bounds against the playhead at
 window close, which separates "never decoded" from "decoded and evicted"),
-`perClip[].barrierN`, `proxyState`, `consoleErrors`, and `longFrames.frames[]`
+`perClip[].barrierN`, `proxyState`, `quietGate`, `consoleErrors`, and `longFrames.frames[]`
 (each long frame's `startTime`/`renderStart`/`styleAndLayoutStart` split, plus
 `timerCadence.worst` with timestamps so a timer stall can be lined up against
 one) — read the cell object directly; the markdown is a summary, not the whole

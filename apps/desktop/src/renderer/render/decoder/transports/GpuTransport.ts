@@ -169,6 +169,10 @@ export class GpuTransport implements DecodeTransport {
       path: o.path,
       poolSize: o.poolSize ?? 3,
       colorSpace: deriveColorSpace(o.sourceColor),
+      // Missing/invalid probe dimensions deliberately ride as zero: main's
+      // budget validates and fails closed before native allocation.
+      codedWidth: o.codedWidth ?? 0,
+      codedHeight: o.codedHeight ?? 0,
     });
   }
 

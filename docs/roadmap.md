@@ -255,7 +255,8 @@ measurement rather than a guess — which is also why all but one turned out to 
 ours rather than a platform limit.
 
 Where the 1080p hardware lane carried 2 simultaneous tracks and 4K carried
-none, they now carry 5 and 1. What each fix bought, and the landmine it left:
+none, they now carry 5 and 1 reliably; a second 4K track is intermittent rather
+than a stable ceiling. What each fix bought, and the landmine it left:
 
 - **The hardware lane's read barrier was the whole multi-track wall** — and it
   took two passes to remove, because the first one only moved it. The lane blocks
@@ -267,8 +268,8 @@ none, they now carry 5 and 1. What each fix bought, and the landmine it left:
   WebGL2 offers no blocking wait, so the drain had to flush-and-poll, and on an
   idle GPU that poll was what *completed* the fence — turned out to cost the
   remaining tail. Taking the completion signal on the renderer's presented WebGPU
-  device removed the spin entirely: 4K went 0 → 1 track and that track's tick p99
-  23.5 → 17.3 ms, matching a barrier-less control. Landmines it leaves:
+  device removed the spin entirely: 4K went 0 → 1 reliable track and that track's
+  tick p99 23.5 → 17.3 ms, matching a barrier-less control. Landmines it leaves:
   the barrier is **size-independent**, so do not re-try shrinking the sampled
   region; the WebGPU completion signal lands ~90 ms out regardless of load, so a
   wider deadline buys a slot-hold throughput ceiling instead of correctness; and
@@ -362,10 +363,16 @@ trace: the GPU's engine counters are identical between the matched smooth and
 stuttering cells.
 
 A third cell fails on the tick tail alone **without** the blocked-thread half of
-that signature, and it is the one that caps a leg: 4K ffmpeg-hardware at two tracks
-holds a healthy 8 ms timer (p50 8.0 ms, nothing over 50 ms) and 0.00 % drops while
-`rafInterval` p99 sits at exactly 4× vsync — the thread was alive, and what it lost
-was rendering opportunities. Same instrument, other branch of the decision tree.
+that signature, but intermittently rather than deterministically. After the quiet
+gate was fixed to require both low app CPU and no pending derivative jobs, repeated
+4K ffmpeg-hardware pairs were 5/5 smooth at one track (tick p99 16.9–17.2 ms) and
+3/5 smooth at two tracks (17.5, 17.6, 27.9, 38.9 and 40.5 ms across all five runs).
+Both red two-track cells held a healthy 8 ms timer (p50 8.0 ms, nothing over 50 ms)
+and 0.00 % drops while `rafInterval` p99 reached 33.3–33.4 ms, about 2× vsync: the
+thread was alive, and what it lost was rendering opportunities. Earlier 67–68 ms
+samples, which suggested a 4×-vsync tail, are invalid because the CPU-only quiet
+gate admitted measurement while derivative jobs were still running. Same
+instrument, other branch of the decision tree.
 
 **Still open — the concurrent-session cap is one number for two resolutions.**
 `MAX_HW_SESSIONS` is measured at 1080p, where nothing binds: five hardware sessions

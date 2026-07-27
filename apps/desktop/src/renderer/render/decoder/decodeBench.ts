@@ -197,6 +197,8 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
             forceLane: "hardware" as const,
             sourcePath,
             componentAvailable: true,
+            width,
+            height,
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
           }
         : strategy === "sw"
@@ -366,9 +368,17 @@ export async function decodeBenchConcurrentOrderCheck(
     // a hard fatal — but saying so up front names the cause instead of leaving
     // it to be inferred from N identical open failures.
     const budget = await getPreviewGpuBudget();
-    if (args.sessions > budget.max) {
+    const availableSessions = budget.sessions.max - budget.sessions.used;
+    const fixtureArea = width * height;
+    const availableByArea = Number.isSafeInteger(fixtureArea) && fixtureArea > 0
+      ? Math.floor(
+        (budget.codedPixelArea.max - budget.codedPixelArea.used) / fixtureArea,
+      )
+      : 0;
+    const available = Math.min(availableSessions, availableByArea);
+    if (args.sessions > available) {
       throw new Error(
-        `sessions=${args.sessions} exceeds the concurrent-HW cap (${budget.max}); the surplus cannot be on hardware`,
+        `sessions=${args.sessions} exceeds the live preview-GPU budget for ${width}x${height} (available=${available}, session slots=${availableSessions}, coded-area fits=${availableByArea}); the surplus cannot be on hardware`,
       );
     }
 
@@ -383,6 +393,8 @@ export async function decodeBenchConcurrentOrderCheck(
         forceLane: "hardware" as const,
         sourcePath,
         componentAvailable: true,
+        width,
+        height,
         ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
       }) as FfmpegSource;
       handles.push(h);
@@ -515,6 +527,8 @@ export interface BudgetProbeResult {
 
 export async function decodeBenchBudgetProbe(args: {
   sourcePath: string;
+  width: number;
+  height: number;
   count: number;
 }): Promise<BudgetProbeResult> {
   const pool = new SourceDecoderPool();
@@ -532,6 +546,8 @@ export async function decodeBenchBudgetProbe(args: {
         forceLane: "hardware",
         sourcePath: args.sourcePath,
         componentAvailable: true,
+        width: args.width,
+        height: args.height,
       }) as FfmpegSource;
       let fatalReason: string | null = null;
       // Register before the open attempt so a budget-rejected open is captured.
@@ -861,6 +877,8 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
             forceLane: "hardware" as const,
             sourcePath: args.sourcePath,
             componentAvailable: true,
+            ...(args.width != null ? { width: args.width } : {}),
+            ...(args.height != null ? { height: args.height } : {}),
             // Conditional spread, not `poolSize: args.poolSize` — exactOptionalPropertyTypes
             // rejects assigning `number | undefined` to the optional `poolSize: number` field.
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),

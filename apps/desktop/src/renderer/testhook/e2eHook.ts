@@ -82,7 +82,7 @@ import {
 } from "../render/decoder/decodeBench";
 import { probeBothModes, type BothModesResult } from "../render/decoder/importProbe";
 import type { ActiveClipProbe, CompositorPerfSnapshot } from "../render/Compositor";
-import { getPreviewGpuBudget, type PreviewGpuBudget } from "@/bridge/previewGpu";
+import { getPreviewGpuBudget, type PreviewGpuBudgetSnapshot } from "@/bridge/previewGpu";
 import {
   ensureWaveformWindow,
   registerWaveformProducer,
@@ -407,7 +407,12 @@ export interface E2EHook {
   /// sessions and report each open's outcome. The (MAX_HW_SESSIONS+1)th must
   /// reject with `hw-budget-exceeded` and surface it via onFatalError (the
   /// resolver then downgrades that source off tier 1). Dev/e2e only.
-  decodeBenchBudgetProbe(args: { sourcePath: string; count: number }): Promise<BudgetProbeResult>;
+  decodeBenchBudgetProbe(args: {
+    sourcePath: string;
+    width: number;
+    height: number;
+    count: number;
+  }): Promise<BudgetProbeResult>;
   /// HW→SW in-place fallback: a REAL (unforced) counterpart to
   /// `decodeBenchBudgetProbe` — opens `count` ffmpeg-engine sources on an
   /// HW-eligible clip WITHOUT forcing a lane, so `pickInitialLane`'s real
@@ -456,7 +461,7 @@ export interface E2EHook {
   /// hardware was even available at the moment it was asked. Sampling it around
   /// a teardown/reopen is how a stale-session race is told apart from a sticky
   /// per-media verdict — the two are indistinguishable from the lane alone.
-  previewGpuBudget(): Promise<PreviewGpuBudget>;
+  previewGpuBudget(): Promise<PreviewGpuBudgetSnapshot>;
   /// Turn the preview loop's per-stage timing on/off (`render/perf/stageTimers`).
   /// Off by default — production must not pay for it — and clears the window.
   stageProfilingSet(on: boolean): void;

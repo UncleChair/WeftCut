@@ -24,6 +24,9 @@ import type { NativeDecode } from '@weftcut/native-decode'
 /// native swscales each frame DOWN before packing, so a 4K frame crosses this
 /// IPC at a fraction of its 12.44 MB. The returned dimensions and every relayed
 /// frame report the SHIPPED size — native owns that math.
+///
+/// `cadenceDiv` selects producer output cadence (null = 1 = every frame).
+/// Native skips unselected frames before copy-back/swscale/packing and IPC.
 export function openPreviewSw(
   backend: NativeDecode,
   win: BrowserWindow,
@@ -32,12 +35,13 @@ export function openPreviewSw(
   lane: string | null,
   device: string | null,
   scaleDiv: number | null,
+  cadenceDiv: number | null,
 ): { width: number; height: number } {
   const info = backend.previewSwOpen(streamId, path, (err: Error | null, frame) => {
     if (err) return
     if (win.isDestroyed()) return // renderer reloaded/closed mid-stream → webContents.send would throw
     win.webContents.send('previewSw:frame', frame)
-  }, lane, device, scaleDiv)
+  }, lane, device, scaleDiv, cadenceDiv)
   return { width: info.width, height: info.height }
 }
 

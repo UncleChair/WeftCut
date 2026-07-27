@@ -464,7 +464,7 @@ export { getSystemStats, type SystemStats } from "@/bridge/metrics";
 
 // Live HW-decode session budget from main. Same re-export shape as the metrics
 // snapshot above, and for the same reason: the PerfHUD reads it from "../ipc".
-export { getPreviewGpuBudget, type PreviewGpuBudget } from "@/bridge/previewGpu";
+export { getPreviewGpuBudget, type PreviewGpuBudgetSnapshot } from "@/bridge/previewGpu";
 
 export async function projectSummary(): Promise<ProjectSummary> {
   return invoke<ProjectSummary>("project_summary");

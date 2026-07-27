@@ -234,24 +234,56 @@ async function runHwFallbackProbe(page: Page, count: number): Promise<HwFallback
   )) as HwFallbackProbeResult
 }
 
-/// The live `MAX_HW_SESSIONS` off the same `previewGpu:budget` bridge the
-/// renderer's resolver reads. Call it on a freshly launched app, where nothing
-/// holds a session yet, so `max` is the whole budget rather than what is left.
+/// The largest concurrent hardware shape THIS fixture can occupy, read from the
+/// same live `previewGpu:budget` bridge as the renderer. Admission has two
+/// constraints (session slots + coded pixel area), so using only
+/// `sessions.max` can ask a large fixture to open a shape main must refuse.
 ///
-/// Every cap-shaped expectation below derives from this instead of restating the
-/// constant, and that is not just staleness insurance:
-/// `decodeBenchConcurrentOrderCheck` REFUSES a run with `sessions > budget.max`,
-/// so a count written ahead of a cap raise fails the run outright ("exceeds the
-/// concurrent-HW cap") instead of quietly testing the old shape. Deriving is the
-/// only form that holds on both sides of a cap change.
-async function readHwCap(page: Page): Promise<number> {
+/// Call on a freshly launched app, where nothing owns a reservation. The
+/// subtraction still matters: it keeps this helper honest if a future fixture
+/// setup begins decoding before the check.
+async function readLargestConcurrentForFixture(
+  page: Page,
+  width: number,
+  height: number,
+): Promise<number> {
   const budget = (await page.evaluate(() =>
     (window as unknown as {
-      api: { previewGpu: { budget(): Promise<{ used: number; max: number }> } }
+      api: {
+        previewGpu: {
+          budget(): Promise<{
+            currency: 'coded-pixel-area'
+            sessions: { used: number; max: number }
+            codedPixelArea: { used: number; max: number; calibratedFps: 30 }
+          }>
+        }
+      }
     }).api.previewGpu.budget(),
-  )) as { used: number; max: number }
-  expect(budget.max, `previewGpu budget reported no hardware-session cap: ${JSON.stringify(budget)}`).toBeGreaterThan(0)
-  return budget.max
+  )) as {
+    currency: 'coded-pixel-area'
+    sessions: { used: number; max: number }
+    codedPixelArea: { used: number; max: number; calibratedFps: 30 }
+  }
+  expect(budget.currency).toBe('coded-pixel-area')
+  expect(
+    budget.sessions.max,
+    `previewGpu budget reported no hardware-session cap: ${JSON.stringify(budget)}`,
+  ).toBeGreaterThan(0)
+  const fixtureArea = width * height
+  expect(
+    Number.isSafeInteger(fixtureArea) && fixtureArea > 0,
+    `invalid order-fixture coded size ${width}x${height}`,
+  ).toBe(true)
+  const sessionSlots = budget.sessions.max - budget.sessions.used
+  const areaFits = Math.floor(
+    (budget.codedPixelArea.max - budget.codedPixelArea.used) / fixtureArea,
+  )
+  const largestConcurrent = Math.min(sessionSlots, areaFits)
+  expect(
+    largestConcurrent,
+    `previewGpu budget cannot admit even one ${width}x${height} order fixture: ${JSON.stringify(budget)}`,
+  ).toBeGreaterThan(0)
+  return largestConcurrent
 }
 
 test.describe('ffmpeg engine hardware lane preview presents frames in order (Electron) @serial', () => {
@@ -317,7 +349,8 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     }
   })
 
-  // The same probe at whatever MAX_HW_SESSIONS currently is. The fixed-three run
+  // The same probe at the largest concurrent shape this fixture's live budget
+  // admits. The fixed-three run
   // above is not superseded by this one: three sessions still leave the most
   // barrier slack of any multi-session shape (see the drain numbers above), which
   // makes it the multi-session case most likely to HIDE a reorder. This run
@@ -325,8 +358,9 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   // where per-session slack is thinnest.
   //
   // The session count comes from the live budget rather than a literal because
-  // `decodeBenchConcurrentOrderCheck` refuses `sessions > budget.max` (see
-  // `readHwCap`) — a hard-coded count ahead of a cap raise would fail the run,
+  // `decodeBenchConcurrentOrderCheck` refuses a shape exceeding either live
+  // constraint (see `readLargestConcurrentForFixture`) — a hard-coded count
+  // ahead of a budget change would fail the run,
   // not skip it. While the cap is still three this run would only repeat the test
   // above, so it skips.
   //
@@ -334,28 +368,28 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   // wall clock for all sessions, deliberately unscaled (a run that cannot walk
   // the clip in the single-session budget IS the capacity answer), so adding
   // sessions does not extend the work this has to wait out.
-  test('ffmpeg hardware lane: MAX_HW_SESSIONS concurrent sessions each present frames in order (no reorder at the cap)', async () => {
+  test('ffmpeg hardware lane: largest admitted concurrent fixture shape presents frames in order', async () => {
     test.setTimeout(240_000)
     const { app, page } = await launchApp()
     try {
-      const cap = await readHwCap(page)
+      const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
       test.skip(
         cap <= 3,
-        `MAX_HW_SESSIONS is still ${cap} — the cap has not moved, so this run would be identical to the 3-session test above`,
+        `largest admitted fixture shape is ${cap} — this run would be identical to the 3-session test above`,
       )
       await enterEditorWithPreview(page)
       const r = await runConcurrentOrderCheck(page, cap)
       // eslint-disable-next-line no-console
-      console.log(`[preview-gpu-order] ${cap} concurrent hardware sessions (at MAX_HW_SESSIONS) ->\n` + reportConcurrent(r))
+      console.log(`[preview-gpu-order] ${cap} concurrent hardware sessions (largest admitted fixture shape) ->\n` + reportConcurrent(r))
       expectConcurrentRunInOrder(r, cap)
     } finally {
       await app.close()
     }
   })
 
-  // Smoke item b — HW session budget → downgrade (runtime seam), FORCED lane.
-  // The main process caps concurrent hardware-lane sessions at MAX_HW_SESSIONS;
-  // the (cap+1)th open must reject with `hw-budget-exceeded` and surface it via
+  // Smoke item b — HW admission budget → downgrade (runtime seam), FORCED lane.
+  // Main admits this fixture up to the smaller of session slots and coded-area
+  // fits; the (cap+1)th open must reject with `hw-budget-exceeded` and surface it via
   // onFatalError (the resolver's downgrade-off-tier-1 on that marker is
   // unit-tested in ffmpegCapability.test.ts). This opens cap+1 real sessions with
   // the lane FORCED (`forceLane: 'hardware'`), which bypasses `FfmpegSource`'s
@@ -367,24 +401,29 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     test.setTimeout(120_000)
     const { app, page } = await launchApp()
     try {
-      const cap = await readHwCap(page)
+      const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
       await waitForHook(page, 'decodeBenchBudgetProbe')
       const r = (await page.evaluate(
         (args) =>
           (window as unknown as {
             __weftcutTest: { decodeBenchBudgetProbe(a: unknown): Promise<{ outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }> }
           }).__weftcutTest.decodeBenchBudgetProbe(args),
-        { sourcePath: CLIP, count: cap + 1 },
+        {
+          sourcePath: CLIP,
+          width: CLIP_META.width,
+          height: CLIP_META.height,
+          count: cap + 1,
+        },
       )) as { outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }
       // eslint-disable-next-line no-console
       console.log(`[preview-gpu-order] budget (forced lane, cap=${cap}) ->\n` + JSON.stringify(r.outcomes, null, 2))
       expect(r.error, `budget probe errored: ${r.error}`).toBeUndefined()
-      // Every open up to MAX_HW_SESSIONS fits the budget and opens cleanly.
+      // Every open up to this fixture's largest admitted shape opens cleanly.
       expect(r.outcomes.slice(0, cap).every((o) => o.ready), `first ${cap} hardware-lane sessions should open`).toBe(true)
       // The (cap+1)th is rejected at the cap, and the budget reason reaches the
       // handle's fatal path (what drives the resolver's sticky downgrade).
       const overBudget = r.outcomes[cap]!
-      expect(overBudget.ready, `session ${cap} must NOT open (over the ${cap}-session budget)`).toBe(false)
+      expect(overBudget.ready, `session ${cap} must NOT open (past the ${cap}-fixture admission shape)`).toBe(false)
       expect(overBudget.error ?? '', 'the over-budget open should reject with hw-budget-exceeded').toContain('hw-budget-exceeded')
       expect(overBudget.fatalReason ?? '', 'onFatalError should carry the budget reason').toContain('hw-budget-exceeded')
     } finally {
@@ -393,7 +432,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   })
 
   // HW→SW in-place fallback (Task 13) — a REAL budget-rejection trigger, not
-  // an injected error. Opens MAX_HW_SESSIONS + 1 real ffmpeg-engine
+  // an injected error. Opens the largest admitted fixture shape + 1 real ffmpeg-engine
   // sources on this HW-eligible clip WITHOUT forcing a lane —
   // `pickInitialLane`'s real GPU capability probe puts each on hardware
   // exactly as production does (see decodeBench.ts's
@@ -412,11 +451,11 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   // happens INSIDE its one `FfmpegSource` instance (never disposed/re-acquired
   // across the test), so "no swap" is inherent to how the probe drives it, not a
   // separate counter to assert.
-  test('ffmpeg hardware lane: the (MAX_HW_SESSIONS+1)th session survives budget rejection via in-place HW→SW fallback', async () => {
+  test('ffmpeg hardware lane: the first over-budget fixture session survives via in-place HW→SW fallback', async () => {
     test.setTimeout(120_000)
     const { app, page } = await launchApp()
     try {
-      const cap = await readHwCap(page)
+      const cap = await readLargestConcurrentForFixture(page, CLIP_META.width, CLIP_META.height)
       const r = await runHwFallbackProbe(page, cap + 1)
       // eslint-disable-next-line no-console
       console.log(`[preview-gpu-order] hw-fallback (unforced, cap=${cap}) ->\n` + JSON.stringify(r, null, 2))
@@ -424,7 +463,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
       expect(r.sessions.length).toBe(cap + 1)
       const hw = r.sessions.slice(0, cap)
       const spilled = r.sessions[cap]!
-      // Every session within MAX_HW_SESSIONS opens cleanly on the hardware lane
+      // Every session within this fixture's admitted shape opens cleanly on the hardware lane
       // (the real HW probe passes for this HEVC 8-bit fixture on a GPU that
       // d3d11va-decodes it). Asserted per session, with its index in the message,
       // so ONE session landing on the wrong lane is identifiable from the failure.

@@ -18,6 +18,10 @@ export interface DecodeTransportOpen {
   sourceColor?: VideoColorSpaceInit;
   /// Native GPU pool size (GPU transport only; SW ignores). Default 3.
   poolSize?: number;
+  /// Renderer-probed coded dimensions. The GPU transport sends them to main's
+  /// admission budget before native open; SW transports ignore them.
+  codedWidth?: number;
+  codedHeight?: number;
 }
 
 export interface DecodeTransport {

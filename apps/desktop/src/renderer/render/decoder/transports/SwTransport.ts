@@ -59,9 +59,14 @@ export class SwTransport implements DecodeTransport {
   /// full res — and reports the shipped dims on the frame, which the Compositor
   /// renormalizes against the media size. Absent or 1 = full resolution, and
   /// nothing extra rides through: an unscaled open stays exactly today's call.
+  ///
+  /// `cadenceDiv`: optional output cadence divisor. Decode still advances every
+  /// source frame, but native only performs copy-back/scale/pack/IPC for every
+  /// Nth frame. Absent or 1 leaves the ordinary path byte-for-byte unchanged.
   constructor(
     private readonly accel?: { lane: string; device: string | null },
     private readonly scaleDiv?: number,
+    private readonly cadenceDiv?: number,
   ) {}
 
   /// Subscribe to the frame event, then open the native session. Throws on
@@ -80,6 +85,9 @@ export class SwTransport implements DecodeTransport {
         path: o.path,
         ...(this.accel ? { lane: this.accel.lane, device: this.accel.device } : {}),
         ...(this.scaleDiv !== undefined && this.scaleDiv > 1 ? { scaleDiv: this.scaleDiv } : {}),
+        ...(this.cadenceDiv !== undefined && this.cadenceDiv > 1
+          ? { cadenceDiv: this.cadenceDiv }
+          : {}),
       });
     } catch (err) {
       // Open failure: surface it as the terminal error BEFORE rethrowing —

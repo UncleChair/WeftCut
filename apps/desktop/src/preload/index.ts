@@ -11,7 +11,7 @@ import type {
   DirEntry,
   HwBarrierMode,
   NotificationOpts,
-  PreviewGpuBudget,
+  PreviewGpuBudgetSnapshot,
   PreviewGpuColorSpace,
   PreviewGpuMainTiming,
   PreviewGpuOpenReply,
@@ -167,7 +167,7 @@ const api: WeftcutApi = {
     // to check a run's observed barrier against what it asked for. It is NOT how
     // the preload learns the mode — see the `evt:previewGpu:barrier` latch below
     // for why a reply cannot do that job.
-    open(args: { streamId: string; path: string; poolSize: number; colorSpace: PreviewGpuColorSpace }): Promise<PreviewGpuOpenReply> {
+    open(args: { streamId: string; path: string; poolSize: number; colorSpace: PreviewGpuColorSpace; codedWidth: number; codedHeight: number }): Promise<PreviewGpuOpenReply> {
       return ipcRenderer.invoke('previewGpu:open', args) as Promise<PreviewGpuOpenReply>
     },
     requestFrameAt(args: { streamId: string; targetUs: number }): Promise<void> {
@@ -193,8 +193,8 @@ const api: WeftcutApi = {
       ch.port1.onmessage = (ev: MessageEvent) => { receiveSlotAck(ch.port1, ev.data) }
       window.postMessage({ __weftcutPreviewGpu: 'port', streamId }, '*', [ch.port2])
     },
-    budget(): Promise<PreviewGpuBudget> {
-      return ipcRenderer.invoke('previewGpu:budget') as Promise<PreviewGpuBudget>
+    budget(): Promise<PreviewGpuBudgetSnapshot> {
+      return ipcRenderer.invoke('previewGpu:budget') as Promise<PreviewGpuBudgetSnapshot>
     },
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport> {
       return ipcRenderer.invoke('previewGpu:takeTimings', { streamId }) as Promise<PreviewGpuTimingReport>
@@ -210,7 +210,7 @@ const api: WeftcutApi = {
   // arriving on the dedicated `previewSw:frame` channel (NOT the generic
   // `evt:*` EventSink relay), so `onFrame` subscribes to that channel directly.
   previewSw: {
-    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null }): Promise<{ width: number; height: number }> {
+    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null }): Promise<{ width: number; height: number }> {
       return ipcRenderer.invoke('previewSw:open', args) as Promise<{ width: number; height: number }>
     },
     requestFrameAt(args: { streamId: string; targetUs: number }): void {

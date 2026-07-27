@@ -25,7 +25,7 @@ import { RotateCcwIcon } from "lucide-react";
 import {
   getPreviewGpuBudget,
   getSystemStats,
-  type PreviewGpuBudget,
+  type PreviewGpuBudgetSnapshot,
   type SystemStats,
 } from "../ipc";
 import type { Compositor, CompositorPerfSnapshot } from "./Compositor";
@@ -155,7 +155,7 @@ export interface PerfHudSample {
   /// lane a clip is on; this says whether hardware was available to be asked for
   /// — the missing half of the story when a clip reads SW and nothing explains it.
   /// Null before the first poll resolves.
-  hwBudget: PreviewGpuBudget | null;
+  hwBudget: PreviewGpuBudgetSnapshot | null;
 }
 
 /// One point of the monitor's frame-interval sparkline.
@@ -320,6 +320,10 @@ function PerfDashboard({
   const fpsLookup = new Map(fpsByLayer);
   const fps = fpsFromMs(rafP50);
   const heapCapRatio = heapCapRatioOf(memory);
+  const hwBudgetAtCap = hwBudget !== null && (
+    hwBudget.sessions.used >= hwBudget.sessions.max
+    || hwBudget.codedPixelArea.used >= hwBudget.codedPixelArea.max
+  );
   const prewarm = snap?.upcomingPrewarm;
   const prewarmRequested = prewarm?.clips.filter((c) => c.requested).length ?? 0;
   const prewarmDueMs =
@@ -448,13 +452,13 @@ function PerfDashboard({
             label="HW sessions"
             value={
               <>
-                {hwBudget.used}
-                <span className="perf-tile-unit">/{hwBudget.max}</span>
+                {hwBudget.sessions.used}
+                <span className="perf-tile-unit">/{hwBudget.sessions.max}</span>
               </>
             }
-            meta={hwBudget.used >= hwBudget.max ? "at cap — next open falls to SW" : "slots free"}
-            warn={hwBudget.used >= hwBudget.max}
-            title="Concurrent native GPU decode sessions registered in main, against the cap. At the cap, the next clip's hardware open throws hw-budget-exceeded and that clip opens on the software lane instead — and stays there for the life of that decode session."
+            meta={`${(hwBudget.codedPixelArea.used / 1_000_000).toFixed(1)}/${(hwBudget.codedPixelArea.max / 1_000_000).toFixed(1)} M coded px · ${hwBudget.codedPixelArea.calibratedFps}fps calibration${hwBudgetAtCap ? " · at cap" : ""}`}
+            warn={hwBudgetAtCap}
+            title="Greedy native GPU decode admission: both a hard session slot and coded width×height area must fit. The area limit is calibrated on 30fps measurements; it is not a pixel-rate model. A refused open falls to software for that decode session."
           />
         ) : null}
       </div>
@@ -698,7 +702,7 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
   const [sys, setSys] = useState<SystemStats | null>(null);
   // Main's HW-session budget, polled on the same slow cadence as the process
   // stats: it changes only when a session opens or closes, never per frame.
-  const [hwBudget, setHwBudget] = useState<PreviewGpuBudget | null>(null);
+  const [hwBudget, setHwBudget] = useState<PreviewGpuBudgetSnapshot | null>(null);
   // Master audio bus meter (rms/peak dBFS). Null in export mode or before
   // the graph exists.
   const [aud, setAud] = useState<{ rmsDb: number; peakDb: number } | null>(null);

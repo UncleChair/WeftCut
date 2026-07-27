@@ -15,11 +15,16 @@ import type { BrowserWindow, ColorSpace, SharedTextureImported } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
 import {
   HW_BUDGET_EXCEEDED,
+  HW_BUDGET_RESERVATION_MISMATCH,
   type HwBarrierMode,
-  type PreviewGpuBudget,
+  type PreviewGpuBudgetSnapshot,
   type PreviewGpuTimingReport,
 } from '../shared/ipc'
 import { clearMainPendingFor } from './previewGpuTiming.js'
+import {
+  createPreviewGpuBudget,
+  type PreviewGpuBudgetLease,
+} from './previewGpuBudget.js'
 
 interface GpuSession {
   // One imported texture per pool slot, indexed by the slot number the native
@@ -29,40 +34,32 @@ interface GpuSession {
   imported: SharedTextureImported[]
   width: number
   height: number
+  budgetLease: PreviewGpuBudgetLease
 }
 
 const sessions = new Map<string, GpuSession>()
+/// One admission authority for every open/close. It greedily reserves coded
+/// pixel AREA (30fps-calibrated, not pixel-rate) plus a hard session slot before
+/// native allocation. The module owns validation, rollback and idempotent lease
+/// release; callers never recompute policy.
+const previewGpuBudget = createPreviewGpuBudget()
 
-/// Concurrent HW-session cap. What it rations is the GPU's VideoDecode engine —
-/// not the per-frame read barrier (free under `rendererFence`, so cap headroom
-/// converts straight into tracks), and not VRAM: 5 sessions × 3 slots × w·h·1.5
-/// NV12 is ≈47MB at 1080p, ≈187MB at 4K — NOMINAL desc sizes, not measurements
-/// — and even that 4K figure is ~4% of what the app already holds on the GPU at
-/// three 4K tracks, where the real consumer is the FrameRing's resolution-blind
-/// lookahead. (The 3 is `poolSize`, a renderer-owned knob, not this cap.)
-///
-/// Landmine: engine load scales with PIXELS, not sessions, so one number for
-/// both resolutions is right at 1080p (18.7% at five hardware tracks) and
-/// knowingly too high at 4K (58-62% on ONE H.264 track). Three 4K hardware
-/// tracks stay nearly clean — 0.00% drops, engine 91.9% — and the FOURTH tips it
-/// to 99.9% and starves EVERY session, the healthy three included: all four
-/// deliver zero frames and hold their poster. A cliff, not a slope. Kept because
-/// 4K's smooth ceiling sits far below the cap anyway, and a LOWER cap is worse
-/// at five 4K tracks — its software spills push NV12 over CPU IPC and stall the
-/// main thread for tens of seconds. The ½/¼ playback-resolution dial cannot
-/// help: the decoder downscales before IPC, cutting IPC bytes and raster cost,
-/// never engine load. Per-resolution caps are backlog (docs/roadmap.md).
-///
-/// Landmine: LOWERING this silently shrinks ordering coverage. The E2E order
-/// gate derives its session counts from this value at runtime rather than
-/// restating it, and `decodeBenchConcurrentOrderCheck` refuses a run with
-/// `sessions > budget.max` — so the at-cap concurrency probe simply stops
-/// probing, with no failure to warn anyone. Reordering on this transport
-/// surfaces as WRONG PIXELS, not as a slow cell.
-///
-/// Over-budget opens throw the typed reason the renderer's resolver maps to a
-/// per-source downgrade to the next tier.
-const MAX_HW_SESSIONS = 5
+/// Best-effort GPU-reference teardown: one broken Electron import must not
+/// prevent the remaining imports from releasing. Admission release is owned by
+/// each caller's surrounding `finally`, so this helper never touches the lease.
+function releaseImports(
+  imported: readonly SharedTextureImported[],
+  streamId: string,
+  phase: 'rollback' | 'close',
+): void {
+  for (const imp of imported) {
+    try {
+      imp.release()
+    } catch (releaseErr) {
+      console.warn(`[main] previewGpu ${phase} import release failed for ${streamId}`, releaseErr)
+    }
+  }
+}
 
 /// Barrier strategy applied before a slot is acked, read ONCE from
 /// `WEFTCUT_HW_BARRIER` and reported on every open reply (see `HwBarrierMode`
@@ -90,19 +87,19 @@ const HW_BARRIER_MODE: HwBarrierMode = HW_BARRIER_MODES.includes(
 
 /// Live HW-session count (for the renderer's budget-aware resolution + tests).
 export function hwSessionCount(): number {
-  return sessions.size
+  return previewGpuBudget.snapshot().sessions.used
 }
 
-/// The budget as the renderer sees it (`previewGpu:budget`). The count alone is
-/// unreadable without the cap it is compared against, so both travel together —
-/// a lane readout wants "2/5", not "2". Whether an open would be REFUSED is the
-/// only decision this supports, and `used >= max` is that predicate.
+/// The budget as the renderer sees it (`previewGpu:budget`). Both admission
+/// constraints travel together: the hard session cap and the coded-pixel-area
+/// currency calibrated on the 30fps fixtures. Either constraint can refuse an
+/// open.
 ///
 /// A sample is a point in time, not a promise: the count falls asynchronously
 /// (a renderer teardown fires `previewGpu:close` without awaiting it), so
 /// `used < max` at read time does not guarantee the next open succeeds.
-export function hwBudget(): PreviewGpuBudget {
-  return { used: sessions.size, max: MAX_HW_SESSIONS }
+export function hwBudget(): PreviewGpuBudgetSnapshot {
+  return previewGpuBudget.snapshot()
 }
 
 /// Tail of the open-serialisation chain. `openPreviewGpu` awaits inside its
@@ -127,12 +124,25 @@ export function openPreviewGpu(
   path: string,
   poolSize: number,
   colorSpace: ColorSpace,
+  codedWidth: number,
+  codedHeight: number,
 ): Promise<{ width: number; height: number; poolSize: number; barrierMode: HwBarrierMode }> {
   // Serialise: run after whatever open is already in flight, succeeded or not
   // (hence the `.catch`, so one failed open doesn't poison the chain).
   const mine = openChain
     .catch(() => {})
-    .then(() => doOpenPreviewGpu(backend, win, streamId, path, poolSize, colorSpace))
+    .then(() =>
+      doOpenPreviewGpu(
+        backend,
+        win,
+        streamId,
+        path,
+        poolSize,
+        colorSpace,
+        codedWidth,
+        codedHeight,
+      ),
+    )
   openChain = mine
   return mine
 }
@@ -144,31 +154,44 @@ async function doOpenPreviewGpu(
   path: string,
   poolSize: number,
   colorSpace: ColorSpace,
+  codedWidth: number,
+  codedHeight: number,
 ): Promise<{ width: number; height: number; poolSize: number; barrierMode: HwBarrierMode }> {
-  // Budget gate FIRST — before any native allocation. The throw rejects the
-  // `previewGpu:open` invoke; the renderer's resolver treats 'hw-budget-exceeded'
-  // as a sticky downgrade off tier 1 rather than a hard failure.
-  if (sessions.size >= MAX_HW_SESSIONS) throw new Error(HW_BUDGET_EXCEEDED)
-  // Latch the barrier mode in the preload. WHERE THIS SITS IS THE CONTRACT:
-  // after the budget gate (a refused open must not latch a stream that will
-  // never produce a frame) and before `previewGpuOpen` (which starts the decode
-  // thread — the first thing that can emit a frameReady poke).
-  //
-  // `evt:previewGpu:barrier` and `evt:previewGpu:frameReady` are the SAME
-  // ordered webContents channel, so sending here — before the producer exists —
-  // is what guarantees the preload has the mode before any frame of this stream
-  // arrives. Move this below the native open and the race silently returns: an
-  // early frame finds no latch, stamps the preload's unlatched fallback, later
-  // frames stamp the configured mode, and the session reports two applied modes.
-  // That reads as an INVALID bench cell, not a slow one.
-  //
-  // The open reply can't carry this job (though it still carries the value, as
-  // the configured label to check the observed one against): an invoke reply is
-  // a separate channel, and it loses to frameReady once 2+ sessions are opening.
-  win.webContents.send('evt:previewGpu:barrier', { streamId, mode: HW_BARRIER_MODE })
-  const info = backend.previewGpuOpen(streamId, path, poolSize)
+  // Reserve FIRST — before the barrier latch and before any native allocation.
+  // Invalid/missing dimensions fail closed in the same transient capacity class:
+  // a stale probe must never let main under-count decode load.
+  const budgetLease = previewGpuBudget.reserve(streamId, {
+    width: codedWidth,
+    height: codedHeight,
+  })
+  if (!budgetLease) throw new Error(HW_BUDGET_EXCEEDED)
   const imported: SharedTextureImported[] = []
+  let nativeOpened = false
   try {
+    // Latch the barrier mode in the preload. WHERE THIS SITS IS THE CONTRACT:
+    // after the budget gate (a refused open must not latch a stream that will
+    // never produce a frame) and before `previewGpuOpen` (which starts the decode
+    // thread — the first thing that can emit a frameReady poke).
+    //
+    // `evt:previewGpu:barrier` and `evt:previewGpu:frameReady` are the SAME
+    // ordered webContents channel, so sending here — before the producer exists —
+    // is what guarantees the preload has the mode before any frame of this stream
+    // arrives. Move this below the native open and the race silently returns: an
+    // early frame finds no latch, stamps the preload's unlatched fallback, later
+    // frames stamp the configured mode, and the session reports two applied modes.
+    // That reads as an INVALID bench cell, not a slow one.
+    //
+    // The open reply can't carry this job (though it still carries the value, as
+    // the configured label to check the observed one against): an invoke reply is
+    // a separate channel, and it loses to frameReady once 2+ sessions are opening.
+    win.webContents.send('evt:previewGpu:barrier', { streamId, mode: HW_BARRIER_MODE })
+    const info = backend.previewGpuOpen(streamId, path, poolSize)
+    nativeOpened = true
+    if (info.width !== codedWidth || info.height !== codedHeight) {
+      throw new Error(
+        `${HW_BUDGET_RESERVATION_MISMATCH}: reserved ${codedWidth}x${codedHeight}, native opened ${info.width}x${info.height}`,
+      )
+    }
     for (let k = 0; k < info.slots.length; k++) {
       // Slot-correlation announce FIRST (see fn doc): the preload pushes this onto
       // its announce queue and pairs the NEXT receiver callback to slot k.
@@ -195,18 +218,40 @@ async function doOpenPreviewGpu(
       // sendSharedTexture has its own internal timeout (~1000ms) and can reject.
       await sharedTexture.sendSharedTexture({ frame: win.webContents.mainFrame, importedSharedTexture: imp })
     }
+    sessions.set(streamId, {
+      imported,
+      width: info.width,
+      height: info.height,
+      budgetLease,
+    })
+    return {
+      width: info.width,
+      height: info.height,
+      poolSize: info.slots.length,
+      barrierMode: HW_BARRIER_MODE,
+    }
   } catch (err) {
     // Partial-open failure: slots 0..k-1 are already imported, but we haven't
     // reached `sessions.set` yet, so a later close() would find no session and
     // leak both those imports and the native session `previewGpuOpen` already
     // created. Release what succeeded and drop the orphaned native session
     // ourselves, then rethrow so the ipc caller sees the open failure.
-    for (const imp of imported) imp.release()
-    backend.previewGpuClose(streamId)
+    if (nativeOpened) {
+      try {
+        backend.previewGpuClose(streamId)
+      } catch (closeErr) {
+        console.warn(`[main] previewGpu rollback close failed for ${streamId}`, closeErr)
+      }
+    }
+    try {
+      releaseImports(imported, streamId, 'rollback')
+    } finally {
+      // A texture release may itself fail. Admission must still roll back or a
+      // single partial open can permanently leak capacity.
+      previewGpuBudget.release(budgetLease)
+    }
     throw err
   }
-  sessions.set(streamId, { imported, width: info.width, height: info.height })
-  return { width: info.width, height: info.height, poolSize: info.slots.length, barrierMode: HW_BARRIER_MODE }
 }
 
 /// Move the session's decode anchor. targetUs is source microseconds; the addon
@@ -244,7 +289,16 @@ export function closePreviewGpu(backend: NativeDecode, streamId: string): void {
   clearMainPendingFor(streamId)
   const session = sessions.get(streamId)
   if (!session) return
-  backend.previewGpuClose(streamId)
-  for (const imp of session.imported) imp.release()
+  // Remove first so duplicate/re-entrant close is a no-op. The lease itself is
+  // identity-checked too, so no stale close can release a newer same-id open.
   sessions.delete(streamId)
+  try {
+    backend.previewGpuClose(streamId)
+  } finally {
+    try {
+      releaseImports(session.imported, streamId, 'close')
+    } finally {
+      previewGpuBudget.release(session.budgetLease)
+    }
+  }
 }

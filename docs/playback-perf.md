@@ -296,8 +296,9 @@ two consecutive non-smooth cells, since a single cell can fail on a transient.
 
 RTX 3050 + i5-13400 (16 threads), Electron 42.4.1 / Chromium 148, 60 Hz display,
 30 fps compositions. H.264 `yuv420p`, GOP 240, proxies off,
-`playback_resolution: full`, one media shared across N tracks. Single run per
-cell, and rows measured in different sittings are not comparable in absolute
+`playback_resolution: full`, one media shared across N tracks. Most rows are a
+single run per cell; the 4K hardware row has the repeated distribution called
+out below. Rows measured in different sittings are not comparable in absolute
 milliseconds (see Reproducibility below).
 
 ### Max smooth tracks
@@ -309,7 +310,7 @@ milliseconds (see Reproducibility below).
 | 1080p webcodecs | **2** | drops 28.33 % at 3, with `flushes` 0, `stale` 318 and decode running 31.6–32.5 fps — real decode capacity, not the livelock that used to cap this leg at 2. Recorded as **3** before, on a 3-track cell that measured 0.00 %; see Reproducibility |
 | 1080p HEVC ffmpeg-hw | **5** | not reached. All five clips take hardware: 0.00 % drops, 60.1 fps presented, tick p99 **18.10 ms** against a 33.3 ms budget, main-process CPU 0.909 %, zero wasted frames of 3000, and `nv12Ingest` never fires. Was 1, capped by the barrier |
 | 1080p HEVC webcodecs | **≥5** | not reached — 0.00 % drops and tick p99 ≤ 25.2 ms from one track to five. The best result in the matrix |
-| 4K ffmpeg-hw | **1** | [the main thread stopping](#a-tick-gap-is-the-main-thread-stopping-not-the-loop-being-starved) — not the lane, and provably not the session cap. The 2-track cell fails on tick p99 alone (68.90 ms and 67.00 ms in two independent invocations) with 0.00 % drops and presented fps clearing the floor, and its `rafInterval` p99 is 66.7 ms, an exact 4× vsync. Was 0: that whole cliff was the read barrier, first its synchronous drain and then its deadline spin. The magnitude at 2 tracks is the part that does not reproduce across sittings — the same cell has measured tick p99 17.4 ms — so read the ceiling, not the tail |
+| 4K ffmpeg-hw | **1 reliable; 2 intermittent** | With the derivative-aware quiet gate, five paired 2-track cells measured tick p99 **17.5, 17.6, 40.5, 27.9, 38.9 ms**: 3 smooth, 2 STUTTER. Every paired 1-track baseline was smooth at 16.9–17.2 ms. The red cells fail on tick alone with 0.00 % drops, `rafInterval` p99 33.3–33.4 ms, a healthy 8 ms timer, and no attributed script: the thread is alive but intermittently loses a rendering opportunity. Was 0: that whole cliff was the read barrier, first its synchronous drain and then its deadline spin. The former 67/68 ms evidence is invalid because derivative jobs ran inside those windows; see Reproducibility |
 | 4K ffmpeg-sw | **0** | drops 94.0 % at one track |
 | 4K webcodecs | **0** | tick p99 75–82 ms at one track — with **zero** drops |
 
@@ -376,18 +377,37 @@ So when judging a change: **measure baseline and candidate in the same session**
 and compare shapes, ceilings, and ratios rather than absolute milliseconds. The
 tables here are a reference point, not a control.
 
-**One gap is too large for that drift band to explain, and it is the 4K hardware
-2-track cell.** It has measured tick p99 17.4 ms and it has measured 68.90 and
-67.00 ms — a 4× spread, where the band above is 15–25 %, so this is not sitting
-drift. It is not the session cap either: the live budget is read-only diagnostics
-and a single `used >= max` inside the open gate is the whole decision, so at two
-sessions any cap of two or more executes an identical path. What the failing shape
-carries is
-[the main-thread stop's own signature](#a-tick-gap-is-the-main-thread-stopping-not-the-loop-being-starved) —
-`rafInterval` p99 exactly 4× vsync, a healthy timer, no script over the floor, and
-0.00 % drops — so it is that phenomenon appearing at a lower track count than the
-smooth reading suggests, which is why this leg is credited with **1** track and
-why the tail is on [the roadmap](roadmap.md) rather than in this table.
+**The 4K hardware second track is intermittent, and the old 67/68 ms comparison
+was not valid.** The old quiet gate looked only for four consecutive sub-20% CPU
+polls. A fresh import's derivative queue dips below that threshold between ffmpeg
+jobs: a targeted probe saw the `Generating derivatives` pill still present when
+the gate returned after ~1.55 s, still present after the 5 s warm-up, and disappear
+only inside the measured window. The two 67.0/68.9 ms reports waited 1.549/1.555 s
+and are invalidated. The gate now also requires the derivative pill to stay absent;
+the same fixture then waits 15–16 s and records why it waited in `quietGate`.
+
+Five valid same-sitting pairs on `35cf93d3` put every 1-track baseline at
+16.9–17.2 ms and the 2-track tick p99 at **17.5, 17.6, 40.5, 27.9, 38.9 ms**:
+3/5 smooth, 2/5 STUTTER. Drops stayed 0.00 % and presented fps stayed
+58.6–60.0. This is not the session cap: at two sessions every cap of two or more
+executes the same open path.
+
+It is not a branch regression at `45a98405` either. Corrected-gate isolated runs
+gave `3e5adabf` 43.5/40.6/42.1 ms and `45a98405` 17.3/36.3/33.9 ms. The
+documented 17.4 ms source,
+`playback-perf-2026-07-26-5a1c7357-t11-2160.json`, labels a
+`rendererFence` cell even though a clean `5a1c7357` checkout does not recognise
+that barrier; it was a dirty worktree containing the implementation later
+committed as `3e5adabf`. The same implementation has therefore measured both
+green and red.
+
+The clean red shape is the live-thread branch of
+[the tick-gap decision tree](#a-tick-gap-is-the-main-thread-stopping-not-the-loop-being-starved):
+`rafInterval` p99 is 33.3–33.4 ms, the timer remains at 8.0 ms with nothing over
+50 ms, no script is attributed, and drops are 0.00 %. It is not the
+blocked-thread mechanism whose timer stalls. Credit this leg with **1 reliable
+track, with a second track that is intermittent**, rather than presenting either
+one favourable invocation or one red invocation as a deterministic ceiling.
 
 ### The composite loop is not the bottleneck anywhere
 

@@ -9,10 +9,10 @@
 // Deliberately NOT routed through `GpuTransport`, which owns a single session:
 // the budget is process-wide and stays readable with no session open at all.
 
-import type { PreviewGpuBudget } from '../../shared/ipc'
+import type { PreviewGpuBudgetSnapshot } from '../../shared/ipc'
 
-export type { PreviewGpuBudget }
+export type { PreviewGpuBudgetSnapshot }
 
-export async function getPreviewGpuBudget(): Promise<PreviewGpuBudget> {
+export async function getPreviewGpuBudget(): Promise<PreviewGpuBudgetSnapshot> {
   return window.api.previewGpu.budget()
 }
