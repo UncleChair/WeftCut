@@ -204,8 +204,8 @@
 
     /* Depth ladder — recessed well → workspace → panel/card → raised content
        → floating overlay. Adjacent steps are deliberately visible on large
-       regions without turning the editor slate-blue. Pure #000 stays reserved
-       for the preview canvas where color judgment matters. */
+       regions without turning the editor slate-blue. The preview canvas sits
+       on --background (not pure #000) so dark footage edges stay visible. */
     --surface-sunken: #08090b;   /* thumbnail slots, code wells, inset editors */
     --surface-raised: #181c23;   /* rows/cards lifted above a panel, hover rests */
 
