@@ -613,7 +613,7 @@ The slot pool did not size this budget. A bare three-slot NV12 pool is nominally
 The measured cliff was VideoDecode load, while most retained memory belonged to
 the resolution-blind FrameRing.
 
-### Current policy verification — and the remaining codec-equivalence check
+### Current policy verification — HEVC and H.264 both accepted
 
 The production-shaped candidate later checkpointed as `adfbd7f5` has three
 current-build HEVC repeats per heavy cell. The JSON names retain base SHA
@@ -630,20 +630,39 @@ run recorded 6000–6005 serve hits. The policy therefore preserves the three
 healthy hardware sessions and keeps the main thread alive under two spills for
 this codec.
 
-H.264, the codec in the original engine-cliff table, also has three-repeat
-**isolated prototype** evidence for the same 3-gpu + quarter-size/half-cadence
-shape. Four tracks had 0.00 % drops, all rings tracking, and zero timer gaps over
-50 ms in all three runs; five tracks kept all rings tracking and the timer alive
-in all three, though drops were 3.16–3.66 % and tick p99 varied 23.1–56.8 ms.
-Those six retained JSONs are named
-`playback-perf-t13-cap3-spill540p15[-4t]-r1..r3.json`.
+H.264, the codec in the original engine-cliff table, first produced
+three-repeat **isolated prototype** evidence for the same 3-gpu +
+quarter-size/half-cadence shape. Four tracks had 0.00 % drops, all rings
+tracking, and zero timer gaps over 50 ms in all three runs; five tracks kept
+all rings tracking and the timer alive in all three, though drops were
+3.16–3.66 % and tick p99 varied 23.1–56.8 ms. Those six retained JSONs are
+named `playback-perf-t13-cap3-spill540p15[-4t]-r1..r3.json`.
 
-That prototype evidence is not a substitute for running the final main-worktree
-IPC/admission implementation against H.264 with the final replay state gate.
-That targeted 4/5-track equivalence rerun is still pending because this
-environment refused Electron launch (`spawn EPERM`) and its approval credits
-were exhausted. Until it is collected, the implementation and the HEVC
-acceptance are complete, but the original-codec formal verification is not.
+The formal main-worktree run on the final IPC/admission implementation with the
+final replay state gate is now collected — `84182572`, six cells named
+`playback-perf-2026-07-27-84182572-t13-h264-{4,5}-r1..r3.json`:
+
+| current 4K H.264 | runs | lane mix | drops | tick p99 | timer gaps >50 ms | ring result |
+|---|---:|---|---:|---:|---:|---|
+| 4 tracks, replay state gate | 3 | 3 gpu + 1 sw | 0.00 % in all | 57.1 / 58.0 / 57.5 ms | 0 / 0 / 0 | 28 / 28 / 28 / 16, every ring tracking |
+| 5 tracks, replay state gate | 3 | 3 gpu + 2 sw | 0.00 % in all | 54.1 / 55.1 / 43.8 ms | 0 / 0 / 0 | 28–29 on GPU, 15–16 on spill, every ring tracking |
+
+Every cell is `routePure: false` with zero drift; the replay gate released in
+1.85–2.16 s (against HEVC's 1.32–1.37 s); `VideoDecode` sat at 69–71 %. Both
+track counts fail the smooth verdict on the tick criterion alone — 0.00 %
+drops, presented 51.7–54.9 fps, a live 8 ms timer with nothing over 18.5 ms,
+97–98 % pre-render share and no script over the floor — which is the 4K
+hardware intermittency's documented shape, and the p99 range reproduces the
+prototype's. Five-track drops improved on the prototype's 3.16–3.66 % to
+0.00 %. The acceptance items (rings tracking at close, five-track liveness,
+n ≥ 3 with run-independent verdicts) are met on the original codec; the tick
+tail is not cap-attributable and stays with the 2-track intermittency above.
+
+(An earlier same-day attempt measured a machine-wide d3d11va outage, not the
+build — zero GPU sessions across seven consecutive launches of either codec,
+`VideoDecode` 0, hours after the HEVC set had passed 3/3 on identical code; a
+1-track probe after ~10 min idle was healthy again. Those artifacts are
+preserved as `*-envfail`. It is the quiet-machine rule made concrete.)
 
 **Ordering remains a release gate.** The order spec now computes the largest
 admitted count for its fixture from both live currencies, while retaining pool

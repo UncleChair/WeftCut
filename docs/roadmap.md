@@ -371,24 +371,25 @@ samples, which suggested a 4×-vsync tail, are invalid because the CPU-only quie
 gate admitted measurement while derivative jobs were still running. Same
 instrument, other branch of the decision tree.
 
-**Implemented; one formal codec-equivalence rerun remains.** The fixed-cap
-landmine above is now the two-currency admission policy plus the formal spill.
-On the production-shaped candidate, three current-build HEVC repeats at four
-tracks (3 GPU + 1 spill) and three at five tracks (3 GPU + 2 spills, final replay
+**Implemented and verified on both codecs.** The fixed-cap landmine above is
+now the two-currency admission policy plus the formal spill. On the
+production-shaped candidate, three current-build HEVC repeats at four tracks
+(3 GPU + 1 spill) and three at five tracks (3 GPU + 2 spills, final replay
 state gate) all held 0.00 % drops, live rings and zero timer gaps over 50 ms;
 five-track tick p99 was 17.0–18.3 ms. These are deliberately mixed,
 `routePure: false` cells.
 
-The original cliff was measured with 4K H.264. Three-repeat isolated prototypes
-of the final 3-GPU + 540p/half-cadence shape keep every H.264 ring tracking and
-the timer alive at four and five tracks, but the five-track cells still show
-3.16–3.66 % drops and a 23.1–56.8 ms tick tail. The final main-worktree H.264
-4/5-track replay-state-gate run could not be collected in the current agent
-environment: Electron launch was denied with `spawn EPERM`, and the escalation
-approval budget was exhausted. Treat implementation as done and HEVC acceptance
-as repeated; keep the H.264 current-build equivalence check visible rather than
-silently generalising the HEVC result. [playback-perf](playback-perf.md) carries
-the policy, evidence filenames and exact limitation.
+The original cliff was measured with 4K H.264, and the formal main-worktree
+H.264 set on `84182572` — three four-track and three five-track
+replay-state-gate cells — now holds the same shape: expected mixed lanes with
+zero drift, 0.00 % drops in all six (improving on the isolated prototype's
+3.16–3.66 % at five tracks), every ring tracking at close, zero timer gaps
+over 50 ms. Both track counts still read STUTTER on the tick criterion alone
+(p99 43.8–58.0 ms with the live-thread, no-script signature) — the 4K
+two-track intermittency recorded above, present at every cap and provably not
+budget-attributable, tracked separately rather than folded into this
+acceptance. [playback-perf](playback-perf.md) carries the policy, evidence
+filenames and exact limitation.
 
 One decision this data settles and one it does not:
 
