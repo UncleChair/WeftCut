@@ -177,21 +177,8 @@
   background: var(--muted);
 }
 
-/* Close button appears on tab hover only — an always-on X on every tab reads
-   as noise. Keyboard focus still forces it visible; while hidden it swallows
-   no clicks. */
-.weft-dockview .dv-tabs-and-actions-container .weft-dock-tab-close {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.weft-dockview .dv-tabs-and-actions-container .dv-tab:hover .weft-dock-tab-close,
-.weft-dockview
-  .dv-tabs-and-actions-container
-  .weft-dock-tab-close:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
+/* Close button stays visible on every tab; hover only changes its highlight
+   (see .weft-dock-tab-close:hover above). */
 
 /* Dockview's custom tab-strip scrollbar is hover chrome that flashes on
    every wheel tick. */
