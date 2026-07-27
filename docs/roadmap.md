@@ -243,7 +243,7 @@ from the pinned source tarball — see `fetch-ffmpeg-lgpl.mjs`). Where the
 runtime is absent, the Standard engine is simply unavailable (`auto` resolves
 to Lite) rather than broken.
 
-### Preview playback smoothness — the walls are measured, and all but one are gone
+### Preview playback smoothness — the walls are measured, and all but two are gone
 
 [playback-perf](playback-perf.md) profiles the whole preview loop under N
 tracks across 1080p/4K × ffmpeg-hw / ffmpeg-sw / WebCodecs. The headline is
@@ -251,11 +251,11 @@ that **the compositor is not the problem**: `PlaybackEngine.tick` plus the
 Pixi present run 2–6 % of a 16.7 ms budget in every cell measured, while the
 tick *interval* p99 reached 38–140 ms. Every wall was in frame delivery, in
 retained memory, or outside the loop entirely, and each one below was named by a
-measurement rather than a guess — which is also why all but the last turned out to
-be ours rather than a platform limit.
+measurement rather than a guess — which is also why all but one turned out to be
+ours rather than a platform limit.
 
 Where the 1080p hardware lane carried 2 simultaneous tracks and 4K carried
-none, they now carry 5 and 2. What each fix bought, and the landmine it left:
+none, they now carry 5 and 1. What each fix bought, and the landmine it left:
 
 - **The hardware lane's read barrier was the whole multi-track wall** — and it
   took two passes to remove, because the first one only moved it. The lane blocks
@@ -267,7 +267,7 @@ none, they now carry 5 and 2. What each fix bought, and the landmine it left:
   WebGL2 offers no blocking wait, so the drain had to flush-and-poll, and on an
   idle GPU that poll was what *completed* the fence — turned out to cost the
   remaining tail. Taking the completion signal on the renderer's presented WebGPU
-  device removed the spin entirely: 4K went 0 → 2 tracks and one track's tick p99
+  device removed the spin entirely: 4K went 0 → 1 track and that track's tick p99
   23.5 → 17.3 ms, matching a barrier-less control. Landmines it leaves:
   the barrier is **size-independent**, so do not re-try shrinking the sampled
   region; the WebGPU completion signal lands ~90 ms out regardless of load, so a
@@ -317,6 +317,22 @@ none, they now carry 5 and 2. What each fix bought, and the landmine it left:
   hardware-vs-software an engine-level fact, and
   [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md) makes it
   private to the Standard engine.
+- **The hardware lane carries five concurrent GPU sessions.** `MAX_HW_SESSIONS`
+  was rationing the read barrier and never decode capacity — five pure hardware
+  tracks leave the GPU's VideoDecode engine at 11–24 % at 1080p — so with the
+  barrier off the critical path the constant follows the measurement: the 1080p
+  cell that fails under a tighter cap (HEVC at five tracks) runs 0.00 % drops,
+  tick p99 18.10 ms against a 33.3 ms budget and main-process CPU 0.909 %, with
+  `nv12Ingest` never firing because no clip spills to software. What keeps the
+  constant safe to move is the [order gate](preview.md#decode-engine), and that
+  part is worth copying: it derives every cap-shaped expectation from the *live*
+  cap rather than restating the number, so the constant has exactly one home; and
+  it was proven able to go **red** before anything rested on it going green —
+  forced onto a deliberately-reordering barrier, all four pixel-checking cells
+  fail on 179–248 mismatches out of 299 checked frames, every Δ the run's pool
+  size or an exact multiple of it, while the software-lane control stays green.
+  The landmine it leaves is the item below: the cap is one number, and the
+  resource it rations is not.
 
 **Still open — what stops the renderer's main thread while delivery is perfect.**
 Two cells fail on the tick tail alone with 0.00 % drops: 4K WebCodecs at one track
@@ -345,17 +361,31 @@ saturation and Pixi's GC. The next instrument is a `toplevel` trace of
 trace: the GPU's engine counters are identical between the matched smooth and
 stuttering cells.
 
-**Next, and small — raise the concurrent hardware-session cap.** `MAX_HW_SESSIONS`
-is 3 because each session used to cost a synchronous read barrier; it never
-rationed decode capacity (five pure hardware tracks leave the GPU's VideoDecode
-engine at 11–24 %). Measured at a cap of 5 in one sitting, more sessions help and
-cost nothing: the one failing cell in the 1080p sweep (HEVC at five tracks) goes
-43.69 % drops → 0.00 %, two tick tails come down to the flat ~17 ms the pure lane
-holds everywhere, main-process CPU drops to ~1 %, and `nv12Ingest` falls to zero
-because the software spill stops happening. The constant is not the work, though:
-the order gate asserts that the *fourth* concurrent open is refused, and its
-ordering probe is pinned at three sessions — so the gate has to be re-pinned first,
-and 4K measured, since a slot is ~12.4 MB there against ~4.5 MB at 1080p.
+A third cell fails on the tick tail alone **without** the blocked-thread half of
+that signature, and it is the one that caps a leg: 4K ffmpeg-hardware at two tracks
+holds a healthy 8 ms timer (p50 8.0 ms, nothing over 50 ms) and 0.00 % drops while
+`rafInterval` p99 sits at exactly 4× vsync — the thread was alive, and what it lost
+was rendering opportunities. Same instrument, other branch of the decision tree.
+
+**Still open — the concurrent-session cap is one number for two resolutions.**
+`MAX_HW_SESSIONS` is measured at 1080p, where nothing binds: five hardware sessions
+sit at 18.7 % of the VideoDecode engine and a nominal 46.7 MB of slot pool (a bare
+NV12 slot is 3.11 MB at 1080p and 12.44 MB at 4K, three per session — desc
+arithmetic, and nothing instruments real pool VRAM). At 4K the engine binds
+instead, from the first track: 58–62 % with one H.264 track, 81.5 % at two, 91.9 %
+at three, and **99.9 % at four**, where the fourth session starves every session
+including the three that were fine — all four deliver zero frames and sit on their
+0.5 s poster, while spilling that fourth clip to software holds the engine at
+94.4 % and keeps video moving. A cliff, not a slope. Lowering the constant is not
+the answer, because at five 4K tracks the spill is the worse shape (it stops the
+renderer's main thread for 17–36 s at a stretch, where five hardware sessions keep
+it alive with zero timer gaps over 50 ms); what the data asks for is a
+**resolution-aware or decode-load-aware** ceiling — derived from frame area, or
+from measured engine load, rather than from a session count. Two things to know
+before starting: the ½/¼ playback-resolution dial cannot substitute, because the
+native decoder downscales *after* decode and before IPC, so engine load is
+unchanged; and the four-track comparison is n = 1 per side, so re-measure it first.
+[playback-perf](playback-perf.md) carries the tables.
 
 One decision this data settles and one it does not:
 
@@ -363,9 +393,9 @@ One decision this data settles and one it does not:
   Standard engine on 8-bit ≤1080p, and the whole of that was the read barrier.
   With the barrier off the critical path the ordering reverses: measured in one
   sitting, 1080p max smooth tracks are H.264 **5** on ffmpeg-hw against 2 on
-  WebCodecs, and HEVC **4** against ≥5. That lone remaining HEVC cell is the
-  session cap's software spill rather than the hardware lane — the same five
-  clips all on hardware hold tick p99 18.2 ms with 0.00 % drops. Since
+  WebCodecs, and HEVC **5** against ≥5 — the hardware lane's five HEVC clips all
+  taking hardware, at 0.00 % drops and tick p99 18.10 ms against a 33.3 ms
+  budget. Since
   [decode-bench](decode-bench.md) already gave ffmpeg the decisive **seek**
   advantage, `auto` now wins both axes, and picking per-*interaction* has lost
   its motive while keeping its cost: the swap key is
@@ -383,8 +413,9 @@ Measured non-levers — do not spend time here: the snapshot blit
 (`blitDrawImage` mean 0.02–0.03 ms), `ringLookup`, the audio sweep,
 `stage.removeChildren()`, and the effect-chain sync are each ≤ 3 % of a
 sub-millisecond tick; `nv12Ingest` is negligible at 1080p (p95 1.3 ms) and only
-becomes real at 4K (p95 9.0 ms); the GPU's VideoDecode engine sits at ~5 % per
-hardware track, so no decoder is saturated anywhere in the matrix.
+becomes real at 4K (p95 9.0 ms); and the GPU's VideoDecode engine sits at ~5 % per
+1080p hardware track, so no decoder is saturated at that resolution. 4K is the
+exception on both counts, and it is the open item above.
 
 ### Zero-copy GPU frame upload — deprioritized, measure first
 

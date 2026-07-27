@@ -695,10 +695,15 @@ async function runCell(leg, tracks) {
     const laneMixPre = {};
     for (const p of pre) laneMixPre[p.sourceKind] = (laneMixPre[p.sourceKind] ?? 0) + 1;
     // A leg is "pure" only when EVERY layer sits on the intended lane. The
-    // hardware leg goes impure past MAX_HW_SESSIONS (3): clips 4..N silently
-    // ride the software transport in place, with no event and no log. Recorded,
-    // not rejected — that degradation IS production behaviour and is one of the
-    // findings this matrix exists to surface.
+    // hardware leg goes impure past `MAX_HW_SESSIONS`: the overflow clips ride
+    // the software transport in place, with no state change to observe. It IS
+    // logged — `noteLaneOpen` emits a `decode-lane` LogBus row for exactly this
+    // transition — but worded `hardware → software`, which neither of
+    // `consoleErrors`' patterns matches, so that array comes back EMPTY from
+    // runs where every spill fired. Only `perClip[].downgraded` and `laneMix`
+    // prove a leg spilled here. Recorded, not rejected — that degradation IS
+    // production behaviour and is one of the findings this matrix exists to
+    // surface.
     const routePure = pre.every((p) => p.sourceKind === spec.sourceKind);
 
     // ── Quiet gate ─────────────────────────────────────────────────────────

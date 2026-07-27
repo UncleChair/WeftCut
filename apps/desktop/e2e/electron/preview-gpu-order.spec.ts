@@ -167,6 +167,42 @@ function reportConcurrent(r: ConcurrentOrderResult): string {
   return `pool=${r.poolSize}${r.error ? ` error=${r.error}` : ''}\n${r.sessions.map(reportSession).join('\n')}`
 }
 
+/// Every assertion a concurrent hardware-lane run owes, applied per session.
+/// Shared by the fixed-three run and the at-cap run so the two cannot drift into
+/// checking different things about the same probe; `sessions` rides the messages
+/// because the contention level is the first thing a shortfall has to report.
+function expectConcurrentRunInOrder(r: ConcurrentOrderResult, sessions: number): void {
+  expect(r.error, `concurrent order check errored: ${r.error}`).toBeUndefined()
+  expect(r.sessions.length, `expected ${sessions} session results`).toBe(sessions)
+  for (const s of r.sessions) {
+    expect(s.error, `session ${s.index} errored: ${s.error}\n${reportConcurrent(r)}`).toBeUndefined()
+    // A session on software has not tested the hardware path. Fail rather
+    // than report its ordering under a hardware label.
+    expect(
+      s.lane,
+      `session ${s.index} ran on "${s.lane}", not hardware — this run did not test the thing:\n${reportConcurrent(r)}`,
+    ).toBe('hardware')
+    // Per session: the barrier latch is per stream, so one session running a
+    // different variant than its siblings is drift this must not bury.
+    expectBarrierRan(s.barrierApplied, `session ${s.index}`)
+    // Short `checked` under contention is a CAPACITY finding, not a reason
+    // to lower the bar — the message carries every session's numbers so the
+    // shortfall can be read directly.
+    expect(
+      s.checked,
+      `session ${s.index} checked only ${s.checked} frames${s.timedOut ? ' (ran out of budget)' : ''} — ${sessions} concurrent sessions did not sustain throughput:\n${reportConcurrent(r)}`,
+    ).toBeGreaterThan(200)
+    expect(
+      s.missing,
+      `session ${s.index} never received ${s.missing} frame(s):\n${reportConcurrent(r)}`,
+    ).toBeLessThan(30)
+    expect(
+      s.mismatches.length,
+      `session ${s.index} presented ${s.mismatches.length} frame(s) whose pixels did not match their PTS (reorder under ${sessions}-session contention):\n${reportConcurrent(r)}`,
+    ).toBe(0)
+  }
+}
+
 interface HwFallbackSessionOutcome {
   index: number
   ready: boolean
@@ -196,6 +232,26 @@ async function runHwFallbackProbe(page: Page, count: number): Promise<HwFallback
       count,
     },
   )) as HwFallbackProbeResult
+}
+
+/// The live `MAX_HW_SESSIONS` off the same `previewGpu:budget` bridge the
+/// renderer's resolver reads. Call it on a freshly launched app, where nothing
+/// holds a session yet, so `max` is the whole budget rather than what is left.
+///
+/// Every cap-shaped expectation below derives from this instead of restating the
+/// constant, and that is not just staleness insurance:
+/// `decodeBenchConcurrentOrderCheck` REFUSES a run with `sessions > budget.max`,
+/// so a count written ahead of a cap raise fails the run outright ("exceeds the
+/// concurrent-HW cap") instead of quietly testing the old shape. Deriving is the
+/// only form that holds on both sides of a cap change.
+async function readHwCap(page: Page): Promise<number> {
+  const budget = (await page.evaluate(() =>
+    (window as unknown as {
+      api: { previewGpu: { budget(): Promise<{ used: number; max: number }> } }
+    }).api.previewGpu.budget(),
+  )) as { used: number; max: number }
+  expect(budget.max, `previewGpu budget reported no hardware-session cap: ${JSON.stringify(budget)}`).toBeGreaterThan(0)
+  return budget.max
 }
 
 test.describe('ffmpeg engine hardware lane preview presents frames in order (Electron) @serial', () => {
@@ -255,84 +311,93 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
       const r = await runConcurrentOrderCheck(page, 3)
       // eslint-disable-next-line no-console
       console.log('[preview-gpu-order] 3 concurrent hardware sessions ->\n' + reportConcurrent(r))
-      expect(r.error, `concurrent order check errored: ${r.error}`).toBeUndefined()
-      expect(r.sessions.length, 'expected 3 session results').toBe(3)
-      for (const s of r.sessions) {
-        expect(s.error, `session ${s.index} errored: ${s.error}\n${reportConcurrent(r)}`).toBeUndefined()
-        // A session on software has not tested the hardware path. Fail rather
-        // than report its ordering under a hardware label.
-        expect(
-          s.lane,
-          `session ${s.index} ran on "${s.lane}", not hardware — this run did not test the thing:\n${reportConcurrent(r)}`,
-        ).toBe('hardware')
-        // Per session: the barrier latch is per stream, so one session running a
-        // different variant than its siblings is drift this must not bury.
-        expectBarrierRan(s.barrierApplied, `session ${s.index}`)
-        // Short `checked` under contention is a CAPACITY finding, not a reason
-        // to lower the bar — the message carries every session's numbers so the
-        // shortfall can be read directly.
-        expect(
-          s.checked,
-          `session ${s.index} checked only ${s.checked} frames${s.timedOut ? ' (ran out of budget)' : ''} — 3 concurrent sessions did not sustain throughput:\n${reportConcurrent(r)}`,
-        ).toBeGreaterThan(200)
-        expect(
-          s.missing,
-          `session ${s.index} never received ${s.missing} frame(s):\n${reportConcurrent(r)}`,
-        ).toBeLessThan(30)
-        expect(
-          s.mismatches.length,
-          `session ${s.index} presented ${s.mismatches.length} frame(s) whose pixels did not match their PTS (reorder under 3-session contention):\n${reportConcurrent(r)}`,
-        ).toBe(0)
-      }
+      expectConcurrentRunInOrder(r, 3)
+    } finally {
+      await app.close()
+    }
+  })
+
+  // The same probe at whatever MAX_HW_SESSIONS currently is. The fixed-three run
+  // above is not superseded by this one: three sessions still leave the most
+  // barrier slack of any multi-session shape (see the drain numbers above), which
+  // makes it the multi-session case most likely to HIDE a reorder. This run
+  // covers the shape production actually ships once the cap moves past three,
+  // where per-session slack is thinnest.
+  //
+  // The session count comes from the live budget rather than a literal because
+  // `decodeBenchConcurrentOrderCheck` refuses `sessions > budget.max` (see
+  // `readHwCap`) — a hard-coded count ahead of a cap raise would fail the run,
+  // not skip it. While the cap is still three this run would only repeat the test
+  // above, so it skips.
+  //
+  // Same 240s as the fixed-three run: the hook's drive budget is ONE shared 90s
+  // wall clock for all sessions, deliberately unscaled (a run that cannot walk
+  // the clip in the single-session budget IS the capacity answer), so adding
+  // sessions does not extend the work this has to wait out.
+  test('ffmpeg hardware lane: MAX_HW_SESSIONS concurrent sessions each present frames in order (no reorder at the cap)', async () => {
+    test.setTimeout(240_000)
+    const { app, page } = await launchApp()
+    try {
+      const cap = await readHwCap(page)
+      test.skip(
+        cap <= 3,
+        `MAX_HW_SESSIONS is still ${cap} — the cap has not moved, so this run would be identical to the 3-session test above`,
+      )
+      await enterEditorWithPreview(page)
+      const r = await runConcurrentOrderCheck(page, cap)
+      // eslint-disable-next-line no-console
+      console.log(`[preview-gpu-order] ${cap} concurrent hardware sessions (at MAX_HW_SESSIONS) ->\n` + reportConcurrent(r))
+      expectConcurrentRunInOrder(r, cap)
     } finally {
       await app.close()
     }
   })
 
   // Smoke item b — HW session budget → downgrade (runtime seam), FORCED lane.
-  // The main process caps concurrent hardware-lane sessions at MAX_HW_SESSIONS (3);
-  // the 4th open must reject with `hw-budget-exceeded` and surface it via
+  // The main process caps concurrent hardware-lane sessions at MAX_HW_SESSIONS;
+  // the (cap+1)th open must reject with `hw-budget-exceeded` and surface it via
   // onFatalError (the resolver's downgrade-off-tier-1 on that marker is
-  // unit-tested in decodeCapability.test.ts). This opens 4 real sessions with
+  // unit-tested in ffmpegCapability.test.ts). This opens cap+1 real sessions with
   // the lane FORCED (`forceLane: 'hardware'`), which bypasses `FfmpegSource`'s
   // in-place HW→SW recovery by design (`_doEnsureReady`'s catch only recovers
   // when `!forceLane`) — the bench harness needs this hard-fatal behavior for
   // deterministic hardware-only measurement. See the REAL (unforced) fallback
   // test below for the production in-place-recovery path.
-  test('ffmpeg hardware lane (forced): the 4th concurrent session hits hw-budget-exceeded (budget → fatal)', async () => {
+  test('ffmpeg hardware lane (forced): the over-budget concurrent session hits hw-budget-exceeded (budget → fatal)', async () => {
     test.setTimeout(120_000)
     const { app, page } = await launchApp()
     try {
+      const cap = await readHwCap(page)
       await waitForHook(page, 'decodeBenchBudgetProbe')
       const r = (await page.evaluate(
         (args) =>
           (window as unknown as {
             __weftcutTest: { decodeBenchBudgetProbe(a: unknown): Promise<{ outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }> }
           }).__weftcutTest.decodeBenchBudgetProbe(args),
-        { sourcePath: CLIP, count: 4 },
+        { sourcePath: CLIP, count: cap + 1 },
       )) as { outcomes: Array<{ index: number; ready: boolean; error: string | null; fatalReason: string | null }>; error?: string }
       // eslint-disable-next-line no-console
-      console.log('[preview-gpu-order] budget (forced lane) ->\n' + JSON.stringify(r.outcomes, null, 2))
+      console.log(`[preview-gpu-order] budget (forced lane, cap=${cap}) ->\n` + JSON.stringify(r.outcomes, null, 2))
       expect(r.error, `budget probe errored: ${r.error}`).toBeUndefined()
-      // First MAX_HW_SESSIONS (3) open cleanly.
-      expect(r.outcomes.slice(0, 3).every((o) => o.ready), 'first 3 hardware-lane sessions should open').toBe(true)
-      // The 4th is rejected at the cap, and the budget reason reaches the
+      // Every open up to MAX_HW_SESSIONS fits the budget and opens cleanly.
+      expect(r.outcomes.slice(0, cap).every((o) => o.ready), `first ${cap} hardware-lane sessions should open`).toBe(true)
+      // The (cap+1)th is rejected at the cap, and the budget reason reaches the
       // handle's fatal path (what drives the resolver's sticky downgrade).
-      const fourth = r.outcomes[3]!
-      expect(fourth.ready, 'the 4th session must NOT open (over budget)').toBe(false)
-      expect(fourth.error ?? '', 'the 4th open should reject with hw-budget-exceeded').toContain('hw-budget-exceeded')
-      expect(fourth.fatalReason ?? '', 'onFatalError should carry the budget reason').toContain('hw-budget-exceeded')
+      const overBudget = r.outcomes[cap]!
+      expect(overBudget.ready, `session ${cap} must NOT open (over the ${cap}-session budget)`).toBe(false)
+      expect(overBudget.error ?? '', 'the over-budget open should reject with hw-budget-exceeded').toContain('hw-budget-exceeded')
+      expect(overBudget.fatalReason ?? '', 'onFatalError should carry the budget reason').toContain('hw-budget-exceeded')
     } finally {
       await app.close()
     }
   })
 
   // HW→SW in-place fallback (Task 13) — a REAL budget-rejection trigger, not
-  // an injected error. Opens MAX_HW_SESSIONS (3) + 1 real ffmpeg-engine
+  // an injected error. Opens MAX_HW_SESSIONS + 1 real ffmpeg-engine
   // sources on this HW-eligible clip WITHOUT forcing a lane —
   // `pickInitialLane`'s real GPU capability probe puts each on hardware
   // exactly as production does (see decodeBench.ts's
-  // `decodeBenchHwFallbackProbe` doc comment). The 4th's HW `open()`
+  // `decodeBenchHwFallbackProbe` doc comment). The over-budget one's HW `open()`
   // genuinely trips `hw-budget-exceeded`; because nothing forced its lane,
   // `FfmpegSource._doEnsureReady`'s catch engages the SAME in-place HW→SW
   // recovery a runtime GPU error uses — the ring survives, `ensureReady()`
@@ -343,35 +408,39 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   // session directly off a private `SourceDecoderPool` (the same bench-style
   // harness the order-check/budget-probe tests above use) — there is no live
   // Compositor in the loop, so Compositor's swap machinery (`beginSwap`/
-  // `SwapState`) never runs here at all. The 4th session's recovery happens
-  // INSIDE its one `FfmpegSource` instance (never disposed/re-acquired across
-  // the test), so "no swap" is inherent to how the probe drives it, not a
+  // `SwapState`) never runs here at all. The over-budget session's recovery
+  // happens INSIDE its one `FfmpegSource` instance (never disposed/re-acquired
+  // across the test), so "no swap" is inherent to how the probe drives it, not a
   // separate counter to assert.
   test('ffmpeg hardware lane: the (MAX_HW_SESSIONS+1)th session survives budget rejection via in-place HW→SW fallback', async () => {
     test.setTimeout(120_000)
     const { app, page } = await launchApp()
     try {
-      const r = await runHwFallbackProbe(page, 4)
+      const cap = await readHwCap(page)
+      const r = await runHwFallbackProbe(page, cap + 1)
       // eslint-disable-next-line no-console
-      console.log('[preview-gpu-order] hw-fallback (unforced) ->\n' + JSON.stringify(r, null, 2))
+      console.log(`[preview-gpu-order] hw-fallback (unforced, cap=${cap}) ->\n` + JSON.stringify(r, null, 2))
       expect(r.error, `hw-fallback probe errored: ${r.error}`).toBeUndefined()
-      expect(r.sessions.length).toBe(4)
-      const [s0, s1, s2, s3] = r.sessions
-      // First 3 open cleanly on the hardware lane (the real HW probe passes
-      // for this HEVC 8-bit fixture on a GPU that d3d11va-decodes it).
-      for (const s of [s0, s1, s2]) {
-        expect(s?.ready, 'first 3 sessions should open on the hardware lane').toBe(true)
-        expect(s?.lane, 'first 3 sessions should open on the hardware lane').toBe('hardware')
+      expect(r.sessions.length).toBe(cap + 1)
+      const hw = r.sessions.slice(0, cap)
+      const spilled = r.sessions[cap]!
+      // Every session within MAX_HW_SESSIONS opens cleanly on the hardware lane
+      // (the real HW probe passes for this HEVC 8-bit fixture on a GPU that
+      // d3d11va-decodes it). Asserted per session, with its index in the message,
+      // so ONE session landing on the wrong lane is identifiable from the failure.
+      for (const s of hw) {
+        expect(s.ready, `session ${s.index} (within the ${cap}-session budget) should open`).toBe(true)
+        expect(s.lane, `session ${s.index} (within the ${cap}-session budget) should open on the hardware lane, got "${s.lane}"`).toBe('hardware')
       }
-      // The 4th trips the budget, but recovers IN PLACE — ensureReady still
-      // resolves (ready=true), and the final lane is software.
-      expect(s3?.ready, 'the 4th session must recover, not fail, after the budget rejection').toBe(true)
-      expect(s3?.lane, 'the 4th session must have fallen back to the software lane').toBe('software')
+      // The over-budget one trips the budget, but recovers IN PLACE — ensureReady
+      // still resolves (ready=true), and the final lane is software.
+      expect(spilled.ready, 'the over-budget session must recover, not fail, after the budget rejection').toBe(true)
+      expect(spilled.lane, 'the over-budget session must have fallen back to the software lane').toBe('software')
       // And it keeps delivering real frames on the new (software) transport —
       // the ring genuinely grows, not just a resolved promise.
       expect(
         r.lastRingPushCountAfter,
-        `4th session's ring never grew after fallback (before=${r.lastRingPushCountBefore} after=${r.lastRingPushCountAfter})`,
+        `over-budget session's ring never grew after fallback (before=${r.lastRingPushCountBefore} after=${r.lastRingPushCountAfter})`,
       ).toBeGreaterThan(r.lastRingPushCountBefore)
     } finally {
       await app.close()

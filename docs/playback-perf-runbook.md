@@ -70,7 +70,7 @@ second copy of the app.
 
 | column | what invalidates the cell |
 |---|---|
-| `lanes` | not the route you asked for. Past `MAX_HW_SESSIONS` (3) the hardware leg is *legitimately* mixed — that is a finding, not a fault — but a 1-track cell on the wrong lane is a broken pin |
+| `lanes` | not the route you asked for. Past `MAX_HW_SESSIONS` the hardware leg is *legitimately* mixed — that is a finding, not a fault — but a 1-track cell on the wrong lane is a broken pin |
 | `routeDrift` (JSON) | non-empty means the lane, HW lane, or resolver key changed mid-window. The cell measured two different things |
 | `quietReached` / `quietWaitS` (JSON) | `false` means background work (quick-proxy encode, decodability sweep, filmstrip tiles) was still running inside the window |
 | `barrier n` | on a hardware leg, a small sample count means the window caught few delivered frames |

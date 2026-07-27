@@ -33,11 +33,36 @@ interface GpuSession {
 
 const sessions = new Map<string, GpuSession>()
 
-/// Conservative HW-session cap (bench data is single-source; widen only on
-/// measurement). 3 sessions × 3 slots × ~4.5MB/1080p-NV12-slot ≈ 40MB VRAM
-/// steady-state. Over-budget opens throw the typed reason the renderer's
-/// resolver maps to a per-source downgrade to the next tier.
-const MAX_HW_SESSIONS = 3
+/// Concurrent HW-session cap. What it rations is the GPU's VideoDecode engine —
+/// not the per-frame read barrier (free under `rendererFence`, so cap headroom
+/// converts straight into tracks), and not VRAM: 5 sessions × 3 slots × w·h·1.5
+/// NV12 is ≈47MB at 1080p, ≈187MB at 4K — NOMINAL desc sizes, not measurements
+/// — and even that 4K figure is ~4% of what the app already holds on the GPU at
+/// three 4K tracks, where the real consumer is the FrameRing's resolution-blind
+/// lookahead. (The 3 is `poolSize`, a renderer-owned knob, not this cap.)
+///
+/// Landmine: engine load scales with PIXELS, not sessions, so one number for
+/// both resolutions is right at 1080p (18.7% at five hardware tracks) and
+/// knowingly too high at 4K (58-62% on ONE H.264 track). Three 4K hardware
+/// tracks stay nearly clean — 0.00% drops, engine 91.9% — and the FOURTH tips it
+/// to 99.9% and starves EVERY session, the healthy three included: all four
+/// deliver zero frames and hold their poster. A cliff, not a slope. Kept because
+/// 4K's smooth ceiling sits far below the cap anyway, and a LOWER cap is worse
+/// at five 4K tracks — its software spills push NV12 over CPU IPC and stall the
+/// main thread for tens of seconds. The ½/¼ playback-resolution dial cannot
+/// help: the decoder downscales before IPC, cutting IPC bytes and raster cost,
+/// never engine load. Per-resolution caps are backlog (docs/roadmap.md).
+///
+/// Landmine: LOWERING this silently shrinks ordering coverage. The E2E order
+/// gate derives its session counts from this value at runtime rather than
+/// restating it, and `decodeBenchConcurrentOrderCheck` refuses a run with
+/// `sessions > budget.max` — so the at-cap concurrency probe simply stops
+/// probing, with no failure to warn anyone. Reordering on this transport
+/// surfaces as WRONG PIXELS, not as a slow cell.
+///
+/// Over-budget opens throw the typed reason the renderer's resolver maps to a
+/// per-source downgrade to the next tier.
+const MAX_HW_SESSIONS = 5
 
 /// Barrier strategy applied before a slot is acked, read ONCE from
 /// `WEFTCUT_HW_BARRIER` and reported on every open reply (see `HwBarrierMode`
@@ -70,7 +95,7 @@ export function hwSessionCount(): number {
 
 /// The budget as the renderer sees it (`previewGpu:budget`). The count alone is
 /// unreadable without the cap it is compared against, so both travel together —
-/// a lane readout wants "2/3", not "2". Whether an open would be REFUSED is the
+/// a lane readout wants "2/5", not "2". Whether an open would be REFUSED is the
 /// only decision this supports, and `used >= max` is that predicate.
 ///
 /// A sample is a point in time, not a promise: the count falls asynchronously

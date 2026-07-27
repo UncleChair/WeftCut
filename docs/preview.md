@@ -257,11 +257,12 @@ dimension the one-frame probe can't test — a codec must be on it before its
 probe is even kicked — but never overrules a probe's negative verdict. (The
 underlying D3D11 backward-seek hang is a separate pre-existing gap the
 allow-list routes around, not a fix — a tracked follow-up.) Concurrent GPU
-sessions are capped at a conservative `MAX_HW_SESSIONS` (3); an open past the
-cap throws a typed `hw-budget-exceeded` that the engine *recovers* from exactly
-like a runtime HW death — the over-budget clip falls to the SW transport rather
-than erroring — but records nothing, because the cap is transient capacity and
-not a verdict about the source.
+sessions are capped at `MAX_HW_SESSIONS`, a measured figure at 1080p and a
+knowingly generous one at 4K ([playback-perf](playback-perf.md)); an open past
+the cap throws a typed `hw-budget-exceeded` that the engine *recovers* from
+exactly like a runtime HW death — the over-budget clip falls to the SW transport
+rather than erroring — but records nothing, because the cap is transient capacity
+and not a verdict about the source.
 
 **Sticky, per-source, no re-promotion.** A HW *failure* marks this source
 software-only for the rest of the session; a total ffmpeg failure under `auto`
