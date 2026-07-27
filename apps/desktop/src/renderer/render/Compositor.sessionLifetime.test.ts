@@ -10,8 +10,8 @@ import type { DecoderPool } from "./decoder/session";
 // an explicit `pool.release`. The Compositor tears clips down in two places and
 // for a long time neither released: the pool held the handle until its idle
 // sweep noticed seconds later, and a clip resolving inside that window raced
-// `MAX_HW_SESSIONS` against layers the user had already deleted. Losing that
-// race is permanent, because the lane is picked once per source. These tests
+// admission against layers the user had already deleted. Losing that race is
+// permanent, because the lane is picked once per source. These tests
 // pin the release rather than the teardown, since the teardown was never the
 // part that broke.
 

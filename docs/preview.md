@@ -256,13 +256,15 @@ indefinitely on a backward seek. The allow-list encodes that seek-safety
 dimension the one-frame probe can't test — a codec must be on it before its
 probe is even kicked — but never overrules a probe's negative verdict. (The
 underlying D3D11 backward-seek hang is a separate pre-existing gap the
-allow-list routes around, not a fix — a tracked follow-up.) Concurrent GPU
-sessions are capped at `MAX_HW_SESSIONS`, a measured figure at 1080p and a
-knowingly generous one at 4K ([playback-perf](playback-perf.md)); an open past
-the cap throws a typed `hw-budget-exceeded` that the engine *recovers* from
-exactly like a runtime HW death — the over-budget clip falls to the SW transport
-rather than erroring — but records nothing, because the cap is transient capacity
-and not a verdict about the source.
+allow-list routes around, not a fix — a tracked follow-up.) GPU admission
+reserves two currencies before native allocation: at most five concurrent
+sessions and at most `3 × 3840 × 2160` total coded pixel area. The area is
+calibrated against the measured 30 fps fixtures; it is not pixel-rate because
+source fps is not carried into admission. Thus five 1080p sessions fit, while a
+fourth 4K session does not ([playback-perf](playback-perf.md)). Exhausting either
+currency throws typed `hw-budget-exceeded`; the clip falls to the SW transport
+rather than erroring and records no capability verdict, because admission
+capacity is transient.
 
 **Sticky, per-source, no re-promotion.** A HW *failure* marks this source
 software-only for the rest of the session; a total ffmpeg failure under `auto`
@@ -271,8 +273,15 @@ the source (reload / re-import) is what clears it.
 
 The budget throw is different in kind but not in effect. It records no verdict,
 so it does not spread: a *different* clip on the same media probes normally and
-takes hardware while the over-budget one sits on software. What it also does not
-do is come back. Lane selection runs once per decode session, at
+takes hardware while the over-budget one sits on software. Above 1080p, only
+this capacity fallback gets the formal spill profile: the smallest supported
+scale near a 960×540 target (quarter size for 4K) and half cadence. Native still
+decodes every reference frame, but skips unselected frames before copy-back,
+scale, packing and IPC. Device failures and native-size mismatches use the
+ordinary software profile instead.
+
+What a spill also does not do is come back. Lane selection runs once per decode
+session, at
 `pickInitialLane`, and a decode session outlives the timeline edit that would
 free a slot — `SourceDecoderPool` keys sources by layer id and drops one only on
 its idle sweep (the clip stops being requested for several seconds), a
@@ -283,10 +292,12 @@ the same layer id gets the same, already-downgraded source handed back. The
 budget is per-open; the *asking* is per-source-lifetime, and that is what
 decides.
 
-The live budget is readable — `previewGpu:budget` returns main's session count
-and the cap, and the PerfHUD shows it as `HW sessions used/max` beside the
-per-clip lane pills. A clip reading `SW↓` next to a budget with slots free is
-this behaviour, not a capability verdict.
+The live budget is readable — `previewGpu:budget` returns
+`sessions.used/max`, `codedPixelArea.used/max`, and the latter's
+`calibratedFps: 30`. The PerfHUD shows both currencies beside the per-clip lane
+pills. This is diagnostic state, not an invitation to pre-check: main's
+reservation is the authority. A clip reading `SW↓` next to newly available
+capacity is the sticky source lifetime above, not a capability verdict.
 
 **Two trails, logged separately.** `noteResolution` emits one LogBus row per
 media per change of the resolved key, so an engine or source change (the

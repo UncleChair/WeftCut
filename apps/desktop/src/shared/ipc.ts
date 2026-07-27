@@ -153,9 +153,9 @@ export type PreviewGpuOpenReply = {
   barrierMode: HwBarrierMode
 }
 
-/// Reason `previewGpu:open` rejects with when the concurrent-HW-session budget is
+/// Reason `previewGpu:open` rejects with when either HW admission currency is
 /// full. A CAPACITY condition, not a capability one: the same media on the same
-/// machine opens on hardware again as soon as a session frees up. Callers must
+/// machine opens on hardware again as soon as enough reservation frees. Callers must
 /// treat it as "software for THIS open" and must NOT record it as a per-media
 /// hardware verdict (see `FfmpegSource`'s open-failure branch — doing so pinned a
 /// source to software for the rest of the app session the first time concurrent

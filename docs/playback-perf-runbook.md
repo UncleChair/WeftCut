@@ -37,6 +37,7 @@ re-running the bench without rebuilding measures the old code.
 ```bash
 npm run bench:playback                                  # the default sweep
 npm run bench:playback -- --route hw --max-tracks 4     # one leg
+npm run bench:playback -- --codec h264 --resolution 2160 --route hw --tracks 4,5 --replay-after-warmup --tag t13-h264
 npm run e2e -- --playback-perf                          # as a gate, after Playwright
 ```
 
@@ -48,6 +49,7 @@ npm run e2e -- --playback-perf                          # as a gate, after Playw
 | `--max-tracks N` | 8 | sweeps 1..N, stopping after 2 consecutive non-smooth cells |
 | `--tracks 1,3,5` | — | explicit list; **disables the early stop** |
 | `--window-s N` / `--warmup-s N` | 20 / 5 | measured window and warm-up |
+| `--replay-after-warmup` | off | pause/seek 2 s/play after warm-up, then require four consecutive live ring-coverage polls before resetting counters; use for heavy spill cells |
 | `--playback-resolution full\|half\|quarter` | `full` | a diagnostic axis, not a comparison axis — see below |
 | `--tag NAME` | — | suffixes the report file so chunked runs don't clobber |
 | `--report PATH` | — | re-render tables from a report on disk, running nothing |
@@ -70,10 +72,18 @@ second copy of the app.
 
 | column | what invalidates the cell |
 |---|---|
-| `lanes` | not the route you asked for. Past `MAX_HW_SESSIONS` the hardware leg is *legitimately* mixed — that is a finding, not a fault — but a 1-track cell on the wrong lane is a broken pin |
+| `lanes` / `routePure` | a 1-track cell on the wrong lane is a broken pin. A hardware cell that exceeds either live admission currency is legitimately mixed: at 4K, 4/5 tracks should be 3 GPU + 1/2 formal SW spills and `routePure: false` |
 | `routeDrift` (JSON) | non-empty means the lane, HW lane, or resolver key changed mid-window. The cell measured two different things |
-| `quietReached` / `quietWaitS` / `quietGate` (JSON) | `false` means the app never held both quiet conditions: total Electron CPU below 20% **and** no active derivative-job pill for four consecutive polls. `quietGate` records how many polls were blocked by CPU and by derivative jobs |
+| `quietReached` / `quietWaitS` / `quietGate` (JSON) | an ordinary measured cell must have `quietReached: true`: total Electron CPU below 20% **and** no active derivative-job pill for four consecutive polls. A 300 s miss is now `InvalidRun`, not a measured cell. `quietGate` records how many polls each signal blocked |
+| `replayGate` (JSON) | when replay is requested, `used` must be true and every recorded ring must have covered the live playhead. Clock progress alone is not enough |
 | `barrier n` | on a hardware leg, a small sample count means the window caught few delivered frames |
+
+For budget-shaped expectations, read `window.api.previewGpu.budget()`. Its two
+authoritative currencies are `sessions.used/max` and
+`codedPixelArea.used/max`; the latter is calibrated at 30 fps and is not a
+pixel-rate claim. Do not predict admission from the session count alone, and do
+not turn the diagnostic snapshot into a client-side gate — main's atomic
+reservation remains authoritative.
 
 A cell that errored reports `{kind: "error"}` or `{kind: "invalid"}` inline and
 the batch continues; one bad session never aborts the rest of the matrix.
@@ -142,6 +152,11 @@ Every one of these shipped a false reading at least once in this spec.
   `quietGate.derivativeBusyPolls` count is the audit trail; a fresh 4K import on
   this box has needed ~15 s to clear even though the old CPU-only gate returned
   after ~1.55 s.
+- **A replay clock tick is not proof the decoders recovered.** A backward seek
+  flushes every ring; opening the window on the first advancing position sample
+  includes refill startup in a supposedly steady-state result. The replay gate
+  requires every ring to bracket the live playhead for four consecutive 250 ms
+  polls and invalidates after 30 s. Never replace it with a fixed sleep.
 
 **`--playback-resolution` is a diagnostic, never a comparison.** Sweeping it
 answers whether a lane's wall is latency-bound (a smaller frame changes nothing)
@@ -187,7 +202,8 @@ Read the columns in this order:
 
 For the deeper JSON fields — `ringAtEnd` (ring bounds against the playhead at
 window close, which separates "never decoded" from "decoded and evicted"),
-`perClip[].barrierN`, `proxyState`, `quietGate`, `consoleErrors`, and `longFrames.frames[]`
+`perClip[].barrierN`, `proxyState`, `quietGate`, `replayGate`,
+`consoleErrors`, and `longFrames.frames[]`
 (each long frame's `startTime`/`renderStart`/`styleAndLayoutStart` split, plus
 `timerCadence.worst` with timestamps so a timer stall can be lined up against
 one) — read the cell object directly; the markdown is a summary, not the whole

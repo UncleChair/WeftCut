@@ -318,22 +318,19 @@ than a stable ceiling. What each fix bought, and the landmine it left:
   hardware-vs-software an engine-level fact, and
   [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md) makes it
   private to the Standard engine.
-- **The hardware lane carries five concurrent GPU sessions.** `MAX_HW_SESSIONS`
-  was rationing the read barrier and never decode capacity — five pure hardware
-  tracks leave the GPU's VideoDecode engine at 11–24 % at 1080p — so with the
-  barrier off the critical path the constant follows the measurement: the 1080p
-  cell that fails under a tighter cap (HEVC at five tracks) runs 0.00 % drops,
-  tick p99 18.10 ms against a 33.3 ms budget and main-process CPU 0.909 %, with
-  `nv12Ingest` never firing because no clip spills to software. What keeps the
-  constant safe to move is the [order gate](preview.md#decode-engine), and that
-  part is worth copying: it derives every cap-shaped expectation from the *live*
-  cap rather than restating the number, so the constant has exactly one home; and
-  it was proven able to go **red** before anything rested on it going green —
-  forced onto a deliberately-reordering barrier, all four pixel-checking cells
-  fail on 179–248 mismatches out of 299 checked frames, every Δ the run's pool
-  size or an exact multiple of it, while the software-lane control stays green.
-  The landmine it leaves is the item below: the cap is one number, and the
-  resource it rations is not.
+- **GPU admission has two currencies.** The old fixed session count was
+  simultaneously right at 1080p and unsafe at 4K. Main now atomically reserves a
+  hard five-session ceiling plus `3 × 3840 × 2160` of total coded pixel area
+  before native allocation. The area is explicitly calibrated at 30 fps, not
+  described as pixel-rate because source fps is absent from the contract. Five
+  1080p clips therefore stay hardware, while only three 4K clips do. A 4K budget
+  spill ships quarter-size software frames at half cadence, skipping before
+  copy-back/packing/IPC so two spills no longer create the old byte flood. The
+  [order gate](preview.md#decode-engine) derives its largest fixture-specific
+  concurrent count from both live currencies. It passes all eight
+  `rendererFence` cells and, under the deliberately incorrect `none` barrier,
+  fails all five pixel-checking cells on mismatches only while the budget,
+  fallback and software controls stay green.
 
 **Still open — what stops the renderer's main thread while delivery is perfect.**
 Two cells fail on the tick tail alone with 0.00 % drops: 4K WebCodecs at one track
@@ -374,25 +371,24 @@ samples, which suggested a 4×-vsync tail, are invalid because the CPU-only quie
 gate admitted measurement while derivative jobs were still running. Same
 instrument, other branch of the decision tree.
 
-**Still open — the concurrent-session cap is one number for two resolutions.**
-`MAX_HW_SESSIONS` is measured at 1080p, where nothing binds: five hardware sessions
-sit at 18.7 % of the VideoDecode engine and a nominal 46.7 MB of slot pool (a bare
-NV12 slot is 3.11 MB at 1080p and 12.44 MB at 4K, three per session — desc
-arithmetic, and nothing instruments real pool VRAM). At 4K the engine binds
-instead, from the first track: 58–62 % with one H.264 track, 81.5 % at two, 91.9 %
-at three, and **99.9 % at four**, where the fourth session starves every session
-including the three that were fine — all four deliver zero frames and sit on their
-0.5 s poster, while spilling that fourth clip to software holds the engine at
-94.4 % and keeps video moving. A cliff, not a slope. Lowering the constant is not
-the answer, because at five 4K tracks the spill is the worse shape (it stops the
-renderer's main thread for 17–36 s at a stretch, where five hardware sessions keep
-it alive with zero timer gaps over 50 ms); what the data asks for is a
-**resolution-aware or decode-load-aware** ceiling — derived from frame area, or
-from measured engine load, rather than from a session count. Two things to know
-before starting: the ½/¼ playback-resolution dial cannot substitute, because the
-native decoder downscales *after* decode and before IPC, so engine load is
-unchanged; and the four-track comparison is n = 1 per side, so re-measure it first.
-[playback-perf](playback-perf.md) carries the tables.
+**Implemented; one formal codec-equivalence rerun remains.** The fixed-cap
+landmine above is now the two-currency admission policy plus the formal spill.
+On the production-shaped candidate, three current-build HEVC repeats at four
+tracks (3 GPU + 1 spill) and three at five tracks (3 GPU + 2 spills, final replay
+state gate) all held 0.00 % drops, live rings and zero timer gaps over 50 ms;
+five-track tick p99 was 17.0–18.3 ms. These are deliberately mixed,
+`routePure: false` cells.
+
+The original cliff was measured with 4K H.264. Three-repeat isolated prototypes
+of the final 3-GPU + 540p/half-cadence shape keep every H.264 ring tracking and
+the timer alive at four and five tracks, but the five-track cells still show
+3.16–3.66 % drops and a 23.1–56.8 ms tick tail. The final main-worktree H.264
+4/5-track replay-state-gate run could not be collected in the current agent
+environment: Electron launch was denied with `spawn EPERM`, and the escalation
+approval budget was exhausted. Treat implementation as done and HEVC acceptance
+as repeated; keep the H.264 current-build equivalence check visible rather than
+silently generalising the HEVC result. [playback-perf](playback-perf.md) carries
+the policy, evidence filenames and exact limitation.
 
 One decision this data settles and one it does not:
 

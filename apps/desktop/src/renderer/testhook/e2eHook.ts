@@ -403,10 +403,10 @@ export interface E2EHook {
   /// can order correctly alone and reorder in company. Reports each session
   /// separately — a merged count would bury one session's defect. Dev/e2e only.
   decodeBenchConcurrentOrderCheck(args: ConcurrentOrderCheckArgs): Promise<ConcurrentOrderCheckResult>;
-  /// HW session-budget runtime probe (smoke item b): open `count` native-hw
-  /// sessions and report each open's outcome. The (MAX_HW_SESSIONS+1)th must
-  /// reject with `hw-budget-exceeded` and surface it via onFatalError (the
-  /// resolver then downgrades that source off tier 1). Dev/e2e only.
+  /// HW admission-budget runtime probe (smoke item b): open `count` native-hw
+  /// sessions of the supplied coded size and report each outcome. The first
+  /// request beyond either live currency must reject with
+  /// `hw-budget-exceeded` and surface it via onFatalError. Dev/e2e only.
   decodeBenchBudgetProbe(args: {
     sourcePath: string;
     width: number;
@@ -416,8 +416,8 @@ export interface E2EHook {
   /// HW→SW in-place fallback: a REAL (unforced) counterpart to
   /// `decodeBenchBudgetProbe` — opens `count` ffmpeg-engine sources on an
   /// HW-eligible clip WITHOUT forcing a lane, so `pickInitialLane`'s real
-  /// probe puts the first `MAX_HW_SESSIONS` on hardware exactly as production
-  /// does; the (MAX_HW_SESSIONS+1)th's budget rejection then engages
+  /// probe fills the live session/area budget exactly as production does; the
+  /// first refused open then engages
   /// `FfmpegSource`'s in-place HW→SW recovery instead of the forced path's
   /// hard fatal. Dev/e2e only. See decodeBench.ts's doc comment.
   decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Promise<HwFallbackProbeResult>;

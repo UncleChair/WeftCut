@@ -701,8 +701,9 @@ async function runCell(leg, tracks) {
     const laneMixPre = {};
     for (const p of pre) laneMixPre[p.sourceKind] = (laneMixPre[p.sourceKind] ?? 0) + 1;
     // A leg is "pure" only when EVERY layer sits on the intended lane. The
-    // hardware leg goes impure past `MAX_HW_SESSIONS`: the overflow clips ride
-    // the software transport in place, with no state change to observe. It IS
+    // hardware leg goes impure when either live admission currency (hard
+    // session slots or coded-pixel area) is exhausted: overflow clips ride the
+    // software transport in place, with no state change to observe. It IS
     // logged — `noteLaneOpen` emits a `decode-lane` LogBus row for exactly this
     // transition — but worded `hardware → software`, which neither of
     // `consoleErrors`' patterns matches, so that array comes back EMPTY from
@@ -959,7 +960,8 @@ async function runCell(leg, tracks) {
       throw new InvalidRun(`barrier pin did not hold, expected ${expectedBarrier} — ${barrierDrift.join("; ")}`);
     // Distinct from a mismatch: a clip with no observation never delivered an
     // instrumented frame, or sits on a transport with no barrier (the software
-    // clips a hardware leg grows past MAX_HW_SESSIONS), and neither is drift.
+    // clips a hardware leg grows past its live admission budget), and neither
+    // is drift.
     // Nothing observed ANYWHERE under a pin is the case that must not pass — the
     // cell cannot say which variant produced it, and an unattributable cell in a
     // variant comparison is the artefact this whole check exists to exclude.

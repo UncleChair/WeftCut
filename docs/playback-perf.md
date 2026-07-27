@@ -235,12 +235,15 @@ failure marks a source software-only for the rest of the session and never
 re-promotes, each cell gets its own launch — one poisoned source cannot leak
 into later cells.
 
-**The hardware leg goes impure past the session cap by design.** Concurrent GPU
-sessions are capped at `MAX_HW_SESSIONS`; a clip that opens past the cap takes a
-`hw-budget-exceeded` and falls to the software transport in place, leaving only a
-`decode-lane` LogBus row behind. The sweep records the per-cell lane mix instead
-of rejecting those cells — that degradation is production behaviour and is one of
-the things the matrix exists to surface.
+**The hardware leg goes impure past the admission budget by design.** Main
+reserves both a hard session slot and the source's coded `width × height` before
+native allocation. Exhausting either currency returns `hw-budget-exceeded`; that
+clip falls to the software transport in place and leaves a `decode-lane` LogBus
+row. The sweep records the per-cell lane mix instead of rejecting it. In
+particular, a four- or five-track 4K cell is expected to report
+`routePure: false`: three clips are admitted to GPU and the remainder are formal
+software spills. Calling that cell route-pure would hide the production behaviour
+the matrix exists to measure.
 
 ## Conditions the run enforces
 
@@ -261,8 +264,10 @@ Rather than assume the defaults:
 inside the measured window: the quick-proxy encode (no fixture here is
 `Bypass` — they are long-GOP or above 1080p), the decodability sweep, and the
 timeline's filmstrip and waveform tiles. The cell waits for the whole app's CPU
-to settle rather than for any one job, so decorations are covered too, and
-records how long it waited and whether the gate was actually reached.
+to stay below 20 % while the derivative-job pill stays absent for four
+consecutive polls. If that state is not reached within 300 s the cell is
+`InvalidRun`; it never opens a measurement window with `quietReached: false`.
+`quietGate` records which signal kept it waiting.
 
 Playback starts 2 s into the clip and the window ends well inside the 60 s
 fixture, so neither the clip head nor the auto-pause at end-of-material can
@@ -270,6 +275,10 @@ enter the measurement. The measured window opens only once `positionUs` is
 observed advancing — `playing` is intent and flips before the warm-up gate
 releases the clock — and stage counters are reset *after* the warm-up so
 decoder init and first-frame texture allocation stay out of the distribution.
+For heavy spill cells, `--replay-after-warmup` then pauses, seeks back to 2 s and
+plays again. It does not reset on the first clock tick: every ring must be
+non-empty and bracket the live playhead for four consecutive 250 ms polls. The
+state-based wait is stored as `replayGate`, and a 30 s miss invalidates the cell.
 
 ## The smooth/stutter verdict
 
@@ -389,8 +398,8 @@ the same fixture then waits 15–16 s and records why it waited in `quietGate`.
 Five valid same-sitting pairs on `35cf93d3` put every 1-track baseline at
 16.9–17.2 ms and the 2-track tick p99 at **17.5, 17.6, 40.5, 27.9, 38.9 ms**:
 3/5 smooth, 2/5 STUTTER. Drops stayed 0.00 % and presented fps stayed
-58.6–60.0. This is not the session cap: at two sessions every cap of two or more
-executes the same open path.
+58.6–60.0. This is not admission: two 4K sessions consume 2/5 session slots and
+two thirds of the coded-area budget, so both execute the same admitted path.
 
 It is not a branch regression at `45a98405` either. Corrected-gate isolated runs
 gave `3e5adabf` 43.5/40.6/42.1 ms and `45a98405` 17.3/36.3/33.9 ms. The
@@ -523,143 +532,126 @@ The WebCodecs leg is the control that isolates it: same fixture, same
 compositor, same track counts, no barrier — and tick p95 stays 17.4–17.8 ms from
 one track to four.
 
-### The session cap overflows silently
+### Hardware admission is now a two-currency budget
 
-A 1080p clip that opens past `MAX_HW_SESSIONS` takes a `hw-budget-exceeded` and
-opens on the ffmpeg software transport in place. It used to take the whole
-session with it; since that lane stopped re-seeking per request, it does not:
+Main admits a GPU preview only when **both** of these reservations fit:
 
-| 1080p, 3 × `native-gpu` + 1 × `sw` | before | after |
-|---|---|---|
-| tick p50 | **82.6 ms** | **16.6 ms** |
-| presented | **13.0 fps** | **43.7 fps** |
-| main-process CPU | **28.7 %** | **3.6 %** |
-| drops | 39.8 % | 3.96 % |
-| per-clip delivery | — | 30.2 / 30.2 / 30.2 / 30.0 |
+| currency | maximum | what binds |
+|---|---:|---|
+| concurrent sessions | 5 | protects against unbounded tiny-session fan-out |
+| coded pixel area | 24,883,200 = `3 × 3840 × 2160` | a monotone proxy for the measured decode-load cliff |
 
-The cell still misses the verdict, but on `tick p99` 103.1 ms with delivery
-perfect — which is what the *pure*-hardware 3-track cell does too (p99 40.3 ms,
-0.00 % drops, barrier 0.47 thread-s/s). The remaining cost in a mixed cell is the
-read barrier and the tick tail, not the lane the overflow lands on.
+The public snapshot calls the second currency `coded-pixel-area` and reports
+`calibratedFps: 30`. It is deliberately **not** called pixel-rate: admission does
+not yet carry source fps, so the data only calibrates this area at the 30 fps
+fixtures measured here. At 1080p the hard five-session limit binds; at 4K the
+area limit binds after three sessions. Mixed resolutions add their coded areas
+and still share the five-session ceiling.
 
-**Nothing fired an event or a log when the overflow happened**, and since it no
-longer announces itself as a stutter, that silence — not the routing — was the
-defect this cell exposed. The bench could see the transition only by diffing
-`activeClipProbe().sourceKind` per layer, which is why this matrix has a lane-mix
-column at all. It is now also a `decode-lane` LogBus row per transition
-([preview.md](preview.md#decode-engine)).
+The renderer-probed coded dimensions travel in `previewGpu:open`. Main reserves
+before the native session or shared textures exist, then compares native's
+actual dimensions with the reservation. Invalid dimensions, duplicate ids,
+area overflow and session overflow all fail closed. A native-size mismatch is a
+separate transient fallback: main closes the just-opened native session and
+releases the lease, and the renderer does not poison that media's hardware
+capability verdict. Rollback and normal close attempt every imported-frame
+release before releasing the lease.
 
-A mixed cell is also the internal check on the software pin: that `sw` clip is
-produced *organically* by the session budget, not by the `WEFTCUT_FORCE_HW_LANE`
-pin, and shows the same signature (`nv12Ingest` appears, main-process CPU rises).
-Reproducing one at 1080p takes a sweep one track past the cap.
+`hw-budget-exceeded` is also a capacity result, not a capability verdict. A
+refused clip stays software for that source lifetime, but a later independent
+open can use a released reservation. Both live currencies are visible in
+`previewGpu:budget` and the PerfHUD.
 
-**Where the cap sits, and why.** While a hardware session cost a synchronous read
-barrier, rationing sessions was rationing that; with the barrier off the critical
-path the cap is a measured choice rather than an argued one — the same fixtures on
-the hardware route, a cap of three against the five the product allows:
+**A formal spill makes the 4K refusal survivable.** Only a genuine budget
+refusal above 1080p gets this profile. For a 4K source the software transport
+ships 960×540 frames at half cadence (approximately 15 fps for these 30 fps
+fixtures): native still decodes reference frames in order, but skips the
+unselected frames before copy-back, scale, packing and IPC. Budget spills at or
+below 1080p keep the user's requested scale and full cadence. Device failures,
+dimension mismatches and other fallbacks also keep the ordinary profile; they
+must not masquerade as capacity spills.
 
-| 1080p hw route | capped at 3 | capped at 5 |
+### Why the fixed count was replaced
+
+The two tables below are **historical before data from fixed-cap prototypes**,
+not descriptions of the current budget. They explain the policy.
+
+At 1080p, raising the old fixed count from three to five helped and cost nothing
+measurable:
+
+| historical 1080p hw route | fixed cap 3 | fixed cap 5 |
 |---|---|---|
 | HEVC 4 tracks | smooth · 3 gpu + 1 sw · p99 23.5 ms · main 4.7 % | smooth · 4 gpu · p99 24.7 ms · main **1.0 %** |
 | HEVC 5 tracks | **STUTTER** · 43.69 % drops · 48.6 fps · p99 45.1 ms · main 8.7 % | **SMOOTH** · 0.00 % · 60.1 fps · p99 **18.2 ms** · main **1.0 %** |
 | H.264 4 tracks | smooth · 3 gpu + 1 sw · p99 19.2 ms · main 3.6 % | smooth · 4 gpu · p99 **17.2 ms** · main **0.9 %** |
 | H.264 5 tracks | smooth · 3 gpu + 2 sw · p99 23.7 ms · main 6.8 % | smooth · 5 gpu · p99 **17.1 ms** · main **0.8 %** |
 
-At 1080p the extra sessions **help and cost nothing measurable**: the cell that
-fails under the tighter cap passes, two tick tails sit at the flat ~17 ms the pure
-lane holds everywhere, and `nv12Ingest` is zero rather than 57–62 ms per
-wall-second because no clip spills. Five pure hardware tracks leave the GPU's
-VideoDecode engine at 24.2 % (H.264) and 11.5–18.7 % (HEVC — that counter is
-machine-wide and reads with GPU power state, so treat the spread as the
-instrument's), so the cap never rationed decode capacity at this resolution.
+Five pure hardware tracks left VideoDecode at 24.2 % for H.264 and
+11.5–18.7 % for HEVC. That is why the hard session ceiling remains five rather
+than becoming a blanket three.
 
-**The gate is what makes the cap movable at all.** Ordering is the failure mode on
-this transport that produces wrong pixels rather than a slow cell, so the cap is
-only ever as safe as [the order gate](preview.md#decode-engine) watching it. That
-gate derives every cap-shaped expectation from the live cap instead of restating
-the number — which open is the first to be refused, how many sessions its
-concurrent-ordering probe drives — so the constant has exactly one home. And it is
-a gate that has been shown to *fail*: forced onto a barrier that deliberately
-reorders, all four pixel-checking cells go red on mismatch counts of 179–248 out
-of 299 checked frames, every Δ the run's pool size or an exact multiple of it —
-the slot-reuse race the gate exists to catch — while the software-lane control
-stays green. At the cap it is green, its concurrent probe driving five sessions
-for 299 checked frames with 0 missing and 0 reordered.
+At 4K, the old five-session policy walked off an engine cliff:
 
-**The slot pool the cap sizes is nominal, not measured — and at 4K it is not what
-binds.** A preview slot is a bare NV12 texture, `width × height × 1.5`: **3.11 MB**
-at 1080p and **12.44 MB** at 4K, three slots per session, so five sessions hold
-**46.7 MB** of 1080p or **186.6 MB** of 4K. Those are desc arithmetic, not a
-reading: row-pitch alignment and chroma-plane placement make real VRAM
-driver-dependent and somewhat larger, and nothing in the preview path instruments
-it (`frameRingBudget.ts` says outright that the ring budget is not derived from
-real VRAM either). At 4K the pool is also the wrong thing to watch: 186.6 MB is
-~4 % of the ~4.5 GB a coarse, process-wide dedicated-memory reading shows the app
-holding at three 4K tracks, where each added track costs **~1.3 GB** — the
-FrameRing's resolution-blind lookahead, not the pool. What binds at 4K is the
-VideoDecode engine.
-
-### The same cap is generous at 1080p and too high at 4K
-
-The cap is one number for both resolutions and the resource it rations is not. At
-1080p nothing binds: five hardware sessions sit at 18.7 % of the VideoDecode
-engine with a nominal 46.7 MB of slot pool. At 4K that engine is the constraint
-from the very first track — **58–62 % with ONE H.264 track**, 81.5 % at two,
-91.9 % at three — and the cap is high enough to walk off the end of it:
-
-| 4K H.264, hardware, 4 tracks | 3 hardware + 1 software | 4 hardware |
+| historical 4K H.264 / 4 tracks | fixed cap 3: 3 gpu + 1 sw | fixed cap 5: 4 gpu |
 |---|---|---|
 | drops | **39.18 %** | **89.35 %** |
-| presented | 15.14 fps | 53.02 fps *(the same stale frame, 53×/s)* |
 | decode fps per clip | 9.08 / 9.32 / 9.17 / 29.46 | **0.00 × 4** |
 | GPU VideoDecode | 94.4 % | **99.9 %** |
-| ring at close | 12 / 12 / 11 / 26, tracking the playhead | all **0**, every clip bound to its 0.5 s poster |
-| ring fate | pushed 1175, serveHit 562, miss-empty 682 | pushed **0**, serveHit **0**, miss-empty 4244 |
-| timer gaps > 50 ms | **157** | 0 |
-| `nv12Ingest` | p50 4.30 ms, **61.5 ms per wall-second** | none |
+| ring at close | 12 / 12 / 11 / 26, tracking | all **0**, bound to the 0.5 s poster |
+| ring fate | pushed 1175, serveHit 562 | pushed **0**, serveHit **0** |
 
-**It is a cliff, not a slope.** Three concurrent 4K hardware sessions are nearly
-clean — 0.00 % drops, 55.2 fps presented, engine 91.9 %. The **fourth** tips the
-engine to 99.9 % and starves *every* session including the three that were fine:
-all four deliver zero frames and sit on their poster. Spilling that fourth clip to
-software instead — what a cap of three produces — holds the engine at 94.4 % and
-keeps video moving, badly. This is the one place a lower cap wins, and it is why a
-resolution-aware or decode-load-aware cap sits on [the roadmap](roadmap.md).
-`--playback-resolution` cannot buy it back: the native decoder downscales each
-frame *before it crosses IPC*, so ½ and ¼ cut IPC bytes and raster cost and leave
-VideoDecode engine load exactly where it was.
+Three concurrent 4K sessions were nearly clean at 91.9 % VideoDecode; the
+fourth starved all four. A simple fixed cap of three was still not sufficient:
+at five tracks its two full-size/full-cadence software spills froze the renderer
+for 17–36 s. The area reservation prevents the fourth hardware open, while the
+formal 540p/half-cadence spill removes the byte flood that made the lower fixed
+cap unsafe.
 
-**At five 4K tracks it inverts again, and the tick column lies about which shape
-is better.** Read the timer row first:
+The slot pool did not size this budget. A bare three-slot NV12 pool is nominally
+9.3 MB per 1080p session and 37.3 MB per 4K session; the historical five-session
+4K pool was only 186.6 MB against roughly 4.5 GB process-wide dedicated memory.
+The measured cliff was VideoDecode load, while most retained memory belonged to
+the resolution-blind FrameRing.
 
-| 4K H.264, hardware, 5 tracks | 3 hardware + 2 software | 5 hardware |
-|---|---|---|
-| drops | 45.97 % | 30.13 % |
-| presented | 17.33 fps | 18.08 fps |
-| tick p99 / max | **153.8** / 353.3 ms | **1393.1** / 3001.1 ms |
-| timer p50 / max | 8.1 / **17 485.7 ms** | 8.1 / **12.0 ms** |
-| timer gaps > 50 ms | **31**, the worst 17.5 s | **0**, across 2503 samples |
-| main-process CPU mean | **47.72 %** | 30.95 % |
-| GPU VideoDecode | 72.9 % | 99.9 % |
+### Current policy verification — and the remaining codec-equivalence check
 
-The mixed shape's prettier tick p99 is **survivorship bias**: its renderer main
-thread genuinely stops — 17.5 s and 16.8 s at a stretch, and a second run of the
-same cell froze for 36.0 s and 31.5 s and fired five timer samples in the whole
-window — and during a freeze the loop is not ticking, so no interval sample is
-taken. Five hardware sessions keep the thread alive instead (timer max 12.0 ms,
-zero gaps over 50 ms), and their 1393 ms tick p99 is lost rendering opportunity on
-a live thread. Two 4K NV12 streams over CPU IPC is ~25 MB per composition frame
-and `nv12Ingest` already costs 61.5 ms per wall-second at one stream, so spilling
-at 4K does not avoid
-[the main-thread stop](#a-tick-gap-is-the-main-thread-stopping-not-the-loop-being-starved) —
-it causes a far worse one.
+The production-shaped candidate later checkpointed as `adfbd7f5` has three
+current-build HEVC repeats per heavy cell. The JSON names retain base SHA
+`35cf93d3` because measurement preceded the checkpoint:
 
-Two limits on how hard to lean on this pair: the 4-track comparison is **n = 1 per
-side**, and neither mixed 5-track run reached a steady state (one of them ran its
-clock at 0.304× realtime, which is where that run's "0.00 % drops" came from), so
-read that column as "collapses, shape varies" rather than as a throughput
-measurement.
+| current 4K HEVC | runs | lane mix | drops | tick p99 | timer gaps >50 ms | ring result |
+|---|---:|---|---:|---:|---:|---|
+| 4 tracks | 3 | 3 gpu + 1 sw | 0.00 % in all | 17.1 / 17.2 / 17.1 ms | 0 / 0 / 0 | 28–29 / 28 / 28 / 15, every ring tracking |
+| 5 tracks, replay state gate | 3 | 3 gpu + 2 sw | 0.00 % in all | 17.0 / 18.3 / 17.6 ms | 0 / 0 / 0 | 27–29 on GPU, 15–16 on spill, every ring tracking |
+
+These cells are intentionally `routePure: false`. Across the five-track runs,
+the replay gate took 1.32–1.37 s, total pushed frames were 2396–2402, and every
+run recorded 6000–6005 serve hits. The policy therefore preserves the three
+healthy hardware sessions and keeps the main thread alive under two spills for
+this codec.
+
+H.264, the codec in the original engine-cliff table, also has three-repeat
+**isolated prototype** evidence for the same 3-gpu + quarter-size/half-cadence
+shape. Four tracks had 0.00 % drops, all rings tracking, and zero timer gaps over
+50 ms in all three runs; five tracks kept all rings tracking and the timer alive
+in all three, though drops were 3.16–3.66 % and tick p99 varied 23.1–56.8 ms.
+Those six retained JSONs are named
+`playback-perf-t13-cap3-spill540p15[-4t]-r1..r3.json`.
+
+That prototype evidence is not a substitute for running the final main-worktree
+IPC/admission implementation against H.264 with the final replay state gate.
+That targeted 4/5-track equivalence rerun is still pending because this
+environment refused Electron launch (`spawn EPERM`) and its approval credits
+were exhausted. Until it is collected, the implementation and the HEVC
+acceptance are complete, but the original-codec formal verification is not.
+
+**Ordering remains a release gate.** The order spec now computes the largest
+admitted count for its fixture from both live currencies, while retaining pool
+1/3/5 coverage. Under `rendererFence`, all eight cells passed with 299 checked,
+0 missing and 0 mismatched frames per ordering cell. Under the deliberately
+incorrect `none` barrier, the five pixel-checking cells failed on mismatches
+only (181–252 of 299), while budget/fallback and software controls stayed green.
+That is the slot-reuse race the negative control exists to expose.
 
 ### The software lane re-seeked on every request
 

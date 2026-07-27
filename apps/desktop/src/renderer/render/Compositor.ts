@@ -886,8 +886,9 @@ export class Compositor {
         // pool holds the handle — and on the ffmpeg hardware lane its GPU
         // session — until the idle sweep notices seconds later, so a clip
         // resolving in that window is measured against layers the user already
-        // deleted and can lose the `MAX_HW_SESSIONS` race to a ghost. That loss
-        // is permanent: the lane is picked once per source (docs/preview.md).
+        // deleted and can lose a session/area reservation to a ghost. That
+        // loss is permanent: the lane is picked once per source
+        // (docs/preview.md).
         // It costs the idle sweep's undo grace, which is the better trade — a
         // warm re-decode is a second, a phantom downgrade lasts the session.
         // LANDMINE: release BOTH pool keys. `abandonSwap` above covers a swap

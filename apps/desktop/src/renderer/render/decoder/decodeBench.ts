@@ -280,10 +280,11 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
 
 // ── Concurrent frame-CONTENT-order check (N hardware sessions at once) ───────
 // `decodeBenchOrderCheck` above drives ONE session, and a single session is not
-// the case we ship: production runs up to MAX_HW_SESSIONS hardware clips at
-// once, and the barrier's safety margin is not a constant across that. The
-// synchronous readback barrier measures ~19ms of drain at one session but ~5ms at
-// three — the sessions share one flush, so per-session slack COLLAPSES as
+// the case we ship: production runs up to the fixture-specific count admitted
+// by both live currencies, and the barrier's safety margin is not a constant
+// across that. The synchronous readback barrier measures ~19ms of drain at one
+// session but ~5ms at three — the sessions share one flush, so per-session
+// slack COLLAPSES as
 // sessions are added, and any barrier whose correctness depends on how deep the
 // GPU command queue is when it submits (the deferred-ack fence path especially)
 // can pass alone and reorder in company. A reorder that only appears at three
@@ -295,9 +296,9 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
 
 export interface ConcurrentOrderCheckArgs {
   sourcePath: string; // absolute fixture path; served via weftcut-media://
-  /// Concurrent hardware sessions to open. Must be <= the live HW-session cap
-  /// (MAX_HW_SESSIONS) or the surplus sessions are budget-rejected — which this
-  /// driver reports as an error rather than letting them run on software.
+  /// Concurrent hardware sessions to open. Must fit both live admission
+  /// currencies for this coded size or surplus sessions are budget-rejected —
+  /// which this driver reports as an error rather than letting them run on SW.
   sessions: number;
   /// Native pool size (slot count) per session. Default 3 (the product default).
   poolSize?: number;
@@ -504,11 +505,11 @@ export async function decodeBenchConcurrentOrderCheck(
   }
 }
 
-// ── HW session-budget probe (smoke item b) ───────────────────────────────────
-// The main process caps concurrent native-hw sessions at MAX_HW_SESSIONS (3);
-// the (MAX+1)th `previewGpuOpen` throws `hw-budget-exceeded`. This exercises
-// the untested RUNTIME seam: that opening MAX+1 real sessions actually
-// rejects at the cap and the rejection reaches this probe with the budget
+// ── HW admission-budget probe (smoke item b) ─────────────────────────────────
+// Main reserves both a hard session slot and the requested coded area. The
+// first `previewGpuOpen` beyond either currency throws
+// `hw-budget-exceeded`. This exercises the runtime seam: a real overflow
+// rejects before native allocation and reaches this probe with the budget
 // reason. Because the lane is forced to "hardware", `FfmpegSource._doEnsureReady`'s
 // catch calls `fireFatal` on any open failure, so `onFatalError` fires and
 // `fatalReason` is populated (e.g. `"hw-budget-exceeded"`). The e2e assertion
@@ -535,8 +536,9 @@ export async function decodeBenchBudgetProbe(args: {
   const url = convertFileSrc(args.sourcePath);
   const outcomes: BudgetProbeOutcome[] = [];
   try {
-    // Open sequentially WITHOUT disposing, so live session count climbs to the
-    // cap and the next open trips it. The pool is disposed in `finally`.
+    // Open sequentially WITHOUT disposing, so live reservations accumulate
+    // until the first request exceeds a currency. The pool is disposed in
+    // `finally`.
     for (let i = 0; i < args.count; i++) {
       const h = pool.acquire({
         layerId: `budget-${i}`,
@@ -580,8 +582,8 @@ export async function decodeBenchBudgetProbe(args: {
 // in-place HW→SW recovery when `!forceLane` (see FfmpegSource.ts). This
 // driver leaves the lane UNFORCED: `pickInitialLane`'s real GPU capability
 // probe decides "hardware" for an HW-eligible clip exactly as production
-// does. Opening MAX_HW_SESSIONS+1 such sources means the LAST one's HW
-// `previewGpuOpen` genuinely trips `hw-budget-exceeded` — and because nothing
+// does. Opening one source past the fixture-specific live capacity makes that
+// HW `previewGpuOpen` genuinely trip `hw-budget-exceeded` — and because nothing
 // forced its lane, the SAME in-place recovery a runtime GPU error uses
 // engages: the ring survives, `ensureReady()` resolves normally (not a
 // fatal), and `currentLane()` reads "software" afterward. A real trigger, not
@@ -590,12 +592,12 @@ export async function decodeBenchBudgetProbe(args: {
 export interface HwFallbackProbeArgs {
   sourcePath: string; // absolute fixture path; served via weftcut-media://
   /// HW-eligible codec (h264/hevc/vp9, 8-bit) so `pickInitialLane`'s probe
-  /// actually picks "hardware" for the first MAX_HW_SESSIONS sources.
+  /// actually picks hardware until the supplied coded size fills admission.
   codec: string;
   pixFmt: string;
   width: number;
   height: number;
-  count: number; // MAX_HW_SESSIONS + 1
+  count: number; // fixture-specific admitted count + 1
 }
 
 export interface HwFallbackSessionOutcome {
