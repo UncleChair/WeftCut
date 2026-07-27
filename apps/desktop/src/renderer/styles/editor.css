@@ -301,10 +301,14 @@
 }
 
 .mixer-panel {
-  padding: 12px 14px;
+  /* Same 12px inset / 8px rhythm as the Captions and Nearby Panels. */
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  /* Everything in the mixer speaks --font-size-body; without this the Role
+     names inherit the 16px UA default. */
+  font-size: var(--font-size-body);
 }
 
 /* The responsive Role strip/row area. The strips/rows modifier lives on the
@@ -393,7 +397,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
 }
 
@@ -454,6 +458,82 @@
   font-variant-numeric: tabular-nums;
   font-size: var(--font-size-micro);
   color: var(--muted-foreground);
+}
+
+/* Captions panel — cue list plus the corpus-wide style controls, on the
+   same 12px inset / 8px rhythm as the Nearby and Role Mixer Panels. */
+.captions-panel {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--font-size-body);
+}
+
+.captions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.caption-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-control);
+}
+
+.caption-row.is-selected {
+  background: var(--selection-bg);
+}
+
+.caption-seek {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.caption-seek:hover {
+  color: var(--foreground);
+}
+
+.caption-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.captions-style-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.captions-style-section h4 {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* The number field defaults to width: 100% (single-column property rows);
+   here it shares the row with the heading and the color field. */
+.captions-style-section .app-number-field {
+  flex: 0 0 auto;
+  width: 88px;
 }
 
 .property-panel {
