@@ -144,14 +144,8 @@ const zhCN: Resources = {
     open_panel: "打开面板",
     reset: "重置工作区",
     move_panel: "移动{{title}}",
-    close_panel: "关闭{{title}}",
     overflow_tooltip: "隐藏面板：{{names}}",
     overflow_tooltip_empty: "显示隐藏面板",
-    menu: {
-      close: "关闭",
-      close_others: "关闭其他",
-      close_all: "全部关闭",
-    },
     panels: {
       media: "素材库",
       preview: "预览",

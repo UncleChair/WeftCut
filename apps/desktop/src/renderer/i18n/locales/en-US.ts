@@ -140,14 +140,8 @@ const enUS = {
     open_panel: "Open Panel",
     reset: "Reset Workspace",
     move_panel: "Move {{title}}",
-    close_panel: "Close {{title}}",
     overflow_tooltip: "Hidden panels: {{names}}",
     overflow_tooltip_empty: "Show hidden panels",
-    menu: {
-      close: "Close",
-      close_others: "Close Others",
-      close_all: "Close All",
-    },
     panels: {
       media: "Media Pool",
       preview: "Preview",

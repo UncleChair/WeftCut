@@ -15,11 +15,10 @@ import {
   type DockviewReadyEvent,
   type DroptargetOverlayModel,
   type DropOverlayModelParams,
-  type GetTabContextMenuItemsParams,
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
 } from "dockview-react";
-import { XIcon } from "lucide-react";
+import { ListTreeIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "dockview-react/dist/styles/dockview.css";
 
@@ -345,32 +344,6 @@ function removeOverflowRow(target: EventTarget | null): void {
   if (target instanceof HTMLElement) target.closest(".dv-tab")?.remove();
 }
 
-/** Right-click on an overflow-dropdown row is re-targeted at the real header
- *  tab, so Dockview's own tab context menu (close / close others / close all)
- *  opens — one menu implementation, two entry points. The overflow popover
- *  only dismisses on an outside pointerdown, so it is closed first to keep
- *  the two from stacking. */
-function forwardOverflowContextMenu(
-  kind: PanelKind,
-  x: number,
-  y: number,
-): void {
-  document.body.dispatchEvent(
-    new PointerEvent("pointerdown", { bubbles: true }),
-  );
-  const content = document.querySelector(
-    `.weft-dockview .dv-tabs-container .weft-dock-tab[data-panel-kind="${kind}"]`,
-  );
-  content?.closest(".dv-tab")?.dispatchEvent(
-    new MouseEvent("contextmenu", {
-      bubbles: true,
-      cancelable: true,
-      clientX: x,
-      clientY: y,
-    }),
-  );
-}
-
 /** Behavior layer over Dockview's built-in overflow popover: the chevron's
  *  tooltip previews the hidden Panel names, clicks open the list anchored
  *  under the chevron (not at the mouse point), and once open Arrow/Home/End
@@ -551,10 +524,9 @@ export function WeftCutDockTab({
 
   /* Overflow-dropdown rows are menu items, not drag sources: no grab cursor,
    * no maximize-on-double-click. Click activation stays with Dockview's row
-   * wrapper; the close button must beat that wrapper's native listener, so
-   * it stops the click in the capture phase. Closing a Panel from the list
-   * also removes the row — the popover isn't rebuilt while open, and a stale
-   * row would point at a dead Panel. */
+   * wrapper. Closing a Panel from the list (middle-click) also removes the
+   * row — the popover isn't rebuilt while open, and a stale row would point
+   * at a dead Panel. */
   if (tabLocation === "headerOverflow") {
     return (
       <div
@@ -567,30 +539,8 @@ export function WeftCutDockTab({
           removeOverflowRow(event.currentTarget);
           chrome.closePanel(kind);
         }}
-        onContextMenu={(event) => {
-          if (!kind) return;
-          event.preventDefault();
-          event.stopPropagation();
-          forwardOverflowContextMenu(kind, event.clientX, event.clientY);
-        }}
       >
         <span className="weft-dock-tab-label">{title}</span>
-        {kind ? (
-          <button
-            type="button"
-            className="weft-dock-tab-close"
-            aria-label={t("dock_workspace.close_panel", { title })}
-            title={t("dock_workspace.close_panel", { title })}
-            onClickCapture={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              removeOverflowRow(event.currentTarget);
-              chrome.closePanel(kind);
-            }}
-          >
-            <XIcon size={12} aria-hidden="true" />
-          </button>
-        ) : null}
       </div>
     );
   }
@@ -609,26 +559,11 @@ export function WeftCutDockTab({
         chrome.toggleMaximize(kind);
       }}
     >
+      {/* Selection marker: CSS shows it (and the bottom accent) only on
+          `.dv-active-tab` — this renderer isn't re-run on activation
+          changes, so the marker lives in the DOM of every tab. */}
+      <ListTreeIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
       <span className="weft-dock-tab-label">{title}</span>
-      {kind ? (
-        <button
-          type="button"
-          className="weft-dock-tab-close"
-          aria-label={t("dock_workspace.close_panel", { title })}
-          title={t("dock_workspace.close_panel", { title })}
-          draggable={false}
-          onMouseDown={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onDragStart={(event) => event.preventDefault()}
-          onDoubleClick={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            chrome.closePanel(kind);
-          }}
-        >
-          <XIcon size={12} aria-hidden="true" />
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -740,43 +675,6 @@ export function DockWorkspace({
     [onResetWorkspace],
   );
 
-  /* Right-click affordance for every tab — the single-Panel case included,
-   * whose compact header carries no other menu. Labels are built per click so
-   * they follow the active locale. */
-  const getTabContextMenuItems = useCallback(
-    ({ panel, group }: GetTabContextMenuItemsParams) => {
-      const kind = isPanelKind(panel.id) ? panel.id : null;
-      if (!kind) return [];
-      const items: { label: string; action: () => void }[] = [
-        {
-          label: t("dock_workspace.menu.close"),
-          action: () => chrome.closePanel(kind),
-        },
-      ];
-      if (group.panels.length > 1) {
-        items.push({
-          label: t("dock_workspace.menu.close_others"),
-          action: () => {
-            for (const candidate of [...group.panels]) {
-              if (candidate.id !== panel.id && isPanelKind(candidate.id)) {
-                chrome.closePanel(candidate.id);
-              }
-            }
-          },
-        });
-      }
-      items.push({
-        label: t("dock_workspace.menu.close_all"),
-        action: () => {
-          const open = adapterRef.current?.getSnapshot().openPanels ?? [];
-          for (const candidate of open) chrome.closePanel(candidate);
-        },
-      });
-      return items;
-    },
-    [t, chrome],
-  );
-
   const onReady = useCallback(({ api }: DockviewReadyEvent) => {
     let adapter = adapterRef.current;
     if (!adapter?.belongsTo(api)) {
@@ -821,7 +719,6 @@ export function DockWorkspace({
             noPanelsOverlay="watermark"
             announcements
             messages={messages}
-            getTabContextMenuItems={getTabContextMenuItems}
             dropOverlayModel={dropOverlayModel}
             dndEdges={false}
           />

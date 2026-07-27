@@ -70,10 +70,15 @@
   min-height: 0;
 }
 
-/* No hairline under the strip and no accent line on the selected tab:
-   selection reads from the surface-matched tab + label weight, and region
-   boundaries come from the tonal ladder alone. Groups carry no focus-group
-   marker. */
+/* No hairline under the strip: region boundaries come from the tonal ladder
+   alone. Selection reads from the surface-matched tab, a bottom accent line,
+   the ListTree marker, and label weight. Groups carry no focus-group marker. */
+
+/* Selection layer 1 — bottom accent line on the selected tab, inset so it
+   sits flush on the seam with the Panel below. */
+.weft-dockview .dv-groupview .dv-tabs-container > .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 var(--ring);
+}
 
 /* The selector chain must out-specify Dockview's group-scoped base rules
    (six classes). */
@@ -175,27 +180,22 @@
   font-size: var(--font-size-caption);
 }
 
-.weft-dock-tab-close {
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
+/* Selection layer 2 — ListTree marker, rendered into every tab (the React
+   renderer isn't re-run on activation changes) and revealed only on the
+   selected tab. */
+.weft-dock-tab-active-icon {
+  display: none;
   flex: none;
-  color: var(--muted-foreground);
-  background: transparent;
-  font: inherit;
-  line-height: 16px;
-  cursor: pointer;
+  color: var(--ring);
 }
 
-.weft-dock-tab-close:hover {
-  color: var(--foreground);
-  background: var(--muted);
+.weft-dockview
+  .dv-groupview
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab
+  .weft-dock-tab-active-icon {
+  display: inline-flex;
 }
-
-/* Close button stays visible on every tab; hover only changes its highlight
-   (see .weft-dock-tab-close:hover above). */
 
 /* Dockview's custom tab-strip scrollbar is hover chrome that flashes on
    every wheel tick. */
@@ -203,13 +203,16 @@
   display: none;
 }
 
-/* Every group keeps its 28px tab header so the drag handle, Panel title, and
-   close affordance stay in one fixed place — with one exception: a group
-   holding only Preview has its strip hidden by the adapter (Dockview
-   `hideHeader`), trading draggability for vertical space. */
+/* Every group keeps its 28px tab header so the drag handle and Panel title
+   stay in one fixed place — with one exception: a group holding only Preview
+   has its strip hidden by the adapter (Dockview `hideHeader`), trading
+   draggability for vertical space. */
 .weft-dockview .dv-tabs-and-actions-container .dv-tab {
   height: 28px;
-  padding: 0 8px 0 12px;
+  /* Symmetric 12px: with the close button gone, the inactive tab's label
+     stays centered. The active tab's ListTree marker shifts the label right
+     by design — selection is allowed to move the text. */
+  padding: 0 12px;
   /* Top corners only: the bottom edge must stay flat so the selected tab
      keeps its connected silhouette with the Panel below. */
   border-radius: var(--radius-control) var(--radius-control) 0 0;
@@ -299,26 +302,10 @@
 }
 
 /* Menu-row variant of the Panel tab (WeftCutDockTab with
-   tabLocation="headerOverflow"): no drag affordances; close button appears
-   on row hover / keyboard highlight only. */
+   tabLocation="headerOverflow"): no drag affordances. */
 .weft-dock-tab--overflow {
   width: 100%;
   cursor: default;
-}
-
-.weft-dock-tab--overflow .weft-dock-tab-close {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.weft-dockview .dv-tabs-overflow-container .dv-tab:hover .weft-dock-tab-close,
-.weft-dockview
-  .dv-tabs-overflow-container
-  .dv-tab.weft-overflow-row--kb-focus
-  .weft-dock-tab-close,
-.weft-dock-tab--overflow .weft-dock-tab-close:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 /* No hidden-count badge on the chevron: the tooltip already lists the

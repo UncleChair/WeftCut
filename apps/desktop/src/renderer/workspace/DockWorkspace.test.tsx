@@ -416,7 +416,7 @@ describe("DockWorkspace React integration", () => {
     expect(previewHarness.unmounts).toBe(previewHarness.mounts);
   });
 
-  it("renders overflow rows as menu items, closing via capture-phase click or middle-click", () => {
+  it("renders overflow rows as menu items", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;
     dockHarness.headerApi = {
@@ -430,10 +430,7 @@ describe("DockWorkspace React integration", () => {
 
     // Menu-row variant: no move tooltip, plain title only.
     expect(screen.queryByTitle("Move Effect")).toBeNull();
-
-    const effect = dock.panels.get("effect");
-    fireEvent.click(screen.getByRole("button", { name: "Close Effect" }));
-    expect(effect?.api.close).toHaveBeenCalledOnce();
+    expect(screen.getByTitle("Effect")).toBeTruthy();
   });
 
   it("closes an overflow row's Panel on middle-click", () => {
@@ -484,7 +481,7 @@ describe("DockWorkspace React integration", () => {
     expect(onRowBClick).toHaveBeenCalledOnce();
   });
 
-  it("closes and maximizes from the tab chrome", () => {
+  it("maximizes from the tab chrome", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;
     dockHarness.headerApi = {
@@ -498,28 +495,9 @@ describe("DockWorkspace React integration", () => {
     const effect = dock.panels.get("effect");
     fireEvent.doubleClick(screen.getByTitle("Move Effect"));
     expect(effect?.api.maximize).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: "Close Effect" }));
-    expect(effect?.api.close).toHaveBeenCalledOnce();
   });
 
-  it("shows a close control even for a single-Panel tab", () => {
-    const dock = strictModeApi();
-    dockHarness.api = dock.api;
-    dockHarness.headerApi = {
-      id: "preview",
-      title: "Preview",
-      group: { panels: [{ id: "preview" }] },
-    };
-
-    render(<DockWorkspace contracts={contracts} />);
-
-    const preview = dock.panels.get("preview");
-    expect(screen.getByTitle("Move Preview")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close Preview" }));
-    expect(preview?.api.close).toHaveBeenCalledOnce();
-  });
-
-  it("builds a localized tab context menu with working close actions", () => {
+  it("passes no tab context menu to Dockview", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;
 
@@ -527,49 +505,8 @@ describe("DockWorkspace React integration", () => {
 
     const props = dockHarness.captures[
       dockHarness.captures.length - 1
-    ] as unknown as {
-      getTabContextMenuItems: (params: {
-        panel: { id: string };
-        group: { panels: { id: string }[] };
-      }) => { label: string; action: () => void }[];
-    };
-
-    // Multi-Panel group: Close / Close Others / Close All, in English here.
-    const multi = props.getTabContextMenuItems({
-      panel: { id: "media" },
-      group: { panels: [{ id: "media" }, { id: "preview" }] },
-    });
-    expect(multi.map((item) => item.label)).toEqual([
-      "Close",
-      "Close Others",
-      "Close All",
-    ]);
-
-    const media = dock.panels.get("media");
-    multi[0]!.action();
-    expect(media?.api.close).toHaveBeenCalledOnce();
-
-    const preview = dock.panels.get("preview");
-    multi[1]!.action();
-    expect(preview?.api.close).toHaveBeenCalledOnce();
-
-    multi[2]!.action();
-    expect(dock.panels.size).toBe(0);
-
-    // Single-Panel group: no Close Others.
-    const solo = props.getTabContextMenuItems({
-      panel: { id: "timeline" },
-      group: { panels: [{ id: "timeline" }] },
-    });
-    expect(solo.map((item) => item.label)).toEqual(["Close", "Close All"]);
-
-    // Unknown panels get no menu at all.
-    expect(
-      props.getTabContextMenuItems({
-        panel: { id: "not-a-panel" },
-        group: { panels: [{ id: "not-a-panel" }] },
-      }),
-    ).toEqual([]);
+    ] as Record<string, unknown>;
+    expect(props.getTabContextMenuItems).toBeUndefined();
   });
 
   it("widens drop targets and sizes the overlay to the resulting split", () => {
