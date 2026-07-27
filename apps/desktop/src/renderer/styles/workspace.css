@@ -6,8 +6,9 @@
   overflow: hidden;
   /* The recessed well behind the Dock: the theme's 6px inter-group gaps
      (WEFT_DOCK_THEME) show this tone, so region boundaries read as depth
-     instead of drawn borders. */
-  background: var(--surface-sunken);
+     instead of drawn borders. Pure black, one step below --surface-sunken,
+     for maximum contrast against every Panel surface. */
+  background: #000;
 }
 
 .weft-dockview {
@@ -15,21 +16,13 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  /* Tonal ladder: strip → hidden tab → Panel surface. Every Panel except
-     Preview and Timeline sits on the unified --card surface, and the visible
-     Panel's tab matches it exactly so the two read as one continuous region. */
-  --weft-dock-strip: var(--surface-sunken);
-  --weft-dock-tab-hidden: color-mix(
-    in srgb,
-    var(--background) 45%,
-    var(--surface-sunken)
-  );
-  /* Base Panel surface; Preview (black canvas) and Timeline (its own
-     scroll-area base) keep this, all other Panels lift to --card. */
-  --weft-dock-panel-surface: var(--background);
-  /* Matches the unified --card Panel surface so the selected tab and its
-     Panel read as one continuous region; Timeline groups override the
-     --dv-*-visiblepanel vars back to the base surface below. */
+  /* One uniform --card island per group: strip, tabs, and Panel surface all
+     share it, so the black inter-group gaps do all the region separation.
+     Selection reads from the bottom accent line, the ListTree marker, and
+     label weight — not from surface contrast. */
+  --weft-dock-strip: var(--card);
+  --weft-dock-tab-hidden: var(--card);
+  --weft-dock-panel-surface: var(--card);
   --weft-dock-tab-visible: var(--card);
   --weft-dock-border: var(--border);
   --dv-tabs-and-actions-container-height: 28px;
@@ -66,6 +59,17 @@
   --dv-border-radius: var(--radius-sm);
 }
 
+/* Keep the grid backdrop transparent: Dockview paints
+ * `--dv-group-view-background-color` (now --card) across the whole
+ * `.dv-dockview` element, inter-group gaps included. Transparent lets the
+ * pure-black well show through the theme gap; each group island paints its
+ * own --card. Note `.dv-dockview` is the grid element — a CHILD of the
+ * `.weft-dockview` wrapper — so the rule must target it, not our class.
+ * Two-class selector so source order vs dockview.css can't flip it. */
+.dock-workspace .dv-dockview {
+  background-color: transparent;
+}
+
 /* Region separators off via Dockview's own theme variable — the same switch
  * its built-in *Spaced themes use (`--dv-separator-border: transparent`).
  * `hideBorders` doesn't reach the v7 shell splitviews (they're built without
@@ -84,9 +88,9 @@
   min-height: 0;
 }
 
-/* No hairline under the strip: region boundaries come from the tonal ladder
-   alone. Selection reads from the surface-matched tab, a bottom accent line,
-   the ListTree marker, and label weight. Groups carry no focus-group marker. */
+/* No hairline under the strip: region boundaries come from the inter-group
+   gaps alone. Selection reads from a bottom accent line, the ListTree
+   marker, and label weight. Groups carry no focus-group marker. */
 
 /* Selection layer 1 — bottom accent line on the selected tab, inset so it
    sits flush on the seam with the Panel below. */
@@ -128,29 +132,8 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  /* Anchors the bottom of the tonal ladder; the visible tab continues it
-     via --weft-dock-tab-visible. */
+  /* Every Panel sits on the unified --card surface. */
   background: var(--weft-dock-panel-surface);
-}
-
-/* Unified editing surface: every Panel except Preview (pure black canvas)
-   and Timeline (keeps the workspace base under its own scroll area) sits on
-   --card, one step above the base. */
-.weft-dock-panel:not([data-panel-kind="preview"]):not([data-panel-kind="timeline"]) {
-  background: var(--card);
-}
-
-/* Keep the visible tab flush with its Panel: Timeline groups stay on the
-   base surface instead of the unified --card. The --dv-* vars must be
-   re-declared here (not just --weft-dock-tab-visible) because var() in a
-   custom property resolves where the property is declared. */
-.weft-dockview .dv-groupview:has(.weft-dock-panel[data-panel-kind="timeline"]) {
-  --dv-activegroup-visiblepanel-tab-background-color: var(
-    --weft-dock-panel-surface
-  );
-  --dv-inactivegroup-visiblepanel-tab-background-color: var(
-    --weft-dock-panel-surface
-  );
 }
 
 .weft-dock-panel > .preview,

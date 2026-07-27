@@ -920,7 +920,7 @@ export function Timeline({
     </div>
     <div
       ref={rootRef}
-      className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-background ${
+      className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-card ${
         drag ? "cursor-grabbing select-none" : ""
       } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
       onClick={clearLayerSelection}

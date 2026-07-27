@@ -7,9 +7,9 @@
   flex-direction: column;
   align-items: stretch;
   justify-content: stretch;
-  /* One step above pure black so the edges of dark footage stay visible
-     against the canvas surround. */
-  background: var(--background);
+  /* Unified with every other Panel on --card; still light enough that the
+     edges of dark footage stay visible against the canvas surround. */
+  background: var(--card);
   min-height: 0;
 }
 
