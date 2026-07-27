@@ -55,7 +55,6 @@
 .media-pool {
   grid-area: mediapool;
   overflow-y: auto;
-  border-right: 1px solid var(--border-soft);
   background: var(--card);
   min-height: 0;
   /* Anchor for the file-drop overlay. */

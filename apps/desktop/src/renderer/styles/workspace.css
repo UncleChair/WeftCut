@@ -4,7 +4,10 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--background);
+  /* The recessed well behind the Dock: the theme's 6px inter-group gaps
+     (WEFT_DOCK_THEME) show this tone, so region boundaries read as depth
+     instead of drawn borders. */
+  background: var(--surface-sunken);
 }
 
 .weft-dockview {
@@ -49,9 +52,8 @@
   --dv-inactivegroup-hiddenpanel-tab-color: var(--muted-foreground);
   --dv-group-view-background-color: var(--weft-dock-panel-surface);
   --dv-paneview-active-outline-color: var(--ring);
-  /* --border, not --border-soft: the soft hairline disappears on the dark
-     strip. */
-  --dv-separator-border: var(--weft-dock-border);
+  /* Tab-strip divider only — region separators are gone: the theme gap
+     separates groups with the sunken background instead. */
   --dv-tab-divider-color: var(--weft-dock-border);
   /* Dockview's default drop feedback is borderless with a faint gray fill —
      nearly invisible on this palette. */
@@ -62,6 +64,18 @@
   --dv-context-menu-color: var(--foreground);
   --dv-icon-hover-background-color: var(--muted);
   --dv-border-radius: var(--radius-sm);
+}
+
+/* Region separators off via Dockview's own theme variable — the same switch
+ * its built-in *Spaced themes use (`--dv-separator-border: transparent`).
+ * `hideBorders` doesn't reach the v7 shell splitviews (they're built without
+ * styles, which re-adds the `dv-separator-border` class), so the variable is
+ * the reliable surface. It must be set on `.dv-shell`: the theme class
+ * defines the color there, and the nearest ancestor declaration wins
+ * inheritance — setting it on `.dock-workspace` alone would lose to Abyss.
+ * The ::before still generates but paints nothing. */
+.dock-workspace .dv-shell {
+  --dv-separator-border: transparent;
 }
 
 .weft-dockview .dv-groupview {

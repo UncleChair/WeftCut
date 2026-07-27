@@ -68,6 +68,11 @@ vi.mock("dockview-react", async () => {
         </div>
       );
     },
+    themeAbyss: {
+      name: "abyss",
+      className: "dockview-theme-abyss",
+      colorScheme: "dark",
+    },
   };
 });
 

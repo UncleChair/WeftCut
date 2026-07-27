@@ -19,7 +19,6 @@
 .properties { grid-area: properties; }
 
 .timeline {
-  border-top: 1px solid var(--border-soft);
   overflow: hidden;
   min-height: 0;
   display: flex;

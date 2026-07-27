@@ -11,8 +11,10 @@ import {
 } from "react";
 import {
   DockviewReact,
+  themeAbyss,
   type DockviewMessages,
   type DockviewReadyEvent,
+  type DockviewTheme,
   type DroptargetOverlayModel,
   type DropOverlayModelParams,
   type IDockviewPanelHeaderProps,
@@ -599,6 +601,17 @@ export function EmptyWorkspaceRecovery() {
 const DOCK_COMPONENTS = { [DOCK_COMPONENT_ID]: WeftCutPanelRenderer };
 const DOCK_TAB_COMPONENTS = { [DOCK_TAB_COMPONENT_ID]: WeftCutDockTab };
 
+/* Spaced theme: `gap` is layout-level (the shell sizes groups so a real gap
+ * sits between them), letting the sunken workspace background show through
+ * and separate Panels. `hideBorders` removes the grid's separator borders;
+ * it doesn't reach the v7 shell splitviews, so workspace.css also sets
+ * `--dv-separator-border: transparent` on `.dv-shell` (the same switch
+ * Dockview's own *Spaced themes use). Based on Abyss to keep its base
+ * `--dv-*` variable defaults; the className stays Abyss's so those base
+ * styles keep applying, while the app's own overrides live on
+ * `.weft-dockview` (the `className` prop). */
+const WEFT_DOCK_THEME: DockviewTheme = { ...themeAbyss, name: "weft", gap: 6 };
+
 /* Drop-target geometry, tuned so the highlight always equals the layout the
  * drop will produce (a 50/50 split or a full-area tab merge) and targets are
  * large enough to hit: a group's outer third splits, its middle merges, and
@@ -709,6 +722,8 @@ export function DockWorkspace({
         >
           <DockviewReact
             className="weft-dockview"
+            theme={WEFT_DOCK_THEME}
+            hideBorders
             components={DOCK_COMPONENTS}
             tabComponents={DOCK_TAB_COMPONENTS}
             watermarkComponent={EmptyWorkspaceRecovery}
