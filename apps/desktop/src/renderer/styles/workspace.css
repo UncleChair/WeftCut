@@ -12,29 +12,26 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  /* Tonal ladder: strip → hidden tab → visible Panel, with the visible
-     Panel's tab lifted one half-step above the Panel surface. The Panel
-     surface matches the Timeline's scroll-area base (--background) so every
-     Panel shares the same editing surface. */
+  /* Tonal ladder: strip → hidden tab → Panel surface. Every Panel except
+     Preview and Timeline sits on the unified --card surface, and the visible
+     Panel's tab matches it exactly so the two read as one continuous region. */
   --weft-dock-strip: var(--surface-sunken);
   --weft-dock-tab-hidden: color-mix(
     in srgb,
     var(--background) 45%,
     var(--surface-sunken)
   );
+  /* Base Panel surface; Preview (black canvas) and Timeline (its own
+     scroll-area base) keep this, all other Panels lift to --card. */
   --weft-dock-panel-surface: var(--background);
-  /* Neutral lift (no hue shift, same family as --hover-neutral) so the
-     selected tab reads as a solid block without breaking the connected
-     silhouette. */
-  --weft-dock-tab-visible: color-mix(
-    in srgb,
-    var(--foreground) 5%,
-    var(--weft-dock-panel-surface)
-  );
+  /* Matches the unified --card Panel surface so the selected tab and its
+     Panel read as one continuous region; Timeline groups override the
+     --dv-*-visiblepanel vars back to the base surface below. */
+  --weft-dock-tab-visible: var(--card);
   --weft-dock-border: var(--border);
   --dv-tabs-and-actions-container-height: 28px;
   --dv-tabs-and-actions-container-background-color: var(--weft-dock-strip);
-  /* Connected tab: the visible Panel's tab sits on the lifted surface so it
+  /* Connected tab: the visible Panel's tab matches the Panel surface so it
      reads as one continuous region with the content below. */
   --dv-activegroup-visiblepanel-tab-background-color: var(
     --weft-dock-tab-visible
@@ -74,7 +71,7 @@
 }
 
 /* No hairline under the strip and no accent line on the selected tab:
-   selection reads from the lifted surface + label weight, and region
+   selection reads from the surface-matched tab + label weight, and region
    boundaries come from the tonal ladder alone. Groups carry no focus-group
    marker. */
 
@@ -112,9 +109,29 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  /* Anchors the bottom of the tonal ladder; the visible tab lifts half a
-     step above it via --weft-dock-tab-visible. */
+  /* Anchors the bottom of the tonal ladder; the visible tab continues it
+     via --weft-dock-tab-visible. */
   background: var(--weft-dock-panel-surface);
+}
+
+/* Unified editing surface: every Panel except Preview (pure black canvas)
+   and Timeline (keeps the workspace base under its own scroll area) sits on
+   --card, one step above the base. */
+.weft-dock-panel:not([data-panel-kind="preview"]):not([data-panel-kind="timeline"]) {
+  background: var(--card);
+}
+
+/* Keep the visible tab flush with its Panel: Timeline groups stay on the
+   base surface instead of the unified --card. The --dv-* vars must be
+   re-declared here (not just --weft-dock-tab-visible) because var() in a
+   custom property resolves where the property is declared. */
+.weft-dockview .dv-groupview:has(.weft-dock-panel[data-panel-kind="timeline"]) {
+  --dv-activegroup-visiblepanel-tab-background-color: var(
+    --weft-dock-panel-surface
+  );
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(
+    --weft-dock-panel-surface
+  );
 }
 
 .weft-dock-panel > .preview,
