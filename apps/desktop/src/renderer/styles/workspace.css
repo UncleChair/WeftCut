@@ -12,28 +12,46 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
+  /* Tonal ladder: strip → hidden tab → visible Panel + its tab. The Panel
+     surface matches the Timeline's scroll-area base (--background) so every
+     Panel shares the same editing surface. */
+  --weft-dock-strip: var(--surface-sunken);
+  --weft-dock-tab-hidden: color-mix(
+    in srgb,
+    var(--background) 45%,
+    var(--surface-sunken)
+  );
+  --weft-dock-panel-surface: var(--background);
+  --weft-dock-border: var(--border);
   --dv-tabs-and-actions-container-height: 28px;
-  --dv-tabs-and-actions-container-background-color: var(--surface-sunken);
-  --dv-activegroup-visiblepanel-tab-background-color: var(--secondary);
+  --dv-tabs-and-actions-container-background-color: var(--weft-dock-strip);
+  /* Connected tab: the visible Panel's tab takes the Panel surface color so
+     it reads as one continuous region with the content below. */
+  --dv-activegroup-visiblepanel-tab-background-color: var(
+    --weft-dock-panel-surface
+  );
   --dv-activegroup-visiblepanel-tab-color: var(--foreground);
-  --dv-activegroup-hiddenpanel-tab-background-color: var(--surface-sunken);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--weft-dock-tab-hidden);
   --dv-activegroup-hiddenpanel-tab-color: var(--muted-foreground);
-  --dv-inactivegroup-visiblepanel-tab-background-color: var(--card);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(
+    --weft-dock-panel-surface
+  );
   --dv-inactivegroup-visiblepanel-tab-color: var(--foreground);
-  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--surface-sunken);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(
+    --weft-dock-tab-hidden
+  );
   --dv-inactivegroup-hiddenpanel-tab-color: var(--muted-foreground);
-  --dv-group-view-background-color: var(--card);
+  --dv-group-view-background-color: var(--weft-dock-panel-surface);
   --dv-paneview-active-outline-color: var(--ring);
-  --dv-separator-border: var(--border-soft);
-  --dv-tab-divider-color: var(--border);
-  /* Drop feedback: VS Code-style — a translucent accent fill with a solid
-     accent outline, so the pending split reads as a real region. Dockview's
-     default is borderless (`--dv-drag-over-border: none`) with a faint gray
-     fill, which made the drop state nearly invisible. */
+  /* --border, not --border-soft: the soft hairline disappears on the dark
+     strip. */
+  --dv-separator-border: var(--weft-dock-border);
+  --dv-tab-divider-color: var(--weft-dock-border);
+  /* Dockview's default drop feedback is borderless with a faint gray fill —
+     nearly invisible on this palette. */
   --dv-drag-over-background-color: color-mix(in srgb, var(--ring) 20%, transparent);
   --dv-drag-over-border-color: var(--ring);
   --dv-drag-over-border: 2px solid var(--ring);
-  /* Dockview's built-in tab context menu, themed to match the app menus. */
   --dv-context-menu-background-color: var(--card);
   --dv-context-menu-color: var(--foreground);
   --dv-icon-hover-background-color: var(--muted);
@@ -46,10 +64,41 @@
   min-height: 0;
 }
 
-/* Active-group signal: a flat 2px accent line under the group's tab strip.
-   (The old full-perimeter outline read as a glowing frame around the Panel.) */
-.weft-dockview .dv-groupview.dv-active-group .dv-tabs-and-actions-container {
-  box-shadow: inset 0 -2px 0 0 color-mix(in srgb, var(--ring) 72%, transparent);
+/* Hairline under every strip; the visible tab's opaque background paints
+   over its own stretch, completing the connected-tab silhouette. */
+.weft-dockview .dv-tabs-and-actions-container {
+  box-shadow: inset 0 -1px 0 0 var(--weft-dock-border);
+}
+
+/* No accent line on the selected tab: selection reads from the connected
+   silhouette alone, and groups carry no focus-group marker. */
+
+/* The selector chain must out-specify Dockview's group-scoped base rules
+   (six classes). */
+.weft-dockview .dv-groupview .dv-tabs-container > .dv-tab.dv-inactive-tab {
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.weft-dockview
+  .dv-groupview
+  .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-inactive-tab:hover {
+  background-color: color-mix(
+    in srgb,
+    var(--foreground) 7%,
+    var(--weft-dock-tab-hidden)
+  );
+  color: var(--foreground);
+}
+
+/* Kill Dockview's 1px focus outline (`.dv-tab:focus::after`): the silhouette
+   already marks selection, and the outline fires on plain mouse clicks. */
+.weft-dockview .dv-tabs-container > .dv-tab:focus::after,
+.weft-dockview .dv-tabs-container > .dv-tab:focus-within::after {
+  content: none;
 }
 
 .weft-dock-panel {
@@ -58,7 +107,9 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--card);
+  /* Must match --weft-dock-panel-surface so the visible tab and the Panel
+     body stay one continuous surface. */
+  background: var(--weft-dock-panel-surface);
 }
 
 .weft-dock-panel > .preview,
@@ -89,20 +140,9 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   /* The whole tab is the dock drag source. */
   cursor: grab;
-}
-
-/* The drag-dots icon was removed for a flatter look, but its slot stays as
-   empty space so the tab's geometry is unchanged from when it was shown. */
-.weft-dock-grip {
-  width: 14px;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
 }
 
 .weft-dock-tab-label {
@@ -132,10 +172,9 @@
   background: var(--muted);
 }
 
-/* The close affordance only appears while its tab is hovered — active tabs
-   and single-Panel tabs included; an always-on X on every tab reads as
-   noise. Keyboard focus still forces it visible, and while hidden it
-   swallows no clicks. */
+/* Close button appears on tab hover only — an always-on X on every tab reads
+   as noise. Keyboard focus still forces it visible; while hidden it swallows
+   no clicks. */
 .weft-dockview .dv-tabs-and-actions-container .weft-dock-tab-close {
   opacity: 0;
   pointer-events: none;
@@ -149,26 +188,21 @@
   pointer-events: auto;
 }
 
-/* Wheel-scrolled tab strips show no scrollbar: Dockview's custom scrollbar
-   is hover chrome that flashes on every wheel tick. */
+/* Dockview's custom tab-strip scrollbar is hover chrome that flashes on
+   every wheel tick. */
 .weft-dockview .dv-tabs-and-actions-container .dv-scrollbar {
   display: none;
 }
 
-/* Every group keeps its 28px tab header — so the drag handle, Panel title,
-   and close affordance stay in one fixed place regardless of group state —
-   with one exception: a group holding only Preview has its strip hidden by
-   the adapter (Dockview `hideHeader`). With no strip there is no drag handle,
-   so a solo Preview cannot be dragged, and the preview surface gains the
-   vertical space. Once another Panel joins the group the strip returns for
-   tab switching. */
+/* Every group keeps its 28px tab header so the drag handle, Panel title, and
+   close affordance stay in one fixed place — with one exception: a group
+   holding only Preview has its strip hidden by the adapter (Dockview
+   `hideHeader`), trading draggability for vertical space. */
 .weft-dockview .dv-tabs-and-actions-container .dv-tab {
   height: 28px;
-  padding: 0 8px;
+  padding: 0 8px 0 12px;
 }
 
-/* The drop preview is a real region, not a hairline: soften its corners to
-   match the app's surfaces. */
 .weft-dockview .dv-drop-target-selection {
   border-radius: var(--radius-sm);
 }
@@ -202,9 +236,8 @@
 }
 
 /* ---- Tabs-overflow dropdown ----------------------------------------------
-   Dockview's built-in overflow popover (the chevron at the tab strip's right
-   end), themed to match the app's own menus (`.app-menu-list`): same border,
-   radius, shadow, hover tone, and body-size labels. */
+   Dockview's built-in overflow popover, themed to match the app's own menus
+   (`.app-menu-list`). */
 .weft-dockview .dv-tabs-overflow-container {
   min-width: 220px;
   max-width: 320px;
@@ -240,17 +273,16 @@
   font-size: var(--font-size-body);
 }
 
-/* Active Panel's row: accent spine, mirroring the active group's strip
-   underline so "where am I" reads the same in both places. */
+/* The active Panel's row keeps an explicit accent spine — menu rows have no
+   connected silhouette to lean on. */
 .weft-dockview .dv-tabs-overflow-container .dv-tab.dv-active-tab {
   box-shadow: inset 2px 0 0 var(--ring);
   color: var(--foreground);
 }
 
 /* Menu-row variant of the Panel tab (WeftCutDockTab with
-   tabLocation="headerOverflow"): no drag affordances, full-width label, and
-   the close button only appears on row hover / keyboard highlight — the
-   VS Code overflow-menu pattern. */
+   tabLocation="headerOverflow"): no drag affordances; close button appears
+   on row hover / keyboard highlight only. */
 .weft-dock-tab--overflow {
   width: 100%;
   cursor: default;
@@ -271,8 +303,8 @@
   pointer-events: auto;
 }
 
-/* The chevron trigger itself: no hidden-count badge (the tooltip already
-   lists the hidden Panels by name), just a compact strip button. */
+/* No hidden-count badge on the chevron: the tooltip already lists the
+   hidden Panels by name. */
 .weft-dockview .dv-tabs-overflow-dropdown-default {
   gap: 2px;
   padding: 0 6px;

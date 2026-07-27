@@ -609,9 +609,6 @@ export function WeftCutDockTab({
         chrome.toggleMaximize(kind);
       }}
     >
-      {/* Grip slot kept for geometry: the drag-dots icon was removed for a
-          flatter look, but the empty span preserves the original spacing. */}
-      <span className="weft-dock-grip" aria-hidden="true" />
       <span className="weft-dock-tab-label">{title}</span>
       {kind ? (
         <button
