@@ -215,7 +215,6 @@ export function MediaPool({
   if (media.length === 0) {
     return (
       <div className="media-pool-inner">
-        <h2>{t("media_pool.heading")}</h2>
         <p className="placeholder">{t("media_pool.empty")}</p>
       </div>
     );
@@ -232,10 +231,6 @@ export function MediaPool({
   return (
     <div className="media-pool-inner">
       <MediaDragPreview />
-      <h2>
-        {t("media_pool.heading")} (
-        {trimmed ? `${filtered.length}/${media.length}` : media.length})
-      </h2>
       <div className="media-pool-search">
         <AppInput
           type="search"
