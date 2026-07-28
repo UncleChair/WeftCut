@@ -318,6 +318,10 @@
  */
 .settings-panel--nav {
   width: min(720px, calc(100vw - 32px));
+  /* Fixed vertical share so tab switches don't resize the dialog: every
+     pane's content fits the same box, with per-pane overflow scrolling
+     inside `.settings-content` instead. */
+  height: min(80vh, calc(100vh - 64px));
 }
 
 .settings-layout {
