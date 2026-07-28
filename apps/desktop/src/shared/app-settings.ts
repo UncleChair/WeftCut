@@ -12,6 +12,11 @@ export type DisplayMode = "AbRoll" | "ShowAll";
 /// place it becomes a number.
 export type PlaybackResolution = "full" | "half" | "quarter";
 
+/// Media-pool card arrangement: `large` keeps the legacy one-card-per-row
+/// full-width cards; `grid` packs fixed-size cards into as many columns as
+/// the panel width fits; `list` renders compact file-manager-style rows.
+export type MediaPoolLayout = "large" | "grid" | "list";
+
 export interface AppSettings {
   display_mode: DisplayMode;
   /// Half-width of the symmetric peek window in microseconds (default
@@ -37,6 +42,9 @@ export interface AppSettings {
   /// 12.44 MB per frame. Preview only — export always decodes full size.
   /// App-level, like `decode_engine`: it describes THIS machine's headroom.
   playback_resolution: PlaybackResolution;
+  /// Media-pool card arrangement (see MediaPoolLayout). App-level: it's a
+  /// browsing preference of this user, not a property of any project.
+  media_pool_layout: MediaPoolLayout;
   /// Absolute path to the user-configurable data root that owns all large,
   /// app-managed, relocatable content (motifs/, cache/, downloads/). Empty /
   /// unset means "use the default" — the main-process resolver
@@ -68,6 +76,7 @@ export interface AppSettingsPatch {
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
   playback_resolution?: PlaybackResolution;
+  media_pool_layout?: MediaPoolLayout;
   /// New data-root path. An empty string clears it back to unset (→ default).
   data_root?: string;
   /// New UI language (a SUPPORTED_LOCALES code). An empty string clears it back
@@ -84,6 +93,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   preview_effects_enabled: true,
   decode_engine: "auto",
   playback_resolution: "full",
+  media_pool_layout: "large",
   // Unset by default: the resolver substitutes `<userData>/data`. Left
   // `undefined` so it is never serialized onto disk unless the user sets it.
   data_root: undefined,

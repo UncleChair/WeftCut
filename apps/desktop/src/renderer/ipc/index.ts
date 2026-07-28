@@ -684,10 +684,11 @@ export async function workspaceDir(): Promise<string | null> {
 // existing `import { AppSettings } from "../ipc"` call sites keep working.
 import type {
   DisplayMode,
+  MediaPoolLayout,
   AppSettings,
   AppSettingsPatch,
 } from "../../shared/app-settings";
-export type { DisplayMode, AppSettings, AppSettingsPatch };
+export type { DisplayMode, MediaPoolLayout, AppSettings, AppSettingsPatch };
 
 export async function appSettingsGet(): Promise<AppSettings> {
   return invoke<AppSettings>("app_settings_get");

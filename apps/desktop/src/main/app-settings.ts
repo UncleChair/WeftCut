@@ -69,6 +69,13 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
         parsed.playback_resolution === 'full' || parsed.playback_resolution === 'half' || parsed.playback_resolution === 'quarter'
           ? parsed.playback_resolution
           : d.playback_resolution,
+      // Additive field, same trap as playback_resolution: files written before
+      // it existed have no key — an absent/unrecognized value MUST land on the
+      // default ("large") so the pool keeps its legacy card layout.
+      media_pool_layout:
+        parsed.media_pool_layout === 'large' || parsed.media_pool_layout === 'grid' || parsed.media_pool_layout === 'list'
+          ? parsed.media_pool_layout
+          : d.media_pool_layout,
       // Optional path; a non-string, empty, or whitespace-only value degrades to
       // unset (undefined) so the resolver falls back to the default root. Kept
       // out of the on-disk file when unset (JSON.stringify drops undefined).
@@ -107,6 +114,7 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.preview_effects_enabled !== undefined) current.preview_effects_enabled = patch.preview_effects_enabled
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine
       if (patch.playback_resolution !== undefined) current.playback_resolution = patch.playback_resolution
+      if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
       // Empty / whitespace-only clears the field back to unset (→ default root);
       // any other value is stored verbatim. Storing undefined keeps it off disk.
       if (patch.data_root !== undefined) current.data_root = patch.data_root.trim() === '' ? undefined : patch.data_root

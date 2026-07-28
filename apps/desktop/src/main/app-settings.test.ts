@@ -114,6 +114,19 @@ describe('app-settings store', () => {
     expect(store({ [PATH]: '{ "playback_resolution": 2 }' }).get().playback_resolution).toBe('full')
   })
 
+  it('media_pool_layout defaults to large on a file written before the field existed', () => {
+    // Same additive-field trap as playback_resolution: an existing
+    // app_settings.json has no key, and the renderer switches on the value —
+    // undefined there would silently drop every layout class.
+    expect(store({ [PATH]: '{ "display_mode": "ShowAll" }' }).get().media_pool_layout).toBe('large')
+    expect(store().get().media_pool_layout).toBe('large')
+    expect(store().apply({ media_pool_layout: 'grid' }).media_pool_layout).toBe('grid')
+    expect(store().apply({ media_pool_layout: 'list' }).media_pool_layout).toBe('list')
+    // Hand-edited / wrong-typed values degrade the same way.
+    expect(store({ [PATH]: '{ "media_pool_layout": "mosaic" }' }).get().media_pool_layout).toBe('large')
+    expect(store({ [PATH]: '{ "media_pool_layout": 3 }' }).get().media_pool_layout).toBe('large')
+  })
+
   it('data_root round-trips, and empty/missing/corrupt degrades to unset', () => {
     // No file → unset (resolver substitutes the default).
     expect(store().get().data_root).toBeUndefined()

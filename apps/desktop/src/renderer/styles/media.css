@@ -101,6 +101,52 @@
   /* Sibling above the scrolling .media-pool-inner, so it never moves. Its
    * padding mirrors the inner's side/top padding. */
   padding: 8px 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.media-pool-search .app-input-wrap {
+  /* The search field claims the free width; the layout switch stays fixed. */
+  flex: 1;
+  min-width: 0;
+}
+
+/* Card-arrangement switch beside the search field (large / grid / list).
+   The choice persists via app_settings.media_pool_layout. */
+.media-layout-switch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-on-dark);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+}
+
+.media-layout-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border: none;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.media-layout-button:hover {
+  background: var(--hover-neutral);
+  color: var(--foreground);
+}
+
+.media-layout-button.is-active {
+  background: var(--active-neutral);
+  color: var(--foreground);
 }
 
 /* Search field + its ✕ come from AppInput (.app-input / .app-input-clear). */
@@ -114,6 +160,80 @@
   display: grid;
   grid-template-columns: 1fr;
   gap: 8px;
+}
+
+/* Grid mode: fixed-size cards wrapped with flex. A grid with auto-fill +
+   space-between redistributes the gap every time the column count flips,
+   which reads as a spacing jump while the panel is resized; flex keeps the
+   gap constant and lets the leftover space sit at the row's right edge. */
+.media-list.is-layout-grid {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.media-list.is-layout-grid .media-item {
+  flex: none;
+  width: 148px;
+}
+
+/* List mode: compact file-manager-style rows — small thumbnail, name,
+   inline duration. */
+.media-list.is-layout-list {
+  grid-template-columns: 1fr;
+  gap: 2px;
+}
+
+.media-list.is-layout-list .media-item {
+  flex-direction: row;
+  align-items: center;
+}
+
+.media-list.is-layout-list .media-item-thumb {
+  /* Static so the status badges inside anchor to the whole row (the li is
+     positioned) instead of the 72px thumbnail. */
+  position: static;
+  flex: none;
+  width: 72px;
+}
+
+.media-list.is-layout-list .media-item-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border-top: none;
+}
+
+.media-list.is-layout-list .media-item-meta-inline {
+  flex: none;
+  padding: 0 8px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sized for a full-width card; it would smother a 72px row thumbnail.
+   The inline duration above replaces it. */
+.media-list.is-layout-list .media-item-metadata {
+  display: none;
+}
+
+/* The kind pill would cover most of a 72px thumbnail. */
+.media-list.is-layout-list .media-kind {
+  display: none;
+}
+
+.media-list.is-layout-list .media-analyze-shots {
+  flex: none;
+  margin-right: 6px;
+}
+
+/* List mode: the proxy pill leaves its floating corner slot and joins the
+   row as an always-visible inline control (no hover reveal needed). */
+.media-list.is-layout-list .media-proxy-pill {
+  position: static;
+  flex: none;
+  margin-right: 6px;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .media-item {
@@ -422,9 +542,11 @@
 
 /* Per-clip proxy override pill (tri-state: Auto / Force proxy / Force
    original) — the only UI path to set the override, so it must stay
-   reachable by keyboard/AT. It occupies the thumbnail's top-left corner;
-   top-right is reserved for the media kind. Hidden at rest and revealed on
-   hover or focus-within. Hidden entirely for Bypass sources. */
+   reachable by keyboard/AT. In card modes it floats over the thumbnail's
+   top-left corner (anchored to the card; the thumb is its first child) and
+   is revealed on hover/focus-within; top-right is reserved for the media
+   kind. In list mode it flows inline in the row, always visible (see the
+   is-layout-list override above). Hidden entirely for Bypass sources. */
 .media-proxy-pill {
   position: absolute;
   top: 6px;

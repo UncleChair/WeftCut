@@ -70,8 +70,11 @@ describe("MediaPool proxy pill", () => {
     renderPool([makeMedia("m1", { route: "direct-export", quick_proxy: null })]);
     const pill = document.querySelector(".media-proxy-pill.is-auto");
     expect(pill).not.toBeNull();
-    expect(pill?.closest(".media-item-thumb")).not.toBeNull();
-    expect(pill?.closest(".media-item-info")).toBeNull();
+    // The pill is a direct child of the card li (not the thumb) so list
+    // mode can flow it inline as an always-visible row control; card modes
+    // keep it pinned over the thumbnail's top-left corner via CSS.
+    expect(pill?.parentElement?.classList.contains("media-item")).toBe(true);
+    expect(pill?.closest(".media-item-thumb")).toBeNull();
     expect(pill?.textContent).toBe("Proxy: Auto");
     await userEvent.click(pill as HTMLElement);
 

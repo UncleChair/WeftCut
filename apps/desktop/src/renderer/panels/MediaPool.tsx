@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { LayoutGridIcon, ListIcon, RectangleHorizontalIcon } from "lucide-react";
 
 import { MediaThumbnail } from "./MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
@@ -10,9 +11,15 @@ import {
   useMediaDragStore,
 } from "../timeline/mediaDrag";
 import { AppInput } from "../components/AppInput";
-import { type MediaSummary, generateQuickProxy, analyzeShots } from "../ipc";
+import {
+  type MediaPoolLayout,
+  type MediaSummary,
+  generateQuickProxy,
+  analyzeShots,
+} from "../ipc";
 import { registerRevealMedia } from "../state/navigation";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
+import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
 import { quickProxyPath } from "../render/decodeRoute";
 
 function isFileDrag(e: React.DragEvent): boolean {
@@ -20,6 +27,19 @@ function isFileDrag(e: React.DragEvent): boolean {
 }
 
 const MAX_DRAG_PREVIEW_WIDTH_PX = 220;
+
+/// Card arrangement options for the pool, persisted app-wide as
+/// app_settings.media_pool_layout. `large` is the legacy one-card-per-row
+/// layout; `grid` packs fixed-size cards into as many columns as fit;
+/// `list` renders compact file-manager-style rows.
+const LAYOUT_MODES: ReadonlyArray<{
+  mode: MediaPoolLayout;
+  Icon: typeof ListIcon;
+}> = [
+  { mode: "large", Icon: RectangleHorizontalIcon },
+  { mode: "grid", Icon: LayoutGridIcon },
+  { mode: "list", Icon: ListIcon },
+];
 
 function mediaDragVisual(
   element: HTMLElement,
@@ -178,6 +198,7 @@ export function MediaPool({
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const layout = useMediaPoolLayout();
   const beginMediaDrag = useMediaDragStore((s) => s.begin);
   const endMediaDrag = useMediaDragStore((s) => s.end);
 
@@ -247,6 +268,24 @@ export function MediaPool({
             }
           }}
         />
+        <div
+          className="media-layout-switch"
+          role="group"
+          aria-label={t("media_pool.layout_label")}
+        >
+          {LAYOUT_MODES.map(({ mode, Icon }) => (
+            <button
+              key={mode}
+              type="button"
+              className={`media-layout-button${layout === mode ? " is-active" : ""}`}
+              aria-pressed={layout === mode}
+              title={t(`media_pool.layout_${mode}`)}
+              onClick={() => void setAppSettings({ media_pool_layout: mode })}
+            >
+              <Icon size={14} aria-hidden />
+            </button>
+          ))}
+        </div>
       </div>
       <div className="media-pool-inner">
       {filtered.length === 0 ? (
@@ -254,7 +293,7 @@ export function MediaPool({
           {t("media_pool.no_matches", { query: trimmed })}
         </p>
       ) : (
-        <ul className="media-list">
+        <ul className={`media-list${layout !== "large" ? ` is-layout-${layout}` : ""}`}>
           {filtered.map((m) => {
             const readiness = mediaReadiness(m, importing, proxyState, {
               previewDecodable: previewDecodable.has(m.id),
@@ -318,7 +357,6 @@ export function MediaPool({
                     defaultValue: m.kind,
                   })}
                 </span>
-                <ProxyPill media={m} />
                 <div className="media-item-metadata">
                   <span className="media-resolution-badge">
                     {m.width !== null && m.height !== null
@@ -381,6 +419,22 @@ export function MediaPool({
               <span className="media-item-name" title={m.label}>
                 {m.label}
               </span>
+              {layout === "list" && (
+                // Compact rows have no room for the hover-revealed metadata
+                // gradient (hidden in CSS); surface the duration inline
+                // instead, like a file manager's details column.
+                <span className="media-item-meta-inline">
+                  {m.duration_us !== null
+                    ? formatMediaDuration(m.duration_us)
+                    : t("media_pool.no_duration")}
+                </span>
+              )}
+              {/* Direct child of the li (not the thumb) so list mode can flow
+                  it inline as an always-visible row control. In card modes it
+                  stays absolutely pinned to the thumbnail's top-left corner —
+                  the thumb is the card's first child, so the anchor is the
+                  same either way. */}
+              <ProxyPill media={m} />
               {interactive && m.kind === "Video" && (
                 // Drive-by "Analyze shots": warms the deterministic shot-detector
                 // cache (shared with the agent's analyze_clip / auto_split_by_shot)

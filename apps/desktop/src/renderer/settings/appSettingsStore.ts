@@ -51,6 +51,7 @@ const FALLBACK: AppSettings = {
   preview_effects_enabled: true,
   decode_engine: "auto",
   playback_resolution: "full",
+  media_pool_layout: "large",
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -81,6 +82,10 @@ export const useDecodeEngine = (): AppSettings["decode_engine"] =>
 /// re-rendering the React tree. This is for the settings UI.
 export const usePlaybackResolution = (): AppSettings["playback_resolution"] =>
   useAppSettingsStore((s) => s.settings.playback_resolution);
+/// Media-pool card arrangement: `large` (one card per row), `grid`
+/// (fixed-size cards, adaptive columns), `list` (compact rows).
+export const useMediaPoolLayout = (): AppSettings["media_pool_layout"] =>
+  useAppSettingsStore((s) => s.settings.media_pool_layout);
 /// Persisted UI language (a SUPPORTED_LOCALES code), or `undefined` when unset
 /// (the renderer auto-detects the OS language). i18next remains the live
 /// language source; this is the persisted user choice.
