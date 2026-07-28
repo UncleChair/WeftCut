@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { GlobeIcon } from "lucide-react";
+import { GlobeIcon, SearchIcon } from "lucide-react";
 
 import { WindowControls } from "../components/WindowControls";
 import {
@@ -9,6 +9,8 @@ import {
   MenuItem,
   MenuSeparator,
 } from "../menu/Menu";
+import { resolveAccelerator } from "../shortcuts/match";
+import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
@@ -107,6 +109,13 @@ export function AppMenuBar({
 }: AppMenuBarProps) {
   const { t, i18n } = useTranslation();
 
+  // The header search button shows the *effective* palette binding, so a
+  // user remap in Settings → Keyboard is reflected here immediately.
+  const searchBinding = useEffectiveBindings("openSearchPalette");
+  const searchAccelerator = searchBinding
+    ? resolveAccelerator(searchBinding)
+    : "";
+
   const cycleLocale = useCallback(() => {
     const current = i18n.language as Locale;
     const idx = SUPPORTED_LOCALES.indexOf(current);
@@ -203,12 +212,6 @@ export function AppMenuBar({
               onSelect={onToggleBladeMode}
               disabled={busy || !canBlade}
             />
-            <MenuSeparator />
-            <MenuItem
-              actionId="openSearchPalette"
-              label={t("actions.open_search")}
-              onSelect={onOpenSearch}
-            />
           </Menu>
 
           <ViewMenu
@@ -237,6 +240,24 @@ export function AppMenuBar({
           <DevMenu />
         </MenuBar>
       </div>
+      {/* Spotlight-style entry: a button skinned as an input box, pushed
+          against the right header group by an auto left margin (see
+          .header-search in misc.css). No data-drag-region — it must
+          stay clickable. */}
+      <button
+        type="button"
+        className="header-search"
+        onClick={onOpenSearch}
+        aria-label={t("actions.open_search")}
+      >
+        <SearchIcon size={12} aria-hidden />
+        <span className="header-search-label">{t("actions.search")}</span>
+        {searchAccelerator && (
+          <kbd className="header-search-kbd" aria-hidden>
+            {searchAccelerator}
+          </kbd>
+        )}
+      </button>
       <div className="header-right" data-drag-region>
         {pong !== "ok" && pong !== "…" && (
           <span className="ping" data-drag-region>

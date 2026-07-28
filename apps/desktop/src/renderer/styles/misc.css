@@ -33,6 +33,60 @@
   align-self: stretch;
 }
 
+/* Header search entry — a <button> skinned as an input box (same skin
+   variables as .app-input). The auto left margin pushes it against the
+   right header group, inside the space between the left (brand + menus)
+   and right (locale + window controls) groups, so it can never overlap
+   the menus. */
+.header-search {
+  margin-left: auto;
+  /* Matches .header-right's internal gap. */
+  margin-right: 12px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 140px;
+  max-width: 100%;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: var(--font-size-body);
+  color: var(--muted-foreground);
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.header-search:hover {
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.header-search:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+}
+
+.header-search-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.header-search-kbd {
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: var(--font-size-micro);
+  opacity: 0.6;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 1px 5px;
+}
+
 .standalone-row.level-error .row-body {
   color: var(--destructive);
 }

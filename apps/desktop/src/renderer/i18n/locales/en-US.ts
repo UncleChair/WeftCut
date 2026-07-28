@@ -224,6 +224,7 @@ const enUS = {
     seek_start: "Go to start",
     seek_end: "Go to end",
     open_search: "Search everything…",
+    search: "Search",
   },
   dialogs: {
     save_title: "Save WeftCut project",

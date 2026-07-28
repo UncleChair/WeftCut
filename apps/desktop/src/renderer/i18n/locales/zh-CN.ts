@@ -222,6 +222,7 @@ const zhCN: Resources = {
     seek_start: "跳到开头",
     seek_end: "跳到结尾",
     open_search: "全局搜索…",
+    search: "搜索",
   },
   dialogs: {
     save_title: "保存 WeftCut 项目",
