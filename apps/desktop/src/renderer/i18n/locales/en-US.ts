@@ -622,10 +622,9 @@ const enUS = {
       "This rate is non-drop-frame: {{tc}} is {{wall}} of real time.",
     content_end_wall_clock: "Content end {{tc}} is {{wall}}.",
     timeline_heading: "Timeline",
-    timeline_blurb: "Timeline editing preferences.",
-    tail_snap_enabled: "Enable timeline snapping",
+    tail_snap_enabled: "Clip snapping",
     tail_snap_enabled_hint:
-      "Align edits to nearby clip edges or the playhead.",
+      "Snap clips to nearby clip edges or the playhead while dragging or trimming.",
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels, so the effective time range follows the current timeline zoom.",

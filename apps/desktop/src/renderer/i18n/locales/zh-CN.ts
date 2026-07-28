@@ -602,10 +602,9 @@ const zhCN: Resources = {
     duration_wall_clock: "该帧率为非丢帧时间码：{{tc}} 实际为 {{wall}}。",
     content_end_wall_clock: "内容末尾 {{tc}} 实际为 {{wall}}。",
     timeline_heading: "时间线",
-    timeline_blurb: "控制时间线编辑偏好。",
-    tail_snap_enabled: "启用时间线吸附",
+    tail_snap_enabled: "启用片段吸附",
     tail_snap_enabled_hint:
-      "编辑时自动对齐到附近的图层边界或播放头。",
+      "拖拽或修剪片段时，自动对齐到附近的片段边界或播放头。",
     tail_snap_strength: "吸附强度",
     tail_snap_strength_hint:
       "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",

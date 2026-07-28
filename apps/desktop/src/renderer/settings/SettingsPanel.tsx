@@ -236,7 +236,6 @@ export function SettingsPanel({
 
             <section className="settings-section">
               <h3>{t("settings.timeline_heading")}</h3>
-              <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
               <TimelineSnapSection onError={setError} />
             </section>
 
