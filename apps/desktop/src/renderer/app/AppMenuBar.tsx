@@ -40,7 +40,6 @@ interface AppMenuBarProps {
   onAddTextLayer: () => void;
   onOpenMotifPicker: () => void;
   onOpenExport: () => void;
-  onOpenConnect: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
   workspaceController: DockWorkspaceController | null;
@@ -100,7 +99,6 @@ export function AppMenuBar({
   onAddTextLayer,
   onOpenMotifPicker,
   onOpenExport,
-  onOpenConnect,
   onOpenSettings,
   onOpenSearch,
   workspaceController,
@@ -227,11 +225,6 @@ export function AppMenuBar({
           </Menu>
 
           <Menu label={t("menu.tools")}>
-            <MenuItem
-              label={t("actions.connect_agent")}
-              hint={t("actions.connect_agent_hint")}
-              onSelect={onOpenConnect}
-            />
             <MenuItem
               actionId="openSearchPalette"
               label={t("actions.open_search")}

@@ -192,9 +192,6 @@ const enUS = {
       "Flush any pending edits to the workspace, then return to the project picker.",
     undo: "Undo",
     redo: "Redo",
-    connect_agent: "Connect agent…",
-    connect_agent_hint:
-      "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive WeftCut over MCP.",
     settings: "Settings…",
     settings_hint: "Preferences, shortcuts & API keys.",
     motifs: "Motifs…",
@@ -571,11 +568,9 @@ const enUS = {
     dismiss: "Got it",
   },
   connect: {
-    heading: "Connect an agent",
     blurb:
       "Paste one of these snippets into the agent's MCP config. The token is reused across restarts — hit Refresh to rotate it.",
     starting: "MCP server starting…",
-    close: "Close",
     copy: "Copy",
     copied: "Copied!",
     reveal: "Reveal",
@@ -603,6 +598,7 @@ const enUS = {
     cat_editing: "Project",
     cat_keyboard: "Keyboard",
     cat_api_keys: "Transcription / Speech",
+    cat_agent: "Agent",
     project_scope_blurb:
       "Settings on this page apply to the current project only and are saved with the project file.",
     startup_heading: "Startup",

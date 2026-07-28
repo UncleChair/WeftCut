@@ -30,7 +30,6 @@ import {
   registerRevealTrack,
 } from "./state/navigation";
 import { AgentMode } from "./agent/AgentMode";
-import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
@@ -113,7 +112,6 @@ export function App({ onCloseProject }: AppProps) {
   // ratchet + prod CPU). It lives in playheadStore; consumers pick their tier
   // (transient / throttled / imperative) — see playheadStore.ts.
   const [paused, setPaused] = useState<boolean>(true);
-  const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] =
     useState<SystemSettingsTarget>("general");
@@ -651,7 +649,6 @@ export function App({ onCloseProject }: AppProps) {
         addColorLayer: handleAddColorLayer,
         addTextLayer: handleAddTextLayer,
         openMotifPicker: () => setMotifPickerOpen(true),
-        openConnect: () => setConnectOpen(true),
         openSettings: () => setSettingsOpen(true),
       },
       {
@@ -758,7 +755,6 @@ export function App({ onCloseProject }: AppProps) {
           onAddTextLayer={handleAddTextLayer}
           onOpenMotifPicker={() => setMotifPickerOpen(true)}
           onOpenExport={() => setExportDialogOpen(true)}
-          onOpenConnect={() => setConnectOpen(true)}
           onOpenSettings={() => openSettings("general")}
           onOpenSearch={() => setPaletteOpen(true)}
           workspaceController={workspaceController}
@@ -862,9 +858,6 @@ export function App({ onCloseProject }: AppProps) {
         />
       )}
       <PickOverlayHost />
-      {connectOpen && (
-        <ConnectAgentPanel onClose={() => setConnectOpen(false)} />
-      )}
       {settingsOpen && (
         <SettingsPanel
           onClose={() => setSettingsOpen(false)}

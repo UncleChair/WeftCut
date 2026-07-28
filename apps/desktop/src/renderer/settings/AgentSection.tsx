@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
-import { AppDialog } from "../components/AppDialog";
 import { Button } from "@/components/ui/button";
-
-interface Props {
-  onClose: () => void;
-}
 
 const REFRESH_INTERVAL_MS = 1000;
 
-export function ConnectAgentPanel({ onClose }: Props) {
+/// MCP connection info for external agents (URL, bearer token, config
+/// snippet). Lives in the Settings "Agent" tab; like the other panes it
+/// stays mounted across tab switches, so the poll below runs once.
+export function AgentSection() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<McpInfoView | null>(null);
   const [revealed, setRevealed] = useState(false);
@@ -88,68 +86,59 @@ export function ConnectAgentPanel({ onClose }: Props) {
     }
   };
 
+  if (!info) {
+    return <p className="connect-status">{t("connect.starting")}</p>;
+  }
+
   return (
-    <AppDialog
-      title={t("connect.heading")}
-      onClose={onClose}
-      closeLabel={t("connect.close")}
-      panelClassName="connect-agent-panel"
-    >
-        <div className="connect-agent-body">
-        {!info ? (
-          <p className="connect-status">{t("connect.starting")}</p>
-        ) : (
+    <>
+      <p className="connect-blurb">{t("connect.blurb")}</p>
+
+      <ConnectField
+        label={t("connect.field.url")}
+        value={info.url}
+        onCopy={() => copy("url", info.url)}
+        copied={copied === "url"}
+        copyLabel={t("connect.copy")}
+        copiedLabel={t("connect.copied")}
+      />
+      <ConnectField
+        label={t("connect.field.bearer")}
+        value={revealed ? info.bearer_token : "••••••••••••••••"}
+        onCopy={() => copy("bearer", info.bearer_token)}
+        copied={copied === "bearer"}
+        copyLabel={t("connect.copy")}
+        copiedLabel={t("connect.copied")}
+        extraButton={
           <>
-            <p className="connect-blurb">{t("connect.blurb")}</p>
-
-            <ConnectField
-              label={t("connect.field.url")}
-              value={info.url}
-              onCopy={() => copy("url", info.url)}
-              copied={copied === "url"}
-              copyLabel={t("connect.copy")}
-              copiedLabel={t("connect.copied")}
-            />
-            <ConnectField
-              label={t("connect.field.bearer")}
-              value={revealed ? info.bearer_token : "••••••••••••••••"}
-              onCopy={() => copy("bearer", info.bearer_token)}
-              copied={copied === "bearer"}
-              copyLabel={t("connect.copy")}
-              copiedLabel={t("connect.copied")}
-              extraButton={
-                <>
-                  <Button size="sm" onClick={() => setRevealed((r) => !r)}>
-                    {revealed ? t("connect.hide") : t("connect.reveal")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={refreshToken}
-                    disabled={refreshing}
-                    title={t("connect.refresh_hint")}
-                  >
-                    {refreshing ? t("connect.refreshing") : t("connect.refresh")}
-                  </Button>
-                </>
-              }
-            />
-
-            <h3>{t("connect.snippets_heading")}</h3>
-
-            <ConnectSnippet
-              label={t("connect.snippet.config")}
-              value={snippet}
-              onCopy={() => copy("config", snippet)}
-              copied={copied === "config"}
-              copyLabel={t("connect.copy")}
-              copiedLabel={t("connect.copied")}
-            />
-
-            <p className="connect-note">{t("connect.token_note")}</p>
+            <Button size="sm" onClick={() => setRevealed((r) => !r)}>
+              {revealed ? t("connect.hide") : t("connect.reveal")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={refreshToken}
+              disabled={refreshing}
+              title={t("connect.refresh_hint")}
+            >
+              {refreshing ? t("connect.refreshing") : t("connect.refresh")}
+            </Button>
           </>
-        )}
-        </div>
-    </AppDialog>
+        }
+      />
+
+      <h3>{t("connect.snippets_heading")}</h3>
+
+      <ConnectSnippet
+        label={t("connect.snippet.config")}
+        value={snippet}
+        onCopy={() => copy("config", snippet)}
+        copied={copied === "config"}
+        copyLabel={t("connect.copy")}
+        copiedLabel={t("connect.copied")}
+      />
+
+      <p className="connect-note">{t("connect.token_note")}</p>
+    </>
   );
 }
 

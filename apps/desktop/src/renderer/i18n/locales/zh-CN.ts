@@ -194,9 +194,6 @@ const zhCN: Resources = {
     save_and_close_hint: "将待保存的编辑写入工作区，并返回项目选择页。",
     undo: "撤销",
     redo: "重做",
-    connect_agent: "连接代理…",
-    connect_agent_hint:
-      "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 WeftCut 所需的 URL 和令牌。",
     settings: "设置…",
     settings_hint: "偏好设置、快捷键与 API 密钥。",
     motifs: "Motifs…",
@@ -555,10 +552,8 @@ const zhCN: Resources = {
     dismiss: "知道了",
   },
   connect: {
-    heading: "连接代理",
     blurb: "把下面任一片段粘贴到代理的 MCP 配置中。令牌在重启后保持不变 —— 点击「刷新」可重新生成。",
     starting: "MCP 服务正在启动…",
-    close: "关闭",
     copy: "复制",
     copied: "已复制！",
     reveal: "显示",
@@ -585,6 +580,7 @@ const zhCN: Resources = {
     cat_editing: "项目",
     cat_keyboard: "键盘",
     cat_api_keys: "转录 / 语音",
+    cat_agent: "代理",
     project_scope_blurb: "本页设置仅作用于当前项目，随工程文件保存。",
     startup_heading: "启动",
     reopen_on_launch: "启动时重新打开上一个项目",

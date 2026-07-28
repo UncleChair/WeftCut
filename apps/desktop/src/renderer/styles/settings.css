@@ -281,7 +281,7 @@
  * pinned; the inner `.settings-body` wrapper carries the scroll.
  * `min-height: 0` lets the flex item shrink below its content size —
  * without it `overflow-y: auto` never engages because the body grows
- * to fit its children. Same pattern as `.connect-agent-body`.
+ * to fit its children.
  *
  * `.settings-body` is a pure scroll container — no padding, no border.
  * `.settings-card` fills the body edge-to-edge with a subtle bg shift

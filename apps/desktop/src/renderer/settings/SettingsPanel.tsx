@@ -41,6 +41,7 @@ import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
+import { AgentSection } from "./AgentSection";
 import { decodeEngineOptions } from "./decodeEngineOptions";
 import { speechEngineOptions } from "./speechEngineOptions";
 import {
@@ -65,7 +66,7 @@ function clampTailSnapStrength(value: number): number {
   return Math.round(Math.min(TAIL_SNAP_MAX_PX, Math.max(TAIL_SNAP_MIN_PX, value)));
 }
 
-type SettingsCategory = "general" | "editing" | "keyboard" | "apikeys";
+type SettingsCategory = "general" | "editing" | "keyboard" | "apikeys" | "agent";
 
 /// Sidebar order. Every pane stays mounted (toggled via `hidden`) so
 /// in-progress input and per-section fetches survive a tab switch.
@@ -74,6 +75,7 @@ const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   { id: "editing", labelKey: "settings.cat_editing" },
   { id: "keyboard", labelKey: "settings.cat_keyboard" },
   { id: "apikeys", labelKey: "settings.cat_api_keys" },
+  { id: "agent", labelKey: "settings.cat_agent" },
 ];
 
 interface CompositionState {
@@ -306,6 +308,19 @@ export function SettingsPanel({
               {t("settings.cat_api_keys")}
             </div>
             <SpeechSection onError={setError} />
+          </div>
+
+          <div
+            role="tabpanel"
+            id="settings-panel-agent"
+            aria-labelledby="settings-tab-agent"
+            hidden={category !== "agent"}
+            className="settings-pane"
+          >
+            <div className="settings-pane-title">
+              {t("settings.cat_agent")}
+            </div>
+            <AgentSection />
           </div>
         </div>
       </div>

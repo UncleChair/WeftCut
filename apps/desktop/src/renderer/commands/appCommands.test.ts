@@ -21,7 +21,7 @@ const handlers: HandlerMap = {
 
 const menu = {
   addColorLayer: noop, addTextLayer: noop,
-  openMotifPicker: noop, openConnect: noop, openSettings: noop,
+  openMotifPicker: noop, openSettings: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
@@ -41,9 +41,9 @@ describe("buildAppCommands", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("appends the five menu-only commands", () => {
+  it("appends the four menu-only commands", () => {
     const ids = buildAppCommands(handlers, menu, flags).map((d) => d.id);
-    for (const id of ["addColorLayer", "addTextLayer", "openMotifPicker", "openConnect", "openSettings"]) {
+    for (const id of ["addColorLayer", "addTextLayer", "openMotifPicker", "openSettings"]) {
       expect(ids).toContain(id);
     }
   });

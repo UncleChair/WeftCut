@@ -12,63 +12,13 @@
   user-select: text;
 }
 
-/* ---- Connect-agent panel ---- */
-
-.connect-agent-panel {
-  width: min(640px, calc(100vw - 32px));
-  max-height: calc(100vh - 64px);
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--shadow-modal);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.connect-agent-panel header {
-  display: flex;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.connect-agent-panel header h2 {
-  margin: 0;
-  font-size: var(--font-size-title);
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.connect-agent-body {
-  flex: 1 1 auto;
-  /* min-height: 0 lets a flex item shrink below its content size; without it
-     overflow-y: auto never engages because the body grows to fit its children. */
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.connect-agent-body > p,
-.connect-agent-body > h3,
-.connect-agent-body > .connect-field,
-.connect-agent-body > .connect-snippet {
-  padding: 0 16px;
-}
+/* ---- Agent (MCP connect) section — lives in the Settings "Agent" tab ---- */
 
 .connect-blurb,
 .connect-status {
   margin: 12px 0;
   font-size: var(--font-size-body);
   color: var(--muted-foreground);
-}
-
-.connect-agent-panel h3 {
-  margin: 16px 0 8px;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  color: var(--color-gray-300);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .connect-field {

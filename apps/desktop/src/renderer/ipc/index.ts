@@ -1179,7 +1179,7 @@ export interface McpInfoView {
 }
 
 /// Returns the live MCP server connection details, or `null` if the server is
-/// still starting. Used by the connect-agent panel.
+/// still starting. Used by the Settings "Agent" tab.
 export async function getMcpInfo(): Promise<McpInfoView | null> {
   // Main-process handler (not a Rust command) — named API, not backend.invoke.
   return (await window.api.mcp.getInfo()) as McpInfoView | null;

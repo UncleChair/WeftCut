@@ -4,7 +4,7 @@ import type { CommandDef } from "./registry";
 
 /// App-level command catalog for the palette: derived from the shortcut
 /// HandlerMap (so new shortcut actions appear automatically) plus the
-/// five menu-only actions that have no binding. Pure factory — App calls
+/// four menu-only actions that have no binding. Pure factory — App calls
 /// it inside useCommandProvider's getter, so flags are read fresh on
 /// every listCommands().
 export interface AppCommandFlags {
@@ -19,7 +19,6 @@ export interface MenuCommandDeps {
   addColorLayer: () => void | Promise<void>;
   addTextLayer: () => void | Promise<void>;
   openMotifPicker: () => void;
-  openConnect: () => void;
   openSettings: () => void;
 }
 
@@ -59,7 +58,6 @@ export function buildAppCommands(
     { id: "addColorLayer", labelKey: "actions.add_color_layer", run: menu.addColorLayer },
     { id: "addTextLayer", labelKey: "actions.add_text_layer", run: menu.addTextLayer },
     { id: "openMotifPicker", labelKey: "actions.motifs", run: menu.openMotifPicker },
-    { id: "openConnect", labelKey: "actions.connect_agent", run: menu.openConnect },
     { id: "openSettings", labelKey: "actions.settings", run: menu.openSettings },
   );
   return defs;

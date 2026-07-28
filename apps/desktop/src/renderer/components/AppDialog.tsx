@@ -16,8 +16,8 @@ interface AppDialogProps {
   /// aria-label for the ✕ button. Omit to render no ✕ — the new-project
   /// dialog closes via its footer buttons and backdrop only.
   closeLabel?: string | undefined;
-  /// Legacy panel skin: "settings-panel", "motif-picker",
-  /// "connect-agent-panel", ... The popup carries only centering; the
+  /// Legacy panel skin: "settings-panel", "motif-picker", ...
+  /// The popup carries only centering; the
   /// panel class owns size/background/border/shadow.
   panelClassName: string;
   /// Extra header controls between the title and ✕ (MotifPicker's
