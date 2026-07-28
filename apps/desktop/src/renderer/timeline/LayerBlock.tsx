@@ -66,6 +66,10 @@ export interface DragSeed {
   /// Group escape remains available to trim gestures. Body-drag reserves Alt
   /// for duplicate, so ordinary moves continue to fan out across the group.
   escapeGroup: boolean;
+  /// Selection state before this pointerdown. An unselected clip body gets a
+  /// short temporal arm delay so a selection click cannot become a move;
+  /// selected clips and explicit trim handles respond immediately.
+  wasSelectedAtPointerDown: boolean;
 }
 
 export interface DragState extends DragSeed {
@@ -453,6 +457,7 @@ export function LayerBlock({
       overTrackId: trackId,
       duplicate: e.altKey && kind === "move",
       escapeGroup: e.altKey && kind !== "move",
+      wasSelectedAtPointerDown: isSelected,
     });
   };
 

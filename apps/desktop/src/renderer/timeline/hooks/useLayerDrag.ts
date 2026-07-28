@@ -41,6 +41,23 @@ interface LayerMoveProjection {
   conflictingLayerIds: string[];
 }
 
+const UNSELECTED_CLIP_DRAG_ARM_MS = 100;
+
+interface LayerDragGesture {
+  state: DragState;
+  phase: "pending" | "dragging";
+  armAtMs: number;
+  lastClientX: number;
+  lastClientY: number;
+}
+
+interface PointerDragEvaluation {
+  state: DragState;
+  hasEditIntent: boolean;
+  hasCommitChange: boolean;
+  moveProjection: LayerMoveProjection | null;
+}
+
 /// Layer drag state machine (move / trim-start / trim-end): ghost
 /// tracking via window pointermove, frame + timeline-boundary snapping,
 /// and the commit-on-pointerup switch that lowers to
@@ -79,7 +96,10 @@ export function useLayerDrag(opts: {
     tailSnapStrengthPx,
     onMutated,
   } = opts;
-  const [drag, setDragState] = useState<DragState | null>(null);
+  const [gesture, setGesture] = useState<LayerDragGesture | null>(null);
+  // Pending selection gestures stay private: callers render drag chrome only
+  // after the temporal arm and a real frame/track change have both happened.
+  const drag = gesture?.phase === "dragging" ? gesture.state : null;
   const [pendingPlacements, setPendingPlacements] =
     useState<PendingLayerPlacement[] | null>(null);
 
@@ -185,16 +205,27 @@ export function useLayerDrag(opts: {
 
   const setDrag = useCallback(
     (seed: DragSeed | null) => {
-      setDragState(
-        seed
-          ? {
-              ...seed,
-              subjects: buildDragSubjects(seed),
-              validity: "valid",
-              conflictingLayerIds: [],
-            }
-          : null,
-      );
+      if (!seed) {
+        setGesture(null);
+        return;
+      }
+      const state: DragState = {
+        ...seed,
+        subjects: buildDragSubjects(seed),
+        validity: "valid",
+        conflictingLayerIds: [],
+      };
+      const armDelayMs =
+        seed.kind === "move" && !seed.wasSelectedAtPointerDown
+          ? UNSELECTED_CLIP_DRAG_ARM_MS
+          : 0;
+      setGesture({
+        state,
+        phase: "pending",
+        armAtMs: Date.now() + armDelayMs,
+        lastClientX: seed.startX,
+        lastClientY: seed.startY,
+      });
     },
     [buildDragSubjects],
   );
@@ -226,6 +257,39 @@ export function useLayerDrag(opts: {
       return snappedDest - anchor;
     },
     [fpsNum, fpsDen],
+  );
+
+  const constrainedAnchorUs = useCallback(
+    (state: DragState, deltaUs: number): number => {
+      switch (state.kind) {
+        case "move":
+          return Math.max(0, state.originalTStart + deltaUs);
+        case "trim-start":
+          return Math.max(
+            0,
+            Math.min(
+              state.originalTStart + deltaUs,
+              adjacentFrameBoundaryUs(
+                state.originalTEnd,
+                -1,
+                fpsNum,
+                fpsDen,
+              ),
+            ),
+          );
+        case "trim-end":
+          return Math.max(
+            adjacentFrameBoundaryUs(
+              state.originalTStart,
+              1,
+              fpsNum,
+              fpsDen,
+            ),
+            state.originalTEnd + deltaUs,
+          );
+      }
+    },
+    [fpsDen, fpsNum],
   );
 
   const snapDeltaToTimelineBoundary = useCallback(
@@ -322,35 +386,74 @@ export function useLayerDrag(opts: {
     [layerEntryById, tracks],
   );
 
-  const handlePointerMove = useCallback(
-    (e: PointerEvent) => {
-      if (!drag) return;
-      const deltaPx = e.clientX - drag.startX;
-      const rawDeltaUs = (deltaPx / pxPerSec) * 1_000_000;
+  const evaluatePointer = useCallback(
+    (
+      state: DragState,
+      clientX: number,
+      clientY: number,
+    ): PointerDragEvaluation => {
+      const deltaPx = clientX - state.startX;
+      const rawDeltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
+      const anchor =
+        state.kind === "trim-end" ? state.originalTEnd : state.originalTStart;
+      // Compare grid destinations before calculating a drag delta. This is the
+      // causality gate: snapping may refine a requested edit, but a stationary
+      // pointer (including an off-grid audio anchor) cannot create one.
+      const requestedFrameChange =
+        snapFrameRound(anchor + rawDeltaUs, fpsNum, fpsDen) !==
+        snapFrameRound(anchor, fpsNum, fpsDen);
       const frameDeltaUs = snapDragDelta(
-        drag.kind,
-        drag.originalTStart,
-        drag.originalTEnd,
+        state.kind,
+        state.originalTStart,
+        state.originalTEnd,
         rawDeltaUs,
       );
       const overTrack =
-        drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
-      const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
-      const projection =
-        drag.kind === "move"
-          ? buildMoveProjection(drag, deltaUs, overTrack)
+        state.kind === "move" ? trackUnderPointer(clientY) : null;
+      const destinationTrackId =
+        overTrack && trackAcceptsForLayer(overTrack, state)
+          ? overTrack.id
+          : state.trackId;
+      const trackChanged =
+        state.kind === "move" && destinationTrackId !== state.trackId;
+
+      const timeChanged =
+        requestedFrameChange &&
+        constrainedAnchorUs(state, frameDeltaUs) !== anchor;
+
+      const hasEditIntent = timeChanged || trackChanged;
+      // A purely vertical move preserves time. In particular, do not let its
+      // zero horizontal delta be attracted to the playhead.
+      const deltaUs = timeChanged
+        ? snapDeltaToTimelineBoundary(state, frameDeltaUs)
+        : 0;
+      const moveProjection =
+        state.kind === "move"
+          ? buildMoveProjection(state, deltaUs, overTrack)
           : null;
-      setDragState({
-        ...drag,
+      const nextState: DragState = {
+        ...state,
         deltaUs,
         overTrackId: overTrack?.id ?? null,
-        validity: projection?.validity ?? "valid",
-        conflictingLayerIds: projection?.conflictingLayerIds ?? [],
-      });
+        validity: moveProjection?.validity ?? "valid",
+        conflictingLayerIds: moveProjection?.conflictingLayerIds ?? [],
+      };
+
+      const hasCommitChange =
+        constrainedAnchorUs(state, deltaUs) !== anchor || trackChanged;
+
+      return {
+        state: nextState,
+        hasEditIntent,
+        hasCommitChange,
+        moveProjection,
+      };
     },
     [
       buildMoveProjection,
-      drag,
+      constrainedAnchorUs,
+      fpsDen,
+      fpsNum,
       pxPerSec,
       snapDragDelta,
       snapDeltaToTimelineBoundary,
@@ -358,32 +461,55 @@ export function useLayerDrag(opts: {
     ],
   );
 
+  const handlePointerMove = useCallback(
+    (e: PointerEvent) => {
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      setGesture((current) => {
+        if (!current) return null;
+        const evaluation = evaluatePointer(current.state, clientX, clientY);
+        const next = {
+          ...current,
+          lastClientX: clientX,
+          lastClientY: clientY,
+        };
+        if (current.phase === "pending") {
+          if (Date.now() < current.armAtMs || !evaluation.hasEditIntent) {
+            return next;
+          }
+          return {
+            ...next,
+            phase: "dragging",
+            state: evaluation.state,
+          };
+        }
+        return { ...next, state: evaluation.state };
+      });
+    },
+    [evaluatePointer],
+  );
+
   const handlePointerUp = useCallback(
     async (e: PointerEvent) => {
-      if (!drag) return;
-      const deltaPx = e.clientX - drag.startX;
-      const rawDeltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
-      const frameDeltaUs = snapDragDelta(
-        drag.kind,
-        drag.originalTStart,
-        drag.originalTEnd,
-        rawDeltaUs,
+      if (!gesture) return;
+      const evaluation = evaluatePointer(
+        gesture.state,
+        e.clientX,
+        e.clientY,
       );
-      const overTrack =
-        drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
-      const deltaUs = snapDeltaToTimelineBoundary(drag, frameDeltaUs);
-      const committed = drag;
-      const moveProjection =
-        committed.kind === "move"
-          ? buildMoveProjection(committed, deltaUs, overTrack)
-          : null;
-      setDragState(null);
-
-      // Treat tiny deltas + same track as a no-op so a click doesn't accidentally
-      // shove a layer one frame.
-      const sameTrack =
-        !overTrack || overTrack.id === committed.trackId;
-      if (Math.abs(deltaUs) < 1_000 && sameTrack) return;
+      const temporalArmReached =
+        gesture.phase === "dragging" || Date.now() >= gesture.armAtMs;
+      setGesture(null);
+      if (
+        !temporalArmReached ||
+        !evaluation.hasEditIntent ||
+        !evaluation.hasCommitChange
+      ) {
+        return;
+      }
+      const committed = evaluation.state;
+      const deltaUs = committed.deltaUs;
+      const moveProjection = evaluation.moveProjection;
 
       try {
         // `docs/features.md#groups` — Alt-held at drag start opts the move /
@@ -432,31 +558,12 @@ export function useLayerDrag(opts: {
             break;
           }
           case "trim-start": {
-            const newStart = Math.max(
-              0,
-              Math.min(
-                committed.originalTStart + deltaUs,
-                adjacentFrameBoundaryUs(
-                  committed.originalTEnd,
-                  -1,
-                  fpsNum,
-                  fpsDen,
-                ),
-              ),
-            );
+            const newStart = constrainedAnchorUs(committed, deltaUs);
             await trimLayer(committed.layerId, "in", newStart, escape);
             break;
           }
           case "trim-end": {
-            const newEnd = Math.max(
-              adjacentFrameBoundaryUs(
-                committed.originalTStart,
-                1,
-                fpsNum,
-                fpsDen,
-              ),
-              committed.originalTEnd + deltaUs,
-            );
+            const newEnd = constrainedAnchorUs(committed, deltaUs);
             await trimLayer(committed.layerId, "out", newEnd, escape);
             break;
           }
@@ -468,27 +575,49 @@ export function useLayerDrag(opts: {
       }
     },
     [
-      buildMoveProjection,
-      drag,
-      fpsDen,
-      fpsNum,
+      constrainedAnchorUs,
+      evaluatePointer,
+      gesture,
       onMutated,
-      pxPerSec,
-      snapDragDelta,
-      snapDeltaToTimelineBoundary,
-      trackUnderPointer,
     ],
   );
 
+  // If an unselected clip moved during the grace window and the pointer then
+  // rests, promote it exactly when the one-shot arm delay expires. This is an
+  // activation timer, not a pointermove debounce: continuous motion never
+  // pushes the deadline farther away.
   useEffect(() => {
-    if (!drag) return;
+    if (!gesture || gesture.phase !== "pending") return;
+    const delayMs = Math.max(0, gesture.armAtMs - Date.now());
+    const timer = window.setTimeout(() => {
+      setGesture((current) => {
+        if (!current || current.phase !== "pending") return current;
+        if (Date.now() < current.armAtMs) return current;
+        const evaluation = evaluatePointer(
+          current.state,
+          current.lastClientX,
+          current.lastClientY,
+        );
+        if (!evaluation.hasEditIntent) return current;
+        return {
+          ...current,
+          phase: "dragging",
+          state: evaluation.state,
+        };
+      });
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [evaluatePointer, gesture]);
+
+  useEffect(() => {
+    if (!gesture) return;
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [drag, handlePointerMove, handlePointerUp]);
+  }, [gesture, handlePointerMove, handlePointerUp]);
 
   return { drag, setDrag, pendingPlacements, pendingLayerById, dragLayerById };
 }

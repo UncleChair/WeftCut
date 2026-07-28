@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
+  act,
   cleanup,
   createEvent,
   fireEvent,
@@ -27,6 +28,7 @@ import {
   setLayerSelection,
   useSelectionStore,
 } from "../state/selectionStore";
+import { setPlayheadTimeUs } from "../state/playheadStore";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
@@ -203,6 +205,7 @@ function renderTimeline(overrides: {
 describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
     clearLayerSelection();
+    setPlayheadTimeUs(0);
     ipcMocks.addMediaLayer.mockClear();
     ipcMocks.moveLayer.mockClear();
     ipcMocks.pasteLayer.mockClear();
@@ -213,12 +216,18 @@ describe("Timeline seek/selection coupling", () => {
     // Show-All so the role-stamped track always renders regardless of the
     // default AB-roll filter.
     useAppSettingsStore.setState((s) => ({
-      settings: { ...s.settings, display_mode: "ShowAll" },
+      settings: {
+        ...s.settings,
+        display_mode: "ShowAll",
+        tail_snap_enabled: true,
+        tail_snap_strength_px: 12,
+      },
     }));
   });
   afterEach(() => {
     useMediaDragStore.getState().end();
     cleanup();
+    vi.useRealTimers();
   });
 
   it("clicking the ruler seeks AND keeps the selected clip selected", () => {
@@ -255,6 +264,138 @@ describe("Timeline seek/selection coupling", () => {
     expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
     expect(Array.from(useSelectionStore.getState().selectedLayerIds)).toEqual([layer.id]);
     expect(onSeek).not.toHaveBeenCalled();
+  });
+
+  it("does not let snapping move a selected clip during a stationary click", () => {
+    setPlayheadTimeUs(100_000);
+    const { getByText } = renderTimeline({ selectedLayerId: layer.id });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 80,
+      clientY: 30,
+    });
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 30 });
+
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+  });
+
+  it("keeps a short drag on an unselected clip as selection only", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { getByText } = renderTimeline({ selectedLayerId: null });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 80,
+      clientY: 30,
+    });
+    fireEvent.pointerMove(window, { clientX: 83, clientY: 30 });
+
+    expect(block.style.left).toBe("0px");
+
+    fireEvent.pointerUp(window, { clientX: 83, clientY: 30 });
+    expect(useSelectionStore.getState().primaryLayerId).toBe(layer.id);
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+  });
+
+  it("arms an unselected clip drag after a short delay without losing its small delta", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { getByText } = renderTimeline({ selectedLayerId: null });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 80,
+      clientY: 30,
+    });
+    fireEvent.pointerMove(window, { clientX: 83, clientY: 30 });
+    expect(block.style.left).toBe("0px");
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(block.style.left).toBe(`${(33_333 / 1_000_000) * 80}px`);
+
+    fireEvent.pointerUp(window, { clientX: 83, clientY: 30 });
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      layer.id,
+      track.id,
+      33_333,
+      false,
+    );
+  });
+
+  it("starts a selected clip drag without the temporal delay", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { getByText } = renderTimeline({ selectedLayerId: layer.id });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 80,
+      clientY: 30,
+    });
+    fireEvent.pointerMove(window, { clientX: 83, clientY: 30 });
+
+    expect(block.style.left).toBe(`${(33_333 / 1_000_000) * 80}px`);
+
+    fireEvent.pointerUp(window, { clientX: 83, clientY: 30 });
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      layer.id,
+      track.id,
+      33_333,
+      false,
+    );
+  });
+
+  it("starts an explicit trim handle drag without the temporal delay", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { getByText } = renderTimeline({ selectedLayerId: null });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 160,
+      top: 0,
+      bottom: 48,
+      width: 160,
+      height: 48,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(block, {
+      button: 0,
+      clientX: 160,
+      clientY: 30,
+    });
+    fireEvent.pointerMove(window, { clientX: 163, clientY: 30 });
+
+    expect(block.title).toContain("00:00:02:01");
+
+    fireEvent.pointerUp(window, { clientX: 163, clientY: 30 });
+    expect(ipcMocks.trimLayer).toHaveBeenCalledWith(
+      layer.id,
+      "out",
+      2_033_333,
+      false,
+    );
   });
 
   it("clicking the content preview overlay still selects without seeking", () => {
