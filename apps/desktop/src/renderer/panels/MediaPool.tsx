@@ -229,7 +229,7 @@ export function MediaPool({
     : media;
 
   return (
-    <div className="media-pool-inner">
+    <>
       <MediaDragPreview />
       <div className="media-pool-search">
         <AppInput
@@ -248,6 +248,7 @@ export function MediaPool({
           }}
         />
       </div>
+      <div className="media-pool-inner">
       {filtered.length === 0 ? (
         <p className="placeholder">
           {t("media_pool.no_matches", { query: trimmed })}
@@ -409,7 +410,8 @@ export function MediaPool({
         })}
         </ul>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 

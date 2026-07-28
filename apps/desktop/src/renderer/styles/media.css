@@ -54,7 +54,10 @@
 }
 .media-pool {
   grid-area: mediapool;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  /* The inner region scrolls; the search bar above it stays put. */
+  overflow: hidden;
   background: var(--card);
   min-height: 0;
   /* Anchor for the file-drop overlay. */
@@ -80,6 +83,9 @@
 
 .media-pool-inner {
   padding: 8px 16px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .media-pool-inner h2 {
@@ -92,12 +98,12 @@
 }
 
 .media-pool-search {
-  position: relative;
-  margin-bottom: 8px;
+  /* Sibling above the scrolling .media-pool-inner, so it never moves. Its
+   * padding mirrors the inner's side/top padding. */
+  padding: 8px 16px 0;
 }
 
-/* Search field + its ✕ now come from AppInput (.app-input / .app-input-clear);
- * .media-pool-search just provides the bottom margin around the wrap. */
+/* Search field + its ✕ come from AppInput (.app-input / .app-input-clear). */
 
 /* MediaPool card grid: thumbnail on top, name strip at the bottom. Click to
    preview; HTML5 drag handles drag-to-track. */
