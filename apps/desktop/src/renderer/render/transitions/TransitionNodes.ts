@@ -15,6 +15,7 @@
 import { Container, Mesh, MeshGeometry, RenderTexture, Shader } from "pixi.js";
 import type { Renderer } from "pixi.js";
 import { logEmit } from "../../ipc";
+import { STAGE, stageAdd, stageNow } from "../perf/stageTimers";
 import type { ActiveTransition } from "./activeTransitions";
 import { TransitionRtPool } from "./TransitionRtPool";
 import { directionVector, shaderSourceFor, TRANSITION_GL_VERT } from "./transitionSources";
@@ -127,8 +128,12 @@ export class TransitionNodeManager {
   /// so the staged quad samples THIS frame's pixels at the ticker's render.
   finishFrame(): void {
     for (const node of this.nodes.values()) {
+      // Per node, so a multi-node frame lands as ONE per-frame bake total and
+      // a frame with no nodes records nothing at all.
+      const tBake = stageNow();
       this.renderer.render({ container: node.sideA, target: node.rtA, clear: true, clearColor: TRANSPARENT });
       this.renderer.render({ container: node.sideB, target: node.rtB, clear: true, clearColor: TRANSPARENT });
+      stageAdd(STAGE.Transitions, tBake);
       const u = (node.mesh.shader!.resources as { transition: { uniforms: TransitionUniforms } })
         .transition.uniforms;
       u.uProgress = node.progress;

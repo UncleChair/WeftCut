@@ -655,6 +655,10 @@ impl NativeDecode {
     /// the dimension math (even rounding, small-source floor) — the reply and
     /// every frame report the shipped size. Preview only; the export lane has no
     /// such knob.
+    ///
+    /// `cadence_div` is also preview-only (absent = 1 = every frame). Decode
+    /// still consumes every source frame, but only every Nth frame proceeds to
+    /// copy-back/swscale/packing and IPC.
     #[napi]
     pub fn preview_sw_open(
         &self,
@@ -664,8 +668,9 @@ impl NativeDecode {
         lane: Option<String>,
         device: Option<String>,
         scale_div: Option<u32>,
+        cadence_div: Option<u32>,
     ) -> napi::Result<PreviewSwOpenInfoJs> {
-        use crate::preview_sw::decoder::{DecodeAccel, OutScale};
+        use crate::preview_sw::decoder::{DecodeAccel, OutScale, OutputCadence};
         let accel = match lane.as_deref() {
             None | Some("software") => DecodeAccel::Software,
             Some("nvdec") => DecodeAccel::Nvdec,
@@ -677,12 +682,20 @@ impl NativeDecode {
             Some(_) => DecodeAccel::Software,
         };
         let out_scale = scale_div.map_or(OutScale::FULL, OutScale::from_divisor);
+        let output_cadence =
+            cadence_div.map_or(OutputCadence::FULL, OutputCadence::from_divisor);
         self.preview_sw_sinks
             .lock_recover()
             .insert(stream_id.clone(), on_frame);
         let info = self
             .preview_sw
-            .open_with_accel(&stream_id, &path, accel, out_scale)
+            .open_with_accel_and_cadence(
+                &stream_id,
+                &path,
+                accel,
+                out_scale,
+                output_cadence,
+            )
             .map_err(napi::Error::from_reason)?;
         Ok(PreviewSwOpenInfoJs {
             width: info.width,

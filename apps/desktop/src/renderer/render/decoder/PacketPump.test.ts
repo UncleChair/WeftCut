@@ -148,6 +148,30 @@ class SequentialSink implements PumpPacketSink {
   }
 }
 
+/// A source with REAL GOP structure: a key every `gopSeconds`, so
+/// `getKeyPacket` returns a *different* key for a target in a different GOP.
+/// `SequentialSink` deliberately models the opposite (one key for the whole
+/// source), and the two cases take opposite branches of the reset decision —
+/// same-GOP far-forward must keep decoding, later-GOP far-forward must jump.
+class GopSink implements PumpPacketSink {
+  getKeyCalls: number[] = [];
+
+  constructor(private readonly gopSeconds: number) {}
+
+  async getKeyPacket(tsSeconds: number): Promise<PumpPacket | null> {
+    this.getKeyCalls.push(tsSeconds);
+    return makePacket(Math.floor(tsSeconds / this.gopSeconds) * this.gopSeconds);
+  }
+
+  async getFirstPacket(): Promise<PumpPacket | null> {
+    return makePacket(0);
+  }
+
+  async getNextPacket(pkt: PumpPacket): Promise<PumpPacket | null> {
+    return makePacket(pkt.timestamp + 0.033);
+  }
+}
+
 /// A packet sink whose `getNextPacket` HANGS until the test releases it,
 /// giving deterministic control over each await hop. `getKeyPacket`
 /// resolves immediately to the single key at t=0.
@@ -288,8 +312,13 @@ describe("PacketPump", () => {
     sink.release(null); // end the in-flight fill so the new target is evaluated
     await tick();
 
-    expect(dec.resets).toBe(1);
+    // The observable is the KEY LOOKUP, not a reset: this target is far-forward
+    // of the frontier, so the pump asks for its key — and then finds it is the
+    // key it is already decoding from and declines to re-seek (see the
+    // same-GOP test below). A frontier of +1 instead of 0 would leave the gap at
+    // exactly 1_000_000, not past it, and there would be no second lookup at all.
     expect(sink.getKeyCalls).toHaveLength(2);
+    expect(dec.resets).toBe(0);
   });
 
   it("falls back to the first packet when the normalized start precedes the first key", async () => {
@@ -327,7 +356,11 @@ describe("PacketPump", () => {
     expect(dec.decoded.map((p) => p.timestamp)).toEqual([sourceStartPtsUs / 1e6]);
   });
 
-  it("far-forward seek resets exactly once, re-seeks the key, and then makes progress toward the target", async () => {
+  it("a far-forward seek INSIDE the current GOP keeps decoding forward — no reset, no flush", async () => {
+    // The target is 5 s ahead, but its key packet is the one already being
+    // decoded from. Resetting there would rewind the frontier to that key and
+    // discard the prefix already decoded, to arrive at the same place by a
+    // longer route. So the pump asks for the key, recognises it, and presses on.
     const sink = new GatedSink();
     const ring = new FakeRing();
     const dec = makeFakeDecoder();
@@ -343,23 +376,20 @@ describe("PacketPump", () => {
     sink.release(makePacket(0.6)); // in-flight resolves → loop top sees the seek
     await tick();
 
-    expect(dec.resets).toBe(1);
-    expect(ring.flushes).toBe(1);
-    expect(sink.getKeyCalls).toContain(5); // sought to 5s
+    expect(sink.getKeyCalls).toContain(5); // it DID look the key up
+    expect(dec.resets).toBe(0); // …and declined to re-seek to a key it is past
+    expect(ring.flushes).toBe(0); // nothing thrown away
 
-    // COVERAGE GAP this test used to miss: decideReset is STILL true right
-    // after the reset (the re-seeked key sits >1s before the 5s target).
-    // Without a target-latch the mid-fill re-check breaks the pass right
-    // back out before even asking for the next packet — the pump parks on
-    // the key forever. Confirm it instead presses on toward the target.
+    // And it must genuinely press on rather than park: the mid-fill re-check
+    // sees the same far-forward condition every pass and must not wedge.
     expect(sink.inFlight()).toBe(1); // parked on a genuine forward getNextPacket
-    sink.release(makePacket(0.1)); // a forward delta from the re-seeked key
+    sink.release(makePacket(0.7));
     await tick();
-    expect(dec.resets).toBe(1); // still exactly one reset — no re-seek loop
-    expect(dec.decoded.at(-1)?.timestamp).toBe(0.1); // frontier advanced past the key
+    expect(dec.resets).toBe(0);
+    expect(dec.decoded.at(-1)?.timestamp).toBe(0.7); // frontier still advancing
   });
 
-  it("repeated same-target kicks after a far-forward reset do not re-seek", async () => {
+  it("repeated same-target kicks while far behind never re-seek or flush", async () => {
     // Long-GOP source: one key at t=0, deltas every ~33ms out to 20s.
     const sink = new SequentialSink(0.033, 20);
     const ring = new FakeRing();
@@ -370,27 +400,108 @@ describe("PacketPump", () => {
     await tick(); // cold start; fill loop runs to MAX_QUEUE from t=0
 
     const target = 5_000_000;
-    pump.requestFrameAt(target); // far-forward: cursor already set → a REAL reset
+    pump.requestFrameAt(target); // far-forward, same GOP → keep going forward
     await tick();
-    expect(dec.resets).toBe(1);
-    expect(sink.getKeyCalls.filter((s) => s === 5).length).toBe(1);
+    expect(dec.resets).toBe(0);
 
     const decodedBefore = dec.decoded.length;
     // Repeat the SAME target several times, simulating the Compositor's
     // per-tick nudge plus the decoder's async output callback freeing
-    // queue slots. Pre-fix, decideReset stays true for this target forever
-    // (the key sits >1s before it) and every kick re-seeks the identical
-    // key — a livelock. Post-fix the latch suppresses the re-seek and the
-    // fill loop keeps advancing.
+    // queue slots. The far-forward condition stays true throughout (the key
+    // sits >1 s before the target); the pump must keep filling regardless.
     for (let i = 0; i < 5; i++) {
       dec.drain(MAX_QUEUE);
       pump.requestFrameAt(target);
       await tick();
     }
 
-    expect(dec.resets).toBe(1); // no additional resets
-    expect(sink.getKeyCalls.filter((s) => s === 5).length).toBe(1); // no re-seek
+    expect(dec.resets).toBe(0);
+    expect(ring.flushes).toBe(0);
     expect(dec.decoded.length).toBeGreaterThan(decodedBefore); // decode kept progressing
+  });
+
+  it("a MOVING target while far behind never re-seeks or flushes — the playback livelock", async () => {
+    // THE regression this guards. The original latch was keyed on the target
+    // (`seekResolvedForTargetUs`), so it only ever protected a STATIONARY
+    // playhead. Under playback the target moves every frame, so every pass saw a
+    // fresh target, re-fired the far-forward arm, reset the decoder, flushed the
+    // ring, and re-seeked the SAME key a whole GOP back — discarding the prefix
+    // it had just decoded, forever. Measured on 3 concurrent 1080p clips: 254
+    // ring flushes in 20 s, two rings that never held a single frame while their
+    // decoders ran at 40 fps.
+    const sink = new SequentialSink(0.033, 60);
+    const ring = new FakeRing();
+    const dec = makeFakeDecoder();
+    const pump = new PacketPump({ decoder: dec, packetSink: sink, ring });
+
+    pump.requestFrameAt(0);
+    await tick();
+
+    // Advance the playhead a frame at a time while staying far ahead of the
+    // frontier — exactly what a clip that has fallen behind under load sees.
+    let target = 5_000_000;
+    for (let i = 0; i < 20; i++) {
+      dec.drain(MAX_QUEUE);
+      target += 33_333;
+      pump.requestFrameAt(target);
+      await tick();
+    }
+
+    expect(dec.resets).toBe(0);
+    expect(ring.flushes).toBe(0);
+    // Forward progress is the point: a livelocked pump parks on the key.
+    expect((dec.decoded.at(-1)?.timestamp ?? 0)).toBeGreaterThan(0.5);
+  });
+
+  it("a far-forward seek into a LATER GOP does reset and re-seek — but still does not flush", async () => {
+    // The complement of the same-GOP case: here the key really is different, so
+    // continuing forward would mean decoding every packet in between. Reset and
+    // jump. The ring is still not flushed — `requestFrameAt`'s `setAnchor` has
+    // already evicted whatever fell outside the new window, and what remains is
+    // either useful or about to age out on its own.
+    const sink = new GopSink(8);
+    const ring = new FakeRing();
+    const dec = makeFakeDecoder();
+    const pump = new PacketPump({ decoder: dec, packetSink: sink, ring });
+
+    pump.requestFrameAt(0);
+    await tick(); // cold start on the GOP-0 key, then fills forward from it
+    expect(dec.decoded[0]?.timestamp).toBe(0);
+    const beforeSeek = dec.decoded.length;
+
+    pump.requestFrameAt(20_000_000); // GOP 2 → a DIFFERENT key at 16s
+    await tick();
+
+    expect(dec.resets).toBe(1);
+    expect(ring.flushes).toBe(0);
+    // The first packet dispatched after the reset is the new GOP's key.
+    expect(dec.decoded[beforeSeek]?.timestamp).toBe(16);
+  });
+
+  it("a BACKWARD reset beyond the ring still flushes — those frames are the wrong region", async () => {
+    // The one case where the cached frames must go: the target is older than
+    // anything cached, so the ring holds frames from a region the playhead has
+    // left. Keeping them would let `frameAt` paint the wrong content while the
+    // decoder rebuilds.
+    const sink = new GopSink(8);
+    const ring = new FakeRing();
+    const dec = makeFakeDecoder();
+    const pump = new PacketPump({ decoder: dec, packetSink: sink, ring });
+
+    pump.requestFrameAt(20_000_000);
+    await tick();
+    expect(dec.resets).toBe(0); // cold start is not a reset
+    const beforeSeek = dec.decoded.length;
+
+    ring.first = 18_000_000; // the ring caches from 18s onward
+    pump.requestFrameAt(2_000_000); // target older than the ring's first entry
+    await tick();
+
+    expect(dec.resets).toBe(1);
+    expect(ring.flushes).toBe(1);
+    // Re-seeked to the GOP-0 key: the pump only moves forward, so a backward
+    // target can only be reached from its own GOP's key.
+    expect(dec.decoded[beforeSeek]?.timestamp).toBe(0);
   });
 
   it("cold start to a far target on a long-GOP source reaches the target (no livelock)", async () => {

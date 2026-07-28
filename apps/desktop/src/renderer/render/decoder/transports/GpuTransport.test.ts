@@ -15,6 +15,11 @@
 // delivery, foreign-streamId frames dropped) the brief specifies.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GpuTransport } from "./GpuTransport";
+import {
+  setSlotFenceBackend,
+  sharedSlotFenceQueue,
+  type SlotFenceBackend,
+} from "./slotFenceQueue";
 
 interface FakePort {
   onmessage: ((ev: { data: unknown }) => void) | null;
@@ -54,20 +59,112 @@ function installFakePreviewGpu() {
     requestPort: vi.fn((streamId: string) => {
       port = dispatchHandoff(streamId);
     }),
-    open: vi.fn(async () => {}),
+    open: vi.fn(async (_args: { streamId: string }) => {}),
     requestFrameAt: vi.fn(async () => {}),
-    close: vi.fn(() => {}),
+    close: vi.fn(async (_args: { streamId: string }) => {}),
   };
   (window as unknown as { api: { previewGpu: typeof api } }).api = { previewGpu: api };
   return { api, getPort: () => port };
 }
 
+/// A device stand-in for the shared slot-fence queue, with the completion signal
+/// under the test's control. Installed on the module singleton (the real device
+/// comes from the Pixi Application, which no unit test has) and removed after.
+function installFakeSlotFenceDevice(): { signalAll: () => void } {
+  const signals: (() => void)[] = [];
+  const backend: SlotFenceBackend = {
+    submit(_bmp, onSignal) {
+      let done = false;
+      signals.push(() => {
+        done = true;
+        onSignal();
+      });
+      return { signalled: () => done, dispose: () => {} };
+    },
+  };
+  setSlotFenceBackend(backend);
+  return {
+    signalAll: () => {
+      for (const s of signals) s();
+    },
+  };
+}
+
+/// One delegated frame message — what the preload posts under `rendererFence`:
+/// no barrier stamps of its own, `ackDelegated` carrying the obligation.
+function delegatedFrame(streamId: string, slot: number, ptsUs: number, bitmap: ImageBitmap) {
+  return {
+    kind: "frame",
+    streamId,
+    slot,
+    ptsUs,
+    durUs: 33,
+    bitmap,
+    gvfMs: 0.2,
+    cibMs: 0.4,
+    residentMs: 0.8,
+    ackDelegated: true,
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   delete (window as unknown as { api?: unknown }).api;
+  setSlotFenceBackend(null);
 });
 
 describe("GpuTransport", () => {
+  it("closes a session that finishes opening after disposal", async () => {
+    const { api } = installFakePreviewGpu();
+    const liveSessions = new Set<string>();
+    let finishOpen!: () => void;
+    const openGate = new Promise<void>((resolve) => {
+      finishOpen = resolve;
+    });
+    api.open.mockImplementation(async ({ streamId }) => {
+      await openGate;
+      liveSessions.add(streamId);
+    });
+    api.close.mockImplementation(async ({ streamId }) => {
+      liveSessions.delete(streamId);
+    });
+
+    const t = new GpuTransport();
+    const opening = t.open({ streamId: "disposed-opening", path: "C:/x.mp4" });
+    await vi.waitFor(() => expect(api.open).toHaveBeenCalledOnce());
+
+    t.dispose();
+    finishOpen();
+    await opening;
+
+    expect(liveSessions).toEqual(new Set());
+  });
+
+  it("forwards renderer-probed coded dimensions to main admission", async () => {
+    const { api } = installFakePreviewGpu();
+    const t = new GpuTransport();
+    await t.open({
+      streamId: "budget-size",
+      path: "C:/x.mp4",
+      codedWidth: 3840,
+      codedHeight: 2160,
+    });
+    expect(api.open).toHaveBeenCalledWith({
+      streamId: "budget-size",
+      path: "C:/x.mp4",
+      poolSize: 3,
+      colorSpace: {
+        primaries: "bt709",
+        transfer: "bt709",
+        matrix: "bt709",
+        range: "limited",
+      },
+      codedWidth: 3840,
+      codedHeight: 2160,
+    });
+    t.dispose();
+  });
+
   it("requests its port BY streamId and delivers only its own frames", async () => {
     const { api, getPort } = installFakePreviewGpu();
     const t = new GpuTransport();
@@ -119,6 +216,171 @@ describe("GpuTransport", () => {
       data: { kind: "frame", streamId: "s1", slot: 0, ptsUs: 40, durUs: 33, bitmap: makeFakeBitmap(3) },
     });
     expect(frames).toEqual([40]);
+    t.dispose();
+  });
+
+  // ── rendererFence: the ack obligation crosses the port ──────────────────────
+  //
+  // Under this mode the preload runs no barrier and does NOT ack. The obligation
+  // arrives with the bitmap, and `pool_size` unmet obligations wedge the session
+  // for good — so these assert the OBLIGATION, not the timing.
+
+  it("acks a delegated slot back up the port once the device signals", async () => {
+    const { getPort } = installFakePreviewGpu();
+    const device = installFakeSlotFenceDevice();
+    const t = new GpuTransport();
+    t.onFrame(() => {});
+    await t.open({ streamId: "rf1", path: "C:/x.mp4" });
+    const port = getPort()!;
+
+    port.onmessage!({ data: delegatedFrame("rf1", 2, 10, makeFakeBitmap(1)) });
+    // Deferred: nothing has completed yet, so the slot is still held.
+    expect(port.postMessage).not.toHaveBeenCalled();
+
+    device.signalAll();
+    sharedSlotFenceQueue().drain();
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "consumeAck",
+      streamId: "rf1",
+      slot: 2,
+    });
+    t.dispose();
+  });
+
+  // The sharp one. A frame the ring evicts, or one that arrives with nothing
+  // subscribed, still holds a slot — so the ack may not be tied to paint.
+  it("acks a delegated frame nothing ever painted", async () => {
+    const { getPort } = installFakePreviewGpu();
+    const device = installFakeSlotFenceDevice();
+    const t = new GpuTransport();
+    // Deliberately NO onFrame: nothing consumes, nothing paints.
+    await t.open({ streamId: "rf2", path: "C:/x.mp4" });
+    const port = getPort()!;
+
+    port.onmessage!({ data: delegatedFrame("rf2", 1, 10, makeFakeBitmap(1)) });
+    device.signalAll();
+    sharedSlotFenceQueue().drain();
+
+    expect(port.postMessage).toHaveBeenCalledTimes(1);
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "consumeAck",
+      streamId: "rf2",
+      slot: 1,
+    });
+    t.dispose();
+  });
+
+  it("acks each delegated slot exactly once", async () => {
+    const { getPort } = installFakePreviewGpu();
+    const device = installFakeSlotFenceDevice();
+    const t = new GpuTransport();
+    t.onFrame(() => {});
+    await t.open({ streamId: "rf3", path: "C:/x.mp4" });
+    const port = getPort()!;
+
+    for (let slot = 0; slot < 3; slot++) {
+      port.onmessage!({ data: delegatedFrame("rf3", slot, slot * 33, makeFakeBitmap(slot)) });
+    }
+    device.signalAll();
+    sharedSlotFenceQueue().drain();
+    sharedSlotFenceQueue().drain();
+
+    const acked = (port.postMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(
+      (c) => (c[0] as { slot: number }).slot,
+    );
+    expect(acked.sort()).toEqual([0, 1, 2]);
+    t.dispose();
+  });
+
+  // Teardown ordering from this side: dispose drops the pending slots before the
+  // port goes and before main is asked to close, so a signal that lands after
+  // teardown cannot ack into a session main is mid-closing.
+  it("drops a disposed stream's pending slots without acking", async () => {
+    const { getPort } = installFakePreviewGpu();
+    const device = installFakeSlotFenceDevice();
+    const t = new GpuTransport();
+    t.onFrame(() => {});
+    await t.open({ streamId: "rf4", path: "C:/x.mp4" });
+    const port = getPort()!;
+    port.onmessage!({ data: delegatedFrame("rf4", 0, 10, makeFakeBitmap(1)) });
+
+    t.dispose();
+    device.signalAll();
+    sharedSlotFenceQueue().drain();
+
+    expect(port.postMessage).not.toHaveBeenCalled();
+    expect(sharedSlotFenceQueue().pendingCount()).toBe(0);
+  });
+
+  // The applied mode must name what RAN here, not what the preload delegated: a
+  // session with no device runs the fallback, and a leg that reported its label
+  // would publish the fallback's behaviour under the fence's name.
+  it("reports the barrier the renderer applied, not the delegation itself", async () => {
+    const { getPort } = installFakePreviewGpu();
+    const device = installFakeSlotFenceDevice();
+    const t = new GpuTransport();
+    t.onFrame(() => {});
+    await t.open({ streamId: "rf5", path: "C:/x.mp4" });
+    const port = getPort()!;
+    port.onmessage!({ data: delegatedFrame("rf5", 0, 10, makeFakeBitmap(1)) });
+    expect(t.handoffTimings()!.barrierModeObserved).toBe("rendererFence");
+    device.signalAll();
+    sharedSlotFenceQueue().drain();
+    t.dispose();
+  });
+
+  it("does not report a fence when there is no device to take one on", async () => {
+    const { getPort } = installFakePreviewGpu();
+    // No device registered — jsdom has no OffscreenCanvas either, so the ladder
+    // bottoms out and reports `none`, which is the correctness alarm.
+    const t = new GpuTransport();
+    t.onFrame(() => {});
+    await t.open({ streamId: "rf6", path: "C:/x.mp4" });
+    const port = getPort()!;
+    port.onmessage!({ data: delegatedFrame("rf6", 0, 10, makeFakeBitmap(1)) });
+
+    expect(t.handoffTimings()!.barrierModeObserved).not.toBe("rendererFence");
+    // ...and the slot is still released, synchronously.
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "consumeAck",
+      streamId: "rf6",
+      slot: 0,
+    });
+    t.dispose();
+  });
+
+  // A non-delegated frame (every other barrier mode) must not touch the queue —
+  // the preload already acked it, and a second ack frees a slot twice.
+  it("never acks a frame the preload kept ownership of", async () => {
+    const { getPort } = installFakePreviewGpu();
+    installFakeSlotFenceDevice();
+    const t = new GpuTransport();
+    t.onFrame(() => {});
+    await t.open({ streamId: "rf7", path: "C:/x.mp4" });
+    const port = getPort()!;
+    port.onmessage!({
+      data: {
+        kind: "frame",
+        streamId: "rf7",
+        slot: 0,
+        ptsUs: 10,
+        durUs: 33,
+        bitmap: makeFakeBitmap(1),
+        gvfMs: 0.2,
+        cibMs: 0.4,
+        residentMs: 20,
+        barrierMs: 19,
+        barrierDrawMs: 0.1,
+        barrierReadMs: 18.9,
+        barrierApplied: "readback",
+      },
+    });
+
+    expect(port.postMessage).not.toHaveBeenCalled();
+    expect(sharedSlotFenceQueue().pendingCount()).toBe(0);
+    const s = t.handoffTimings()!;
+    expect(s.barrierModeObserved).toBe("readback");
+    expect(s.barrierP50).toBeCloseTo(19);
     t.dispose();
   });
 });

@@ -54,10 +54,27 @@ export interface ResetDecisionInput {
 /// GOP-crossings flow the next key packet in-stream without a reset
 /// (ADR 0003 — an unconditional per-GOP reset reintroduces the playback
 /// stall the ADR exists to prevent).
+export function resetReason(s: ResetDecisionInput): ResetReason | null {
+  if (s.ringFirstPtsUs !== null && s.targetUs < s.ringFirstPtsUs)
+    return "backward-beyond-ring";
+  if (s.targetUs - s.lastDecodedPtsUs > FORWARD_SEEK_RESET_US) return "far-forward";
+  return null;
+}
+
+/// WHICH of the two conditions above fired. The two are not interchangeable and
+/// the pump treats them differently:
+///
+///   - `backward-beyond-ring` — the cached frames are from the WRONG REGION of
+///     the timeline and must go, so the reset flushes the ring, and re-seeking to
+///     a key we are already past is mandatory (the pump only moves forward).
+///   - `far-forward` — the cached frames are not wrong, merely early or already
+///     trimmed by `setAnchor`, so the reset must NOT flush; and re-seeking to a
+///     key the frontier has already advanced past is not just useless but
+///     harmful (see `seekedKeyTimestamp`).
+export type ResetReason = "backward-beyond-ring" | "far-forward";
+
 export function decideReset(s: ResetDecisionInput): boolean {
-  if (s.ringFirstPtsUs !== null && s.targetUs < s.ringFirstPtsUs) return true;
-  if (s.targetUs - s.lastDecodedPtsUs > FORWARD_SEEK_RESET_US) return true;
-  return false;
+  return resetReason(s) !== null;
 }
 
 /// The decoder surface the pump drives. `SourceHandle` implements this as
@@ -136,7 +153,41 @@ export class PacketPump {
   /// the pump never advances past it. The latch scopes the reset decision
   /// to "have I already seeked for this exact target", so decideReset only
   /// gets to fire a fresh reset when the target actually changes.
+  ///
+  /// This is a FAST PATH ONLY, and on its own it is not sufficient — see
+  /// `seekedKeyTimestamp`. It saves a key-packet lookup while the target holds
+  /// still; it cannot protect a target that moves.
   private seekResolvedForTargetUs: number | null = null;
+  /// Container timestamp (seconds — the packet's own identity) of the key packet
+  /// the pump last seeked to, or `null` before any seek / after an invalidation.
+  ///
+  /// LANDMINE, and the reason this exists alongside `seekResolvedForTargetUs`:
+  /// that latch is keyed on the TARGET, and **during playback the target changes
+  /// every single frame**. So it only ever protected a stationary playhead (a
+  /// held position, a settled scrub) and gave zero protection under playback.
+  /// Once a clip fell a second behind under load, every pump pass saw a fresh
+  /// target, re-fired the far-forward arm, reset, flushed the ring, and re-seeked
+  /// to the SAME key up to a whole GOP back — then threw away the prefix it had
+  /// just decoded and did it again. Measured on 3 concurrent 1080p clips: 254
+  /// ring flushes in 20 s, 1722 frames decoded and refused, two rings that never
+  /// held a single frame while their decoders ran at 40 fps. A clip never
+  /// recovered, because falling behind is what caused it to fall further behind.
+  ///
+  /// Keyed on the KEY PACKET instead, the check holds for a moving target: if the
+  /// seek would land on the key we are already decoding forward from, it is a
+  /// no-op and must be skipped rather than performed. Scoped to `far-forward`
+  /// only — a BACKWARD target inside the same GOP genuinely needs the re-seek,
+  /// because the pump cannot reach it by moving forward.
+  ///
+  /// Deliberately key IDENTITY and not "is the key at or before the frontier",
+  /// which would be the more general rule (it would also cover a key the pump
+  /// crossed in-stream under ADR 0003, where a forward GOP boundary needs no
+  /// reset). The general form has to convert `key.timestamp` seconds into source
+  /// µs to compare against `lastDecodedPtsUs`, and that conversion is the exact
+  /// ±1 µs rounding trap the non-zero-origin frontier test guards: the pump's
+  /// frontier comes from `chunk.timestamp`, not from `round(seconds * 1e6)`.
+  /// Comparing a packet's own `timestamp` to itself has no rounding at all.
+  private seekedKeyTimestamp: number | null = null;
   /// Single-flight guard: at most one runPump() loop is live.
   private pumping = false;
   /// Set by requestFrameAt while a loop is live; the loop re-runs its
@@ -184,8 +235,9 @@ export class PacketPump {
     this.lastDecodedPtsUs = Number.NEGATIVE_INFINITY;
     this.flushedThisRun = false;
     // The fresh decoder has never been seeked; let it re-seek even for a
-    // target the OLD decoder already resolved.
+    // target the OLD decoder already resolved, and even to the same key.
     this.seekResolvedForTargetUs = null;
+    this.seekedKeyTimestamp = null;
   }
 
   dispose(): void {
@@ -211,14 +263,15 @@ export class PacketPump {
         // fix: decideReset alone would re-fire every pass for a far target
         // whose key sits >1s before it, even though the seek already
         // landed there (see the field doc on seekResolvedForTargetUs).
-        const needsSeek =
-          this.cursor === null ||
-          (target !== this.seekResolvedForTargetUs &&
-            decideReset({
-              targetUs: target,
-              lastDecodedPtsUs: this.lastDecodedPtsUs,
-              ringFirstPtsUs: this.deps.ring.firstPtsUs(),
-            }));
+        const reason =
+          target !== this.seekResolvedForTargetUs
+            ? resetReason({
+                targetUs: target,
+                lastDecodedPtsUs: this.lastDecodedPtsUs,
+                ringFirstPtsUs: this.deps.ring.firstPtsUs(),
+              })
+            : null;
+        const needsSeek = this.cursor === null || reason !== null;
         if (needsSeek) {
           const isReset = this.cursor !== null; // cold start is not a reset
           const myGen = this.generation;
@@ -236,18 +289,43 @@ export class PacketPump {
             if (this.generation !== myGen || this._disposed) return;
           }
           if (!key) break; // no key packet (empty/bad source) — give up this pass
-          if (isReset && this.deps.decoder.state === "configured") {
-            this.deps.decoder.reset();
-            this.deps.decoder.configure();
-            this.deps.ring.flush();
-          }
-          if (this.deps.decoder.state === "configured") {
-            const prepared = this.clock.prepare(key);
-            this.deps.decoder.decode(prepared.chunk);
-            this.cursor = key;
-            this.lastDecodedPtsUs = prepared.sourcePtsUs;
-            this.flushedThisRun = false;
+          // The seek would land on the key we are ALREADY decoding forward
+          // from, for a target that merely drifted ahead. Performing it would
+          // rewind the frontier to that key and discard the prefix already
+          // decoded — and since the target keeps moving, do so again every pass.
+          // That is the livelock; see `seekedKeyTimestamp`. Backward resets are
+          // excluded deliberately: the pump only moves forward, so a backward
+          // target inside this same GOP can only be reached by re-seeking.
+          const alreadyDecodingFromKey =
+            reason === "far-forward" &&
+            this.cursor !== null &&
+            key.timestamp === this.seekedKeyTimestamp;
+          if (alreadyDecodingFromKey) {
+            // Adopt the target into the fast path so the next pass skips the
+            // key lookup too, and fall through to the forward fill.
             this.seekResolvedForTargetUs = target;
+          } else {
+            if (isReset && this.deps.decoder.state === "configured") {
+              this.deps.decoder.reset();
+              this.deps.decoder.configure();
+              // Flush ONLY when the cached frames are from the wrong region.
+              // On a far-forward reset they are not wrong — `requestFrameAt`
+              // already called `setAnchor(target)`, which evicted everything
+              // outside the new window, so what remains is either useful or
+              // about to age out on its own. Flushing it was how a clip that
+              // fell behind under load threw away the very frames that would
+              // have served the playhead.
+              if (reason === "backward-beyond-ring") this.deps.ring.flush();
+            }
+            if (this.deps.decoder.state === "configured") {
+              const prepared = this.clock.prepare(key);
+              this.deps.decoder.decode(prepared.chunk);
+              this.cursor = key;
+              this.lastDecodedPtsUs = prepared.sourcePtsUs;
+              this.flushedThisRun = false;
+              this.seekResolvedForTargetUs = target;
+              this.seekedKeyTimestamp = key.timestamp;
+            }
           }
         }
 
@@ -263,6 +341,15 @@ export class PacketPump {
           // pump already seeked for, decideReset's far-forward arm is
           // expected to still read true (the key sits >1s before it) and
           // must NOT re-trigger a break/re-seek — that's the livelock.
+          //
+          // Left keyed on the TARGET rather than the key packet (unlike the
+          // pass-start check) because this arm cannot afford the async key
+          // lookup that identifying the key requires. The cost of that is
+          // bounded and not a livelock: while a clip is lagging, every new
+          // target breaks the fill once, the pass-start check then recognises
+          // the key and declines to re-seek, and the fill resumes — so the
+          // frontier still advances by at least one packet per tick and the
+          // ring is never flushed. Progress, just not at full fill speed.
           if (
             this.targetUs !== this.seekResolvedForTargetUs &&
             decideReset({

@@ -78,19 +78,109 @@ export type PreviewGpuColorSpace = {
   range: 'limited' | 'full' | 'derived' | 'invalid'
 }
 
+/// Which read-completion barrier runs between snapshotting a slot's shared
+/// texture and acking it back to the native pool. The product ships one of these
+/// (`rendererFence`); the others exist so a bench can A/B against it. Main
+/// resolves the mode from an env var (`WEFTCUT_HW_BARRIER`, see
+/// src/main/previewGpu.ts) and every session reports the one it applied.
+///
+/// Two of them defer the ack behind a completion signal, and they differ in which
+/// process takes it and — the part that turned out to matter — whether waiting
+/// for it can be done without burning the renderer thread.
+///
+///   rendererFence — THE DEFAULT. The preload runs no barrier at all: it posts
+///              the bitmap and hands the ack obligation to the renderer, which
+///              takes the completion signal on the Pixi WebGPU device (see
+///              renderer/render/decoder/transports/slotFenceQueue.ts) and acks
+///              back over the same port. WebGPU's signal is a PROMISE, so a slot
+///              that is not ready costs nothing to keep waiting for — that, not
+///              a faster signal, is the win: 1080p one track goes from 0.088 to
+///              0.000 spin thread-s/s and tick p99 23.5 → 17.3ms, and 4K goes
+///              from 0 smooth tracks (tick p99 45.7ms, 38% drops at two) to 2,
+///              matching the barrier-less control in every cell measured.
+///              Its own compromise is the deadline — see `DEADLINE_MS` there.
+///   fence    — the same deferral, with the copy + `fenceSync` taken on a
+///              PRIVATE offscreen 1×1 WebGL2 context in the preload. Correct and
+///              off the critical path, and it took 1080p hardware from 2 smooth
+///              tracks to 4 (tick p99 at 3 tracks 39.8 → 17.0ms). Its limit is
+///              the idle GPU, where that fence does not signal on its own at ANY
+///              bound: the drain's flush-and-poll spin is what completes it, and
+///              WebGL2 cannot express a blocking wait
+///              (`MAX_CLIENT_WAIT_TIMEOUT_WEBGL` is 0 on Chromium) so the spin is
+///              wall-clock-bounded busy work — ~2s per 20s window at one quiet
+///              1080p track, 0.35-0.42 thread-s/s at 4K. NOT fixable by widening
+///              its deadline; see `FENCE_DEADLINE_MS`, where the wider bound
+///              measured worse. Retained as the A/B control.
+///   readback — no longer the default, but still CORRECT and shipped for years:
+///              rasterize + read back 1px, which blocks until Chromium's
+///              cross-device read has GPU-completed. ~20ms of renderer-thread
+///              time per frame — the wall that capped hardware preview at 2
+///              smooth 1080p tracks. Now the A/B control and the safe fallback.
+///   gpuflush — force the copy on the GPU only (texImage2D + flush), no CPU
+///              readback. MEASURED AND REJECTED: reorders exactly as `none`
+///              does, so submitting the copy is not what the ack was waiting
+///              for — completion is. Kept only to re-run that comparison, and
+///              it is the finding `fence` is built on.
+///   none     — no barrier. KNOWN-INCORRECT: the lane presents frames pool_size
+///              out of order (see the block comment in src/preload/index.ts).
+///              It exists to measure the barrier's cost ceiling, nothing else.
+export type HwBarrierMode = 'readback' | 'fence' | 'gpuflush' | 'none' | 'rendererFence'
+
+/// Renderer → preload message on a session's frame port: this slot's read has
+/// completed (or its deadline passed), so the preload may release it with
+/// `previewGpu:consumeAck`. The ONLY message that travels back up the port, and
+/// it exists only under `rendererFence`, where the renderer owns the ack.
+///
+/// Typed here rather than on either side because both ends must agree on it and
+/// neither owns it: the renderer posts it, the preload turns it into the ack. The
+/// preload verifies `streamId` against the port it arrived on, so an ack can only
+/// ever free a slot of the stream whose channel carried it.
+export type PreviewGpuSlotAck = { kind: 'consumeAck'; streamId: string; slot: number }
+
 /// Reply of `previewGpu.open`: decoded stream dimensions + the realized pool
 /// size (native may hand back fewer slots than requested).
-export type PreviewGpuOpenReply = { width: number; height: number; poolSize: number }
+export type PreviewGpuOpenReply = {
+  width: number
+  height: number
+  poolSize: number
+  /// Barrier strategy main resolved for this session (see `HwBarrierMode`).
+  /// The CONFIGURED value, for a caller that wants to cross-check what it got.
+  /// It is NOT how the preload learns the mode — a reply can be overtaken by
+  /// the frames it describes, which cost a bench run: frames landing first
+  /// missed the latch, ran the fallback, and invalidated every multi-track
+  /// cell. The latch rides `evt:previewGpu:barrier`, sent before the native
+  /// session exists on the same ordered channel as the frames themselves.
+  barrierMode: HwBarrierMode
+}
 
-/// Reason `previewGpu:open` rejects with when the concurrent-HW-session budget is
+/// Reason `previewGpu:open` rejects with when either HW admission currency is
 /// full. A CAPACITY condition, not a capability one: the same media on the same
-/// machine opens on hardware again as soon as a session frees up. Callers must
+/// machine opens on hardware again as soon as enough reservation frees. Callers must
 /// treat it as "software for THIS open" and must NOT record it as a per-media
 /// hardware verdict (see `FfmpegSource`'s open-failure branch — doing so pinned a
-/// source to software for the rest of the app session the first time it ever had
-/// more than MAX_HW_SESSIONS overlapping clips, and kept it there after the extra
-/// clips were deleted). Shared so main and the renderer can't drift on the string.
+/// source to software for the rest of the app session the first time concurrent
+/// load exceeded admission, and kept it there after the extra clips were
+/// deleted). Shared so main and the renderer can't drift on the string.
 export const HW_BUDGET_EXCEEDED = 'hw-budget-exceeded'
+
+/// The native session opened at dimensions different from the coded size main
+/// reserved. Treat this as a transient admission mismatch for THIS open: main
+/// closes the native session and releases its lease, and the renderer falls to
+/// software without poisoning the per-media hardware capability cache.
+export const HW_BUDGET_RESERVATION_MISMATCH = 'hw-budget-reservation-mismatch'
+
+/// Live preview-GPU admission snapshot. Main greedily reserves BOTH a hard
+/// session slot and the source's coded width×height before native open.
+///
+/// `codedPixelArea` is calibrated from the measured 30 fps fixtures. It is
+/// deliberately NOT called pixel-rate: fps is not yet carried into admission,
+/// and multiplying this number by an assumed rate would overstate the model.
+/// `calibratedFps` makes that empirical boundary visible to diagnostics.
+export type PreviewGpuBudgetSnapshot = {
+  currency: 'coded-pixel-area'
+  sessions: { used: number; max: number }
+  codedPixelArea: { used: number; max: number; calibratedFps: 30 }
+}
 
 /// Per-metric ms summary from the native preview timing accumulator (decode-bench
 /// Stage 3). Field names are the napi camelCase of the Rust `TimingSummary`.
@@ -312,21 +402,33 @@ export interface WeftcutApi {
   /// cross contextBridge). Instead `requestPort(streamId)` hands a MessagePort to
   /// the main world via `window.postMessage`, over which the preload posts that
   /// stream's decoded frames; the renderer listens for the one-time port message
-  /// then reads frames off `port.onmessage`. consumeAck is preload-internal
-  /// (fired after createImageBitmap), so it is deliberately NOT exposed here.
+  /// then reads frames off `port.onmessage`. consumeAck is deliberately NOT
+  /// exposed here: the preload fires it, either itself or when the renderer
+  /// reports a slot's read complete over that same port (`PreviewGpuSlotAck`),
+  /// which reaches only the stream whose channel carried it.
   previewGpu: {
     open(args: {
       streamId: string
       path: string
       poolSize: number
       colorSpace: PreviewGpuColorSpace
+      /// Renderer-probed coded dimensions reserved by main before native open.
+      codedWidth: number
+      codedHeight: number
     }): Promise<PreviewGpuOpenReply>
     requestFrameAt(args: { streamId: string; targetUs: number }): Promise<void>
     close(args: { streamId: string }): Promise<void>
     /// One channel PER stream. The handoff post carries `streamId` so a listener
     /// can tell its own port from another concurrent session's — the post is a
-    /// broadcast every live transport hears.
+    /// broadcast every live transport hears. The channel is bidirectional: under
+    /// `rendererFence` the renderer sends slot acks back up it
+    /// (`PreviewGpuSlotAck`), the only traffic that flows that way.
     requestPort(streamId: string): void
+    /// Live preview-GPU admission budget (see `PreviewGpuBudgetSnapshot`).
+    /// Diagnostics —
+    /// the open gate in main is still the authority; a caller must not pre-check
+    /// this and skip the open.
+    budget(): Promise<PreviewGpuBudgetSnapshot>
     /// E2E/bench-only: drain this session's per-frame timing samples. Rejects
     /// for an unknown stream, or with "preview-gpu not built" off the native path.
     takeTimings(streamId: string): Promise<PreviewGpuTimingReport>
@@ -349,7 +451,11 @@ export interface WeftcutApi {
     /// full): native downscales each frame BEFORE it crosses IPC, so the reply
     /// and every `PreviewSwFrameMsg` carry the SHIPPED dimensions, which can be
     /// smaller than the media's.
-    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null }): Promise<{ width: number; height: number }>
+    ///
+    /// `cadenceDiv` is preview-only (absent = 1 = every frame). Native decodes
+    /// every frame for reference correctness, then skips unselected frames
+    /// before copy-back/scale/packing and IPC.
+    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null }): Promise<{ width: number; height: number }>
     requestFrameAt(args: { streamId: string; targetUs: number }): void
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void

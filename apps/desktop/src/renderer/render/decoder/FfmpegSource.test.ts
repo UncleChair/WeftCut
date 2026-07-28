@@ -1,7 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// The lane trail is the only thing in this graph that reaches the LogBus, and
+// it does so through `../../ipc`'s `window.api` bridge — absent in the node env.
+const bus = vi.hoisted(() => ({ rows: [] as { message: string }[] }));
+vi.mock("../../ipc", () => ({
+  logEmit: async (input: { message: string }) => { bus.rows.push(input); },
+}));
+
 import { FfmpegSource } from "./FfmpegSource";
 import { pickInitialLane, resetFfmpegCapabilitySession } from "./ffmpegCapability";
-import { HW_BUDGET_EXCEEDED } from "../../../shared/ipc";
+import { resetFfmpegLaneTrail } from "./ffmpegLaneTrail";
+import {
+  HW_BUDGET_EXCEEDED,
+  HW_BUDGET_RESERVATION_MISMATCH,
+} from "../../../shared/ipc";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 
 function fakeTransport(opts?: { openRejects?: string }) {
@@ -85,6 +97,29 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
     // No further IPC nudge past eof — the old handle used to gate on eof;
     // the transports no longer do, so FfmpegSource must gate it itself.
     expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops nudging while the ring's lookahead is full, and resumes as it drains", async () => {
+    // The lane's brake. Before this, `isLookaheadFull` was computed on every
+    // ffmpeg source and consulted by nobody, so nothing bounded what the decoder
+    // PRODUCED — only what the ring kept.
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }) },
+    );
+    await src.ensureReady();
+
+    gpu.emitFrame(0);
+    gpu.emitFrame(1_500_000);          // a full second of lookahead past the anchor below
+    await src.requestFrameAt(100_000); // target inside the ring, so no stranded-flush
+    expect(src.isLookaheadFull()).toBe(true);
+    expect(gpu.t.requestFrameAt).toHaveBeenCalledTimes(0);
+
+    // Playhead advances; the same cached tail is no longer a full window ahead.
+    await src.requestFrameAt(600_000);
+    expect(gpu.t.requestFrameAt).toHaveBeenCalledWith(600_000);
   });
 
   it("keeps evicting via the ring anchor after eof, even though the transport is no longer nudged", async () => {
@@ -255,18 +290,38 @@ describe("FfmpegSource — HW open failure: capacity vs capability", () => {
   // `markHwUnusable` is a sticky per-MEDIA, session-lifetime verdict. The
   // concurrent-HW-session budget is a transient CAPACITY limit, so recording it
   // pinned a source to the software lane for the rest of the app session the
-  // moment it ever had more than MAX_HW_SESSIONS overlapping clips — and kept it
+  // moment its concurrent load exceeded admission — and kept it
   // there after the extra clips were deleted. Symptom: a single 4K clip that had
   // been fine suddenly stutters through the SW lane with nothing on the timeline
   // to explain it.
-  const openFails = (reason: string) => {
+  const openFails = (
+    reason: string,
+    options: { width?: number | null; height?: number | null; playbackScaleDiv?: number } = {},
+  ) => {
     const gpu = fakeTransport({ openRejects: reason });
     const sw = fakeTransport();
+    const makeSw = vi.fn(() => sw.t);
     const src = new FfmpegSource(
-      { layerId: "L", mediaId: "m-cap", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
-      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
+      {
+        layerId: "L",
+        mediaId: "m-cap",
+        sourcePath: "C:/x.mp4",
+        codec: "h264",
+        pixFmt: "yuv420p",
+        componentAvailable: true,
+        width: options.width ?? 3840,
+        height: options.height ?? 2160,
+        ...(options.playbackScaleDiv !== undefined
+          ? { playbackScaleDiv: options.playbackScaleDiv }
+          : {}),
+      },
+      {
+        makeGpu: () => gpu.t,
+        makeSw,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+      },
     );
-    return { src, gpu, sw };
+    return { src, gpu, sw, makeSw };
   };
 
   /// Ask the REAL resolver what the next open for this media would pick, with a
@@ -286,12 +341,31 @@ describe("FfmpegSource — HW open failure: capacity vs capability", () => {
   beforeEach(() => resetFfmpegCapabilitySession());
 
   it("falls back to software for a budget failure WITHOUT marking the media", async () => {
-    const { src, sw } = openFails(HW_BUDGET_EXCEEDED);
+    const { src, sw, makeSw } = openFails(HW_BUDGET_EXCEEDED);
     await src.ensureReady();
     expect(src.currentLane()).toBe("software"); // this open degrades…
     expect(sw.t.open).toHaveBeenCalled();
+    expect(makeSw).toHaveBeenCalledWith({
+      scaleDiv: 4,
+      cadenceDiv: 2,
+    });
     // …but the media's verdict is untouched, so the NEXT open re-probes and takes
     // hardware again once a session frees up.
+    expect(await nextOpenLane("m-cap")).toEqual({ lane: "hardware", probed: true });
+  });
+
+  it("treats native dimension drift as transient without applying the budget spill profile", async () => {
+    const { src, makeSw } = openFails(
+      `${HW_BUDGET_RESERVATION_MISMATCH}: reserved 3840x2160, native opened 1920x1080`,
+      { playbackScaleDiv: 2 },
+    );
+    await src.ensureReady();
+
+    expect(src.currentLane()).toBe("software");
+    expect(makeSw).toHaveBeenCalledWith({
+      scaleDiv: 2,
+      cadenceDiv: 1,
+    });
     expect(await nextOpenLane("m-cap")).toEqual({ lane: "hardware", probed: true });
   });
 
@@ -403,6 +477,110 @@ describe("FfmpegSource — live playback-resolution change", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(src.currentLane()).toBe("software");
     expect(opened).toHaveLength(1); // opened by the fallback, reading the live divisor
+  });
+});
+
+describe("FfmpegSource — lane transitions leave a trail", () => {
+  // The lane is deliberately absent from the resolved decode key (ADR 0030), so
+  // the resolution trail cannot see it move; `ffmpegLaneTrail` is the channel
+  // that can. What matters here is the COUNT — once per transition, never per
+  // open and never per frame.
+  beforeEach(() => {
+    bus.rows.length = 0;
+    resetFfmpegLaneTrail();
+    resetFfmpegCapabilitySession();
+  });
+
+  const hwSource = (
+    layerId: string,
+    mediaId: string,
+    gpu: ReturnType<typeof fakeTransport>,
+    sw: ReturnType<typeof fakeTransport>,
+  ) =>
+    new FfmpegSource(
+      { layerId, mediaId, sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
+    );
+
+  it("emits exactly one row, naming the reason, when the hardware open overflows the budget", async () => {
+    // The hardware open THREW, so nothing ever recorded "hardware" — the row
+    // exists only because the fallback tells the trail what it left.
+    const src = hwSource("L-of", "m-of", fakeTransport({ openRejects: HW_BUDGET_EXCEEDED }), fakeTransport());
+    await src.ensureReady();
+
+    expect(src.currentLane()).toBe("software");
+    expect(bus.rows).toHaveLength(1);
+    expect(bus.rows[0]!.message).toContain("layer L-of");
+    expect(bus.rows[0]!.message).toContain("media m-of");
+    expect(bus.rows[0]!.message).toContain("hardware → software");
+    expect(bus.rows[0]!.message).toContain(HW_BUDGET_EXCEEDED);
+  });
+
+  it("emits a second row for the return trip once a hardware session frees up", async () => {
+    // The budget is per-open and never sticky, so the same clip re-promotes on
+    // its next open. Silence there would read as "still on software".
+    const overflowed = hwSource("L-rt", "m-rt", fakeTransport({ openRejects: HW_BUDGET_EXCEEDED }), fakeTransport());
+    await overflowed.ensureReady();
+    overflowed.dispose();
+
+    const promoted = hwSource("L-rt", "m-rt", fakeTransport(), fakeTransport());
+    await promoted.ensureReady();
+
+    expect(promoted.currentLane()).toBe("hardware");
+    expect(bus.rows).toHaveLength(2);
+    expect(bus.rows[1]!.message).toContain("software → hardware");
+  });
+
+  it("emits one row for the runtime HW→SW swap and nothing more as frames flow", async () => {
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = hwSource("L-loss", "m-loss", gpu, sw);
+    await src.ensureReady();
+    expect(bus.rows).toHaveLength(0); // the first open is not a transition
+
+    gpu.fail("gpu-device-lost");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bus.rows).toHaveLength(1);
+    expect(bus.rows[0]!.message).toContain("hardware → software (gpu-device-lost)");
+
+    for (let i = 0; i < 30; i++) {
+      await src.requestFrameAt(i * 33_333);
+      sw.emitFrame(i * 33_333);
+    }
+    expect(bus.rows).toHaveLength(1); // per transition, not per frame
+  });
+
+  it("says nothing at all when no transition happens", async () => {
+    const gpu = fakeTransport();
+    const src = hwSource("L-quiet", "m-quiet", gpu, fakeTransport());
+    await src.ensureReady();
+    for (let i = 0; i < 30; i++) {
+      await src.requestFrameAt(i * 33_333);
+      gpu.emitFrame(i * 33_333);
+    }
+    expect(src.currentLane()).toBe("hardware");
+    expect(bus.rows).toEqual([]);
+  });
+
+  it("says nothing on the same-lane playback-resolution re-open", async () => {
+    // `setPlaybackScaleDiv` reuses the fallback's dispose-and-`openLane`
+    // mechanism, so the trail — not the call site — is what keeps it quiet.
+    const src = new FfmpegSource(
+      { layerId: "L-scale", mediaId: "m-scale", sourcePath: "C:/x.mov", codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true },
+      {
+        makeGpu: () => fakeTransport().t,
+        makeSw: () => fakeTransport().t,
+        pickLane: async () => ({ lane: "software" as const, hwLane: null, device: null }),
+      },
+    );
+    await src.ensureReady();
+    src.setPlaybackScaleDiv(2);
+    await new Promise((r) => setTimeout(r, 0));
+    src.setPlaybackScaleDiv(4);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(src.currentLane()).toBe("software");
+    expect(bus.rows).toEqual([]);
   });
 });
 

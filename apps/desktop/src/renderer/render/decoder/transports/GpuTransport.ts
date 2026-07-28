@@ -12,9 +12,18 @@
 // This is the transport half only — no FrameRing, no first-frame/fatal-error
 // hooks, no idle bookkeeping. Those stay with `FfmpegSource` (the caller),
 // which owns exactly one `DecodeTransport` at a time.
-import type { PreviewGpuColorSpace } from "../../../../shared/ipc";
+import type {
+  HwBarrierMode,
+  PreviewGpuColorSpace,
+  PreviewGpuSlotAck,
+} from "../../../../shared/ipc";
 import type { DecodeTransport, DecodeTransportOpen } from "./DecodeTransport";
-import { HandoffTimings, type HandoffTimingSummary } from "./handoffTimings";
+import {
+  HandoffTimings,
+  type FenceHandoffStats,
+  type HandoffTimingSummary,
+} from "./handoffTimings";
+import { sharedSlotFenceQueue } from "./slotFenceQueue";
 
 /// How long to wait for the preload's port handoff before `open()` rejects.
 /// Generous — this is a one-time same-process `postMessage` round-trip, not a
@@ -34,6 +43,33 @@ interface PortFrameMsg {
   gvfMs?: number;
   cibMs?: number;
   residentMs?: number;
+  /// The read-completion barrier, stamped directly around the drain rather than
+  /// derived from the other three. `barrierMs` is the TOTAL for whichever
+  /// barrier mode the preload ran; the other two split it into its GPU-copy and
+  /// CPU-read phases (see `BarrierCost` in preload/index.ts — the readback's two
+  /// halves are not separable from the total alone).
+  barrierMs?: number;
+  barrierDrawMs?: number;
+  barrierReadMs?: number;
+  /// The barrier that actually RAN for this frame, which is not always the one
+  /// configured: the preload falls back from `gpuflush` to `readback` when
+  /// WebGL2 is missing. A bench leg labelled by intent instead of by outcome
+  /// silently reports the wrong variant's cost.
+  barrierApplied?: HwBarrierMode;
+  /// Health of the deferred-ack fence path, present only while it is running.
+  /// The wait it defers is NOT in `barrierMs` — that stays the blocking cost, so
+  /// a mechanism that MOVED the cost can't read as one that removed it. The one
+  /// exception is `forcedWaitMsTotal`: a deadline spin IS blocking, and reading
+  /// barrier cost without it understates the path to near zero.
+  fence?: FenceHandoffStats;
+  /// Set under `rendererFence`: the preload ran NO barrier on this bitmap and
+  /// will NOT ack its slot. Delivering the frame transferred that obligation
+  /// here, and it is unconditional — a frame this transport never paints (ring
+  /// eviction, a suspended compositor) holds a slot just the same, and
+  /// `pool_size` stranded slots wedge the session for good. The barrier stamps
+  /// above are absent on such a message for the same reason they are stamped at
+  /// all: only this side knows which rung of its ladder ran.
+  ackDelegated?: boolean;
 }
 interface PortEofMsg {
   kind: "eof";
@@ -133,7 +169,17 @@ export class GpuTransport implements DecodeTransport {
       path: o.path,
       poolSize: o.poolSize ?? 3,
       colorSpace: deriveColorSpace(o.sourceColor),
+      // Missing/invalid probe dimensions deliberately ride as zero: main's
+      // budget validates and fails closed before native allocation.
+      codedWidth: o.codedWidth ?? 0,
+      codedHeight: o.codedHeight ?? 0,
     });
+    // `dispose()` may have raced the asynchronous main-process open before the
+    // session was registered, making its first close a no-op. Once open lands,
+    // close again so the native session and its GPU-budget lease cannot leak.
+    if (this._disposed) {
+      await window.api.previewGpu.close({ streamId: this.streamId });
+    }
   }
 
   private waitForPort(): Promise<void> {
@@ -157,7 +203,10 @@ export class GpuTransport implements DecodeTransport {
   /// Handle one message off the preload's port. Filters by `streamId` —
   /// defensive: the port is now per-stream, so a foreign message shouldn't
   /// arrive at all; if one does, drop it WITHOUT leaking its bitmap (a 4K
-  /// ImageBitmap per frame is not a survivable leak).
+  /// ImageBitmap per frame is not a survivable leak). A delegated ack dies with
+  /// such a frame, which is tolerable only because reaching here at all would
+  /// mean the preload routed another stream's frame onto this port — the
+  /// impossibility this guard is defensive about, not a live failure mode.
   private handlePortMessage(data: PortMsg): void {
     if (!data || data.streamId !== this.streamId) {
       if (data && data.kind === "frame") data.bitmap?.close?.();
@@ -166,17 +215,63 @@ export class GpuTransport implements DecodeTransport {
     if (data.kind === "frame") {
       if (this._disposed) {
         // Late frame after teardown — drop it, returning the bitmap's
-        // backing resources rather than leaking them.
+        // backing resources rather than leaking them. Deliberately NOT acked:
+        // dispose() has already dropped this stream's pending slots and asked
+        // main to close, and an ack into a mid-closing session is what that
+        // ordering exists to prevent.
         data.bitmap?.close?.();
         return;
       }
-      this.timings.record(data.gvfMs, data.cibMs, data.residentMs);
+      // The barrier stamps come from whichever side actually ran one. Under
+      // `rendererFence` that is HERE, so the preload's zeroes must not be the
+      // ones recorded — a leg would then read as barrier-free when a barrier
+      // ran, which is the false PASS `barrierApplied` exists to stop.
+      let barrierMs = data.barrierMs;
+      let barrierDrawMs = data.barrierDrawMs;
+      let barrierReadMs = data.barrierReadMs;
+      let barrierApplied = data.barrierApplied;
+      let fence = data.fence;
+      if (data.ackDelegated === true) {
+        const queue = sharedSlotFenceQueue();
+        // Before `frameCb`, and unconditionally: the slot's release cannot
+        // depend on the ring keeping the frame, or on anything painting it.
+        const applied = queue.submit(this.streamId, data.slot, data.bitmap, () =>
+          this.postSlotAck(data.slot),
+        );
+        barrierApplied = applied.applied;
+        barrierDrawMs = applied.drawMs;
+        barrierReadMs = applied.readMs;
+        barrierMs = applied.drawMs + applied.readMs;
+        fence = queue.stats(this.streamId);
+        // A frame arriving is the wake-up the already-queued slots were waiting
+        // for; doing it here costs no scheduling, and the pump only covers gaps.
+        queue.drain();
+      }
+      this.timings.record(
+        data.gvfMs,
+        data.cibMs,
+        data.residentMs,
+        barrierMs,
+        barrierDrawMs,
+        barrierReadMs,
+        barrierApplied,
+        fence,
+      );
       this.frameCb?.(data.bitmap, data.ptsUs, data.durUs);
     } else if (data.kind === "eof") {
       this.eofCb?.();
     } else if (data.kind === "error") {
       this.errorCb?.(data.message);
     }
+  }
+
+  /// Release one slot back up the port (`rendererFence` only). The port is read
+  /// LIVE, not captured: `dispose()` nulls it, and this is the second line of
+  /// defence behind dropping the pending slots — neither an ack nor a poke may
+  /// reach a session main is mid-closing.
+  private postSlotAck(slot: number): void {
+    const ack: PreviewGpuSlotAck = { kind: "consumeAck", streamId: this.streamId, slot };
+    this.port?.postMessage(ack);
   }
 
   /// Preload handoff timings for this session, or null before the first
@@ -233,6 +328,11 @@ export class GpuTransport implements DecodeTransport {
       window.removeEventListener("message", this.messageListener);
       this.messageListener = null;
     }
+    // Drop this stream's un-acked slots WITHOUT acking, BEFORE the port goes and
+    // before main is asked to close — the renderer-side half of the ordering the
+    // preload's `closePreviewGpuStream` keeps from its end. The native close
+    // joins the decode thread, so the slots cease to exist with it.
+    sharedSlotFenceQueue().dropFor(this.streamId);
     if (this.port) {
       this.port.onmessage = null;
       this.port = null;

@@ -36,6 +36,10 @@ import {
   type PreviewSampler,
 } from "../colorpick/previewSamplerRegistry";
 import { quickProxyPath } from "./decodeRoute";
+import {
+  setSlotFenceBackend,
+  slotFenceBackendForRenderer,
+} from "./decoder/transports/slotFenceQueue";
 import { proxyIntent } from "../state/proxyPreferenceStore";
 import { resolveDecodeEngine } from "./decoder/decodeEngine";
 import {
@@ -68,7 +72,10 @@ import {
   clearMasterMeter,
   publishMasterMeter,
 } from "../state/masterMeterStore";
-import { setPixiPresentationVisible } from "./previewPresentation";
+import {
+  installTimedPresent,
+  setPixiPresentationVisible,
+} from "./previewPresentation";
 import type { PreviewFrameCapture } from "../testhook/e2eHook";
 
 interface Props {
@@ -192,6 +199,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         `${LOG} application init: canvas=${app.canvas.width}×${app.canvas.height} ` +
           `renderer=${app.renderer.type}`,
       );
+      // Hardware-lane slot acks: the read-completion signal is taken on THIS
+      // device, because it is presented every frame and therefore serviced every
+      // frame (see slotFenceQueue.ts — an unpresented context signals ~2 display
+      // intervals late on an idle GPU). Registered from the host rather than
+      // reached for by the transport: the device belongs to the Application's
+      // lifecycle, not to any one decode session.
+      setSlotFenceBackend(slotFenceBackendForRenderer(app.renderer));
       // @pixi/react renders a bare <canvas> with no CSS sizing.
       // Inline-replaced canvas elements default to their intrinsic
       // pixel size (here 1920×1080), which overflows the preview
@@ -305,6 +319,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         playbackScaleDiv(useAppSettingsStore.getState().settings.playback_resolution),
       );
       compositor.setPresentationVisible(visibleRef.current);
+      // Before the visibility call: that one early-returns when the state is
+      // unchanged (the usual init case, already visible), so it would never
+      // install the timed present on its own.
+      installTimedPresent(app);
       setPixiPresentationVisible(app, visibleRef.current);
       const initialSummary = useProjectStore.getState().summary;
       compositor.setProject(initialSummary);
@@ -328,22 +346,38 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       engine.onPlayStateChange(setTransportPlaying);
       registerTransport(engine);
 
-      // Session-end dropped-frame summary → status log. FCP-style "warn
-      // after playback": the transport indicator shows drops live; this
-      // row makes them durable + explains the cause. `takeUnderrun
+      // Session-end underrun summary → status log. FCP-style "warn after
+      // playback": the transport indicator shows the counts live; this row
+      // makes them durable + explains the cause. `takeUnderrun
       // SessionSummary` is once-per-session, so a pause-during-warmup
       // (which also fires playing=false) can't re-log a stale count.
+      //
+      // The two counts stay separate phrases: "dropped" is a decoder that
+      // fell behind, "late" is a composite loop that stalled with a full
+      // ring. Merging them would point the reader at the wrong subsystem.
       engine.onPlayStateChange((playing) => {
         if (playing) return;
-        const dropped = compositor.takeUnderrunSessionSummary();
-        if (dropped === 0) return;
+        const { droppedFrames, lateFrames } =
+          compositor.takeUnderrunSessionSummary();
+        if (droppedFrames === 0 && lateFrames === 0) return;
+        const causes: string[] = [];
+        if (droppedFrames > 0) {
+          causes.push(
+            `${droppedFrames} frame${droppedFrames === 1 ? "" : "s"} dropped (decoding fell behind)`,
+          );
+        }
+        if (lateFrames > 0) {
+          causes.push(
+            `${lateFrames} frame${lateFrames === 1 ? "" : "s"} late (the render loop stalled)`,
+          );
+        }
         void logEmit({
           level: "warn",
           category: { kind: "System" },
           source: { kind: "System" },
-          message: `Playback dropped ${dropped} frame${dropped === 1 ? "" : "s"} — decoding fell behind`,
+          message: `Playback couldn't keep up — ${causes.join("; ")}`,
           i18n_key: "log.playback_dropped_frames",
-          i18n_args: { count: dropped },
+          i18n_args: { dropped: droppedFrames, late: lateFrames },
         });
       });
 
@@ -565,6 +599,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               positionUs: engine.positionUs(),
               ...compositor.presentationSnapshot(),
             }),
+            // Playback bench: read the product's OWN per-frame accounting
+            // (dropped frames, per-clip rings, HW handoff barrier) rather than
+            // having the driver recompute frame timing from outside.
+            perfSnapshot: () => compositor.getPerfSnapshot(),
           });
         });
       }
@@ -691,6 +729,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       compositorRef.current = null;
       engineRef.current = null;
       applicationRef.current = null;
+      // The device goes with the Application. Slots already pending keep their
+      // own probes and still ack — see `SlotFenceQueue.setBackend`.
+      setSlotFenceBackend(null);
       clearMasterMeter();
       if (meterTimerRef.current !== null) {
         window.clearInterval(meterTimerRef.current);

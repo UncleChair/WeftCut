@@ -408,6 +408,10 @@ const enUS = {
       "{{count}} frame dropped during playback — decoding fell behind",
     dropped_frames_other:
       "{{count}} frames dropped during playback — decoding fell behind",
+    late_frames_one:
+      "{{count}} frame late during playback — the render loop stalled",
+    late_frames_other:
+      "{{count}} frames late during playback — the render loop stalled",
   },
   export: {
     title: "Export",

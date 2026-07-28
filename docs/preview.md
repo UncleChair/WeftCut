@@ -183,15 +183,40 @@ means for licensing.
 - **HW transport** — Windows d3d11va: a pooled shared GPU texture reaches the
   compositor with zero pixel bytes crossing IPC. The preload isolated world
   builds each `ImageBitmap` from the shared slot and forwards it over a
-  MessagePort. A **cross-device read-completion barrier** guards correctness:
-  before a slot recycles, the preload rasterizes a 1px sample of the bitmap to
-  force Chromium to materialize its `createImageBitmap` copy — which cannot
-  finish until the GPU-process read of ffmpeg's own-device texture has landed.
-  Without it, the producer could overwrite a slot mid-read and deliver a later
-  frame's pixels tagged with an earlier PTS (the B-frame reorder that
-  `preview-gpu-order.spec.ts` locks: each frame carries a barcode of its index
-  and every delivered bitmap must match its PTS-derived index). It is
-  codec-agnostic and the readback is a pipeline flush, not a frame transfer.
+  MessagePort. Codec-agnostic — nothing on the path inspects the bitstream.
+- **A slot's recycling waits for the GPU read; its delivery doesn't.** ffmpeg
+  overwrites a slot in place as soon as it is acked, on its own D3D11 device,
+  while Chromium reads that texture on the GPU process's — a cross-device
+  dependency Chromium cannot track, so `await createImageBitmap` resolving is
+  not the read having landed. Ack too early and the producer overwrites the slot
+  mid-read, delivering a later frame's pixels tagged with an earlier PTS
+  (`preview-gpu-order.spec.ts` locks this: every frame carries a barcode of its
+  index and every delivered bitmap must match its PTS-derived index, on one
+  session and on three concurrent ones). What has to wait is **recycling**, not
+  **delivery** — treating the two as one costs a display interval on the
+  renderer thread for every frame of every session. So the preload hands the
+  bitmap over immediately and delegates the ack to the renderer, which copies one
+  pixel out of the delivered bitmap on Pixi's WebGPU queue, waits for that
+  queue's submitted work, and acks the slot back up the same port.
+- **Waiting must be free, which is why the signal is a promise.** The same
+  deferral expressed with a WebGL2 `fenceSync` needs a context of its own, and on
+  an idle GPU such a fence does not signal by itself at any bound — the drain's
+  flush-and-poll spin is what completes it, and WebGL2 cannot express a blocking
+  wait, so that spin is busy work on the renderer thread. It cost a quiet 1080p
+  track ~2 s per 20 s window and made 4K fail outright. WebGPU's
+  `onSubmittedWorkDone` is a promise, so a slot that is not ready yet costs
+  nothing to keep waiting for.
+- **The ack is independent of paint, and bounded.** A frame the ring evicts, or
+  one that arrives while nothing is compositing, still holds a slot, and
+  `pool_size` stranded slots wedge a session for good — so the signal is taken on
+  delivery and never waits on anything downstream. A signal still absent at its
+  deadline acks regardless: one possibly-torn frame is the smaller harm. That
+  deadline is a real compromise rather than a formality, because the WebGPU signal
+  arrives well after it; the constant carries the measurements and the reason
+  (`slotFenceQueue.ts`). `HwBarrierMode` (`shared/ipc.ts`) names the strategies;
+  the preload-side fence and the synchronous 1px readback — a pipeline flush, not
+  a frame transfer — stay available as A/B controls, the readback also as the
+  fallback where the renderer has no device to fence on.
 - **SW transport** — libavcodec decodes the original in the main process and
   ships NV12 bytes over classic IPC ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
   The bytes ring as `NativeNv12Frame`s and convert to RGB in the compositor's
@@ -200,6 +225,17 @@ means for licensing.
   never via `createImageBitmap`, whose buffer-frame conversion is always
   BT.601 ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)).
   Gate: `preview-sw-color.spec.ts` (saturated charts, 709 + 601 legs).
+- **SW requests continue, they don't re-seek.** The native session keeps a
+  cursor (position + the frame it stopped on) across requests, so a target that
+  moves forward — every playback tick — resumes the same decode pass, and only a
+  backward scrub or a jump more than a second past the frontier pays a seek.
+  It stops once half a second past the target is decoded, which is what paces
+  delivery to content rate: one new frame per tick, no duplicates. The renderer
+  adds the second brake, skipping the request entirely while
+  `FrameRing.isLookaheadFull()` (time OR byte budget). Seeking per request
+  instead costs the whole GOP prefix every tick — measured 137× decode
+  amplification on a 240-frame GOP, which is what made this lane unusable for
+  long-GOP and 10-bit sources.
 - **HW→SW fallback is internal.** A HW decode error, device loss, or the
   budget throw disposes the GPU transport and opens the SW transport **into
   the same `FrameRing`** — a fresh `streamId` so no stale GPU frame lands, the
@@ -220,17 +256,62 @@ indefinitely on a backward seek. The allow-list encodes that seek-safety
 dimension the one-frame probe can't test — a codec must be on it before its
 probe is even kicked — but never overrules a probe's negative verdict. (The
 underlying D3D11 backward-seek hang is a separate pre-existing gap the
-allow-list routes around, not a fix — a tracked follow-up.) Concurrent GPU
-sessions are capped at a conservative `MAX_HW_SESSIONS` (3); an open past the
-cap throws a typed `hw-budget-exceeded` that the engine handles exactly like a
-runtime HW death — the over-budget clip falls to the SW transport rather than
-erroring.
+allow-list routes around, not a fix — a tracked follow-up.) GPU admission
+reserves two currencies before native allocation: at most five concurrent
+sessions and at most `3 × 3840 × 2160` total coded pixel area. The area is
+calibrated against the measured 30 fps fixtures; it is not pixel-rate because
+source fps is not carried into admission. Thus five 1080p sessions fit, while a
+fourth 4K session does not ([playback-perf](playback-perf.md)). Exhausting either
+currency throws typed `hw-budget-exceeded`; the clip falls to the SW transport
+rather than erroring and records no capability verdict, because admission
+capacity is transient.
 
-**Sticky, per-source, no re-promotion.** A HW failure marks this source
+**Sticky, per-source, no re-promotion.** A HW *failure* marks this source
 software-only for the rest of the session; a total ffmpeg failure under `auto`
 marks the source `webcodecs` for the session. Neither re-promotes — reopening
-the source (reload / re-import) is what clears it. Each transition logs to
-LogBus once, not per frame.
+the source (reload / re-import) is what clears it.
+
+The budget throw is different in kind but not in effect. It records no verdict,
+so it does not spread: a *different* clip on the same media probes normally and
+takes hardware while the over-budget one sits on software. Above 1080p, only
+this capacity fallback gets the formal spill profile: the smallest supported
+scale near a 960×540 target (quarter size for 4K) and half cadence. Native still
+decodes every reference frame, but skips unselected frames before copy-back,
+scale, packing and IPC. Device failures and native-size mismatches use the
+ordinary software profile instead.
+
+What a spill also does not do is come back. Lane selection runs once per decode
+session, at
+`pickInitialLane`, and a decode session outlives the timeline edit that would
+free a slot — `SourceDecoderPool` keys sources by layer id and drops one only on
+its idle sweep (the clip stops being requested for several seconds), a
+resolver-key change (a proxy landing, an engine flip), or a pool teardown
+(reload, re-import, export suspend). So deleting the other clips does not
+re-promote the clip that lost the race, and neither does reopening the project:
+the same layer id gets the same, already-downgraded source handed back. The
+budget is per-open; the *asking* is per-source-lifetime, and that is what
+decides.
+
+The live budget is readable — `previewGpu:budget` returns
+`sessions.used/max`, `codedPixelArea.used/max`, and the latter's
+`calibratedFps: 30`. The PerfHUD shows both currencies beside the per-clip lane
+pills. This is diagnostic state, not an invitation to pre-check: main's
+reservation is the authority. A clip reading `SW↓` next to newly available
+capacity is the sticky source lifetime above, not a capability verdict.
+
+**Two trails, logged separately.** `noteResolution` emits one LogBus row per
+media per change of the resolved key, so an engine or source change (the
+total-ffmpeg-failure case above, a proxy landing) leaves a trail. The lane needs
+its own channel, because it is deliberately absent from that key (ADR 0030) and
+putting it there would make hardware-vs-software an engine-level fact:
+`noteLaneOpen` emits one `decode-lane` row per clip per hardware↔software
+transition, naming the layer, the media, the lane left, the lane taken and the
+reason — the `hw-budget-exceeded` overflow, a device loss, a capability failure.
+Both trails log per *change*, never per frame: a first open, and a same-lane
+re-open such as a playback-resolution change, are silent. A return trip would
+log the same way, but on the budget path there is nothing to log while the
+source lives: an over-budget clip does not re-promote inside its own decode
+session (above), so the overflow row is the only row that clip emits.
 
 **Capability cache.** `<userData>/decode_capability.json` persists per-machine
 probe verdicts across restarts, keyed by lane (`sw`/`hw`) and a
@@ -394,6 +475,16 @@ The HUD's reset button clears the Compositor's `compositeMsMax` AND
 the engine's warmup max so a one-off cold-start spike doesn't pin
 the displayed max forever. The HUD's z-index sits below page
 chrome popovers / settings dialogs so it doesn't obscure them.
+
+For a per-stage breakdown rather than a single `composite ms` — including
+the two costs that bracket lives outside, `setAnchorTime` and the Pixi
+present — see [`playback-perf.md`](playback-perf.md), the multi-track
+playback benchmark (operated per
+[`playback-perf-runbook.md`](playback-perf-runbook.md)), and
+`render/perf/stageTimers.ts`, the accumulator it reads. Note what the
+HUD's **Dropped** counter cannot see: it judges whether the ring held a
+fresh frame, so a loop stalled by a synchronous GPU drain reports zero
+drops while looking visibly jerky.
 
 ## Render & Play
 

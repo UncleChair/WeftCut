@@ -168,6 +168,29 @@ describe("SwTransport", () => {
     t.dispose();
   });
 
+  it("forwards a reduced output cadence only for an explicit spill profile", async () => {
+    const { api } = installApi();
+    const spilled = new SwTransport(undefined, 4, 2);
+    await spilled.open({ streamId: "spill", path: "C:/4k.mp4" });
+    expect(api.open).toHaveBeenCalledWith({
+      streamId: "spill",
+      path: "C:/4k.mp4",
+      scaleDiv: 4,
+      cadenceDiv: 2,
+    });
+    spilled.dispose();
+
+    const ordinary = installApi();
+    const fullCadence = new SwTransport(undefined, 4, 1);
+    await fullCadence.open({ streamId: "ordinary", path: "C:/4k.mp4" });
+    expect(ordinary.api.open).toHaveBeenCalledWith({
+      streamId: "ordinary",
+      path: "C:/4k.mp4",
+      scaleDiv: 4,
+    });
+    fullCadence.dispose();
+  });
+
   it("does not fire onError when disposed before a failing open() settles", async () => {
     let rejectOpen!: (e: Error) => void;
     const api = {

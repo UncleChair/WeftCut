@@ -5,6 +5,7 @@
 // there, so prod bundles tree-shake it out with the rest of the hook surface.
 // Spec: docs/decode-bench.md
 import { convertFileSrc } from "@/bridge/ipc";
+import { getPreviewGpuBudget } from "@/bridge/previewGpu";
 import { SourceDecoderPool, type SourceHandle } from "./SourceDecoderPool";
 import type { FfmpegSource } from "./FfmpegSource";
 import type { FfmpegLane } from "./decodeEngine";
@@ -137,6 +138,12 @@ export interface OrderCheckResult {
   /// budget (a genuine dropped/undelivered frame — distinct from a mispairing).
   missing: number;
   mismatches: OrderCheckMismatch[];
+  /// The read-completion barrier this session actually RAN (`HwBarrierMode`, or
+  /// `'mixed'`), null off the hardware lane. Reported because a barcode check
+  /// passes under EVERY correct barrier: a run whose configured variant silently
+  /// fell back to another one is green and proves nothing about the variant it
+  /// was launched for. The caller compares this against what it pinned.
+  barrierApplied?: string | null;
   error?: string;
 }
 
@@ -190,6 +197,8 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
             forceLane: "hardware" as const,
             sourcePath,
             componentAvailable: true,
+            width,
+            height,
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
           }
         : strategy === "sw"
@@ -251,7 +260,17 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
       checked++;
       if (decodedIdx !== i) mismatches.push({ ptsUs: pts, expectedIdx: i, decodedIdx });
     }
-    return { strategy, poolSize, checked, missing, mismatches };
+    return {
+      strategy,
+      poolSize,
+      checked,
+      missing,
+      mismatches,
+      // `in`, because the pool's return union includes the WebCodecs handle,
+      // which has no preload stage and therefore no barrier to report.
+      barrierApplied:
+        "handoffTimings" in h ? (h.handoffTimings()?.barrierModeObserved ?? null) : null,
+    };
   } catch (e) {
     return { strategy, poolSize, checked, missing, mismatches, error: String(e) };
   } finally {
@@ -259,11 +278,238 @@ export async function decodeBenchOrderCheck(args: OrderCheckArgs): Promise<Order
   }
 }
 
-// ── HW session-budget probe (smoke item b) ───────────────────────────────────
-// The main process caps concurrent native-hw sessions at MAX_HW_SESSIONS (3);
-// the (MAX+1)th `previewGpuOpen` throws `hw-budget-exceeded`. This exercises
-// the untested RUNTIME seam: that opening MAX+1 real sessions actually
-// rejects at the cap and the rejection reaches this probe with the budget
+// ── Concurrent frame-CONTENT-order check (N hardware sessions at once) ───────
+// `decodeBenchOrderCheck` above drives ONE session, and a single session is not
+// the case we ship: production runs up to the fixture-specific count admitted
+// by both live currencies, and the barrier's safety margin is not a constant
+// across that. The synchronous readback barrier measures ~19ms of drain at one
+// session but ~5ms at three — the sessions share one flush, so per-session
+// slack COLLAPSES as
+// sessions are added, and any barrier whose correctness depends on how deep the
+// GPU command queue is when it submits (the deferred-ack fence path especially)
+// can pass alone and reorder in company. A reorder that only appears at three
+// sessions would clear every other gate in this repo.
+//
+// Every session is checked independently and reported separately: one merged
+// count would let three sessions' worth of passes bury a single session's
+// defect, and "which session reordered" is the first question a failure raises.
+
+export interface ConcurrentOrderCheckArgs {
+  sourcePath: string; // absolute fixture path; served via weftcut-media://
+  /// Concurrent hardware sessions to open. Must fit both live admission
+  /// currencies for this coded size or surplus sessions are budget-rejected —
+  /// which this driver reports as an error rather than letting them run on SW.
+  sessions: number;
+  /// Native pool size (slot count) per session. Default 3 (the product default).
+  poolSize?: number;
+  fpsNum: number;
+  fpsDen: number;
+  /// Total frames in the clip; each session walks [0, frameCount-1).
+  frameCount: number;
+  width: number;
+  height: number;
+  /// Barcode stripe count (12 in the standard fixture).
+  bits: number;
+}
+
+export interface ConcurrentOrderSessionResult {
+  index: number;
+  /// The lane this session actually resolved to. Anything but "hardware" means
+  /// the run did not test the thing (see `error`).
+  lane: string;
+  checked: number;
+  missing: number;
+  mismatches: OrderCheckMismatch[];
+  /// True when this session ran out of overall budget before walking the clip.
+  /// A capacity finding, NOT a pass: `checked` will be short and the caller must
+  /// treat that as a result to report, never as a bar to lower.
+  timedOut: boolean;
+  /// The barrier this session actually RAN — see `OrderCheckResult`. Per session,
+  /// because the fallback is per stream: one session missing its latch while the
+  /// others got theirs is exactly the drift this reports.
+  barrierApplied?: string | null;
+  error?: string;
+}
+
+export interface ConcurrentOrderCheckResult {
+  poolSize: number | null;
+  sessions: ConcurrentOrderSessionResult[];
+  /// Set for a whole-run failure (bad session count, pool teardown). A
+  /// per-session failure lives on that session instead.
+  error?: string;
+}
+
+/// Open `sessions` hardware-lane sources on the SAME fixture and verify the
+/// barcode↔PTS pairing on every one of them (see the block comment above).
+///
+/// Opens are sequential, drives are CONCURRENT. Sequential opens are not a
+/// concession: main chains every `previewGpu:open` through one promise
+/// (`openPreviewGpu`'s `openChain`) precisely so the preload's positional
+/// slot-announce FIFO can pair imports safely, so concurrent opens would be
+/// serialised there anyway — doing it here just keeps "which session failed to
+/// open" unambiguous. The concurrency that matters is the drive: N read loops
+/// interleaved on one thread, contending one GPU command queue, which is what
+/// builds the queue depth a single-session run never reaches.
+export async function decodeBenchConcurrentOrderCheck(
+  args: ConcurrentOrderCheckArgs,
+): Promise<ConcurrentOrderCheckResult> {
+  const { sourcePath, fpsNum, fpsDen, frameCount, width, height, bits } = args;
+  const poolSize = args.poolSize ?? null;
+  const pool = new SourceDecoderPool();
+  const results: ConcurrentOrderSessionResult[] = [];
+  const PER_FRAME_BUDGET_MS = 5_000;
+  // Deliberately the single-session budget, NOT a scaled-up one. If N sessions
+  // cannot walk the clip in the time one session needs, that is the capacity
+  // answer the run exists to produce; stretching the budget would hide it.
+  const OVERALL_BUDGET_MS = 90_000;
+  try {
+    if (args.sessions < 1) throw new Error(`sessions must be >= 1, got ${args.sessions}`);
+    // Refuse a run that cannot put every session on hardware. Over the cap the
+    // surplus opens trip `hw-budget-exceeded`, and with the lane forced that is
+    // a hard fatal — but saying so up front names the cause instead of leaving
+    // it to be inferred from N identical open failures.
+    const budget = await getPreviewGpuBudget();
+    const availableSessions = budget.sessions.max - budget.sessions.used;
+    const fixtureArea = width * height;
+    const availableByArea = Number.isSafeInteger(fixtureArea) && fixtureArea > 0
+      ? Math.floor(
+        (budget.codedPixelArea.max - budget.codedPixelArea.used) / fixtureArea,
+      )
+      : 0;
+    const available = Math.min(availableSessions, availableByArea);
+    if (args.sessions > available) {
+      throw new Error(
+        `sessions=${args.sessions} exceeds the live preview-GPU budget for ${width}x${height} (available=${available}, session slots=${availableSessions}, coded-area fits=${availableByArea}); the surplus cannot be on hardware`,
+      );
+    }
+
+    const url = convertFileSrc(sourcePath);
+    const handles: FfmpegSource[] = [];
+    for (let i = 0; i < args.sessions; i++) {
+      const h = pool.acquire({
+        layerId: `concurrent-order-${i}`,
+        mediaId: `concurrent-order:${i}:${sourcePath}`,
+        proxyAssetUrl: url,
+        engine: "ffmpeg" as const,
+        forceLane: "hardware" as const,
+        sourcePath,
+        componentAvailable: true,
+        width,
+        height,
+        ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),
+      }) as FfmpegSource;
+      handles.push(h);
+      results.push({ index: i, lane: "unopened", checked: 0, missing: 0, mismatches: [], timedOut: false });
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await h.ensureReady();
+        results[i]!.lane = h.currentLane();
+      } catch (e) {
+        results[i]!.error = String(e);
+        results[i]!.lane = h.currentLane();
+      }
+    }
+
+    const frameDurUs = (1_000_000 * fpsDen) / fpsNum;
+    const ptsOf = (n: number) => Math.round(n * frameDurUs);
+    const t0 = performance.now();
+
+    /// One session's read loop — the single-session discipline verbatim: nudge
+    /// the anchor forward so the pump never idles between slot fills (keeping
+    /// the read/ack race live), then read each frame's barcode before the
+    /// lookbehind evicts it. The `await sleep(1)` is what lets the N loops
+    /// interleave; with several running, each session's real nudge cadence is
+    /// set by the contention itself.
+    const driveOne = async (i: number): Promise<void> => {
+      const out = results[i]!;
+      const h = handles[i]!;
+      // A session that never opened on hardware has nothing to verify, and
+      // driving it would report a SOFTWARE lane's ordering under a hardware
+      // label — the same refusal `copybackFallbackError` makes for benchmarks.
+      if (out.error) return;
+      if (out.lane !== "hardware") {
+        out.error = `session ${i} resolved to lane "${out.lane}", not hardware — this run did not test the hardware path`;
+        return;
+      }
+      // Per-session canvas: `drawImage` + `getImageData` are synchronous so a
+      // shared one would not corrupt, but a private one keeps each session's
+      // read independent of the others' interleaving by construction.
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) {
+        out.error = `session ${i}: no 2d context`;
+        return;
+      }
+      void h.requestFrameAt(0);
+      for (let n = 0; n < frameCount - 1; n++) {
+        if (performance.now() - t0 > OVERALL_BUDGET_MS) {
+          out.timedOut = true;
+          break;
+        }
+        const pts = ptsOf(n);
+        h.ring.setAnchor(pts);
+        const wStart = performance.now();
+        while (!h.ring.containsPts(pts)) {
+          void h.requestFrameAt(pts);
+          if (performance.now() - wStart > PER_FRAME_BUDGET_MS) break;
+          // eslint-disable-next-line no-await-in-loop
+          await sleep(1);
+        }
+        const ringFrame = h.ring.frameAt(pts);
+        if (!ringFrame || !h.ring.containsPts(pts)) {
+          out.missing++;
+          continue;
+        }
+        if (isNativeNv12Frame(ringFrame)) {
+          // Only reachable if a session silently landed on the CPU-plane lane;
+          // the guard above should have stopped that. Handled the same way the
+          // single-session check does rather than throwing.
+          const vf = new VideoFrame(ringFrame.data as BufferSource, {
+            format: "NV12",
+            codedWidth: ringFrame.width,
+            codedHeight: ringFrame.height,
+            timestamp: ringFrame.timestamp,
+          });
+          try {
+            ctx.drawImage(vf, 0, 0);
+          } finally {
+            vf.close();
+          }
+        } else {
+          ctx.drawImage(ringFrame, 0, 0);
+        }
+        const decodedIdx = decodeBarcodeIndex(
+          ctx.getImageData(0, 0, width, height).data,
+          width,
+          height,
+          bits,
+        );
+        out.checked++;
+        if (decodedIdx !== n) out.mismatches.push({ ptsUs: pts, expectedIdx: n, decodedIdx });
+      }
+      out.barrierApplied = h.handoffTimings?.()?.barrierModeObserved ?? null;
+    };
+
+    // The whole point: all N read loops in flight at once. `allSettled` so one
+    // session throwing still yields the others' verdicts — a partial answer
+    // localises the defect, a rejected Promise.all loses it.
+    const settled = await Promise.allSettled(results.map((_, i) => driveOne(i)));
+    settled.forEach((s, i) => {
+      if (s.status === "rejected" && !results[i]!.error) results[i]!.error = String(s.reason);
+    });
+    return { poolSize, sessions: results };
+  } catch (e) {
+    return { poolSize, sessions: results, error: String(e) };
+  } finally {
+    pool.dispose();
+  }
+}
+
+// ── HW admission-budget probe (smoke item b) ─────────────────────────────────
+// Main reserves both a hard session slot and the requested coded area. The
+// first `previewGpuOpen` beyond either currency throws
+// `hw-budget-exceeded`. This exercises the runtime seam: a real overflow
+// rejects before native allocation and reaches this probe with the budget
 // reason. Because the lane is forced to "hardware", `FfmpegSource._doEnsureReady`'s
 // catch calls `fireFatal` on any open failure, so `onFatalError` fires and
 // `fatalReason` is populated (e.g. `"hw-budget-exceeded"`). The e2e assertion
@@ -282,14 +528,17 @@ export interface BudgetProbeResult {
 
 export async function decodeBenchBudgetProbe(args: {
   sourcePath: string;
+  width: number;
+  height: number;
   count: number;
 }): Promise<BudgetProbeResult> {
   const pool = new SourceDecoderPool();
   const url = convertFileSrc(args.sourcePath);
   const outcomes: BudgetProbeOutcome[] = [];
   try {
-    // Open sequentially WITHOUT disposing, so live session count climbs to the
-    // cap and the next open trips it. The pool is disposed in `finally`.
+    // Open sequentially WITHOUT disposing, so live reservations accumulate
+    // until the first request exceeds a currency. The pool is disposed in
+    // `finally`.
     for (let i = 0; i < args.count; i++) {
       const h = pool.acquire({
         layerId: `budget-${i}`,
@@ -299,6 +548,8 @@ export async function decodeBenchBudgetProbe(args: {
         forceLane: "hardware",
         sourcePath: args.sourcePath,
         componentAvailable: true,
+        width: args.width,
+        height: args.height,
       }) as FfmpegSource;
       let fatalReason: string | null = null;
       // Register before the open attempt so a budget-rejected open is captured.
@@ -331,8 +582,8 @@ export async function decodeBenchBudgetProbe(args: {
 // in-place HW→SW recovery when `!forceLane` (see FfmpegSource.ts). This
 // driver leaves the lane UNFORCED: `pickInitialLane`'s real GPU capability
 // probe decides "hardware" for an HW-eligible clip exactly as production
-// does. Opening MAX_HW_SESSIONS+1 such sources means the LAST one's HW
-// `previewGpuOpen` genuinely trips `hw-budget-exceeded` — and because nothing
+// does. Opening one source past the fixture-specific live capacity makes that
+// HW `previewGpuOpen` genuinely trip `hw-budget-exceeded` — and because nothing
 // forced its lane, the SAME in-place recovery a runtime GPU error uses
 // engages: the ring survives, `ensureReady()` resolves normally (not a
 // fatal), and `currentLane()` reads "software" afterward. A real trigger, not
@@ -341,12 +592,12 @@ export async function decodeBenchBudgetProbe(args: {
 export interface HwFallbackProbeArgs {
   sourcePath: string; // absolute fixture path; served via weftcut-media://
   /// HW-eligible codec (h264/hevc/vp9, 8-bit) so `pickInitialLane`'s probe
-  /// actually picks "hardware" for the first MAX_HW_SESSIONS sources.
+  /// actually picks hardware until the supplied coded size fills admission.
   codec: string;
   pixFmt: string;
   width: number;
   height: number;
-  count: number; // MAX_HW_SESSIONS + 1
+  count: number; // fixture-specific admitted count + 1
 }
 
 export interface HwFallbackSessionOutcome {
@@ -628,6 +879,8 @@ export async function decodeBenchRun(args: BenchArgs): Promise<BenchResult> {
             forceLane: "hardware" as const,
             sourcePath: args.sourcePath,
             componentAvailable: true,
+            ...(args.width != null ? { width: args.width } : {}),
+            ...(args.height != null ? { height: args.height } : {}),
             // Conditional spread, not `poolSize: args.poolSize` — exactOptionalPropertyTypes
             // rejects assigning `number | undefined` to the optional `poolSize: number` field.
             ...(args.poolSize !== undefined ? { poolSize: args.poolSize } : {}),

@@ -32,7 +32,21 @@ import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { playheadTimeUs } from "../state/playheadStore";
 import { useProjectStore } from "../state/projectStore";
-import { setPreferProxies } from "../state/proxyPreferenceStore";
+import {
+  setPreferProxies,
+  setProxyOverride,
+} from "../state/proxyPreferenceStore";
+import {
+  transportPause,
+  transportPlay,
+  transportSeek,
+} from "../state/playbackStore";
+import {
+  resetStageTimers,
+  setStageProfiling,
+  stageSnapshot,
+  type StageSnapshot,
+} from "../render/perf/stageTimers";
 import { resolveDecode } from "../render/decodeRoute";
 import { exists, readDir } from "@/bridge/fs";
 import { join as pathJoin } from "@/bridge/path";
@@ -53,18 +67,22 @@ import {
   decodeBenchRun,
   decodeBenchPhase,
   decodeBenchOrderCheck,
+  decodeBenchConcurrentOrderCheck,
   decodeBenchBudgetProbe,
   decodeBenchHwFallbackProbe,
   type BenchArgs,
   type BenchResult,
   type OrderCheckArgs,
   type OrderCheckResult,
+  type ConcurrentOrderCheckArgs,
+  type ConcurrentOrderCheckResult,
   type BudgetProbeResult,
   type HwFallbackProbeArgs,
   type HwFallbackProbeResult,
 } from "../render/decoder/decodeBench";
 import { probeBothModes, type BothModesResult } from "../render/decoder/importProbe";
-import type { ActiveClipProbe } from "../render/Compositor";
+import type { ActiveClipProbe, CompositorPerfSnapshot } from "../render/Compositor";
+import { getPreviewGpuBudget, type PreviewGpuBudgetSnapshot } from "@/bridge/previewGpu";
 import {
   ensureWaveformWindow,
   registerWaveformProducer,
@@ -337,6 +355,13 @@ export interface E2EHook {
   /// `proxyIntent`/`resolveSource`) actually flips. Returns the setter's
   /// promise so the caller can await the store update before proceeding.
   setPreferProxies(v: boolean): Promise<void>;
+  /// Per-clip proxy override: `false` forces Original, `true` forces the proxy,
+  /// `null` clears back to the global Prefer-Proxies toggle. LANDMINE — the same
+  /// store-propagation trap as `setPreferProxies`: only the wrapped setter's
+  /// optimistic `setState` reaches `useProxyPrefStore`, which is what
+  /// `proxyIntent`/`resolveSource` read, so a raw `update_project_settings`
+  /// patch would leave the clip decoding off its old source.
+  setProxyOverride(mediaId: string, value: boolean | null): Promise<void>;
   /// Render the REAL buildPanGraph + constantPanGains in an OfflineAudioContext
   /// and return the mean L/R RMS energy. Drives the actual Web Audio graph
   /// wiring (splitter/4-gain/merger topology) that the headless math goldens
@@ -372,16 +397,27 @@ export interface E2EHook {
   /// non-empty ⇒ the strategy presented frames out of order (pixels↔pts
   /// mispaired). See decodeBench.decodeBenchOrderCheck. Dev/e2e only.
   decodeBenchOrderCheck(args: OrderCheckArgs): Promise<OrderCheckResult>;
-  /// HW session-budget runtime probe (smoke item b): open `count` native-hw
-  /// sessions and report each open's outcome. The (MAX_HW_SESSIONS+1)th must
-  /// reject with `hw-budget-exceeded` and surface it via onFatalError (the
-  /// resolver then downgrades that source off tier 1). Dev/e2e only.
-  decodeBenchBudgetProbe(args: { sourcePath: string; count: number }): Promise<BudgetProbeResult>;
+  /// The same content-order guard run on N CONCURRENT hardware sessions, which
+  /// is the shipped case the single-session check above cannot speak for: the
+  /// barrier's per-session slack collapses as sessions are added, so a strategy
+  /// can order correctly alone and reorder in company. Reports each session
+  /// separately — a merged count would bury one session's defect. Dev/e2e only.
+  decodeBenchConcurrentOrderCheck(args: ConcurrentOrderCheckArgs): Promise<ConcurrentOrderCheckResult>;
+  /// HW admission-budget runtime probe (smoke item b): open `count` native-hw
+  /// sessions of the supplied coded size and report each outcome. The first
+  /// request beyond either live currency must reject with
+  /// `hw-budget-exceeded` and surface it via onFatalError. Dev/e2e only.
+  decodeBenchBudgetProbe(args: {
+    sourcePath: string;
+    width: number;
+    height: number;
+    count: number;
+  }): Promise<BudgetProbeResult>;
   /// HW→SW in-place fallback: a REAL (unforced) counterpart to
   /// `decodeBenchBudgetProbe` — opens `count` ffmpeg-engine sources on an
   /// HW-eligible clip WITHOUT forcing a lane, so `pickInitialLane`'s real
-  /// probe puts the first `MAX_HW_SESSIONS` on hardware exactly as production
-  /// does; the (MAX_HW_SESSIONS+1)th's budget rejection then engages
+  /// probe fills the live session/area budget exactly as production does; the
+  /// first refused open then engages
   /// `FfmpegSource`'s in-place HW→SW recovery instead of the forced path's
   /// hard fatal. Dev/e2e only. See decodeBench.ts's doc comment.
   decodeBenchHwFallbackProbe(args: HwFallbackProbeArgs): Promise<HwFallbackProbeResult>;
@@ -405,6 +441,35 @@ export interface E2EHook {
   /// without reaching into Dockview's private DOM or serialized JSON. Null before
   /// the workspace controller mounts. Dev/e2e only.
   dockWorkspaceProbe(): DockWorkspaceProbe | null;
+  /// Start REAL playback through the global transport (`playbackStore`), so the
+  /// playback bench never has to click the DOM or press Space.
+  transportPlay(): void;
+  /// Stop real playback through the global transport. Safe no-op with no preview.
+  transportPause(): void;
+  /// Seek the global transport to composition-time `us`. Deliberately separate
+  /// from `weftcutSeekUs`, which bypasses the store to reach the preview
+  /// bridge's `engine.seek`.
+  transportSeekUs(us: number): void;
+  /// The product's OWN per-frame preview accounting off the live Compositor:
+  /// `underrun.droppedFrames`/`underrun.lateFrames`, per-clip
+  /// `decodedFrameCount`/`ringSize`/
+  /// `lookaheadFull`/`downgraded`, `compositeMsLast`/`compositeMsMax`, and the
+  /// hardware lane's `handoff` barrier percentiles. Null until the preview mounts.
+  compositorPerfSnapshot(): CompositorPerfSnapshot | null;
+  /// Live concurrent-HW-session budget from main (`used`/`max`). The lane mix a
+  /// perf snapshot reports says WHICH lane each clip took; this says whether
+  /// hardware was even available at the moment it was asked. Sampling it around
+  /// a teardown/reopen is how a stale-session race is told apart from a sticky
+  /// per-media verdict — the two are indistinguishable from the lane alone.
+  previewGpuBudget(): Promise<PreviewGpuBudgetSnapshot>;
+  /// Turn the preview loop's per-stage timing on/off (`render/perf/stageTimers`).
+  /// Off by default — production must not pay for it — and clears the window.
+  stageProfilingSet(on: boolean): void;
+  /// Drop the recorded stage window, so a bench phase's warm-up frames can't
+  /// pollute the measured percentiles.
+  stageProfilingReset(): void;
+  /// Per-stage percentiles + time-share for the window recorded so far.
+  stageProfilingSnapshot(): StageSnapshot;
 }
 
 /// JSON-serializable projection of DockWorkspaceSnapshot (its `openPanels` Set
@@ -454,6 +519,10 @@ interface PreviewBridge {
   /// Composite + capture PNG and presented-frame metadata in one operation.
   captureFrame(layerId?: string): Promise<PreviewFrameCapture>;
   resourceProbe(): PreviewResourceProbe;
+  /// The live Compositor's own per-frame accounting (see
+  /// `Compositor.getPerfSnapshot`) — dropped frames, per-clip decode/ring
+  /// counters, composite ms, HW handoff barrier percentiles.
+  perfSnapshot(): CompositorPerfSnapshot;
 }
 
 export interface PreviewFrameCapture {
@@ -515,16 +584,18 @@ export function installDockWorkspaceProbe(
   hookSlot().dockWorkspaceProbe = read;
 }
 
-/// Root-side: install the decode-bench hooks (docs/decode-bench.md). No
-/// App/export state needed — the driver owns its own private
-/// SourceDecoderPool. Called once on boot from main.tsx.
+/// Root-side: install the decode-bench hooks (docs/decode-bench.md) plus the
+/// preview-playback bench surface. No App/export state needed — the driver owns
+/// its own private SourceDecoderPool. Called once on boot from main.tsx.
 export function installDecodeBenchHooks(): void {
   if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
   hookSlot().decodeBenchRun = decodeBenchRun;
   hookSlot().decodeBenchPhase = decodeBenchPhase;
   hookSlot().decodeBenchOrderCheck = decodeBenchOrderCheck;
+  hookSlot().decodeBenchConcurrentOrderCheck = decodeBenchConcurrentOrderCheck;
   hookSlot().decodeBenchBudgetProbe = decodeBenchBudgetProbe;
   hookSlot().decodeBenchHwFallbackProbe = decodeBenchHwFallbackProbe;
+  installPlaybackBenchHooks();
 
   // issue #7 boundary #1 probe: run the frame-import comparison on the main
   // thread AND in a dedicated Worker, returning both so the spec can localise a
@@ -557,6 +628,36 @@ export function installDecodeBenchHooks(): void {
       worker.terminate();
     }
   };
+}
+
+/// Root-side: install the preview-playback bench surface — transport control,
+/// the Compositor's own perf snapshot, the per-stage profiler, and the per-clip
+/// proxy override. Self-gated, and called from `installDecodeBenchHooks` (which
+/// main.tsx already wires on boot) so nothing lands on `window` in prod.
+export function installPlaybackBenchHooks(): void {
+  if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
+  // Playback control via the global transport store, not the preview bridge:
+  // the bench needs the SAME entry point the UI's play/pause uses.
+  hookSlot().transportPlay = () => transportPlay();
+  hookSlot().transportPause = () => transportPause();
+  hookSlot().transportSeekUs = (us: number) => transportSeek(us);
+  hookSlot().compositorPerfSnapshot = () => previewBridge?.perfSnapshot() ?? null;
+  // Straight to main — no preview bridge. The budget is main's, and it must stay
+  // readable while NO preview is mounted (that is exactly the window where a
+  // reopen's stale sessions are still registered).
+  hookSlot().previewGpuBudget = () => getPreviewGpuBudget();
+  // `stageTimers` is a module singleton shared with the playback loop, so these
+  // need no bridge. LANDMINE: it is a PER-REALM singleton — this controls the
+  // renderer main thread's preview loop, never the export Worker's copy.
+  hookSlot().stageProfilingSet = (on: boolean) => setStageProfiling(on);
+  hookSlot().stageProfilingReset = () => resetStageTimers();
+  hookSlot().stageProfilingSnapshot = () => stageSnapshot();
+  // Drive the REAL wrapped setter, for the same reason as setPreferProxies (see
+  // its doc comment): the raw update_project_settings patch never reaches
+  // useProxyPrefStore, which is what proxyIntent/resolveSource read, so a bench
+  // that forced Original through the raw command would keep measuring the proxy.
+  hookSlot().setProxyOverride = (mediaId: string, value: boolean | null) =>
+    setProxyOverride(mediaId, value);
 }
 
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,

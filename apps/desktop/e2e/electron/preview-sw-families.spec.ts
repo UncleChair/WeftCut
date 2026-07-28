@@ -109,6 +109,25 @@ async function runFamilyConformance(c: FamilyCase, testInfo: TestInfo) {
     )
     expect(stillBound, 'frame-drop floor: sprite must hold last frame on a frameAt miss').toBe(true)
 
+    // Let the far seek LAND before seeking back. The long-GOP assertion below
+    // reads `ringFirstPtsUs`, which answers for the whole ring and not just for
+    // what the next request produced — and the lane keeps up to half a second of
+    // lookahead per request, of which the ring then retains half a second as
+    // lookbehind. Seek straight back from here and the frames still cached from
+    // the 0 s fill sit inside the target's lookbehind window (measured: earliest
+    // 300 000 = 800 000 − LOOKBEHIND), so the assertion would fail on cached
+    // frames that are perfectly legitimate and prove nothing either way. Landing
+    // the far seek first makes the backward seek strand the ring, which flushes
+    // it, so what follows is only ever this request's own output.
+    await page.waitForFunction(
+      (id) => {
+        const p = (window as { __weftcutTest: { activeClipProbe(id?: string): { ringFirstPtsUs: number | null } | null } }).__weftcutTest.activeClipProbe(id)
+        return p && p.ringFirstPtsUs != null && p.ringFirstPtsUs >= 40_000_000 ? true : null
+      },
+      layerId,
+      { timeout: 90_000, polling: 200 },
+    )
+
     // Seek to the conformance target and wait until the ring holds the SEEKED frame.
     await page.evaluate((us) => (window as { __weftcutTest: { weftcutSeekUs(us: number): void } }).__weftcutTest.weftcutSeekUs(us), c.seekUs)
     const handle = await page.waitForFunction(

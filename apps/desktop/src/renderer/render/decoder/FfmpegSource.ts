@@ -13,7 +13,16 @@ import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
 import type { FfmpegLaneResolution } from "./ffmpegCapability";
-import { HW_BUDGET_EXCEEDED } from "../../../shared/ipc";
+import { noteLaneOpen } from "./ffmpegLaneTrail";
+import {
+  HW_BUDGET_EXCEEDED,
+  HW_BUDGET_RESERVATION_MISMATCH,
+} from "../../../shared/ipc";
+import {
+  resolveBudgetSpillProfile,
+  type BudgetSpillCadenceDiv,
+  type BudgetSpillScaleDiv,
+} from "./budgetSpillProfile";
 
 const IDLE_DISPOSE_MS = 5_000;
 let nextStreamSeq = 0;
@@ -44,7 +53,11 @@ export interface FfmpegSourceInit {
 
 interface FfmpegSourceDeps {
   makeGpu?: () => DecodeTransport;
-  makeSw?: () => DecodeTransport;
+  makeSw?: (profile?: {
+    accel?: { lane: string; device: string | null };
+    scaleDiv: BudgetSpillScaleDiv;
+    cadenceDiv: BudgetSpillCadenceDiv;
+  }) => DecodeTransport;
   pickLane?: typeof pickInitialLane;
 }
 
@@ -81,6 +94,10 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// `openLane` reads it fresh, so a later lane change (the HW→SW fallback)
   /// picks up the current value rather than the one the source was born with.
   private scaleDiv: number;
+  /// True only after main refuses this source with `HW_BUDGET_EXCEEDED`.
+  /// Dimension drift and capability failures may also fall back to software,
+  /// but must keep the ordinary software profile.
+  private budgetSpill = false;
 
   constructor(init: FfmpegSourceInit, deps: FfmpegSourceDeps = {}) {
     this.init = init;
@@ -104,6 +121,11 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// (via `ActiveClipProbe.hwLane`) to assert WHICH HW lane engaged.
   currentHwLane(): string | null { return this.hwPlan?.lane ?? null; }
   isDowngraded(): boolean { return this.startedHardware && this.lane === "software"; }
+  /// Cumulative frames this source delivered, for the PerfHUD's per-clip fps
+  /// column and the playback bench. Counted at the ring rather than in a
+  /// transport so an internal HW→SW lane flip keeps ONE monotonic series — both
+  /// transports push into the same `FrameRing`.
+  decodedFrameCount(): number { return this.ring.pushCount; }
   isLookaheadFull(): boolean { return this.ring.isLookaheadFull(); }
   isIdle(nowMs: number): boolean { return this.lastUseMs > 0 && nowMs - this.lastUseMs > IDLE_DISPOSE_MS; }
 
@@ -159,17 +181,20 @@ export class FfmpegSource implements PreviewDecodeSession {
         // a sticky per-MEDIA, session-lifetime verdict, and the HW-session budget
         // is a transient CAPACITY limit — so marking it pinned the source to
         // software for the rest of the app session the moment it ever had more
-        // than MAX_HW_SESSIONS overlapping clips, and kept it there after the
+        // concurrent load than the budget admits, and kept it there after the
         // extra clips were deleted. Symptom: a single 4K clip that had been fine
         // suddenly previews through the software lane (12.4 MB NV12 per frame over
         // IPC instead of a shared texture) and stutters, with nothing on the
         // timeline to explain it. Fall back for THIS open only; the next open
         // re-probes and takes hardware again once a session frees up.
-        if (!reason.includes(HW_BUDGET_EXCEEDED)) markHwUnusable(this.mediaId, reason);
+        const budgetExceeded = reason.includes(HW_BUDGET_EXCEEDED);
+        const reservationMismatch = reason.includes(HW_BUDGET_RESERVATION_MISMATCH);
+        if (!budgetExceeded && !reservationMismatch) markHwUnusable(this.mediaId, reason);
+        this.budgetSpill = budgetExceeded;
         this.transport?.dispose();
         this.transport = null;
         try {
-          await this.openLane("software");
+          await this.openLane("software", { from: "hardware", reason });
         } catch (swErr) {
           if (this._disposed) return;
           this.fireFatal(swErr instanceof Error ? swErr.message : String(swErr));
@@ -186,11 +211,19 @@ export class FfmpegSource implements PreviewDecodeSession {
 
   /// Open a transport for `lane`, wiring frames into the ring and errors into
   /// the recovery path. Used by initial ready AND the in-place fallback.
-  private async openLane(lane: FfmpegLane): Promise<void> {
+  ///
+  /// `transition` is passed only by the two in-place HW→SW fallbacks, and only
+  /// so the lane trail can name what was left and why: the hardware open that
+  /// preceded them may have THROWN, in which case nothing recorded "hardware"
+  /// and the trail would otherwise read this as a first open.
+  private async openLane(
+    lane: FfmpegLane,
+    transition?: { from: FfmpegLane; reason: string },
+  ): Promise<void> {
     this.eof = false; // a fresh transport can produce frames again
     const t = lane === "hardware"
       ? this.makeHardwareTransport()
-      : (this.deps.makeSw?.() ?? new SwTransport(undefined, this.scaleDiv));
+      : this.makeSoftwareTransport();
     t.onFrame((frame, ptsUs, durUs) => {
       if (this._disposed) { frame.close(); return; }
       this.ring.push(frame, ptsUs, durUs);
@@ -215,7 +248,13 @@ export class FfmpegSource implements PreviewDecodeSession {
       path: this.init.sourcePath,
       ...(this.init.sourceColor !== undefined ? { sourceColor: this.init.sourceColor } : {}),
       ...(this.init.poolSize !== undefined ? { poolSize: this.init.poolSize } : {}),
+      ...(this.init.width != null ? { codedWidth: this.init.width } : {}),
+      ...(this.init.height != null ? { codedHeight: this.init.height } : {}),
     });
+    // Only a lane CHANGE emits — the success tail is reached by every open
+    // (initial, both fallbacks, and the same-lane playback-resolution re-open),
+    // so the trail, not this call site, is what keeps it once-per-transition.
+    noteLaneOpen({ layerId: this.layerId, mediaId: this.mediaId, lane, ...(transition ?? {}) });
     if (this.lastTargetUs !== null) t.requestFrameAt(this.lastTargetUs);
   }
 
@@ -230,10 +269,25 @@ export class FfmpegSource implements PreviewDecodeSession {
     if (hw && (hw.lane === "nvdec" || hw.lane === "vaapi")) {
       // The copy-back lanes ship the same NV12 bytes over the same IPC, so they
       // want the playback-resolution divisor just as much as software does.
-      return this.deps.makeSw?.()
-        ?? new SwTransport({ lane: hw.lane, device: hw.device }, this.scaleDiv);
+      return this.makeSoftwareTransport({ lane: hw.lane, device: hw.device });
     }
     return this.deps.makeGpu?.() ?? new GpuTransport();
+  }
+
+  /// One constructor seam owns every byte-shipping profile. The formal spill
+  /// is selected only after a budget refusal; ordinary software and Linux
+  /// copy-back lanes preserve the user's resolution and full cadence.
+  private makeSoftwareTransport(accel?: { lane: string; device: string | null }): DecodeTransport {
+    const profile = resolveBudgetSpillProfile({
+      budgetExceeded: this.budgetSpill,
+      codedWidth: this.init.width,
+      codedHeight: this.init.height,
+      playbackScaleDiv: this.scaleDiv,
+    });
+    return this.deps.makeSw?.({
+      ...(accel ? { accel } : {}),
+      ...profile,
+    }) ?? new SwTransport(accel, profile.scaleDiv, profile.cadenceDiv);
   }
 
   /// True when the CURRENT lane ships frames through `SwTransport` — plain
@@ -278,10 +332,12 @@ export class FfmpegSource implements PreviewDecodeSession {
     if (this._disposed) return;
     if (lane === "hardware" && this.startedHardware && this.transport) {
       markHwUnusable(this.mediaId, reason);
+      this.budgetSpill = false;
       const dead = this.transport;
       this.transport = null;
       dead.dispose();
-      void this.openLane("software").catch((e) => this.fireFatal(`${reason}; sw recovery failed: ${String(e)}`));
+      void this.openLane("software", { from: "hardware", reason })
+        .catch((e) => this.fireFatal(`${reason}; sw recovery failed: ${String(e)}`));
       return;
     }
     this.fireFatal(reason);
@@ -315,6 +371,13 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.ring.setAnchor(tUs);      // always — drives lookbehind eviction, even post-eof
     if (this.eof) return; // eof seen on the current transport — its own IPC is done,
     // but the anchor above must still advance so the ring keeps evicting stale frames.
+    // Backpressure. Until this line `isLookaheadFull` was consulted only by the
+    // WebCodecs pump, so on this lane the ring's byte ceiling bounded what was
+    // RETAINED and never what the decoder produced. It cannot starve the lane:
+    // the byte arm is floored at `MIN_LOOKAHEAD_FRAMES` ahead and the time arm
+    // wants a full second — deeper than the native pump's own 500 ms horizon, so
+    // steady playback never reaches here and the native cursor sets the pace.
+    if (this.ring.isLookaheadFull()) return;
     this.transport?.requestFrameAt(tUs);
   }
 

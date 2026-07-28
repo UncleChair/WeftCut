@@ -188,6 +188,11 @@ export class SourceHandle {
   /// peak, slow `createImageBitmap`).
   private conversionsInFlight = 0;
   private peakConversionsInWindow = 0;
+  /// Same measurement as `peakConversionsInWindow` but NOT reset by the 1 s log
+  /// window — the playback bench samples once per measured window, so a peak
+  /// that resets every second would be whatever the last second happened to
+  /// hold rather than the worst the run reached.
+  private peakConversionsEver = 0;
   private _disposed = false;
 
   get disposed(): boolean {
@@ -259,6 +264,9 @@ export class SourceHandle {
         this.conversionsInFlight += 1;
         if (this.conversionsInFlight > this.peakConversionsInWindow) {
           this.peakConversionsInWindow = this.conversionsInFlight;
+        }
+        if (this.conversionsInFlight > this.peakConversionsEver) {
+          this.peakConversionsEver = this.conversionsInFlight;
         }
         createImageBitmap(frame).then(
           (bitmap) => {
@@ -477,6 +485,13 @@ export class SourceHandle {
   /// Whether this handle has fallen back to software decode. Dev `PerfHUD`.
   isDowngraded(): boolean {
     return this.downgraded;
+  }
+
+  /// Outputs awaiting `createImageBitmap`, each pinning a HW decode-pool slot —
+  /// see `DecodeSession.conversionBacklog`. `peak` is the handle's lifetime max,
+  /// deliberately not the 1 s log window's.
+  conversionBacklog(): { inFlight: number; peak: number } {
+    return { inFlight: this.conversionsInFlight, peak: this.peakConversionsEver };
   }
 
   /// Whether the ring's lookahead window is satisfied. Dev `PerfHUD`.

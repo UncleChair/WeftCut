@@ -22,7 +22,12 @@ import { SecondaryWindow } from "@/bridge/window";
 import { WindowControls } from "@/components/WindowControls";
 import { RotateCcwIcon } from "lucide-react";
 
-import { getSystemStats, type SystemStats } from "../ipc";
+import {
+  getPreviewGpuBudget,
+  getSystemStats,
+  type PreviewGpuBudgetSnapshot,
+  type SystemStats,
+} from "../ipc";
 import type { Compositor, CompositorPerfSnapshot } from "./Compositor";
 import type { PlaybackEngine, WarmupStats } from "./PlaybackEngine";
 import { throughputFps, type ThroughputSample } from "./perfHudStats";
@@ -146,6 +151,11 @@ export interface PerfHudSample {
   fpsByLayer: Array<[string, number]>;
   sys: SystemStats | null;
   aud: { rmsDb: number; peakDb: number } | null;
+  /// Main's live concurrent-HW-session budget. The per-clip lane pill says which
+  /// lane a clip is on; this says whether hardware was available to be asked for
+  /// — the missing half of the story when a clip reads SW and nothing explains it.
+  /// Null before the first poll resolves.
+  hwBudget: PreviewGpuBudgetSnapshot | null;
 }
 
 /// One point of the monitor's frame-interval sparkline.
@@ -161,6 +171,32 @@ function heapCapRatioOf(memory: PerfMemory | null): number | null {
   return memory && memory.jsHeapSizeLimit > 0
     ? memory.usedJSHeapSize / memory.jsHeapSizeLimit
     : null;
+}
+
+type RingFate = NonNullable<CompositorPerfSnapshot["clips"][number]["ringFate"]>;
+type ConversionBacklog = CompositorPerfSnapshot["clips"][number]["conversionBacklog"];
+
+/// Decoded frames the ring took delivery of (or was offered) and then discarded
+/// without ever handing them to the compositor. The three terms are distinct
+/// mechanisms — arrived too late to be worth keeping, aged out of the window
+/// unpainted, thrown away by a seek/resync — but any of them climbing during
+/// steady playback means decode work is being paid for and binned.
+function wasteOf(f: RingFate): number {
+  return f.staleDropped + f.evictedUnserved + f.flushedUnserved;
+}
+
+function fateTitle(f: RingFate, conv: ConversionBacklog): string {
+  const lines = [
+    `pushed ${f.pushed} · stale-on-arrival ${f.staleDropped}`,
+    `evicted ${f.evicted} (${f.evictedUnserved} never painted)`,
+    `flushed ${f.flushed} over ${f.flushes} seek/resync (${f.flushedUnserved} never painted)`,
+    `serves: ${f.serveHit} hit · ${f.serveClamp} clamp · ${f.serveRepeat} REPEAT`,
+    `misses: ${f.serveMissEmpty} empty · ${f.serveMissGap} out-of-window`,
+  ];
+  // Only the WebCodecs lane has an output-side conversion queue, and each entry
+  // in it holds an open VideoFrame — i.e. a pinned hardware decode-pool slot.
+  if (conv) lines.push(`createImageBitmap in flight ${conv.inFlight} (peak ${conv.peak})`);
+  return lines.join("\n");
 }
 
 /// True when any tracked metric is in its warn band — drives the monitor's
@@ -279,10 +315,15 @@ function PerfDashboard({
   history: HistPoint[];
   onReset: () => void;
 }) {
-  const { snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud } = sample;
+  const { snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud, hwBudget } =
+    sample;
   const fpsLookup = new Map(fpsByLayer);
   const fps = fpsFromMs(rafP50);
   const heapCapRatio = heapCapRatioOf(memory);
+  const hwBudgetAtCap = hwBudget !== null && (
+    hwBudget.sessions.used >= hwBudget.sessions.max
+    || hwBudget.codedPixelArea.used >= hwBudget.codedPixelArea.max
+  );
   const prewarm = snap?.upcomingPrewarm;
   const prewarmRequested = prewarm?.clips.filter((c) => c.requested).length ?? 0;
   const prewarmDueMs =
@@ -347,17 +388,18 @@ function PerfDashboard({
           title="Preview warmup before play. 'cap hit' = WARMUP_MAX_WAIT_MS reached before the ring filled (possible initial-frame stutter)."
         />
         <StatTile
-          label="Dropped"
+          label="Drop / late"
           value={
-            (snap?.underrun?.droppedFrames ?? 0) === 0 ? (
+            (snap?.underrun?.droppedFrames ?? 0) === 0 &&
+            (snap?.underrun?.lateFrames ?? 0) === 0 ? (
               <span className="perf-muted">0</span>
             ) : (
-              <>{snap!.underrun.droppedFrames} <span className="perf-tile-unit">frames</span></>
+              <>{snap!.underrun.droppedFrames} / {snap!.underrun.lateFrames} <span className="perf-tile-unit">frames</span></>
             )
           }
-          meta={snap?.underrun?.active ? "decode behind NOW" : "this play session"}
+          meta={snap?.underrun?.active ? "behind NOW" : "this play session"}
           warn={Boolean(snap?.underrun?.active)}
-          title="Comp frames painted late while the master clock ran (underrunTracker). The transport-bar dot mirrors this."
+          title="Underrun counts while the master clock ran (underrunTracker): comp frames painted from a stale ring / composite ticks past one comp-frame budget. The transport-bar dot mirrors both."
         />
         <StatTile
           label="Prewarm"
@@ -405,6 +447,20 @@ function PerfDashboard({
             title={`${sys.process_count} processes across the Electron/Chromium tree · ${sys.logical_cores} logical cores`}
           />
         ) : null}
+        {hwBudget ? (
+          <StatTile
+            label="HW sessions"
+            value={
+              <>
+                {hwBudget.sessions.used}
+                <span className="perf-tile-unit">/{hwBudget.sessions.max}</span>
+              </>
+            }
+            meta={`${(hwBudget.codedPixelArea.used / 1_000_000).toFixed(1)}/${(hwBudget.codedPixelArea.max / 1_000_000).toFixed(1)} M coded px · ${hwBudget.codedPixelArea.calibratedFps}fps calibration${hwBudgetAtCap ? " · at cap" : ""}`}
+            warn={hwBudgetAtCap}
+            title="Greedy native GPU decode admission: both a hard session slot and coded width×height area must fit. The area limit is calibrated on 30fps measurements; it is not a pixel-rate model. A refused open falls to software for that decode session."
+          />
+        ) : null}
       </div>
 
       <section className="perf-card">
@@ -447,6 +503,16 @@ function PerfDashboard({
                     barrier the preload pays per frame, per session. */}
                 <th className="perf-num" title="Preload read-completion barrier, ms (p50/p95) — hardware lane only">
                   barrier
+                </th>
+                {/* Cumulative, not a rate: what a human watches here is whether
+                    it CLIMBS during steady playback. A ring that is filling and
+                    painting leaves this flat; churn (re-seek loops, a decoder
+                    delivering frames the window has already passed) is the only
+                    thing that moves it. `fps` and `ring` both read healthy
+                    while this runs away — that combination is the measured
+                    signature of the multi-track collapse. */}
+                <th className="perf-num" title="Decoded frames the ring discarded without ever painting them (stale-on-arrival + evicted/flushed unserved)">
+                  waste
                 </th>
               </tr>
             </thead>
@@ -516,6 +582,18 @@ function PerfDashboard({
                           }
                         >
                           {clip.handoff.barrierP50.toFixed(1)}/{clip.handoff.barrierP95.toFixed(1)}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="perf-num">
+                      {clip.ringFate ? (
+                        <span
+                          className={wasteOf(clip.ringFate) > 0 ? "perf-warn" : undefined}
+                          title={fateTitle(clip.ringFate, clip.conversionBacklog)}
+                        >
+                          {wasteOf(clip.ringFate)}
                         </span>
                       ) : (
                         "—"
@@ -622,6 +700,9 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
   // Process-tree resource snapshot (CPU%/RSS) from Electron's app.getAppMetrics()
   // via the main process. Null only until the first poll resolves.
   const [sys, setSys] = useState<SystemStats | null>(null);
+  // Main's HW-session budget, polled on the same slow cadence as the process
+  // stats: it changes only when a session opens or closes, never per frame.
+  const [hwBudget, setHwBudget] = useState<PreviewGpuBudgetSnapshot | null>(null);
   // Master audio bus meter (rms/peak dBFS). Null in export mode or before
   // the graph exists.
   const [aud, setAud] = useState<{ rmsDb: number; peakDb: number } | null>(null);
@@ -730,6 +811,11 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
           if (!cancelled) setSys(s);
         })
         .catch(() => {});
+      getPreviewGpuBudget()
+        .then((b) => {
+          if (!cancelled) setHwBudget(b);
+        })
+        .catch(() => {});
     }, 1000);
     return () => {
       cancelled = true;
@@ -825,8 +911,9 @@ export function PerfTelemetryBridge({ compositorRef, engineRef }: TelemetryProps
       fpsByLayer: Array.from(fpsByLayer.entries()),
       sys,
       aud: aud ? { rmsDb: jsonSafeDb(aud.rmsDb), peakDb: jsonSafeDb(aud.peakDb) } : null,
+      hwBudget,
     }),
-    [snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud],
+    [snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud, hwBudget],
   );
 
   useEffect(() => {

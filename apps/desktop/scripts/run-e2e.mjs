@@ -17,6 +17,10 @@ const EXTRA_GATES = {
     script: 'e2e/scripts/ruler-node-count.mjs',
     why: 'ruler tick/DOM count stays bounded by the viewport',
   },
+  '--playback-perf': {
+    script: 'e2e/scripts/playback-perf.mjs',
+    why: 'per-stage preview playback cost and the max smooth track count',
+  },
 }
 
 /** Split the extra-gate flags out of the Playwright argv — Playwright rejects

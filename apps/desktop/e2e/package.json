@@ -8,6 +8,7 @@
     "test:fixtures": "node fixtures/generate-fixtures.test.mjs",
     "gate:effects-f16-parity": "node effects-f16-parity/run.mjs",
     "bench:decode": "node scripts/decode-bench.mjs",
-    "bench:decode:fixtures": "node scripts/gen-decode-bench-fixtures.mjs"
+    "bench:decode:fixtures": "node scripts/gen-decode-bench-fixtures.mjs",
+    "bench:playback": "node scripts/playback-perf.mjs"
   }
 }

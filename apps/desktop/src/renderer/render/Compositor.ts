@@ -63,9 +63,11 @@ import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
 import { selectActiveTransitions } from "./transitions/activeTransitions";
 import { TransitionNodeManager } from "./transitions/TransitionNodes";
+import { STAGE, stageAdd, stageNow, stageRecord } from "./perf/stageTimers";
 import {
   judgeFrameSelection,
   UnderrunTracker,
+  type UnderrunSessionSummary,
   type UnderrunSnapshot,
 } from "./underrunTracker";
 
@@ -128,6 +130,19 @@ export interface CompositorPerfSnapshot {
     /// True when the ring's lookahead window is satisfied (decoder not
     /// running behind the playhead).
     lookaheadFull: boolean;
+    /// Where this clip's decoded frames went — see `FrameRingFate`. Null on the
+    /// export store, which has no retention window to lose one to.
+    ///
+    /// This is the counter set that separates "never decoded" from "decoded and
+    /// thrown away": `decodedFrameCount` is incremented by BOTH engines before
+    /// they call `ring.push`, so a frame the ring then rejects as stale is
+    /// counted as delivered and never held. Diff two snapshots for rates; read
+    /// `serveRepeat` absolutely, since a held frame is a judder event the
+    /// dropped-frame counter is blind to.
+    ringFate: import("./decoder/FrameRing").FrameRingFate | null;
+    /// WebCodecs only: decoder outputs awaiting `createImageBitmap`, each
+    /// pinning a hardware decode-pool slot (ADR 0004). Null on every other lane.
+    conversionBacklog: { inFlight: number; peak: number } | null;
   }>;
 }
 
@@ -193,6 +208,13 @@ export interface ActiveClipProbe {
   /// seeked frame rather than an earlier one the ring surfaced while catching up.
   ringFirstPtsUs: number | null;
   ringLastPtsUs: number | null;
+  /// Where this clip's decoded frames went (see `FrameRingFate`), null on a
+  /// store without a retention window. Carried here as well as on
+  /// `CompositorPerfSnapshot` because the playback bench reads the two probes at
+  /// different points — the perf snapshot brackets the measured window, while
+  /// this one is also sampled during the pre-window route verification, where a
+  /// clip already churning before the window opens is worth seeing.
+  ringFate: import("./decoder/FrameRing").FrameRingFate | null;
   /// True once a real (non-EMPTY) texture is bound to the sprite. A VideoClip
   /// snapshots the ring's ImageBitmap into its own canvas, so "the bitmap
   /// reached the sprite" shows up as a bound, correctly-sized texture rather
@@ -283,8 +305,8 @@ export interface CompositorInit {
   /// (feedback_playhead_gate_and_tiers). See `compositeFrame`'s
   /// reset/diff/fire around its layer sweep.
   onUnsupported?: (unsupported: ReadonlySet<string>) => void;
-  /// Preview-only: playback underrun (dropped-frame) state changes for the
-  /// transport-bar indicator. Edge-triggered + throttled by
+  /// Preview-only: playback underrun (dropped + late-tick) state changes for
+  /// the transport-bar indicator. Edge-triggered + throttled by
   /// `UnderrunTracker` (never per-frame — feedback_playhead_gate_and_tiers);
   /// safe to feed straight into React state. Export omits it.
   onUnderrun?: (snapshot: UnderrunSnapshot) => void;
@@ -601,9 +623,11 @@ export class Compositor {
   private compositeMsLast = 0;
   private compositeMsMax = 0;
   private upcomingPrewarm: UpcomingClipPrewarmSnapshot | null = null;
-  /// Dropped-frame accounting (preview only; inert in export mode where
-  /// `playing` never goes true). Sweep verdicts come from `updateClip`
-  /// via `sweepLateLayers`; session lifecycle from `setMasterPlayState`.
+  /// Underrun accounting — dropped frames and late composite ticks
+  /// (preview only; inert in export mode where `playing` never goes true).
+  /// Sweep verdicts come from `updateClip` via `sweepLateLayers`; session
+  /// lifecycle from `setMasterPlayState`; the tick interval is read off
+  /// the tracker's own clock.
   private underrun: UnderrunTracker;
   /// Visible VideoClip layers judged late during the CURRENT composite
   /// sweep. Reset before the layer loop, read after it — same
@@ -750,9 +774,9 @@ export class Compositor {
     this.underrun.noteSeekWhilePlaying();
   }
 
-  /// Session-end dropped-frame count for the LogBus summary row; at most
+  /// Session-end dropped + late counts for the LogBus summary row; at most
   /// once per play session (see `UnderrunTracker.takeSessionSummary`).
-  takeUnderrunSessionSummary(): number {
+  takeUnderrunSessionSummary(): UnderrunSessionSummary {
     return this.underrun.takeSessionSummary();
   }
 
@@ -840,6 +864,8 @@ export class Compositor {
     if (c.fps_num > 0 && c.fps_den > 0) {
       this.fpsNum = c.fps_num;
       this.fpsDen = c.fps_den;
+      // Same fps drives the underrun tracker's late-tick threshold.
+      this.underrun.bindFrameBudgetMs((1_000 * this.fpsDen) / this.fpsNum);
     }
     const livingLayerIds = new Set<string>();
     for (const t of summary.tracks) {
@@ -856,6 +882,22 @@ export class Compositor {
         this.abandonSwap(layerId);
         this.tenBitIngest?.release(layerId);
         this.nv12Ingest?.release(layerId);
+        // Release the decode session too, not just the sprite. Without this the
+        // pool holds the handle — and on the ffmpeg hardware lane its GPU
+        // session — until the idle sweep notices seconds later, so a clip
+        // resolving in that window is measured against layers the user already
+        // deleted and can lose a session/area reservation to a ghost. That
+        // loss is permanent: the lane is picked once per source
+        // (docs/preview.md).
+        // It costs the idle sweep's undo grace, which is the better trade — a
+        // warm re-decode is a second, a phantom downgrade lasts the session.
+        // LANDMINE: release BOTH pool keys. `abandonSwap` above covers a swap
+        // still in flight, but a COMPLETED one left `clip.source` under
+        // `${layerId}#swap` with the base key already released, so asking only
+        // for `layerId` would leak the handle that is actually decoding.
+        // `release` no-ops on a miss, so asking for both is safe in either state.
+        this.pool.release(layerId);
+        this.pool.release(swapKeys(layerId, c.mediaId).swapLayerId);
         c.sprite.dispose();
         c.effects.dispose();
         this.clips.delete(layerId);
@@ -928,7 +970,9 @@ export class Compositor {
     effectOpts: { previewEffectsEnabled: boolean },
   ): void {
     if (effects) {
+      const tEffects = stageNow();
       sprite.displayObject.filters = effectsFor(effects, layer, tInLayerUs, effectOpts);
+      stageAdd(STAGE.Effects, tEffects);
     }
     // Transition divert: a participant's finished node — transform, opacity,
     // and filters exactly as the normal path would stage them — goes into its
@@ -976,7 +1020,9 @@ export class Compositor {
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
 
     const prevChildCount = this.stage.children.length;
+    const tRebuild = stageNow();
     this.stage.removeChildren();
+    stageAdd(STAGE.SceneRebuild, tRebuild);
 
     // First pass: ensure audio mixers for every Audio layer. Skipped
     // entirely in export mode — export audio mixes in Rust
@@ -989,6 +1035,7 @@ export class Compositor {
     // track. Treating the VideoClip as also audio-bearing here would
     // play the same audio twice — the audible doubling bug.
     if (this.audioGraph !== null) {
+      const tAudio = stageNow();
       // Audio gates — mirror audio/mix.rs audible_audio_layers semantics:
       // whole-track disable still gates, but audio mute/solo now lives on
       // ROLES (mute wins over solo; an absent role defaults audible iff no
@@ -1051,6 +1098,7 @@ export class Compositor {
         const layer = this.layerById.get(layerId);
         audio.mixer.tick(tUsSnapped, false, layer?.t_end_us ?? 0, null);
       }
+      stageAdd(STAGE.Audio, tAudio);
     }
 
     this.ownerCompositeCount += 1;
@@ -1058,6 +1106,9 @@ export class Compositor {
     // hidden. Everything below this point is visual/presentation-only work.
     if (!this.presentationVisible) {
       this.presentationDirty = true;
+      // The `compositeMsLast` stamp at the tail never sees this exit, so this
+      // bracket is the only account of an audio-only (hidden-tab) frame.
+      stageAdd(STAGE.Composite, compositeStart);
       return;
     }
     this.presentationDirty = false;
@@ -1101,6 +1152,7 @@ export class Compositor {
     }
 
     let z = 0;
+    const tSweep = stageNow();
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
@@ -1138,6 +1190,7 @@ export class Compositor {
         }
       }
     }
+    stageAdd(STAGE.LayerSweep, tSweep);
     // Bake diverted sides into their RTs + publish progress, after the sweep
     // (so any branch's staging is caught) and before the ticker's stage
     // render (so the quad samples THIS frame's pixels).
@@ -1162,6 +1215,11 @@ export class Compositor {
     // clock is running and not scrubbing (a scrub deliberately paints
     // approximate frames); decay ticks unconditionally so the indicator
     // dims after pause too (the engine's rAF tick keeps compositing).
+    //
+    // `tickDecay` must stay on the unconditional path: it also stamps the
+    // tracker's tick clock, and moving it under the `playing && !scrubbing`
+    // guard would make a whole scrub or pause difference into one giant
+    // late tick when judging resumes.
     if (this.mode === "preview") {
       if (this.playing && !this.scrubbing) {
         this.underrun.judgeSweep(this.sweepLateLayers > 0, tUsSnapped);
@@ -1211,6 +1269,7 @@ export class Compositor {
     if (this.compositeMsLast > this.compositeMsMax) {
       this.compositeMsMax = this.compositeMsLast;
     }
+    stageRecord(STAGE.Composite, this.compositeMsLast);
   }
 
   /// Authored composition duration, in microseconds, from the current
@@ -1348,6 +1407,8 @@ export class Compositor {
         downgraded: c.source.isDowngraded?.() ?? false,
         handoff: c.source.handoffTimings?.() ?? null,
         lookaheadFull: c.source.isLookaheadFull?.() ?? false,
+        ringFate: ring.fate ?? null,
+        conversionBacklog: c.source.conversionBacklog?.() ?? null,
       });
     }
     return {
@@ -1399,6 +1460,7 @@ export class Compositor {
       ringSize: s.ring.size(),
       ringFirstPtsUs: s.ring.firstPtsUs(),
       ringLastPtsUs: s.ring.lastPtsUs(),
+      ringFate: s.ring.fate ?? null,
       spriteBound: !isEmpty,
       spriteWidth: isEmpty ? 0 : tex.orig.width,
       spriteHeight: isEmpty ? 0 : tex.orig.height,
@@ -1766,6 +1828,11 @@ export class Compositor {
           this.abandonSwap(layer.id);
           this.tenBitIngest?.release(layer.id);
           this.nv12Ingest?.release(layer.id);
+          // Same release the `setProject` teardown does, for the same reason —
+          // the orphaned handle can be holding a scarce GPU session. Keep the
+          // two in step; this comment claims they mirror each other.
+          this.pool.release(layer.id);
+          this.pool.release(swapKeys(layer.id, existing.mediaId).swapLayerId);
           existing.sprite.dispose();
           existing.effects.dispose();
           this.clips.delete(layer.id);
@@ -2048,7 +2115,9 @@ export class Compositor {
 
     // Upload the current frame BEFORE adjusting transforms so the
     // sprite's natural size reflects the real texture dimensions.
+    const tRing = stageNow();
     const selected = clip.source.ring.selectFrame(srcTUs);
+    stageAdd(STAGE.RingLookup, tRing);
     const frame = selected?.frame ?? null;
 
     // Underrun accounting: while the master clock runs, a stale or
@@ -2072,19 +2141,23 @@ export class Compositor {
     }
     if (frame && selected) {
       if (isTenBitFrame(frame)) {
-        clip.sprite.bindExternalTexture(
-          this.ensureTenBitIngest().textureFor(clip.layerId, frame),
-        );
+        const tTenBit = stageNow();
+        const texture = this.ensureTenBitIngest().textureFor(clip.layerId, frame);
+        stageAdd(STAGE.TenBitIngest, tTenBit);
+        clip.sprite.bindExternalTexture(texture);
       } else if (isNativeNv12Frame(frame)) {
         // Native 8-bit CPU-plane frames (export relay AND the SW preview
         // lane) convert in OUR shader — Chromium's software conversion of
         // buffer-defined NV12 VideoFrames applies BT.601 regardless of the
         // stamped colorSpace (see nv12Frame.ts).
-        clip.sprite.bindExternalTexture(
-          this.ensureNv12Ingest().textureFor(clip.layerId, frame),
-        );
+        const tNv12 = stageNow();
+        const texture = this.ensureNv12Ingest().textureFor(clip.layerId, frame);
+        stageAdd(STAGE.Nv12Ingest, tNv12);
+        clip.sprite.bindExternalTexture(texture);
       } else {
+        const tUpload = stageNow();
         clip.sprite.updateFrame(frame);
+        stageAdd(STAGE.BitmapUpload, tUpload);
       }
       clip.boundFramePtsUs = selected.ptsUs;
       clip.boundFrameDurationUs = selected.durationUs;
