@@ -174,6 +174,12 @@ export class GpuTransport implements DecodeTransport {
       codedWidth: o.codedWidth ?? 0,
       codedHeight: o.codedHeight ?? 0,
     });
+    // `dispose()` may have raced the asynchronous main-process open before the
+    // session was registered, making its first close a no-op. Once open lands,
+    // close again so the native session and its GPU-budget lease cannot leak.
+    if (this._disposed) {
+      await window.api.previewGpu.close({ streamId: this.streamId });
+    }
   }
 
   private waitForPort(): Promise<void> {

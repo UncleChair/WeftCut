@@ -59,9 +59,9 @@ function installFakePreviewGpu() {
     requestPort: vi.fn((streamId: string) => {
       port = dispatchHandoff(streamId);
     }),
-    open: vi.fn(async () => {}),
+    open: vi.fn(async (_args: { streamId: string }) => {}),
     requestFrameAt: vi.fn(async () => {}),
-    close: vi.fn(() => {}),
+    close: vi.fn(async (_args: { streamId: string }) => {}),
   };
   (window as unknown as { api: { previewGpu: typeof api } }).api = { previewGpu: api };
   return { api, getPort: () => port };
@@ -114,6 +114,32 @@ afterEach(() => {
 });
 
 describe("GpuTransport", () => {
+  it("closes a session that finishes opening after disposal", async () => {
+    const { api } = installFakePreviewGpu();
+    const liveSessions = new Set<string>();
+    let finishOpen!: () => void;
+    const openGate = new Promise<void>((resolve) => {
+      finishOpen = resolve;
+    });
+    api.open.mockImplementation(async ({ streamId }) => {
+      await openGate;
+      liveSessions.add(streamId);
+    });
+    api.close.mockImplementation(async ({ streamId }) => {
+      liveSessions.delete(streamId);
+    });
+
+    const t = new GpuTransport();
+    const opening = t.open({ streamId: "disposed-opening", path: "C:/x.mp4" });
+    await vi.waitFor(() => expect(api.open).toHaveBeenCalledOnce());
+
+    t.dispose();
+    finishOpen();
+    await opening;
+
+    expect(liveSessions).toEqual(new Set());
+  });
+
   it("forwards renderer-probed coded dimensions to main admission", async () => {
     const { api } = installFakePreviewGpu();
     const t = new GpuTransport();
