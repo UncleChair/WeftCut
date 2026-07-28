@@ -20,7 +20,7 @@ import {
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
 } from "dockview-react";
-import { ListTreeIcon } from "lucide-react";
+import { TextAlignStartIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "dockview-react/dist/styles/dockview.css";
 
@@ -532,8 +532,8 @@ export function WeftCutDockTab({
       {/* Selection marker: CSS shows it (and the bottom accent) only on
           `.dv-active-tab` — this renderer isn't re-run on activation
           changes, so the marker lives in the DOM of every tab. */}
-      <ListTreeIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
       <span className="weft-dock-tab-label">{title}</span>
+      <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
     </div>
   );
 }

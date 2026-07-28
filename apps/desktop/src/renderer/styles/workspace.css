@@ -18,7 +18,7 @@
   min-height: 0;
   /* One uniform --card island per group: strip, tabs, and Panel surface all
      share it, so the black inter-group gaps do all the region separation.
-     Selection reads from the bottom accent line, the ListTree marker, and
+     Selection reads from the bottom accent line, the text-align-start marker, and
      label weight — not from surface contrast. */
   --weft-dock-strip: var(--card);
   --weft-dock-tab-hidden: var(--card);
@@ -89,7 +89,7 @@
 }
 
 /* No hairline under the strip: region boundaries come from the inter-group
-   gaps alone. Selection reads from a bottom accent line, the ListTree
+   gaps alone. Selection reads from a bottom accent line, the text-align-start
    marker, and label weight. Groups carry no focus-group marker. */
 
 /* Selection layer 1 — bottom accent line on the selected tab, inset so it
@@ -177,12 +177,16 @@
   font-size: var(--font-size-caption);
 }
 
-/* Selection layer 2 — ListTree marker, rendered into every tab (the React
+/* Selection layer 2 — text-align-start marker, rendered into every tab (the React
    renderer isn't re-run on activation changes) and revealed only on the
-   selected tab. */
+   selected tab. The margins only take effect while visible: the left margin
+   widens the text gap to 12px, and the negative right margin seats the marker
+   6px from the tab's trailing edge. */
 .weft-dock-tab-active-icon {
   display: none;
   flex: none;
+  margin-left: 6px;
+  margin-right: -6px;
   color: var(--ring);
 }
 
@@ -207,8 +211,8 @@
 .weft-dockview .dv-tabs-and-actions-container .dv-tab {
   height: 28px;
   /* Symmetric 12px: with the close button gone, the inactive tab's label
-     stays centered. The active tab's ListTree marker shifts the label right
-     by design — selection is allowed to move the text. */
+     stays centered. The active tab's trailing text-align-start marker
+     leaves the text in place. */
   padding: 0 12px;
   /* Top corners only: the bottom edge must stay flat so the selected tab
      keeps its connected silhouette with the Panel below. */
