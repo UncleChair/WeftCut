@@ -169,7 +169,6 @@ export function AppMenuBar({
               onSelect={onSaveAs}
               disabled={busy}
             />
-            <MenuSeparator />
             <MenuItem
               actionId="closeProject"
               label={t("actions.save_and_close")}
