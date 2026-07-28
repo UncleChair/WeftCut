@@ -582,11 +582,10 @@ const zhCN: Resources = {
     heading: "设置",
     close: "关闭",
     cat_general: "通用",
-    cat_editing: "编辑",
+    cat_editing: "项目",
     cat_keyboard: "键盘",
     cat_api_keys: "转录 / 语音",
-    scope_project: "项目",
-    scope_project_hint: "仅作用于当前项目。",
+    project_scope_blurb: "本页设置仅作用于当前项目，随工程文件保存。",
     startup_heading: "启动",
     reopen_on_launch: "启动时重新打开上一个项目",
     reopen_on_launch_hint:
@@ -612,10 +611,10 @@ const zhCN: Resources = {
       "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",
     auto_delete_empty_tracks: "自动删除空轨道",
     auto_delete_empty_tracks_hint:
-      "删除轨道上最后一个片段时一并移除该轨道，一次撤销即可同时恢复；A/B 轨始终保留。此选项随工程保存。",
+      "删除轨道上最后一个片段时一并移除该轨道，一次撤销即可同时恢复；A/B 轨始终保留。",
     prefer_proxies: "预览优先使用代理",
     prefer_proxies_hint:
-      "对已生成代理的片段，在预览中播放轻量的 720p 代理以获得更流畅的拖拽体验；导出仍使用原始文件。此选项随工程保存。",
+      "对已生成代理的片段，在预览中播放轻量的 720p 代理以获得更流畅的拖拽体验；导出仍使用原始文件。",
     decode_unsupported_generate_proxy: "生成代理",
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:

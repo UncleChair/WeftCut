@@ -391,21 +391,6 @@
   border-bottom: 1px solid var(--border-soft);
 }
 
-.settings-scope-badge {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 1px 7px;
-  font-size: var(--font-size-micro);
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: 0;
-  vertical-align: middle;
-  color: var(--muted-foreground);
-  background: rgba(156, 163, 175, 0.1);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-}
-
 /*
  * One spacing source per section. Each `.settings-section` is a flex
  * column whose single `gap` sets BOTH the heading->content gap and the

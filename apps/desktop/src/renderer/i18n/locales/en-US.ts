@@ -600,11 +600,11 @@ const enUS = {
     heading: "Settings",
     close: "Close",
     cat_general: "General",
-    cat_editing: "Editing",
+    cat_editing: "Project",
     cat_keyboard: "Keyboard",
     cat_api_keys: "Transcription / Speech",
-    scope_project: "Project",
-    scope_project_hint: "Applies to the current project only.",
+    project_scope_blurb:
+      "Settings on this page apply to the current project only and are saved with the project file.",
     startup_heading: "Startup",
     reopen_on_launch: "Reopen last project on launch",
     reopen_on_launch_hint:
@@ -631,10 +631,10 @@ const enUS = {
       "Measured in screen pixels, so the effective time range follows the current timeline zoom.",
     auto_delete_empty_tracks: "Auto-delete emptied tracks",
     auto_delete_empty_tracks_hint:
-      "Deleting the last clip on a track also removes the track — one undo restores both. A/B roll always stays. Saved with the project.",
+      "Deleting the last clip on a track also removes the track — one undo restores both. A/B roll always stays.",
     prefer_proxies: "Prefer proxies for preview",
     prefer_proxies_hint:
-      "Play the lightweight 720p proxy in the preview for clips that have one, for smoother scrubbing. Export still uses the original. Saved with the project.",
+      "Play the lightweight 720p proxy in the preview for clips that have one, for smoother scrubbing. Export still uses the original.",
     decode_unsupported_generate_proxy: "Generate proxy",
     keybindings_heading: "Keyboard shortcuts",
     keybindings_blurb:

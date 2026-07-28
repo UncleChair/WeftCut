@@ -76,21 +76,6 @@ const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   { id: "apikeys", labelKey: "settings.cat_api_keys" },
 ];
 
-/// Small pill marking a setting whose value travels with the .vproj
-/// (per-project) instead of the app — the two scopes look identical in
-/// the list otherwise.
-function ProjectBadge() {
-  const { t } = useTranslation();
-  return (
-    <span
-      className="settings-scope-badge"
-      title={t("settings.scope_project_hint")}
-    >
-      {t("settings.scope_project")}
-    </span>
-  );
-}
-
 interface CompositionState {
   durationUs: number;
   durationPinned: boolean;
@@ -250,6 +235,12 @@ export function SettingsPanel({
             </section>
 
             <section className="settings-section">
+              <h3>{t("settings.timeline_heading")}</h3>
+              <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
+              <TimelineSnapSection onError={setError} />
+            </section>
+
+            <section className="settings-section">
               <h3>{t("settings.motifs_heading")}</h3>
               <PrebakeSection onError={setError} />
             </section>
@@ -268,11 +259,9 @@ export function SettingsPanel({
             className="settings-pane"
           >
             <div className="settings-pane-title">{t("settings.cat_editing")}</div>
+            <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
             <section className="settings-section">
-              <h3>
-                {t("settings.composition_heading")}
-                <ProjectBadge />
-              </h3>
+              <h3>{t("settings.composition_heading")}</h3>
               <p className="settings-blurb">{t("settings.composition_blurb")}</p>
               <CompositionSection
                 composition={composition}
@@ -282,9 +271,6 @@ export function SettingsPanel({
             </section>
 
             <section className="settings-section">
-              <h3>{t("settings.timeline_heading")}</h3>
-              <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
-              <TimelineSnapSection onError={setError} />
               <AutoDeleteEmptyTracksSection onError={setError} />
               <PreferProxiesToggle onError={setError} />
             </section>
@@ -440,7 +426,6 @@ function AutoDeleteEmptyTracksSection({
       <span>
         <span className="settings-toggle-label">
           {t("settings.auto_delete_empty_tracks")}
-          <ProjectBadge />
         </span>
         <span className="settings-toggle-hint">
           {t("settings.auto_delete_empty_tracks_hint")}
@@ -480,7 +465,6 @@ function PreferProxiesToggle({
       <span>
         <span className="settings-toggle-label">
           {t("settings.prefer_proxies")}
-          <ProjectBadge />
         </span>
         <span className="settings-toggle-hint">
           {t("settings.prefer_proxies_hint")}
