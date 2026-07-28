@@ -346,47 +346,17 @@ function removeOverflowRow(target: EventTarget | null): void {
   if (target instanceof HTMLElement) target.closest(".dv-tab")?.remove();
 }
 
-/** Behavior layer over Dockview's built-in overflow popover: the chevron's
- *  tooltip previews the hidden Panel names, clicks open the list anchored
- *  under the chevron (not at the mouse point), and once open Arrow/Home/End
- *  move a highlight and Enter activates it (Esc already closes via Dockview). */
+/** Behavior layer over Dockview's built-in overflow popover: clicks open the
+ *  list anchored under the chevron (not at the mouse point), and once open
+ *  Arrow/Home/End move a highlight and Enter activates it (Esc already
+ *  closes via Dockview). */
 function useTabsOverflowA11y(
   containerRef: RefObject<HTMLElement | null>,
 ): void {
-  const { t } = useTranslation();
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const KB_FOCUS_CLASS = "weft-overflow-row--kb-focus";
-
-    const onPointerOver = (event: PointerEvent) => {
-      const target = event.target;
-      // Element, not HTMLElement: the chevron is an SVG, and SVG targets are
-      // not HTMLElements — matching on Element catches clicks/hovers on the
-      // icon and walks up to the root the same way.
-      if (!(target instanceof Element)) return;
-      const root = target.closest(".dv-tabs-overflow-dropdown-root");
-      const handle = root?.querySelector<HTMLElement>(
-        ".dv-tabs-overflow-dropdown-default",
-      );
-      if (!root || !handle) return;
-      const list = root
-        .closest(".dv-tabs-and-actions-container")
-        ?.querySelector(".dv-tabs-container");
-      if (!list) return;
-      const listRect = list.getBoundingClientRect();
-      const names: string[] = [];
-      for (const tab of list.querySelectorAll(".dv-tab")) {
-        const rect = tab.getBoundingClientRect();
-        if (rect.left < listRect.left - 1 || rect.right > listRect.right + 1) {
-          const label = tab.querySelector(".weft-dock-tab-label")?.textContent;
-          if (label) names.push(label);
-        }
-      }
-      handle.title = names.length
-        ? t("dock_workspace.overflow_tooltip", { names: names.join(", ") })
-        : t("dock_workspace.overflow_tooltip_empty");
-    };
 
     /* Dockview opens the popover at the mouse point, so its position drifts
      * with the click. Swallow trusted chevron clicks in the capture phase and
@@ -503,16 +473,14 @@ function useTabsOverflowA11y(
       event.stopPropagation();
     };
 
-    container.addEventListener("pointerover", onPointerOver);
     container.addEventListener("click", onClickCapture, { capture: true });
     window.addEventListener("keydown", onKeyDown, { capture: true });
     return () => {
       popoverObserver.disconnect();
-      container.removeEventListener("pointerover", onPointerOver);
       container.removeEventListener("click", onClickCapture, { capture: true });
       window.removeEventListener("keydown", onKeyDown, { capture: true });
     };
-  }, [containerRef, t]);
+  }, [containerRef]);
 }
 
 export function WeftCutDockTab({
@@ -533,7 +501,6 @@ export function WeftCutDockTab({
     return (
       <div
         className="weft-dock-tab weft-dock-tab--overflow"
-        title={title}
         onAuxClick={(event) => {
           if (!kind || event.button !== 1) return;
           event.preventDefault();
@@ -551,7 +518,6 @@ export function WeftCutDockTab({
     <div
       className="weft-dock-tab"
       data-panel-kind={kind ?? undefined}
-      title={t("dock_workspace.move_panel", { title })}
       onPointerEnter={() => chrome.setHoveredPanel(kind)}
       onPointerLeave={() => chrome.setHoveredPanel(null)}
       onDoubleClick={(event) => {

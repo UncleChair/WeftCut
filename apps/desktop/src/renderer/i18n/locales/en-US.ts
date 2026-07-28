@@ -139,9 +139,6 @@ const enUS = {
     all_closed: "All panels are closed.",
     open_panel: "Open Panel",
     reset: "Reset Workspace",
-    move_panel: "Move {{title}}",
-    overflow_tooltip: "Hidden panels: {{names}}",
-    overflow_tooltip_empty: "Show hidden panels",
     panels: {
       media: "Media Pool",
       preview: "Preview",

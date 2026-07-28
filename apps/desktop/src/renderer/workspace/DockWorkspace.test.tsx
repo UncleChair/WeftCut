@@ -433,9 +433,11 @@ describe("DockWorkspace React integration", () => {
 
     render(<DockWorkspace contracts={contracts} />);
 
-    // Menu-row variant: no move tooltip, plain title only.
-    expect(screen.queryByTitle("Move Effect")).toBeNull();
-    expect(screen.getByTitle("Effect")).toBeTruthy();
+    // Menu-row variant: labeled with the plain title, no hover tooltip.
+    const row = document.querySelector(".weft-dock-tab--overflow");
+    expect(row).toBeTruthy();
+    expect(row?.textContent).toBe("Effect");
+    expect(row?.getAttribute("title")).toBeNull();
   });
 
   it("closes an overflow row's Panel on middle-click", () => {
@@ -452,7 +454,7 @@ describe("DockWorkspace React integration", () => {
 
     const effect = dock.panels.get("effect");
     fireEvent(
-      screen.getByTitle("Effect"),
+      document.querySelector(".weft-dock-tab--overflow")!,
       new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
     );
     expect(effect?.api.close).toHaveBeenCalledOnce();
@@ -498,7 +500,9 @@ describe("DockWorkspace React integration", () => {
     render(<DockWorkspace contracts={contracts} />);
 
     const effect = dock.panels.get("effect");
-    fireEvent.doubleClick(screen.getByTitle("Move Effect"));
+    fireEvent.doubleClick(
+      document.querySelector('.weft-dock-tab[data-panel-kind="effect"]')!,
+    );
     expect(effect?.api.maximize).toHaveBeenCalledOnce();
   });
 
