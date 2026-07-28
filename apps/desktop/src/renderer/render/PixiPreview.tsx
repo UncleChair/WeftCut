@@ -6,6 +6,7 @@
 // Plan: docs/render.md
 
 import {
+  type CSSProperties,
   forwardRef,
   useCallback,
   useEffect,
@@ -97,7 +98,7 @@ let previewResourceSequence = 0;
 /// (`texture.source.pixelWidth`) — the logical size stays `width`/`height`, so
 /// `app.screen`, `renderer.width/height`, `containMap` and every render
 /// texture keep composition coordinates and nothing has to move. The canvas
-/// scales the smaller buffer back up through its `objectFit: contain` styling.
+/// scales the smaller buffer back up into the CSS-owned display box.
 ///
 /// Size and fraction are applied together on purpose: a composition-size
 /// change must carry the current fraction forward rather than reset it.
@@ -206,17 +207,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // reached for by the transport: the device belongs to the Application's
       // lifecycle, not to any one decode session.
       setSlotFenceBackend(slotFenceBackendForRenderer(app.renderer));
-      // @pixi/react renders a bare <canvas> with no CSS sizing.
-      // Inline-replaced canvas elements default to their intrinsic
-      // pixel size (here 1920×1080), which overflows the preview
-      // panel. Force the display size to fill the wrapper; the backing
-      // store's own size is the renderer's business, and `contain` scales
-      // whatever it is into the box without changing the framing.
-      const c = app.canvas as HTMLCanvasElement;
-      c.style.width = "100%";
-      c.style.height = "100%";
-      c.style.display = "block";
-      c.style.objectFit = "contain";
+      // Display geometry belongs to `.pixi-preview-canvas`: its DOM box is
+      // contain-sized and centered independently of this physical backing
+      // store. Do not write inline width/height here — playback resolution
+      // changes the backing pixels and must never change the on-panel size.
 
       // Dispose any prior Compositor (StrictMode re-mount). Release its
       // transport registration first so the store never holds a disposed
@@ -762,17 +756,17 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
   return (
     <div
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "100%",
-        // Letterbox surround: matches the editor's deepest-panel color
-        // so the preview area integrates with the rest of the chrome.
-        // The canvas itself stays pure black (`background={0x000000}`
-        // below) so true-black composition pixels stand apart from the
-        // surround when the aspect ratio doesn't fill the wrapper.
-        background: "var(--background)",
-      }}
+      className="pixi-preview-host"
+      style={
+        {
+          "--pixi-preview-canvas-width": `min(100cqw, ${
+            (composition.width / composition.height) * 100
+          }cqh)`,
+          "--pixi-preview-canvas-height": `min(100cqh, ${
+            (composition.height / composition.width) * 100
+          }cqw)`,
+        } as CSSProperties
+      }
     >
       <PixiApplication
         width={composition.width}
