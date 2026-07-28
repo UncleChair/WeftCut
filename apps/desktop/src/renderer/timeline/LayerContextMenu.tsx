@@ -82,7 +82,7 @@ export function LayerContextMenu({
           side="bottom"
           align="start"
           sideOffset={0}
-          className="z-50"
+          className="app-popup-positioner"
         >
           <MenuPrimitive.Popup className="app-menu-list">
             <MenuPrimitive.Item

@@ -852,6 +852,17 @@ export async function importMedia(path: string): Promise<string> {
   return invoke<string>("import_media", { path });
 }
 
+/// Remove one item from the project media pool. The guarded path rejects with
+/// `MediaInUse { referenced_by }`; callers may then offer an explicit
+/// force-confirmation, which also removes those referencing timeline layers.
+/// Neither path deletes the source file from disk.
+export async function removeMedia(
+  mediaId: string,
+  force = false,
+): Promise<void> {
+  return invoke<void>("remove_media", { mediaId, force });
+}
+
 /// Audio encode parameters. `sampleRate`/`channels` are null to follow the
 /// composition. Mirrors Rust `AudioEncodeSpec` (serde camelCase).
 export interface AudioExportSpec {

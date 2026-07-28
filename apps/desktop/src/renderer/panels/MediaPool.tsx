@@ -3,6 +3,10 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { LayoutGridIcon, ListIcon, RectangleHorizontalIcon } from "lucide-react";
 
+import {
+  MediaContextMenu,
+  type MediaProxyMode,
+} from "./MediaContextMenu";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
 import {
@@ -10,13 +14,18 @@ import {
   mediaDragPayload,
   useMediaDragStore,
 } from "../timeline/mediaDrag";
+import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
+import { Button } from "../components/ui/button";
 import {
   type MediaPoolLayout,
   type MediaSummary,
+  type TrackSummary,
   generateQuickProxy,
   analyzeShots,
+  removeMedia,
 } from "../ipc";
+import { formatTimecode } from "../frames";
 import { registerRevealMedia } from "../state/navigation";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { setAppSettings, useMediaPoolLayout } from "../settings/appSettingsStore";
@@ -40,6 +49,104 @@ const LAYOUT_MODES: ReadonlyArray<{
   { mode: "grid", Icon: LayoutGridIcon },
   { mode: "list", Icon: ListIcon },
 ];
+
+interface MediaReference {
+  layerId: string;
+  layerLabel: string | null;
+  layerKind: string | null;
+  trackLabel: string | null;
+  trackNumber: number | null;
+  tStartUs: number | null;
+}
+
+interface MediaRemovalTarget {
+  media: MediaSummary;
+  references: MediaReference[];
+}
+
+interface MediaContextTarget {
+  x: number;
+  y: number;
+  mediaId: string;
+}
+
+function layerMediaId(
+  layer: TrackSummary["layers"][number],
+): string | null {
+  switch (layer.params.kind) {
+    case "VideoClip":
+    case "ImageOverlay":
+    case "Audio":
+      return layer.params.media_id;
+    default:
+      return null;
+  }
+}
+
+/// Resolve backend layer ids to human-facing timeline context. With no
+/// `onlyLayerIds`, this derives the live references for a media item before
+/// opening the confirmation. With ids, it presents the authoritative
+/// `MediaInUse.referenced_by` result returned by the guarded remove call.
+function mediaReferencesFor(
+  mediaId: string,
+  tracks: readonly TrackSummary[],
+  onlyLayerIds?: readonly string[],
+): MediaReference[] {
+  const requested = onlyLayerIds ? new Set(onlyLayerIds) : null;
+  const found = new Set<string>();
+  const references: MediaReference[] = [];
+
+  tracks.forEach((track, trackIndex) => {
+    track.layers.forEach((layer) => {
+      const matches = requested
+        ? requested.has(layer.id)
+        : layerMediaId(layer) === mediaId;
+      if (!matches || found.has(layer.id)) return;
+      found.add(layer.id);
+      references.push({
+        layerId: layer.id,
+        layerLabel: layer.label,
+        layerKind: layer.params.kind,
+        trackLabel: track.label,
+        trackNumber: trackIndex + 1,
+        tStartUs: layer.t_start_us,
+      });
+    });
+  });
+
+  // A project-change notification can race the command rejection. Keep every
+  // authoritative id visible even when the stale renderer snapshot cannot yet
+  // resolve its label/track.
+  for (const layerId of onlyLayerIds ?? []) {
+    if (found.has(layerId)) continue;
+    references.push({
+      layerId,
+      layerLabel: null,
+      layerKind: null,
+      trackLabel: null,
+      trackNumber: null,
+      tStartUs: null,
+    });
+  }
+  return references;
+}
+
+/// Electron may wrap an `Error(JSON.stringify(CommandError))` in IPC prose.
+/// Regex only the stable structured fields so prefixes/suffixes do not matter.
+function parseMediaInUseLayerIds(error: unknown): string[] | null {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (!/"error"\s*:\s*"MediaInUse"/.test(raw)) return null;
+  const match = /"referenced_by"\s*:\s*(\[[^\]]*\])/.exec(raw);
+  if (!match?.[1]) return [];
+  try {
+    const parsed = JSON.parse(match[1]) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 function mediaDragVisual(
   element: HTMLElement,
@@ -183,32 +290,44 @@ export function MediaDropZone({ children }: { children: React.ReactNode }) {
 
 export function MediaPool({
   media,
+  tracks,
   importing,
   proxyState,
   previewDecodable,
+  fpsNum,
+  fpsDen,
   onCancelImport,
+  onMutated,
 }: {
   media: MediaSummary[];
+  tracks: TrackSummary[];
   importing: ReadonlySet<string>;
   proxyState: ReadonlyMap<string, ProxyState>;
   previewDecodable: ReadonlySet<string>;
   fpsNum: number;
   fpsDen: number;
   onCancelImport: (mediaId: string) => Promise<void>;
+  onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const layout = useMediaPoolLayout();
   const beginMediaDrag = useMediaDragStore((s) => s.begin);
   const endMediaDrag = useMediaDragStore((s) => s.end);
+  const proxyOverrides = useProxyPrefStore((s) => s.overrides);
 
   // Palette "reveal in media pool": clear any filter (the target must be
   // in the filtered list), then flash + scroll the row into view.
   const [flashId, setFlashId] = useState<string | null>(null);
-  // The media id whose shot analysis is currently running (drive-by "Analyze
-  // shots"). One at a time is enough for a pool action; the button shows a
-  // pending label and disables so a second click can't re-kick mid-run.
+  // The media id whose shot analysis is currently running. One at a time is
+  // enough for a pool action; reopening its menu shows the pending label and
+  // disables a second kick.
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<MediaContextTarget | null>(
+    null,
+  );
+  const [removalTarget, setRemovalTarget] =
+    useState<MediaRemovalTarget | null>(null);
   useEffect(
     () =>
       registerRevealMedia((id) => {
@@ -232,6 +351,14 @@ export function MediaPool({
       clearTimeout(timer);
     };
   }, [flashId]);
+  // Coordinates are viewport-fixed. Close when any ancestor scrolls so the
+  // menu never floats detached from the card it belongs to.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [contextMenu]);
 
   if (media.length === 0) {
     return (
@@ -248,10 +375,92 @@ export function MediaPool({
   const filtered = needle
     ? media.filter((m) => m.label.toLowerCase().includes(needle))
     : media;
+  const contextMedia = contextMenu
+    ? (media.find((candidate) => candidate.id === contextMenu.mediaId) ?? null)
+    : null;
+  const contextReadiness = contextMedia
+    ? mediaReadiness(contextMedia, importing, proxyState, {
+        previewDecodable: previewDecodable.has(contextMedia.id),
+      })
+    : null;
+  const contextReason =
+    contextReadiness && !contextReadiness.ready
+      ? contextReadiness.reason
+      : null;
+  const contextOverride = contextMedia
+    ? proxyOverrides[contextMedia.id]
+    : undefined;
+  const contextProxyMode: MediaProxyMode | null =
+    !contextMedia || contextMedia.decode_route.route === "bypass"
+      ? null
+      : contextOverride === undefined
+        ? "auto"
+        : contextOverride
+          ? "proxy"
+          : "original";
 
   return (
     <>
       <MediaDragPreview />
+      {contextMenu && contextMedia && contextReadiness && (
+        <MediaContextMenu
+          key={`${contextMedia.id}:${contextMenu.x}:${contextMenu.y}`}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          media={contextMedia}
+          proxyMode={contextProxyMode}
+          canSetProxy={contextReason !== "importing"}
+          canAnalyze={contextReadiness.ready}
+          analyzing={analyzingId === contextMedia.id}
+          canRemove={contextReason !== "importing"}
+          onClose={() => setContextMenu(null)}
+          onProxyModeChange={(mode) => {
+            setContextMenu(null);
+            const next =
+              mode === "auto" ? null : mode === "proxy" ? true : false;
+            if (next === true && quickProxyPath(contextMedia) === null) {
+              void generateQuickProxy(contextMedia.id);
+            }
+            void setProxyOverride(contextMedia.id, next);
+          }}
+          onAnalyze={() => {
+            setContextMenu(null);
+            setAnalyzingId(contextMedia.id);
+            void analyzeShots(contextMedia.id)
+              .catch((error) => {
+                console.warn("analyze shots failed:", error);
+              })
+              .finally(() =>
+                setAnalyzingId((current) =>
+                  current === contextMedia.id ? null : current,
+                ),
+              );
+          }}
+          onRemove={() => {
+            setContextMenu(null);
+            setRemovalTarget({
+              media: contextMedia,
+              references: mediaReferencesFor(contextMedia.id, tracks),
+            });
+          }}
+        />
+      )}
+      {removalTarget && (
+        <RemoveMediaDialog
+          key={removalTarget.media.id}
+          target={removalTarget}
+          tracks={tracks}
+          fpsNum={fpsNum}
+          fpsDen={fpsDen}
+          onReferencesChanged={(references) =>
+            setRemovalTarget((current) =>
+              current ? { ...current, references } : null,
+            )
+          }
+          onClose={() => setRemovalTarget(null)}
+          onRemoved={onMutated}
+        />
+      )}
       <div className="media-pool-search">
         <AppInput
           type="search"
@@ -288,210 +497,340 @@ export function MediaPool({
         </div>
       </div>
       <div className="media-pool-inner">
-      {filtered.length === 0 ? (
-        <p className="placeholder">
-          {t("media_pool.no_matches", { query: trimmed })}
-        </p>
-      ) : (
-        <ul className={`media-list${layout !== "large" ? ` is-layout-${layout}` : ""}`}>
-          {filtered.map((m) => {
-            const readiness = mediaReadiness(m, importing, proxyState, {
-              previewDecodable: previewDecodable.has(m.id),
-            });
-            const interactive = readiness.ready;
-            const reason = readiness.ready ? null : readiness.reason;
-            return (
-            <li
-              key={m.id}
-              data-media-id={m.id}
-              className={[
-                "media-item",
-                reason === "importing" ? "is-importing" : "",
-                reason === "missing" ? "is-missing" : "",
-                reason === "proxy_pending" ? "is-proxy-pending" : "",
-                reason === "proxy_failed" ? "is-proxy-failed" : "",
-                flashId === m.id ? "is-search-flash" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              draggable={interactive}
-              onDragStart={(e) => {
-                const payload = mediaDragPayload(m);
-                beginMediaDrag(
-                  payload,
-                  mediaDragVisual(e.currentTarget, e.clientX, e.clientY),
-                );
-                e.dataTransfer.setData(
-                  MEDIA_DRAG_TYPE,
-                  JSON.stringify(payload),
-                );
-                e.dataTransfer.effectAllowed = "copy";
-                hideNativeDragPreview(e.dataTransfer);
-              }}
-              onDragEnd={endMediaDrag}
-              title={
-                interactive
-                  ? t("media_pool.drag_hint", {
-                      defaultValue: "Drag onto a track to add",
-                    })
-                  : reason === "missing"
-                    ? t("media_pool.missing_hint", { path: m.path })
-                    : reason === "proxy_pending"
-                      ? t("media_pool.proxy_pending_hint", {
-                          defaultValue: "Preview is being prepared…",
-                        })
-                      : reason === "proxy_failed"
-                        ? t("media_pool.proxy_failed_hint", {
-                            defaultValue:
-                              "Preview could not be prepared. Re-import to retry.",
-                          })
-                        : t("media_pool.importing")
-              }
-            >
-              <div className="media-item-thumb">
-                <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
-                <span
-                  className={`media-kind kind-${m.kind.toLowerCase()}`}
-                >
-                  {t(`kinds.${m.kind.toLowerCase()}`, {
-                    defaultValue: m.kind,
-                  })}
-                </span>
-                <div className="media-item-metadata">
-                  <span className="media-resolution-badge">
-                    {m.width !== null && m.height !== null
-                      ? `${m.width}×${m.height}`
-                      : "—"}
-                  </span>
-                  <span className="media-duration-badge">
-                    {m.duration_us !== null
-                      ? formatMediaDuration(m.duration_us)
-                      : t("media_pool.no_duration")}
-                  </span>
-                </div>
-                {reason === "importing" && (
-                  <button
-                    type="button"
-                    className="media-import-cancel"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      await onCancelImport(m.id);
-                    }}
-                    title={t("media_pool.importing_cancel_hint")}
-                  >
-                    {t("media_pool.importing")}
-                  </button>
-                )}
-                {reason === "missing" && (
-                  <span
-                    className="media-missing-badge"
-                    title={t("media_pool.missing_hint", { path: m.path })}
-                  >
-                    {t("media_pool.missing")}
-                  </span>
-                )}
-                {reason === "proxy_pending" && (
-                  <span
-                    className="media-proxy-pending-badge"
-                    title={t("media_pool.proxy_pending_hint", {
-                      defaultValue: "Preview is being prepared…",
-                    })}
-                  >
-                    {t("media_pool.proxy_pending", {
-                      defaultValue: "Preparing…",
-                    })}
-                  </span>
-                )}
-                {reason === "proxy_failed" && (
-                  <span
-                    className="media-proxy-failed-badge"
-                    title={t("media_pool.proxy_failed_hint", {
-                      defaultValue:
-                        "Preview could not be prepared. Re-import to retry.",
-                    })}
-                  >
-                    {t("media_pool.proxy_failed", {
-                      defaultValue: "Preview failed",
-                    })}
-                  </span>
-                )}
-              </div>
-              <span className="media-item-name" title={m.label}>
-                {m.label}
-              </span>
-              {layout === "list" && (
-                // Compact rows have no room for the hover-revealed metadata
-                // gradient (hidden in CSS); surface the duration inline
-                // instead, like a file manager's details column.
-                <span className="media-item-meta-inline">
-                  {m.duration_us !== null
-                    ? formatMediaDuration(m.duration_us)
-                    : t("media_pool.no_duration")}
-                </span>
-              )}
-              {/* Direct child of the li (not the thumb) so list mode can flow
-                  it inline as an always-visible row control. In card modes it
-                  stays absolutely pinned to the thumbnail's top-left corner —
-                  the thumb is the card's first child, so the anchor is the
-                  same either way. */}
-              <ProxyPill media={m} />
-              {interactive && m.kind === "Video" && (
-                // Drive-by "Analyze shots": warms the deterministic shot-detector
-                // cache (shared with the agent's analyze_clip / auto_split_by_shot)
-                // via the main-side `analyze_shots` handler. Disabled + relabeled
-                // while running; on a long clip the whole-source scan is inline, so
-                // the pending state is the user's only progress cue for now.
-                <button
-                  type="button"
-                  className="media-analyze-shots"
-                  disabled={analyzingId === m.id}
-                  onClick={(e) => {
+        {filtered.length === 0 ? (
+          <p className="placeholder">
+            {t("media_pool.no_matches", { query: trimmed })}
+          </p>
+        ) : (
+          <ul
+            className={`media-list${layout !== "large" ? ` is-layout-${layout}` : ""}`}
+          >
+            {filtered.map((m) => {
+              const readiness = mediaReadiness(m, importing, proxyState, {
+                previewDecodable: previewDecodable.has(m.id),
+              });
+              const interactive = readiness.ready;
+              const reason = readiness.ready ? null : readiness.reason;
+              return (
+                <li
+                  key={m.id}
+                  data-media-id={m.id}
+                  className={[
+                    "media-item",
+                    reason === "importing" ? "is-importing" : "",
+                    reason === "missing" ? "is-missing" : "",
+                    reason === "proxy_pending" ? "is-proxy-pending" : "",
+                    reason === "proxy_failed" ? "is-proxy-failed" : "",
+                    flashId === m.id ? "is-search-flash" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  draggable={interactive}
+                  tabIndex={0}
+                  aria-haspopup="menu"
+                  aria-expanded={contextMenu?.mediaId === m.id}
+                  aria-keyshortcuts="Shift+F10"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
                     e.stopPropagation();
-                    setAnalyzingId(m.id);
-                    void analyzeShots(m.id).finally(() => setAnalyzingId((cur) => (cur === m.id ? null : cur)));
+                    setContextMenu({
+                      x: e.clientX,
+                      y: e.clientY,
+                      mediaId: m.id,
+                    });
                   }}
-                  title={t("media_pool.analyze_shots_hint", {
-                    defaultValue: "Detect shot cuts for this clip",
-                  })}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key !== "ContextMenu" &&
+                      !(e.shiftKey && e.key === "F10")
+                    ) {
+                      return;
+                    }
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setContextMenu({
+                      x: rect.left + Math.min(32, rect.width / 2),
+                      y: rect.top + Math.min(32, rect.height / 2),
+                      mediaId: m.id,
+                    });
+                  }}
+                  onDragStart={(e) => {
+                    setContextMenu(null);
+                    const payload = mediaDragPayload(m);
+                    beginMediaDrag(
+                      payload,
+                      mediaDragVisual(e.currentTarget, e.clientX, e.clientY),
+                    );
+                    e.dataTransfer.setData(
+                      MEDIA_DRAG_TYPE,
+                      JSON.stringify(payload),
+                    );
+                    e.dataTransfer.effectAllowed = "copy";
+                    hideNativeDragPreview(e.dataTransfer);
+                  }}
+                  onDragEnd={endMediaDrag}
+                  title={
+                    interactive
+                      ? t("media_pool.card_ready_hint")
+                      : reason === "missing"
+                        ? t("media_pool.missing_hint", { path: m.path })
+                        : reason === "proxy_pending"
+                          ? t("media_pool.proxy_pending_hint", {
+                              defaultValue: "Preview is being prepared…",
+                            })
+                          : reason === "proxy_failed"
+                            ? t("media_pool.proxy_failed_hint", {
+                                defaultValue:
+                                  "Preview could not be prepared. Re-import to retry.",
+                              })
+                            : t("media_pool.importing")
+                  }
                 >
-                  {analyzingId === m.id
-                    ? t("media_pool.analyze_shots_running", { defaultValue: "Analyzing…" })
-                    : t("media_pool.analyze_shots", { defaultValue: "Analyze shots" })}
-                </button>
-              )}
-            </li>
-          );
-        })}
-        </ul>
-      )}
+                  <div className="media-item-thumb">
+                    <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
+                    <span
+                      className={`media-kind kind-${m.kind.toLowerCase()}`}
+                    >
+                      {t(`kinds.${m.kind.toLowerCase()}`, {
+                        defaultValue: m.kind,
+                      })}
+                    </span>
+                    <div className="media-item-metadata">
+                      <span className="media-resolution-badge">
+                        {m.width !== null && m.height !== null
+                          ? `${m.width}×${m.height}`
+                          : "—"}
+                      </span>
+                      <span className="media-duration-badge">
+                        {m.duration_us !== null
+                          ? formatMediaDuration(m.duration_us)
+                          : t("media_pool.no_duration")}
+                      </span>
+                    </div>
+                    {reason === "importing" && (
+                      <button
+                        type="button"
+                        className="media-import-cancel"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await onCancelImport(m.id);
+                        }}
+                        title={t("media_pool.importing_cancel_hint")}
+                      >
+                        {t("media_pool.importing")}
+                      </button>
+                    )}
+                    {reason === "missing" && (
+                      <span
+                        className="media-missing-badge"
+                        title={t("media_pool.missing_hint", { path: m.path })}
+                      >
+                        {t("media_pool.missing")}
+                      </span>
+                    )}
+                    {reason === "proxy_pending" && (
+                      <span
+                        className="media-proxy-pending-badge"
+                        title={t("media_pool.proxy_pending_hint", {
+                          defaultValue: "Preview is being prepared…",
+                        })}
+                      >
+                        {t("media_pool.proxy_pending", {
+                          defaultValue: "Preparing…",
+                        })}
+                      </span>
+                    )}
+                    {reason === "proxy_failed" && (
+                      <span
+                        className="media-proxy-failed-badge"
+                        title={t("media_pool.proxy_failed_hint", {
+                          defaultValue:
+                            "Preview could not be prepared. Re-import to retry.",
+                        })}
+                      >
+                        {t("media_pool.proxy_failed", {
+                          defaultValue: "Preview failed",
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <span className="media-item-name" title={m.label}>
+                    {m.label}
+                  </span>
+                  {layout === "list" && (
+                    // Compact rows have no room for the hover-revealed metadata
+                    // gradient (hidden in CSS); surface the duration inline
+                    // instead, like a file manager's details column.
+                    <span className="media-item-meta-inline">
+                      {m.duration_us !== null
+                        ? formatMediaDuration(m.duration_us)
+                        : t("media_pool.no_duration")}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </>
   );
 }
 
-/// Per-clip proxy override: cycles Auto → Force proxy → Force original → Auto.
-/// Hidden for Bypass (no quick_proxy slot). Choosing Force-proxy on a source
-/// with no built proxy kicks an on-demand build.
-function ProxyPill({ media }: { media: MediaSummary }) {
+function RemoveMediaDialog({
+  target,
+  tracks,
+  fpsNum,
+  fpsDen,
+  onReferencesChanged,
+  onClose,
+  onRemoved,
+}: {
+  target: MediaRemovalTarget;
+  tracks: readonly TrackSummary[];
+  fpsNum: number;
+  fpsDen: number;
+  onReferencesChanged: (references: MediaReference[]) => void;
+  onClose: () => void;
+  onRemoved: () => Promise<void>;
+}) {
   const { t } = useTranslation();
-  const override = useProxyPrefStore((s) => s.overrides[media.id]); // boolean | undefined
-  if (media.decode_route.route === "bypass") return null;
-  const state: "auto" | "proxy" | "original" =
-    override === undefined ? "auto" : override ? "proxy" : "original";
-  const next: boolean | null = state === "auto" ? true : state === "proxy" ? false : null;
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const force = target.references.length > 0;
+
+  const confirmRemoval = async () => {
+    setRemoving(true);
+    setError(null);
+    try {
+      await removeMedia(target.media.id, force);
+    } catch (cause) {
+      const referencedBy = parseMediaInUseLayerIds(cause);
+      if (referencedBy !== null && !force) {
+        onReferencesChanged(
+          mediaReferencesFor(target.media.id, tracks, referencedBy),
+        );
+      } else {
+        setError(
+          t("media_pool.remove_failed", {
+            detail: cause instanceof Error ? cause.message : String(cause),
+          }),
+        );
+      }
+      setRemoving(false);
+      return;
+    }
+
+    await onRemoved().catch(() => undefined);
+    onClose();
+  };
+
   return (
-    <button
-      type="button"
-      className={`media-proxy-pill is-${state}`}
-      title={t(`media_pool.proxy_pill_${state}_hint`)}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (next === true && quickProxyPath(media) === null) void generateQuickProxy(media.id);
-        void setProxyOverride(media.id, next);
+    <AppDialog
+      title={t(
+        force
+          ? "media_pool.remove_in_use_title"
+          : "media_pool.remove_title",
+      )}
+      onClose={() => {
+        if (!removing) onClose();
       }}
+      closeLabel={removing ? undefined : t("media_pool.remove_cancel")}
+      panelClassName="settings-panel media-remove-dialog"
     >
-      {t(`media_pool.proxy_pill_${state}`)}
-    </button>
+      <div className="settings-body">
+        <div className="settings-card">
+          {force ? (
+            <>
+              <p className="settings-blurb media-remove-copy">
+                {t("media_pool.remove_in_use_body", {
+                  label: target.media.label,
+                  count: target.references.length,
+                })}
+              </p>
+              <ul className="media-remove-reference-list">
+                {target.references.map((reference) => {
+                  const kind = reference.layerKind
+                    ? t(`kinds.${reference.layerKind.toLowerCase()}`, {
+                        defaultValue: reference.layerKind,
+                      })
+                    : null;
+                  const layerName =
+                    reference.layerLabel?.trim() ||
+                    kind ||
+                    t("media_pool.remove_unknown_layer", {
+                      id: reference.layerId.slice(0, 8),
+                    });
+                  const trackName =
+                    reference.trackLabel?.trim() ||
+                    (reference.trackNumber !== null
+                      ? t("timeline.track_label", {
+                          n: reference.trackNumber,
+                        })
+                      : t("media_pool.remove_unknown_track"));
+                  return (
+                    <li key={reference.layerId} title={reference.layerId}>
+                      <span className="media-remove-reference-name">
+                        {layerName}
+                      </span>
+                      <span className="media-remove-reference-meta">
+                        {trackName}
+                        {reference.tStartUs !== null
+                          ? ` · ${formatTimecode(
+                              reference.tStartUs,
+                              fpsNum,
+                              fpsDen,
+                            )}`
+                          : ""}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="settings-warn media-remove-note">
+                {t("media_pool.remove_in_use_note")}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="settings-blurb media-remove-copy">
+                {t("media_pool.remove_body", {
+                  label: target.media.label,
+                })}
+              </p>
+              <p className="settings-warn media-remove-note">
+                {t("media_pool.remove_unused_note")}
+              </p>
+            </>
+          )}
+          {error && (
+            <p className="settings-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="export-actions">
+            <Button size="lg" disabled={removing} onClick={onClose}>
+              {t("media_pool.remove_cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              size="lg"
+              disabled={removing}
+              onClick={() => void confirmRemoval()}
+            >
+              {removing
+                ? t("media_pool.removing")
+                : force
+                  ? t("media_pool.remove_force_confirm", {
+                      count: target.references.length,
+                    })
+                  : t("media_pool.remove_confirm")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </AppDialog>
   );
 }
 

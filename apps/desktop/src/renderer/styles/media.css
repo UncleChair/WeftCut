@@ -221,21 +221,6 @@
   display: none;
 }
 
-.media-list.is-layout-list .media-analyze-shots {
-  flex: none;
-  margin-right: 6px;
-}
-
-/* List mode: the proxy pill leaves its floating corner slot and joins the
-   row as an always-visible inline control (no hover reveal needed). */
-.media-list.is-layout-list .media-proxy-pill {
-  position: static;
-  flex: none;
-  margin-right: 6px;
-  opacity: 1;
-  pointer-events: auto;
-}
-
 .media-item {
   display: flex;
   flex-direction: column;
@@ -313,6 +298,11 @@
 .media-item:hover {
   outline-color: var(--selection-border);
   background: var(--surface-raised);
+}
+
+.media-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 
 .media-item[draggable="true"]:active {
@@ -540,55 +530,149 @@
   z-index: 2;
 }
 
-/* Per-clip proxy override pill (tri-state: Auto / Force proxy / Force
-   original) — the only UI path to set the override, so it must stay
-   reachable by keyboard/AT. In card modes it floats over the thumbnail's
-   top-left corner (anchored to the card; the thumb is its first child) and
-   is revealed on hover/focus-within; top-right is reserved for the media
-   kind. In list mode it flows inline in the row, always visible (see the
-   is-layout-list override above). Hidden entirely for Bypass sources. */
-.media-proxy-pill {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  z-index: 2;
+.media-context-menu {
+  min-width: 252px;
+}
+
+/* The proxy preference is a compact three-way choice, not three independent
+   commands. Keep it on one line and use radio semantics/visuals so the active
+   preview source is immediately legible. */
+.media-proxy-radio-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px 8px 8px;
+}
+
+.media-proxy-radio-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px 7px;
+  color: var(--muted-foreground);
   font: inherit;
   font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-slate-300);
-  background: rgba(11, 13, 17, 0.86);
-  border: 1px solid var(--border-on-dark);
-  border-radius: 999px;
-  padding: 1px 8px;
-  cursor: pointer;
   white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--transition-fast), border-color var(--transition-fast);
+  background: var(--surface-tint);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  cursor: pointer;
 }
 
-.media-item:hover .media-proxy-pill,
-.media-item:focus-within .media-proxy-pill {
-  opacity: 1;
-  pointer-events: auto;
+.media-proxy-radio-button[data-highlighted] {
+  color: var(--foreground);
+  background: var(--hover-neutral-strong);
+  border-color: var(--border);
 }
 
-.media-proxy-pill:hover {
-  border-color: var(--border-on-dark-strong);
+.media-proxy-radio-button[aria-checked="true"] {
+  color: var(--foreground);
+  background: var(--selection-bg);
+  border-color: var(--selection-border);
 }
 
-.media-proxy-pill.is-proxy {
-  color: var(--color-blue-200);
-  background: rgba(20, 48, 96, 0.9);
-  border-color: color-mix(in srgb, var(--color-blue-400) 65%, transparent);
+.media-proxy-radio-button[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.media-proxy-pill.is-original {
-  color: var(--color-amber-200);
-  background: rgba(74, 55, 12, 0.9);
-  border-color: color-mix(in srgb, var(--keyframe) 58%, transparent);
+.media-proxy-radio-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 10px;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--muted-foreground);
+  border-radius: 50%;
+}
+
+.media-proxy-radio-indicator::after {
+  width: 4px;
+  height: 4px;
+  content: "";
+  background: transparent;
+  border-radius: 50%;
+}
+
+.media-proxy-radio-button[aria-checked="true"]
+  .media-proxy-radio-indicator {
+  border-color: var(--ring);
+}
+
+.media-proxy-radio-button[aria-checked="true"]
+  .media-proxy-radio-indicator::after {
+  background: var(--ring);
+}
+
+.media-proxy-radio-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-context-menu-remove {
+  color: var(--destructive);
+}
+
+.media-context-menu-remove[data-highlighted] {
+  background: color-mix(in srgb, var(--destructive) 14%, transparent);
+}
+
+/* Guarded media removal confirmation. Referencing layers are named with their
+   track + start time before the force path becomes available. */
+.media-remove-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.media-remove-copy {
+  line-height: 1.5;
+}
+
+.media-remove-reference-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(220px, 32vh);
+  overflow-y: auto;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.media-remove-reference-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+}
+
+.media-remove-reference-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--font-size-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-remove-reference-meta {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.media-remove-note {
+  margin-bottom: 0;
 }
 
 /* Status-bar pill: "Generating N derivatives…". */

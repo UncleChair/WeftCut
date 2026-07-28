@@ -45,7 +45,13 @@ export function EasingMenu({
   return (
     <PopoverPrimitive.Root open modal={false} onOpenChange={(o) => { if (!o) onClose(); }}>
       <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Positioner anchor={anchor} side="bottom" align="start" sideOffset={4} className="z-50">
+        <PopoverPrimitive.Positioner
+          anchor={anchor}
+          side="bottom"
+          align="start"
+          sideOffset={4}
+          className="app-popup-positioner"
+        >
           <PopoverPrimitive.Popup
             className="app-menu-list"
             style={{ padding: "6px", display: "flex", flexWrap: "wrap", gap: "4px", width: "168px" }}

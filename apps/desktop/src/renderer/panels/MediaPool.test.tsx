@@ -1,20 +1,43 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, createEvent, fireEvent, render } from "@testing-library/react";
+import {
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../i18n"; // initialize i18next so useTranslation() resolves (keys land in Task 10)
 
 vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
-  return { ...actual, generateQuickProxy: vi.fn().mockResolvedValue(undefined) };
+  return {
+    ...actual,
+    generateQuickProxy: vi.fn().mockResolvedValue(undefined),
+    analyzeShots: vi.fn().mockResolvedValue(3),
+    getMediaThumbnail: vi.fn().mockRejectedValue("not_ready"),
+    removeMedia: vi.fn().mockResolvedValue(undefined),
+  };
 });
+
+vi.mock("@/bridge/events", () => ({
+  listen: vi.fn().mockResolvedValue(() => undefined),
+}));
 
 vi.mock("../state/proxyPreferenceStore", async (importActual) => {
   const actual = await importActual<typeof import("../state/proxyPreferenceStore")>();
   return { ...actual, setProxyOverride: vi.fn().mockResolvedValue(undefined) };
 });
 
-import { generateQuickProxy, type MediaSummary } from "../ipc";
+import {
+  analyzeShots,
+  generateQuickProxy,
+  removeMedia,
+  type MediaSummary,
+  type TrackSummary,
+} from "../ipc";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { formatMediaDuration, MediaDropZone, MediaPool } from "./MediaPool";
 import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
@@ -26,9 +49,8 @@ afterEach(() => {
   useMediaDragStore.getState().end();
 });
 
-// kind: "Audio" sidesteps mediaReadiness's Video-only proxy-pending branch
-// and MediaThumbnail's video-thumbnail IPC fetch — neither is relevant to
-// the pill, and both would otherwise need extra mocking.
+// Audio keeps most tests outside mediaReadiness's Video-only proxy-pending
+// branch. Tests for Video-only menu actions opt in explicitly.
 function makeMedia(id: string, route: MediaSummary["decode_route"]): MediaSummary {
   return {
     id,
@@ -46,65 +68,159 @@ function makeMedia(id: string, route: MediaSummary["decode_route"]): MediaSummar
   };
 }
 
-function renderPool(media: MediaSummary[]) {
-  return render(
-    <MediaPool
-      media={media}
-      importing={new Set()}
-      proxyState={new Map()}
-      previewDecodable={new Set()}
-      fpsNum={30}
-      fpsDen={1}
-      onCancelImport={vi.fn().mockResolvedValue(undefined)}
-    />,
-  );
+function renderPool(media: MediaSummary[], tracks: TrackSummary[] = []) {
+  const onMutated = vi.fn().mockResolvedValue(undefined);
+  return {
+    ...render(
+      <MediaPool
+        media={media}
+        tracks={tracks}
+        importing={new Set()}
+        proxyState={new Map()}
+        previewDecodable={new Set()}
+        fpsNum={30}
+        fpsDen={1}
+        onCancelImport={vi.fn().mockResolvedValue(undefined)}
+        onMutated={onMutated}
+      />,
+    ),
+    onMutated,
+  };
 }
 
-describe("MediaPool proxy pill", () => {
-  it("renders no pill for a Bypass-route media", () => {
-    renderPool([makeMedia("m-bypass", { route: "bypass" })]);
-    expect(document.querySelector(".media-proxy-pill")).toBeNull();
+function makeReferencingTrack(mediaId: string): TrackSummary {
+  return {
+    id: "track-1",
+    kind: "Audio",
+    label: "Dialogue",
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: null,
+    transient: false,
+    layers: [
+      {
+        id: "layer-1",
+        label: "Interview clip",
+        t_start_us: 2_000_000,
+        t_end_us: 3_000_000,
+        kind: "Audio",
+        color_hint: "audio",
+        enabled: true,
+        locked: false,
+        effects: [],
+        params: {
+          kind: "Audio",
+          media_id: mediaId,
+          media_label: mediaId,
+          src_in_us: 0,
+          src_out_us: 1_000_000,
+          gain_db: { mode: "Static", value: 0 },
+          pan: { mode: "Static", value: 0 },
+          fade_in_us: 0,
+          fade_out_us: 0,
+          mute: false,
+          role: "dialogue",
+        },
+      },
+    ],
+  };
+}
+
+function openMediaMenu(mediaId: string): HTMLElement {
+  const card = document.querySelector(
+    `[data-media-id="${mediaId}"]`,
+  ) as HTMLElement;
+  fireEvent.contextMenu(card, { clientX: 80, clientY: 90 });
+  return card;
+}
+
+describe("MediaPool context menu", () => {
+  it("keeps card chrome action-free and omits proxy choices for Bypass media", () => {
+    const { container } = renderPool([
+      makeMedia("m-bypass", { route: "bypass" }),
+    ]);
+
+    expect(container.querySelector(".media-proxy-pill")).toBeNull();
+    expect(container.querySelector(".media-analyze-shots")).toBeNull();
+    expect(container.querySelector(".media-remove-button")).toBeNull();
+
+    openMediaMenu("m-bypass");
+    expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
+    expect(
+      screen.getByRole("menuitem", { name: "Remove from media pool" }),
+    ).toBeTruthy();
   });
 
-  it("clicking a non-bypass pill in auto state sets the override to true, and also kicks a build when no quick proxy exists", async () => {
+  it("lays out one proxy radio group and selecting Proxy builds a missing quick proxy", async () => {
+    const user = userEvent.setup();
     renderPool([makeMedia("m1", { route: "direct-export", quick_proxy: null })]);
-    const pill = document.querySelector(".media-proxy-pill.is-auto");
-    expect(pill).not.toBeNull();
-    // The pill is a direct child of the card li (not the thumb) so list
-    // mode can flow it inline as an always-visible row control; card modes
-    // keep it pinned over the thumbnail's top-left corner via CSS.
-    expect(pill?.parentElement?.classList.contains("media-item")).toBe(true);
-    expect(pill?.closest(".media-item-thumb")).toBeNull();
-    expect(pill?.textContent).toBe("Proxy: Auto");
-    await userEvent.click(pill as HTMLElement);
+    openMediaMenu("m1");
+
+    const radioGroup = document.querySelector(".media-proxy-radio-group");
+    expect(radioGroup).not.toBeNull();
+    expect(radioGroup?.children).toHaveLength(3);
+    expect(
+      screen
+        .getByRole("menuitemradio", { name: "Auto" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Proxy" }),
+    );
 
     expect(generateQuickProxy).toHaveBeenCalledWith("m1");
     expect(setProxyOverride).toHaveBeenCalledWith("m1", true);
   });
 
-  it("does not kick a build from auto->proxy when a quick proxy already exists", async () => {
+  it("does not rebuild when selecting Proxy with a landed quick proxy", async () => {
+    const user = userEvent.setup();
     renderPool([
       makeMedia("m2", { route: "direct-export", quick_proxy: "/proxies/m2.mp4" }),
     ]);
-    const pill = document.querySelector(".media-proxy-pill.is-auto");
-    await userEvent.click(pill as HTMLElement);
+    openMediaMenu("m2");
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Proxy" }),
+    );
 
     expect(generateQuickProxy).not.toHaveBeenCalled();
     expect(setProxyOverride).toHaveBeenCalledWith("m2", true);
   });
 
-  it("clicking again from an existing proxy override (true) cycles to force-original (false)", async () => {
+  it("shows the current override and allows choosing the original explicitly", async () => {
+    const user = userEvent.setup();
     useProxyPrefStore.setState({ overrides: { m3: true } });
     renderPool([makeMedia("m3", { route: "direct-export", quick_proxy: null })]);
-    const pill = document.querySelector(".media-proxy-pill.is-proxy");
-    expect(pill).not.toBeNull();
-    await userEvent.click(pill as HTMLElement);
+    openMediaMenu("m3");
+
+    expect(
+      screen
+        .getByRole("menuitemradio", { name: "Proxy" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Original" }),
+    );
 
     expect(setProxyOverride).toHaveBeenCalledWith("m3", false);
-    // Already has a proxy override going to false is not the no-proxy build
-    // path (that's only auto(undefined)->true); guard against a regression
-    // that fires a build on every click.
     expect(generateQuickProxy).not.toHaveBeenCalled();
+  });
+
+  it("moves shot analysis into the menu and supports the keyboard menu key", async () => {
+    const user = userEvent.setup();
+    const media = makeMedia("video-1", { route: "bypass" });
+    media.kind = "Video";
+    const { container } = renderPool([media]);
+    const card = container.querySelector(".media-item") as HTMLElement;
+
+    fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+    await user.click(
+      screen.getByRole("menuitem", { name: "Analyze shots" }),
+    );
+
+    expect(analyzeShots).toHaveBeenCalledWith("video-1");
+    expect(container.querySelector(".media-analyze-shots")).toBeNull();
   });
 });
 
@@ -134,6 +250,103 @@ describe("MediaPool card metadata", () => {
 
   it("does not wrap total minutes at 60", () => {
     expect(formatMediaDuration((125 * 60 + 9) * 1_000_000)).toBe("125:09");
+  });
+});
+
+describe("MediaPool removal", () => {
+  it("opens guarded removal from the context menu for unused media", async () => {
+    const user = userEvent.setup();
+    const { onMutated } = renderPool([
+      makeMedia("unused-media", { route: "bypass" }),
+    ]);
+
+    openMediaMenu("unused-media");
+    await user.click(
+      screen.getByRole("menuitem", {
+        name: "Remove from media pool",
+      }),
+    );
+
+    expect(
+      screen.getByText("Remove “unused-media” from this project?"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/source file will stay on disk/i),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      expect(removeMedia).toHaveBeenCalledWith("unused-media", false);
+      expect(onMutated).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("lists timeline references before offering the explicit force path", async () => {
+    const user = userEvent.setup();
+    const media = makeMedia("used-media", { route: "bypass" });
+    const { onMutated } = renderPool(
+      [media],
+      [makeReferencingTrack(media.id)],
+    );
+
+    openMediaMenu("used-media");
+    await user.click(
+      screen.getByRole("menuitem", {
+        name: "Remove from media pool",
+      }),
+    );
+
+    expect(screen.getByText("Media is in use")).toBeTruthy();
+    expect(screen.getByText("Interview clip")).toBeTruthy();
+    expect(screen.getByText("Dialogue · 00:00:02:00")).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("button", { name: "Remove media + 1 layer" }),
+    );
+
+    await waitFor(() => {
+      expect(removeMedia).toHaveBeenCalledWith("used-media", true);
+      expect(onMutated).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("upgrades a stale guarded confirmation when the backend reports MediaInUse", async () => {
+    const user = userEvent.setup();
+    vi.mocked(removeMedia)
+      .mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            error: "MediaInUse",
+            media: "raced-media",
+            referenced_by: ["late-layer"],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(undefined);
+    const { onMutated } = renderPool([
+      makeMedia("raced-media", { route: "bypass" }),
+    ]);
+
+    openMediaMenu("raced-media");
+    await user.click(
+      screen.getByRole("menuitem", {
+        name: "Remove from media pool",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    const forceButton = await screen.findByRole("button", {
+      name: "Remove media + 1 layer",
+    });
+    expect(screen.getByText("Layer late-lay")).toBeTruthy();
+    expect(removeMedia).toHaveBeenNthCalledWith(1, "raced-media", false);
+
+    await user.click(forceButton);
+    await waitFor(() => {
+      expect(removeMedia).toHaveBeenNthCalledWith(2, "raced-media", true);
+      expect(onMutated).toHaveBeenCalledOnce();
+    });
   });
 });
 

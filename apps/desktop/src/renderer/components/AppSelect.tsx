@@ -60,7 +60,7 @@ export function AppSelect({
           align="start"
           sideOffset={4}
           alignItemWithTrigger={false}
-          className="z-50"
+          className="app-popup-positioner"
         >
           <Select.Popup className="app-menu-list">
             {options.map((o) => (

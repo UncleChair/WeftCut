@@ -146,6 +146,7 @@ function MediaDockPanel() {
     <MediaDropZone>
       <MediaPool
         media={summary?.media ?? []}
+        tracks={summary?.tracks ?? []}
         importing={contracts.importingMediaIds}
         proxyState={contracts.proxyState}
         previewDecodable={contracts.previewDecodableMediaIds}
@@ -154,6 +155,7 @@ function MediaDockPanel() {
         onCancelImport={async (id) => {
           await importCancel(id).catch(() => false);
         }}
+        onMutated={contracts.onMutated}
       />
     </MediaDropZone>
   );

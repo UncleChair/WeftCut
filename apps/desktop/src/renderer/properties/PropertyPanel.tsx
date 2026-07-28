@@ -1451,7 +1451,7 @@ function Field({
                 side="bottom"
                 align="end"
                 sideOffset={4}
-                className="z-50"
+                className="app-popup-positioner"
               >
                 <Tooltip.Popup className="prop-field-hint-bubble">
                   {hint}

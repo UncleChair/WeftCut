@@ -13,20 +13,33 @@ import { seededGen } from '../ids'
 // If this fails, a channel was added or removed unintentionally — do NOT
 // silently update the expected list; investigate first.
 describe('PRODUCTION_OPS', () => {
-  it('contains exactly the 37 in-scope renderer channels', () => {
+  it('contains exactly the 38 in-scope renderer channels', () => {
     const expected = [
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       'add_media_layer', 'add_motif', 'add_text_layer', 'add_track', 'add_transition',
       'delete_layer', 'duplicate_layer',
       'fit_composition_to_layers', 'groups_create', 'groups_dissolve', 'move_effect',
       'move_layer', 'paste_layer', 'project_redo', 'project_restore_checkpoint', 'project_undo',
-      'remove_effect', 'remove_transition', 'restyle_captions',
+      'remove_effect', 'remove_media', 'remove_transition', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'split_layer_grouped',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track',
       'update_layer_param_tracks', 'update_layer_params', 'update_project_settings',
       'update_role_flags', 'update_track_flags', 'update_transition',
     ].sort()
     expect([...PRODUCTION_OPS].sort()).toEqual(expected)
+  })
+})
+
+describe('parseMechanical media removal', () => {
+  it('maps the guarded and forced renderer paths to remove_media', () => {
+    expect(parseMechanical('remove_media', { mediaId: 'media-1' })).toEqual({
+      op: 'remove_media',
+      args: { media: 'media-1', force: false },
+    })
+    expect(parseMechanical('remove_media', { mediaId: 'media-1', force: true })).toEqual({
+      op: 'remove_media',
+      args: { media: 'media-1', force: true },
+    })
   })
 })
 

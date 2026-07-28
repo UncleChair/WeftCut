@@ -47,6 +47,13 @@
 
 /* Placement (portal + 4px below the trigger) is owned by Base UI's
  * Positioner; this class is purely the dropdown's visual chrome. */
+.app-popup-positioner {
+  /* Dockview's resize sash is z-index: 99. Every app-owned portalled popup
+   * must stay above it so the sash cannot steal hover/click hit-testing and
+   * trigger an outside-dismiss while the pointer is visibly over a menu. */
+  z-index: 1000;
+}
+
 .app-menu-list {
   min-width: 220px;
   background: var(--card);

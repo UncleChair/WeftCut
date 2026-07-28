@@ -40,7 +40,11 @@ export function Menu({ label, hint, children }: MenuProps) {
         </span>
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner align="start" sideOffset={4} className="z-50">
+        <MenuPrimitive.Positioner
+          align="start"
+          sideOffset={4}
+          className="app-popup-positioner"
+        >
           <MenuPrimitive.Popup className="app-menu-list">
             {children}
           </MenuPrimitive.Popup>

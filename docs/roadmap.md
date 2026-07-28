@@ -541,11 +541,6 @@ project-content workflows below need a human surface.
   badges and current-cursor state, plus create / restore checkpoint actions.
   The agent-mode record panel is useful partial UI, but it is available only
   inside an agent-started session and is not the general history surface.
-- **Media-pool removal.** `remove_media` safely rejects referenced media and
-  supports an undoable forced cascade, but the media pool has no delete
-  action. Add Remove, show the referencing layers when blocked, and require a
-  specific confirmation before the force path.
-
 **P1 — workflows and project configuration:**
 
 - **Analysis, transcription, and voice workflows.** `analyze_clip`,
