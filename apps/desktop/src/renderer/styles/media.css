@@ -585,26 +585,14 @@
   flex: 0 0 10px;
   width: 10px;
   height: 10px;
-  border: 1px solid var(--muted-foreground);
-  border-radius: 50%;
+  color: var(--muted-foreground);
 }
 
-.media-proxy-radio-indicator::after {
-  width: 4px;
-  height: 4px;
-  content: "";
-  background: transparent;
-  border-radius: 50%;
-}
-
+.media-proxy-radio-button[data-highlighted]
+  .media-proxy-radio-indicator,
 .media-proxy-radio-button[aria-checked="true"]
   .media-proxy-radio-indicator {
-  border-color: var(--ring);
-}
-
-.media-proxy-radio-button[aria-checked="true"]
-  .media-proxy-radio-indicator::after {
-  background: var(--ring);
+  color: var(--ring);
 }
 
 .media-proxy-radio-label {

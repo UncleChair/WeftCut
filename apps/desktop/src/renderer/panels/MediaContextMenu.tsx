@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+import { CircleDotIcon, CircleIcon } from "lucide-react";
 
 import type { MediaSummary } from "../ipc";
 
@@ -115,9 +116,19 @@ export function MediaContextMenu({
                       className="media-proxy-radio-button"
                       title={t(`media_pool.proxy_mode_${mode}_hint`)}
                     >
-                      <span
+                      <MenuPrimitive.RadioItemIndicator
+                        keepMounted
                         className="media-proxy-radio-indicator"
-                        aria-hidden="true"
+                        render={(props, state) => {
+                          const Icon = state.checked
+                            ? CircleDotIcon
+                            : CircleIcon;
+                          return (
+                            <span {...props}>
+                              <Icon size={10} aria-hidden />
+                            </span>
+                          );
+                        }}
                       />
                       <span className="media-proxy-radio-label">
                         {t(`media_pool.proxy_mode_${mode}`)}
