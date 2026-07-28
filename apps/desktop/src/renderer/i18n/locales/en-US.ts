@@ -112,8 +112,6 @@ const enUS = {
     edit: "Edit",
     insert: "Insert",
     view: "View",
-    export: "Export",
-    tools: "Tools",
   },
   dev: {
     menu: "Dev",

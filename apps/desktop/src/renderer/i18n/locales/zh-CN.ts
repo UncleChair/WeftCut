@@ -116,8 +116,6 @@ const zhCN: Resources = {
     edit: "编辑",
     insert: "插入",
     view: "视图",
-    export: "导出",
-    tools: "工具",
   },
   dev: {
     menu: "开发",

@@ -168,6 +168,19 @@ export function AppMenuBar({
               onSelect={onSaveAndClose}
               disabled={busy}
             />
+            <MenuSeparator />
+            <MenuItem
+              actionId="export"
+              label={t("actions.export")}
+              onSelect={onOpenExport}
+              disabled={exportLocked}
+            />
+            <MenuSeparator />
+            <MenuItem
+              label={t("actions.settings")}
+              hint={t("actions.settings_hint")}
+              onSelect={onOpenSettings}
+            />
           </Menu>
 
           <Menu label={t("menu.edit")}>
@@ -189,6 +202,12 @@ export function AppMenuBar({
               label={t("actions.toggle_blade_mode")}
               onSelect={onToggleBladeMode}
               disabled={busy || !canBlade}
+            />
+            <MenuSeparator />
+            <MenuItem
+              actionId="openSearchPalette"
+              label={t("actions.open_search")}
+              onSelect={onOpenSearch}
             />
           </Menu>
 
@@ -212,29 +231,6 @@ export function AppMenuBar({
               label={t("actions.motifs")}
               hint={t("actions.motifs_hint")}
               onSelect={onOpenMotifPicker}
-            />
-          </Menu>
-
-          <Menu label={t("menu.export")}>
-            <MenuItem
-              actionId="export"
-              label={t("actions.export")}
-              onSelect={onOpenExport}
-              disabled={exportLocked}
-            />
-          </Menu>
-
-          <Menu label={t("menu.tools")}>
-            <MenuItem
-              actionId="openSearchPalette"
-              label={t("actions.open_search")}
-              onSelect={onOpenSearch}
-            />
-            <MenuSeparator />
-            <MenuItem
-              label={t("actions.settings")}
-              hint={t("actions.settings_hint")}
-              onSelect={onOpenSettings}
             />
           </Menu>
 
