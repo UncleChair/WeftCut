@@ -1,12 +1,16 @@
 # Roadmap
 
 The foundation is in place: the project state actor + history (TypeScript,
-Electron main), the workspace on-disk format, media import with proxy / thumbnail / waveform jobs,
+Electron main), the workspace on-disk format, media import with proxy /
+thumbnail / waveform jobs, generated media-pool thumbnails with
+large / grid / list layouts,
 audio IR + ffmpeg export + final mux, PixiJS + WebCodecs renderer
 (preview and export share one compositor), the Motif catalog
 (built-in + user-authored, with an agent authoring loop over MCP),
 speech-to-text over pluggable backends (OpenAI cloud + local whisper.cpp / FunASR sidecars) + cloud TTS
-behind a provider-agnostic trait surface, the MCP server (streamable-HTTP,
+behind a provider-agnostic trait surface, deterministic cached shot / frame
+analysis (`analyze_clip`, `compare_frames`, and `auto_split_by_shot`),
+the MCP server (streamable-HTTP,
 hosted in the Electron main) with its edit / workflow / speech tools and
 its in-protocol change feed, the status-bar `LogBus` console, the i18n
 stack (en-US + zh-CN).
@@ -511,10 +515,72 @@ to verify on real macOS + Linux hardware:
   build script; confirm the app's first-launch auto-download (and the proxy
   SOCKS fallback in [`setup.md`](setup.md)) works on a clean machine.
 
+### Human UI parity — state / MCP capabilities still missing desktop surfaces
+
+This is the audit of editing capabilities that already exist below the
+renderer but cannot be completed in the normal human workspace. It is not a
+blanket requirement to put every agent-orchestration primitive in a menu:
+`dry_run`, history locks, and session setup can stay agent-facing. The
+project-content workflows below need a human surface.
+
+**P0 — core project editing:**
+
+- **Track lifecycle and ordering.** `add_track`, `remove_track`, and
+  `move_track` are implemented and undoable; the normal track header exposes
+  only visibility / lock-style flags. Add an always-visible add affordance,
+  insert-above / insert-below and move-up / move-down (or drag-reorder)
+  actions, plus a confirmation that explains non-empty forced deletion.
+- **Markers.** Point and region markers have add / update / remove state and
+  MCP paths; search can navigate to them and the agent-mode mini timeline can
+  render them. The normal timeline still needs marker rendering and hit
+  targets, add-at-playhead, drag / region-resize, label + color editing, and
+  delete.
+- **History and checkpoints.** The normal workspace stops at Undo / Redo even
+  though `project://history` exposes the commit log and named checkpoints can
+  be created, listed, and restored. Ship a dockable history panel with actor
+  badges and current-cursor state, plus create / restore checkpoint actions.
+  The agent-mode record panel is useful partial UI, but it is available only
+  inside an agent-started session and is not the general history surface.
+- **Media-pool removal.** `remove_media` safely rejects referenced media and
+  supports an undoable forced cascade, but the media pool has no delete
+  action. Add Remove, show the referencing layers when blocked, and require a
+  specific confirmation before the force path.
+
+**P1 — workflows and project configuration:**
+
+- **Analysis, transcription, and voice workflows.** `analyze_clip`,
+  `detect_silences`, `transcribe_clip`, `synthesize_speech`, and
+  `auto_split_by_shot` ship as compute / MCP workflows. File-based subtitle
+  import already gives humans one caption path, and the media pool has an
+  **Analyze shots** cache-warming button, but there is no normal UI to inspect
+  the returned ranges / shots, tune parameters, preview a proposal, or apply
+  split / delete / caption / voiceover actions. Build one reusable
+  review-before-apply workflow surface rather than one opaque button per
+  tool.
+- **Composition settings after project creation.** `set_composition` supports
+  dimensions, frame rate, sample rate, channel count, color space,
+  background, and duration. Settings currently exposes only duration once a
+  project exists; surface the remaining fields with the existing validation
+  and composition-lock errors.
+- **Video-description configuration and results.** `describe_clip` and the
+  VLM configuration stores exist, but the renderer has neither provider /
+  model / endpoint settings nor a place to inspect generated descriptions.
+  Either expose both in Settings + an analysis result view, or explicitly
+  designate this as an agent-only workflow.
+
+**P2 — completeness and discoverability:**
+
+- **Group maintenance.** Create / dissolve are human-operable, while add
+  members, remove members, and rename remain state / MCP-only. Add these to
+  the selection or group inspector once the multi-selection model settles.
+- **Settings and authoring polish already tracked elsewhere.** The
+  preview-effects switch is in the Effect subsystem section; keyframe batch
+  editing and color authoring are in Keyframes; transition discoverability
+  and chip operations are in Transitions. Keep those as one source of truth
+  rather than duplicating them here.
+
 ### Polish
 
-- Undo / redo UI: history panel showing per-actor edits.
-- Checkpoints UI: named save points, agent-rollback affordance.
 - Error toasts with structured-error options ("Create new track" /
   "Trim existing") instead of raw text.
 - Onboarding tour on first workspace open.
@@ -523,10 +589,6 @@ to verify on real macOS + Linux hardware:
 - Motif-picker thumbnails for the remaining starter Motifs
   (rendered lazily via a CDP still; verify each Motif renders end-to-end
   through the picker → export path).
-- Media-pool thumbnail strip (backend data already cached; React + canvas
-  work). The timeline waveform and filmstrip strips ship already (see
-  [`timeline-content-preview.md`](timeline-content-preview.md)); this is the
-  media-pool panel counterpart.
 - Drive the menus from the command registry
   (`renderer/commands/registry.ts`, see
   [features.md §Global search palette](features.md#global-search-palette)) so
@@ -551,22 +613,26 @@ and return actionable "not configured" errors instead of being hidden. The refin
 is to omit unsupported speech tools from the advertised catalog
 entirely, keyed on which providers are configured.
 
-### Frame analysis for agents (`analyze_clip` / `compare_frames`) — unscheduled
+### Frame and shot analysis — agent tools shipped; human review / apply remains
 
-**Designed, not scheduled.** The MCP surface lets an agent *see* a frame
-(`media://{id}/frame/{t_us}`) but not reason about how a clip's picture
-changes over time. The planned addition is two "Analysis tools" beside
-`detect_silences`: `analyze_clip` (a structured shot list — scene
-boundaries, a representative keyframe timestamp per shot, per-shot
-brightness/motion, and black/freeze/fade events) and `compare_frames`
-(pairwise perceptual-hash similarity). A heuristic Rust pass —
-histogram-difference scene scoring (the PySceneDetect approach), driven by
-the same ffmpeg CLI child + `ffmpeg_sem` as the other derivative jobs,
-lazy on the 720p proxy, content-addressed cache — behind a `SceneDetector`
-trait so a learned model (TransNetV2 via ONNX) can slot in later for
-gradual-transition accuracy. Deliberately *not* the renderer/GPU path (keeps
-analysis off the compositor the user is driving) and *not* a vision model
-(semantic "what's in the frame" stays the multimodal agent's job).
+`analyze_clip` now ships a deterministic shot report over a VideoClip's
+source, preferring the 720p proxy: cleaned shot boundaries, representative
+frame times, brightness / motion / sharpness statistics, black / freeze /
+fade flags, and raw cut scores. Reports are content-addressed in the VSHOT
+cache; `media://{id}/analysis` exposes the default whole-source report.
+`compare_frames` ships the pairwise pHash-Hamming + MSSIM comparison, and
+`auto_split_by_shot` consumes the same cached report to split a layer in one
+undoable commit (optionally dropping short results).
+
+The remaining product work is the human workflow called out in UI parity:
+the media-pool **Analyze shots** action currently warms the cache and shows
+only a pending state. Add a shot list with cover thumbnails, scores / event
+flags, click-to-preview, sensitivity + minimum-shot controls, explicit
+apply-as-splits / apply-as-markers actions, progress, and actionable errors.
+`compare_frames` can remain an agent / diagnostic primitive unless a concrete
+human deduplication workflow needs it. The heuristic detector stays behind
+the `SceneDetector` seam so a learned implementation can be evaluated later
+for gradual-transition accuracy without changing the tool contract.
 
 ### Transitions — v1 shipped; named deferrals remain
 
@@ -605,8 +671,10 @@ The named deferrals:
 - **Policy C — the transition rides the trim**: individual mutations become
   transition-aware, reconcile degrades to a backstop (upgrade path recorded
   in ADR 0035).
-- **Chip edge drag-resize** on the timeline (duration edits go through the
-  inspector or MCP).
+- **Authoring discoverability and chip operations.** Add-transition currently
+  lives in the cut context menu; add a more discoverable entry point, a chip
+  context menu, and chip edge drag-resize (duration edits currently go
+  through the inspector or MCP).
 - **Transition-specific error for blocked in-transition splits** — the
   atomic rejection surfaces as the generic `LayerOverlap` error.
 
