@@ -629,9 +629,9 @@ const enUS = {
     heading: "Settings",
     close: "Close",
     cat_general: "General",
-    cat_editing: "Project",
+    cat_project: "Project",
     cat_keyboard: "Keyboard",
-    cat_api_keys: "Transcription / Speech",
+    cat_speech: "Transcription",
     cat_agent: "Agent",
     project_scope_blurb:
       "Settings on this page apply to the current project only and are saved with the project file.",

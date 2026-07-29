@@ -1,10 +1,10 @@
 import type { AppNotice } from "../../shared/ipc";
 
-export type SystemSettingsTarget = "general" | "apikeys";
+export type SystemSettingsTarget = "general" | "speech";
 
 export function systemSettingsTarget(code: string): SystemSettingsTarget | null {
   if (code === "native_decode_unavailable") return "general";
-  if (code === "keyring_unavailable") return "apikeys";
+  if (code === "keyring_unavailable") return "speech";
   return null;
 }
 

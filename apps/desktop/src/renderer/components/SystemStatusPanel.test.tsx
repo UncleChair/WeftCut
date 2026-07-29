@@ -23,7 +23,7 @@ describe("SystemStatusPanel", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "打开 API 密钥设置" }));
-    expect(onOpenSettings).toHaveBeenCalledWith("apikeys");
+    expect(onOpenSettings).toHaveBeenCalledWith("speech");
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();

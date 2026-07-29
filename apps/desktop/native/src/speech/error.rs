@@ -11,7 +11,7 @@ use super::backend::SpeechBackend;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpeechError {
-    #[error("no API key configured for {provider:?}; configure it in Settings → API keys")]
+    #[error("no API key configured for {provider:?}; configure it in Settings → Transcription")]
     MissingKey { provider: SpeechBackend },
 
     #[error("{provider:?} rejected the API key (401 unauthorized)")]

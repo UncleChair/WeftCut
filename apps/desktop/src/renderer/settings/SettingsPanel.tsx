@@ -66,15 +66,15 @@ function clampTailSnapStrength(value: number): number {
   return Math.round(Math.min(TAIL_SNAP_MAX_PX, Math.max(TAIL_SNAP_MIN_PX, value)));
 }
 
-type SettingsCategory = "general" | "editing" | "keyboard" | "apikeys" | "agent";
+type SettingsCategory = "general" | "project" | "keyboard" | "speech" | "agent";
 
 /// Sidebar order. Every pane stays mounted (toggled via `hidden`) so
 /// in-progress input and per-section fetches survive a tab switch.
 const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   { id: "general", labelKey: "settings.cat_general" },
-  { id: "editing", labelKey: "settings.cat_editing" },
+  { id: "project", labelKey: "settings.cat_project" },
   { id: "keyboard", labelKey: "settings.cat_keyboard" },
-  { id: "apikeys", labelKey: "settings.cat_api_keys" },
+  { id: "speech", labelKey: "settings.cat_speech" },
   { id: "agent", labelKey: "settings.cat_agent" },
 ];
 
@@ -106,10 +106,10 @@ interface Props {
   composition?: CompositionState | null;
   /// Refresh the parent project summary after Pin / Fit actions so the
   /// section's labels reflect the new state immediately. Its presence is
-  /// the "a project is open" signal: the editing ("Project") category only
-  /// renders when this is provided, so callers without a workspace (the
-  /// startup screen) simply omit both composition props and the
-  /// project-scoped tab drops out — no separate flag to keep in sync.
+  /// the "a project is open" signal: the project category only renders
+  /// when this is provided, so callers without a workspace (the startup
+  /// screen) simply omit both composition props and the project-scoped
+  /// tab drops out — no separate flag to keep in sync.
   onCompositionChanged?: () => Promise<void> | void;
 }
 
@@ -130,9 +130,9 @@ export function SettingsPanel({
   const showProjectCategory = onCompositionChanged !== undefined;
   const visibleCategories = showProjectCategory
     ? CATEGORIES
-    : CATEGORIES.filter((c) => c.id !== "editing");
+    : CATEGORIES.filter((c) => c.id !== "project");
   const [category, setCategory] = useState<SettingsCategory>(
-    initialCategory === "editing" && !showProjectCategory
+    initialCategory === "project" && !showProjectCategory
       ? "general"
       : initialCategory,
   );
@@ -272,12 +272,12 @@ export function SettingsPanel({
           {showProjectCategory && (
             <div
               role="tabpanel"
-              id="settings-panel-editing"
-              aria-labelledby="settings-tab-editing"
-              hidden={category !== "editing"}
+              id="settings-panel-project"
+              aria-labelledby="settings-tab-project"
+              hidden={category !== "project"}
               className="settings-pane"
             >
-              <div className="settings-pane-title">{t("settings.cat_editing")}</div>
+              <div className="settings-pane-title">{t("settings.cat_project")}</div>
               <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
               <section className="settings-section">
                 <h3>{t("settings.composition_heading")}</h3>
@@ -318,13 +318,13 @@ export function SettingsPanel({
 
           <div
             role="tabpanel"
-            id="settings-panel-apikeys"
-            aria-labelledby="settings-tab-apikeys"
-            hidden={category !== "apikeys"}
+            id="settings-panel-speech"
+            aria-labelledby="settings-tab-speech"
+            hidden={category !== "speech"}
             className="settings-pane"
           >
             <div className="settings-pane-title">
-              {t("settings.cat_api_keys")}
+              {t("settings.cat_speech")}
             </div>
             <SpeechSection onError={setError} />
           </div>
