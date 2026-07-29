@@ -556,7 +556,6 @@ export function MediaPool({
                   draggable={interactive}
                   tabIndex={0}
                   aria-haspopup="menu"
-                  aria-expanded={contextMenu?.mediaId === m.id}
                   aria-keyshortcuts="Shift+F10"
                   onContextMenu={(e) => {
                     e.preventDefault();
