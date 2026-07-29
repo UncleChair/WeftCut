@@ -27,6 +27,7 @@ import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previe
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
 import { MAIN_WINDOW_MINIMUM_SIZE } from './mainWindowConfig.js'
+import { openPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
   writeMarker, readMarker, clearMarker, deleteOldCopy,
@@ -975,11 +976,13 @@ app.whenReady().then(async () => {
   // Open a path or URL in the OS default handler. Files/folders → the file
   // manager; http(s) → the default browser (openExternal refuses non-web
   // schemes, so a compromised renderer can't launch arbitrary protocols).
+  // Path opens go through openPathRobust (see openPath.ts: Electron's
+  // shell.openPath can wedge the launched GTK app on Linux).
   ipcMain.handle('shell:open', async (_e, { target }: { target: string }) => {
     if (/^https?:\/\//i.test(target)) {
       await shell.openExternal(target)
     } else {
-      const err = await shell.openPath(target)
+      const err = await openPathRobust(target)
       if (err) throw new Error(err)
     }
   })
@@ -1126,9 +1129,11 @@ app.whenReady().then(async () => {
     app.exit(0)
   })
 
-  // Reveal the effective data root in the OS file manager.
+  // Reveal the effective data root in the OS file manager. Goes through
+  // openPathRobust: Electron's shell.openPath can wedge the launched file
+  // manager on Linux (see openPath.ts).
   ipcMain.handle('dataRoot:openFolder', async () => {
-    const err = await shell.openPath(dataRoot.dataRoot)
+    const err = await openPathRobust(dataRoot.dataRoot)
     if (err) throw new Error(err)
   })
 
