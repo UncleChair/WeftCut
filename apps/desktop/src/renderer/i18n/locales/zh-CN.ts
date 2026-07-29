@@ -613,9 +613,9 @@ const zhCN: Resources = {
     cat_agent: "代理",
     project_scope_blurb: "本页设置仅作用于当前项目，随工程文件保存。",
     startup_heading: "启动",
-    reopen_on_launch: "启动时重新打开上一个项目",
+    reopen_on_launch: "自动打开上一个项目",
     reopen_on_launch_hint:
-      "开启后将跳过起始页，自动打开最近使用的项目。默认关闭——以防崩溃前的半提交状态被静默重新挂载。",
+      "开启后将跳过起始页，自动打开最近使用的项目。",
     composition_heading: "合成",
     composition_blurb:
       "合成时长默认跟随最末一帧。需要固定时长且大于内容时可手动延长。",
@@ -633,7 +633,7 @@ const zhCN: Resources = {
       "拖拽或修剪片段时，自动对齐到附近的片段边界或播放头。",
     tail_snap_strength: "吸附强度",
     tail_snap_strength_hint:
-      "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",
+      "以屏幕像素为单位。",
     tracks_heading: "轨道",
     auto_delete_empty_tracks: "自动删除空轨道",
     auto_delete_empty_tracks_hint:
@@ -645,7 +645,7 @@ const zhCN: Resources = {
     decode_unsupported_generate_proxy: "生成代理",
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:
-      "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",
+      "管理你的快捷键配置表。",
     preview_engine_heading: "预览引擎",
     preview_engine_blurb:
       "实时模式使用 WebCodecs + WebGL2 即时反馈编辑结果；缓存模式播放预渲染的片段。自动模式根据能力探测结果择优。",
@@ -679,11 +679,10 @@ const zhCN: Resources = {
     testing: "测试中…",
     test_hint:
       "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
-    // 转录 / 语音面板（工单 05）：引擎选择器 + 各后端配置行。
     speech_blurb:
-      "选择用于转写音频（transcribe_clip）的引擎。云端（OpenAI）需要 API 密钥；本地引擎（whisper.cpp）离线运行，需在下方指定其可执行文件与模型文件。",
+      "选择用于语音转录的引擎。OpenAI（Whisper）需要 API 密钥；其他本地引擎离线运行，需在下方指定其可执行文件与模型文件。",
     speech_engine: "转录引擎",
-    speech_engine_auto: "自动（推荐）",
+    speech_engine_auto: "自动",
     speech_engine_soon: "即将支持",
     speech_engine_active: "当前引擎：{{engine}}",
     speech_engine_none:
@@ -740,7 +739,7 @@ const zhCN: Resources = {
       "轻量引擎不支持该片段的格式，且未安装标准引擎。",
     data_location_heading: "数据位置",
     data_location_blurb:
-      "WeftCut 存放大型托管文件的位置——你的 Motifs、媒体缓存以及下载的资源。小型设置和项目文件始终保留在应用的配置文件夹中。",
+      "WeftCut 存放大型托管文件的位置，你的 Motifs、部分缓存以及下载的资源都会存放于此。",
     data_location_current_label: "当前文件夹",
     data_location_fallback: "回退——你所选的文件夹不可用，已改用默认位置。",
     data_location_change: "更改…",
@@ -774,9 +773,9 @@ const zhCN: Resources = {
     export_title: "导出键盘快捷键",
     import_title: "导入键盘快捷键",
     press_a_key: "请按键…",
-    conflict: "已绑定到「{{action}}」——请先在该操作中取消",
+    conflict: "已绑定到「{{action}}」—— 请先取消对应绑定。",
     reset_blocked:
-      "无法重置：{{chord}} 已绑定到「{{action}}」，请先在该操作中取消。",
+      "无法重置：{{chord}} 已绑定到「{{action}}」，请先取消对应绑定。",
   },
   colorpick: {
     pick: "取色",
