@@ -49,6 +49,13 @@ export interface AudioMixerInit {
   layerTEndUs: number;
 }
 
+/// Unique ownership token for one scheduled-or-pending source chunk. The map
+/// entry's object identity prevents a stale async read from releasing a newer
+/// reservation for the same source-frame key after a seek.
+interface LiveChunkSlot {
+  node: AudioBufferSourceNode | null;
+}
+
 export class AudioMixer {
   readonly layerId: string;
 
@@ -81,10 +88,7 @@ export class AudioMixer {
   /// (engine re-anchored: seek-during-play, ctx state flip) triggers a
   /// micro-faded reschedule.
   private lastAnchor: ClockAnchor | null = null;
-  /// Bumped on teardown; in-flight chunk reads from an older generation
-  /// are dropped instead of scheduled.
-  private generation = 0;
-  private liveChunks = new Map<number, AudioBufferSourceNode | null>();
+  private liveChunks = new Map<number, LiveChunkSlot>();
 
   constructor(init: AudioMixerInit, graph: AudioGraph) {
     this.layerId = init.layerId;
@@ -239,14 +243,16 @@ export class AudioMixer {
     for (const chunk of planned) {
       // Reserve the slot synchronously so the next tick doesn't double-
       // schedule while the Range read is in flight; the placeholder is
-      // replaced by the real node on resolve.
-      this.liveChunks.set(chunk.srcStartFrame, null);
+      // filled with the real node on resolve. Slot identity is the ownership
+      // token: an older read for the same source key cannot release this one.
+      const slot: LiveChunkSlot = { node: null };
+      this.liveChunks.set(chunk.srcStartFrame, slot);
       void this.scheduleChunk(
         chunk.srcStartFrame,
         chunk.frames,
         chunk.when,
         chunk.bufferOffsetFrames,
-        this.generation,
+        slot,
       );
     }
   }
@@ -256,7 +262,7 @@ export class AudioMixer {
     frames: number,
     when: number,
     bufferOffsetFrames: number,
-    gen: number,
+    slot: LiveChunkSlot,
   ): Promise<void> {
     const source = this.source;
     if (!source) return;
@@ -264,11 +270,13 @@ export class AudioMixer {
     try {
       channels = await source.readWindow(srcStartFrame, frames);
     } catch (e) {
+      // A teardown or newer same-key reservation superseded this request.
+      // Its failure belongs to the old schedule and must not release or warn
+      // on behalf of the current one.
+      if (this.liveChunks.get(srcStartFrame) !== slot) return;
       // Failed read = this chunk stays silent; drop the reservation so the
       // next tick retries. Warn once per layer.
-      if (this.liveChunks.get(srcStartFrame) === null) {
-        this.liveChunks.delete(srcStartFrame);
-      }
+      this.liveChunks.delete(srcStartFrame);
       if (!this.readFailedWarned) {
         this.readFailedWarned = true;
         console.warn(
@@ -278,13 +286,10 @@ export class AudioMixer {
       }
       return;
     }
-    if (gen !== this.generation) {
-      // Torn down while reading — drop silently.
-      if (this.liveChunks.get(srcStartFrame) === null) {
-        this.liveChunks.delete(srcStartFrame);
-      }
-      return;
-    }
+    // Torn down or replaced while reading — drop silently. Identity, rather
+    // than a generation number plus a shared null marker, closes the ABA race
+    // where an old completion deleted a newer reservation for this same key.
+    if (this.liveChunks.get(srcStartFrame) !== slot) return;
 
     const ctx = this.graph.ctx;
 
@@ -306,7 +311,7 @@ export class AudioMixer {
       startAt = when + lateFrames / SAMPLE_RATE;
       if (offsetFrames >= frames) {
         // Entirely in the past by now — drop; the next tick replans.
-        if (this.liveChunks.get(srcStartFrame) === null) {
+        if (this.liveChunks.get(srcStartFrame) === slot) {
           this.liveChunks.delete(srcStartFrame);
         }
         return;
@@ -319,12 +324,12 @@ export class AudioMixer {
     node.buffer = buffer;
     node.connect(this.gainNode);
     node.onended = (): void => {
-      if (this.liveChunks.get(srcStartFrame) === node) {
+      if (this.liveChunks.get(srcStartFrame) === slot && slot.node === node) {
         this.liveChunks.delete(srcStartFrame);
       }
     };
+    slot.node = node;
     node.start(startAt, offsetFrames / SAMPLE_RATE);
-    this.liveChunks.set(srcStartFrame, node);
 
     this.applyCurves(srcStartFrame, frames, startAt, offsetFrames);
   }
@@ -407,7 +412,6 @@ export class AudioMixer {
   /// Stop everything scheduled. `microFade` masks the discontinuity with a
   /// 5 ms trim ramp (re-anchor / live edit); pause paths skip it.
   private teardown(microFade: boolean): void {
-    this.generation += 1;
     const ctxNow = this.graph.ctx.currentTime;
     const stopAt = microFade ? ctxNow + MICRO_FADE_S : ctxNow;
     if (microFade) {
@@ -416,7 +420,8 @@ export class AudioMixer {
       g.setValueAtTime(g.value, ctxNow);
       g.linearRampToValueAtTime(0, stopAt);
     }
-    for (const node of this.liveChunks.values()) {
+    for (const slot of this.liveChunks.values()) {
+      const node = slot.node;
       if (!node) continue;
       try {
         node.onended = null;
