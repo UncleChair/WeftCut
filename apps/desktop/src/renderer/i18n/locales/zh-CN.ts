@@ -712,7 +712,7 @@ const zhCN: Resources = {
     motifs_heading: "Motifs",
     prebake_motifs: "预烘焙 Motifs",
     prebake_motifs_hint:
-      "在后台将 Motif 动画帧渲染到磁盘，使播放更流畅、重新打开项目时即时加载。会在项目的 Cache 文件夹下占用磁盘空间。",
+      "后台渲染 Motif 帧到磁盘，播放更流畅、重开更快；占用项目 Cache 的磁盘空间。",
     preview_heading: "预览",
     decode_engine: "解码引擎",
     decode_engine_auto: "自动",

@@ -739,7 +739,7 @@ const enUS = {
     motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:
-      "Render motif animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
+      "Background-render motif frames to disk. Smoother playback, instant reopen; uses disk space in the project Cache.",
     preview_heading: "Preview",
     decode_engine: "Decode engine",
     decode_engine_auto: "Automatic",
