@@ -15,7 +15,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "bootstrap": "npm run ffmpeg:fetch && npm run ffmpeg:fetch-lgpl && npm run napi:build && npm run napi:build:decode",
+    "bootstrap": "npm run electron:install && npm run ffmpeg:fetch && npm run ffmpeg:fetch-lgpl && npm run napi:build && npm run napi:build:decode",
+    "electron:install": "node scripts/install-electron.mjs",
     "dev": "electron-vite dev",
     "predev": "npm run build:wasm",
     "build": "electron-vite build",
