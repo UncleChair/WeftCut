@@ -634,9 +634,11 @@ const zhCN: Resources = {
     tail_snap_strength: "吸附强度",
     tail_snap_strength_hint:
       "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",
+    tracks_heading: "轨道",
     auto_delete_empty_tracks: "自动删除空轨道",
     auto_delete_empty_tracks_hint:
       "删除轨道上最后一个片段时一并移除该轨道，一次撤销即可同时恢复；A/B 轨始终保留。",
+    playback_heading: "播放",
     prefer_proxies: "预览优先使用代理",
     prefer_proxies_hint:
       "对已生成代理的片段，在预览中播放轻量的 720p 代理以获得更流畅的拖拽体验；导出仍使用原始文件。",

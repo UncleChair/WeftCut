@@ -210,7 +210,6 @@ export function SettingsPanel({
             hidden={category !== "general"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">{t("settings.cat_general")}</div>
             <section className="settings-section">
               <h3>{t("settings.startup_heading")}</h3>
               <label className="settings-toggle-row">
@@ -270,7 +269,6 @@ export function SettingsPanel({
               hidden={category !== "project"}
               className="settings-pane"
             >
-              <div className="settings-pane-title">{t("settings.cat_project")}</div>
               <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
               <section className="settings-section">
                 <h3>{t("settings.composition_heading")}</h3>
@@ -283,7 +281,12 @@ export function SettingsPanel({
               </section>
 
               <section className="settings-section">
+                <h3>{t("settings.tracks_heading")}</h3>
                 <AutoDeleteEmptyTracksSection onError={setError} />
+              </section>
+
+              <section className="settings-section">
+                <h3>{t("settings.playback_heading")}</h3>
                 <PreferProxiesToggle onError={setError} />
               </section>
             </div>
@@ -296,9 +299,6 @@ export function SettingsPanel({
             hidden={category !== "keyboard"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">
-              {t("settings.cat_keyboard")}
-            </div>
             <section className="settings-section">
               <p className="settings-blurb">{t("settings.keybindings_blurb")}</p>
               <KeybindingPanel
@@ -316,9 +316,6 @@ export function SettingsPanel({
             hidden={category !== "speech"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">
-              {t("settings.cat_speech")}
-            </div>
             <SpeechSection onError={setError} />
           </div>
 
@@ -329,9 +326,6 @@ export function SettingsPanel({
             hidden={category !== "agent"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">
-              {t("settings.cat_agent")}
-            </div>
             <AgentSection />
           </div>
         </div>

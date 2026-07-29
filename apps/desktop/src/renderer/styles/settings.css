@@ -45,13 +45,15 @@
   color: var(--foreground);
 }
 
+/* Section headings sit one step above row labels in the type hierarchy:
+ * `--font-size-label` is the "section labels" slot (see docs/ui-tokens.md),
+ * so a heading reads as the parent of the 13px/500 `.settings-toggle-label`
+ * rows beneath it instead of fading into them. */
 .settings-panel h3 {
   margin: 16px 0 8px;
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-label);
   font-weight: 600;
-  color: var(--color-gray-300);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--foreground);
 }
 
 .settings-blurb,
@@ -135,10 +137,13 @@
   min-width: 120px;
 }
 
+/* Same role as `.settings-toggle-label` — the primary label of a control
+ * row — so it shares that type slot instead of reading as secondary text. */
 .settings-slider-label {
   min-width: 92px;
-  font-size: var(--font-size-body);
-  color: var(--color-gray-300);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--foreground);
 }
 
 .settings-slider-unit {
@@ -398,9 +403,10 @@
 /*
  * One spacing source per section. Each `.settings-section` is a flex
  * column whose single `gap` sets BOTH the heading->content gap and the
- * row->row gap, so they're identical everywhere; one margin separates
- * sections. The row elements' own ad-hoc vertical padding/margins are
- * zeroed so they can't reintroduce the old uneven rhythm.
+ * row->row gap, so they're identical everywhere; adjacent sections are
+ * separated by a hairline with even air on both sides. The row elements'
+ * own ad-hoc vertical padding/margins are zeroed so they can't
+ * reintroduce the old uneven rhythm.
  */
 .settings-section {
   display: flex;
@@ -409,7 +415,9 @@
 }
 
 .settings-section + .settings-section {
-  margin-top: 22px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
 }
 
 .settings-section > *,

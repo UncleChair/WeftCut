@@ -658,9 +658,11 @@ const enUS = {
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels, so the effective time range follows the current timeline zoom.",
+    tracks_heading: "Tracks",
     auto_delete_empty_tracks: "Auto-delete emptied tracks",
     auto_delete_empty_tracks_hint:
       "Deleting the last clip on a track also removes the track — one undo restores both. A/B roll always stays.",
+    playback_heading: "Playback",
     prefer_proxies: "Prefer proxies for preview",
     prefer_proxies_hint:
       "Play the lightweight 720p proxy in the preview for clips that have one, for smoother scrubbing. Export still uses the original.",
