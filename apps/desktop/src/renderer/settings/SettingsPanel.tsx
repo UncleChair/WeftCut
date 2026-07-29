@@ -42,21 +42,14 @@ import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import { AgentSection } from "./AgentSection";
-import { decodeEngineOptions } from "./decodeEngineOptions";
+import { PreviewSection } from "./PreviewSection";
 import { speechEngineOptions } from "./speechEngineOptions";
 import {
-  useDecodeComponentAvailable,
-  useDecodeComponentReason,
-} from "./decodeComponentStore";
-import {
   setAppSettings,
-  useDecodeEngine,
-  usePlaybackResolution,
   usePrebakeMotifsEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "./appSettingsStore";
-import type { PlaybackResolution } from "../../shared/app-settings";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 
 const TAIL_SNAP_MIN_PX = 2;
@@ -264,8 +257,8 @@ export function SettingsPanel({
             </section>
 
             <section className="settings-section">
-              <DecodeEngineSection onError={setError} />
-              <PlaybackResolutionSection onError={setError} />
+              <h3>{t("settings.preview_heading")}</h3>
+              <PreviewSection onError={setError} />
             </section>
           </div>
 
@@ -789,89 +782,6 @@ export function DataLocationSection({
         </AppDialog>
       )}
     </>
-  );
-}
-
-function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
-  const { t } = useTranslation();
-  const engine = useDecodeEngine();
-  const componentAvailable = useDecodeComponentAvailable();
-  const componentReason = useDecodeComponentReason();
-  return (
-    <label className="settings-toggle-row">
-      <AppSelect
-        value={engine}
-        onValueChange={async (next) => {
-          onError("");
-          if (next === "ffmpeg" && !componentAvailable) {
-            onError(
-              t("settings.decode_engine_unavailable", {
-                reason: componentReason ?? "",
-              }),
-            );
-            return;
-          }
-          try {
-            await setAppSettings({
-              decode_engine: next as "auto" | "ffmpeg" | "webcodecs",
-            });
-          } catch (err) {
-            onError(String(err));
-          }
-        }}
-        options={decodeEngineOptions(t, componentAvailable)}
-      />
-      <span>
-        <span className="settings-toggle-label">{t("settings.decode_engine")}</span>
-        <span className="settings-toggle-hint">
-          {componentAvailable
-            ? t("settings.decode_engine_hint")
-            : t("settings.decode_engine_unavailable", {
-                reason: componentReason ?? "",
-              })}
-        </span>
-      </span>
-    </label>
-  );
-}
-
-/// Preview quality dial (Full / ½ / ¼), sitting with the decode engine because
-/// both describe how THIS machine plays back. Applying is a plain app-settings
-/// patch — `PixiPreview` subscribes to the store and re-opens the live decode
-/// transports in place, so the change is visible without a reload.
-function PlaybackResolutionSection({ onError }: { onError: (msg: string) => void }) {
-  const { t } = useTranslation();
-  const resolution = usePlaybackResolution();
-  return (
-    <label className="settings-toggle-row">
-      <AppSelect
-        value={resolution}
-        onValueChange={async (next) => {
-          onError("");
-          try {
-            await setAppSettings({
-              playback_resolution: next as PlaybackResolution,
-            });
-          } catch (err) {
-            onError(String(err));
-          }
-        }}
-        options={[
-          { value: "full", label: t("settings.playback_resolution_full") },
-          { value: "half", label: t("settings.playback_resolution_half") },
-          { value: "quarter", label: t("settings.playback_resolution_quarter") },
-        ]}
-        ariaLabel={t("settings.playback_resolution")}
-      />
-      <span>
-        <span className="settings-toggle-label">
-          {t("settings.playback_resolution")}
-        </span>
-        <span className="settings-toggle-hint">
-          {t("settings.playback_resolution_hint")}
-        </span>
-      </span>
-    </label>
   );
 }
 

@@ -633,3 +633,160 @@
   font-family: inherit;
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Preview choice groups (decode engine cards / resolution segments) ---
+ * Label + control + hint stack with a tighter rhythm than the section gap
+ * the groups sit inside. */
+
+.settings-choice-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Decode engine radio cards — every option visible with its trade-off
+ * inline, instead of a dropdown + hint pair. */
+.settings-radio-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--popover);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.settings-radio-card[data-checked] {
+  border-color: var(--ring);
+}
+
+.settings-radio-card:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: var(--focus-ring);
+}
+
+.settings-radio-card[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-radio-card-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.settings-radio-card[data-checked] .settings-radio-card-dot {
+  border-color: var(--primary);
+}
+
+.settings-radio-card-indicator {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.settings-radio-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.settings-radio-card-title {
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.settings-radio-card-desc {
+  font-size: var(--font-size-caption);
+  color: var(--color-gray-500);
+  line-height: 1.4;
+}
+
+/* Playback resolution three-stop slider — smooth (¼) on the left, quality
+ * (Full) on the right. Reuses the .app-slider* skin; the rules below add the
+ * end captions, the stop dots inside the track, and the tick labels under
+ * it. */
+.settings-resolution-slider {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.settings-resolution-end {
+  flex-shrink: 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-gray-500);
+  /* Optically center the captions on the 16px slider control row, not on
+   * the control + tick-labels column they flank. */
+  line-height: 16px;
+}
+
+.settings-resolution-track {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Stop dot on the track — one per fraction. Painted after the indicator so
+ * it stays visible on the filled side; the thumb (later in DOM) covers the
+ * dot at the current stop. */
+.settings-resolution-stop {
+  position: absolute;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--foreground);
+  opacity: 0.35;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Tick labels under the track: first/last hug their stop, the middle one
+ * centers; the label at the current stop highlights. */
+.settings-resolution-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: var(--font-size-caption);
+  color: var(--color-gray-500);
+}
+
+.settings-resolution-ticks > span {
+  flex: 1;
+  text-align: center;
+}
+
+.settings-resolution-ticks > span:first-child {
+  text-align: left;
+}
+
+.settings-resolution-ticks > span:last-child {
+  text-align: right;
+}
+
+.settings-resolution-ticks > span.is-active {
+  color: var(--foreground);
+  font-weight: 500;
+}

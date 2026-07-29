@@ -1,7 +1,7 @@
 // The decode-engine tier options (Automatic / Standard / Lite), shared by the
-// preview picker (SettingsPanel DecodeEngineSection) and the export dialog so
-// the two surfaces can't drift apart in wording or in the grayed-with-reason
-// pattern (spec decision 10: "preview's exact pattern").
+// preview picker (SettingsPanel's PreviewSection radio cards) and the export
+// dialog so the two surfaces can't drift apart in wording or in the
+// grayed-with-reason pattern (spec decision 10: "preview's exact pattern").
 import type { TFunction } from "i18next";
 import type { ReactNode } from "react";
 import type { AppSelectOption } from "../components/AppSelect";
