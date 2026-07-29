@@ -338,6 +338,42 @@
   margin: 0;
 }
 
+/* macOS: the native traffic lights sit top-left (titleBarStyle: 'hidden'),
+ * so inset the titlebar's left edge for the settings button to clear them.
+ * Mirrors .app-header; native fullscreen hides the buttons, dropping the
+ * inset. */
+html.platform-mac .startup-titlebar {
+  padding-left: 80px;
+}
+
+html.platform-mac.app-window-fullscreen .startup-titlebar {
+  padding-left: 0;
+}
+
+/* Top-left settings entry. The titlebar is justify-content: flex-end (the
+ * locale toggle + caption buttons cluster right), so margin-right: auto
+ * pins this one to the left edge. Borderless: the icon itself is the
+ * button — no pill chrome. */
+.startup-settings-toggle {
+  align-self: center;
+  margin-right: auto;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.startup-settings-toggle:hover {
+  color: var(--foreground);
+}
+
 .startup-locale-toggle {
   align-self: center;
   display: inline-flex;
@@ -711,7 +747,8 @@
 
 
 .startup-recent-toggle:focus-visible,
-.startup-locale-toggle:focus-visible {
+.startup-locale-toggle:focus-visible,
+.startup-settings-toggle:focus-visible {
   outline: none;
   border-radius: var(--radius-control);
   box-shadow: var(--focus-ring);

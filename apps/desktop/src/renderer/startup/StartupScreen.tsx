@@ -9,7 +9,9 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
-import { setLocale } from "../settings/appSettingsStore";
+import { setLocale, wireAppSettingsStream } from "../settings/appSettingsStore";
+import { wireDecodeComponent } from "../settings/decodeComponentStore";
+import { SettingsPanel } from "../settings/SettingsPanel";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppSelect } from "../components/AppSelect";
@@ -21,14 +23,17 @@ import {
   FolderOpenIcon,
   GlobeIcon,
   PlusIcon,
+  SettingsIcon,
   XIcon,
 } from "lucide-react";
 import {
+  keybindingsGet,
   projectNewWorkspace,
   projectOpen,
   recentsLastNewProjectParent,
   recentsList,
   recentsRemove,
+  type KeybindingsMap,
   type RecentEntry,
 } from "../ipc";
 import { CANVAS_PRESETS } from "./canvasPresets";
@@ -50,6 +55,8 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
   // Recents collapses to the most-recent COLLAPSED_RECENT_COUNT entries on
   // mount. After Save-and-Close lands the user back here, the just-closed
   // project is #1 in the list, so the collapsed view is almost always more
@@ -78,6 +85,31 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   useEffect(() => {
     void refreshRecents();
   }, [refreshRecents]);
+
+  // The settings panel reads app-level stores that are otherwise only wired
+  // inside the editor (`useAppWiring`). Hydrate them for the dialog's
+  // lifetime so its panes show the persisted values, not the boot defaults.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await wireAppSettingsStream();
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    void wireDecodeComponent();
+    keybindingsGet()
+      .then(setKeybindings)
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [settingsOpen]);
 
   const runProtected = useCallback(
     async (
@@ -145,6 +177,18 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           slim strip along the top carries the drag region + caption
           buttons (and the locale toggle, which used to float here). */}
       <div className="startup-titlebar" data-drag-region>
+        {/* Top-left app-level affordances: settings apply below-project
+            scope, so they're reachable before a workspace exists. The
+            locale toggle + caption buttons stay on the right. */}
+        <button
+          type="button"
+          className="startup-settings-toggle"
+          onClick={() => setSettingsOpen(true)}
+          title={t("settings.heading")}
+          aria-label={t("settings.heading")}
+        >
+          <SettingsIcon size={16} strokeWidth={1.5} aria-hidden />
+        </button>
         <button
           type="button"
           className="startup-locale-toggle"
@@ -295,6 +339,15 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             setNewProjectOpen(false);
             onWorkspaceReady();
           }}
+        />
+      )}
+      {settingsOpen && (
+        // No composition props: there is no open project here, so the
+        // project-scoped "Project" category hides itself (see SettingsPanel).
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
+          keybindings={keybindings}
+          onKeybindingsChanged={setKeybindings}
         />
       )}
     </div>

@@ -100,11 +100,17 @@ interface Props {
   keybindings: KeybindingsMap;
   onKeybindingsChanged: (next: KeybindingsMap) => void;
   /// Live composition state for the Composition section. `null` while
-  /// the project summary is still loading.
-  composition: CompositionState | null;
+  /// the project summary is still loading. Omitted entirely (together
+  /// with `onCompositionChanged`) when no project is open — e.g. on the
+  /// startup screen.
+  composition?: CompositionState | null;
   /// Refresh the parent project summary after Pin / Fit actions so the
-  /// section's labels reflect the new state immediately.
-  onCompositionChanged: () => Promise<void> | void;
+  /// section's labels reflect the new state immediately. Its presence is
+  /// the "a project is open" signal: the editing ("Project") category only
+  /// renders when this is provided, so callers without a workspace (the
+  /// startup screen) simply omit both composition props and the
+  /// project-scoped tab drops out — no separate flag to keep in sync.
+  onCompositionChanged?: () => Promise<void> | void;
 }
 
 export function SettingsPanel({
@@ -112,13 +118,24 @@ export function SettingsPanel({
   initialCategory = "general",
   keybindings,
   onKeybindingsChanged,
-  composition,
+  composition = null,
   onCompositionChanged,
 }: Props) {
   const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
-  const [category, setCategory] = useState<SettingsCategory>(initialCategory);
+  // Project-scoped sections (composition pin, per-project toggles) talk to
+  // workspace IPC, so the whole category unmounts — not just hides — when
+  // there is no open project behind the panel.
+  const showProjectCategory = onCompositionChanged !== undefined;
+  const visibleCategories = showProjectCategory
+    ? CATEGORIES
+    : CATEGORIES.filter((c) => c.id !== "editing");
+  const [category, setCategory] = useState<SettingsCategory>(
+    initialCategory === "editing" && !showProjectCategory
+      ? "general"
+      : initialCategory,
+  );
   const tabRefs = useRef<
     Partial<Record<SettingsCategory, HTMLButtonElement | null>>
   >({});
@@ -126,7 +143,7 @@ export function SettingsPanel({
   /// Roving-tabindex keyboard nav for the vertical tablist (WAI-ARIA
   /// tabs pattern): arrows move + activate, Home/End jump to the ends.
   const onNavKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const order = CATEGORIES.map((c) => c.id);
+    const order = visibleCategories.map((c) => c.id);
     const idx = order.indexOf(category);
     let next: SettingsCategory | undefined;
     if (e.key === "ArrowDown") next = order[(idx + 1) % order.length];
@@ -162,7 +179,7 @@ export function SettingsPanel({
           aria-label={t("settings.heading")}
           onKeyDown={onNavKeyDown}
         >
-          {CATEGORIES.map((c) => (
+          {visibleCategories.map((c) => (
             <button
               key={c.id}
               ref={(el) => {
@@ -252,30 +269,32 @@ export function SettingsPanel({
             </section>
           </div>
 
-          <div
-            role="tabpanel"
-            id="settings-panel-editing"
-            aria-labelledby="settings-tab-editing"
-            hidden={category !== "editing"}
-            className="settings-pane"
-          >
-            <div className="settings-pane-title">{t("settings.cat_editing")}</div>
-            <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
-            <section className="settings-section">
-              <h3>{t("settings.composition_heading")}</h3>
-              <p className="settings-blurb">{t("settings.composition_blurb")}</p>
-              <CompositionSection
-                composition={composition}
-                onChanged={onCompositionChanged}
-                onError={setError}
-              />
-            </section>
+          {showProjectCategory && (
+            <div
+              role="tabpanel"
+              id="settings-panel-editing"
+              aria-labelledby="settings-tab-editing"
+              hidden={category !== "editing"}
+              className="settings-pane"
+            >
+              <div className="settings-pane-title">{t("settings.cat_editing")}</div>
+              <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
+              <section className="settings-section">
+                <h3>{t("settings.composition_heading")}</h3>
+                <p className="settings-blurb">{t("settings.composition_blurb")}</p>
+                <CompositionSection
+                  composition={composition}
+                  onChanged={onCompositionChanged}
+                  onError={setError}
+                />
+              </section>
 
-            <section className="settings-section">
-              <AutoDeleteEmptyTracksSection onError={setError} />
-              <PreferProxiesToggle onError={setError} />
-            </section>
-          </div>
+              <section className="settings-section">
+                <AutoDeleteEmptyTracksSection onError={setError} />
+                <PreferProxiesToggle onError={setError} />
+              </section>
+            </div>
+          )}
 
           <div
             role="tabpanel"
