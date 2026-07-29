@@ -11,14 +11,9 @@
   user-select: text;
 }
 
-/* ---- Agent (MCP connect) section — lives in the Settings "Agent" tab ---- */
-
-.connect-blurb,
-.connect-status {
-  margin: 0 0 12px;
-  font-size: var(--font-size-body);
-  color: var(--muted-foreground);
-}
+/* ---- Agent (MCP connect) section — lives in the Settings "Agent" tab ----
+ * Layout follows the settings-panel idiom (`settings-section` + h3 + hairline
+ * separation); only the client-tab strip and the snippet box are local. */
 
 .connect-tabs {
   display: flex;
@@ -45,69 +40,6 @@
 .connect-tab.is-active {
   color: var(--foreground);
   border-bottom-color: var(--primary);
-}
-
-.connect-agent-prompt {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 10px;
-  border: 1px solid var(--selection-border);
-  border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--primary) 10%, var(--surface-raised));
-}
-
-.connect-agent-prompt-icon {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-control);
-  background: var(--selection-bg);
-  color: var(--color-blue-300);
-}
-
-.connect-agent-prompt-copy {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.settings-panel .connect-agent-prompt-copy h3 {
-  margin: 0;
-}
-
-.connect-agent-prompt-copy p {
-  margin: 2px 0 0;
-  font-size: var(--font-size-caption);
-  line-height: 1.4;
-  color: var(--muted-foreground);
-}
-
-.connect-agent-prompt-button {
-  min-width: 126px;
-}
-
-.connect-manual-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 14px;
-  color: var(--muted-foreground);
-  font-size: var(--font-size-caption);
-}
-
-.connect-manual-heading::after {
-  content: "";
-  flex: 1 1 auto;
-  height: 1px;
-  background: var(--border-soft);
-}
-
-.connect-snippet {
-  margin: 8px 0 12px;
 }
 
 .connect-snippet-header {
@@ -139,14 +71,4 @@
 
 .connect-snippet code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.connect-note {
-  margin: 12px 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-amber-500);
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: var(--radius-control);
-  padding: 8px 10px;
 }

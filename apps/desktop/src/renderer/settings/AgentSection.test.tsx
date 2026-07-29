@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 //
-// Covers the Settings "Agent" tab (AgentSection): one copyable config snippet
-// per agent client (Codex / Claude / Cursor / generic), token masked until
-// revealed, copy always carries the real token.
+// Covers the Settings "Agent" tab (AgentSection): a generic setup prompt for
+// agent self-configuration plus one copyable config snippet per agent client
+// (Codex / Claude / Cursor / generic), token masked until revealed, copy
+// always carries the real token.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -64,16 +65,15 @@ describe("AgentSection", () => {
     );
   });
 
-  it("copies an English setup prompt with the selected client config", async () => {
+  it("copies a generic English setup prompt with the connection details", async () => {
     render(<AgentSection />);
-    await userEvent.click(await screen.findByRole("tab", { name: "Claude" }));
     await userEvent.click(
-      screen.getByRole("button", { name: "Copy setup prompt" }),
+      await screen.findByRole("button", { name: "Copy setup prompt" }),
     );
 
     expect(clipboard.writeText).toHaveBeenCalledWith(
       expect.stringMatching(
-        /Configure the WeftCut MCP server for Claude[\s\S]*"type": "http"[\s\S]*secret-token[\s\S]*preserve all other settings/,
+        /Configure the WeftCut MCP server for me[\s\S]*URL: http:\/\/127\.0\.0\.1:4711\/mcp[\s\S]*Bearer secret-token[\s\S]*preserve all other settings/,
       ),
     );
   });
@@ -87,7 +87,7 @@ describe("AgentSection", () => {
 
     expect(clipboard.writeText).toHaveBeenCalledWith(
       expect.stringMatching(
-        /请在这台电脑上为 Codex 配置 WeftCut MCP 服务[\s\S]*secret-token[\s\S]*保留所有其他设置和 MCP 服务/,
+        /请为我配置 WeftCut MCP 服务[\s\S]*Bearer secret-token[\s\S]*保留所有其他设置和 MCP 服务/,
       ),
     );
   });

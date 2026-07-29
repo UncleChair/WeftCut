@@ -1,13 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  BotIcon,
-  CheckIcon,
-  CopyIcon,
-  EyeIcon,
-  EyeOffIcon,
-  RotateCcwIcon,
-} from "lucide-react";
+import { CheckIcon, CopyIcon, EyeIcon, EyeOffIcon, RotateCcwIcon } from "lucide-react";
 import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
 import { Button } from "@/components/ui/button";
 
@@ -42,9 +35,11 @@ function buildSnippet(client: ClientId, url: string, token: string): string {
   return JSON.stringify({ mcpServers: { weftcut: server } }, null, 2);
 }
 
-/// MCP connection info for external agents, rendered as one copyable config
-/// snippet per client. Lives in the Settings "Agent" tab; like the other
-/// panes it stays mounted across tab switches, so the poll below runs once.
+/// MCP connection info for external agents, rendered as two independent
+/// paths: a generic setup prompt the user pastes into their agent (the agent
+/// edits its own client config), and per-client manual snippets below. Lives
+/// in the Settings "Agent" tab; like the other panes it stays mounted across
+/// tab switches, so the poll below runs once.
 export function AgentSection() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<McpInfoView | null>(null);
@@ -104,13 +99,13 @@ export function AgentSection() {
     }
   };
 
+  // The prompt is generic — the agent figures out its own client config
+  // format; all it needs from us is the URL and token.
   const copyAgentPrompt = async () => {
     if (!info) return;
-    const fullSnippet = buildSnippet(client, info.url, info.bearer_token);
     const prompt = t("connect.agent_prompt", {
-      client: t(`connect.tabs.${client}`),
-      hint: t(`connect.hint.${client}`),
-      snippet: fullSnippet,
+      url: info.url,
+      token: info.bearer_token,
     });
     try {
       await navigator.clipboard.writeText(prompt);
@@ -154,126 +149,108 @@ export function AgentSection() {
   };
 
   if (!info) {
-    return <p className="connect-status">{t("connect.starting")}</p>;
+    return <p className="settings-status">{t("connect.starting")}</p>;
   }
 
   return (
     <>
-      <p className="connect-blurb">{t("connect.blurb")}</p>
+      <p className="settings-blurb">{t("connect.blurb")}</p>
+      <p className="settings-warn">{t("connect.token_note")}</p>
 
-      <div
-        className="connect-tabs"
-        role="tablist"
-        aria-label={t("connect.snippets_heading")}
-        onKeyDown={onTabsKeyDown}
-      >
-        {CLIENTS.map((id) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            id={`connect-tab-${id}`}
-            aria-selected={client === id}
-            aria-controls="connect-snippet-panel"
-            tabIndex={client === id ? 0 : -1}
-            className={
-              client === id ? "connect-tab is-active" : "connect-tab"
-            }
-            onClick={() => setClient(id)}
-          >
-            {t(`connect.tabs.${id}`)}
-          </button>
-        ))}
-      </div>
-
-      <section
-        className="connect-agent-prompt"
-        aria-labelledby="connect-agent-prompt-heading"
-      >
-        <span className="connect-agent-prompt-icon" aria-hidden="true">
-          <BotIcon size={16} />
-        </span>
-        <div className="connect-agent-prompt-copy">
-          <h3 id="connect-agent-prompt-heading">
-            {t("connect.prompt_heading")}
-          </h3>
-          <p>
-            {t("connect.prompt_blurb", {
-              client: t(`connect.tabs.${client}`),
-            })}
-          </p>
+      <section className="settings-section">
+        <h3>{t("connect.prompt_heading")}</h3>
+        <p className="settings-blurb">{t("connect.prompt_blurb")}</p>
+        <div className="settings-key-input-row">
+          <Button size="sm" onClick={() => void copyAgentPrompt()}>
+            {promptCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+            {promptCopied
+              ? t("connect.prompt_copied")
+              : t("connect.copy_prompt")}
+          </Button>
         </div>
-        <Button
-          variant="default"
-          className="connect-agent-prompt-button"
-          onClick={() => void copyAgentPrompt()}
-        >
-          {promptCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-          {promptCopied
-            ? t("connect.prompt_copied")
-            : t("connect.copy_prompt")}
-        </Button>
       </section>
 
-      <div className="connect-manual-heading">
-        <span>{t("connect.manual_heading")}</span>
-      </div>
-
-      <div
-        className="connect-snippet"
-        role="tabpanel"
-        id="connect-snippet-panel"
-        aria-labelledby={`connect-tab-${client}`}
-      >
-        <div className="connect-snippet-header">
-          <span>{t(`connect.hint.${client}`)}</span>
-          <div className="connect-snippet-actions">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => void copyConfig()}
-              title={
-                configCopied ? t("connect.copied") : t("connect.copy")
+      <section className="settings-section">
+        <h3>{t("connect.manual_heading")}</h3>
+        <div
+          className="connect-tabs"
+          role="tablist"
+          aria-label={t("connect.snippets_heading")}
+          onKeyDown={onTabsKeyDown}
+        >
+          {CLIENTS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`connect-tab-${id}`}
+              aria-selected={client === id}
+              aria-controls="connect-snippet-panel"
+              tabIndex={client === id ? 0 : -1}
+              className={
+                client === id ? "connect-tab is-active" : "connect-tab"
               }
-              aria-label={
-                configCopied ? t("connect.copied") : t("connect.copy")
-              }
+              onClick={() => setClient(id)}
             >
-              {configCopied ? (
-                <CheckIcon size={12} />
-              ) : (
-                <CopyIcon size={12} />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => setRevealed((r) => !r)}
-              title={revealed ? t("connect.hide") : t("connect.reveal")}
-              aria-label={revealed ? t("connect.hide") : t("connect.reveal")}
-            >
-              {revealed ? <EyeOffIcon size={12} /> : <EyeIcon size={12} />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => void refreshToken()}
-              disabled={refreshing}
-              title={t("connect.refresh_hint")}
-              aria-label={
-                refreshing ? t("connect.refreshing") : t("connect.refresh")
-              }
-            >
-              <RotateCcwIcon size={12} />
-            </Button>
-          </div>
+              {t(`connect.tabs.${id}`)}
+            </button>
+          ))}
         </div>
-        <pre>
-          <code>{snippet}</code>
-        </pre>
-      </div>
 
-      <p className="connect-note">{t("connect.token_note")}</p>
+        <div
+          className="connect-snippet"
+          role="tabpanel"
+          id="connect-snippet-panel"
+          aria-labelledby={`connect-tab-${client}`}
+        >
+          <div className="connect-snippet-header">
+            <span>{t(`connect.hint.${client}`)}</span>
+            <div className="connect-snippet-actions">
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => void copyConfig()}
+                title={
+                  configCopied ? t("connect.copied") : t("connect.copy")
+                }
+                aria-label={
+                  configCopied ? t("connect.copied") : t("connect.copy")
+                }
+              >
+                {configCopied ? (
+                  <CheckIcon size={12} />
+                ) : (
+                  <CopyIcon size={12} />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => setRevealed((r) => !r)}
+                title={revealed ? t("connect.hide") : t("connect.reveal")}
+                aria-label={revealed ? t("connect.hide") : t("connect.reveal")}
+              >
+                {revealed ? <EyeOffIcon size={12} /> : <EyeIcon size={12} />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => void refreshToken()}
+                disabled={refreshing}
+                title={t("connect.refresh_hint")}
+                aria-label={
+                  refreshing ? t("connect.refreshing") : t("connect.refresh")
+                }
+              >
+                <RotateCcwIcon size={12} />
+              </Button>
+            </div>
+          </div>
+          <pre>
+            <code>{snippet}</code>
+          </pre>
+        </div>
+      </section>
     </>
   );
 }
