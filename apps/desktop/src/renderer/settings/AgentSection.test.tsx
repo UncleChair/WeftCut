@@ -64,6 +64,34 @@ describe("AgentSection", () => {
     );
   });
 
+  it("copies an English setup prompt with the selected client config", async () => {
+    render(<AgentSection />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Claude" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy setup prompt" }),
+    );
+
+    expect(clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /Configure the WeftCut MCP server for Claude[\s\S]*"type": "http"[\s\S]*secret-token[\s\S]*preserve all other settings/,
+      ),
+    );
+  });
+
+  it("copies the setup prompt in the displayed language", async () => {
+    await i18n.changeLanguage("zh-CN");
+    render(<AgentSection />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "复制配置提示词" }),
+    );
+
+    expect(clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /请在这台电脑上为 Codex 配置 WeftCut MCP 服务[\s\S]*secret-token[\s\S]*保留所有其他设置和 MCP 服务/,
+      ),
+    );
+  });
+
   it("switches snippet format per client tab", async () => {
     render(<AgentSection />);
     await snippetText();

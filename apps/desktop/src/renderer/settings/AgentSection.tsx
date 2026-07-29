@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  BotIcon,
   CheckIcon,
   CopyIcon,
   EyeIcon,
@@ -49,7 +50,8 @@ export function AgentSection() {
   const [info, setInfo] = useState<McpInfoView | null>(null);
   const [client, setClient] = useState<ClientId>("codex");
   const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [configCopied, setConfigCopied] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // Poll until the MCP server is up. Once we have info, stop polling.
@@ -89,14 +91,31 @@ export function AgentSection() {
     );
   }, [info, client, revealed]);
 
-  const copy = async () => {
+  const copyConfig = async () => {
     if (!info) return;
     try {
       await navigator.clipboard.writeText(
         buildSnippet(client, info.url, info.bearer_token),
       );
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      setConfigCopied(true);
+      window.setTimeout(() => setConfigCopied(false), 1500);
+    } catch (e) {
+      console.warn("clipboard copy failed:", e);
+    }
+  };
+
+  const copyAgentPrompt = async () => {
+    if (!info) return;
+    const fullSnippet = buildSnippet(client, info.url, info.bearer_token);
+    const prompt = t("connect.agent_prompt", {
+      client: t(`connect.tabs.${client}`),
+      hint: t(`connect.hint.${client}`),
+      snippet: fullSnippet,
+    });
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setPromptCopied(true);
+      window.setTimeout(() => setPromptCopied(false), 1500);
     } catch (e) {
       console.warn("clipboard copy failed:", e);
     }
@@ -141,7 +160,6 @@ export function AgentSection() {
   return (
     <>
       <p className="connect-blurb">{t("connect.blurb")}</p>
-      <p className="connect-note">{t("connect.token_note")}</p>
 
       <div
         className="connect-tabs"
@@ -168,6 +186,39 @@ export function AgentSection() {
         ))}
       </div>
 
+      <section
+        className="connect-agent-prompt"
+        aria-labelledby="connect-agent-prompt-heading"
+      >
+        <span className="connect-agent-prompt-icon" aria-hidden="true">
+          <BotIcon size={16} />
+        </span>
+        <div className="connect-agent-prompt-copy">
+          <h3 id="connect-agent-prompt-heading">
+            {t("connect.prompt_heading")}
+          </h3>
+          <p>
+            {t("connect.prompt_blurb", {
+              client: t(`connect.tabs.${client}`),
+            })}
+          </p>
+        </div>
+        <Button
+          variant="default"
+          className="connect-agent-prompt-button"
+          onClick={() => void copyAgentPrompt()}
+        >
+          {promptCopied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+          {promptCopied
+            ? t("connect.prompt_copied")
+            : t("connect.copy_prompt")}
+        </Button>
+      </section>
+
+      <div className="connect-manual-heading">
+        <span>{t("connect.manual_heading")}</span>
+      </div>
+
       <div
         className="connect-snippet"
         role="tabpanel"
@@ -180,11 +231,19 @@ export function AgentSection() {
             <Button
               variant="ghost"
               size="icon-xs"
-              onClick={() => void copy()}
-              title={copied ? t("connect.copied") : t("connect.copy")}
-              aria-label={copied ? t("connect.copied") : t("connect.copy")}
+              onClick={() => void copyConfig()}
+              title={
+                configCopied ? t("connect.copied") : t("connect.copy")
+              }
+              aria-label={
+                configCopied ? t("connect.copied") : t("connect.copy")
+              }
             >
-              {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+              {configCopied ? (
+                <CheckIcon size={12} />
+              ) : (
+                <CopyIcon size={12} />
+              )}
             </Button>
             <Button
               variant="ghost"
@@ -213,6 +272,8 @@ export function AgentSection() {
           <code>{snippet}</code>
         </pre>
       </div>
+
+      <p className="connect-note">{t("connect.token_note")}</p>
     </>
   );
 }
