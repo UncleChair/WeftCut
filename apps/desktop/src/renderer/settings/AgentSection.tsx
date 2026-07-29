@@ -1,18 +1,55 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  CheckIcon,
+  CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
+  RotateCcwIcon,
+} from "lucide-react";
 import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
 import { Button } from "@/components/ui/button";
 
 const REFRESH_INTERVAL_MS = 1000;
+const MASKED_TOKEN = "••••••••••••••••";
 
-/// MCP connection info for external agents (URL, bearer token, config
-/// snippet). Lives in the Settings "Agent" tab; like the other panes it
-/// stays mounted across tab switches, so the poll below runs once.
+/// Agent clients with a known MCP config format, in sidebar order. Each gets
+/// its own snippet tab; `generic` is the catch-all streamable-HTTP shape.
+type ClientId = "codex" | "claude" | "cursor" | "generic";
+const CLIENTS: readonly ClientId[] = ["codex", "claude", "cursor", "generic"];
+
+/// Ready-to-paste MCP config for one client. Formats follow each client's
+/// official docs:
+/// - codex:   `~/.codex/config.toml`, `[mcp_servers.<name>]` table; HTTP
+///   servers declare `url` + static `http_headers` (no inline bearer field).
+/// - claude:  `.mcp.json` / `~/.claude.json`; a `url` entry is an error
+///   without `"type": "http"`.
+/// - cursor:  `~/.cursor/mcp.json`; `url` + `headers`, no `type` field.
+/// - generic: same shape as cursor — the de-facto streamable-HTTP snippet.
+function buildSnippet(client: ClientId, url: string, token: string): string {
+  if (client === "codex") {
+    return [
+      "[mcp_servers.weftcut]",
+      `url = "${url}"`,
+      `http_headers = { "Authorization" = "Bearer ${token}" }`,
+    ].join("\n");
+  }
+  const server =
+    client === "claude"
+      ? { type: "http", url, headers: { Authorization: `Bearer ${token}` } }
+      : { url, headers: { Authorization: `Bearer ${token}` } };
+  return JSON.stringify({ mcpServers: { weftcut: server } }, null, 2);
+}
+
+/// MCP connection info for external agents, rendered as one copyable config
+/// snippet per client. Lives in the Settings "Agent" tab; like the other
+/// panes it stays mounted across tab switches, so the poll below runs once.
 export function AgentSection() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<McpInfoView | null>(null);
+  const [client, setClient] = useState<ClientId>("codex");
   const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // Poll until the MCP server is up. Once we have info, stop polling.
@@ -41,27 +78,25 @@ export function AgentSection() {
     };
   }, []);
 
+  // Displayed snippet masks the token unless revealed; the copy below always
+  // uses the real one.
   const snippet = useMemo(() => {
     if (!info) return "";
-    return JSON.stringify(
-      {
-        mcpServers: {
-          weftcut: {
-            url: info.url,
-            headers: { Authorization: `Bearer ${info.bearer_token}` },
-          },
-        },
-      },
-      null,
-      2,
+    return buildSnippet(
+      client,
+      info.url,
+      revealed ? info.bearer_token : MASKED_TOKEN,
     );
-  }, [info]);
+  }, [info, client, revealed]);
 
-  const copy = async (key: string, value: string) => {
+  const copy = async () => {
+    if (!info) return;
     try {
-      await navigator.clipboard.writeText(value);
-      setCopied(key);
-      window.setTimeout(() => setCopied((cur) => (cur === key ? null : cur)), 1500);
+      await navigator.clipboard.writeText(
+        buildSnippet(client, info.url, info.bearer_token),
+      );
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
     } catch (e) {
       console.warn("clipboard copy failed:", e);
     }
@@ -86,6 +121,19 @@ export function AgentSection() {
     }
   };
 
+  /// Arrow keys move between client tabs (horizontal tablist).
+  const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const idx = CLIENTS.indexOf(client);
+    let next: ClientId | undefined;
+    if (e.key === "ArrowRight") next = CLIENTS[(idx + 1) % CLIENTS.length];
+    else if (e.key === "ArrowLeft")
+      next = CLIENTS[(idx - 1 + CLIENTS.length) % CLIENTS.length];
+    if (next) {
+      e.preventDefault();
+      setClient(next);
+    }
+  };
+
   if (!info) {
     return <p className="connect-status">{t("connect.starting")}</p>;
   }
@@ -93,116 +141,78 @@ export function AgentSection() {
   return (
     <>
       <p className="connect-blurb">{t("connect.blurb")}</p>
+      <p className="connect-note">{t("connect.token_note")}</p>
 
-      <ConnectField
-        label={t("connect.field.url")}
-        value={info.url}
-        onCopy={() => copy("url", info.url)}
-        copied={copied === "url"}
-        copyLabel={t("connect.copy")}
-        copiedLabel={t("connect.copied")}
-      />
-      <ConnectField
-        label={t("connect.field.bearer")}
-        value={revealed ? info.bearer_token : "••••••••••••••••"}
-        onCopy={() => copy("bearer", info.bearer_token)}
-        copied={copied === "bearer"}
-        copyLabel={t("connect.copy")}
-        copiedLabel={t("connect.copied")}
-        extraButton={
-          <>
-            <Button size="sm" onClick={() => setRevealed((r) => !r)}>
-              {revealed ? t("connect.hide") : t("connect.reveal")}
+      <div
+        className="connect-tabs"
+        role="tablist"
+        aria-label={t("connect.snippets_heading")}
+        onKeyDown={onTabsKeyDown}
+      >
+        {CLIENTS.map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`connect-tab-${id}`}
+            aria-selected={client === id}
+            aria-controls="connect-snippet-panel"
+            tabIndex={client === id ? 0 : -1}
+            className={
+              client === id ? "connect-tab is-active" : "connect-tab"
+            }
+            onClick={() => setClient(id)}
+          >
+            {t(`connect.tabs.${id}`)}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className="connect-snippet"
+        role="tabpanel"
+        id="connect-snippet-panel"
+        aria-labelledby={`connect-tab-${client}`}
+      >
+        <div className="connect-snippet-header">
+          <span>{t(`connect.hint.${client}`)}</span>
+          <div className="connect-snippet-actions">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => void copy()}
+              title={copied ? t("connect.copied") : t("connect.copy")}
+              aria-label={copied ? t("connect.copied") : t("connect.copy")}
+            >
+              {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
             </Button>
             <Button
-              size="sm"
-              onClick={refreshToken}
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => setRevealed((r) => !r)}
+              title={revealed ? t("connect.hide") : t("connect.reveal")}
+              aria-label={revealed ? t("connect.hide") : t("connect.reveal")}
+            >
+              {revealed ? <EyeOffIcon size={12} /> : <EyeIcon size={12} />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => void refreshToken()}
               disabled={refreshing}
               title={t("connect.refresh_hint")}
+              aria-label={
+                refreshing ? t("connect.refreshing") : t("connect.refresh")
+              }
             >
-              {refreshing ? t("connect.refreshing") : t("connect.refresh")}
+              <RotateCcwIcon size={12} />
             </Button>
-          </>
-        }
-      />
-
-      <h3>{t("connect.snippets_heading")}</h3>
-
-      <ConnectSnippet
-        label={t("connect.snippet.config")}
-        value={snippet}
-        onCopy={() => copy("config", snippet)}
-        copied={copied === "config"}
-        copyLabel={t("connect.copy")}
-        copiedLabel={t("connect.copied")}
-      />
-
-      <p className="connect-note">{t("connect.token_note")}</p>
+          </div>
+        </div>
+        <pre>
+          <code>{snippet}</code>
+        </pre>
+      </div>
     </>
-  );
-}
-
-interface FieldProps {
-  label: string;
-  value: string;
-  onCopy: () => void;
-  copied: boolean;
-  copyLabel: string;
-  copiedLabel: string;
-  extraButton?: ReactNode;
-}
-
-function ConnectField({
-  label,
-  value,
-  onCopy,
-  copied,
-  copyLabel,
-  copiedLabel,
-  extraButton,
-}: FieldProps) {
-  return (
-    <div className="connect-field">
-      <span className="connect-field-label">{label}</span>
-      <div className="connect-field-row">
-        <code className="connect-value">{value}</code>
-        <Button size="sm" onClick={onCopy}>
-          {copied ? copiedLabel : copyLabel}
-        </Button>
-        {extraButton}
-      </div>
-    </div>
-  );
-}
-
-interface SnippetProps {
-  label: string;
-  value: string;
-  onCopy: () => void;
-  copied: boolean;
-  copyLabel: string;
-  copiedLabel: string;
-}
-
-function ConnectSnippet({
-  label,
-  value,
-  onCopy,
-  copied,
-  copyLabel,
-  copiedLabel,
-}: SnippetProps) {
-  return (
-    <div className="connect-snippet">
-      <div className="connect-snippet-header">
-        <span>{label}</span>
-        <Button size="sm" onClick={onCopy}>
-          {copied ? copiedLabel : copyLabel}
-        </Button>
-      </div>
-      <pre>
-        <code>{value}</code>
-      </pre>
-    </div>
   );
 }

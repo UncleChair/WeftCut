@@ -603,26 +603,31 @@ const enUS = {
   },
   connect: {
     blurb:
-      "Paste one of these snippets into the agent's MCP config. The token is reused across restarts — hit Refresh to rotate it.",
+      "Pick your agent client and paste its snippet into the client's MCP config. The token is reused across restarts — hit the refresh icon to rotate it.",
     starting: "MCP server starting…",
-    copy: "Copy",
+    copy: "Copy config",
     copied: "Copied!",
-    reveal: "Reveal",
-    hide: "Hide",
-    refresh: "Refresh",
+    reveal: "Reveal token",
+    hide: "Hide token",
+    refresh: "Refresh token",
     refreshing: "Refreshing…",
     refresh_hint: "Generate a new bearer token and persist it",
     refresh_confirm:
       "Generate a new bearer token? Any agent using the current token will need its config updated.",
     token_note:
       "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
-    field: {
-      url: "Server URL",
-      bearer: "Bearer token",
+    snippets_heading: "Client config snippets",
+    tabs: {
+      codex: "Codex",
+      claude: "Claude",
+      cursor: "Cursor",
+      generic: "Generic",
     },
-    snippets_heading: "Config snippets",
-    snippet: {
-      config: "MCP config (Claude Desktop / Cursor / any streamable-HTTP client)",
+    hint: {
+      codex: "Paste into ~/.codex/config.toml",
+      claude: "Paste into .mcp.json (project) or ~/.claude.json",
+      cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
+      generic: "Works with any streamable-HTTP MCP client",
     },
   },
   settings: {

@@ -582,25 +582,30 @@ const zhCN: Resources = {
     dismiss: "知道了",
   },
   connect: {
-    blurb: "把下面任一片段粘贴到代理的 MCP 配置中。令牌在重启后保持不变 —— 点击「刷新」可重新生成。",
+    blurb: "选择你的代理客户端，把对应片段粘贴到它的 MCP 配置中。令牌在重启后保持不变 —— 点击刷新图标可重新生成。",
     starting: "MCP 服务正在启动…",
-    copy: "复制",
+    copy: "复制配置",
     copied: "已复制！",
-    reveal: "显示",
-    hide: "隐藏",
-    refresh: "刷新",
+    reveal: "显示令牌",
+    hide: "隐藏令牌",
+    refresh: "刷新令牌",
     refreshing: "刷新中…",
     refresh_hint: "重新生成 Bearer 令牌并保存",
     refresh_confirm: "重新生成 Bearer 令牌？正在使用旧令牌的代理需要更新其配置。",
     token_note:
       "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
-    field: {
-      url: "服务器地址",
-      bearer: "Bearer 令牌",
+    snippets_heading: "客户端配置片段",
+    tabs: {
+      codex: "Codex",
+      claude: "Claude",
+      cursor: "Cursor",
+      generic: "通用",
     },
-    snippets_heading: "配置片段",
-    snippet: {
-      config: "MCP 配置（Claude Desktop / Cursor / 任何 streamable-HTTP 客户端）",
+    hint: {
+      codex: "粘贴到 ~/.codex/config.toml",
+      claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
+      cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
+      generic: "适用于任何 streamable-HTTP MCP 客户端",
     },
   },
   settings: {
