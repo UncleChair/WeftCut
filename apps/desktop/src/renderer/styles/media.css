@@ -88,6 +88,29 @@
   overflow-y: auto;
 }
 
+/* Empty pool: center the placeholder copy and the large import CTA. */
+.media-pool-inner--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.media-pool-inner--empty .placeholder {
+  margin: 0;
+}
+
+/* Optical centering: a blank trailing row lifts the text+button stack above
+   the mathematical center — dead-center reads as sagging low. Tune the
+   lift with this height (the stack rises by half of it). */
+.media-pool-inner--empty::after {
+  content: "";
+  display: block;
+  height: 28px;
+  flex: none;
+}
+
 .media-pool-inner h2 {
   margin: 0 0 6px 0;
   font-size: var(--font-size-body);
@@ -125,7 +148,10 @@
   background: var(--surface-sunken);
 }
 
-.media-layout-button {
+/* The pool's import action (leading edge of the search row) shares the
+   layout-switch buttons' chrome. */
+.media-layout-button,
+.media-import-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -139,7 +165,8 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.media-layout-button:hover {
+.media-layout-button:hover,
+.media-import-button:hover {
   background: var(--hover-neutral);
   color: var(--foreground);
 }

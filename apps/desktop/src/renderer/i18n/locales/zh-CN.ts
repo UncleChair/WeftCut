@@ -236,7 +236,7 @@ const zhCN: Resources = {
     export_filter: "输出文件",
   },
   media_pool: {
-    empty: "尚未导入素材 — 点击「导入素材…」添加文件。",
+    empty: "尚未导入素材",
     search_placeholder: "搜索素材…",
     no_matches: "未找到与「{{query}}」匹配的素材。",
     clear_search: "清除搜索",
@@ -582,40 +582,45 @@ const zhCN: Resources = {
     dismiss: "知道了",
   },
   connect: {
-    blurb: "把下面任一片段粘贴到代理的 MCP 配置中。令牌在重启后保持不变 —— 点击「刷新」可重新生成。",
+    blurb: "选择你的代理客户端，把对应片段粘贴到它的 MCP 配置中。令牌在重启后保持不变 —— 点击刷新图标可重新生成。",
     starting: "MCP 服务正在启动…",
-    copy: "复制",
+    copy: "复制配置",
     copied: "已复制！",
-    reveal: "显示",
-    hide: "隐藏",
-    refresh: "刷新",
+    reveal: "显示令牌",
+    hide: "隐藏令牌",
+    refresh: "刷新令牌",
     refreshing: "刷新中…",
     refresh_hint: "重新生成 Bearer 令牌并保存",
     refresh_confirm: "重新生成 Bearer 令牌？正在使用旧令牌的代理需要更新其配置。",
     token_note:
       "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
-    field: {
-      url: "服务器地址",
-      bearer: "Bearer 令牌",
+    snippets_heading: "客户端配置片段",
+    tabs: {
+      codex: "Codex",
+      claude: "Claude",
+      cursor: "Cursor",
+      generic: "通用",
     },
-    snippets_heading: "配置片段",
-    snippet: {
-      config: "MCP 配置（Claude Desktop / Cursor / 任何 streamable-HTTP 客户端）",
+    hint: {
+      codex: "粘贴到 ~/.codex/config.toml",
+      claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
+      cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
+      generic: "适用于任何 streamable-HTTP MCP 客户端",
     },
   },
   settings: {
     heading: "设置",
     close: "关闭",
     cat_general: "通用",
-    cat_editing: "项目",
+    cat_project: "项目",
     cat_keyboard: "键盘",
-    cat_api_keys: "转录 / 语音",
+    cat_speech: "语音转录",
     cat_agent: "代理",
     project_scope_blurb: "本页设置仅作用于当前项目，随工程文件保存。",
     startup_heading: "启动",
-    reopen_on_launch: "启动时重新打开上一个项目",
+    reopen_on_launch: "自动打开上一个项目",
     reopen_on_launch_hint:
-      "开启后将跳过起始页，自动打开最近使用的项目。默认关闭——以防崩溃前的半提交状态被静默重新挂载。",
+      "开启后将跳过起始页，自动打开最近使用的项目。",
     composition_heading: "合成",
     composition_blurb:
       "合成时长默认跟随最末一帧。需要固定时长且大于内容时可手动延长。",
@@ -633,17 +638,19 @@ const zhCN: Resources = {
       "拖拽或修剪片段时，自动对齐到附近的片段边界或播放头。",
     tail_snap_strength: "吸附强度",
     tail_snap_strength_hint:
-      "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",
+      "以屏幕像素为单位。",
+    tracks_heading: "轨道",
     auto_delete_empty_tracks: "自动删除空轨道",
     auto_delete_empty_tracks_hint:
       "删除轨道上最后一个片段时一并移除该轨道，一次撤销即可同时恢复；A/B 轨始终保留。",
+    playback_heading: "播放",
     prefer_proxies: "预览优先使用代理",
     prefer_proxies_hint:
       "对已生成代理的片段，在预览中播放轻量的 720p 代理以获得更流畅的拖拽体验；导出仍使用原始文件。",
     decode_unsupported_generate_proxy: "生成代理",
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:
-      "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",
+      "管理你的快捷键配置表。",
     preview_engine_heading: "预览引擎",
     preview_engine_blurb:
       "实时模式使用 WebCodecs + WebGL2 即时反馈编辑结果；缓存模式播放预渲染的片段。自动模式根据能力探测结果择优。",
@@ -677,11 +684,10 @@ const zhCN: Resources = {
     testing: "测试中…",
     test_hint:
       "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
-    // 转录 / 语音面板（工单 05）：引擎选择器 + 各后端配置行。
     speech_blurb:
-      "选择用于转写音频（transcribe_clip）的引擎。云端（OpenAI）需要 API 密钥；本地引擎（whisper.cpp）离线运行，需在下方指定其可执行文件与模型文件。",
+      "选择用于语音转录的引擎。OpenAI（Whisper）需要 API 密钥；其他本地引擎离线运行，需在下方指定其可执行文件与模型文件。",
     speech_engine: "转录引擎",
-    speech_engine_auto: "自动（推荐）",
+    speech_engine_auto: "自动",
     speech_engine_soon: "即将支持",
     speech_engine_active: "当前引擎：{{engine}}",
     speech_engine_none:
@@ -711,23 +717,26 @@ const zhCN: Resources = {
     motifs_heading: "Motifs",
     prebake_motifs: "预烘焙 Motifs",
     prebake_motifs_hint:
-      "在后台将 Motif 动画帧渲染到磁盘，使播放更流畅、重新打开项目时即时加载。会在项目的 Cache 文件夹下占用磁盘空间。",
-    decode_engine: "预览解码引擎",
-    decode_engine_hint:
-      "自动模式按素材选择最合适的引擎。标准（FFmpeg）可解码所有格式；轻量（WebCodecs）更省资源但支持的格式较少。",
-    decode_engine_auto: "自动（推荐）",
+      "后台渲染 Motif 帧到磁盘，播放更流畅、重开更快；占用项目 Cache 的磁盘空间。",
+    preview_heading: "预览",
+    decode_engine: "解码引擎",
+    decode_engine_auto: "自动",
+    decode_engine_auto_desc: "按素材选择最合适的引擎",
     decode_engine_ffmpeg: "标准",
     decode_engine_ffmpeg_tag: "ffmpeg",
+    decode_engine_ffmpeg_desc: "可解码所有格式",
     decode_engine_webcodecs: "轻量",
     decode_engine_webcodecs_tag: "webcodecs",
+    decode_engine_webcodecs_desc: "更省资源，支持的格式较少",
     decode_engine_unavailable: "标准引擎不可用：{{reason}}",
     decode_engine_unavailable_suffix: "不可用",
     playback_resolution: "播放分辨率",
-    playback_resolution_hint:
-      "以更低的细节绘制预览画面，让播放跟得上——标准引擎以软件方式解码时，解码细节也一并降低。只影响清晰度，画面构图不变。导出始终按完整分辨率渲染。",
     playback_resolution_full: "完整",
-    playback_resolution_half: "二分之一（1/2）",
-    playback_resolution_quarter: "四分之一（1/4）",
+    playback_resolution_half: "1/2",
+    playback_resolution_quarter: "1/4",
+    playback_resolution_smooth: "流畅",
+    playback_resolution_sharp: "清晰",
+    playback_resolution_export_note: "导出始终按完整分辨率渲染。",
     decode_unsupported_title: "不支持的格式",
     decode_unsupported_body: "轻量引擎无法解码该片段。切换到标准引擎即可播放。",
     decode_unsupported_switch: "切换到标准",
@@ -735,7 +744,7 @@ const zhCN: Resources = {
       "轻量引擎不支持该片段的格式，且未安装标准引擎。",
     data_location_heading: "数据位置",
     data_location_blurb:
-      "WeftCut 存放大型托管文件的位置——你的 Motifs、媒体缓存以及下载的资源。小型设置和项目文件始终保留在应用的配置文件夹中。",
+      "WeftCut 存放大型托管文件的位置，你的 Motifs、部分缓存以及下载的资源都会存放于此。",
     data_location_current_label: "当前文件夹",
     data_location_fallback: "回退——你所选的文件夹不可用，已改用默认位置。",
     data_location_change: "更改…",
@@ -769,9 +778,9 @@ const zhCN: Resources = {
     export_title: "导出键盘快捷键",
     import_title: "导入键盘快捷键",
     press_a_key: "请按键…",
-    conflict: "已绑定到「{{action}}」——请先在该操作中取消",
+    conflict: "已绑定到「{{action}}」—— 请先取消对应绑定。",
     reset_blocked:
-      "无法重置：{{chord}} 已绑定到「{{action}}」，请先在该操作中取消。",
+      "无法重置：{{chord}} 已绑定到「{{action}}」，请先取消对应绑定。",
   },
   colorpick: {
     pick: "取色",

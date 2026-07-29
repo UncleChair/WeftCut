@@ -1,7 +1,12 @@
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { LayoutGridIcon, ListIcon, RectangleHorizontalIcon } from "lucide-react";
+import {
+  FolderInputIcon,
+  LayoutGridIcon,
+  ListIcon,
+  RectangleHorizontalIcon,
+} from "lucide-react";
 
 import {
   MediaContextMenu,
@@ -298,6 +303,7 @@ export function MediaPool({
   fpsDen,
   onCancelImport,
   onMutated,
+  onImportMedia,
 }: {
   media: MediaSummary[];
   tracks: TrackSummary[];
@@ -308,6 +314,7 @@ export function MediaPool({
   fpsDen: number;
   onCancelImport: (mediaId: string) => Promise<void>;
   onMutated: () => Promise<void>;
+  onImportMedia: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -362,8 +369,18 @@ export function MediaPool({
 
   if (media.length === 0) {
     return (
-      <div className="media-pool-inner">
+      <div className="media-pool-inner media-pool-inner--empty">
         <p className="placeholder">{t("media_pool.empty")}</p>
+        {/* Empty-state CTA: the same import action as the menu, made the
+            obvious next step when the pool has nothing yet. */}
+        <Button
+          variant="default"
+          size="lg"
+          onClick={() => void onImportMedia()}
+        >
+          <FolderInputIcon size={14} aria-hidden />
+          {t("actions.import_media")}
+        </Button>
       </div>
     );
   }
@@ -462,6 +479,17 @@ export function MediaPool({
         />
       )}
       <div className="media-pool-search">
+        {/* Same import action as the menu bar's Import (Mod+I), surfaced at
+            the pool's leading edge so it's reachable without the menu. */}
+        <button
+          type="button"
+          className="media-import-button"
+          title={t("actions.import_media")}
+          aria-label={t("actions.import_media")}
+          onClick={() => void onImportMedia()}
+        >
+          <FolderInputIcon size={14} aria-hidden />
+        </button>
         <AppInput
           type="search"
           clearable
@@ -528,7 +556,6 @@ export function MediaPool({
                   draggable={interactive}
                   tabIndex={0}
                   aria-haspopup="menu"
-                  aria-expanded={contextMenu?.mediaId === m.id}
                   aria-keyshortcuts="Shift+F10"
                   onContextMenu={(e) => {
                     e.preventDefault();

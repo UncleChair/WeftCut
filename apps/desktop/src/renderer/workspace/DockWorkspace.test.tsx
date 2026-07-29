@@ -307,6 +307,7 @@ const contracts: DockPanelContracts = {
   previewDecodableMediaIds: new Set(),
   onExitBlade: vi.fn(),
   onMutated: async () => {},
+  onImportMedia: async () => {},
   selectedLayerId: null,
   onSelectLayer: vi.fn(),
   onRevealTrack: vi.fn(),

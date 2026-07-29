@@ -1,8 +1,7 @@
 
 
-/* Copyable content: connection URLs / tokens / config snippets, log
+/* Copyable content: config snippets, log
  * text and structured details, error messages. */
-.connect-value,
 .connect-snippet pre,
 .log-message,
 .log-details-json,
@@ -21,58 +20,50 @@
   color: var(--muted-foreground);
 }
 
-.connect-field {
-  margin: 8px 0;
+.connect-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 12px 0 0;
+  border-bottom: 1px solid var(--border-soft);
 }
 
-.connect-field-label {
-  display: block;
+.connect-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 4px 10px;
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
-  margin-bottom: 4px;
+  cursor: pointer;
 }
 
-.connect-field-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.connect-value {
-  flex: 1;
-  background: var(--secondary);
-  padding: 4px 8px;
-  border-radius: var(--radius-control);
-  font-size: var(--font-size-body);
+.connect-tab:hover {
   color: var(--foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  overflow-x: auto;
-  white-space: nowrap;
 }
 
-
-
-.connect-reveal,
-.connect-refresh {
-  font-variant: small-caps;
-}
-
-.connect-refresh:disabled {
-  opacity: 0.6;
-  cursor: progress;
+.connect-tab.is-active {
+  color: var(--foreground);
+  border-bottom-color: var(--primary);
 }
 
 .connect-snippet {
-  margin: 12px 0;
+  margin: 8px 0 12px;
 }
 
 .connect-snippet-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
   margin-bottom: 4px;
+}
+
+.connect-snippet-actions {
+  display: flex;
+  gap: 2px;
 }
 
 .connect-snippet pre {
@@ -92,7 +83,7 @@
 }
 
 .connect-note {
-  margin: 12px 16px 16px;
+  margin: 12px 0;
   font-size: var(--font-size-caption);
   color: var(--color-amber-500);
   background: rgba(245, 158, 11, 0.1);

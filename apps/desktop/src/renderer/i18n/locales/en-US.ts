@@ -238,7 +238,7 @@ const enUS = {
     export_filter: "Output file",
   },
   media_pool: {
-    empty: "No media imported yet — click \"Import media…\" to add a file.",
+    empty: "No media imported yet.",
     search_placeholder: "Search media…",
     no_matches: "No matches for “{{query}}”.",
     clear_search: "Clear search",
@@ -603,42 +603,47 @@ const enUS = {
   },
   connect: {
     blurb:
-      "Paste one of these snippets into the agent's MCP config. The token is reused across restarts — hit Refresh to rotate it.",
+      "Pick your agent client and paste its snippet into the client's MCP config. The token is reused across restarts — hit the refresh icon to rotate it.",
     starting: "MCP server starting…",
-    copy: "Copy",
+    copy: "Copy config",
     copied: "Copied!",
-    reveal: "Reveal",
-    hide: "Hide",
-    refresh: "Refresh",
+    reveal: "Reveal token",
+    hide: "Hide token",
+    refresh: "Refresh token",
     refreshing: "Refreshing…",
     refresh_hint: "Generate a new bearer token and persist it",
     refresh_confirm:
       "Generate a new bearer token? Any agent using the current token will need its config updated.",
     token_note:
       "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
-    field: {
-      url: "Server URL",
-      bearer: "Bearer token",
+    snippets_heading: "Client config snippets",
+    tabs: {
+      codex: "Codex",
+      claude: "Claude",
+      cursor: "Cursor",
+      generic: "Generic",
     },
-    snippets_heading: "Config snippets",
-    snippet: {
-      config: "MCP config (Claude Desktop / Cursor / any streamable-HTTP client)",
+    hint: {
+      codex: "Paste into ~/.codex/config.toml",
+      claude: "Paste into .mcp.json (project) or ~/.claude.json",
+      cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
+      generic: "Works with any streamable-HTTP MCP client",
     },
   },
   settings: {
     heading: "Settings",
     close: "Close",
     cat_general: "General",
-    cat_editing: "Project",
+    cat_project: "Project",
     cat_keyboard: "Keyboard",
-    cat_api_keys: "Transcription / Speech",
+    cat_speech: "Transcription",
     cat_agent: "Agent",
     project_scope_blurb:
       "Settings on this page apply to the current project only and are saved with the project file.",
     startup_heading: "Startup",
-    reopen_on_launch: "Reopen last project on launch",
+    reopen_on_launch: "Auto-open last project",
     reopen_on_launch_hint:
-      "When enabled, WeftCut skips the start screen and re-opens whichever project you used last. Off by default — a partial-commit state at crash time should not silently re-mount.",
+      "When enabled, WeftCut skips the start screen and auto-opens the last used project.",
     composition_heading: "Composition",
     composition_blurb:
       "Composition duration follows the last visible frame by default. Extend it to hold a fixed runtime longer than the content.",
@@ -657,17 +662,19 @@ const enUS = {
       "Snap clips to nearby clip edges or the playhead while dragging or trimming.",
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
-      "Measured in screen pixels, so the effective time range follows the current timeline zoom.",
+      "Measured in screen pixels.",
+    tracks_heading: "Tracks",
     auto_delete_empty_tracks: "Auto-delete emptied tracks",
     auto_delete_empty_tracks_hint:
       "Deleting the last clip on a track also removes the track — one undo restores both. A/B roll always stays.",
+    playback_heading: "Playback",
     prefer_proxies: "Prefer proxies for preview",
     prefer_proxies_hint:
       "Play the lightweight 720p proxy in the preview for clips that have one, for smoother scrubbing. Export still uses the original.",
     decode_unsupported_generate_proxy: "Generate proxy",
     keybindings_heading: "Keyboard shortcuts",
     keybindings_blurb:
-      "Click a chord to remove it, or [+ Add] to bind a new one. Each chord must be unique across actions — unset the current owner first if you want to repurpose a key.",
+      "Manage your keyboard shortcut configuration table.",
     preview_engine_heading: "Preview engine",
     preview_engine_blurb:
       "Real-time playback uses WebCodecs + WebGL2 for instant edit feedback; cached uses pre-rendered segments. Auto picks based on a capability probe.",
@@ -702,11 +709,10 @@ const enUS = {
     testing: "Testing…",
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
-    // Transcription / Speech pane (ticket 05): engine selector + per-backend rows.
     speech_blurb:
-      "Choose which engine transcribes audio (transcribe_clip). Cloud (OpenAI) needs an API key; local engines (whisper.cpp) run offline from a binary + model file you point to below.",
+      "Choose which engine transcribes audio. OpenAI (Whisper) needs an API key; other local engines run offline from a binary + model file you point to below.",
     speech_engine: "Transcription engine",
-    speech_engine_auto: "Automatic (recommended)",
+    speech_engine_auto: "Automatic",
     speech_engine_soon: "coming soon",
     speech_engine_active: "Active engine: {{engine}}",
     speech_engine_none:
@@ -738,23 +744,26 @@ const enUS = {
     motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:
-      "Render motif animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
-    decode_engine: "Preview decode engine",
-    decode_engine_hint:
-      "Automatic picks the best engine per clip. Standard (FFmpeg) plays every format; Lite (WebCodecs) is lightweight but supports fewer formats.",
-    decode_engine_auto: "Automatic (recommended)",
+      "Background-render motif frames to disk. Smoother playback, instant reopen; uses disk space in the project Cache.",
+    preview_heading: "Preview",
+    decode_engine: "Decode engine",
+    decode_engine_auto: "Automatic",
+    decode_engine_auto_desc: "Picks the best engine for each clip",
     decode_engine_ffmpeg: "Standard",
     decode_engine_ffmpeg_tag: "ffmpeg",
+    decode_engine_ffmpeg_desc: "Decodes every format",
     decode_engine_webcodecs: "Lite",
     decode_engine_webcodecs_tag: "webcodecs",
+    decode_engine_webcodecs_desc: "Lighter on resources; supports fewer formats",
     decode_engine_unavailable: "Standard engine unavailable: {{reason}}",
     decode_engine_unavailable_suffix: "unavailable",
     playback_resolution: "Playback resolution",
-    playback_resolution_hint:
-      "Draws the preview at reduced detail so playback keeps up — and decodes at reduced detail too, wherever the Standard engine works in software. Only sharpness changes; framing stays put. Export always renders at full resolution.",
     playback_resolution_full: "Full",
-    playback_resolution_half: "Half (1/2)",
-    playback_resolution_quarter: "Quarter (1/4)",
+    playback_resolution_half: "1/2",
+    playback_resolution_quarter: "1/4",
+    playback_resolution_smooth: "Smooth",
+    playback_resolution_sharp: "Sharp",
+    playback_resolution_export_note: "Export always renders at full resolution.",
     decode_unsupported_title: "Unsupported format",
     decode_unsupported_body:
       "The Lite engine can't decode this clip. Switch to the Standard engine to play it.",
@@ -763,7 +772,7 @@ const enUS = {
       "This clip's format isn't supported by the Lite engine, and the Standard engine isn't installed.",
     data_location_heading: "Data location",
     data_location_blurb:
-      "Where WeftCut keeps its large managed files — your Motifs, the media cache, and downloaded assets. Small settings and project files always stay in the app's config folder.",
+      "Where WeftCut keeps its large managed files. Your Motifs, partial caches, and downloaded assets will be stored here.",
     data_location_current_label: "Current folder",
     data_location_fallback:
       "Fallback — the folder you chose was unavailable, so the default is in use.",
@@ -800,9 +809,9 @@ const enUS = {
     import_title: "Import keyboard shortcuts",
     press_a_key: "Press a key…",
     conflict:
-      "Already bound to {{action}} — unset it there first",
+      "Already bound to {{action}} — unset it first.",
     reset_blocked:
-      "Can't reset: {{chord}} is bound to {{action}}. Unset it there first.",
+      "Can't reset: {{chord}} is bound to {{action}}. Unset it first.",
   },
   colorpick: {
     pick: "Pick color",

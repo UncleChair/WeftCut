@@ -45,13 +45,15 @@
   color: var(--foreground);
 }
 
+/* Section headings sit one step above row labels in the type hierarchy:
+ * `--font-size-label` is the "section labels" slot (see docs/ui-tokens.md),
+ * so a heading reads as the parent of the 13px/500 `.settings-toggle-label`
+ * rows beneath it instead of fading into them. */
 .settings-panel h3 {
   margin: 16px 0 8px;
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-label);
   font-weight: 600;
-  color: var(--color-gray-300);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--foreground);
 }
 
 .settings-blurb,
@@ -135,10 +137,13 @@
   min-width: 120px;
 }
 
+/* Same role as `.settings-toggle-label` — the primary label of a control
+ * row — so it shares that type slot instead of reading as secondary text. */
 .settings-slider-label {
   min-width: 92px;
-  font-size: var(--font-size-body);
-  color: var(--color-gray-300);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--foreground);
 }
 
 .settings-slider-unit {
@@ -398,9 +403,10 @@
 /*
  * One spacing source per section. Each `.settings-section` is a flex
  * column whose single `gap` sets BOTH the heading->content gap and the
- * row->row gap, so they're identical everywhere; one margin separates
- * sections. The row elements' own ad-hoc vertical padding/margins are
- * zeroed so they can't reintroduce the old uneven rhythm.
+ * row->row gap, so they're identical everywhere; adjacent sections are
+ * separated by a hairline with even air on both sides. The row elements'
+ * own ad-hoc vertical padding/margins are zeroed so they can't
+ * reintroduce the old uneven rhythm.
  */
 .settings-section {
   display: flex;
@@ -409,7 +415,9 @@
 }
 
 .settings-section + .settings-section {
-  margin-top: 22px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
 }
 
 .settings-section > *,
@@ -632,4 +640,161 @@
   border-radius: var(--radius-control);
   font-family: inherit;
   font-variant-numeric: tabular-nums;
+}
+
+/* --- Preview choice groups (decode engine cards / resolution segments) ---
+ * Label + control + hint stack with a tighter rhythm than the section gap
+ * the groups sit inside. */
+
+.settings-choice-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Decode engine radio cards — every option visible with its trade-off
+ * inline, instead of a dropdown + hint pair. */
+.settings-radio-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--popover);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.settings-radio-card[data-checked] {
+  border-color: var(--ring);
+}
+
+.settings-radio-card:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: var(--focus-ring);
+}
+
+.settings-radio-card[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-radio-card-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.settings-radio-card[data-checked] .settings-radio-card-dot {
+  border-color: var(--primary);
+}
+
+.settings-radio-card-indicator {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.settings-radio-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.settings-radio-card-title {
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.settings-radio-card-desc {
+  font-size: var(--font-size-caption);
+  color: var(--color-gray-500);
+  line-height: 1.4;
+}
+
+/* Playback resolution three-stop slider — smooth (¼) on the left, quality
+ * (Full) on the right. Reuses the .app-slider* skin; the rules below add the
+ * end captions, the stop dots inside the track, and the tick labels under
+ * it. */
+.settings-resolution-slider {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.settings-resolution-end {
+  flex-shrink: 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-gray-500);
+  /* Optically center the captions on the 16px slider control row, not on
+   * the control + tick-labels column they flank. */
+  line-height: 16px;
+}
+
+.settings-resolution-track {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Stop dot on the track — one per fraction. Painted after the indicator so
+ * it stays visible on the filled side; the thumb (later in DOM) covers the
+ * dot at the current stop. */
+.settings-resolution-stop {
+  position: absolute;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--foreground);
+  opacity: 0.35;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Tick labels under the track: first/last hug their stop, the middle one
+ * centers; the label at the current stop highlights. */
+.settings-resolution-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: var(--font-size-caption);
+  color: var(--color-gray-500);
+}
+
+.settings-resolution-ticks > span {
+  flex: 1;
+  text-align: center;
+}
+
+.settings-resolution-ticks > span:first-child {
+  text-align: left;
+}
+
+.settings-resolution-ticks > span:last-child {
+  text-align: right;
+}
+
+.settings-resolution-ticks > span.is-active {
+  color: var(--foreground);
+  font-weight: 500;
 }

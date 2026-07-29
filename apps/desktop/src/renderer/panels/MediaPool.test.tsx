@@ -70,6 +70,7 @@ function makeMedia(id: string, route: MediaSummary["decode_route"]): MediaSummar
 
 function renderPool(media: MediaSummary[], tracks: TrackSummary[] = []) {
   const onMutated = vi.fn().mockResolvedValue(undefined);
+  const onImportMedia = vi.fn().mockResolvedValue(undefined);
   return {
     ...render(
       <MediaPool
@@ -82,9 +83,11 @@ function renderPool(media: MediaSummary[], tracks: TrackSummary[] = []) {
         fpsDen={1}
         onCancelImport={vi.fn().mockResolvedValue(undefined)}
         onMutated={onMutated}
+        onImportMedia={onImportMedia}
       />,
     ),
     onMutated,
+    onImportMedia,
   };
 }
 
@@ -135,6 +138,24 @@ function openMediaMenu(mediaId: string): HTMLElement {
   fireEvent.contextMenu(card, { clientX: 80, clientY: 90 });
   return card;
 }
+
+describe("MediaPool import button", () => {
+  it("invokes the import callback (same action as the menu's Import)", async () => {
+    const user = userEvent.setup();
+    const { onImportMedia } = renderPool([
+      makeMedia("m-import", { route: "bypass" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Import media…" }));
+    expect(onImportMedia).toHaveBeenCalledOnce();
+  });
+
+  it("shows a large import CTA in the empty state", async () => {
+    const user = userEvent.setup();
+    const { onImportMedia } = renderPool([]);
+    await user.click(screen.getByRole("button", { name: "Import media…" }));
+    expect(onImportMedia).toHaveBeenCalledOnce();
+  });
+});
 
 describe("MediaPool context menu", () => {
   it("keeps card chrome action-free and omits proxy choices for Bypass media", () => {

@@ -12,7 +12,7 @@ use super::backend::VlmBackend;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VlmError {
-    #[error("no API key configured for {provider:?}; configure it in Settings → API keys")]
+    #[error("no API key configured for {provider:?}; configure it in Settings → Transcription")]
     MissingKey { provider: VlmBackend },
 
     #[error("{provider:?} rejected the API key (401 unauthorized)")]

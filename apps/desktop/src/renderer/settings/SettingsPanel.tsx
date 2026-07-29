@@ -42,21 +42,14 @@ import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import { AgentSection } from "./AgentSection";
-import { decodeEngineOptions } from "./decodeEngineOptions";
+import { PreviewSection } from "./PreviewSection";
 import { speechEngineOptions } from "./speechEngineOptions";
 import {
-  useDecodeComponentAvailable,
-  useDecodeComponentReason,
-} from "./decodeComponentStore";
-import {
   setAppSettings,
-  useDecodeEngine,
-  usePlaybackResolution,
   usePrebakeMotifsEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "./appSettingsStore";
-import type { PlaybackResolution } from "../../shared/app-settings";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
 
 const TAIL_SNAP_MIN_PX = 2;
@@ -66,15 +59,15 @@ function clampTailSnapStrength(value: number): number {
   return Math.round(Math.min(TAIL_SNAP_MAX_PX, Math.max(TAIL_SNAP_MIN_PX, value)));
 }
 
-type SettingsCategory = "general" | "editing" | "keyboard" | "apikeys" | "agent";
+type SettingsCategory = "general" | "project" | "keyboard" | "speech" | "agent";
 
 /// Sidebar order. Every pane stays mounted (toggled via `hidden`) so
 /// in-progress input and per-section fetches survive a tab switch.
 const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   { id: "general", labelKey: "settings.cat_general" },
-  { id: "editing", labelKey: "settings.cat_editing" },
+  { id: "project", labelKey: "settings.cat_project" },
   { id: "keyboard", labelKey: "settings.cat_keyboard" },
-  { id: "apikeys", labelKey: "settings.cat_api_keys" },
+  { id: "speech", labelKey: "settings.cat_speech" },
   { id: "agent", labelKey: "settings.cat_agent" },
 ];
 
@@ -100,11 +93,17 @@ interface Props {
   keybindings: KeybindingsMap;
   onKeybindingsChanged: (next: KeybindingsMap) => void;
   /// Live composition state for the Composition section. `null` while
-  /// the project summary is still loading.
-  composition: CompositionState | null;
+  /// the project summary is still loading. Omitted entirely (together
+  /// with `onCompositionChanged`) when no project is open — e.g. on the
+  /// startup screen.
+  composition?: CompositionState | null;
   /// Refresh the parent project summary after Pin / Fit actions so the
-  /// section's labels reflect the new state immediately.
-  onCompositionChanged: () => Promise<void> | void;
+  /// section's labels reflect the new state immediately. Its presence is
+  /// the "a project is open" signal: the project category only renders
+  /// when this is provided, so callers without a workspace (the startup
+  /// screen) simply omit both composition props and the project-scoped
+  /// tab drops out — no separate flag to keep in sync.
+  onCompositionChanged?: () => Promise<void> | void;
 }
 
 export function SettingsPanel({
@@ -112,13 +111,24 @@ export function SettingsPanel({
   initialCategory = "general",
   keybindings,
   onKeybindingsChanged,
-  composition,
+  composition = null,
   onCompositionChanged,
 }: Props) {
   const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
-  const [category, setCategory] = useState<SettingsCategory>(initialCategory);
+  // Project-scoped sections (composition pin, per-project toggles) talk to
+  // workspace IPC, so the whole category unmounts — not just hides — when
+  // there is no open project behind the panel.
+  const showProjectCategory = onCompositionChanged !== undefined;
+  const visibleCategories = showProjectCategory
+    ? CATEGORIES
+    : CATEGORIES.filter((c) => c.id !== "project");
+  const [category, setCategory] = useState<SettingsCategory>(
+    initialCategory === "project" && !showProjectCategory
+      ? "general"
+      : initialCategory,
+  );
   const tabRefs = useRef<
     Partial<Record<SettingsCategory, HTMLButtonElement | null>>
   >({});
@@ -126,7 +136,7 @@ export function SettingsPanel({
   /// Roving-tabindex keyboard nav for the vertical tablist (WAI-ARIA
   /// tabs pattern): arrows move + activate, Home/End jump to the ends.
   const onNavKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const order = CATEGORIES.map((c) => c.id);
+    const order = visibleCategories.map((c) => c.id);
     const idx = order.indexOf(category);
     let next: SettingsCategory | undefined;
     if (e.key === "ArrowDown") next = order[(idx + 1) % order.length];
@@ -162,7 +172,7 @@ export function SettingsPanel({
           aria-label={t("settings.heading")}
           onKeyDown={onNavKeyDown}
         >
-          {CATEGORIES.map((c) => (
+          {visibleCategories.map((c) => (
             <button
               key={c.id}
               ref={(el) => {
@@ -200,7 +210,6 @@ export function SettingsPanel({
             hidden={category !== "general"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">{t("settings.cat_general")}</div>
             <section className="settings-section">
               <h3>{t("settings.startup_heading")}</h3>
               <label className="settings-toggle-row">
@@ -247,35 +256,41 @@ export function SettingsPanel({
             </section>
 
             <section className="settings-section">
-              <DecodeEngineSection onError={setError} />
-              <PlaybackResolutionSection onError={setError} />
+              <h3>{t("settings.preview_heading")}</h3>
+              <PreviewSection onError={setError} />
             </section>
           </div>
 
-          <div
-            role="tabpanel"
-            id="settings-panel-editing"
-            aria-labelledby="settings-tab-editing"
-            hidden={category !== "editing"}
-            className="settings-pane"
-          >
-            <div className="settings-pane-title">{t("settings.cat_editing")}</div>
-            <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
-            <section className="settings-section">
-              <h3>{t("settings.composition_heading")}</h3>
-              <p className="settings-blurb">{t("settings.composition_blurb")}</p>
-              <CompositionSection
-                composition={composition}
-                onChanged={onCompositionChanged}
-                onError={setError}
-              />
-            </section>
+          {showProjectCategory && (
+            <div
+              role="tabpanel"
+              id="settings-panel-project"
+              aria-labelledby="settings-tab-project"
+              hidden={category !== "project"}
+              className="settings-pane"
+            >
+              <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
+              <section className="settings-section">
+                <h3>{t("settings.composition_heading")}</h3>
+                <p className="settings-blurb">{t("settings.composition_blurb")}</p>
+                <CompositionSection
+                  composition={composition}
+                  onChanged={onCompositionChanged}
+                  onError={setError}
+                />
+              </section>
 
-            <section className="settings-section">
-              <AutoDeleteEmptyTracksSection onError={setError} />
-              <PreferProxiesToggle onError={setError} />
-            </section>
-          </div>
+              <section className="settings-section">
+                <h3>{t("settings.tracks_heading")}</h3>
+                <AutoDeleteEmptyTracksSection onError={setError} />
+              </section>
+
+              <section className="settings-section">
+                <h3>{t("settings.playback_heading")}</h3>
+                <PreferProxiesToggle onError={setError} />
+              </section>
+            </div>
+          )}
 
           <div
             role="tabpanel"
@@ -284,9 +299,6 @@ export function SettingsPanel({
             hidden={category !== "keyboard"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">
-              {t("settings.cat_keyboard")}
-            </div>
             <section className="settings-section">
               <p className="settings-blurb">{t("settings.keybindings_blurb")}</p>
               <KeybindingPanel
@@ -299,14 +311,11 @@ export function SettingsPanel({
 
           <div
             role="tabpanel"
-            id="settings-panel-apikeys"
-            aria-labelledby="settings-tab-apikeys"
-            hidden={category !== "apikeys"}
+            id="settings-panel-speech"
+            aria-labelledby="settings-tab-speech"
+            hidden={category !== "speech"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">
-              {t("settings.cat_api_keys")}
-            </div>
             <SpeechSection onError={setError} />
           </div>
 
@@ -317,9 +326,6 @@ export function SettingsPanel({
             hidden={category !== "agent"}
             className="settings-pane"
           >
-            <div className="settings-pane-title">
-              {t("settings.cat_agent")}
-            </div>
             <AgentSection />
           </div>
         </div>
@@ -770,89 +776,6 @@ export function DataLocationSection({
         </AppDialog>
       )}
     </>
-  );
-}
-
-function DecodeEngineSection({ onError }: { onError: (msg: string) => void }) {
-  const { t } = useTranslation();
-  const engine = useDecodeEngine();
-  const componentAvailable = useDecodeComponentAvailable();
-  const componentReason = useDecodeComponentReason();
-  return (
-    <label className="settings-toggle-row">
-      <AppSelect
-        value={engine}
-        onValueChange={async (next) => {
-          onError("");
-          if (next === "ffmpeg" && !componentAvailable) {
-            onError(
-              t("settings.decode_engine_unavailable", {
-                reason: componentReason ?? "",
-              }),
-            );
-            return;
-          }
-          try {
-            await setAppSettings({
-              decode_engine: next as "auto" | "ffmpeg" | "webcodecs",
-            });
-          } catch (err) {
-            onError(String(err));
-          }
-        }}
-        options={decodeEngineOptions(t, componentAvailable)}
-      />
-      <span>
-        <span className="settings-toggle-label">{t("settings.decode_engine")}</span>
-        <span className="settings-toggle-hint">
-          {componentAvailable
-            ? t("settings.decode_engine_hint")
-            : t("settings.decode_engine_unavailable", {
-                reason: componentReason ?? "",
-              })}
-        </span>
-      </span>
-    </label>
-  );
-}
-
-/// Preview quality dial (Full / ½ / ¼), sitting with the decode engine because
-/// both describe how THIS machine plays back. Applying is a plain app-settings
-/// patch — `PixiPreview` subscribes to the store and re-opens the live decode
-/// transports in place, so the change is visible without a reload.
-function PlaybackResolutionSection({ onError }: { onError: (msg: string) => void }) {
-  const { t } = useTranslation();
-  const resolution = usePlaybackResolution();
-  return (
-    <label className="settings-toggle-row">
-      <AppSelect
-        value={resolution}
-        onValueChange={async (next) => {
-          onError("");
-          try {
-            await setAppSettings({
-              playback_resolution: next as PlaybackResolution,
-            });
-          } catch (err) {
-            onError(String(err));
-          }
-        }}
-        options={[
-          { value: "full", label: t("settings.playback_resolution_full") },
-          { value: "half", label: t("settings.playback_resolution_half") },
-          { value: "quarter", label: t("settings.playback_resolution_quarter") },
-        ]}
-        ariaLabel={t("settings.playback_resolution")}
-      />
-      <span>
-        <span className="settings-toggle-label">
-          {t("settings.playback_resolution")}
-        </span>
-        <span className="settings-toggle-hint">
-          {t("settings.playback_resolution_hint")}
-        </span>
-      </span>
-    </label>
   );
 }
 

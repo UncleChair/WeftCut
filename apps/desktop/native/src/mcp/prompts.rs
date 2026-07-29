@@ -201,7 +201,7 @@ Steps:
 2. Inspect the `srt` field. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose.
 3. Call `apply_subtitles` with the (possibly edited) `srt` body — NOT the whole JSON envelope. The cues self-position into a new caption track of editable Text layers via their internal timestamps — you do not pass start/end times (any `t_start_us`/`t_end_us` are ignored). The tool returns the new caption track id.
 
-If `transcribe_clip` errors because no backend is configured (or with `MissingKey` / `InvalidKey`), tell the user to add an OpenAI API key or configure a local engine under Settings → Transcription / Speech. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
+If `transcribe_clip` errors because no backend is configured (or with `MissingKey` / `InvalidKey`), tell the user to add an OpenAI API key or configure a local engine under Settings → Transcription. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
     );
     Ok(PromptResult {
         description: Some("Auto-caption a clip via cloud Whisper + apply_subtitles.".into()),
@@ -249,7 +249,7 @@ Steps:
 
 If the script exceeds 4096 characters, split it at paragraph boundaries and synthesize each chunk separately. Each call's `t_start_us` defaults to the current `composition.duration_us`, so successive chunks chain at the end of the timeline.
 
-If `synthesize_speech` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → API keys."
+If `synthesize_speech` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → Transcription."
     );
     Ok(PromptResult {
         description: Some("Generate cloud TTS and attach it as an Audio layer.".into()),

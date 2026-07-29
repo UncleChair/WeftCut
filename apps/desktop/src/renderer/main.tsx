@@ -49,7 +49,7 @@ if (!import.meta.env.DEV) {
     const t = e.target instanceof Element ? e.target : null;
     if (
       t?.closest(
-        "input, textarea, [contenteditable], .connect-value, .connect-snippet pre, .log-message, .log-details-json",
+        "input, textarea, [contenteditable], .connect-snippet pre, .log-message, .log-details-json",
       )
     ) {
       return;

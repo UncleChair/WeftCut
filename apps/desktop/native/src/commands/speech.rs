@@ -80,7 +80,7 @@ fn parse_backend(s: &str) -> Result<SpeechBackend, String> {
         .ok_or_else(|| format!("unknown provider: {s}"))
 }
 
-/// Presence-only status for the Settings → API keys panel. Reports whether an
+/// Presence-only status for the Settings → Transcription panel. Reports whether an
 /// API key is cached for each cloud backend.
 ///
 /// Deliberately lists **cloud backends only** (the ones an API key applies
