@@ -13,65 +13,30 @@
 //
 // What this queue changes is that there is nothing to spin in. The completion
 // signal on the renderer's WebGPU device is a PROMISE, so a slot that is not
-// ready yet costs nothing to keep waiting for — which is the whole measured win
-// (spin 0.088 → 0.000 thread-s/s, tick p99 23.5 → 17.3ms at one track, the
-// barrier-less control's own figure). It is NOT that the signal arrives sooner:
-// it arrives LATER, ~90ms, and `DEADLINE_MS` is where that tension is arbitrated.
+// ready yet costs nothing on the renderer thread to keep waiting for. It is NOT
+// that the signal arrives sooner: it arrives around 90ms. That hold can limit
+// decode throughput with a shallow native pool, but completion is the ownership
+// boundary — elapsed wall time is not evidence that native may safely overwrite
+// the shared texture.
 //
 // So under `rendererFence` the preload runs NO barrier and delivers the bitmap
 // with the ack obligation attached; this queue discharges it.
 //
-// INVARIANT — every submitted bitmap acks EXACTLY ONCE. `submit` either queues
-// the ack or performs it before returning; nothing else may ack, and nothing may
-// skip it. `pool_size` stranded slots wedge a session for good, so the ack is
-// deliberately independent of PAINT: a frame the ring evicts, or one that arrives
-// while the compositor is suspended, still holds a slot and still acks. The one
-// exception is a stream tearing down (`dropFor`), where the slots cease to exist
-// with the native session and acking into it is the thing to avoid.
+// INVARIANT — every live submitted bitmap acks EXACTLY ONCE, and only after its
+// probe signals. `submit` either queues the ack or performs a completed fallback
+// before returning; nothing else may ack. The ack is deliberately independent
+// of PAINT: a frame the ring evicts, or one that arrives while the compositor is
+// suspended, still holds a slot and still acks. The one exception is a stream
+// tearing down (`dropFor`), where the slots cease to exist with the native
+// session and acking into it is the thing to avoid.
 //
-// TWIN: the poll/deadline/pump discipline mirrors the preload's `fence` queue
-// (src/preload/index.ts). The two cannot share code — different realms — so a
-// change to the contract here wants a look at that one.
+// TWIN: the preload's `fence` queue (src/preload/index.ts) protects the same
+// ownership boundary in another realm. Its WebGL sync requires polling; this
+// WebGPU path is callback-driven. A change to either completion contract wants
+// a look at the other.
 
 import type { HwBarrierMode } from "../../../../shared/ipc";
 import type { FenceHandoffStats } from "./handoffTimings";
-
-/// How long a submitted probe may stay unsignalled before the queue acks anyway
-/// and counts it. Two display intervals, matching the preload fence's bound.
-///
-/// Blowing it costs no thread time here — there is no blocking wait to spin in,
-/// so a timeout is a bare "ack and count it". That makes the trade this constant
-/// arbitrates unusually stark, and it was measured both ways at 1080p over 1-4
-/// hardware tracks:
-///
-///   deadline           33.3ms              200ms
-///   fenceWaitP50       35ms (= deadline)   83-97ms
-///   forcedWaits        ~1 per frame        0
-///   decode fps         30.0                30.0
-///   tick p99           17.3ms              17.3ms
-///   slot hold          ~35ms               ~90ms
-///
-/// So the WebGPU completion signal is REAL — at 200ms nothing force-acks — but it
-/// arrives around 90ms, which is 5-6 display intervals and far past this bound.
-/// The consequence of waiting for it is the slot hold, and a hold is a throughput
-/// ceiling: `poolSize` slots / hold. At ~90ms and the shipped pool of 3 that is
-/// ~33 delivered fps per session — fine for the 30fps fixtures, and a HALVING for
-/// 60fps media. That is a certain regression, against a residual risk, so the
-/// tight bound wins and the ack is usually released on the deadline rather than
-/// on the signal.
-///
-/// What stands behind it: 33ms is well past the copy's actual completion in
-/// practice (`none` — acking immediately — reorders ~80% of frames, and
-/// `preview-gpu-order.spec.ts` is clean at pool 1/3/5 and on three concurrent
-/// sessions at this bound). What would remove the compromise is a deeper pool,
-/// which is the one thing this cost is NOT worth paying VRAM for today.
-///
-/// Ruled out, so nobody re-tries them: prodding the wire with an empty
-/// `queue.submit([])` once per drain pass (the WebGPU analogue of the preload's
-/// `gl.flush()`) does NOT shorten the ~90ms — measured 82.7/97.0/18.6/90.9ms over
-/// 1-4 tracks against 82.7/83.1/96.9/90.3 without it. And widening this bound
-/// without also deepening the pool just moves the hold, per the table above.
-const DEADLINE_MS = 2 * (1000 / 60);
 
 /// One in-flight completion probe over one delivered bitmap.
 export interface SlotFenceProbe {
@@ -103,6 +68,10 @@ export interface SlotFenceSubmission {
   drawMs: number;
   readMs: number;
 }
+
+export type SlotFenceReleasePolicy =
+  | { mode: "signal-only" }
+  | { mode: "unsafe-deadline"; deadlineMs: number };
 
 type PendingSlot = {
   streamId: string;
@@ -149,9 +118,13 @@ export class SlotFenceQueue {
   private readonly statsByStream = new Map<string, StreamStats>();
   private pumpTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /// `deadlineMs` is a seam for tests only (a zero deadline forces on the first
-  /// drain); production always runs `DEADLINE_MS`.
-  constructor(private readonly deadlineMs: number = DEADLINE_MS) {}
+  /// Production uses `signal-only`: an unsignalled probe retains ownership until
+  /// it signals or its stream closes. `unsafe-deadline` explicitly opts into the
+  /// old compatibility behavior and exists only for diagnostics/tests; it may
+  /// recycle a shared texture while Chromium is still reading it.
+  constructor(
+    private readonly releasePolicy: SlotFenceReleasePolicy = { mode: "signal-only" },
+  ) {}
 
   /// Point the queue at a device, or at nothing. Entries already pending keep
   /// their own probes — those are self-contained objects, so a re-registration
@@ -203,27 +176,50 @@ export class SlotFenceQueue {
       : { applied: "none", drawMs: 0, readMs: 0 };
   }
 
-  /// Ack every pending slot whose probe has signalled, plus any that blew the
-  /// deadline. Cheap enough to call opportunistically — a frame arriving is the
-  /// wake-up the queue was waiting for anyway.
+  /// Ack every pending slot whose probe has signalled. In the explicit unsafe
+  /// compatibility mode, a blown deadline is also released and counted.
+  /// Cheap enough to call opportunistically — a frame arriving is a wake-up the
+  /// queue may already have been waiting for.
   drain(): void {
     if (this.pending.length === 0) return;
     const now = performance.now();
     for (let i = this.pending.length - 1; i >= 0; i--) {
       const p = this.pending[i]!;
-      const done = p.probe.signalled();
-      if (!done && now - p.submittedAt < this.deadlineMs) continue;
-      p.probe.dispose();
+      let done = false;
+      try {
+        done = p.probe.signalled();
+      } catch {
+        // An unreadable probe is not proof of completion. Retain its slot for
+        // stream teardown, but keep draining independent slots.
+        continue;
+      }
+      const unsafeDeadlineExpired =
+        this.releasePolicy.mode === "unsafe-deadline" &&
+        now - p.submittedAt >= this.releasePolicy.deadlineMs;
+      if (!done && !unsafeDeadlineExpired) continue;
+      // Completion owns the slot release, not successful destruction of the
+      // probe wrapper. A lost device can make cleanup throw after the work has
+      // already settled; do not let that strand this or earlier ready slots.
+      try {
+        p.probe.dispose();
+      } catch {
+        // Best-effort GPU-object cleanup; ownership release continues below.
+      }
       this.pending.splice(i, 1);
       const stats = this.statsFor(p.streamId);
       stats.pending = Math.max(0, stats.pending - 1);
       stats.lastWaitMs = performance.now() - p.submittedAt;
       if (!done) stats.forcedWaits += 1;
-      // Acked even when the probe never signalled: a slot that is never acked
-      // is a permanent leak and `pool_size` of them wedge the session for good,
-      // so one possibly-torn frame is strictly the smaller harm. `forcedWaits`
-      // is what keeps that trade visible instead of silent.
-      p.ack();
+      // `!done` is reachable only through the explicitly unsafe constructor
+      // option. Keep it observable rather than silently presenting that result
+      // as a completed fence.
+      try {
+        p.ack();
+      } catch {
+        // The production callback owns its transport-failure response (it closes
+        // the native session). Do not let one failed delivery strand other
+        // independently completed slots in this drain pass.
+      }
     }
   }
 
@@ -237,17 +233,28 @@ export class SlotFenceQueue {
     for (let i = this.pending.length - 1; i >= 0; i--) {
       const p = this.pending[i]!;
       if (p.streamId !== streamId) continue;
-      p.probe.dispose();
+      // Device teardown may make destroying its probe throw. Closing the stream
+      // still has to forget every local ownership record; native joins and
+      // destroys the slots independently, so retaining this entry cannot help.
+      try {
+        p.probe.dispose();
+      } catch {
+        // Best-effort GPU-object cleanup; local queue cleanup is unconditional.
+      }
       this.pending.splice(i, 1);
     }
     this.statsByStream.delete(streamId);
+    if (this.pending.length === 0 && this.pumpTimer !== null) {
+      clearTimeout(this.pumpTimer);
+      this.pumpTimer = null;
+    }
   }
 
   /// This stream's fence health in the shape the handoff window records, or
   /// undefined before its first submit. `forcedWaitMsTotal` is structurally 0
-  /// here — see `DEADLINE_MS`: this path has no spin to burn thread time in, and
-  /// reporting a fabricated cost would make the two fence variants look alike
-  /// where they differ most.
+  /// here: this path has no blocking spin to burn thread time in, and reporting
+  /// a fabricated cost would make the two fence variants look alike where they
+  /// differ most.
   stats(streamId: string): FenceHandoffStats | undefined {
     const s = this.statsByStream.get(streamId);
     if (!s) return undefined;
@@ -276,13 +283,11 @@ export class SlotFenceQueue {
   /// Drain driver for the gaps between frames and between signals. Runs only
   /// while something is pending and stops the moment the queue empties.
   ///
-  /// `setTimeout`, NOT requestAnimationFrame, for the same reason the preload's
-  /// pump avoids it: rAF is frozen while the window is OCCLUDED, so acks would
-  /// stop, the pool would starve, and preview would wedge — reproducible only
-  /// when something covers the window. (Occlusion also stops Pixi presenting,
-  /// which brings back the very idle-signal problem this queue moved away from;
-  /// the deadline above is what keeps that case correct rather than stuck.)
+  /// The safe production path is woken directly by the backend's completion
+  /// callback and does not poll. Only the explicit unsafe deadline mode needs a
+  /// timer so its compatibility timeout can elapse between frames.
   private schedulePump(): void {
+    if (this.releasePolicy.mode !== "unsafe-deadline") return;
     if (this.pumpTimer !== null || this.pending.length === 0) return;
     this.pumpTimer = setTimeout(() => {
       this.pumpTimer = null;
@@ -312,7 +317,7 @@ type MaybeWebgpuRenderer = { gpu?: { device?: GPUDevice | null } | null };
 /// blocking wait to offer (`MAX_CLIENT_WAIT_TIMEOUT_WEBGL` is 0 on Chromium), so
 /// the preload's variant must flush-and-poll at its deadline — and on an idle GPU
 /// that spin is what completes the fence rather than merely observing it. This
-/// one resolves on its own; it is just slow to (see `DEADLINE_MS`).
+/// one resolves on its own; it is just slow to.
 class WebgpuSlotFence implements SlotFenceBackend {
   /// One 1×1 destination, created lazily and reused for the whole session. The
   /// pixels are never read — only the dependency matters.
@@ -335,9 +340,9 @@ class WebgpuSlotFence implements SlotFenceBackend {
         [1, 1],
       );
       let done = false;
-      // A rejected promise (device lost) settles as signalled: preview is over
-      // either way, and a probe that can never resolve would hold its slot to
-      // the deadline on every frame.
+      // A rejected promise (device lost) settles as signalled: there can be no
+      // remaining device work to protect, and leaving it pending would retain
+      // the native slot until stream teardown.
       const settle = (): void => {
         done = true;
         onSignal();

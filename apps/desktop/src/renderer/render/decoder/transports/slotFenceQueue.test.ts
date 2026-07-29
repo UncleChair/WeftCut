@@ -7,8 +7,8 @@ import {
 } from "./slotFenceQueue";
 
 /// A probe whose completion the test drives. `signal()` is what a real backend's
-/// `onSubmittedWorkDone` does; a probe left un-signalled models the case the
-/// deadline exists for.
+/// `onSubmittedWorkDone` does; a probe left un-signalled models stalled GPU work
+/// that must retain ownership until stream teardown.
 function controllableBackend(): {
   backend: SlotFenceBackend;
   probes: { signal: () => void; disposed: boolean }[];
@@ -105,21 +105,31 @@ describe("SlotFenceQueue", () => {
     expect(acks).toEqual([1, 0]);
   });
 
-  // A probe that never signals must not park a slot forever: the producer needs
-  // it back. Acking on a timer can deliver a torn frame, which is strictly the
-  // smaller harm — and `forcedWaits` is what keeps the trade visible.
-  it("acks at the deadline when a probe never signals, and counts it", () => {
-    const q = new SlotFenceQueue(0); // zero deadline: the first drain is already late
+  // Recycling an unsignalled slot lets native overwrite the shared texture while
+  // Chromium is still reading it. That is pixel corruption even when the frame
+  // metadata remains perfectly ordered, so elapsed wall time is never evidence
+  // that the slot is safe to release.
+  it("keeps an unsignalled slot owned after the old deadline, until the stream closes", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(0);
+    const q = new SlotFenceQueue();
     const { backend, probes } = controllableBackend();
     q.setBackend(backend);
     const ack = vi.fn();
 
     q.submit("s1", 0, fakeBitmap(), ack);
-    expect(q.stats("s1")?.forcedWaits).toBe(0);
-
+    now.mockReturnValue(1_000);
     q.drain();
-    expect(ack).toHaveBeenCalledTimes(1);
-    expect(q.stats("s1")?.forcedWaits).toBe(1);
+    const forcedWaits = q.stats("s1")?.forcedWaits;
+    const pendingBeforeClose = q.pendingCount();
+    const disposedBeforeClose = probes[0]!.disposed;
+
+    q.dropFor("s1");
+    now.mockRestore();
+
+    expect(ack).not.toHaveBeenCalled();
+    expect(forcedWaits).toBe(0);
+    expect(pendingBeforeClose).toBe(1);
+    expect(disposedBeforeClose).toBe(false);
     expect(probes[0]!.disposed).toBe(true);
     expect(q.pendingCount()).toBe(0);
   });
@@ -132,6 +142,73 @@ describe("SlotFenceQueue", () => {
     probes[0]!.signal();
     q.drain();
     expect(q.stats("s1")?.forcedWaits).toBe(0);
+  });
+
+  it("releases every signalled slot when one probe throws during cleanup", () => {
+    const q = new SlotFenceQueue();
+    let slot = 0;
+    q.setBackend({
+      submit: () => {
+        const ownSlot = slot++;
+        return {
+          signalled: () => true,
+          dispose: () => {
+            if (ownSlot === 1) throw new Error("device already lost");
+          },
+        };
+      },
+    });
+    const acks: number[] = [];
+    q.submit("s1", 0, fakeBitmap(), () => acks.push(0));
+    q.submit("s1", 1, fakeBitmap(), () => acks.push(1));
+
+    expect(() => q.drain()).not.toThrow();
+    expect(acks.sort()).toEqual([0, 1]);
+    expect(q.pendingCount()).toBe(0);
+  });
+
+  it("keeps an unreadable probe owned without blocking other completed slots", () => {
+    const q = new SlotFenceQueue();
+    let slot = 0;
+    const disposed: number[] = [];
+    q.setBackend({
+      submit: () => {
+        const ownSlot = slot++;
+        return {
+          signalled: () => {
+            if (ownSlot === 0) throw new Error("device query failed");
+            return true;
+          },
+          dispose: () => disposed.push(ownSlot),
+        };
+      },
+    });
+    const acks: number[] = [];
+    q.submit("s1", 0, fakeBitmap(), () => acks.push(0));
+    q.submit("s1", 1, fakeBitmap(), () => acks.push(1));
+
+    expect(() => q.drain()).not.toThrow();
+    expect(acks).toEqual([1]);
+    expect(q.pendingCount()).toBe(1);
+
+    q.dropFor("s1");
+    expect(disposed.sort()).toEqual([0, 1]);
+    expect(acks).toEqual([1]);
+    expect(q.pendingCount()).toBe(0);
+  });
+
+  it("continues releasing completed slots when one ack callback throws", () => {
+    const q = new SlotFenceQueue();
+    q.setBackend({ submit: () => ({ signalled: () => true, dispose: () => {} }) });
+    const acked: number[] = [];
+    q.submit("s1", 0, fakeBitmap(), () => acked.push(0));
+    q.submit("s1", 1, fakeBitmap(), () => {
+      throw new Error("port failed");
+    });
+
+    expect(() => q.drain()).not.toThrow();
+    expect(acked).toEqual([0]);
+    expect(q.pendingCount()).toBe(0);
   });
 
   // Teardown ordering, renderer side: the native close joins the decode thread,
@@ -157,6 +234,32 @@ describe("SlotFenceQueue", () => {
     expect(ack).not.toHaveBeenCalled();
   });
 
+  it("finishes closing a stream when one probe throws during cleanup", () => {
+    const q = new SlotFenceQueue();
+    const disposed: number[] = [];
+    let slot = 0;
+    q.setBackend({
+      submit: () => {
+        const ownSlot = slot++;
+        return {
+          signalled: () => false,
+          dispose: () => {
+            disposed.push(ownSlot);
+            if (ownSlot === 1) throw new Error("device already lost");
+          },
+        };
+      },
+    });
+    const ack = vi.fn();
+    q.submit("s1", 0, fakeBitmap(), ack);
+    q.submit("s1", 1, fakeBitmap(), ack);
+
+    expect(() => q.dropFor("s1")).not.toThrow();
+    expect(disposed.sort()).toEqual([0, 1]);
+    expect(q.pendingCount()).toBe(0);
+    expect(ack).not.toHaveBeenCalled();
+  });
+
   it("drops only the named stream", () => {
     const q = new SlotFenceQueue();
     const { backend, probes } = controllableBackend();
@@ -174,9 +277,9 @@ describe("SlotFenceQueue", () => {
     expect(b).toHaveBeenCalledTimes(1);
   });
 
-  // The pump covers the gaps between frames: with one clip at 30fps most signals
-  // land between deliveries, and nothing else would look at the queue.
-  it("drains from its own pump, with no frame arriving to poke it", async () => {
+  // The backend's completion callback covers gaps between frames without a poll:
+  // with one clip at 30fps most signals land between deliveries.
+  it("drains from the completion wake-up, with no frame arriving to poke it", async () => {
     const q = new SlotFenceQueue();
     const { backend, probes } = controllableBackend();
     q.setBackend(backend);
@@ -186,7 +289,6 @@ describe("SlotFenceQueue", () => {
 
     await new Promise((r) => setTimeout(r, 0));
     expect(ack).toHaveBeenCalledTimes(1);
-    // ...and it stops on an empty queue rather than spinning forever.
     expect(q.pendingCount()).toBe(0);
   });
 
@@ -254,11 +356,10 @@ describe("SlotFenceQueue", () => {
     expect(s.waitMs).toBeGreaterThanOrEqual(0);
   });
 
-  // This path has no blocking wait to spin in (the promise either resolves or the
-  // deadline passes), so a fabricated spin total would make the two fence
-  // variants look alike exactly where they differ.
-  it("reports zero spin time even when it force-acks", () => {
-    const q = new SlotFenceQueue(0);
+  // The explicitly unsafe compatibility path has no blocking spin either: its
+  // timer releases immediately. Keep that distinction visible in old bench data.
+  it("reports zero spin time in the explicit unsafe deadline mode", () => {
+    const q = new SlotFenceQueue({ mode: "unsafe-deadline", deadlineMs: 0 });
     const { backend } = controllableBackend();
     q.setBackend(backend);
     q.submit("s1", 0, fakeBitmap(), vi.fn());

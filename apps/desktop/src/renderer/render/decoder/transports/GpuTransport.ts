@@ -110,6 +110,14 @@ export class GpuTransport implements DecodeTransport {
   private portReadyP: Promise<void> | null = null;
 
   private _disposed = false;
+  /// Resolves after the one allowed `open()` attempt, including its
+  /// disposed-during-open compensation close. `dispose()` joins this before it
+  /// promises that main's lease is gone.
+  private openSettledP: Promise<void> | null = null;
+  /// Idempotent main-process close. Its resolution is the admission handoff:
+  /// only then has `closePreviewGpu` released this session's budget lease, so a
+  /// priority replacement may safely attempt `previewGpu.open`.
+  private disposeP: Promise<void> | null = null;
 
   /// Rolling window over the preload's per-frame handoff stamps. The barrier
   /// cost it derives is the one number this path never surfaced.
@@ -132,6 +140,18 @@ export class GpuTransport implements DecodeTransport {
   /// `hw-budget-exceeded`); the caller (`FfmpegSource`) decides whether that's
   /// recoverable.
   async open(o: DecodeTransportOpen): Promise<void> {
+    let settleOpen!: () => void;
+    this.openSettledP = new Promise<void>((resolve) => {
+      settleOpen = resolve;
+    });
+    try {
+      await this.openOnce(o);
+    } finally {
+      settleOpen();
+    }
+  }
+
+  private async openOnce(o: DecodeTransportOpen): Promise<void> {
     this.streamId = o.streamId;
     // Attach BEFORE requestPort() — the preload's handoff post is one-time
     // and un-replayable; a listener attached after the call could miss it.
@@ -271,7 +291,15 @@ export class GpuTransport implements DecodeTransport {
   /// reach a session main is mid-closing.
   private postSlotAck(slot: number): void {
     const ack: PreviewGpuSlotAck = { kind: "consumeAck", streamId: this.streamId, slot };
-    this.port?.postMessage(ack);
+    try {
+      this.port?.postMessage(ack);
+    } catch {
+      // The renderer has completed its read, but native cannot learn that if the
+      // port has failed. Close the session instead of leaving its pool one slot
+      // short forever. Defer disposal so `dropFor` cannot mutate the fence queue
+      // re-entrantly while that queue is draining other completed slots.
+      queueMicrotask(() => this.dispose());
+    }
   }
 
   /// Preload handoff timings for this session, or null before the first
@@ -321,8 +349,8 @@ export class GpuTransport implements DecodeTransport {
   /// (preload releases its shared-texture imports, main closes the native
   /// decode thread). Safe even if `open()` never completed (e.g. the port
   /// handoff timed out).
-  dispose(): void {
-    if (this._disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposeP) return this.disposeP;
     this._disposed = true;
     if (this.messageListener) {
       window.removeEventListener("message", this.messageListener);
@@ -337,6 +365,18 @@ export class GpuTransport implements DecodeTransport {
       this.port.onmessage = null;
       this.port = null;
     }
-    void window.api.previewGpu.close({ streamId: this.streamId });
+    const openSettled = this.openSettledP;
+    this.disposeP = (async () => {
+      // Close immediately in case open already registered main-side. If open
+      // is still in flight this may intentionally be a no-op; join it, then
+      // close again. `openOnce` also performs that compensating close when it
+      // observes `_disposed`, so the second call here is idempotent defence.
+      await window.api.previewGpu.close({ streamId: this.streamId });
+      if (openSettled) {
+        await openSettled;
+        await window.api.previewGpu.close({ streamId: this.streamId });
+      }
+    })();
+    return this.disposeP;
   }
 }

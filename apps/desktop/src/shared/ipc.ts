@@ -94,11 +94,14 @@ export type PreviewGpuColorSpace = {
 ///              renderer/render/decoder/transports/slotFenceQueue.ts) and acks
 ///              back over the same port. WebGPU's signal is a PROMISE, so a slot
 ///              that is not ready costs nothing to keep waiting for — that, not
-///              a faster signal, is the win: 1080p one track goes from 0.088 to
-///              0.000 spin thread-s/s and tick p99 23.5 → 17.3ms, and 4K goes
-///              from 0 smooth tracks (tick p99 45.7ms, 38% drops at two) to 2,
-///              matching the barrier-less control in every cell measured.
-///              Its own compromise is the deadline — see `DEADLINE_MS` there.
+///              a faster signal, is the win. The earlier deadline-based build
+///              measured zero spin and barrier-less tick cost, but those numbers
+///              are not a throughput promise for today's signal-only contract:
+///              completion has been observed at 83–97ms, so a three-slot pool
+///              can cap one session around 31–36 delivered fps.
+///              Ownership is signal-only: elapsed wall time never releases an
+///              unfinished slot. Stream teardown drops remaining probes without
+///              acking because native destroys those slots as the session closes.
 ///   fence    — the same deferral, with the copy + `fenceSync` taken on a
 ///              PRIVATE offscreen 1×1 WebGL2 context in the preload. Correct and
 ///              off the critical path, and it took 1080p hardware from 2 smooth
@@ -127,9 +130,9 @@ export type PreviewGpuColorSpace = {
 export type HwBarrierMode = 'readback' | 'fence' | 'gpuflush' | 'none' | 'rendererFence'
 
 /// Renderer → preload message on a session's frame port: this slot's read has
-/// completed (or its deadline passed), so the preload may release it with
-/// `previewGpu:consumeAck`. The ONLY message that travels back up the port, and
-/// it exists only under `rendererFence`, where the renderer owns the ack.
+/// completed, so the preload may release it with `previewGpu:consumeAck`. The
+/// ONLY message that travels back up the port, and it exists only under
+/// `rendererFence`, where the renderer owns the ack.
 ///
 /// Typed here rather than on either side because both ends must agree on it and
 /// neither owns it: the renderer posts it, the preload turns it into the ack. The

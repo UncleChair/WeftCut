@@ -192,4 +192,8 @@ export interface DecoderPool {
   /// Honestly optional — the EXPORT pool must never downscale (a half-res
   /// export would be silent data loss), so it simply omits the method.
   setPlaybackScaleDiv?(div: number): void;
+  /// Preview-only decode ownership hint. Keys name the current active clips
+  /// plus the nearest upcoming boundary; the pool may reclaim only retained
+  /// native sessions when main reports transient admission pressure.
+  setPriorityKeys?(keys: readonly string[]): boolean | Promise<boolean>;
 }

@@ -59,6 +59,11 @@ interface FfmpegSourceDeps {
     cadenceDiv: BudgetSpillCadenceDiv;
   }) => DecodeTransport;
   pickLane?: typeof pickInitialLane;
+  /// The owning preview pool may synchronously reclaim retained hardware
+  /// sessions when this source loses admission to transient capacity. True
+  /// means at least one lease was released, so retry the authoritative open
+  /// once before accepting the software spill. Absent in benches/export.
+  reclaimRetainedCapacity?: () => boolean | Promise<boolean>;
 }
 
 export class FfmpegSource implements PreviewDecodeSession {
@@ -78,6 +83,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   private readyP: Promise<void> | null = null;
   private ready = false;
   private _disposed = false;
+  private disposeP: Promise<void> | null = null;
   private lastUseMs = 0;
   private lastTargetUs: number | null = null;
   /// Set once the current transport's `onEof` fires; gates further
@@ -121,6 +127,12 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// (via `ActiveClipProbe.hwLane`) to assert WHICH HW lane engaged.
   currentHwLane(): string | null { return this.hwPlan?.lane ?? null; }
   isDowngraded(): boolean { return this.startedHardware && this.lane === "software"; }
+  /// True only for this decode session's transient admission spill. Runtime
+  /// device/capability failures remain sticky and must never be recycled by
+  /// preview priority changes.
+  isBudgetSpill(): boolean {
+    return this.ready && this.budgetSpill && this.lane === "software" && !this._disposed;
+  }
   /// Cumulative frames this source delivered, for the PerfHUD's per-clip fps
   /// column and the playback bench. Counted at the ring rather than in a
   /// transport so an internal HW→SW lane flip keeps ONE monotonic series — both
@@ -175,7 +187,7 @@ export class FfmpegSource implements PreviewDecodeSession {
       // A HARDWARE open failure (budget full, device lost at open) is recoverable
       // the same way a runtime HW error is — fall to SW in place, keeping the ring.
       // Not for a forced lane (bench) or a software open (that IS total failure).
-      const reason = err instanceof Error ? err.message : String(err);
+      let reason = err instanceof Error ? err.message : String(err);
       if (this.startedHardware && this.lane === "hardware" && !this.init.forceLane) {
         // LANDMINE: only a CAPABILITY failure may be recorded. `markHwUnusable` is
         // a sticky per-MEDIA, session-lifetime verdict, and the HW-session budget
@@ -187,12 +199,45 @@ export class FfmpegSource implements PreviewDecodeSession {
         // IPC instead of a shared texture) and stutters, with nothing on the
         // timeline to explain it. Fall back for THIS open only; the next open
         // re-probes and takes hardware again once a session frees up.
-        const budgetExceeded = reason.includes(HW_BUDGET_EXCEEDED);
-        const reservationMismatch = reason.includes(HW_BUDGET_RESERVATION_MISMATCH);
+        let budgetExceeded = reason.includes(HW_BUDGET_EXCEEDED);
+        let reservationMismatch = reason.includes(HW_BUDGET_RESERVATION_MISMATCH);
+        if (budgetExceeded && this.deps.reclaimRetainedCapacity) {
+          // The rejected transport may still own partially-open native state.
+          // Tear it down before asking the pool to release lower-priority
+          // sessions, then retry the main-process reservation exactly once.
+          // Main remains the admission authority; there is deliberately no
+          // renderer-side budget pre-check.
+          await this.closeTransportForFallback();
+          let reclaimed = false;
+          try {
+            reclaimed = await this.deps.reclaimRetainedCapacity();
+          } catch (reclaimErr) {
+            // Capacity relief is opportunistic. If its ordered close fails,
+            // keep the user-visible fallback guarantee: spill to software
+            // instead of turning a temporary budget refusal into a black clip.
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[weftcut/ffmpeg] capacity reclaim failed for ${this.layerId}`,
+              reclaimErr,
+            );
+          }
+          if (this._disposed) return;
+          if (reclaimed) {
+            try {
+              await this.openLane("hardware");
+              if (!this._disposed) this.ready = true;
+              return;
+            } catch (retryErr) {
+              if (this._disposed) return;
+              reason = retryErr instanceof Error ? retryErr.message : String(retryErr);
+              budgetExceeded = reason.includes(HW_BUDGET_EXCEEDED);
+              reservationMismatch = reason.includes(HW_BUDGET_RESERVATION_MISMATCH);
+            }
+          }
+        }
         if (!budgetExceeded && !reservationMismatch) markHwUnusable(this.mediaId, reason);
         this.budgetSpill = budgetExceeded;
-        this.transport?.dispose();
-        this.transport = null;
+        await this.closeTransportForFallback();
         try {
           await this.openLane("software", { from: "hardware", reason });
         } catch (swErr) {
@@ -207,6 +252,24 @@ export class FfmpegSource implements PreviewDecodeSession {
     }
     if (this._disposed) return;
     this.ready = true;
+  }
+
+  private async closeTransportForFallback(): Promise<void> {
+    const transport = this.transport;
+    this.transport = null;
+    if (!transport) return;
+    try {
+      await transport.dispose();
+    } catch (closeErr) {
+      // A failed close must not suppress the software safety lane. Main's
+      // admission remains authoritative, so any later hardware retry still has
+      // to pass `previewGpu:open`; this path makes no capacity assumption.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[weftcut/ffmpeg] hardware transport close failed for ${this.layerId}`,
+        closeErr,
+      );
+    }
   }
 
   /// Open a transport for `lane`, wiring frames into the ring and errors into
@@ -381,12 +444,22 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.transport?.requestFrameAt(tUs);
   }
 
-  dispose(): void {
-    if (this._disposed) return;
+  /// Pool-only ordered teardown. Unlike ordinary fire-and-forget `dispose`,
+  /// this resolves after a GPU transport's main-process close has released its
+  /// admission lease, making it safe to open a priority replacement.
+  disposeAndWait(): Promise<void> {
+    if (this.disposeP) return this.disposeP;
+    if (this._disposed) return Promise.resolve();
     this._disposed = true;
-    this.transport?.dispose();
+    const transport = this.transport;
     this.transport = null;
     this.ring.dispose();
     this.onFirstFrameCb = null;
+    this.disposeP = Promise.resolve(transport?.dispose());
+    return this.disposeP;
+  }
+
+  dispose(): void {
+    void this.disposeAndWait();
   }
 }

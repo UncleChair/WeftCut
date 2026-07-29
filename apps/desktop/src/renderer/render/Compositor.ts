@@ -25,6 +25,10 @@ import {
 } from "./resolveView";
 import { SourceDecoderPool, SourceHandle } from "./decoder/SourceDecoderPool";
 import type { DecodeSession, DecoderPool } from "./decoder/session";
+import {
+  planPreviewDecodePriority,
+  type PreviewDecodePriorityPlan,
+} from "./decoder/previewDecodePriority";
 import type { HandoffTimingSummary } from "./decoder/transports/handoffTimings";
 import { FfmpegSource } from "./decoder/FfmpegSource";
 import { markFfmpegUnusable } from "./decoder/ffmpegCapability";
@@ -623,6 +627,14 @@ export class Compositor {
   private compositeMsLast = 0;
   private compositeMsMax = 0;
   private upcomingPrewarm: UpcomingClipPrewarmSnapshot | null = null;
+  /// One priority plan per project snapshot + snapped composition time. A
+  /// normal playback tick reaches this through setAnchor, boundary prewarm and
+  /// composite; caching keeps that at one O(layers) scan and one pool publish.
+  private decodePriorityPlanCache: {
+    summary: ProjectSummary;
+    tUs: number;
+    plan: PreviewDecodePriorityPlan;
+  } | null = null;
   /// Underrun accounting — dropped frames and late composite ticks
   /// (preview only; inert in export mode where `playing` never goes true).
   /// Sweep verdicts come from `updateClip` via `sweepLateLayers`; session
@@ -835,6 +847,7 @@ export class Compositor {
   /// disappeared get evicted; new layers will appear on the next
   /// `compositeFrame()` if active.
   setProject(summary: ProjectSummary | null): void {
+    this.decodePriorityPlanCache = null;
     this.projectSummary = summary;
     this.layerById.clear();
     this.trackEnabledByLayer.clear();
@@ -1018,6 +1031,11 @@ export class Compositor {
     // Exact-rational snap only — pre-rounded frame durations drift (see
     // `fpsNum`).
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
+    // Declare active + nearest-upcoming ownership before `ensureClip` opens
+    // any source in the visual sweep. If main rejects an upcoming HW open, the
+    // pool may now reclaim only truly retained sessions, never a clip this
+    // frame is still presenting (including either overlap-swap key).
+    this.updateDecodePriorities(tUsSnapped);
 
     const prevChildCount = this.stage.children.length;
     const tRebuild = stageNow();
@@ -1362,6 +1380,7 @@ export class Compositor {
     // See `snapFrameFloor` and the long comment in `compositeFrame`
     // for why the pre-rounded `approxFrameDurUs` is not safe here.
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
+    this.updateDecodePriorities(tUsSnapped);
     for (const c of this.clips.values()) {
       const layer = this.layerById.get(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
@@ -1567,23 +1586,17 @@ export class Compositor {
   /// and fill its first-frame ring before the playhead reaches it.
   private prewarmUpcomingClipBoundary(tUs: number): void {
     if (!this.projectSummary) return;
-    const horizonEndUs = tUs + UPCOMING_CLIP_PREWARM_US;
-    let nextStartUs: number | null = null;
-    let candidates: LayerSummary[] = [];
-
-    for (const track of this.projectSummary.tracks) {
-      if (!track.enabled) continue;
-      for (const layer of track.layers) {
-        if (!layer.enabled || layer.params.kind !== "VideoClip") continue;
-        if (layer.t_start_us <= tUs || layer.t_start_us > horizonEndUs) continue;
-        if (nextStartUs === null || layer.t_start_us < nextStartUs) {
-          nextStartUs = layer.t_start_us;
-          candidates = [layer];
-        } else if (layer.t_start_us === nextStartUs) {
-          candidates.push(layer);
-        }
-      }
-    }
+    // Re-plan here as well as in the owner paths above: this method is the
+    // exact point that calls `ensureClip` for speculative sources, so its
+    // priority declaration must happen before that acquire even if a future
+    // caller invokes prewarm from a different tick path.
+    const plan = this.updateDecodePriorities(tUs)
+      ?? planPreviewDecodePriority(
+        this.projectSummary,
+        tUs,
+        UPCOMING_CLIP_PREWARM_US,
+      );
+    const candidates = plan.upcomingLayers;
 
     const clips: UpcomingClipPrewarmSnapshot["clips"] = [];
     for (const layer of candidates) {
@@ -1617,9 +1630,47 @@ export class Compositor {
     this.upcomingPrewarm = {
       anchorUs: tUs,
       windowUs: UPCOMING_CLIP_PREWARM_US,
-      nextStartUs,
+      nextStartUs: plan.nextStartUs,
       clips,
     };
+  }
+
+  /// Publish decode ownership without exposing Standard-engine lane policy to
+  /// the Compositor. A true result means the pool recycled an old budget spill;
+  /// repaint once its ordered main-process closes finish so `ensureClip` can
+  /// revive the disposed source through the ordinary acquire path.
+  private updateDecodePriorities(tUs: number): PreviewDecodePriorityPlan | null {
+    if (this.mode !== "preview" || !this.projectSummary) return null;
+    const cached = this.decodePriorityPlanCache;
+    if (cached && cached.summary === this.projectSummary && cached.tUs === tUs) {
+      return cached.plan;
+    }
+    const plan = planPreviewDecodePriority(
+      this.projectSummary,
+      tUs,
+      UPCOMING_CLIP_PREWARM_US,
+    );
+    this.decodePriorityPlanCache = {
+      summary: this.projectSummary,
+      tUs,
+      plan,
+    };
+    const result = this.pool.setPriorityKeys?.(plan.poolKeys);
+    if (typeof result === "boolean") {
+      if (result) this.scheduleRepaint();
+    } else if (result) {
+      void result
+        .then((recycled) => {
+          if (recycled && !this.disposed) this.scheduleRepaint();
+        })
+        .catch((err: unknown) => {
+          // Ordered close failed. Keep the current spill alive rather than
+          // racing a replacement open against an unreleased lease.
+          // eslint-disable-next-line no-console
+          console.warn("[weftcut/pixi] decode priority rebalance failed", err);
+        });
+    }
+    return plan;
   }
 
   /// Map the active motif layers at composition-time `tUs` to prewarm specs

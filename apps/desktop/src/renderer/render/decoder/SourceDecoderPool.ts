@@ -20,7 +20,7 @@ import { FrameRing } from "./FrameRing";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
-import { FfmpegSource } from "./FfmpegSource";
+import { FfmpegSource, type FfmpegSourceInit } from "./FfmpegSource";
 import type { SourceHandleInit } from "./session";
 
 const IDLE_DISPOSE_MS = 5_000;
@@ -545,6 +545,15 @@ interface MediaEntry {
   refCount: number;
 }
 
+interface SourceDecoderPoolDeps {
+  /// Internal constructor seam: production uses `FfmpegSource`; tests keep that
+  /// deep module real while replacing only its native transport adapters.
+  makeFfmpegSource?: (
+    init: FfmpegSourceInit,
+    reclaimRetainedCapacity: () => boolean | Promise<boolean>,
+  ) => FfmpegSource;
+}
+
 /// Process-wide pool. One instance lives in the Compositor.
 ///
 /// Two-tier keying: `handles` are per-layer (each clip gets its own
@@ -555,11 +564,15 @@ export class SourceDecoderPool {
   private handles = new Map<string, SourceHandle | FfmpegSource>();
   private medias = new Map<string, MediaEntry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private priorityKeys = new Set<string>();
+  private prioritySignature = "";
   /// Current playback-resolution divisor (1 | 2 | 4), stamped onto every
   /// `FfmpegSource` this pool creates. 1 until the preview seeds it from the
   /// app setting. `SourceHandle` (Lite/WebCodecs) has no such knob — it decodes
   /// in the browser, with no IPC ship stage to shrink.
   private playbackScaleDiv = 1;
+
+  constructor(private readonly deps: SourceDecoderPoolDeps = {}) {}
 
   /// Acquire (or create) a handle for `layerId`. Multiple layers may
   /// share the same `mediaId`; each gets a distinct handle (decoder +
@@ -579,7 +592,7 @@ export class SourceDecoderPool {
     if (init.engine === "ffmpeg") {
       const existingFfmpeg = this.handles.get(init.layerId);
       if (existingFfmpeg) return existingFfmpeg;
-      const ffmpegHandle = new FfmpegSource({
+      const sourceInit: FfmpegSourceInit = {
         layerId: init.layerId,
         mediaId: init.mediaId,
         sourcePath: init.sourcePath ?? "",
@@ -598,7 +611,12 @@ export class SourceDecoderPool {
         ...(init.height !== undefined ? { height: init.height } : {}),
         ...(init.poolSize !== undefined ? { poolSize: init.poolSize } : {}),
         ...(init.forceLane !== undefined ? { forceLane: init.forceLane } : {}),
-      });
+      };
+      const reclaimRetainedCapacity = () =>
+        this.reclaimRetainedHardwareCapacity(init.layerId);
+      const ffmpegHandle = this.deps.makeFfmpegSource
+        ? this.deps.makeFfmpegSource(sourceInit, reclaimRetainedCapacity)
+        : new FfmpegSource(sourceInit, { reclaimRetainedCapacity });
       this.handles.set(init.layerId, ffmpegHandle);
       this.startSweeperIfNeeded();
       return ffmpegHandle;
@@ -615,6 +633,38 @@ export class SourceDecoderPool {
     this.handles.set(init.layerId, h);
     this.startSweeperIfNeeded();
     return h;
+  }
+
+  /// Preview declares the decode sessions that own the current frame or the
+  /// nearest upcoming boundary. The pool keeps the lane/capacity mechanics
+  /// private: a priority source rejected by main may evict only retained
+  /// FFmpeg hardware sessions, never another active/upcoming source.
+  setPriorityKeys(keys: readonly string[]): boolean | Promise<boolean> {
+    const next = new Set(keys);
+    const signature = JSON.stringify([...next].sort());
+    const changed = signature !== this.prioritySignature;
+    this.priorityKeys = next;
+    this.prioritySignature = signature;
+    if (!changed) return false;
+
+    // A prewarm source may already have accepted a temporary software spill
+    // when every session in the old priority set was genuinely needed. Once
+    // the boundary moves, the former active source becomes retained: close it
+    // first, then recycle the spilled handle so the normal next acquire asks
+    // main for hardware again. One recycle per priority epoch avoids retry
+    // churn when the priority set itself exceeds the physical budget.
+    const spilled: Array<[string, FfmpegSource]> = [];
+    for (const [key, handle] of this.handles) {
+      if (
+        next.has(key)
+        && handle instanceof FfmpegSource
+        && handle.isBudgetSpill()
+      ) {
+        spilled.push([key, handle]);
+      }
+    }
+    if (spilled.length === 0) return false;
+    return this.recyclePrioritySpills(spilled);
   }
 
   /// Adopt a new playback-resolution divisor (1 | 2 | 4): future sources are
@@ -688,6 +738,52 @@ export class SourceDecoderPool {
       entry.media.dispose();
       this.medias.delete(mediaId);
     }
+  }
+
+  /// Release lower-priority native hardware sessions and wait until main has
+  /// closed each one (therefore released its admission lease). Called only
+  /// from a priority FfmpegSource after authoritative `previewGpu:open`
+  /// returned `hw-budget-exceeded`.
+  private async reclaimRetainedHardwareCapacity(requesterKey: string): Promise<boolean> {
+    if (!this.priorityKeys.has(requesterKey)) return false;
+    const retained: Array<[string, FfmpegSource]> = [];
+    for (const [key, handle] of this.handles) {
+      if (
+        key !== requesterKey
+        && !this.priorityKeys.has(key)
+        && handle instanceof FfmpegSource
+        && !handle.disposed
+        && handle.currentLane() === "hardware"
+      ) {
+        retained.push([key, handle]);
+      }
+    }
+    if (retained.length === 0) return false;
+    await Promise.all(retained.map(async ([key, handle]) => {
+      await this.releaseFfmpegHandleAndWait(key, handle);
+    }));
+    return true;
+  }
+
+  private async recyclePrioritySpills(
+    spilled: Array<[string, FfmpegSource]>,
+  ): Promise<boolean> {
+    await this.reclaimRetainedHardwareCapacity(spilled[0]![0]);
+    await Promise.all(spilled.map(async ([key, handle]) => {
+      await this.releaseFfmpegHandleAndWait(key, handle);
+    }));
+    return true;
+  }
+
+  private async releaseFfmpegHandleAndWait(
+    key: string,
+    handle: FfmpegSource,
+  ): Promise<void> {
+    if (this.handles.get(key) !== handle) return;
+    // Remove before awaiting so a concurrent acquire cannot receive the
+    // disposed handle. FFmpeg sources have no `medias` refcount entry.
+    this.handles.delete(key);
+    await handle.disposeAndWait();
   }
 
   private startSweeperIfNeeded(): void {

@@ -6,6 +6,11 @@ const bus = vi.hoisted(() => ({ rows: [] as { message: string }[] }));
 vi.mock("../../ipc", () => ({
   logEmit: async (input: { message: string }) => { bus.rows.push(input); },
 }));
+// Every spec injects its transport adapter. Mock the production WebGPU
+// adapter so this module-level test does not load renderer-fence machinery.
+vi.mock("./transports/GpuTransport", () => ({
+  GpuTransport: class {},
+}));
 
 import { FfmpegSource } from "./FfmpegSource";
 import { pickInitialLane, resetFfmpegCapabilitySession } from "./ffmpegCapability";
@@ -16,7 +21,7 @@ import {
 } from "../../../shared/ipc";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 
-function fakeTransport(opts?: { openRejects?: string }) {
+function fakeTransport(opts?: { openRejects?: string; disposeRejects?: string }) {
   let frameCb: ((b: ImageBitmap, p: number, d: number) => void) | null = null;
   let errorCb: ((r: string) => void) | null = null;
   let eofCb: (() => void) | null = null;
@@ -29,7 +34,9 @@ function fakeTransport(opts?: { openRejects?: string }) {
       onFrame: (cb) => { frameCb = cb; },
       onError: (cb) => { errorCb = cb; },
       onEof: (cb) => { eofCb = cb; },
-      dispose: vi.fn(),
+      dispose: opts?.disposeRejects
+        ? vi.fn(async () => { throw new Error(opts.disposeRejects); })
+        : vi.fn(),
     } as DecodeTransport,
     emitFrame: (p: number) => frameCb?.({ close() {} } as unknown as ImageBitmap, p, 33),
     fail: (r: string) => errorCb?.(r),
@@ -170,6 +177,118 @@ describe("FfmpegSource — internal HW→SW fallback", () => {
 });
 
 describe("FfmpegSource — HW open failure fallback", () => {
+  it("retries hardware before spilling when the pool reclaims retained capacity", async () => {
+    const blocked = fakeTransport({ openRejects: HW_BUDGET_EXCEEDED });
+    const admitted = fakeTransport();
+    const sw = fakeTransport();
+    const reclaimRetainedCapacity = vi.fn(() => true);
+    const gpuAttempts = [blocked, admitted];
+    const src = new FfmpegSource(
+      {
+        layerId: "upcoming",
+        mediaId: "m",
+        sourcePath: "C:/x.mp4",
+        codec: "h264",
+        pixFmt: "yuv420p",
+        componentAvailable: true,
+      },
+      {
+        makeGpu: () => gpuAttempts.shift()!.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }),
+        reclaimRetainedCapacity,
+      },
+    );
+
+    await src.ensureReady();
+
+    expect(reclaimRetainedCapacity).toHaveBeenCalledOnce();
+    expect(blocked.t.dispose).toHaveBeenCalledOnce();
+    expect(admitted.t.open).toHaveBeenCalledOnce();
+    expect(sw.t.open).not.toHaveBeenCalled();
+    expect(src.currentLane()).toBe("hardware");
+    expect(src.isDowngraded()).toBe(false);
+  });
+
+  it("waits for the retained session's lease release before retrying hardware", async () => {
+    const blocked = fakeTransport({ openRejects: HW_BUDGET_EXCEEDED });
+    const admitted = fakeTransport();
+    const sw = fakeTransport();
+    const gpuAttempts = [blocked, admitted];
+    let finishLeaseRelease!: (released: boolean) => void;
+    const leaseReleased = new Promise<boolean>((resolve) => {
+      finishLeaseRelease = resolve;
+    });
+    const src = new FfmpegSource(
+      {
+        layerId: "upcoming",
+        mediaId: "m",
+        sourcePath: "C:/x.mp4",
+        codec: "h264",
+        pixFmt: "yuv420p",
+        componentAvailable: true,
+      },
+      {
+        makeGpu: () => gpuAttempts.shift()!.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }),
+        reclaimRetainedCapacity: () => leaseReleased,
+      },
+    );
+
+    const ready = src.ensureReady();
+    await vi.waitFor(() => {
+      expect(blocked.t.dispose).toHaveBeenCalledOnce();
+    });
+    expect(admitted.t.open).not.toHaveBeenCalled();
+
+    finishLeaseRelease(true);
+    await ready;
+
+    expect(admitted.t.open).toHaveBeenCalledOnce();
+    expect(src.currentLane()).toBe("hardware");
+  });
+
+  it("still opens the software spill when rejected-HW cleanup and reclaim fail", async () => {
+    const blocked = fakeTransport({
+      openRejects: HW_BUDGET_EXCEEDED,
+      disposeRejects: "close failed",
+    });
+    const sw = fakeTransport();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const src = new FfmpegSource(
+      {
+        layerId: "upcoming",
+        mediaId: "m",
+        sourcePath: "C:/x.mp4",
+        codec: "h264",
+        pixFmt: "yuv420p",
+        componentAvailable: true,
+      },
+      {
+        makeGpu: () => blocked.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: null, device: null }),
+        reclaimRetainedCapacity: async () => {
+          throw new Error("reclaim failed");
+        },
+      },
+    );
+
+    await expect(src.ensureReady()).resolves.toBeUndefined();
+
+    expect(src.currentLane()).toBe("software");
+    expect(sw.t.open).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("hardware transport close failed"),
+      expect.any(Error),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("capacity reclaim failed"),
+      expect.any(Error),
+    );
+  });
+
   it("falls back to SW in place when the HARDWARE open() rejects (budget/device-loss at open)", async () => {
     const gpu = fakeTransport({ openRejects: "hw-budget-exceeded" });
     const sw = fakeTransport();

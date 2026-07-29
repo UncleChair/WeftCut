@@ -114,6 +114,30 @@ afterEach(() => {
 });
 
 describe("GpuTransport", () => {
+  it("does not resolve disposal until main has released the session lease", async () => {
+    const { api } = installFakePreviewGpu();
+    let finishClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      finishClose = resolve;
+    });
+    api.close.mockImplementation(async () => {
+      await closeGate;
+    });
+    const t = new GpuTransport();
+    await t.open({ streamId: "await-close", path: "C:/x.mp4" });
+
+    let disposed = false;
+    const disposing = Promise.resolve(t.dispose()).then(() => {
+      disposed = true;
+    });
+    await Promise.resolve();
+
+    expect(disposed).toBe(false);
+    finishClose();
+    await disposing;
+    expect(disposed).toBe(true);
+  });
+
   it("closes a session that finishes opening after disposal", async () => {
     const { api } = installFakePreviewGpu();
     const liveSessions = new Set<string>();
@@ -133,11 +157,20 @@ describe("GpuTransport", () => {
     const opening = t.open({ streamId: "disposed-opening", path: "C:/x.mp4" });
     await vi.waitFor(() => expect(api.open).toHaveBeenCalledOnce());
 
-    t.dispose();
+    let disposed = false;
+    const disposing = t.dispose().then(() => {
+      disposed = true;
+    });
+    await Promise.resolve();
+    // The first close raced before `open` registered the session. Disposal
+    // must stay pending until open's compensating close has released it.
+    expect(disposed).toBe(false);
     finishOpen();
     await opening;
+    await disposing;
 
     expect(liveSessions).toEqual(new Set());
+    expect(disposed).toBe(true);
   });
 
   it("forwards renderer-probed coded dimensions to main admission", async () => {
@@ -290,6 +323,27 @@ describe("GpuTransport", () => {
     );
     expect(acked.sort()).toEqual([0, 1, 2]);
     t.dispose();
+  });
+
+  it("closes the session when a completed slot ack cannot cross the port", async () => {
+    const { api, getPort } = installFakePreviewGpu();
+    const device = installFakeSlotFenceDevice();
+    const t = new GpuTransport();
+    t.onFrame(() => {});
+    await t.open({ streamId: "rf-ack-failed", path: "C:/x.mp4" });
+    const port = getPort()!;
+    port.postMessage = vi.fn(() => {
+      throw new Error("port closed");
+    });
+    port.onmessage!({
+      data: delegatedFrame("rf-ack-failed", 0, 10, makeFakeBitmap(1)),
+    });
+
+    expect(() => device.signalAll()).not.toThrow();
+    await vi.waitFor(() =>
+      expect(api.close).toHaveBeenCalledWith({ streamId: "rf-ack-failed" }),
+    );
+    expect(sharedSlotFenceQueue().pendingCount()).toBe(0);
   });
 
   // Teardown ordering from this side: dispose drops the pending slots before the

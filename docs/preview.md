@@ -206,14 +206,15 @@ means for licensing.
   track ~2 s per 20 s window and made 4K fail outright. WebGPU's
   `onSubmittedWorkDone` is a promise, so a slot that is not ready yet costs
   nothing to keep waiting for.
-- **The ack is independent of paint, and bounded.** A frame the ring evicts, or
+- **The ack is independent of paint, and completion-bound.** A frame the ring evicts, or
   one that arrives while nothing is compositing, still holds a slot, and
   `pool_size` stranded slots wedge a session for good — so the signal is taken on
-  delivery and never waits on anything downstream. A signal still absent at its
-  deadline acks regardless: one possibly-torn frame is the smaller harm. That
-  deadline is a real compromise rather than a formality, because the WebGPU signal
-  arrives well after it; the constant carries the measurements and the reason
-  (`slotFenceQueue.ts`). `HwBarrierMode` (`shared/ipc.ts`) names the strategies;
+  delivery and never waits on anything downstream. An unsignalled slot remains
+  owned regardless of elapsed wall time, until its GPU completion signal arrives
+  or the stream closes; time alone is not evidence that native may overwrite the
+  shared texture. The observed 83–97 ms hold with a three-slot pool can constrain
+  high-frame-rate throughput, but it no longer trades pixel ordering for that
+  throughput. `HwBarrierMode` (`shared/ipc.ts`) names the strategies;
   the preload-side fence and the synchronous 1px readback — a pipeline flush, not
   a frame transfer — stay available as A/B controls, the readback also as the
   fallback where the renderer has no device to fence on.
@@ -236,10 +237,12 @@ means for licensing.
   instead costs the whole GOP prefix every tick — measured 137× decode
   amplification on a 240-frame GOP, which is what made this lane unusable for
   long-GOP and 10-bit sources.
-- **HW→SW fallback is internal.** A HW decode error, device loss, or the
-  budget throw disposes the GPU transport and opens the SW transport **into
-  the same `FrameRing`** — a fresh `streamId` so no stale GPU frame lands, the
-  last HW frame held so there's no visible gap. The lane flips; nothing
+- **HW→SW fallback is internal.** A HW decode error or device loss disposes the
+  GPU transport and opens the SW transport **into the same `FrameRing`** — a
+  fresh `streamId` so no stale GPU frame lands, the last HW frame held so
+  there's no visible gap. A budget throw first gives the owning pool one
+  ordered chance to reclaim retained capacity and retry hardware; only a retry
+  that still loses admission takes the same SW path. The lane flips; nothing
   external fires and the swap key is unchanged. `currentLane()` reads the live
   lane for PerfHUD/diagnostics.
 - **Total failure surfaces once.** Only if the SW transport also dies (or the
@@ -266,38 +269,44 @@ currency throws typed `hw-budget-exceeded`; the clip falls to the SW transport
 rather than erroring and records no capability verdict, because admission
 capacity is transient.
 
-**Sticky, per-source, no re-promotion.** A HW *failure* marks this source
-software-only for the rest of the session; a total ffmpeg failure under `auto`
-marks the source `webcodecs` for the session. Neither re-promotes — reopening
-the source (reload / re-import) is what clears it.
+**Capability failures stay sticky; capacity spills do not.** A genuine HW
+failure (device creation/loss, decode failure) marks that media software-only
+for the rest of the app session; a total ffmpeg failure under `auto` marks the
+media `webcodecs` for the session. Those verdicts do not re-promote. A budget
+throw records no verdict, so it neither spreads to another clip on the same
+media nor becomes a permanent property of this clip.
 
-The budget throw is different in kind but not in effect. It records no verdict,
-so it does not spread: a *different* clip on the same media probes normally and
-takes hardware while the over-budget one sits on software. Above 1080p, only
-this capacity fallback gets the formal spill profile: the smallest supported
-scale near a 960×540 target (quarter size for 4K) and half cadence. Native still
-decodes every reference frame, but skips unselected frames before copy-back,
-scale, packing and IPC. Device failures and native-size mismatches use the
-ordinary software profile instead.
+Above 1080p, only this capacity fallback gets the formal spill profile: the
+smallest supported scale near a 960×540 target (quarter size for 4K) and half
+cadence. Native still decodes every reference frame, but skips unselected
+frames before copy-back, scale, packing and IPC. Device failures and native-size
+mismatches use the ordinary software profile instead.
 
-What a spill also does not do is come back. Lane selection runs once per decode
-session, at
-`pickInitialLane`, and a decode session outlives the timeline edit that would
-free a slot — `SourceDecoderPool` keys sources by layer id and drops one only on
-its idle sweep (the clip stops being requested for several seconds), a
-resolver-key change (a proxy landing, an engine flip), or a pool teardown
-(reload, re-import, export suspend). So deleting the other clips does not
-re-promote the clip that lost the race, and neither does reopening the project:
-the same layer id gets the same, already-downgraded source handed back. The
-budget is per-open; the *asking* is per-source-lifetime, and that is what
-decides.
+`Compositor` publishes one **priority epoch** before any active acquire or
+upcoming prewarm: every currently active VideoClip plus every clip at the
+nearest boundary inside the one-second lookahead, with both its base and
+overlap-swap pool keys. A priority source that receives
+`hw-budget-exceeded` may ask `SourceDecoderPool` to close only non-priority
+FFmpeg hardware handles retained from older timeline regions. The pool awaits
+each `previewGpu:close` through main's native close and budget-lease release
+before `FfmpegSource` retries `previewGpu:open`; a fire-and-forget close would
+race the same still-live lease.
+
+If the priority set itself exceeds physical capacity, the rejected source uses
+the spill profile without retry churn. When the playhead crosses the boundary,
+the priority epoch changes: the just-departed hardware source is now
+reclaimable, and any priority budget-spill handle is disposed and reacquired
+through the normal pool path. That fresh open asks main for hardware again.
+Thus the five-second idle retention remains useful in the ordinary case, but
+cannot pin an about-to-play clip to software under measured budget pressure.
 
 The live budget is readable — `previewGpu:budget` returns
 `sessions.used/max`, `codedPixelArea.used/max`, and the latter's
 `calibratedFps: 30`. The PerfHUD shows both currencies beside the per-clip lane
 pills. This is diagnostic state, not an invitation to pre-check: main's
 reservation is the authority. A clip reading `SW↓` next to newly available
-capacity is the sticky source lifetime above, not a capability verdict.
+capacity is a transient spill awaiting the next priority rebalance, not a
+capability verdict.
 
 **Two trails, logged separately.** `noteResolution` emits one LogBus row per
 media per change of the resolved key, so an engine or source change (the
@@ -308,10 +317,9 @@ putting it there would make hardware-vs-software an engine-level fact:
 transition, naming the layer, the media, the lane left, the lane taken and the
 reason — the `hw-budget-exceeded` overflow, a device loss, a capability failure.
 Both trails log per *change*, never per frame: a first open, and a same-lane
-re-open such as a playback-resolution change, are silent. A return trip would
-log the same way, but on the budget path there is nothing to log while the
-source lives: an over-budget clip does not re-promote inside its own decode
-session (above), so the overflow row is the only row that clip emits.
+re-open such as a playback-resolution change, are silent. A priority rebalance
+that rebuilds a budget-spilled clip leaves the matching `software → hardware`
+return row; capability-failure sessions never produce that return.
 
 **Capability cache.** `<userData>/decode_capability.json` persists per-machine
 probe verdicts across restarts, keyed by lane (`sw`/`hw`) and a

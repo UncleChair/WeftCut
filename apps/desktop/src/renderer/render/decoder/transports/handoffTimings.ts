@@ -22,10 +22,12 @@
 
 import type { HwBarrierMode } from "../../../../shared/ipc";
 
-/// Health of the `fence` barrier's deferred-ack queue, as the preload reports it
+/// Health of a deferred-ack fence queue, as the preload or renderer reports it
 /// per frame. `pendingPeak`/`forcedWaits`/`forcedWaitMsTotal` are cumulative
 /// counters (the window keeps the max, so they survive the ring); `waitMs` is
 /// one completed submit→ack and is absent until the first fence drains.
+/// Production `rendererFence` is signal-only, so its forced counters stay zero;
+/// non-zero renderer values identify explicit unsafe/legacy diagnostic data.
 export interface FenceHandoffStats {
   waitMs?: number;
   pendingPeak: number;
@@ -52,14 +54,14 @@ export interface HandoffTimingSummary {
   /// Which barrier the preload actually RAN, as opposed to the one the run was
   /// configured for. It exists because the configured label can lie — the
   /// preload falls back from a GPU path to `readback` when WebGL2 is missing,
-  /// and main resolves an unset or unrecognised mode to `fence` — so a bench leg
+  /// and main resolves an unset or unrecognised mode to `rendererFence` — so a bench leg
   /// that trusts its own `WEFTCUT_HW_BARRIER` label can report a barrier-less
   /// result that in fact ran the full barrier. A measurement whose route drifted
   /// is invalid, not slow; this is what makes the drift visible.
   ///
   /// Note the two fallbacks differ ON PURPOSE: main's unrecognised-mode default
-  /// is `fence`, while the preload's fallback for a stream whose barrier latch
-  /// never arrived is `readback`. Because that differs from the default, an
+  /// is `rendererFence`, while the preload's fallback for a stream whose barrier
+  /// latch never arrived is `readback`. Because that differs from the default, an
   /// unlatched frame reports a second applied mode and the session reads
   /// `'mixed'` — a fallback that matched the default would blend in silently.
   ///
@@ -67,7 +69,7 @@ export interface HandoffTimingSummary {
   /// same "don't answer what you didn't measure" rule the null summary follows.
   /// `'mixed'` is the disagreement sentinel; see the latch in `record`.
   barrierModeObserved: HwBarrierMode | "mixed" | null;
-  /// The three health indicators for the `fence` barrier, which trades a
+  /// The three health indicators for deferred fence barriers, which trade a
   /// blocking wait for a deferred one and therefore has failure modes the
   /// barrier timings above cannot show.
   ///
@@ -76,8 +78,8 @@ export interface HandoffTimingSummary {
   /// mistake this split exists to prevent. `fencePendingQueuePeak` is how deep
   /// the un-acked queue ever got: approaching `poolSize` means the deferral is
   /// starving the producer rather than freeing it. `fenceForcedWaits` counts
-  /// deadline fallbacks — the one to watch, because a fence path that quietly
-  /// force-waits every frame is the old synchronous barrier wearing a hat.
+  /// preload WebGL forced waits, plus explicit unsafe/legacy renderer deadline
+  /// releases. It stays zero for production's signal-only `rendererFence`.
   fenceWaitP50: number | null;
   fencePendingQueuePeak: number;
   fenceForcedWaits: number;
@@ -90,9 +92,8 @@ export interface HandoffTimingSummary {
   /// measurement window to fold it back into a real thread-seconds figure.
   ///
   /// Structurally 0 under `rendererFence`: a promise-based completion signal has
-  /// nothing to poll, so its deadline is a bare "ack and count it". Read
-  /// `fenceForcedWaits` there — a zero here means no spin EXISTS, not that no
-  /// deadline was blown.
+  /// nothing to poll, and production has no deadline release. A zero here means
+  /// no spin exists; `fencePendingQueuePeak`/`fenceWaitP50` carry its health.
   fenceForcedWaitMsTotal: number;
   /// `createImageBitmap` — an enqueue, so cheap; it is the barrier that waits
   /// for the copy this call schedules.

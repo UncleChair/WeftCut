@@ -34,6 +34,8 @@ interface ChromaUniforms {
 }
 
 export class ChromaKeyFilter extends Filter {
+  private readonly chromaUniforms: UniformGroup;
+
   constructor() {
     const d = CHROMA_UNIFORM_DEFAULTS;
     const gpuProgram = GpuProgram.from({
@@ -45,22 +47,43 @@ export class ChromaKeyFilter extends Filter {
       fragment: CHROMA_FRAG_GL,
       name: "chromakey-filter",
     });
+    const chromaUniforms = new UniformGroup({
+      uKey: { value: new Float32Array(d.uKey), type: "vec3<f32>" },
+      uBalance: { value: d.uBalance, type: "f32" },
+      uClipBlack: { value: d.uClipBlack, type: "f32" },
+      uClipWhite: { value: d.uClipWhite, type: "f32" },
+      uDespill: { value: d.uDespill, type: "f32" },
+      uFeather: { value: d.uFeather, type: "f32" },
+      uShrink: { value: d.uShrink, type: "f32" },
+      uViewMatte: { value: d.uViewMatte, type: "f32" },
+    });
     super({
       gpuProgram,
       glProgram,
       resources: {
-        chromaUniforms: new UniformGroup({
-          uKey: { value: new Float32Array(d.uKey), type: "vec3<f32>" },
-          uBalance: { value: d.uBalance, type: "f32" },
-          uClipBlack: { value: d.uClipBlack, type: "f32" },
-          uClipWhite: { value: d.uClipWhite, type: "f32" },
-          uDespill: { value: d.uDespill, type: "f32" },
-          uFeather: { value: d.uFeather, type: "f32" },
-          uShrink: { value: d.uShrink, type: "f32" },
-          uViewMatte: { value: d.uViewMatte, type: "f32" },
-        }),
+        chromaUniforms,
       },
     });
+    this.chromaUniforms = chromaUniforms;
+  }
+
+  override apply(...args: Parameters<Filter["apply"]>): void {
+    super.apply(...args);
+    const buffer = this.chromaUniforms.buffer;
+    if (buffer) {
+      // Pixi creates this buffer lazily on the first WebGPU apply. Its GC can
+      // unload the buffer while EffectChain still owns this filter, but Pixi's
+      // bind-group cache then keeps pointing at the destroyed GPUBuffer.
+      // Keep this tiny filter-owned UBO resident for the filter's lifetime;
+      // destroy() below is its explicit release point.
+      buffer.autoGarbageCollect = false;
+    }
+  }
+
+  override destroy(destroyPrograms = false): void {
+    const buffer = this.chromaUniforms.buffer;
+    if (buffer && !buffer.destroyed) buffer.destroy();
+    super.destroy(destroyPrograms);
   }
 
   applyParam(name: ChromaParamName, value: number): void {

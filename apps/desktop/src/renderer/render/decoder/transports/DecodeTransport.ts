@@ -32,7 +32,11 @@ export interface DecodeTransport {
   /// SW: open failure only). FfmpegSource decides whether this is recoverable.
   onError(cb: (reason: string) => void): void;
   onEof(cb: () => void): void;
-  dispose(): void;
+  /// Begins teardown. GPU transports resolve only after main has closed the
+  /// native session and released its admission lease; callers that intend to
+  /// open a replacement session must await it. Other call sites may keep the
+  /// historical fire-and-forget posture.
+  dispose(): void | Promise<void>;
   /// Diagnostics: per-frame preload handoff timings. Hardware lane only — the
   /// SW transport has no preload stage to stamp, so it does not implement this.
   handoffTimings?(): HandoffTimingSummary | null;
