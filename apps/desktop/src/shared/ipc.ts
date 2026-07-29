@@ -66,6 +66,17 @@ export type SystemStats = {
 /// fire-once-before-subscribe race a pushed event had.
 export type AppNotice = { level: 'info' | 'warn' | 'error'; code: string }
 
+/// Version identity for the About dialog, pulled by the renderer (the bundle
+/// has no package.json access). `app` is app.getVersion(); the rest are
+/// process.versions / process platform tags used by bug reports.
+export type AppVersions = {
+  app: string
+  electron: string
+  chrome: string
+  platform: string
+  arch: string
+}
+
 /// Color-space tag for a native GPU-preview shared-texture import. Mirrors
 /// Electron's `ColorSpace` structure (main passes it straight to
 /// `importSharedTexture`); typed structurally here so this DOM/electron-free
@@ -389,8 +400,9 @@ export interface WeftcutApi {
     exists(label: string): Promise<boolean>
   }
   media: { dropped(paths: string[]): Promise<void> }
-  /// Startup notices the renderer pulls on mount (see AppNotice).
-  app: { notices(): Promise<AppNotice[]> }
+  /// Startup notices the renderer pulls on mount (see AppNotice), plus the
+  /// version identity behind the Help → About dialog (see AppVersions).
+  app: { notices(): Promise<AppNotice[]>; versions(): Promise<AppVersions> }
   /// Open a path or URL in the OS default handler (file manager / browser).
   shell: { open(target: string): Promise<void> }
   /// Post a desktop notification (best-effort; no-op where unsupported).

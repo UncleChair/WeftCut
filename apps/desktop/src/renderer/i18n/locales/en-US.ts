@@ -112,10 +112,25 @@ const enUS = {
     edit: "Edit",
     insert: "Insert",
     view: "View",
+    help: "Help",
   },
   dev: {
     menu: "Dev",
     performance_monitor: "Performance Monitor",
+  },
+  help: {
+    check_updates: "Check for Updates…",
+    report_issue: "Report an Issue…",
+    about: "About WeftCut",
+    version: "Version {{version}}",
+    developed_by: "Developed by UncleChair",
+    license_mit: "License: WeftCut is <mit>MIT</mit>-licensed.",
+    third_party:
+      "Third-party components have their own licenses: <notices>THIRD-PARTY-NOTICES.md</notices>.",
+    copy_version: "Copy Version Info",
+    copied: "Copied",
+    project_link: "Project Page",
+    close: "Close",
   },
   view: {
     display_mode_heading: "Track display",

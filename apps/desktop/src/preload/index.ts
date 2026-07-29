@@ -3,6 +3,7 @@ import type { SharedTextureImported } from 'electron'
 import type {
   WeftcutApi,
   AppNotice,
+  AppVersions,
   DecodeCapabilityProbeResult,
   DecodeComponentStatus,
   DecodeHwProbeResult,
@@ -115,6 +116,7 @@ const api: WeftcutApi = {
 
   app: {
     notices: (): Promise<AppNotice[]> => ipcRenderer.invoke('app:notices') as Promise<AppNotice[]>,
+    versions: (): Promise<AppVersions> => ipcRenderer.invoke('app:versions') as Promise<AppVersions>,
   },
 
   // OS shell + desktop notification — native main-process concerns, handled by

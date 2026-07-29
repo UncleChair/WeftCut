@@ -18,6 +18,7 @@ import {
 } from "../i18n";
 import { setLocale } from "../settings/appSettingsStore";
 import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
+import { HelpMenu } from "./HelpMenu";
 import { openPerformanceMonitor } from "../render/performanceMonitorWindow";
 import type {
   DockWorkspaceController,
@@ -235,6 +236,8 @@ export function AppMenuBar({
               onSelect={onOpenMotifPicker}
             />
           </Menu>
+
+          <HelpMenu />
 
           <DevMenu />
         </MenuBar>

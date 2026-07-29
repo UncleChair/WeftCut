@@ -614,6 +614,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
   ipcMain.handle('app:notices', () => startupNotices)
+  // About-dialog identity: app version + runtime tags, pulled by the renderer
+  // (Help → About) since the bundle has no package.json access.
+  ipcMain.handle('app:versions', () => ({
+    app: app.getVersion(),
+    electron: process.versions.electron ?? '',
+    chrome: process.versions.chrome ?? '',
+    platform: process.platform,
+    arch: process.arch,
+  }))
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
     // Motif runtime registration: renderer sends its clock-takeover source once
