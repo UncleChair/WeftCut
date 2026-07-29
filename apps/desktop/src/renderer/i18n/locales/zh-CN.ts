@@ -236,7 +236,7 @@ const zhCN: Resources = {
     export_filter: "输出文件",
   },
   media_pool: {
-    empty: "尚未导入素材 — 点击「导入素材…」添加文件。",
+    empty: "尚未导入素材",
     search_placeholder: "搜索素材…",
     no_matches: "未找到与「{{query}}」匹配的素材。",
     clear_search: "清除搜索",

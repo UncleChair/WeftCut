@@ -238,7 +238,7 @@ const enUS = {
     export_filter: "Output file",
   },
   media_pool: {
-    empty: "No media imported yet — click \"Import media…\" to add a file.",
+    empty: "No media imported yet.",
     search_placeholder: "Search media…",
     no_matches: "No matches for “{{query}}”.",
     clear_search: "Clear search",

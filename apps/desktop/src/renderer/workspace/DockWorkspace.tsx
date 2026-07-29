@@ -72,6 +72,7 @@ export interface DockPanelContracts {
   previewDecodableMediaIds: ReadonlySet<string>;
   onExitBlade: () => void;
   onMutated: () => Promise<void>;
+  onImportMedia: () => Promise<void>;
   selectedLayerId: string | null;
   onSelectLayer: (layerId: string | null) => void;
   onRevealTrack: (trackId: string, layerId: string) => void;
@@ -156,6 +157,7 @@ function MediaDockPanel() {
           await importCancel(id).catch(() => false);
         }}
         onMutated={contracts.onMutated}
+        onImportMedia={contracts.onImportMedia}
       />
     </MediaDropZone>
   );
