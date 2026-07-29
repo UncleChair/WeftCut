@@ -19,6 +19,7 @@ import {
   playheadTimeUs,
   setPlayheadTimeUs,
 } from "./state/playheadStore";
+import { LatestRequestCoordinator } from "./state/latestRequest";
 import {
   clearLayerSelection,
   setLayerSelection,
@@ -91,6 +92,11 @@ interface AppProps {
 export function App({ onCloseProject }: AppProps) {
   const { t } = useTranslation();
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
+  const summaryRequestsRef = useRef<LatestRequestCoordinator | null>(null);
+  if (summaryRequestsRef.current === null) {
+    summaryRequestsRef.current = new LatestRequestCoordinator();
+  }
+  const summaryRequests = summaryRequestsRef.current;
   const [busy, setBusy] = useState(false);
   // Write-only: error text is surfaced through the status bar / log (see the
   // setError call sites), not rendered here, so we keep only the setter.
@@ -322,12 +328,20 @@ export function App({ onCloseProject }: AppProps) {
   }, [logReady, systemNotices]);
 
   const refresh = useCallback(async () => {
-    try {
-      setSummary(await projectSummary());
-    } catch (e) {
-      setError(t("errors.refresh_failed", { detail: String(e) }));
-    }
-  }, [t]);
+    await summaryRequests.run(
+      () => projectSummary(),
+      setSummary,
+      (error) =>
+        setError(t("errors.refresh_failed", { detail: String(error) })),
+    );
+  }, [summaryRequests, t]);
+
+  useEffect(
+    () => () => {
+      summaryRequests.invalidate();
+    },
+    [summaryRequests],
+  );
 
   const {
     pong,

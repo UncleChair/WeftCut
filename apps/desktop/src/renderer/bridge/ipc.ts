@@ -16,9 +16,36 @@ declare global {
   }
 }
 
+type BackendInvoke = <T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+) => Promise<T>
+
+type E2EInvokeInterceptor = <T>(
+  cmd: string,
+  args: Record<string, unknown> | undefined,
+  next: BackendInvoke,
+) => Promise<T>
+
 /** Send a command to the napi/Rust backend dispatcher. */
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return window.api.backend.invoke(cmd, args) as Promise<T>
+  const next: BackendInvoke = <Result>(
+    nextCmd: string,
+    nextArgs?: Record<string, unknown>,
+  ) => window.api.backend.invoke(nextCmd, nextArgs) as Promise<Result>
+
+  // The E2E build may intercept a renderer → backend call to deterministically
+  // hold/reorder responses. Production builds fold this branch away.
+  if (import.meta.env.VITE_WEFTCUT_E2E === '1') {
+    const interceptor = (
+      globalThis as typeof globalThis & {
+        __weftcutE2EBackendInvokeInterceptor?: E2EInvokeInterceptor
+      }
+    ).__weftcutE2EBackendInvokeInterceptor
+    if (interceptor) return interceptor<T>(cmd, args, next)
+  }
+
+  return next<T>(cmd, args)
 }
 
 export function convertFileSrc(filePath: string): string {

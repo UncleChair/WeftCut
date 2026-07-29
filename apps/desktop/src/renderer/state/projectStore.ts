@@ -12,6 +12,7 @@ import {
   retainLayerSelection,
   retainTransitionSelection,
 } from "./selectionStore";
+import { LatestRequestCoordinator } from "./latestRequest";
 
 /// Frontend mirror of the main-process TS state actor's project, kept in sync
 /// via `project:changed` backend events. The PixiJS preview consumes this
@@ -110,34 +111,30 @@ export const useProjectStore = create<
 export async function wireProjectStore(): Promise<UnlistenFn> {
   // `project:changed` fires a re-fetch, and `project_summary` is an async IPC
   // whose responses can resolve out of order (the actor services calls on a
-  // threadpool). Without a guard, a slow response that captured OLDER actor
-  // state can land AFTER a fresher one and clobber it — e.g. an import decides
-  // a direct-export route, then a stale in-flight summary applies the
-  // pre-decision route, leaving the media transiently export-routeless. The
-  // export-readiness gate then reads that regressed state and fails with
-  // "no export-ready source". Drop any response older than the newest already
-  // applied (last-write-wins by dispatch order).
-  let lastApplied = 0;
-  let dispatched = 0;
+  // threadpool). A newly issued request invalidates every earlier request
+  // immediately, including while the new response is pending. Otherwise the
+  // older snapshot can still publish in that gap and temporarily regress clip
+  // geometry or media export routing.
+  const requests = new LatestRequestCoordinator();
   const refresh = async () => {
-    const reqId = ++dispatched;
-    try {
-      const s = await projectSummary();
-      if (reqId <= lastApplied) return;
-      lastApplied = reqId;
-      useProjectStore.getState().apply(s);
-    } catch {
-      // No project loaded — leave summary null but mark ready so
-      // consumers can distinguish from the pre-fetch state.
-      if (reqId <= lastApplied) return;
-      lastApplied = reqId;
-      useProjectStore.getState().apply(null);
-    }
+    await requests.run(
+      () => projectSummary(),
+      (summary) => useProjectStore.getState().apply(summary),
+      () => {
+        // No project loaded — leave summary null but mark ready so
+        // consumers can distinguish from the pre-fetch state.
+        useProjectStore.getState().apply(null);
+      },
+    );
   };
   await refresh();
-  return await listen("project:changed", () => {
+  const unlisten = await listen("project:changed", () => {
     void refresh();
   });
+  return () => {
+    requests.invalidate();
+    unlisten();
+  };
 }
 
 // ===== Atomic selector helpers ============================================
