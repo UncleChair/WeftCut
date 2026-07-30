@@ -57,20 +57,20 @@ describe('decode capability cache', () => {
 })
 
 // Advertisement-gated multi-lane HW resolution (User Story 8/9/17/18): resolvers
-// probe ONLY lanes the component compiled in, in NVDEC > VAAPI > d3d11va order,
-// per DRM node for VAAPI, and fall back to software when none pass. Driven by
-// FAKE capabilities (the `lanes` array), FAKE devices, and a FAKE verdict (the
-// `probe` spy) — platform-independent, no GPU, runs in CI.
+// probe ONLY lanes the component compiled in, in NVDEC > VAAPI > d3d11va >
+// videotoolbox order, per DRM node for VAAPI, and fall back to software when
+// none pass. Driven by FAKE capabilities (the `lanes` array), FAKE devices, and
+// a FAKE verdict (the `probe` spy) — platform-independent, no GPU, runs in CI.
 describe('resolveHwLane (advertisement-gated multi-lane HW probe)', () => {
   const envKey = () => Promise.resolve('gpu:1:2:drv')
   const store = () => createDecodeCapabilityStore({ fs: memFs(), path: '/x/c.json', dir: '/x' })
-  // NVDEC/d3d11va decode on the sole GPU handle (device=null); VAAPI enumerates
-  // DRM render nodes.
-  const twoNodeDevices = (lane: 'sw' | 'd3d11va' | 'nvdec' | 'vaapi') =>
+  // NVDEC/d3d11va/videotoolbox decode on the sole GPU/OS handle (device=null);
+  // VAAPI enumerates DRM render nodes.
+  const twoNodeDevices = (lane: 'sw' | 'd3d11va' | 'nvdec' | 'vaapi' | 'videotoolbox') =>
     lane === 'vaapi' ? ['/dev/dri/renderD128', '/dev/dri/renderD129'] : [null]
 
-  it('exposes the NVDEC > VAAPI > d3d11va priority as a stable contract', () => {
-    expect(HW_LANE_PRIORITY).toEqual(['nvdec', 'vaapi', 'd3d11va'])
+  it('exposes the NVDEC > VAAPI > d3d11va > videotoolbox priority as a stable contract', () => {
+    expect(HW_LANE_PRIORITY).toEqual(['nvdec', 'vaapi', 'd3d11va', 'videotoolbox'])
   })
 
   it('takes NVDEC first when it passes, never touching VAAPI', async () => {
@@ -191,5 +191,30 @@ describe('resolveHwLane (advertisement-gated multi-lane HW probe)', () => {
     expect(r).toEqual({ lane: 'd3d11va', device: null, ok: true, reason: null })
     expect(probe).toHaveBeenCalledWith('d3d11va', null)
     expect(s.get('d3d11va', 'h264::yuv420p:hd', 'gpu:1:2:drv')).toBe(true)
+  })
+
+  it('resolves the macOS videotoolbox lane through the same path (device null)', async () => {
+    const s = store()
+    const probe = vi.fn(() => ({ ok: true, reason: null }))
+    const r = await resolveHwLane({
+      lanes: ['software', 'videotoolbox'], store: s, classKey: 'h264::yuv420p:hd', envKey,
+      devices: (lane) => (lane === 'vaapi' ? ['/dev/dri/renderD128'] : [null]), probe,
+    })
+    expect(r).toEqual({ lane: 'videotoolbox', device: null, ok: true, reason: null })
+    expect(probe).toHaveBeenCalledWith('videotoolbox', null)
+    expect(s.get('videotoolbox', 'h264::yuv420p:hd', 'gpu:1:2:drv')).toBe(true)
+  })
+
+  it('falls back to software when the advertised videotoolbox lane probes unusable', async () => {
+    // The advertisement is unconditional on macOS; the cached probe verdict is
+    // the actual gate — a refusal must land on software, and be remembered.
+    const s = store()
+    const probe = vi.fn(() => ({ ok: false, reason: 'no hw surface' }))
+    const r = await resolveHwLane({
+      lanes: ['software', 'videotoolbox'], store: s, classKey: 'h264::yuv420p:uhd', envKey,
+      devices: (lane) => (lane === 'vaapi' ? ['/dev/dri/renderD128'] : [null]), probe,
+    })
+    expect(r).toEqual({ lane: null, device: null, ok: false, reason: 'no hw lane passed' })
+    expect(s.get('videotoolbox', 'h264::yuv420p:uhd', 'gpu:1:2:drv')).toBe(false)
   })
 })

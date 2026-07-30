@@ -127,6 +127,19 @@ describe("SwTransport", () => {
     t.dispose();
   });
 
+  it("forwards a VideoToolbox accel with a null device (macOS, issue #10)", async () => {
+    const { api } = installApi();
+    const t = new SwTransport({ lane: "videotoolbox", device: null });
+    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    expect(api.open).toHaveBeenCalledWith({
+      streamId: "s1",
+      path: "/tmp/x.mov",
+      lane: "videotoolbox",
+      device: null,
+    });
+    t.dispose();
+  });
+
   it("forwards no lane/device on the software path (no accel)", async () => {
     const { api } = installApi();
     const t = new SwTransport();

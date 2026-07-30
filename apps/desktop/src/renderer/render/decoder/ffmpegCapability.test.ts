@@ -72,6 +72,11 @@ describe("pickInitialLane", () => {
     expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "/tmp/x.mp4"))
       .toEqual({ lane: "hardware", hwLane: "vaapi", device: "/dev/dri/renderD128" });
   });
+  it("surfaces the resolved VideoToolbox copy-back lane from the probe verdict (macOS, issue #10)", async () => {
+    const probe = vi.fn(async () => ({ ok: true, lane: "videotoolbox", device: null }));
+    expect(await pickInitialLane({ mediaId: "m", codec: "h264", pixFmt: "yuv420p", componentAvailable: true }, probe, "/tmp/x.mp4"))
+      .toEqual({ lane: "hardware", hwLane: "videotoolbox", device: null });
+  });
   it("resolves software after markHwUnusable, even for an eligible codec", async () => {
     markHwUnusable("m", "device-lost");
     const probe = vi.fn(async () => ({ ok: true }));

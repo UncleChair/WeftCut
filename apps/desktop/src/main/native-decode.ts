@@ -18,8 +18,9 @@ export interface NativeDecodeComponent {
   reason: string | null
   version: string | null
   /// The decode lanes this build advertised (`capabilities()`, ADR 0030
-  /// §Lane advertisement): `software` on every platform, plus `d3d11va` on the
-  /// Windows HW-preview build. Empty when the component failed to load.
+  /// §Lane advertisement): `software` on every platform, plus the platform's HW
+  /// lanes — `d3d11va` on the Windows HW-preview build, `nvdec`/`vaapi` on
+  /// Linux, `videotoolbox` on macOS. Empty when the component failed to load.
   /// Resolvers probe ONLY advertised lanes, so the Linux resolver never touches
   /// the GPU-preview stub that returns a "not built" verdict by design.
   lanes: string[]

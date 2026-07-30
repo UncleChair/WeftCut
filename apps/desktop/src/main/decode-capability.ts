@@ -14,16 +14,17 @@ import type { AppSettingsFs } from './app-settings'
 /// The decode lanes the machine cache can hold a verdict for — the software
 /// lane plus each platform's hardware lanes, named exactly as the component
 /// advertises them (`capabilities()`). `d3d11va` is Windows; `nvdec`/`vaapi`
-/// are Linux. Never coexist across platforms, but the cache vocabulary is
-/// platform-independent.
-export type DecodeLane = 'sw' | 'd3d11va' | 'nvdec' | 'vaapi'
+/// are Linux; `videotoolbox` is macOS (issue #10). Never coexist across
+/// platforms, but the cache vocabulary is platform-independent.
+export type DecodeLane = 'sw' | 'd3d11va' | 'nvdec' | 'vaapi' | 'videotoolbox'
 
 /// HW-lane resolution order (User Story 8; mirrors the encode side's
 /// NVENC > VAAPI). NVDEC first so an NVIDIA machine uses its native decoder
 /// rather than the flaky NVIDIA VAAPI shim; VAAPI next (Intel/AMD, and NVIDIA's
-/// shim as a last resort); `d3d11va` trails as the Windows lane (it never shares
-/// an advertisement with the Linux lanes, so its position is inert there).
-export const HW_LANE_PRIORITY: readonly DecodeLane[] = ['nvdec', 'vaapi', 'd3d11va']
+/// shim as a last resort); `d3d11va` (Windows) and `videotoolbox` (macOS) trail
+/// as each platform's sole lane (neither ever shares an advertisement with the
+/// Linux lanes, so their positions are inert).
+export const HW_LANE_PRIORITY: readonly DecodeLane[] = ['nvdec', 'vaapi', 'd3d11va', 'videotoolbox']
 
 interface CacheFile {
   env: Partial<Record<DecodeLane, string>>
@@ -33,9 +34,9 @@ interface CacheFile {
 const EMPTY: CacheFile = { env: {}, entries: {} }
 
 /// Compose the per-lane entry key. A verdict without a device (NVDEC, d3d11va,
-/// SW) keys on the bare classKey — byte-identical to the pre-device format so
-/// those lanes' entries are unchanged. VAAPI folds the DRM node in so per-node
-/// verdicts stay independent.
+/// videotoolbox, SW) keys on the bare classKey — byte-identical to the
+/// pre-device format so those lanes' entries are unchanged. VAAPI folds the DRM
+/// node in so per-node verdicts stay independent.
 function entryKeyOf(classKey: string, device?: string | null): string {
   return device != null ? `${classKey}@${device}` : classKey
 }
@@ -95,8 +96,8 @@ export interface HwProbeVerdict {
 
 /// The chosen HW lane. `lane` is null on software fallback (no advertised HW
 /// lane, or every advertised lane/device probed unusable); `device` names the
-/// DRM render node for a VAAPI verdict (null for NVDEC/d3d11va, which decode on
-/// the sole GPU handle).
+/// DRM render node for a VAAPI verdict (null for NVDEC/d3d11va/videotoolbox,
+/// which decode on the sole GPU/OS handle).
 export interface HwLaneResolution {
   lane: DecodeLane | null
   device: string | null

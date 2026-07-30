@@ -27,6 +27,14 @@ import {
 const IDLE_DISPOSE_MS = 5_000;
 let nextStreamSeq = 0;
 
+/// The HW lanes that COPY BACK to CPU frames and ship bytes over the previewSw
+/// transport (Linux NVDEC/VAAPI — ADR 0034; macOS VideoToolbox — issue #10), as
+/// opposed to the Windows shared-texture lane (d3d11va → GpuTransport). One
+/// predicate so `makeHardwareTransport` and `usesSwTransport` cannot drift.
+function isCopyBackHwLane(lane: string): boolean {
+  return lane === "nvdec" || lane === "vaapi" || lane === "videotoolbox";
+}
+
 export interface FfmpegSourceInit {
   layerId: string;
   mediaId: string;
@@ -43,9 +51,9 @@ export interface FfmpegSourceInit {
   poolSize?: number;
   /// Playback-resolution divisor (1 | 2 | 4) for the SOFTWARE transport: native
   /// ships frames at `src / n`, cutting the per-frame IPC bytes a 4K source
-  /// spends. Preview only, and only on the byte-shipping lanes (software +
-  /// Linux copy-back); the Windows shared-texture lane has no IPC pixels to
-  /// reclaim. Omitted = 1 = full resolution.
+  /// spends. Preview only, and only on the byte-shipping lanes (software + the
+  /// Linux/macOS copy-back lanes); the Windows shared-texture lane has no IPC
+  /// pixels to reclaim. Omitted = 1 = full resolution.
   playbackScaleDiv?: number;
   /// Bench-only: pin the lane (decode-bench Stage 3). Skips capability probing.
   forceLane?: FfmpegLane;
@@ -75,9 +83,9 @@ export class FfmpegSource implements PreviewDecodeSession {
   private transport: DecodeTransport | null = null;
   private lane: FfmpegLane = "software";
   /// The resolved HW lane the current hardware attempt keys its transport on
-  /// (Linux copy-back nvdec/vaapi → SwTransport; Windows d3d11va → GpuTransport).
-  /// null unless `pickInitialLane` resolved a named HW lane; a forced-lane bench
-  /// run leaves it null and falls to the GPU transport.
+  /// (copy-back nvdec/vaapi/videotoolbox → SwTransport; Windows d3d11va →
+  /// GpuTransport). null unless `pickInitialLane` resolved a named HW lane; a
+  /// forced-lane bench run leaves it null and falls to the GPU transport.
   private hwPlan: { lane: string; device: string | null } | null = null;
   private startedHardware = false;
   private readyP: Promise<void> | null = null;
@@ -121,10 +129,11 @@ export class FfmpegSource implements PreviewDecodeSession {
   handoffTimings(): HandoffTimingSummary | null {
     return this.transport?.handoffTimings?.() ?? null;
   }
-  /// The resolved HW lane name (`nvdec`|`vaapi`|`d3d11va`) the current hardware
-  /// attempt keyed its transport on, or null on the software lane / a forced-lane
-  /// bench run. E2E-only: the lane-parameterized conformance spec reads this
-  /// (via `ActiveClipProbe.hwLane`) to assert WHICH HW lane engaged.
+  /// The resolved HW lane name (`nvdec`|`vaapi`|`videotoolbox`|`d3d11va`) the
+  /// current hardware attempt keyed its transport on, or null on the software
+  /// lane / a forced-lane bench run. E2E-only: the lane-parameterized
+  /// conformance spec reads this (via `ActiveClipProbe.hwLane`) to assert WHICH
+  /// HW lane engaged.
   currentHwLane(): string | null { return this.hwPlan?.lane ?? null; }
   isDowngraded(): boolean { return this.startedHardware && this.lane === "software"; }
   /// True only for this decode session's transient admission spill. Runtime
@@ -137,9 +146,9 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// live transport on the shared-texture hardware lane. `currentLane()` alone
   /// over-approximates twice: `lane` is assigned before `open` settles and
   /// survives `closeTransportForFallback` nulling the transport (a window where
-  /// "hardware" owns nothing), and the copy-back lanes (nvdec/vaapi) ride
-  /// `previewSw`, which has no admission budget at all. A reclaim that picks a
-  /// non-holder tears down a live clip and frees nothing.
+  /// "hardware" owns nothing), and the copy-back lanes (nvdec/vaapi/
+  /// videotoolbox) ride `previewSw`, which has no admission budget at all. A
+  /// reclaim that picks a non-holder tears down a live clip and frees nothing.
   holdsHwSessionLease(): boolean {
     return (
       !this._disposed
@@ -348,15 +357,15 @@ export class FfmpegSource implements PreviewDecodeSession {
     if (this.lastTargetUs !== null) t.requestFrameAt(this.lastTargetUs);
   }
 
-  /// Pick the hardware transport by the resolved HW lane: the Linux copy-back
-  /// lanes (nvdec/vaapi) ride the SW transport with a hw accel — decode happens
-  /// on the GPU but frames ship as CPU NV12 over the SAME previewSw transport;
-  /// the Windows shared-texture lane (d3d11va) rides the GPU transport. A forced
-  /// lane (bench) has no hwPlan and falls to the GPU transport (its historical
-  /// behavior).
+  /// Pick the hardware transport by the resolved HW lane: the copy-back lanes
+  /// (Linux nvdec/vaapi, macOS videotoolbox) ride the SW transport with a hw
+  /// accel — decode happens on the GPU/OS media engine but frames ship as CPU
+  /// NV12 over the SAME previewSw transport; the Windows shared-texture lane
+  /// (d3d11va) rides the GPU transport. A forced lane (bench) has no hwPlan and
+  /// falls to the GPU transport (its historical behavior).
   private makeHardwareTransport(): DecodeTransport {
     const hw = this.hwPlan;
-    if (hw && (hw.lane === "nvdec" || hw.lane === "vaapi")) {
+    if (hw && isCopyBackHwLane(hw.lane)) {
       // The copy-back lanes ship the same NV12 bytes over the same IPC, so they
       // want the playback-resolution divisor just as much as software does.
       return this.makeSoftwareTransport({ lane: hw.lane, device: hw.device });
@@ -365,7 +374,7 @@ export class FfmpegSource implements PreviewDecodeSession {
   }
 
   /// One constructor seam owns every byte-shipping profile. The formal spill
-  /// is selected only after a budget refusal; ordinary software and Linux
+  /// is selected only after a budget refusal; ordinary software and the
   /// copy-back lanes preserve the user's resolution and full cadence.
   private makeSoftwareTransport(accel?: { lane: string; device: string | null }): DecodeTransport {
     const profile = resolveBudgetSpillProfile({
@@ -381,13 +390,14 @@ export class FfmpegSource implements PreviewDecodeSession {
   }
 
   /// True when the CURRENT lane ships frames through `SwTransport` — plain
-  /// software, or a Linux copy-back HW lane, both of which pack NV12 bytes
-  /// across IPC. Mirrors `makeHardwareTransport`'s routing, and is the only
-  /// place the playback-resolution divisor can change anything.
+  /// software, or a copy-back HW lane (Linux nvdec/vaapi, macOS videotoolbox),
+  /// all of which pack NV12 bytes across IPC. Mirrors `makeHardwareTransport`'s
+  /// routing, and is the only place the playback-resolution divisor can change
+  /// anything.
   private usesSwTransport(): boolean {
     if (this.lane === "software") return true;
     const hw = this.hwPlan;
-    return hw !== null && (hw.lane === "nvdec" || hw.lane === "vaapi");
+    return hw !== null && isCopyBackHwLane(hw.lane);
   }
 
   /// Adopt a new playback-resolution divisor on a LIVE source, without a

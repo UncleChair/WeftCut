@@ -75,14 +75,16 @@ export function isFfmpegUnusable(mediaId: string): boolean {
 
 /// Resolved lane verdict `pickInitialLane` hands back. Carries the binary lane
 /// `FfmpegSource`'s ring/recovery logic keys on PLUS the specific HW lane that
-/// passed, so the source can route the hardware transport by lane NAME (Linux
-/// copy-back NVDEC/VAAPI ride SwTransport; Windows d3d11va rides GpuTransport).
+/// passed, so the source can route the hardware transport by lane NAME (the
+/// copy-back lanes — Linux NVDEC/VAAPI, macOS VideoToolbox — ride SwTransport;
+/// Windows d3d11va rides GpuTransport).
 export interface FfmpegLaneResolution {
   /// Binary lane the FfmpegSource ring/recovery logic keys on.
   lane: FfmpegLane;
-  /// The specific advertised HW lane that passed (`nvdec` | `vaapi` | `d3d11va`)
-  /// when `lane === "hardware"`, else null. Drives the FfmpegSource transport
-  /// choice: nvdec/vaapi ride SwTransport (copy-back), d3d11va rides GpuTransport.
+  /// The specific advertised HW lane that passed (`nvdec` | `vaapi` |
+  /// `videotoolbox` | `d3d11va`) when `lane === "hardware"`, else null. Drives
+  /// the FfmpegSource transport choice: nvdec/vaapi/videotoolbox ride
+  /// SwTransport (copy-back), d3d11va rides GpuTransport.
   hwLane: string | null;
   /// VAAPI DRM render node the verdict was measured on (else null).
   device: string | null;

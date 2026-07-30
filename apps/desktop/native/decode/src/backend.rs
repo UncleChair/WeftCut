@@ -259,7 +259,12 @@ pub fn version_info() -> String {
 /// UNCATCHABLY on the first mapped frame. The lane is gated on
 /// [`crate::preview_sw::decoder::vaapi_copyback_supported`] (which also pins the
 /// bundled libva so the implib resolves it) rather than advertised and later
-/// crashed. Resolvers probe ONLY advertised lanes: on Linux, where
+/// crashed. On macOS (issue #10) the `"videotoolbox"` copy-back lane is
+/// advertised unconditionally: VideoToolbox is an OS framework present on every
+/// supported Mac, and where a decode is refused (unsupported codec/machine) the
+/// one-frame probe Errs cleanly — no abort — so the resolver's cached
+/// probe-verdict machinery, not the advertisement, is the gate (same posture as
+/// NVDEC). Resolvers probe ONLY advertised lanes: on Linux, where
 /// `preview_gpu_probe` is a by-design stub returning a "not built" verdict, the
 /// d3d11va lane is never advertised and so is never probed — replacing the old
 /// platform-string guard.
@@ -288,6 +293,13 @@ pub fn capabilities() -> Vec<String> {
         if crate::preview_sw::decoder::vaapi_copyback_supported() {
             lanes.push("vaapi".to_string());
         }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // VideoToolbox is an OS framework on every supported Mac — safe to
+        // advertise unconditionally; a per-format refusal surfaces as a clean
+        // probe Err (software fallback), never an abort. See the doc above.
+        lanes.push("videotoolbox".to_string());
     }
     lanes
 }
@@ -702,6 +714,8 @@ impl NativeDecode {
     /// - `Some("nvdec")` → NVDEC copy-back (default GPU handle; `device` ignored).
     /// - `Some("vaapi")` → VAAPI copy-back pinned to the `device` DRM render node
     ///   (empty when absent, letting libva default-select).
+    /// - `Some("videotoolbox")` → VideoToolbox copy-back (issue #10; the single
+    ///   macOS OS media engine — `device` ignored).
     /// - any other `lane` → treated as software (safe fallback; the caller should
     ///   only ever open an already-probed lane).
     ///
@@ -733,6 +747,7 @@ impl NativeDecode {
             Some("vaapi") => DecodeAccel::Vaapi {
                 device: device.unwrap_or_default(),
             },
+            Some("videotoolbox") => DecodeAccel::VideoToolbox,
             // Unknown lane: fall back to software rather than error — the resolver
             // only opens lanes it has already probed, so this is defensive.
             Some(_) => DecodeAccel::Software,

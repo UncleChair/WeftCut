@@ -19,11 +19,12 @@
 // which owns exactly one `DecodeTransport` at a time and sets the ring's
 // eviction anchor itself (see `requestFrameAt` below).
 //
-// It can also carry a hardware COPY-BACK accel (Linux NVDEC/VAAPI): the caller
-// passes a `{ lane, device }` accel into the constructor and it rides through
-// on `open()`, telling main to decode on the GPU and copy frames back to CPU.
-// The frame path is IDENTICAL NV12 either way — copy-back is not a distinct
-// frame format, just a different decode source — so nothing below changes.
+// It can also carry a hardware COPY-BACK accel (Linux NVDEC/VAAPI, macOS
+// VideoToolbox): the caller passes a `{ lane, device }` accel into the
+// constructor and it rides through on `open()`, telling main to decode on the
+// GPU/OS media engine and copy frames back to CPU. The frame path is IDENTICAL
+// NV12 either way — copy-back is not a distinct frame format, just a different
+// decode source — so nothing below changes.
 import type { PreviewSwFrameMsg } from "../../../../shared/ipc";
 import { nv12FrameFromBytes } from "../nv12Frame";
 import type { DecodeTransport, DecodeTransportOpen, TransportFrame } from "./DecodeTransport";
@@ -49,10 +50,10 @@ export class SwTransport implements DecodeTransport {
   /// behind.
   private lastSentTargetUs: number | null = null;
 
-  /// `accel`: optional hardware copy-back accel (Linux NVDEC/VAAPI), forwarded to
-  /// main on `open()` so the GPU decodes and copies NV12 back to CPU. Absent
-  /// (software) means no accel rides through and the native path stays plain CPU
-  /// decode.
+  /// `accel`: optional hardware copy-back accel (Linux NVDEC/VAAPI, macOS
+  /// VideoToolbox), forwarded to main on `open()` so the GPU/OS media engine
+  /// decodes and copies NV12 back to CPU. Absent (software) means no accel rides
+  /// through and the native path stays plain CPU decode.
   ///
   /// `scaleDiv`: optional playback-resolution divisor (1 | 2 | 4). Native
   /// downscales each frame before it crosses IPC — 4K NV12 is 12.44 MB/frame at

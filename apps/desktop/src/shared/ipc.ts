@@ -371,9 +371,10 @@ export interface DecodeCapabilityProbeResult {
 /// resolves the best HW decode lane for a caller-supplied `classKey` (the
 /// renderer derives it from `MediaSummary` — the HW probe itself does not,
 /// unlike the SW probe, since probing is comparatively expensive). `lane` is the
-/// HW lane that passed (`d3d11va` | `nvdec` | `vaapi`), or null on software
-/// fallback; `device` names the DRM render node for a `vaapi` verdict (null for
-/// NVDEC/d3d11va, which decode on the sole GPU handle).
+/// HW lane that passed (`d3d11va` | `nvdec` | `vaapi` | `videotoolbox`), or null
+/// on software fallback; `device` names the DRM render node for a `vaapi`
+/// verdict (null for NVDEC/d3d11va/videotoolbox, which decode on the sole
+/// GPU/OS handle).
 export interface DecodeHwProbeResult {
   ok: boolean
   reason: string | null
@@ -492,9 +493,10 @@ export interface WeftcutApi {
   /// `onFrame`.
   previewSw: {
     /// `lane`/`device` select the Standard engine's hardware copy-back lane
-    /// (Linux NVDEC/VAAPI; `device` = the DRM node for VAAPI). Absent/null =
-    /// software. This is the private HW-vs-SW choice — the frame contract the
-    /// session emits is unchanged NV12 either way.
+    /// (Linux NVDEC/VAAPI, macOS VideoToolbox; `device` = the DRM node for
+    /// VAAPI, null otherwise). Absent/null = software. This is the private
+    /// HW-vs-SW choice — the frame contract the session emits is unchanged
+    /// NV12 either way.
     ///
     /// `scaleDiv` is the playback-resolution divisor (1 | 2 | 4; absent = 1 =
     /// full): native downscales each frame BEFORE it crosses IPC, so the reply

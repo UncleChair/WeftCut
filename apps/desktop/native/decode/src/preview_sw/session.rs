@@ -590,11 +590,12 @@ impl PreviewSwRegistry {
     }
 
     /// Open `path` for preview on `accel` — the software lane (mirrors [`open`]) or
-    /// a copy-back hardware lane (`DecodeAccel::Nvdec`/`Vaapi`, issue #5 Block C):
-    /// the session thread opens its [`SwVideoStream`] via `open_with_accel` so hw
-    /// frames are transferred back to CPU NV12, feeding the SAME frame transport as
-    /// software. Blocks on the init handshake so a decoder-open failure (including a
-    /// hw device that can't be created) surfaces synchronously and falls back.
+    /// a copy-back hardware lane (`DecodeAccel::Nvdec`/`Vaapi`, issue #5 Block C;
+    /// `DecodeAccel::VideoToolbox`, issue #10): the session thread opens its
+    /// [`SwVideoStream`] via `open_with_accel` so hw frames are transferred back to
+    /// CPU NV12, feeding the SAME frame transport as software. Blocks on the init
+    /// handshake so a decoder-open failure (including a hw device that can't be
+    /// created) surfaces synchronously and falls back.
     ///
     /// `out_scale` is the playback-resolution divisor: the session ships every
     /// frame at that fraction of the source size, so a 4K frame crosses IPC
@@ -881,6 +882,41 @@ mod tests {
         assert_eq!(frames[0].0, info.width);
         assert_eq!(frames[0].1, info.height);
         assert_eq!(frames[0].2, (320 * 240) + (320 * 240 / 2));
+    }
+
+    // The wired session path for the macOS copy-back lane (issue #10 ticket 02):
+    // `preview_sw_open("videotoolbox")` maps to `DecodeAccel::VideoToolbox` and
+    // lands here — the registry's session thread must open on that accel and
+    // deliver the SAME NV12 frame pokes the software lane does. Deterministic on
+    // any macOS host (VideoToolbox is an OS framework; see ticket 01's decoder
+    // tests), unlike NVDEC/VAAPI whose registry-path proof stays manual/bench.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_session_delivers_nv12_frames_through_the_registry() {
+        let got: Arc<Mutex<Vec<(u32, u32, usize)>>> = Arc::new(Mutex::new(vec![]));
+        let g2 = got.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { frame, .. } = poke {
+                g2.lock()
+                    .unwrap()
+                    .push((frame.width, frame.height, frame.data.len()));
+            }
+        }));
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_h264.mp4");
+        let info = reg
+            .open_with_accel("vt1", p, DecodeAccel::VideoToolbox, OutScale::FULL)
+            .expect("open on videotoolbox through the registry");
+        assert_eq!((info.width, info.height), (192, 144));
+        let _ = reg.request_frame_at("vt1", 0);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = reg.close("vt1");
+        let frames = got.lock().unwrap();
+        assert!(!frames.is_empty(), "expected at least one frame poke");
+        // Same ship-bytes NV12 shape as software (ADR 0029) — packed w*h*3/2.
+        assert_eq!(frames[0].0, 192);
+        assert_eq!(frames[0].1, 144);
+        assert_eq!(frames[0].2, (192 * 144) + (192 * 144 / 2));
     }
 
     #[test]

@@ -937,9 +937,11 @@ app.whenReady().then(async () => {
   // verdict never pays for a decode. envKey is GPU identity
   // (vendor/device/driver): a driver update or GPU swap invalidates every cached
   // HW verdict for this machine. `resolveHwLane` walks the component's ADVERTISED
-  // lanes (`nd.lanes`) in NVDEC > VAAPI > d3d11va order, per DRM node for VAAPI,
-  // and falls back to software when none pass — so a build without a HW lane
-  // (Linux SW-only) never reaches a native probe, no platform special-casing.
+  // lanes (`nd.lanes`) in HW_LANE_PRIORITY order (NVDEC > VAAPI > d3d11va >
+  // videotoolbox — only one platform's lanes are ever advertised), per DRM node
+  // for VAAPI, and falls back to software when none pass — so a build without a
+  // HW lane (Linux SW-only) never reaches a native probe, no platform
+  // special-casing.
   ipcMain.handle('decodeCap:probeHw', async (_e, a: { path: string; classKey: string }) => {
     // E2E/bench lane pin: the lane-parameterized preview-hw conformance spec
     // sets WEFTCUT_FORCE_HW_LANE so ONE variant tests exactly one HW lane on a
@@ -961,15 +963,16 @@ app.whenReady().then(async () => {
       devices: (lane) => (lane === 'vaapi' ? enumerateDrmRenderNodes() : [null]),
       probe: (lane, device) => {
         // Each advertised lane routes to its native one-frame probe: d3d11va to
-        // previewGpuProbe (Windows), NVDEC/VAAPI to previewHwProbe (Linux copy-back,
-        // which takes the DRM node as `device` — null for NVDEC). resolveHwLane only
-        // probes ADVERTISED lanes, so `lane not built` is inert (an unadvertised lane
-        // never reaches here).
+        // previewGpuProbe (Windows), the copy-back lanes — NVDEC/VAAPI (Linux)
+        // and VideoToolbox (macOS, issue #10) — to previewHwProbe (which takes
+        // the DRM node as `device` — null for NVDEC/videotoolbox). resolveHwLane
+        // only probes ADVERTISED lanes, so `lane not built` is inert (an
+        // unadvertised lane never reaches here).
         if (lane === 'd3d11va') {
           const v = ndBackend().previewGpuProbe(a.path, 4000)
           return { ok: v.ok, reason: v.reason ?? null }
         }
-        if (lane === 'nvdec' || lane === 'vaapi') {
+        if (lane === 'nvdec' || lane === 'vaapi' || lane === 'videotoolbox') {
           const v = ndBackend().previewHwProbe(a.path, lane, device, 4000)
           return { ok: v.ok, reason: v.reason ?? null }
         }

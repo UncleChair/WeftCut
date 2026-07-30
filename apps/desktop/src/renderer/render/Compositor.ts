@@ -232,10 +232,11 @@ export interface ActiveClipProbe {
   boundFramePtsUs: number | null;
   boundFrameDurationUs: number | null;
   boundFrameSourceKey: string | null;
-  /// The resolved HW lane (`nvdec`|`vaapi`|`d3d11va`) when the active clip's
-  /// source is a `FfmpegSource` on its hardware lane, else null (software lane,
-  /// a WebCodecs source, or no matching clip). The lane-parameterized preview-hw
-  /// conformance spec asserts this to prove WHICH HW lane engaged.
+  /// The resolved HW lane (`nvdec`|`vaapi`|`videotoolbox`|`d3d11va`) when the
+  /// active clip's source is a `FfmpegSource` on its hardware lane, else null
+  /// (software lane, a WebCodecs source, or no matching clip). The
+  /// lane-parameterized preview-hw conformance spec asserts this to prove WHICH
+  /// HW lane engaged.
   hwLane: string | null;
   /// The resolver IDENTITY (`${engine}:${source}:${target}`) the active clip's
   /// source was built from — see `ActiveClip.builtFromKey`. Lets the decode-

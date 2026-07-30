@@ -387,6 +387,25 @@ describe("FfmpegSource — hardware transport routing by HW lane (C2.2)", () => 
     expect(gpu.t.open).not.toHaveBeenCalled();
   });
 
+  it("routes a resolved VideoToolbox copy-back lane through the SW transport (macOS, issue #10)", async () => {
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      {
+        makeGpu: () => gpu.t,
+        makeSw: () => sw.t,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "videotoolbox", device: null }),
+      },
+    );
+    await src.ensureReady();
+    // Same posture as nvdec/vaapi: decode on the OS media engine, frames ship
+    // NV12 over the SAME previewSw transport (ADR 0029/0034).
+    expect(src.currentLane()).toBe("hardware");
+    expect(sw.t.open).toHaveBeenCalled();
+    expect(gpu.t.open).not.toHaveBeenCalled();
+  });
+
   it("routes the Windows shared-texture lane (d3d11va) through the GPU transport", async () => {
     const gpu = fakeTransport();
     const sw = fakeTransport();
