@@ -42,7 +42,8 @@ export type ActionId =
   | "seekNextEdit"
   | "seekStart"
   | "seekEnd"
-  | "openSearchPalette";
+  | "openSearchPalette"
+  | "openSettings";
 
 export interface ActionDef {
   defaultKeys: string[];
@@ -169,6 +170,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // Global search palette. A chord, so it fires while a text input is
   // focused (default chord behavior) — expected for a Spotlight-style UI.
   openSearchPalette: { defaultKeys: ["Mod+K"], labelKey: "actions.open_search" },
+  // App preferences. Cmd+, is where every Mac user reaches for them, and
+  // `role: 'appMenu'` has no Settings slot — so the macOS App menu projects
+  // this action into one (ADR 0031 Stage 2). Catalogued rather than hard-wired
+  // in the menu so the chord is rebindable, discoverable in Settings →
+  // Keyboard, and identical on Windows/Linux, where the in-app File → Settings
+  // item renders the same accelerator as its hint.
+  openSettings: { defaultKeys: ["Mod+Comma"], labelKey: "actions.settings" },
 };
 
 export const ACTION_IDS = Object.keys(ACTION_DEFS) as ActionId[];

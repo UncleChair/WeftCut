@@ -388,6 +388,7 @@ import type {
   DataRootMigrateResult,
   DataRootPendingCleanup,
 } from './data-root'
+import type { MenuProjection } from './menu'
 
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
@@ -430,6 +431,12 @@ export interface WeftcutApi {
   /// Startup notices the renderer pulls on mount (see AppNotice), plus the
   /// version identity behind the Help → About dialog (see AppVersions).
   app: { notices(): Promise<AppNotice[]>; versions(): Promise<AppVersions> }
+  /// macOS native application menu. The renderer pushes what the CURRENT
+  /// surface can run — labels resolved through i18next, accelerators from the
+  /// effective keybindings — and main rebuilds the menu from it (src/shared/
+  /// menu.ts). A no-op off macOS, where no application menu exists at all.
+  /// Chosen items come back as the `menu:action` event.
+  menu: { sync(projection: MenuProjection): Promise<void> }
   /// Open a path or URL in the OS default handler (file manager / browser).
   shell: { open(target: string): Promise<void> }
   /// Post a desktop notification (best-effort; no-op where unsupported).

@@ -62,6 +62,7 @@ import {
   type HandlerMap,
   type OverrideMap,
 } from "./shortcuts/useShortcuts";
+import { useNativeMenu } from "./menu/nativeMenu";
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
@@ -639,6 +640,7 @@ export function App({ onCloseProject }: AppProps) {
       // latent and pop the palette open when the session ends.
       if (!agentSession) setPaletteOpen(true);
     },
+    openSettings: () => openSettings("general"),
   };
   // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each
   // render. The backend's `Record<string, string[]>` is structurally
@@ -651,6 +653,9 @@ export function App({ onCloseProject }: AppProps) {
     handlers: shortcutHandlers,
     overrides: shortcutOverrides,
   });
+  // Same handlers, projected into the macOS native menu (File, Settings) and
+  // run from it. Inert off macOS. See menu/nativeMenu.ts.
+  useNativeMenu({ handlers: shortcutHandlers, overrides: shortcutOverrides });
 
   // Shared by the Insert menu and the search palette — one implementation,
   // two entry points.
@@ -673,7 +678,6 @@ export function App({ onCloseProject }: AppProps) {
         addColorLayer: handleAddColorLayer,
         addTextLayer: handleAddTextLayer,
         openMotifPicker: () => setMotifPickerOpen(true),
-        openSettings: () => setSettingsOpen(true),
       },
       {
         busy,

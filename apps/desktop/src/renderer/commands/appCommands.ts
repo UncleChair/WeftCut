@@ -4,7 +4,7 @@ import type { CommandDef } from "./registry";
 
 /// App-level command catalog for the palette: derived from the shortcut
 /// HandlerMap (so new shortcut actions appear automatically) plus the
-/// four menu-only actions that have no binding. Pure factory — App calls
+/// three menu-only actions that have no binding. Pure factory — App calls
 /// it inside useCommandProvider's getter, so flags are read fresh on
 /// every listCommands().
 export interface AppCommandFlags {
@@ -15,11 +15,13 @@ export interface AppCommandFlags {
   exportLocked: boolean;
 }
 
+/// Insert-menu entries with no catalogue action of their own. Settings used to
+/// live here too; it became a real action (Cmd+, — the slot the macOS App menu
+/// projects) and now arrives through the HandlerMap like any other.
 export interface MenuCommandDeps {
   addColorLayer: () => void | Promise<void>;
   addTextLayer: () => void | Promise<void>;
   openMotifPicker: () => void;
-  openSettings: () => void;
 }
 
 export function buildAppCommands(
@@ -58,7 +60,6 @@ export function buildAppCommands(
     { id: "addColorLayer", labelKey: "actions.add_color_layer", run: menu.addColorLayer },
     { id: "addTextLayer", labelKey: "actions.add_text_layer", run: menu.addTextLayer },
     { id: "openMotifPicker", labelKey: "actions.motifs", run: menu.openMotifPicker },
-    { id: "openSettings", labelKey: "actions.settings", run: menu.openSettings },
   );
   return defs;
 }

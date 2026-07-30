@@ -17,12 +17,12 @@ const handlers: HandlerMap = {
   seekFrameBack: noop, seekFrameForward: noop, seekSecondBack: noop,
   seekSecondForward: noop, seekPrevEdit: noop, seekNextEdit: noop,
   seekStart: noop, seekEnd: noop,
-  openSearchPalette: noop,
+  openSearchPalette: noop, openSettings: noop,
 };
 
 const menu = {
   addColorLayer: noop, addTextLayer: noop,
-  openMotifPicker: noop, openSettings: noop,
+  openMotifPicker: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
@@ -42,11 +42,19 @@ describe("buildAppCommands", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("appends the four menu-only commands", () => {
+  it("appends the three menu-only commands", () => {
     const ids = buildAppCommands(handlers, menu, flags).map((d) => d.id);
-    for (const id of ["addColorLayer", "addTextLayer", "openMotifPicker", "openSettings"]) {
+    for (const id of ["addColorLayer", "addTextLayer", "openMotifPicker"]) {
       expect(ids).toContain(id);
     }
+  });
+
+  it("lists Settings once, from the catalogue rather than as a menu-only entry", () => {
+    // It carries a binding now (Cmd+, — the macOS App menu's Settings slot), so
+    // it arrives through the HandlerMap; appending it again would double it.
+    const defs = buildAppCommands(handlers, menu, flags);
+    expect(defs.filter((d) => d.id === "openSettings")).toHaveLength(1);
+    expect(defs.find((d) => d.id === "openSettings")?.actionId).toBe("openSettings");
   });
 
   it("every labelKey resolves in the en-US locale", () => {

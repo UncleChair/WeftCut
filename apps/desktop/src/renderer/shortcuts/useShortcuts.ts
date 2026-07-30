@@ -191,7 +191,10 @@ export function useShortcuts({
   }, [entries]);
 }
 
-/// Wrap a shortcut handler so its result lands in the activity log.
+/// Run an action handler with its result in the activity log. Exported for the
+/// macOS native menu (`menu/nativeMenu.ts`), which dispatches the same actions
+/// through the same handler map — a menu-chosen Save must log exactly like the
+/// Cmd+S that would otherwise have run it.
 ///
 /// Three flavors of entry per dispatch:
 ///   * Synchronous handler → one `Info` entry on completion.
@@ -202,7 +205,7 @@ export function useShortcuts({
 ///     resolves.
 ///
 /// Errors always emit at `Error` level, regardless of timing.
-function runWithLogging(actionId: ActionId, fn: () => void | Promise<void>) {
+export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void>) {
   const labelKey = ACTION_DEFS[actionId].labelKey;
   let result: void | Promise<void>;
   try {

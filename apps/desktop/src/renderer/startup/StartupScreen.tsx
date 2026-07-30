@@ -10,6 +10,8 @@ import {
   type Locale,
 } from "../i18n";
 import { setLocale, wireAppSettingsStream } from "../settings/appSettingsStore";
+import { useNativeMenu } from "../menu/nativeMenu";
+import type { OverrideMap } from "../shortcuts/useShortcuts";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { AppDialog } from "../components/AppDialog";
@@ -62,6 +64,15 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   // project is #1 in the list, so the collapsed view is almost always more
   // useful than restoring a stale expansion. Deliberately not persisted.
   const [recentsExpanded, setRecentsExpanded] = useState(false);
+
+  // The macOS App menu's Settings item — the only action this surface can run,
+  // so it is the only one it projects (the editor projects File as well). Cmd+,
+  // must work before any project exists, which is exactly where a Mac user
+  // reaches for preferences. Inert off macOS. See menu/nativeMenu.ts.
+  useNativeMenu({
+    handlers: { openSettings: () => setSettingsOpen(true) },
+    overrides: keybindings as OverrideMap,
+  });
 
   // A first-launch user on a foreign locale needs a way to switch *before*
   // they can read any of the buttons. Mirrors the editor's header toggle.

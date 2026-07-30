@@ -14,7 +14,8 @@ import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { shouldClearApplicationMenu } from './inputPolicy.js'
-import { buildApplicationMenuTemplate } from './appMenu.js'
+import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
+import type { MenuProjection } from '../shared/menu.js'
 import { broadcastEvent } from './broadcast.js'
 import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
@@ -104,6 +105,26 @@ async function hwEnvKey(): Promise<string> {
   } catch {
     return 'gpu:unknown'
   }
+}
+
+/// (Re)install the macOS application menu from the renderer's latest
+/// projection — null before the first sync, i.e. the menu that exists while the
+/// window is still loading. macOS only: Windows/Linux run menu-less, and
+/// installing one there would put accelerators back in front of the renderer's
+/// dispatcher (ADR 0031 Stage 1). Chosen items travel back as `menu:action`,
+/// which the renderer runs through the SAME handler map as `useShortcuts` —
+/// one implementation, two entry points.
+function installApplicationMenu(projection: MenuProjection | null): void {
+  if (process.platform !== 'darwin') return
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      buildApplicationMenuTemplate({
+        projection,
+        appName: app.getName(),
+        dispatch: (actionId) => emitToRenderer('menu:action', { actionId }),
+      }),
+    ),
+  )
 }
 
 // DRM render nodes (/dev/dri/renderD*) for VAAPI device enumeration (issue #5
@@ -317,9 +338,7 @@ app.whenReady().then(async () => {
   // Either way dev reload/DevTools/fullscreen come from hardenWindow's
   // before-input-event seam, so dev and prod share one code path. See ADR 0031.
   if (shouldClearApplicationMenu(process.platform)) Menu.setApplicationMenu(null)
-  else if (process.platform === 'darwin') {
-    Menu.setApplicationMenu(Menu.buildFromTemplate(buildApplicationMenuTemplate()))
-  }
+  else installApplicationMenu(null)
 
   // Bundled ffmpeg: ffmpeg-sidecar resolves "ffmpeg" via PATH when no binary sits
   // adjacent to the exe (ffmpeg_sidecar::paths::ffmpeg_path). Prepend the packaged dir so the
@@ -701,6 +720,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
   ipcMain.handle('app:notices', () => startupNotices)
+  // macOS application menu: the renderer resolves labels (i18next) and
+  // effective accelerators (catalogue defaults ⊕ keybindings.json) and pushes
+  // them here on mount and whenever either changes, so the native menu can
+  // never show a stale label or a rebound chord. Payload is renderer-authored,
+  // hence sanitised before it reaches Menu.buildFromTemplate.
+  ipcMain.handle('menu:sync', (_e, projection: unknown) => {
+    installApplicationMenu(sanitizeMenuProjection(projection))
+  })
   // About-dialog identity: app version + runtime tags, pulled by the renderer
   // (Help → About) since the bundle has no package.json access.
   ipcMain.handle('app:versions', () => ({

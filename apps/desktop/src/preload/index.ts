@@ -30,6 +30,7 @@ import type {
   DataRootMigrateResult,
   DataRootPendingCleanup,
 } from '../shared/data-root'
+import type { MenuProjection } from '../shared/menu'
 
 type Listener = (payload: unknown) => void
 
@@ -117,6 +118,14 @@ const api: WeftcutApi = {
   app: {
     notices: (): Promise<AppNotice[]> => ipcRenderer.invoke('app:notices') as Promise<AppNotice[]>,
     versions: (): Promise<AppVersions> => ipcRenderer.invoke('app:versions') as Promise<AppVersions>,
+  },
+
+  menu: {
+    // Push what this renderer surface can currently run into the macOS
+    // application menu; main rebuilds from it. Off macOS main ignores the call
+    // (there is no application menu there — see src/main/appMenu.ts).
+    sync: (projection: MenuProjection): Promise<void> =>
+      ipcRenderer.invoke('menu:sync', projection) as Promise<void>,
   },
 
   // OS shell + desktop notification — native main-process concerns, handled by
