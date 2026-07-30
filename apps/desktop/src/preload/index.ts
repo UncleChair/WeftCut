@@ -413,9 +413,23 @@ ipcRenderer.on('evt:previewGpu:barrier', (_e, { streamId, mode }: { streamId: st
 
 // Register the receiver ONCE at preload load. Each callback = one slot's texture
 // arriving from main; pair it FIFO to the announce enqueued just before its send.
+//
+// An EMPTY queue here means the announce was pruned by a close that raced this
+// send mid-open (`closePreviewGpuStream` runs its prune before awaiting main's
+// close, and a dispose can land between the announce task and this callback).
+// The ordering contract — announce enqueued before the receiver fires, main
+// serialising opens — rules out "the announce just hasn't arrived yet". The
+// unpaired import must be RELEASED, not dropped: it holds a GPU reference on
+// the slot texture, Electron frees the underlying pool only once every import
+// releases, and nothing else will ever see this one — one leaked NV12 slot per
+// dispose-races-open occurrence, for the process lifetime.
 sharedTexture.setSharedTextureReceiver(async (data) => {
   const a = announceQueue.shift()
-  if (a) importedByKey.set(`${a.streamId}:${a.slot}`, data.importedSharedTexture)
+  if (a) {
+    importedByKey.set(`${a.streamId}:${a.slot}`, data.importedSharedTexture)
+  } else {
+    try { data.importedSharedTexture.release() } catch { /* already torn down */ }
+  }
 })
 
 // Cross-device read-completion barrier (native-hw frame-REORDER fix).
