@@ -196,7 +196,7 @@ describe("createEditingLayout", () => {
       height: 800,
     });
     const [editor, timeline] = dockview.grid.root.data;
-    expect(editor).toMatchObject({ type: "branch", size: 496 });
+    expect(editor).toMatchObject({ type: "branch", size: 576 });
     expect(editor.data.map((node) => node.size)).toEqual([220, 530, 250]);
     expect(editor.data.map((node) => node.data.views)).toEqual([
       ["media"],
@@ -205,7 +205,7 @@ describe("createEditingLayout", () => {
     ]);
     expect(timeline).toMatchObject({
       type: "leaf",
-      size: 304,
+      size: 224,
       data: { views: ["timeline"] },
     });
     expect(Object.keys(dockview.panels).sort()).toEqual([

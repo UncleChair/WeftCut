@@ -354,7 +354,7 @@ describe("Dock Panel registry", () => {
 });
 
 describe("DockWorkspaceAdapter", () => {
-  it("builds the built-in 62/38 Editing layout once with Panel constraints", () => {
+  it("builds the built-in 72/28 Editing layout once with Panel constraints", () => {
     const dock = fakeDockview(1_000, 800);
     const adapter = new DockWorkspaceAdapter(dock.api);
 
@@ -394,7 +394,7 @@ describe("DockWorkspaceAdapter", () => {
       position: { referencePanel: "attribute", direction: "within" },
     });
     expect(byId.get("timeline")).toMatchObject({
-      initialHeight: 304,
+      initialHeight: 224,
       minimumWidth: 420,
       minimumHeight: 180,
       position: { direction: "below" },
@@ -406,7 +406,7 @@ describe("DockWorkspaceAdapter", () => {
       width: 250,
     });
     expect(dock.panels.get("timeline")?.api.setSize).toHaveBeenCalledWith({
-      height: 304,
+      height: 224,
     });
 
     for (const panel of dock.added) {

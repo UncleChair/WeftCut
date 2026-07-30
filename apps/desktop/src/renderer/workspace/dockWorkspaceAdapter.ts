@@ -197,7 +197,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     });
     const timeline = this.addPanel("timeline", {
       position: { direction: "below" },
-      initialHeight: Math.round(height * 0.38),
+      initialHeight: Math.round(height * 0.28),
     });
 
     // `initialWidth` sizes the newly inserted split, so later insertions can
@@ -205,7 +205,7 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     // the complete tree exists; Preview naturally receives the 53% remainder.
     media?.api.setSize({ width: Math.round(width * 0.22) });
     attribute?.api.setSize({ width: Math.round(width * 0.25) });
-    timeline?.api.setSize({ height: Math.round(height * 0.38) });
+    timeline?.api.setSize({ height: Math.round(height * 0.28) });
     this.captureOpenPlacements();
     this.emitChange();
     return true;

@@ -251,7 +251,7 @@ export function createEditingLayout(
           data: [
             {
               type: "branch",
-              size: Math.round(height * 0.62),
+              size: Math.round(height * 0.72),
               data: [
                 {
                   type: "leaf",
@@ -284,7 +284,7 @@ export function createEditingLayout(
             },
             {
               type: "leaf",
-              size: Math.round(height * 0.38),
+              size: Math.round(height * 0.28),
               data: {
                 id: "editing-timeline",
                 views: ["timeline"],

@@ -76,10 +76,10 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
         const g = await geometryOf();
         return ratio(g.timeline.height, g.workspace.height);
       })
-      .toBeCloseTo(0.38, 1);
+      .toBeCloseTo(0.28, 1);
 
     const geometry = await geometryOf();
-    expect(ratio(geometry.timeline.height, geometry.workspace.height)).toBeCloseTo(0.38, 1);
+    expect(ratio(geometry.timeline.height, geometry.workspace.height)).toBeCloseTo(0.28, 1);
     expect(ratio(geometry.timeline.width, geometry.workspace.width)).toBeCloseTo(1, 1);
     expect(ratio(geometry.media.width, geometry.workspace.width)).toBeCloseTo(0.22, 1);
     expect(ratio(geometry.preview.width, geometry.workspace.width)).toBeCloseTo(0.53, 1);
