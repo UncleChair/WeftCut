@@ -227,6 +227,16 @@ pub struct ExportSwMsg {
 
 /// The component's ffmpeg linkage identity — the SW capability-cache envKey.
 /// Changes when the bundled/loaded avcodec changes.
+// `allow`, not `expect`: rustc's dead-code pass treats expect(dead_code) on a
+// #[napi] fn as a live root and never registers fulfillment, so expect would
+// warn `unfulfilled_lint_expectations` in the very build it exists for.
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "napi/noop test builds erase the #[napi] export that is the only caller (Cargo.toml test-noop note)"
+    )
+)]
 #[napi]
 pub fn version_info() -> String {
     format!(
@@ -253,6 +263,16 @@ pub fn version_info() -> String {
 /// `preview_gpu_probe` is a by-design stub returning a "not built" verdict, the
 /// d3d11va lane is never advertised and so is never probed — replacing the old
 /// platform-string guard.
+// `allow`, not `expect`: rustc's dead-code pass treats expect(dead_code) on a
+// #[napi] fn as a live root and never registers fulfillment, so expect would
+// warn `unfulfilled_lint_expectations` in the very build it exists for.
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "napi/noop test builds erase the #[napi] export that is the only caller (Cargo.toml test-noop note)"
+    )
+)]
 #[napi]
 pub fn capabilities() -> Vec<String> {
     #[allow(unused_mut)]

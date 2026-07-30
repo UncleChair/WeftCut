@@ -179,6 +179,13 @@ impl CacheLayout {
         self.current_root().join("inline-subs")
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "reserved for the ffmpeg subtitle burn-in export path; unit tests are the only current caller"
+        )
+    )]
     pub fn inline_subs(&self, hash: &str, ext: &str) -> PathBuf {
         self.inline_subs_dir().join(format!("{hash}.{ext}"))
     }

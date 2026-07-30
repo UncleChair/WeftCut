@@ -57,6 +57,10 @@ pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, M
 // move_layer, trim_layer, delete_layer, split_layer, duplicate_layer) are
 // absent — they are served by the TS actor.
 
+#[expect(
+    dead_code,
+    reason = "hybrid-orchestrator stub: TS intercepts apply_subtitles before dispatch, so no Rust code reads the fields; the struct exists to emit the wire schema"
+)]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct ApplySubtitlesArgs {
     /// Subtitle document body (SRT, ASS, or VTT).
@@ -419,6 +423,10 @@ pub(super) async fn compare_frames(
 // Media tools
 // ============================================================
 
+#[expect(
+    dead_code,
+    reason = "hybrid-orchestrator stub: TS intercepts import_media before dispatch, so no Rust code reads the field; the struct exists to emit the wire schema"
+)]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct ImportMediaArgs {
     /// Absolute path to a video / audio / image / subtitle file the host can read.
@@ -754,10 +762,12 @@ pub(crate) struct SynthesizeSpeechArgs {
     pub speed: Option<f32>,
     /// Optional Audio track id. If omitted, lands on the first existing Audio
     /// track or auto-creates one labeled "Voiceover".
+    #[expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability")]
     #[serde(default)]
     pub target_track_id: Option<String>,
     /// Optional timeline start in microseconds. Defaults to the composition's
     /// current `duration_us` so the voiceover appends at the end.
+    #[expect(dead_code, reason = "placement is applied TS-side; kept for wire-schema stability")]
     #[serde(default)]
     pub t_start_us: Option<i64>,
 }

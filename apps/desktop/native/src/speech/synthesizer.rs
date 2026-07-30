@@ -16,6 +16,13 @@ use super::error::SpeechError;
 /// to pick the cache-file extension and the lowering-side container hint
 /// (ffmpeg generally just sniffs, but the extension matters for OS file
 /// associations and for the agent inspecting the path).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "forward provider surface: tts-1 only produces Mp3 today, so no non-test code constructs the other formats"
+    )
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioFormat {
     Mp3,
@@ -25,6 +32,13 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "pairs with the forward provider surface above; unit tests are the only current caller"
+        )
+    )]
     pub fn extension(self) -> &'static str {
         match self {
             Self::Mp3 => "mp3",
