@@ -855,8 +855,9 @@ impl NativeDecode {
         }
     }
 
-    /// One-frame HARDWARE decode probe (issue #5 Block C). `lane` is `"nvdec"` or
-    /// `"vaapi"`; for `vaapi`, `device` is the DRM render node this probe targets
+    /// One-frame HARDWARE decode probe (issue #5 Block C; `videotoolbox`: issue
+    /// #10). `lane` is `"nvdec"`, `"vaapi"`, or `"videotoolbox"`; for `vaapi`,
+    /// `device` is the DRM render node this probe targets
     /// (main enumerates the nodes and probes each). Opens a throwaway stream on
     /// that hardware lane, decodes one frame, and confirms the surface came back
     /// HARDWARE-decoded — a silent software fallback counts as `ok:false`, so the
@@ -880,6 +881,7 @@ impl NativeDecode {
             "vaapi" => DecodeAccel::Vaapi {
                 device: device.unwrap_or_default(),
             },
+            "videotoolbox" => DecodeAccel::VideoToolbox,
             other => {
                 return Ok(PreviewGpuProbeResult {
                     ok: false,

@@ -85,6 +85,11 @@ pub enum DecodeAccel {
     /// (NVDEC is unaffected: its implib'd `libcuda` comes from the current NVIDIA
     /// driver, which carries every symbol it needs.)
     Vaapi { device: String },
+    /// VideoToolbox on macOS (issue #10): the OS media engine decodes and the
+    /// CVPixelBuffer-backed surface is copied back to a CPU frame. No device
+    /// string — VideoToolbox is a single OS service, not an enumerable device
+    /// (Apple Silicon is the only supported Mac target).
+    VideoToolbox,
 }
 
 impl DecodeAccel {
@@ -94,6 +99,7 @@ impl DecodeAccel {
             DecodeAccel::Software => None,
             DecodeAccel::Nvdec => Some(ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA),
             DecodeAccel::Vaapi { .. } => Some(ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI),
+            DecodeAccel::VideoToolbox => Some(ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX),
         }
     }
 
@@ -105,6 +111,7 @@ impl DecodeAccel {
             DecodeAccel::Software => None,
             DecodeAccel::Nvdec => Some(Pixel::CUDA),
             DecodeAccel::Vaapi { .. } => Some(Pixel::VAAPI),
+            DecodeAccel::VideoToolbox => Some(Pixel::VIDEOTOOLBOX),
         }
     }
 
@@ -121,9 +128,12 @@ impl DecodeAccel {
 /// True for the GPU-surface pixel formats a hardware lane decodes to — the frame
 /// must be transferred to system memory before it can be packed. (D3D11 is
 /// included for symmetry with the Windows path, though this module's hw lanes are
-/// CUDA/VAAPI.)
+/// CUDA/VAAPI/VideoToolbox.)
 fn is_hw_pix_format(fmt: Pixel) -> bool {
-    matches!(fmt, Pixel::CUDA | Pixel::VAAPI | Pixel::D3D11)
+    matches!(
+        fmt,
+        Pixel::CUDA | Pixel::VAAPI | Pixel::D3D11 | Pixel::VIDEOTOOLBOX
+    )
 }
 
 /// Walk libavcodec's offered `pix_fmts` (NONE-terminated) and return `want` if
@@ -157,6 +167,13 @@ unsafe extern "C" fn get_format_vaapi(
     pix_fmts: *const ffs::AVPixelFormat,
 ) -> ffs::AVPixelFormat {
     pick_hw_pix_format(pix_fmts, ffs::AVPixelFormat::AV_PIX_FMT_VAAPI)
+}
+
+unsafe extern "C" fn get_format_videotoolbox(
+    _ctx: *mut ffs::AVCodecContext,
+    pix_fmts: *const ffs::AVPixelFormat,
+) -> ffs::AVPixelFormat {
+    pick_hw_pix_format(pix_fmts, ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX)
 }
 
 /// Pin the BUNDLED libva (>= 2.21) and report whether it can copy back (issue #5
@@ -250,6 +267,7 @@ unsafe fn attach_hw_device(
         (*raw).get_format = Some(match accel {
             DecodeAccel::Nvdec => get_format_cuda,
             DecodeAccel::Vaapi { .. } => get_format_vaapi,
+            DecodeAccel::VideoToolbox => get_format_videotoolbox,
             DecodeAccel::Software => unreachable!("guarded above"),
         });
     }
@@ -1415,6 +1433,7 @@ mod tests {
         assert!(is_hw_pix_format(Pixel::CUDA));
         assert!(is_hw_pix_format(Pixel::VAAPI));
         assert!(is_hw_pix_format(Pixel::D3D11));
+        assert!(is_hw_pix_format(Pixel::VIDEOTOOLBOX));
         // CPU formats must NOT be treated as hw surfaces (they skip the transfer).
         for f in [
             Pixel::NV12,
@@ -1457,5 +1476,69 @@ mod tests {
             },
         );
         assert!(r.is_err(), "absent vaapi node should Err, got {r:?}");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn probe_rejects_videotoolbox_off_macos() {
+        // Off macOS the VideoToolbox hw device type isn't compiled into ffmpeg,
+        // so device create must surface as a graceful Err (the resolver's silent
+        // software-fallback path), never a panic/abort.
+        use super::{probe_hw_first_frame, DecodeAccel};
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        let r = probe_hw_first_frame(p, DecodeAccel::VideoToolbox);
+        assert!(r.is_err(), "videotoolbox off macOS should Err, got {r:?}");
+    }
+
+    // Unlike NVDEC/VAAPI, VideoToolbox is an OS framework present on every
+    // supported Mac (Apple Silicon only), so these real-hardware assertions are
+    // deterministic on any macOS host — no conformance-seam deferral needed.
+    // Fixture: tiny_h264.mp4 — 192x144 8-bit H.264, 12 frames, generated with
+    // the pinned sidecar:
+    //   ffmpeg -f lavfi -i testsrc2=size=192x144:rate=12:duration=1 \
+    //     -c:v h264_videotoolbox -pix_fmt nv12 -b:v 150k tiny_h264.mp4
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_probe_confirms_hw_decode_for_h264() {
+        use super::{probe_hw_first_frame, DecodeAccel};
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_h264.mp4");
+        probe_hw_first_frame(p, DecodeAccel::VideoToolbox)
+            .expect("VideoToolbox H.264 probe must confirm a hw surface");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_copyback_ships_nv12_transport_shape() {
+        // The copy-back lane must ship the exact NV12 byte shape the software
+        // lane does — same transport, no new IPC (ADR 0029/0034).
+        use super::DecodeAccel;
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_h264.mp4");
+        let mut s = SwVideoStream::open_with_accel(
+            p,
+            SwOutFormat::Nv12,
+            DecodeAccel::VideoToolbox,
+            OutScale::FULL,
+        )
+        .expect("open on videotoolbox");
+        let mut frames = 0u32;
+        let mut luma_varies = false;
+        while let Some(f) = s.next_frame().expect("decode") {
+            assert_eq!(f.width, 192);
+            assert_eq!(f.height, 144);
+            assert_eq!(f.data.len(), (192 * 144) + (192 * 144 / 2));
+            let y = &f.data[..192 * 144];
+            if y.iter().any(|&b| b != y[0]) {
+                luma_varies = true;
+            }
+            frames += 1;
+        }
+        assert_eq!(frames, 12, "fixture carries 12 frames (12 fps x 1 s)");
+        assert!(
+            luma_varies,
+            "decoded luma is uniform — black/garbage frames"
+        );
     }
 }
