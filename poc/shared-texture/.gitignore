@@ -1,0 +1,6 @@
+# napi build artifacts (source-only commits)
+native/index.js
+native/index.d.ts
+native/*.node
+native/target/
+node_modules/

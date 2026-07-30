@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>sharedTexture import POC</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 12px; background: #111; color: #ddd; }
+      h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: #aaa; }
+      canvas { border: 1px solid #444; image-rendering: pixelated; display: block; }
+      #log { margin-top: 10px; white-space: pre-wrap; font-size: 12px; color: #9f9; }
+    </style>
+  </head>
+  <body>
+    <h3>native D3D11 &rarr; importSharedTexture &rarr; VideoFrame</h3>
+    <canvas id="cv" width="256" height="256"></canvas>
+    <pre id="log">waiting for texture…</pre>
+  </body>
+</html>

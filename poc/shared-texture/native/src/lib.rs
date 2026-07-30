@@ -1,0 +1,1016 @@
+//! Minimal POC native side.
+//!
+//! Creates a 256x256 synthetic shared D3D11 texture — `bgra` (checkerboard) or
+//! `nv12` (Y bright-top/dark-bottom, neutral chroma) — and returns its
+//! process-local NT HANDLE to JS so the main process can
+//! `sharedTexture.importSharedTexture()` it and display it in the renderer.
+//!
+//! Step 1a of the ffmpeg path: prove an NV12 (YUV) shared texture round-trips,
+//! before wiring real ffmpeg d3d11va decode (which produces NV12).
+//!
+//! Raw `ID3D11Device::CreateTexture2D` only accepts a shareable NT-handle texture
+//! when created with `SHARED_NTHANDLE | SHARED_KEYEDMUTEX` together (proven by the
+//! earlier flag-combo probe), so every texture here carries a keyed mutex and the
+//! upload is bracketed in `AcquireSync(0)`/`ReleaseSync(0)`. The texture is written
+//! once and never mutated, so no further sync is needed for this probe.
+//!
+//! Windows-only by design.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
+
+use napi::bindgen_prelude::*;
+use napi_derive::napi;
+
+use windows::core::{Interface, PCWSTR};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
+use windows::Win32::Graphics::Direct3D::{
+    D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_0,
+    D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_12_1,
+};
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010,
+    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
+};
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1, IDXGIKeyedMutex, IDXGIResource1,
+};
+
+mod convert;
+mod decoder;
+
+const SIZE: u32 = 256;
+const CELL: u32 = 32;
+const INFINITE: u32 = 0xFFFF_FFFF;
+/// `DXGI_SHARED_RESOURCE_READ (0x80000000) | DXGI_SHARED_RESOURCE_WRITE (0x1)`.
+/// Passed as a raw u32 because the windows-crate newtype OR doesn't coerce to the
+/// method's `u32` parameter.
+const DXGI_SHARED_RESOURCE_RW: u32 = 0x8000_0001;
+
+/// Keeps the D3D11 device + texture + handle alive until JS says every cross-process
+/// reference has been released (Electron's `allReferencesReleased` callback). The COM
+/// objects are `!Send`; every napi call here runs on the Node main thread and the
+/// objects never cross threads, so the manual `Send` impl is sound.
+struct Holder {
+    _device: ID3D11Device,
+    _texture: ID3D11Texture2D,
+    handle: HANDLE,
+}
+unsafe impl Send for Holder {}
+
+static REGISTRY: Mutex<Option<HashMap<u32, Holder>>> = Mutex::new(None);
+static NEXT_ID: AtomicU32 = AtomicU32::new(1);
+
+#[napi(object)]
+pub struct PocSharedTexture {
+    pub id: u32,
+    /// Little-endian bytes of the process-local NT HANDLE. Feed this into
+    /// `textureInfo.handle.ntHandle`.
+    pub handle: Buffer,
+    pub width: u32,
+    pub height: u32,
+    /// The GPU adapter the texture lives on. If this is not the adapter Chromium's
+    /// GPU process uses, the cross-process handle open will fail (POC risk R2).
+    pub adapter: String,
+    /// Raw handle value, decimal — for logging/diagnostics only.
+    pub handle_value: String,
+    /// The shared texture's pixel format ("bgra" | "nv12") — JS passes this
+    /// straight into `textureInfo.pixelFormat`.
+    pub pixel_format: String,
+}
+
+fn win_err(ctx: &str, e: windows::core::Error) -> napi::Error {
+    napi::Error::from_reason(format!("{ctx} failed: {e}"))
+}
+
+fn checkerboard() -> Vec<u8> {
+    // BGRA, two obviously-different colors so a correct frame is unmistakable.
+    let orange = [0x33u8, 0x66, 0xff, 0xff]; // B,G,R,A -> renders as R=255,G=102,B=51
+    let dark = [0x22u8, 0x22, 0x22, 0xff];
+    let mut px = vec![0u8; (SIZE * SIZE * 4) as usize];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let i = ((y * SIZE + x) * 4) as usize;
+            let c = if ((x / CELL) + (y / CELL)) % 2 == 0 { &orange } else { &dark };
+            px[i..i + 4].copy_from_slice(c);
+        }
+    }
+    px
+}
+
+/// NV12 plane buffer: Y plane (top half bright, bottom half dark) followed by a
+/// neutral chroma plane, so a correct frame shows two clearly different gray
+/// bands regardless of the exact YUV->RGB matrix.
+fn nv12_pattern() -> Vec<u8> {
+    let (w, h) = (SIZE as usize, SIZE as usize);
+    let mut buf = vec![0u8; w * h + w * h / 2];
+    for y in 0..h {
+        let luma = if y < h / 2 { 210u8 } else { 60u8 };
+        for x in 0..w {
+            buf[y * w + x] = luma;
+        }
+    }
+    // Interleaved UV at neutral 128 == no color tint.
+    for b in buf.iter_mut().skip(w * h) {
+        *b = 128;
+    }
+    buf
+}
+
+/// Pick the highest-VRAM adapter — on a laptop with iGPU + dGPU that is the
+/// discrete GPU, which is what Chromium prefers for GPU compositing/WebGPU. Logs
+/// every adapter so a mismatch (risk R2) is diagnosable.
+fn pick_adapter() -> windows::core::Result<(Option<IDXGIAdapter>, String)> {
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
+        let mut best: Option<(IDXGIAdapter, u64, String)> = None;
+        let mut i = 0u32;
+        while let Ok(ad1) = factory.EnumAdapters1(i) {
+            let desc = ad1.GetDesc1()?;
+            let end = desc
+                .Description
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(desc.Description.len());
+            let name = String::from_utf16_lossy(&desc.Description[..end]);
+            let vram = desc.DedicatedVideoMemory as u64;
+            eprintln!("[poc-native] adapter[{i}] = {name} ({} MB VRAM)", vram / (1024 * 1024));
+            let better = best.as_ref().map(|(_, v, _)| vram > *v).unwrap_or(true);
+            if better {
+                best = Some((ad1.cast()?, vram, name));
+            }
+            i += 1;
+        }
+        Ok(match best {
+            Some((a, _, n)) => (Some(a), n),
+            None => (None, "default".to_string()),
+        })
+    }
+}
+
+/// Create a shareable D3D11 texture, upload `pixels` (bracketed by the mandatory
+/// keyed mutex), open an NT handle, register it for later release, and return the
+/// JS-facing descriptor. Shared by the synthetic and video paths.
+fn make_shared_texture(
+    width: u32,
+    height: u32,
+    dxgi_format: DXGI_FORMAT,
+    bind: u32,
+    row_pitch: u32,
+    pixels: &[u8],
+    pixel_format: &str,
+) -> Result<PocSharedTexture> {
+    unsafe {
+        let (adapter, adapter_name) = pick_adapter().map_err(|e| win_err("pick_adapter", e))?;
+        // DRIVER_TYPE_UNKNOWN when an explicit adapter is given, HARDWARE when not.
+        let driver_type = if adapter.is_some() {
+            D3D_DRIVER_TYPE_UNKNOWN
+        } else {
+            D3D_DRIVER_TYPE_HARDWARE
+        };
+
+        let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
+        let mut feature_level = D3D_FEATURE_LEVEL::default();
+        D3D11CreateDevice(
+            adapter.as_ref(),
+            driver_type,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            Some(&[
+                D3D_FEATURE_LEVEL_12_1,
+                D3D_FEATURE_LEVEL_12_0,
+                D3D_FEATURE_LEVEL_11_1,
+                D3D_FEATURE_LEVEL_11_0,
+            ]),
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            Some(&mut feature_level),
+            Some(&mut context),
+        )
+        .map_err(|e| win_err("D3D11CreateDevice", e))?;
+        let device = device.ok_or_else(|| napi::Error::from_reason("D3D11CreateDevice: null device"))?;
+        let context = context.ok_or_else(|| napi::Error::from_reason("D3D11CreateDevice: null context"))?;
+
+        // NTHANDLE|KEYEDMUTEX always — raw D3D11 requires the pair for a shareable
+        // NT-handle texture (proven by the earlier flag-combo probe). windows 0.58:
+        // struct flag fields are plain u32, constants are newtypes -> `.0`.
+        let nt_km =
+            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
+        // Shared textures reject initial data (E_INVALIDARG); upload after create.
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: dxgi_format,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: bind,
+            CPUAccessFlags: 0,
+            MiscFlags: nt_km,
+        };
+        let mut tex: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&desc, None, Some(&mut tex))
+            .map_err(|e| win_err(&format!("CreateTexture2D({pixel_format} {width}x{height})"), e))?;
+        let texture = tex.ok_or_else(|| napi::Error::from_reason("CreateTexture2D: null texture"))?;
+
+        // Upload bracketed by the keyed mutex, then Flush before sharing.
+        let keyed_mutex: IDXGIKeyedMutex =
+            texture.cast().map_err(|e| win_err("cast IDXGIKeyedMutex", e))?;
+        keyed_mutex.AcquireSync(0, INFINITE).map_err(|e| win_err("AcquireSync", e))?;
+        context.UpdateSubresource(&texture, 0, None, pixels.as_ptr() as *const _, row_pitch, 0);
+        context.Flush();
+        keyed_mutex.ReleaseSync(0).map_err(|e| win_err("ReleaseSync", e))?;
+
+        let resource: IDXGIResource1 = texture.cast().map_err(|e| win_err("cast IDXGIResource1", e))?;
+        let handle = resource
+            .CreateSharedHandle(None, DXGI_SHARED_RESOURCE_RW, PCWSTR::null())
+            .map_err(|e| win_err("CreateSharedHandle", e))?;
+
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let handle_value = handle.0 as isize as i64;
+        eprintln!(
+            "[poc-native] shared {pixel_format} texture id={id} {width}x{height} on '{adapter_name}', NT handle={handle_value}"
+        );
+
+        REGISTRY
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(id, Holder { _device: device, _texture: texture, handle });
+
+        Ok(PocSharedTexture {
+            id,
+            handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+            width,
+            height,
+            adapter: adapter_name,
+            handle_value: handle_value.to_string(),
+            pixel_format: pixel_format.to_string(),
+        })
+    }
+}
+
+#[napi]
+pub fn poc_create_synthetic_texture(format: String) -> Result<PocSharedTexture> {
+    let want = format.to_lowercase();
+    // (dxgi_format, bindFlags, Y/row pitch, plane buffer). NV12 can't be a render
+    // target; BGRA needs RENDER_TARGET to be shareable.
+    let (dxgi_format, bind, row_pitch, pixels): (DXGI_FORMAT, u32, u32, Vec<u8>) =
+        match want.as_str() {
+            "bgra" => (
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+                SIZE * 4,
+                checkerboard(),
+            ),
+            "nv12" => (
+                DXGI_FORMAT_NV12,
+                D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                SIZE,
+                nv12_pattern(),
+            ),
+            other => {
+                return Err(napi::Error::from_reason(format!(
+                    "unsupported format '{other}' (use bgra|nv12)"
+                )))
+            }
+        };
+    make_shared_texture(SIZE, SIZE, dxgi_format, bind, row_pitch, &pixels, &want)
+}
+
+/// A′ ticket 01: deterministic RGBA8 probe pattern. 16×16 corner markers
+/// (TL red, TR green, BL blue, BR white) over an (x,y)-indexed gradient
+/// (R=x&255, G=y&255, B=(x+y)&255), alpha 255 everywhere. A row-pitch error
+/// shears the gradient, a vertical flip swaps TL/BL, an R/B (rgba-vs-bgra)
+/// swap recolors the corners, and any color management bends the ramps —
+/// each failure mode has a distinct signature. MUST stay byte-identical to
+/// `rgbaProbeExpected()` in preload.js (the comparison's other half).
+fn rgba_probe_pattern(w: u32, h: u32) -> Vec<u8> {
+    const M: u32 = 16;
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let c: [u8; 4] = if x < M && y < M {
+                [255, 0, 0, 255]
+            } else if x >= w - M && y < M {
+                [0, 255, 0, 255]
+            } else if x < M && y >= h - M {
+                [0, 0, 255, 255]
+            } else if x >= w - M && y >= h - M {
+                [255, 255, 255, 255]
+            } else {
+                [(x & 255) as u8, (y & 255) as u8, ((x + y) & 255) as u8, 255]
+            };
+            px[i..i + 4].copy_from_slice(&c);
+        }
+    }
+    px
+}
+
+/// A′ ticket 01: create a shared R8G8B8A8 texture carrying the deterministic
+/// probe pattern, for the `pixelFormat:'rgba'` end-to-end import probe. Same
+/// bind flags as the BGRA path (RENDER_TARGET needed for a shareable RGB
+/// texture, per the Result-1 flag-combo probe) — and identical to what the
+/// A′ conversion pass will use, since its slot textures must be render
+/// targets anyway.
+#[napi]
+pub fn poc_create_rgba_probe_texture(width: u32, height: u32) -> Result<PocSharedTexture> {
+    if width < 48 || height < 48 {
+        return Err(napi::Error::from_reason(
+            "probe needs >=48x48 so the 16px corner markers don't overlap".to_string(),
+        ));
+    }
+    let px = rgba_probe_pattern(width, height);
+    make_shared_texture(
+        width,
+        height,
+        DXGI_FORMAT_R8G8B8A8_UNORM,
+        (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+        width * 4,
+        &px,
+        "rgba",
+    )
+}
+
+/// Step 1b-i: ffmpeg-decode the first frame of `path` to NV12 (hardware decode
+/// when available, then GPU→CPU transfer), then upload it into a shared NV12
+/// texture. Proves the ffmpeg→shared-texture→renderer pipeline; 1b-ii will
+/// replace the CPU bounce with a GPU `CopySubresourceRegion`.
+#[napi]
+pub fn poc_create_texture_from_video(path: String) -> Result<PocSharedTexture> {
+    let (w, h, nv12) = decoder::decode_first_frame_nv12(&path)
+        .map_err(|e| napi::Error::from_reason(format!("decode '{path}' failed: {e}")))?;
+    eprintln!("[poc-native] decoded {w}x{h}, {} NV12 bytes", nv12.len());
+    make_shared_texture(
+        w,
+        h,
+        DXGI_FORMAT_NV12,
+        D3D11_BIND_SHADER_RESOURCE.0 as u32,
+        w,
+        &nv12,
+        "nv12",
+    )
+}
+
+/// Step 1b-ii: TRUE zero-copy. Hardware-decode the first frame to a D3D11
+/// surface, then `CopySubresourceRegion` it (GPU→GPU, no CPU bounce) into a
+/// shared NV12 texture created on ffmpeg's own device, and share that.
+#[napi]
+pub fn poc_create_texture_from_video_zerocopy(path: String) -> Result<PocSharedTexture> {
+    let f = decoder::decode_first_d3d11_frame(&path)
+        .map_err(|e| napi::Error::from_reason(format!("d3d11 decode '{path}' failed: {e}")))?;
+    eprintln!(
+        "[poc-native] zero-copy: D3D11 frame {}x{}, src array index {}",
+        f.width,
+        f.height,
+        f.src_index()
+    );
+
+    unsafe {
+        // Borrow ffmpeg's COM objects WITHOUT taking ownership (ffmpeg frees them).
+        let device = ID3D11Device::from_raw_borrowed(&f.device)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device is null"))?;
+        let context = ID3D11DeviceContext::from_raw_borrowed(&f.device_context)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device context is null"))?;
+        let src_ptr = f.src_texture();
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&src_ptr)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+
+        // Detect the decoded surface's DXGI format so the shared copy matches it:
+        // 8-bit decode -> NV12, 10-bit (HEVC/VP9/AV1 Main10) -> P010. The dest must
+        // be the SAME format (CopySubresourceRegion needs matching formats) and JS
+        // imports it with the matching pixelFormat ('nv12' | 'p010le').
+        let mut sdesc = D3D11_TEXTURE2D_DESC::default();
+        src_tex.GetDesc(&mut sdesc);
+        let src_format = sdesc.Format;
+        let pf = if src_format == DXGI_FORMAT_P010 { "p010le" } else { "nv12" };
+        eprintln!(
+            "[poc-native] zero-copy src surface format={:?} -> pixelFormat={pf}",
+            src_format
+        );
+
+        // Shared destination (same format as the source) on ffmpeg's device, so the
+        // copy is intra-device.
+        let nt_km =
+            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: f.width,
+            Height: f.height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: src_format,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: nt_km,
+        };
+        let mut dst: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&desc, None, Some(&mut dst))
+            .map_err(|e| win_err("CreateTexture2D(nv12 zerocopy)", e))?;
+        let dst = dst.ok_or_else(|| napi::Error::from_reason("CreateTexture2D: null"))?;
+
+        // GPU→GPU copy of just the coded region, bracketed by our keyed mutex and
+        // ffmpeg's device-context lock.
+        let dst_km: IDXGIKeyedMutex = dst.cast().map_err(|e| win_err("cast keyed mutex", e))?;
+        dst_km.AcquireSync(0, INFINITE).map_err(|e| win_err("AcquireSync", e))?;
+        if let Some(lock) = f.lock {
+            lock(f.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: f.width,
+            bottom: f.height,
+            back: 1,
+        };
+        context.CopySubresourceRegion(&dst, 0, 0, 0, 0, src_tex, f.src_index(), Some(&region));
+        context.Flush();
+        if let Some(unlock) = f.unlock {
+            unlock(f.lock_ctx);
+        }
+        dst_km.ReleaseSync(0).map_err(|e| win_err("ReleaseSync", e))?;
+
+        let resource: IDXGIResource1 = dst.cast().map_err(|e| win_err("cast IDXGIResource1", e))?;
+        let handle = resource
+            .CreateSharedHandle(None, DXGI_SHARED_RESOURCE_RW, PCWSTR::null())
+            .map_err(|e| win_err("CreateSharedHandle", e))?;
+
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let handle_value = handle.0 as isize as i64;
+        eprintln!(
+            "[poc-native] zero-copy shared {pf} id={id} {}x{}, NT handle={handle_value}",
+            f.width, f.height
+        );
+
+        // Clone (AddRef) ffmpeg's device so it outlives the decoder we're about to
+        // drop; the dst texture references it too.
+        REGISTRY
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(id, Holder { _device: device.clone(), _texture: dst, handle });
+
+        Ok(PocSharedTexture {
+            id,
+            handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+            width: f.width,
+            height: f.height,
+            adapter: "ffmpeg-d3d11".to_string(),
+            handle_value: handle_value.to_string(),
+            pixel_format: pf.to_string(),
+        })
+    }
+    // `f` (decoder/frame/hw_ctx) drops here, after the copy completed + flushed.
+}
+
+/// Result 6: native NV12→BGRA color convert + zero-copy share. Hardware-decode
+/// the first frame to a D3D11 NV12 surface, then on ffmpeg's own device convert
+/// it to BGRA with the BT.601 limited-range matrix (custom pixel shader, no
+/// primaries remap) into a shared BGRA texture, and share THAT. Because the
+/// shared texture is already RGB (matrix:'rgb', range:'full'), the WebGPU
+/// ingestion that mis-colored raw NV12 (Result 5) has no YUV→RGB to mishandle.
+///
+/// The decoder's NV12 frame lives in a `BIND_DECODER` texture ARRAY, which can't
+/// carry shader-resource views; so we first `CopySubresourceRegion` the decoded
+/// slice into a plain `BIND_SHADER_RESOURCE` NV12 texture (subresource 0), then
+/// SRV+convert that.
+///
+/// `matrix` selects the YUV→RGB matrix the convert shader applies ("601"
+/// default, or "709"); it MUST match the source's colorimetry tag (a real
+/// integration reads it from the stream). Result 6 showed the wrong matrix
+/// yields a wrong-but-self-consistent color.
+#[napi]
+pub fn poc_create_bgra_from_video_zerocopy(
+    path: String,
+    matrix: Option<String>,
+) -> Result<PocSharedTexture> {
+    let matrix = match matrix.as_deref() {
+        Some("709") | Some("bt709") => convert::YuvMatrix::Bt709,
+        _ => convert::YuvMatrix::Bt601,
+    };
+    let f = decoder::decode_first_d3d11_frame(&path)
+        .map_err(|e| napi::Error::from_reason(format!("d3d11 decode '{path}' failed: {e}")))?;
+    eprintln!(
+        "[poc-native] bgra-convert: D3D11 NV12 frame {}x{}, src array index {}",
+        f.width,
+        f.height,
+        f.src_index()
+    );
+
+    unsafe {
+        let device = ID3D11Device::from_raw_borrowed(&f.device)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device is null"))?;
+        let context = ID3D11DeviceContext::from_raw_borrowed(&f.device_context)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device context is null"))?;
+        let src_ptr = f.src_texture();
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&src_ptr)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+
+        // Staging NV12 with SHADER_RESOURCE so we can SRV its Y/UV planes (the
+        // decoder texture is BIND_DECODER-only + array-typed). Not shared — local
+        // to this device, freed when it drops at the end of the call.
+        let nv12_desc = D3D11_TEXTURE2D_DESC {
+            Width: f.width,
+            Height: f.height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_NV12,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let mut nv12_srv_tex: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&nv12_desc, None, Some(&mut nv12_srv_tex))
+            .map_err(|e| win_err("CreateTexture2D(nv12 SRV staging)", e))?;
+        let nv12_srv_tex = nv12_srv_tex.ok_or_else(|| napi::Error::from_reason("null nv12 staging"))?;
+
+        // GPU→GPU copy the decoded slice into the SRV-able NV12 texture, under
+        // ffmpeg's device-context lock (decode thread vs. our copy).
+        if let Some(lock) = f.lock {
+            lock(f.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: f.width,
+            bottom: f.height,
+            back: 1,
+        };
+        context.CopySubresourceRegion(&nv12_srv_tex, 0, 0, 0, 0, src_tex, f.src_index(), Some(&region));
+        if let Some(unlock) = f.unlock {
+            unlock(f.lock_ctx);
+        }
+
+        // NV12 → BGRA on the same device via the matrix-only shader.
+        let bgra =
+            convert::convert_nv12_to_bgra_shader(device, context, &nv12_srv_tex, f.width, f.height, matrix)
+                .map_err(napi::Error::from_reason)?;
+
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let handle_value = bgra.handle.0 as isize as i64;
+        eprintln!(
+            "[poc-native] bgra-convert shared id={id} {}x{} (601 limited-range shader), NT handle={handle_value}",
+            bgra.width, bgra.height
+        );
+
+        REGISTRY
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(id, Holder { _device: device.clone(), _texture: bgra.texture, handle: bgra.handle });
+
+        Ok(PocSharedTexture {
+            id,
+            handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+            width: bgra.width,
+            height: bgra.height,
+            adapter: "ffmpeg-d3d11".to_string(),
+            handle_value: handle_value.to_string(),
+            pixel_format: "bgra".to_string(),
+        })
+    }
+    // `f` (decoder/frame/hw_ctx) + nv12 staging drop here, after the convert flushed.
+}
+
+#[napi]
+pub fn poc_release_texture(id: u32) {
+    let holder = REGISTRY.lock().unwrap().as_mut().and_then(|m| m.remove(&id));
+    if let Some(h) = holder {
+        unsafe {
+            let _ = CloseHandle(h.handle);
+        }
+        eprintln!("[poc-native] released texture id={id}");
+        // device + texture drop here, releasing their COM references.
+    }
+}
+
+// ===========================================================================
+// Result 3 — streaming sync: decode a multi-frame video continuously into a
+// POOL of reusable shared NV12 textures, so the producer can fill frame N+1
+// while the renderer still holds frame N.
+//
+// Central question: does the keyed-mutex handshake let us REUSE a shared
+// texture across frames without deadlock / tearing / stale frames?
+//
+// Lifecycle of one pool slot:
+//   free  --pocStreamNextFrame picks it--> busy (we AcquireSync, copy, ReleaseSync)
+//   busy  --JS importSharedTexture + renderer holds VideoFrame-->
+//   busy  --Electron allReferencesReleased fires --> pocFreeSlot --> free
+// The keyed mutex (index 0) serialises OUR GPU write against Chromium's GPU
+// read of the same texture; the free-flag serialises slot *ownership* in JS.
+// ===========================================================================
+
+/// One reusable shared NV12 texture in the streaming pool.
+struct PoolSlot {
+    texture: ID3D11Texture2D,
+    keyed_mutex: IDXGIKeyedMutex,
+    handle: HANDLE,
+    /// `true` once `allReferencesReleased` has fired (or the slot was never sent);
+    /// the producer may only reuse a free slot. Shared as an `AtomicBool` so the
+    /// JS free callback and the producer agree without taking the global lock in a
+    /// surprising order.
+    free: AtomicBool,
+}
+unsafe impl Send for PoolSlot {}
+
+/// The live streaming session: the open decoder + its texture pool, all on
+/// ffmpeg's D3D11 device. COM objects are `!Send`; everything runs on the Node
+/// main thread (same contract as `Holder`).
+struct StreamState {
+    stream: decoder::VideoStream,
+    /// ffmpeg's device, cloned (AddRef) to outlive the decoder so the pool
+    /// textures (created on it) stay valid; only held for its lifetime, the
+    /// per-frame copy goes through `context`.
+    _device: ID3D11Device,
+    context: ID3D11DeviceContext,
+    pool: Vec<PoolSlot>,
+    width: u32,
+    height: u32,
+    frame_index: u32,
+    eof: bool,
+}
+unsafe impl Send for StreamState {}
+
+static STREAM: Mutex<Option<StreamState>> = Mutex::new(None);
+
+#[napi(object)]
+pub struct PocStreamInfo {
+    pub width: u32,
+    pub height: u32,
+    pub pool_size: u32,
+}
+
+#[napi(object)]
+pub struct PocStreamFrame {
+    /// Pool slot index this frame was copied into. JS passes it back to
+    /// `pocFreeSlot` from `allReferencesReleased`.
+    pub slot: u32,
+    /// Little-endian bytes of the slot texture's NT handle (cached once per slot).
+    pub handle: Buffer,
+    pub width: u32,
+    pub height: u32,
+    /// 0-based decode order index of this frame.
+    pub frame_index: u32,
+}
+
+/// Open `path` for streaming and create a pool of `pool_size` reusable shared
+/// NV12 textures on ffmpeg's device. Reuse `poc_open_video_stream` once; pull
+/// frames with `poc_stream_next_frame`.
+#[napi]
+pub fn poc_open_video_stream(path: String, pool_size: u32) -> Result<PocStreamInfo> {
+    let pool_size = pool_size.max(1);
+    let stream = decoder::VideoStream::open(&path)
+        .map_err(|e| napi::Error::from_reason(format!("open stream '{path}' failed: {e}")))?;
+    let (width, height) = (stream.width, stream.height);
+
+    unsafe {
+        let device = ID3D11Device::from_raw_borrowed(&stream.device)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device is null"))?
+            .clone();
+        let context = ID3D11DeviceContext::from_raw_borrowed(&stream.device_context)
+            .ok_or_else(|| napi::Error::from_reason("ffmpeg D3D11 device context is null"))?
+            .clone();
+
+        let nt_km =
+            (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_NV12,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: nt_km,
+        };
+
+        let mut pool = Vec::with_capacity(pool_size as usize);
+        for i in 0..pool_size {
+            let mut tex: Option<ID3D11Texture2D> = None;
+            device
+                .CreateTexture2D(&desc, None, Some(&mut tex))
+                .map_err(|e| win_err(&format!("CreateTexture2D(pool slot {i})"), e))?;
+            let texture = tex.ok_or_else(|| napi::Error::from_reason("CreateTexture2D: null"))?;
+            let keyed_mutex: IDXGIKeyedMutex =
+                texture.cast().map_err(|e| win_err("cast IDXGIKeyedMutex", e))?;
+            let resource: IDXGIResource1 =
+                texture.cast().map_err(|e| win_err("cast IDXGIResource1", e))?;
+            let handle = resource
+                .CreateSharedHandle(None, DXGI_SHARED_RESOURCE_RW, PCWSTR::null())
+                .map_err(|e| win_err("CreateSharedHandle", e))?;
+            pool.push(PoolSlot {
+                texture,
+                keyed_mutex,
+                handle,
+                free: AtomicBool::new(true),
+            });
+        }
+
+        eprintln!(
+            "[poc-native] stream opened {width}x{height}, pool of {pool_size} shared NV12 textures"
+        );
+
+        *STREAM.lock().unwrap() = Some(StreamState {
+            stream,
+            _device: device,
+            context,
+            pool,
+            width,
+            height,
+            frame_index: 0,
+            eof: false,
+        });
+    }
+
+    Ok(PocStreamInfo { width, height, pool_size })
+}
+
+/// Status of a `poc_stream_next_frame` call. Exactly one of `frame` / `eof` /
+/// `busy` is the meaningful field (a `#[napi(object)]` can't be a Rust enum, so
+/// this is a small tagged struct JS branches on).
+#[napi(object)]
+pub struct PocStreamResult {
+    /// "frame" — `frame` is populated; "eof" — stream finished; "busy" — every
+    /// pool slot is still held by the renderer, retry shortly.
+    pub status: String,
+    pub frame: Option<PocStreamFrame>,
+}
+
+/// Decode the next frame and copy it (GPU→GPU) into a FREE pool slot. Returns
+/// status "eof" at end of stream, "busy" if all slots are still held by the
+/// renderer (JS should retry after a tick), or "frame" with the slot + handle.
+#[napi]
+pub fn poc_stream_next_frame() -> Result<PocStreamResult> {
+    let mut guard = STREAM.lock().unwrap();
+    let st = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("no open stream"))?;
+
+    if st.eof {
+        return Ok(PocStreamResult { status: "eof".into(), frame: None });
+    }
+
+    // Find a free slot BEFORE decoding so a busy pool doesn't consume a frame.
+    let slot_idx = st.pool.iter().position(|s| s.free.load(Ordering::Acquire));
+    let Some(slot_idx) = slot_idx else {
+        return Ok(PocStreamResult { status: "busy".into(), frame: None });
+    };
+
+    let decoded = st
+        .stream
+        .next_frame()
+        .map_err(|e| napi::Error::from_reason(format!("decode next frame failed: {e}")))?;
+    let Some(decoded) = decoded else {
+        st.eof = true;
+        eprintln!("[poc-native] stream EOF after {} frames", st.frame_index);
+        return Ok(PocStreamResult { status: "eof".into(), frame: None });
+    };
+
+    let frame_index = st.frame_index;
+    let width = st.width;
+    let height = st.height;
+
+    // Copy the decoded GPU surface into the chosen pool slot, bracketed by the
+    // slot's keyed mutex (our write vs. Chromium's read) AND ffmpeg's device-
+    // context lock (decode thread vs. our copy).
+    unsafe {
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&decoded.src_texture)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+        let slot = &st.pool[slot_idx];
+
+        slot.keyed_mutex
+            .AcquireSync(0, INFINITE)
+            .map_err(|e| win_err("AcquireSync(pool slot)", e))?;
+        if let Some(lock) = st.stream.lock {
+            lock(st.stream.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: width,
+            bottom: height,
+            back: 1,
+        };
+        st.context.CopySubresourceRegion(
+            &slot.texture,
+            0,
+            0,
+            0,
+            0,
+            src_tex,
+            decoded.src_index,
+            Some(&region),
+        );
+        st.context.Flush();
+        if let Some(unlock) = st.stream.unlock {
+            unlock(st.stream.lock_ctx);
+        }
+        slot.keyed_mutex
+            .ReleaseSync(0)
+            .map_err(|e| win_err("ReleaseSync(pool slot)", e))?;
+
+        // Mark busy: the renderer now owns it until allReferencesReleased.
+        slot.free.store(false, Ordering::Release);
+
+        let handle_value = slot.handle.0 as isize as i64;
+        st.frame_index += 1;
+
+        Ok(PocStreamResult {
+            status: "frame".into(),
+            frame: Some(PocStreamFrame {
+                slot: slot_idx as u32,
+                handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+                width,
+                height,
+                frame_index,
+            }),
+        })
+    }
+}
+
+/// Mark a pool slot free again — called from JS `allReferencesReleased`, meaning
+/// every cross-process reference to that slot's texture has been dropped, so the
+/// producer may reuse it for a later frame.
+#[napi]
+pub fn poc_free_slot(slot: u32) {
+    let guard = STREAM.lock().unwrap();
+    if let Some(st) = guard.as_ref() {
+        if let Some(s) = st.pool.get(slot as usize) {
+            s.free.store(true, Ordering::Release);
+        }
+    }
+}
+
+// ===========================================================================
+// Result 4 — persistent import / zero per-frame IPC.
+//
+// Hypothesis: import + send each pool texture exactly ONCE; thereafter the
+// producer overwrites the SAME underlying D3D11 texture (bracketed by the keyed
+// mutex) and the renderer, holding the SAME `SharedTextureImported` object, calls
+// `getVideoFrame()` repeatedly and sees the NEW content — with NO per-frame
+// import/send. If `getVideoFrame()` instead returns the frozen first frame, the
+// persistent import is impossible and per-frame re-import is mandatory.
+//
+// These functions reuse the streaming `STREAM`/pool (open with
+// `poc_open_video_stream`, tear down with `poc_close_video_stream`) but DROP the
+// free-slot/allReferencesReleased gating: the producer writes whichever slot it
+// is told, whenever it likes. That is the whole point — the producer and the
+// persistent import are deliberately NOT coordinated via slot ownership; only the
+// keyed mutex serialises the GPU write against Chromium's read.
+// ===========================================================================
+
+#[napi(object)]
+pub struct PocPersistSlot {
+    /// Little-endian bytes of the slot texture's NT handle (cached once per slot).
+    pub handle: Buffer,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Return a slot's cached NT handle + dimensions, for the ONE-TIME import in
+/// persistent mode. No GPU work — just reads the handle created at open time.
+#[napi]
+pub fn poc_persist_slot_handle(slot: u32) -> Result<PocPersistSlot> {
+    let guard = STREAM.lock().unwrap();
+    let st = guard
+        .as_ref()
+        .ok_or_else(|| napi::Error::from_reason("no open stream"))?;
+    let s = st
+        .pool
+        .get(slot as usize)
+        .ok_or_else(|| napi::Error::from_reason(format!("slot {slot} out of range")))?;
+    let handle_value = s.handle.0 as isize as i64;
+    Ok(PocPersistSlot {
+        handle: Buffer::from(handle_value.to_le_bytes().to_vec()),
+        width: st.width,
+        height: st.height,
+    })
+}
+
+#[napi(object)]
+pub struct PocPersistWrite {
+    /// "frame" — a new frame was written into `slot`; "eof" — stream finished.
+    pub status: String,
+    /// 0-based decode order index of the frame just written (meaningful on "frame").
+    pub frame_index: u32,
+}
+
+/// Decode the next frame and overwrite the GIVEN pool `slot` with it (GPU→GPU),
+/// bracketed by that slot's keyed mutex. Unlike `poc_stream_next_frame` this does
+/// NOT check the free-flag and does NOT import/send anything — it just mutates the
+/// shared texture in place. The renderer is expected to hold a persistent import
+/// of this slot and pull `getVideoFrame()` on its own timer. Returns "eof" at end
+/// of stream.
+#[napi]
+pub fn poc_persist_write_next(slot: u32) -> Result<PocPersistWrite> {
+    let mut guard = STREAM.lock().unwrap();
+    let st = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("no open stream"))?;
+
+    if st.eof {
+        return Ok(PocPersistWrite { status: "eof".into(), frame_index: 0 });
+    }
+    if slot as usize >= st.pool.len() {
+        return Err(napi::Error::from_reason(format!("slot {slot} out of range")));
+    }
+
+    let decoded = st
+        .stream
+        .next_frame()
+        .map_err(|e| napi::Error::from_reason(format!("decode next frame failed: {e}")))?;
+    let Some(decoded) = decoded else {
+        st.eof = true;
+        eprintln!("[poc-native] persist stream EOF after {} frames", st.frame_index);
+        return Ok(PocPersistWrite { status: "eof".into(), frame_index: 0 });
+    };
+
+    let frame_index = st.frame_index;
+    let width = st.width;
+    let height = st.height;
+
+    // Overwrite the chosen slot in place, bracketed by ITS keyed mutex (our write
+    // vs. Chromium's read) and ffmpeg's device-context lock. No free-flag: the
+    // renderer's persistent import of this slot is intentionally not coordinated
+    // here — the keyed mutex is the only handshake. This is the hypothesis under
+    // test.
+    unsafe {
+        let src_tex = ID3D11Texture2D::from_raw_borrowed(&decoded.src_texture)
+            .ok_or_else(|| napi::Error::from_reason("decoded D3D11 texture is null"))?;
+        let pool_slot = &st.pool[slot as usize];
+
+        pool_slot
+            .keyed_mutex
+            .AcquireSync(0, INFINITE)
+            .map_err(|e| win_err("AcquireSync(persist slot)", e))?;
+        if let Some(lock) = st.stream.lock {
+            lock(st.stream.lock_ctx);
+        }
+        let region = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: width,
+            bottom: height,
+            back: 1,
+        };
+        st.context.CopySubresourceRegion(
+            &pool_slot.texture,
+            0,
+            0,
+            0,
+            0,
+            src_tex,
+            decoded.src_index,
+            Some(&region),
+        );
+        st.context.Flush();
+        if let Some(unlock) = st.stream.unlock {
+            unlock(st.stream.lock_ctx);
+        }
+        pool_slot
+            .keyed_mutex
+            .ReleaseSync(0)
+            .map_err(|e| win_err("ReleaseSync(persist slot)", e))?;
+
+        st.frame_index += 1;
+    }
+
+    Ok(PocPersistWrite { status: "frame".into(), frame_index })
+}
+
+/// Drop the decoder + pool, closing each slot's NT handle.
+#[napi]
+pub fn poc_close_video_stream() {
+    let st = STREAM.lock().unwrap().take();
+    if let Some(st) = st {
+        unsafe {
+            for slot in &st.pool {
+                let _ = CloseHandle(slot.handle);
+            }
+        }
+        eprintln!("[poc-native] stream closed ({} frames decoded)", st.frame_index);
+        // stream (decoder), device, context, pool textures all drop here.
+    }
+}

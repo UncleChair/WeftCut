@@ -1,0 +1,41 @@
+# Standalone POC napi addon — deliberately NOT part of apps/desktop/native's
+# cargo workspace (it lives in a sibling subtree). Empty [workspace] makes this
+# crate its own root so cargo never tries to attach it to a parent.
+[workspace]
+
+[package]
+name = "poc-shared-texture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[build-dependencies]
+napi-build = "2"
+
+[dependencies]
+napi = { version = "3", default-features = false, features = ["napi6"] }
+napi-derive = "3"
+# Library bindings (not the subprocess sidecar) — needed to get GPU/decoded
+# frames in-process. Build requires FFMPEG_DIR + LIBCLANG_PATH env vars; 8.1
+# matches the Gyan.FFmpeg.Shared 8.1.1 libs on this machine.
+ffmpeg-next = "8.1"
+
+# D3D11 + DXGI only on Windows; this POC is Windows-only by design.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D_Fxc",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+] }
+
+# Fast iteration: a debug build is fine for a probe, and skips the long release
+# optimize pass on the (large) windows crate.
+[profile.dev]
+opt-level = 0

@@ -1,0 +1,9 @@
+{
+  "name": "poc-shared-texture",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": { "binaryName": "poc-shared-texture" },
+  "scripts": { "build": "napi build --platform" }
+}
