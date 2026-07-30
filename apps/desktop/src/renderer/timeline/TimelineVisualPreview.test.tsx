@@ -261,8 +261,9 @@ describe("TimelineVisualPreview", () => {
 
     const fill = getByTestId("timeline-visual-preview").firstElementChild as HTMLElement;
 
-    expect(fill.getAttribute("style")).toContain(
-      "rgba(10, 20, 30, 0.00392156862745098)",
-    );
+    // jsdom's CSSOM serializes alpha the way browsers do: 1/255 rounds to
+    // 0.004 — distinct from 0 and from a 0-1-channel misread (1.0), which is
+    // all this test needs to pin.
+    expect(fill.getAttribute("style")).toContain("rgba(10, 20, 30, 0.004)");
   });
 });

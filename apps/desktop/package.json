@@ -84,7 +84,7 @@
     "electron-builder": "26.15.3",
     "electron-vite": "6.0.0-beta.1",
     "fast-check": "^4.9.0",
-    "jsdom": "^25.0.1",
+    "jsdom": "^30.0.1",
     "pngjs": "^7.0.0",
     "shadcn": "^4.16.0",
     "typescript": "^7.0.2",
