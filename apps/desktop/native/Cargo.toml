@@ -47,7 +47,7 @@ serde_json = "1"
 schemars = "0.8"
 
 # Domain primitives
-imbl = { version = "3", features = ["serde"] }
+imbl = { version = "7", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
 blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
