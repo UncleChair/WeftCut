@@ -597,9 +597,13 @@ async function runCell(leg, tracks) {
     await page.waitForLoadState("domcontentloaded");
     // The WebCodecs lane can downgrade prefer-hardware → prefer-software
     // internally with no observable state change; its only trace is this line.
+    // `decode lane:` is the Standard engine's transition row (ffmpegLaneTrail)
+    // and carries the DOWNGRADE REASON — without it a DRIFT cell names the
+    // fact but not the cause, which is the difference between "the lane fell"
+    // and "AcquireSync timed out under 3×4K".
     page.on("console", (m) => {
       const t = m.text();
-      if (/decoder .* error:/i.test(t) || /hw-budget-exceeded/i.test(t)) consoleErrors.push(t);
+      if (/decoder .* error:/i.test(t) || /hw-budget-exceeded/i.test(t) || /decode lane:/i.test(t)) consoleErrors.push(t);
     });
 
     try {
@@ -864,6 +868,12 @@ async function runCell(leg, tracks) {
     const wallS = (Date.now() - t0) / 1000;
     const endRes = await probeRes();
     const endPerf = await page.evaluate(() => window.__weftcutTest.compositorPerfSnapshot());
+    // Pool-VRAM sample (the A′ instrument): live Σ w×h×4×slots across the OPEN
+    // hardware sessions, from main's admission surface. Must be taken here —
+    // while the sessions still exist — not after pause/teardown below.
+    const hwBudgetAtEnd = await page
+      .evaluate(() => window.api.previewGpu.budget())
+      .catch(() => null);
     const stages = await page.evaluate(() => window.__weftcutTest.stageProfilingSnapshot());
     const { longFrames, timer: timerCadence } = await drainStallProbes(page);
     const post = await probeAll();
@@ -1039,6 +1049,7 @@ async function runCell(leg, tracks) {
       perClip,
       barrierWallShare,
       fenceSpinShare,
+      hwBudgetAtEnd,
       metrics,
       gpu: {
         videoDecodeMean: mean(gpu.videoDecode),
@@ -1203,6 +1214,25 @@ function printTables(report) {
         `| ${leg.label} | ${c.tracks} | ${c.verdict.pass ? "smooth" : "STUTTER"} | ${f(c.dropRatio * 100, 2)} | ${f(c.presentedFps)} | ${f(dec)} | ` +
         `${f(s.tickInterval?.p50Ms, 2)} | ${f(s.tickInterval?.p99Ms, 2)} | ${f(s.composite?.p50Ms, 2)} | ${f(s.present?.p50Ms, 2)} | ${f(s.present?.p95Ms, 2)} | ${f(s.anchor?.p50Ms, 2)} | ${f(bar, 2)} | ${f(fenceForced, 0)} | ${f(barDraw, 2)} | ${f(barRead, 2)} | ${f(fenceWait, 2)} | ${f(fenceQPeak, 0)} | ${f(barN, 0)} | ${f(c.barrierWallShare, 2)} | ${f(c.fenceSpinShare, 2)} | ` +
         `${f(c.metrics.cpu.Browser?.mean)} | ${f(c.metrics.cpu.Tab?.mean)} | ${f(c.metrics.cpu.GPU?.mean)} | ${f(c.gpu.videoDecodeMean)} | ${f(c.gpu.gpu3dMean)} | ${JSON.stringify(c.laneMix)} |`,
+      );
+    }
+  }
+
+  // Pool VRAM per cell — the measured side of the A′ ×2.67-bytes question.
+  // `slot MB` is main's live Σ w×h×4×slots at window close; `expected MB` is
+  // the same arithmetic from the leg's track count, so a mismatch flags a
+  // session that failed admission (or leaked) rather than a wrong constant.
+  console.log("\n### Pool VRAM (RGBA8 shared slots, sampled at window close)\n");
+  console.log("| leg | tracks | hw sessions | slot MB | coded-area used/max |");
+  console.log("|---|---|---|---|---|");
+  for (const leg of report.legs) {
+    for (const c of leg.cells) {
+      if (c.kind !== "ok" || !c.hwBudgetAtEnd) continue;
+      const b = c.hwBudgetAtEnd;
+      console.log(
+        `| ${leg.label} | ${c.tracks} | ${b.sessions.used}/${b.sessions.max} | ` +
+        `${f((b.slotVram?.usedBytes ?? 0) / (1024 * 1024), 1)} | ` +
+        `${b.codedPixelArea.used}/${b.codedPixelArea.max} |`,
       );
     }
   }

@@ -5,19 +5,23 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
 
-// Runtime verification for the Standard (ffmpeg) engine's Linux copy-back
-// HARDWARE decode lane — the sibling of preview-sw-conformance.spec.ts, but for
-// the HW path. It proves that the real app decodes an INTERFRAME 8-bit H.264
-// clip end-to-end through a hardware lane (NVDEC or VAAPI) and that the rendered
-// preview frame is correct (SSIM vs an ffmpeg reference of the same source
-// frame). The copy-back HW lane rides the SAME previewSw NV12 transport as the
-// software lane (ADR 0034): the native decoder produces NV12 on the GPU, copies
-// it back to system memory, and rings it exactly like a software decode — so
-// `Compositor.activeClipProbe` reports `sourceKind: "native-gpu"` (vs `"sw"` for
-// software) while everything downstream (ring → Nv12Ingest → sprite) is shared.
+// Runtime verification for the Standard (ffmpeg) engine's HARDWARE decode
+// lanes — the sibling of preview-sw-conformance.spec.ts, but for the HW paths.
+// It proves that the real app decodes an INTERFRAME 8-bit H.264 clip
+// end-to-end through a hardware lane and that the rendered preview frame is
+// correct (SSIM vs an ffmpeg reference of the same source frame). Two
+// transport shapes share this one spec:
+//   - nvdec/vaapi (Linux copy-back): NV12 copies back to system memory and
+//     rides the SAME previewSw transport as software (ADR 0034), so
+//     everything downstream (ring → Nv12Ingest → sprite) is shared.
+//   - d3d11va (Windows shared-texture): frames stay on the GPU; native
+//     converts NV12→RGBA with its own shader and shares the texture
+//     (GpuTransport). SSIM here is the lane's natural-content structural
+//     gate; the matrix/range correctness gate is preview-hw-color.spec.ts.
+// Either way `Compositor.activeClipProbe` reports `sourceKind: "native-gpu"`.
 //
 // PARAMETERIZED BY HARDWARE LANE (issue #5 Block C3). One test() per HW lane in
-// {nvdec, vaapi}; each launches the app with WEFTCUT_FORCE_HW_LANE=<lane>, which
+// {nvdec, vaapi, d3d11va}; each launches the app with WEFTCUT_FORCE_HW_LANE=<lane>, which
 // pins main's `decodeCap:probeHw` resolver to consider ONLY that HW lane (plus
 // the software fallback). A variant SKIPS CLEANLY when its lane didn't engage on
 // this machine — e.g. when the addon never advertised the lane, the resolver
@@ -64,7 +68,7 @@ function parseSsimAll(stderr: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-for (const lane of ['nvdec', 'vaapi'] as const) {
+for (const lane of ['nvdec', 'vaapi', 'd3d11va'] as const) {
   test(`preview-hw: ffmpeg engine decodes interframe H.264 on the ${lane} copy-back lane + SSIM (issue #5 Block C3) @serial`, async () => {
     test.skip(!existsSync(H264), `H.264 fixture not found at ${H264} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(240_000)
