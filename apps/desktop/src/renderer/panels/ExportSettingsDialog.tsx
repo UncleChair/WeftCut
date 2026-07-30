@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir, type MediaSummary } from "../ipc";
-import { formatTimecode, wallClockAside } from "../frames";
+import { formatTimecode, inclusiveOutBoundaryUs, wallClockAside } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -509,8 +509,23 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                         />
                         <button
                           type="button"
+                          // The playhead is a frame ANCHOR while the range end
+                          // is EXCLUSIVE: storing the raw playhead µs would
+                          // drop the frame the user is looking at, and — since
+                          // the playhead can't pass the last frame's start —
+                          // make the final frame unreachable. Store the
+                          // displayed frame's exclusive end instead.
                           onClick={() =>
-                            setRangeEndUs(Math.max(currentTimeUs, rangeStartUs))
+                            setRangeEndUs(
+                              Math.max(
+                                inclusiveOutBoundaryUs(
+                                  currentTimeUs,
+                                  comp.fps_num,
+                                  comp.fps_den,
+                                ),
+                                rangeStartUs,
+                              ),
+                            )
                           }
                         >
                           {t("export_dialog.set_to_playhead")}

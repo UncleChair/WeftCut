@@ -2,6 +2,8 @@ import { describe, expect, it, test } from "vitest";
 import {
   adjacentFrameBoundaryUs,
   approxFrameDurUs,
+  boundaryDisplayFrameUs,
+  displayedFrameStartUs,
   formatTimecode,
   formatWallClock,
   frameCount,
@@ -9,6 +11,7 @@ import {
   frameIndexFloor,
   frameIndexInLayer,
   frameIndexRound,
+  inclusiveOutBoundaryUs,
   isFractionalRate,
   lastFrameAnchorUs,
   snapFrameCeil,
@@ -127,6 +130,64 @@ describe("lastFrameAnchorUs", () => {
     // 299·1001/30000 s = 9_976_633.333 µs → half-up rounds DOWN to
     // 9_976_633 (since 0.333 < 0.5).
     expect(lastFrameAnchorUs(10_010_000, 30_000, 1001)).toBe(9_976_633);
+  });
+});
+
+describe("inclusiveOutBoundaryUs", () => {
+  it("returns the exclusive end of the displayed frame", () => {
+    expect(inclusiveOutBoundaryUs(0, 30, 1)).toBe(33_333);
+    expect(inclusiveOutBoundaryUs(33_333, 30, 1)).toBe(66_667);
+    // Mid-frame playhead (shouldn't occur — the playhead is a frame anchor —
+    // but the translation must still resolve to the frame being displayed).
+    expect(inclusiveOutBoundaryUs(40_000, 30, 1)).toBe(66_667);
+  });
+
+  it("reaches exactly the composition duration from the last frame anchor", () => {
+    for (const [num, den] of RATES) {
+      const durationUs = timeUsAtFrame(300, num, den);
+      const lastAnchor = lastFrameAnchorUs(durationUs, num, den);
+      expect(inclusiveOutBoundaryUs(lastAnchor, num, den)).toBe(durationUs);
+    }
+  });
+
+  it("derives fractional-rate boundaries from the grid, not a rounded duration", () => {
+    // Frame 1 at 29.97 starts at 33_367; its exclusive end is frame 2's
+    // start (66_733), NOT 33_367 + 33_367.
+    expect(inclusiveOutBoundaryUs(33_367, 30_000, 1001)).toBe(66_733);
+  });
+
+  it("falls back to a nominal frame on degenerate fps", () => {
+    expect(inclusiveOutBoundaryUs(1_000_000, 0, 1)).toBe(1_033_333);
+  });
+});
+
+describe("boundaryDisplayFrameUs", () => {
+  it("out side shows the last kept frame before the exclusive boundary", () => {
+    expect(boundaryDisplayFrameUs(10_000_000, "out", 30, 1)).toBe(9_966_667);
+    expect(boundaryDisplayFrameUs(33_333, "out", 30, 1)).toBe(0);
+  });
+
+  it("in side shows the boundary itself", () => {
+    expect(boundaryDisplayFrameUs(33_333, "in", 30, 1)).toBe(33_333);
+    expect(boundaryDisplayFrameUs(-5, "in", 30, 1)).toBe(0);
+  });
+
+  it("round-trips with inclusiveOutBoundaryUs at every spec rate", () => {
+    // Marking out at the frame a boundary displays must re-produce the
+    // boundary: display(out) → inclusiveOut → the same exclusive value.
+    for (const [num, den] of RATES) {
+      const boundary = timeUsAtFrame(299, num, den);
+      const shown = boundaryDisplayFrameUs(boundary, "out", num, den);
+      expect(inclusiveOutBoundaryUs(shown, num, den)).toBe(boundary);
+    }
+  });
+});
+
+describe("displayedFrameStartUs", () => {
+  it("is the floor snap of the playhead position, clamped at 0", () => {
+    expect(displayedFrameStartUs(40_000, 30, 1)).toBe(33_333);
+    expect(displayedFrameStartUs(33_333, 30, 1)).toBe(33_333);
+    expect(displayedFrameStartUs(-10, 30, 1)).toBe(0);
   });
 });
 

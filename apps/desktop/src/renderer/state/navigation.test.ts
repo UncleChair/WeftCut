@@ -11,6 +11,8 @@ import {
   selectLayer,
   selectLayers,
   seekToClamped,
+  seekToNextEdit,
+  seekToPrevEdit,
 } from "./navigation";
 import { registerTransport } from "./playbackStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
@@ -101,6 +103,63 @@ describe("clampSeekUs / seekToClamped", () => {
     seekToClamped(2_000_000);
     expect(playheadTimeUs()).toBe(2_000_000);
     expect(seek).toHaveBeenCalledWith(2_000_000);
+  });
+});
+
+describe("seekToPrevEdit / seekToNextEdit", () => {
+  // Fixture edit points: 0, 2s, 4s (l1 boundaries), 5s, 6s (l2 boundaries).
+
+  it("walks forward across every layer boundary", () => {
+    setPlayheadTimeUs(0);
+    seekToNextEdit();
+    expect(playheadTimeUs()).toBe(2_000_000);
+    seekToNextEdit();
+    expect(playheadTimeUs()).toBe(4_000_000);
+    seekToNextEdit();
+    expect(playheadTimeUs()).toBe(5_000_000);
+    seekToNextEdit();
+    expect(playheadTimeUs()).toBe(6_000_000);
+  });
+
+  it("walks backward and reaches 0", () => {
+    setPlayheadTimeUs(6_000_000);
+    seekToPrevEdit();
+    expect(playheadTimeUs()).toBe(5_000_000);
+    seekToPrevEdit();
+    expect(playheadTimeUs()).toBe(4_000_000);
+    seekToPrevEdit();
+    expect(playheadTimeUs()).toBe(2_000_000);
+    seekToPrevEdit();
+    expect(playheadTimeUs()).toBe(0);
+    // Already at the first point — stays put.
+    seekToPrevEdit();
+    expect(playheadTimeUs()).toBe(0);
+  });
+
+  it("navigates from a position between edit points", () => {
+    setPlayheadTimeUs(4_500_000);
+    seekToPrevEdit();
+    expect(playheadTimeUs()).toBe(4_000_000);
+    setPlayheadTimeUs(4_500_000);
+    seekToNextEdit();
+    expect(playheadTimeUs()).toBe(5_000_000);
+  });
+
+  it("is a no-op past the last edit point", () => {
+    setPlayheadTimeUs(7_000_000);
+    seekToNextEdit();
+    expect(playheadTimeUs()).toBe(7_000_000);
+  });
+
+  it("clamps a boundary at the exclusive composition end to the last frame anchor", () => {
+    // Stretch l2 to the composition end: its t_end (10s) is exclusive, so
+    // "next edit" from 6s parks on the last frame's start, not on 10s.
+    const summary = fixtureSummary();
+    summary.tracks[0]!.layers[1]!.t_end_us = 10_000_000;
+    useProjectStore.getState().apply(summary);
+    setPlayheadTimeUs(6_000_000);
+    seekToNextEdit();
+    expect(playheadTimeUs()).toBe(9_966_667);
   });
 });
 

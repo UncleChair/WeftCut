@@ -1,6 +1,6 @@
 import { lastFrameAnchorUs } from "../frames";
 import { transportSeek } from "./playbackStore";
-import { setPlayheadTimeUs } from "./playheadStore";
+import { playheadTimeUs, setPlayheadTimeUs } from "./playheadStore";
 import { useProjectStore } from "./projectStore";
 import { setLayerSelection } from "./selectionStore";
 
@@ -94,6 +94,47 @@ export function jumpToTimeUs(tUs: number): void {
   const clamped = clampSeekUs(tUs);
   seekExact(clamped);
   scrollToTimeFn?.(clamped);
+}
+
+/// Canonical edit points of the current composition: every layer boundary on
+/// every track, plus 0. All tracks participate — navigation is timeline
+/// geometry, not audibility, and there is no track targeting to scope it.
+function editPointsUs(): number[] {
+  const summary = useProjectStore.getState().summary;
+  const points = new Set<number>([0]);
+  for (const track of summary?.tracks ?? []) {
+    for (const layer of track.layers) {
+      points.add(layer.t_start_us);
+      points.add(layer.t_end_us);
+    }
+  }
+  return Array.from(points).sort((a, b) => a - b);
+}
+
+/// Park the playhead on the nearest edit point before/after it
+/// (Premiere-style ↑/↓). Parking ON a cut displays the incoming clip's first
+/// frame — the half-open convention; one ← from there shows the outgoing
+/// clip's last frame. A boundary at the exclusive composition end clamps to
+/// the last frame anchor like every other seek, so "next" at the tail is a
+/// safe no-op rather than a black frame.
+export function seekToPrevEdit(): void {
+  const current = playheadTimeUs();
+  let best: number | null = null;
+  for (const p of editPointsUs()) {
+    if (p >= current) break;
+    best = p;
+  }
+  if (best !== null) seekToClamped(best);
+}
+
+export function seekToNextEdit(): void {
+  const current = playheadTimeUs();
+  for (const p of editPointsUs()) {
+    if (p > current) {
+      seekToClamped(p);
+      return;
+    }
+  }
 }
 
 /// Replace the global selection from an imperative navigation surface. Every

@@ -15,7 +15,8 @@ const handlers: HandlerMap = {
   toggleBladeMode: noop, toggleLog: noop, focusLogSearch: noop,
   toggleDisplayMode: noop,
   seekFrameBack: noop, seekFrameForward: noop, seekSecondBack: noop,
-  seekSecondForward: noop, seekStart: noop, seekEnd: noop,
+  seekSecondForward: noop, seekPrevEdit: noop, seekNextEdit: noop,
+  seekStart: noop, seekEnd: noop,
   openSearchPalette: noop,
 };
 

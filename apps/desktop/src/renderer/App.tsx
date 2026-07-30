@@ -29,6 +29,8 @@ import {
   clampSeekUs,
   registerOpenMediaPoolPanel,
   registerRevealTrack,
+  seekToNextEdit,
+  seekToPrevEdit,
 } from "./state/navigation";
 import { AgentMode } from "./agent/AgentMode";
 import { SettingsPanel } from "./settings/SettingsPanel";
@@ -617,6 +619,14 @@ export function App({ onCloseProject }: AppProps) {
     },
     seekSecondForward: () => {
       void seekTo(playheadTimeUs() + 1_000_000);
+    },
+    // Edit-point navigation lives in state/navigation.ts (module-level
+    // verbs) so the palette and future agent surfaces share it.
+    seekPrevEdit: () => {
+      seekToPrevEdit();
+    },
+    seekNextEdit: () => {
+      seekToNextEdit();
     },
     seekStart: () => {
       void seekTo(0);

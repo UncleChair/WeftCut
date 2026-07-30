@@ -1,4 +1,5 @@
 import type { GroupSummary, LayerSummary, TrackSummary } from "../ipc";
+import { displayedFrameStartUs, inclusiveOutBoundaryUs } from "../frames";
 import {
   animatableParams,
   readParamTrack,
@@ -181,6 +182,30 @@ export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+// Below this on-screen frame width the shadow reads as line jitter, not an
+// area — hide it and let the playhead line stand alone.
+const PLAYHEAD_FRAME_SHADOW_MIN_PX = 5;
+
+/// One-frame-wide playhead shadow (Avid's position bar; Resolve's "Playhead
+/// Shadow"): spans the DISPLAYED frame, from its start to its exclusive end,
+/// making "the playhead shows the frame to its right" visible at frame-level
+/// zoom. Exact grid boundaries per frame — a nominal `pxPerSec / fps` width
+/// would drift at fractional rates (see `approxFrameDurUs`). Returns null
+/// when the frame is too narrow on screen or inputs are degenerate.
+export function playheadFrameShadowPx(
+  tUs: number,
+  fpsNum: number,
+  fpsDen: number,
+  pxPerSec: number,
+): { leftPx: number; widthPx: number } | null {
+  if (fpsNum <= 0 || fpsDen <= 0 || pxPerSec <= 0) return null;
+  const startUs = displayedFrameStartUs(tUs, fpsNum, fpsDen);
+  const endUs = inclusiveOutBoundaryUs(tUs, fpsNum, fpsDen);
+  const widthPx = ((endUs - startUs) / 1_000_000) * pxPerSec;
+  if (widthPx < PLAYHEAD_FRAME_SHADOW_MIN_PX) return null;
+  return { leftPx: (startUs / 1_000_000) * pxPerSec, widthPx };
 }
 
 /// `docs/features.md#groups`. Stable, deterministic hue per group id so all

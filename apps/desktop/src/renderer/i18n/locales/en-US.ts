@@ -236,6 +236,8 @@ const enUS = {
     seek_frame_forward: "Step forward one frame",
     seek_second_back: "Step back one second",
     seek_second_forward: "Step forward one second",
+    seek_prev_edit: "Go to previous edit point",
+    seek_next_edit: "Go to next edit point",
     seek_start: "Go to start",
     seek_end: "Go to end",
     open_search: "Search everything…",

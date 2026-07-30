@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   moveLayer,
   pasteLayer,
@@ -7,7 +7,13 @@ import {
   type LayerSummary,
   type TrackSummary,
 } from "../../ipc";
-import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
+import {
+  adjacentFrameBoundaryUs,
+  boundaryDisplayFrameUs,
+  snapFrameRound,
+} from "../../frames";
+import { transportPause, transportSeek } from "../../state/playbackStore";
+import { setPlayheadTimeUs } from "../../state/playheadStore";
 import {
   layerOverlapClass,
   type VisualTrack,
@@ -291,6 +297,54 @@ export function useLayerDrag(opts: {
     },
     [fpsDen, fpsNum],
   );
+
+  // -------- Trim monitor preview --------
+
+  // While a trim drag is live, the monitor shows the frame the dragged
+  // boundary KEEPS: the out side shows the last kept frame (the traditional
+  // NLE tail-trim display — never the frame past the cut), the in side the
+  // first. The playhead is not the preview cursor: its position is captured
+  // once at gesture start and restored when the gesture ends, so a trim
+  // never relocates the user's park position.
+  const trimPreviewUs = (() => {
+    if (!drag || drag.kind === "move") return null;
+    const boundaryUs = constrainedAnchorUs(drag, drag.deltaUs);
+    return boundaryDisplayFrameUs(
+      boundaryUs,
+      drag.kind === "trim-end" ? "out" : "in",
+      fpsNum,
+      fpsDen,
+    );
+  })();
+  const trimPreviewActive = trimPreviewUs !== null;
+  const trimRestoreUsRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (trimPreviewUs === null) return;
+    if (trimRestoreUsRef.current === null) {
+      trimRestoreUsRef.current = playheadTimeUs();
+      // Trimming while playing would fight the running transport for the
+      // monitor — park it first (Premiere stops playback on a trim drag too).
+      transportPause();
+    }
+    // Dedup is the effect dep itself: the value is frame-quantized upstream,
+    // so a pointer wiggle inside one frame never re-seeks.
+    transportSeek(trimPreviewUs);
+  }, [trimPreviewUs]);
+
+  useEffect(() => {
+    if (!trimPreviewActive) return;
+    return () => {
+      const restoreUs = trimRestoreUsRef.current;
+      trimRestoreUsRef.current = null;
+      if (restoreUs === null) return;
+      // Optimistic store write + transport seek (the seekExact pattern in
+      // state/navigation.ts): engine emits during the preview may have moved
+      // the playhead line, so put both the line and the monitor back.
+      setPlayheadTimeUs(restoreUs);
+      transportSeek(restoreUs);
+    };
+  }, [trimPreviewActive]);
 
   const snapDeltaToTimelineBoundary = useCallback(
     (

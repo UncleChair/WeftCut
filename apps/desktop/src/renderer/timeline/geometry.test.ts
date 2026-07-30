@@ -10,6 +10,7 @@ import {
   keyframeHitTest,
   keyframeXWithinClip,
   layerOverlapClass,
+  playheadFrameShadowPx,
   trackHeaderControls,
   trackKeyframeProperties,
   visualOrderedTracks,
@@ -285,5 +286,36 @@ describe("trackKeyframeProperties", () => {
   it("returns empty when no layer has a keyframed param", () => {
     const track = { kind: "Video", layers: [{ id: "a", kind: "VideoClip", params: { kind: "VideoClip", opacity: staticTrack } }] } as unknown as import("../ipc").TrackSummary;
     expect(trackKeyframeProperties(track)).toEqual([]);
+  });
+});
+
+describe("playheadFrameShadowPx", () => {
+  it("hides the shadow when a frame spans fewer pixels than the floor", () => {
+    // 30 fps at the 80 px/s default zoom: one frame is ~2.7 px.
+    expect(playheadFrameShadowPx(1_000_000, 30, 1, 80)).toBeNull();
+  });
+
+  it("spans exactly the displayed frame at frame-level zoom", () => {
+    // Frame 30 at 30 fps, 400 px/s: [1_000_000, 1_033_333) → 13.33 px.
+    const shadow = playheadFrameShadowPx(1_000_000, 30, 1, 400)!;
+    expect(shadow.leftPx).toBeCloseTo(400, 6);
+    expect(shadow.widthPx).toBeCloseTo(13.3332, 4);
+  });
+
+  it("anchors a mid-frame time to the DISPLAYED frame's start", () => {
+    const shadow = playheadFrameShadowPx(1_010_000, 30, 1, 400)!;
+    expect(shadow.leftPx).toBeCloseTo(400, 6);
+  });
+
+  it("uses exact grid boundaries at fractional rates", () => {
+    // 29.97 frame 1: [33_367, 66_733) — 33_366 µs, not the nominal 33_367.
+    const shadow = playheadFrameShadowPx(33_367, 30_000, 1001, 400)!;
+    expect(shadow.leftPx).toBeCloseTo(13.3468, 4);
+    expect(shadow.widthPx).toBeCloseTo(13.3464, 4);
+  });
+
+  it("returns null on degenerate inputs", () => {
+    expect(playheadFrameShadowPx(0, 0, 1, 400)).toBeNull();
+    expect(playheadFrameShadowPx(0, 30, 1, 0)).toBeNull();
   });
 });

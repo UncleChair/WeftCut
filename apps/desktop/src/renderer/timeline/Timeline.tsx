@@ -56,6 +56,7 @@ import {
   HEADER_COL_PX,
   computeTimelineExtent,
   indexGroups,
+  playheadFrameShadowPx,
   trackKeyframeProperties,
   visualOrderedTracks,
 } from "./geometry";
@@ -1033,7 +1034,12 @@ export function Timeline({
               />
             )}
           </div>
-          <TimelinePlayhead pxPerSec={pxPerSec} visible={visible} />
+          <TimelinePlayhead
+            pxPerSec={pxPerSec}
+            fpsNum={fpsNum}
+            fpsDen={fpsDen}
+            visible={visible}
+          />
         </div>
       </div>
     </div>
@@ -1065,16 +1071,44 @@ export function Timeline({
 /// re-rendered the whole Timeline (and formerly the whole App) per frame.
 /// Here the subscription mutates `style.left` on the ref'd node directly —
 /// zero React commits while playing.
-function TimelinePlayhead({ pxPerSec, visible }: { pxPerSec: number; visible: boolean }) {
+///
+/// The one-frame-wide shadow (child node) makes the display convention
+/// visible at frame-level zoom: the playhead shows the frame to its RIGHT
+/// (half-open intervals — see docs/data-model.md, boundary semantics). Same
+/// transient subscription, same zero-commit rule.
+function TimelinePlayhead({
+  pxPerSec,
+  fpsNum,
+  fpsDen,
+  visible,
+}: {
+  pxPerSec: number;
+  fpsNum: number;
+  fpsDen: number;
+  visible: boolean;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const shadowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!visible) return;
     const apply = (tUs: number) => {
-      if (ref.current) ref.current.style.left = `${(tUs / 1_000_000) * pxPerSec}px`;
+      const leftPx = (tUs / 1_000_000) * pxPerSec;
+      if (ref.current) ref.current.style.left = `${leftPx}px`;
+      if (shadowRef.current) {
+        const shadow = playheadFrameShadowPx(tUs, fpsNum, fpsDen, pxPerSec);
+        if (shadow) {
+          shadowRef.current.style.display = "block";
+          // Offset relative to the playhead root, which sits at `tUs`.
+          shadowRef.current.style.left = `${shadow.leftPx - leftPx}px`;
+          shadowRef.current.style.width = `${shadow.widthPx}px`;
+        } else {
+          shadowRef.current.style.display = "none";
+        }
+      }
     };
     apply(playheadTimeUs());
     return usePlayheadStore.subscribe((s) => apply(s.timeUs));
-  }, [pxPerSec, visible]);
+  }, [pxPerSec, fpsNum, fpsDen, visible]);
   return (
     <div
       ref={ref}
@@ -1082,6 +1116,12 @@ function TimelinePlayhead({ pxPerSec, visible }: { pxPerSec: number; visible: bo
       className="pointer-events-none absolute bottom-0 top-0 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
       style={{ left: (playheadTimeUs() / 1_000_000) * pxPerSec }}
     >
+      <div
+        ref={shadowRef}
+        data-testid="timeline-playhead-frame-shadow"
+        className="pointer-events-none absolute bottom-0 top-0 bg-red-500/10"
+        style={{ display: "none" }}
+      />
       <div
         data-testid="timeline-playhead-head"
         className="sticky top-0 h-4 w-0"

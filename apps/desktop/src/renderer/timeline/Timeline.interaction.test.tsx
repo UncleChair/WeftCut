@@ -28,7 +28,8 @@ import {
   setLayerSelection,
   useSelectionStore,
 } from "../state/selectionStore";
-import { setPlayheadTimeUs } from "../state/playheadStore";
+import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
+import { registerTransport, releaseTransport } from "../state/playbackStore";
 
 const ipcMocks = vi.hoisted(() => ({
   addMediaLayer: vi.fn().mockResolvedValue(undefined),
@@ -396,6 +397,84 @@ describe("Timeline seek/selection coupling", () => {
       2_033_333,
       false,
     );
+  });
+
+  it("drives the monitor to the LAST KEPT frame during a tail trim and restores on release", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const seek = vi.fn();
+    const pause = vi.fn();
+    const transport = { play() {}, pause, seek, isPlaying: () => false };
+    registerTransport(transport);
+    setPlayheadTimeUs(500_000);
+    const { getByText } = renderTimeline({ selectedLayerId: null });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 160,
+      top: 0,
+      bottom: 48,
+      width: 160,
+      height: 48,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 160, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 163, clientY: 30 });
+
+    // New end 2_033_333 (exclusive) → the monitor shows the last kept
+    // frame's start, 2_000_000 (frame 60 @ 30fps) — not the boundary frame.
+    expect(pause).toHaveBeenCalled();
+    expect(seek).toHaveBeenCalledWith(2_000_000);
+
+    fireEvent.pointerMove(window, { clientX: 168, clientY: 30 });
+    // New end 2_100_000 → last kept frame 62 starts at 2_066_667.
+    expect(seek).toHaveBeenCalledWith(2_066_667);
+
+    fireEvent.pointerUp(window, { clientX: 168, clientY: 30 });
+    // Gesture over: the playhead line and the monitor return to the
+    // pre-trim park position.
+    expect(playheadTimeUs()).toBe(500_000);
+    expect(seek).toHaveBeenLastCalledWith(500_000);
+    releaseTransport(transport);
+  });
+
+  it("drives the monitor to the FIRST KEPT frame during a head trim", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const seek = vi.fn();
+    const transport = { play() {}, pause() {}, seek, isPlaying: () => false };
+    registerTransport(transport);
+    setPlayheadTimeUs(500_000);
+    const { getByText } = renderTimeline({ selectedLayerId: null });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 160,
+      top: 0,
+      bottom: 48,
+      width: 160,
+      height: 48,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 0, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 3, clientY: 30 });
+
+    // New start 33_333: the in side shows the boundary frame itself.
+    expect(seek).toHaveBeenCalledWith(33_333);
+
+    fireEvent.pointerUp(window, { clientX: 3, clientY: 30 });
+    expect(playheadTimeUs()).toBe(500_000);
+    releaseTransport(transport);
   });
 
   it("clicking the content preview overlay still selects without seeking", () => {

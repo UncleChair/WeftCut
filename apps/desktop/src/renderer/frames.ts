@@ -31,7 +31,7 @@ export {
   frameCount,
 } from "./eval";
 
-import { frameIndexFloor, frameIndexRound, timeUsAtFrame } from "./eval";
+import { frameIndexFloor, frameIndexRound, snapFrameFloor, timeUsAtFrame } from "./eval";
 
 const US_PER_SEC = 1_000_000;
 const DEFAULT_FRAME_DUR_US = 33_333; // 30 fps fallback
@@ -84,6 +84,53 @@ export function lastFrameAnchorUs(
   const totalFrames = frameIndexRound(durationUs, fpsNum, fpsDen);
   if (totalFrames <= 1) return 0;
   return timeUsAtFrame(totalFrames - 1, fpsNum, fpsDen);
+}
+
+/// Start of the frame the playhead at `playheadUs` DISPLAYS. Identical to
+/// `snapFrameFloor` — this name exists so display-translation call sites read
+/// as the convention they implement (see `docs/data-model.md`, boundary
+/// semantics), not as arithmetic.
+export function displayedFrameStartUs(
+  playheadUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  if (fpsNum <= 0 || fpsDen <= 0) return Math.max(0, playheadUs);
+  return snapFrameFloor(Math.max(0, playheadUs), fpsNum, fpsDen);
+}
+
+/// Exclusive end boundary of the frame the playhead at `playheadUs` displays —
+/// what an inclusive "mark out at the playhead" must STORE, given that range
+/// and boundary entities are exclusive while the playhead is a frame anchor.
+/// A playhead parked on the last frame yields exactly the composition
+/// duration, so set-from-playhead can reach the final frame.
+///
+/// The one-frame gap between the two conventions is bridged HERE, never by a
+/// bare `+1` at a call site — a stored exclusive end fed by a frame-anchor
+/// source without this translation silently drops the displayed frame.
+export function inclusiveOutBoundaryUs(
+  playheadUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  const anchor = Math.max(0, playheadUs);
+  if (fpsNum <= 0 || fpsDen <= 0) return anchor + DEFAULT_FRAME_DUR_US;
+  return timeUsAtFrame(frameIndexFloor(anchor, fpsNum, fpsDen) + 1, fpsNum, fpsDen);
+}
+
+/// The frame a boundary should SHOW the user. `in` side: the boundary itself
+/// (first kept frame). `out` side: the start of the last kept frame BEFORE the
+/// exclusive boundary — the trim/out-point display convention traditional NLEs
+/// pair with frame-anchor playheads (Premiere/Resolve show the last included
+/// frame while dragging a tail trim, not the frame past the cut).
+export function boundaryDisplayFrameUs(
+  boundaryUs: number,
+  side: "in" | "out",
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  if (side === "in") return Math.max(0, boundaryUs);
+  return lastFrameAnchorUs(boundaryUs, fpsNum, fpsDen);
 }
 
 /// Format `us` as SMPTE-style `HH:MM:SS:FF` against the given comp fps.

@@ -38,6 +38,8 @@ export type ActionId =
   | "seekFrameForward"
   | "seekSecondBack"
   | "seekSecondForward"
+  | "seekPrevEdit"
+  | "seekNextEdit"
   | "seekStart"
   | "seekEnd"
   | "openSearchPalette";
@@ -153,6 +155,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   seekFrameForward:  { defaultKeys: ["ArrowRight"],        labelKey: "actions.seek_frame_forward",  repeatable: true },
   seekSecondBack:    { defaultKeys: ["Shift+ArrowLeft"],   labelKey: "actions.seek_second_back",    repeatable: true },
   seekSecondForward: { defaultKeys: ["Shift+ArrowRight"],  labelKey: "actions.seek_second_forward", repeatable: true },
+  // Edit-point navigation (Premiere-style ↑/↓): parks the playhead ON the
+  // cut, which displays the incoming clip's first frame; one ← from there
+  // shows the outgoing clip's last frame. See docs/data-model.md (boundary
+  // semantics).
+  seekPrevEdit:      { defaultKeys: ["ArrowUp"],           labelKey: "actions.seek_prev_edit",      repeatable: true },
+  seekNextEdit:      { defaultKeys: ["ArrowDown"],         labelKey: "actions.seek_next_edit",      repeatable: true },
   seekStart:         { defaultKeys: ["Home"],              labelKey: "actions.seek_start" },
   seekEnd:           { defaultKeys: ["End"],               labelKey: "actions.seek_end" },
   // Global search palette. A chord, so it fires while a text input is

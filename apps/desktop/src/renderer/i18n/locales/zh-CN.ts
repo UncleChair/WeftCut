@@ -233,6 +233,8 @@ const zhCN: Resources = {
     seek_frame_forward: "前进一帧",
     seek_second_back: "后退一秒",
     seek_second_forward: "前进一秒",
+    seek_prev_edit: "跳到上一个剪辑点",
+    seek_next_edit: "跳到下一个剪辑点",
     seek_start: "跳到开头",
     seek_end: "跳到结尾",
     open_search: "全局搜索…",

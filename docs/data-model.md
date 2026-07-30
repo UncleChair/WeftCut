@@ -158,6 +158,47 @@ the App-level `seekTo` so every UI seek path inherits it once; the
 PlaybackEngine's auto-pause parks at the same value so the displayed
 timecode and the painted frame agree at the end of the timeline.
 
+### Boundary semantics: which frame a surface shows or stores
+
+Two conventions coexist by design — the mainstream NLE pairing
+(Premiere / Resolve / Avid behave the same way):
+
+- **Frame-anchor display.** The playhead at time `t` displays the frame
+  *starting* at `t` (half-open `[t, t + 1 frame)`). Parked exactly on a cut
+  it shows the incoming clip's first frame; the outgoing clip's last frame
+  is one `←` away. At frame-level zoom the playhead draws a one-frame-wide
+  shadow to its right (`playheadFrameShadowPx` in `timeline/geometry.ts`)
+  to make this visible.
+- **Inclusive-out display.** A tool that presents an *exclusive end
+  boundary* to the user shows the last frame the boundary KEEPS, not the
+  frame past it: a tail-trim drag previews `boundary − 1 frame` in the
+  monitor, and "set out point from playhead" stores the *end* of the
+  displayed frame so that frame is included.
+
+The one-frame gap between the two conventions is bridged only by the
+named helpers in `apps/desktop/src/renderer/frames.ts` — never by a bare
+`±1` at a call site:
+
+| Surface | Rule | Helper |
+| --- | --- | --- |
+| Playhead / monitor display | frame starting at `t` | `displayedFrameStartUs` |
+| Playhead upper bound, End key, auto-pause park | start of last frame | `lastFrameAnchorUs` via `clampSeekUs` |
+| In point, range start, paste-at-playhead | inclusive; store the playhead value as-is | — |
+| Out point / range end set from the playhead | store the displayed frame's exclusive end | `inclusiveOutBoundaryUs` |
+| Trim-drag monitor preview | out side shows last kept frame, in side the first | `boundaryDisplayFrameUs` |
+| Edit-point navigation (`↑`/`↓`) | park ON the cut (shows incoming frame) | `seekToPrevEdit` / `seekToNextEdit` |
+| Attribute panel End field | shows the exclusive boundary's timecode, so Start + Duration = End holds and frame counts match `out − in + 1` editors | displayed as stored |
+
+Interval math *inside* the render and export pipelines (active-set
+queries, export tail mapping, ring lookups) legitimately subtracts a
+microsecond from a half-open `endUs` where an inclusive query is needed;
+those sites are µs-interval arithmetic, not user-facing frame
+translation, and each carries its own why-comment. The review rule for
+everything user-facing: a new surface that displays a boundary or stores
+a time sourced from the playhead picks its row in this table and goes
+through the helper — a hand-written `frameIndex + 1` or `endUs − 1` in UI
+code is the bug class this section exists to prevent.
+
 Seeking is the time ruler's job alone. A click or drag on the ruler
 strip scrubs the playhead, and the ruler is the only surface that does —
 clicks in the track body select or deselect clips and never move the
