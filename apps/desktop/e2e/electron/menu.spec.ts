@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication } from '@playwright/test'
 
 import { launchApp, newProject, tmpDir } from './helpers/driver'
 
-// The macOS application menu (src/main/appMenu.ts, ADR 0031 Stage 2). Three
+// The macOS application menu (src/main/appMenu.ts, ADR 0031). Three
 // things here that no unit test can prove, because they need the real browser
 // process to expand the role items and the real renderer to project into them:
 //
@@ -24,10 +24,8 @@ import { launchApp, newProject, tmpDir } from './helpers/driver'
 // chords the menu also binds (Cmd+Z, Cmd+W, Cmd+C). Asserting that needs a key
 // event delivered through AppKit — `webContents.sendInputEvent` injects PAST
 // AppKit, so menu key equivalents never run and such a test would pass
-// vacuously, proving nothing. The real check is `osascript … keystroke`, which
-// needs Accessibility permission for the test runner and so cannot be a CI
-// gate; it stays a documented MANUAL check (.scratch/macos-native-menu/spec.md,
-// verdicts in docs/notes/electron-chromium-behavior.md).
+// vacuously, proving nothing. It stays a manual check, written down under
+// "Manual check" in docs/notes/electron-chromium-behavior.md.
 
 const isDarwin = process.platform === 'darwin'
 
@@ -73,7 +71,7 @@ function menuBar(app: ElectronApplication): Promise<string[]> {
 
 test.describe('macOS application menu', () => {
   // macOS is the only platform with one: Windows/Linux run
-  // `setApplicationMenu(null)` and the renderer draws the bar (ADR 0031 Stage 1).
+  // `setApplicationMenu(null)` and the renderer draws the bar (ADR 0031).
   test.skip(!isDarwin, 'macOS-only application menu')
 
   test('a production launch exposes no reload or DevTools item', async () => {

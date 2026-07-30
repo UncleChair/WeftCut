@@ -187,7 +187,7 @@ export function AppMenuBar({
             <MenuSeparator />
             {/* Stays here on every platform for cross-platform consistency,
                 even though macOS ALSO projects it into the App menu under
-                Cmd+, — the two dispatch the same action (ADR 0031 Stage 2). */}
+                Cmd+, — the two dispatch the same action (ADR 0031). */}
             <MenuItem
               actionId="openSettings"
               label={t("actions.settings")}

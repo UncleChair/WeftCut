@@ -5,7 +5,7 @@
 // in which submenu, plus every role item. Labels and accelerators arrive from
 // the renderer as a `MenuProjection` (src/shared/menu.ts owns that contract).
 // Windows/Linux install no menu at all — see inputPolicy.ts. Why any of this:
-// ADR 0031 Stage 2.
+// ADR 0031.
 //
 // Pure — `electron` TYPES only, no runtime import — so the shape is testable
 // without a BrowserWindow. Installation lives in src/main/index.ts.
@@ -24,7 +24,7 @@ import {
 
 /// Roles that must never appear in a shipped menu. Developer affordances live
 /// in `hardenWindow`'s `before-input-event` seam instead, gated on `isDev`, so
-/// dev and prod share one code path on every platform (ADR 0031 Stage 1).
+/// dev and prod share one code path on every platform (ADR 0031).
 /// Compared case-insensitively: Electron lowercases `role` on the live
 /// MenuItem, while a template spells it camelCase.
 export const FORBIDDEN_MENU_ROLES = ['reload', 'forceReload', 'toggleDevTools'] as const

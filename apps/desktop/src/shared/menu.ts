@@ -7,7 +7,7 @@
 // effective binding is catalogue defaults ⊕ `keybindings.json` overrides, which
 // the renderer already resolves for its own menu hints. One resolver, both
 // surfaces. Which items exist and where: src/main/appMenu.ts. Why the two
-// surfaces divide the way they do: ADR 0031 Stage 2.
+// surfaces divide the way they do: ADR 0031.
 //
 // Types + plain data only: main, preload and the renderer all import this, so
 // it must stay free of DOM and Electron types.

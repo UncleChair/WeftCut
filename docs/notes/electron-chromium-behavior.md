@@ -117,14 +117,32 @@ Rules:
 menu **without** a copy role does not. Treat that asymmetry as an Electron 42 implementation
 detail rather than a contract, and ship the standard Edit menu instead of relying on it.
 
-History: ADR 0031 assumed the opposite — that macOS menu accelerators "are resolved by the
-browser process (on macOS via the AppKit main-menu responder chain) and preempt the
-renderer's keydown listener" — and its deferred Stage 2 was designed around that premise
-(Cmd+Z/C/V display-only, renderer clipboard fallback). That premise is false on Electron 42;
-the ADR's own "run a probe before implementing" instruction is what this entry answers, and
-Stage 2 was redesigned accordingly. The ADR's separate claim that
-`setApplicationMenu(null)` "breaks Cmd+C/V in the app's text inputs" is also false here,
+History: the intuitive model — "macOS menu accelerators are resolved by the browser process
+through the AppKit main-menu responder chain and preempt the renderer's keydown listener" —
+is what ADR 0031 was first written around, and it is **false** on Electron 42. A design
+derived from it (Cmd+Z/C/V as display-only items plus a renderer clipboard/undo
+reimplementation) is dead work; the table above is what replaced it. The same ADR's claim
+that `setApplicationMenu(null)` "breaks Cmd+C/V in the app's text inputs" is likewise false,
 though the near-miss variant (a menu lacking the copy role) does break it.
+
+### Manual check: the renderer still owns the shared chords
+
+The one thing here that cannot be a CI gate — `webContents.sendInputEvent` injects past
+AppKit, so menu key equivalents never run and an injected-key test passes whatever the menu
+does. Real keys need `osascript`, which needs Accessibility permission for the runner. Run
+this by hand after touching the menu template, `useShortcuts`, or the Electron major;
+`e2e/electron/menu.spec.ts` covers everything else (menu shape, the projection, dispatch).
+
+With a project open, on macOS:
+
+1. **`Cmd+Z`** in the timeline → the app's undo runs (a timeline edit reverts), not the Edit
+   menu's DOM undo. In a text field (a layer name) → the opposite: the typing is undone and
+   project history is untouched. Both directions are unit-tested in `useShortcuts.test.tsx`;
+   the in-app half was found broken once, when `undo`/`redo` lacked `fireWhenEditing: false`.
+2. **`Cmd+W`** → "Save and Close" — back to the startup screen, window still open.
+3. **`Cmd+C` / `Cmd+V`** in a text field → native clipboard; in the timeline → the app's
+   copy/paste.
+4. **`Cmd+,`** on the startup screen and in the editor → Settings opens.
 
 ## Not re-probed (kept as known Blink behavior)
 
