@@ -161,22 +161,33 @@ function migrateLegacyLocale(): void {
 /// Wire-up: fetch the current settings, subscribe to backend changes.
 /// Returns an unlisten function — `App.tsx` calls this once on mount.
 export async function wireAppSettingsStream(): Promise<UnlistenFn> {
-  // Seed from the current value first so the store reflects the disk
-  // state before the first event fires.
-  try {
-    const initial = await appSettingsGet();
-    useAppSettingsStore.getState().hydrate(initial);
-    // Language lives here now (moved off localStorage): apply the persisted
-    // choice to i18next, or migrate a legacy `weftcut.locale` on first upgrade.
-    if (initial.language) applyPersistedLocale(initial.language);
-    else migrateLegacyLocale();
-  } catch (e) {
-    // IPC unavailable during early boot or in tests; keep defaults.
-    console.warn("appSettingsGet failed:", e);
-  }
-  return listen<AppSettings>(APP_SETTINGS_EVENTS.changed, (e) => {
+  // Subscribe BEFORE the seed read: a change emitted between the seed
+  // resolving and the listener registering would be lost, and this store
+  // carries preview-critical fields (playback_resolution, decode_engine) that
+  // would then sit stale until the next unrelated settings write.
+  let eventSeen = false;
+  const unlisten = await listen<AppSettings>(APP_SETTINGS_EVENTS.changed, (e) => {
+    eventSeen = true;
     useAppSettingsStore.getState().hydrate(e.payload);
     // Keep i18next in sync when the language changes (incl. from another window).
     applyPersistedLocale(e.payload.language);
   });
+  // Seed from the current value so the store reflects the disk state even if
+  // no event ever fires. Events carry point-in-time payloads, so a seed that
+  // lost the race must NOT hydrate over a newer event's payload — hence the
+  // latch, not a blind double-hydrate.
+  try {
+    const initial = await appSettingsGet();
+    if (!eventSeen) {
+      useAppSettingsStore.getState().hydrate(initial);
+      // Language lives here now (moved off localStorage): apply the persisted
+      // choice to i18next, or migrate a legacy `weftcut.locale` on first upgrade.
+      if (initial.language) applyPersistedLocale(initial.language);
+      else migrateLegacyLocale();
+    }
+  } catch (e) {
+    // IPC unavailable during early boot or in tests; keep defaults.
+    console.warn("appSettingsGet failed:", e);
+  }
+  return unlisten;
 }

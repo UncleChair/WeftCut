@@ -127,10 +127,15 @@ export async function wireProjectStore(): Promise<UnlistenFn> {
       },
     );
   };
-  await refresh();
+  // Subscribe BEFORE the seed fetch: a `project:changed` emitted between the
+  // seed resolving and the listener registering would otherwise be lost, and
+  // the store would sit on a stale snapshot until some unrelated later event.
+  // An event landing during the seed just runs a second refresh, which the
+  // coordinator already serializes newest-wins.
   const unlisten = await listen("project:changed", () => {
     void refresh();
   });
+  await refresh();
   return () => {
     requests.invalidate();
     unlisten();
