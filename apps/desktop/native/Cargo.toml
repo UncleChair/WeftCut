@@ -75,7 +75,7 @@ ffmpeg-sidecar = "2"
 # the `@modelcontextprotocol/sdk` low-level Server expects.
 # Phase 1.x Stage 6 base64-encodes media bytes (JPG thumbnails, peaks file)
 # into the media://* resources' blob field. Pinning for direct use.
-base64 = "0.22"
+base64 = "0.23"
 # HTTP client for Whisper / Deepgram / future cloud providers. Pin rustls
 # explicitly to avoid pulling in a native-tls stack (single TLS backend).
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
