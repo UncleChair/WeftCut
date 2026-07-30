@@ -46,6 +46,9 @@ pub struct PreviewGpuTimingSummary {
 pub struct PreviewGpuTimingReport {
     pub coord_rtt: PreviewGpuTimingSummary,
     pub decode_copy: PreviewGpuTimingSummary,
+    /// GPU cost of the NV12→RGBA conversion pass (timestamp queries on the
+    /// decode device; a subsample — see `preview_gpu::TimingReport::convert_gpu`).
+    pub convert_gpu: PreviewGpuTimingSummary,
     pub ack_to_emit: PreviewGpuTimingSummary,
     pub lookahead_gated_skips: u32,
     /// Frames the pump discarded as already-late instead of delivering them (see
@@ -64,6 +67,13 @@ pub struct PreviewGpuTimingReport {
     pub acquire_failed: u32,
     pub final_free_slots: u32,
     pub final_eof: bool,
+    /// Fencing-token counters (see `preview_gpu::TimingReport`): leases the
+    /// owner reclaimed on timeout, and acks dropped on a generation mismatch.
+    pub lease_timeouts: u32,
+    pub stale_gen_acks: u32,
+    /// Session pool VRAM in bytes (`width × height × 4 × slots`, RGBA8). f64:
+    /// byte counts outgrow the u32 counters' clamp convention.
+    pub pool_slot_bytes: f64,
 }
 
 /// Reply of `preview_sw_open`: the dimensions the session's frames will SHIP at
@@ -293,6 +303,7 @@ impl NativeDecode {
                     PreviewGpuPoke::FrameReady {
                         stream_id,
                         slot,
+                        gen,
                         pts_us,
                         dur_us,
                     } => {
@@ -301,6 +312,7 @@ impl NativeDecode {
                             serde_json::json!({
                                 "streamId": stream_id,
                                 "slot": slot,
+                                "gen": gen,
                                 "ptsUs": pts_us,
                                 "durUs": dur_us,
                             }),
@@ -441,17 +453,23 @@ impl NativeDecode {
 #[napi]
 impl NativeDecode {
     /// Open `path` for GPU preview: spawns the session's decode thread and
-    /// returns the shared NV12 pool's slot handles + frame dimensions.
+    /// returns the shared RGBA8 pool's slot handles + frame dimensions.
+    /// `matrix`/`full_range` are the stream's color tags (same derivation the
+    /// renderer ships in `previewGpu:open`'s colorSpace) — they select the
+    /// native NV12→RGBA conversion constants, so the shared texture is already
+    /// working-space RGBA and main imports it tagged sRGB-passthrough.
     #[napi]
     pub fn preview_gpu_open(
         &self,
         stream_id: String,
         path: String,
         pool_size: u32,
+        matrix: String,
+        full_range: bool,
     ) -> napi::Result<PreviewGpuOpenInfo> {
         let info = self
             .preview_gpu
-            .open(&stream_id, &path, pool_size)
+            .open(&stream_id, &path, pool_size, &matrix, full_range)
             .map_err(napi::Error::from_reason)?;
         Ok(PreviewGpuOpenInfo {
             width: info.width,
@@ -481,11 +499,18 @@ impl NativeDecode {
     }
 
     /// Release a slot back to the pool after the renderer drops its last
-    /// cross-process reference to the shared texture.
+    /// cross-process reference to the shared texture. `gen` echoes the
+    /// `frameReady` that delivered the slot (fencing token — a mismatch is
+    /// dropped native-side as stale).
     #[napi]
-    pub fn preview_gpu_consume_ack(&self, stream_id: String, slot: u32) -> napi::Result<()> {
+    pub fn preview_gpu_consume_ack(
+        &self,
+        stream_id: String,
+        slot: u32,
+        gen: u32,
+    ) -> napi::Result<()> {
         self.preview_gpu
-            .consume_ack(&stream_id, slot)
+            .consume_ack(&stream_id, slot, gen)
             .map_err(napi::Error::from_reason)
     }
 
@@ -540,6 +565,7 @@ impl NativeDecode {
         Ok(PreviewGpuTimingReport {
             coord_rtt: to_napi_timing_summary(rep.coord_rtt),
             decode_copy: to_napi_timing_summary(rep.decode_copy),
+            convert_gpu: to_napi_timing_summary(rep.convert_gpu),
             ack_to_emit: to_napi_timing_summary(rep.ack_to_emit),
             lookahead_gated_skips: clamp(rep.lookahead_gated_skips),
             late_frame_drops: clamp(rep.late_frame_drops),
@@ -554,6 +580,9 @@ impl NativeDecode {
             acquire_failed: clamp(rep.acquire_failed),
             final_free_slots: rep.final_free_slots,
             final_eof: rep.final_eof,
+            lease_timeouts: clamp(rep.lease_timeouts),
+            stale_gen_acks: clamp(rep.stale_gen_acks),
+            pool_slot_bytes: rep.pool_slot_bytes as f64,
         })
     }
 }
@@ -581,6 +610,8 @@ impl NativeDecode {
         _stream_id: String,
         _path: String,
         _pool_size: u32,
+        _matrix: String,
+        _full_range: bool,
     ) -> napi::Result<PreviewGpuOpenInfo> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
@@ -595,7 +626,12 @@ impl NativeDecode {
     }
 
     #[napi]
-    pub fn preview_gpu_consume_ack(&self, _stream_id: String, _slot: u32) -> napi::Result<()> {
+    pub fn preview_gpu_consume_ack(
+        &self,
+        _stream_id: String,
+        _slot: u32,
+        _gen: u32,
+    ) -> napi::Result<()> {
         Err(napi::Error::from_reason("preview-gpu not built"))
     }
 

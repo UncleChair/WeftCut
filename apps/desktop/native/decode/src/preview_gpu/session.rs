@@ -33,13 +33,14 @@ use std::time::{Duration, Instant};
 use windows::core::{Interface, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX,
-    D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+    ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
+    D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
 
+use super::convert::ConvertPass;
 use super::decoder::{StreamFrame, VideoStream};
 use crate::recover::{panic_message, LockExt};
 
@@ -66,8 +67,15 @@ pub struct TimingReport {
     /// Whole JS coordination round-trip: `FrameReady` emit -> main relay -> preload
     /// getVideoFrame/createImageBitmap -> `consume_ack` relay back to this thread.
     pub coord_rtt: TimingSummary,
-    /// Decode + GPU-copy cost for one delivered frame (`next_frame` + `copy_frame_into_slot`).
+    /// Decode + GPU-convert cost for one delivered frame (`next_frame` +
+    /// `convert_frame_into_slot`) — CPU wall time, submission included.
     pub decode_copy: TimingSummary,
+    /// GPU-side cost of the NV12→RGBA conversion pass (staging copy + draw),
+    /// measured with timestamp-disjoint queries on the decode device. A
+    /// SUBSAMPLE: one bracket in flight at a time, polled non-blocking, so
+    /// `count` legitimately trails the delivered-frame count. This is the
+    /// number ticket 05's A/B reads for the conversion's own price.
+    pub convert_gpu: TimingSummary,
     /// Bottleneck probe: gap from a slot's `ConsumeAck` (slot freed on this thread)
     /// to the *next* `FrameReady` emitted into that same slot. This is the one
     /// per-slot-cycle segment `coord_rtt` (emit->ack) does NOT cover; by
@@ -121,6 +129,19 @@ pub struct TimingReport {
     /// pool-full stall; `eof == true` confirms a decoder end.
     pub final_free_slots: u32,
     pub final_eof: bool,
+    /// Fencing-token protocol counters. `lease_timeouts` = delivered slots the
+    /// owner reclaimed after [`LEASE_TIMEOUT`] with no ack (each is one
+    /// possibly-torn frame traded against a wedge — routine non-zero means the
+    /// consumer is stalling). `stale_gen_acks` = acks dropped on a generation
+    /// mismatch (the ABA the token exists to catch, usually the late ack of a
+    /// reclaimed lease arriving after the slot refilled).
+    pub lease_timeouts: u64,
+    pub stale_gen_acks: u64,
+    /// This session's shared-pool VRAM: `width × height × 4 (RGBA8) × slots`.
+    /// Static per session — stamped by `take_timings` from the registry's
+    /// session record, NOT accumulated (drain leaves it 0). The pool-VRAM
+    /// instrument the A′ ×2.67-bytes verdict reads.
+    pub pool_slot_bytes: u64,
 }
 
 /// Session-thread timing accumulator. Nanosecond samples in; drained to ms summaries.
@@ -128,6 +149,7 @@ pub struct TimingReport {
 pub struct TimingAccum {
     coord_rtt_ns: Vec<u64>,
     decode_copy_ns: Vec<u64>,
+    convert_gpu_ns: Vec<u64>,
     ack_to_emit_ns: Vec<u64>,
     lookahead_gated_skips: u64,
     late_frame_drops: u64,
@@ -142,6 +164,8 @@ pub struct TimingAccum {
     acquire_failed: u64,
     final_free_slots: u32,
     final_eof: bool,
+    lease_timeouts: u64,
+    stale_gen_acks: u64,
 }
 
 impl TimingAccum {
@@ -155,6 +179,9 @@ impl TimingAccum {
     }
     pub fn push_decode_copy(&mut self, ns: u64) {
         Self::push_capped(&mut self.decode_copy_ns, ns);
+    }
+    pub fn push_convert_gpu(&mut self, ns: u64) {
+        Self::push_capped(&mut self.convert_gpu_ns, ns);
     }
     pub fn push_ack_to_emit(&mut self, ns: u64) {
         Self::push_capped(&mut self.ack_to_emit_ns, ns);
@@ -214,11 +241,21 @@ impl TimingAccum {
         self.final_free_slots = free_slots;
         self.final_eof = eof;
     }
+    /// A delivered slot's lease expired and the owner reclaimed it (gen bump).
+    pub fn note_lease_timeout(&mut self) {
+        self.lease_timeouts = self.lease_timeouts.saturating_add(1);
+    }
+    /// A `ConsumeAck` was dropped because its generation didn't match the
+    /// slot's current fill.
+    pub fn note_stale_gen_ack(&mut self) {
+        self.stale_gen_acks = self.stale_gen_acks.saturating_add(1);
+    }
     /// Compute the summaries and clear the buffers.
     pub fn drain(&mut self) -> TimingReport {
         let report = TimingReport {
             coord_rtt: summarize(&self.coord_rtt_ns),
             decode_copy: summarize(&self.decode_copy_ns),
+            convert_gpu: summarize(&self.convert_gpu_ns),
             ack_to_emit: summarize(&self.ack_to_emit_ns),
             lookahead_gated_skips: self.lookahead_gated_skips,
             late_frame_drops: self.late_frame_drops,
@@ -233,9 +270,13 @@ impl TimingAccum {
             acquire_failed: self.acquire_failed,
             final_free_slots: self.final_free_slots,
             final_eof: self.final_eof,
+            lease_timeouts: self.lease_timeouts,
+            stale_gen_acks: self.stale_gen_acks,
+            pool_slot_bytes: 0, // stamped by take_timings (session-static, not accumulated)
         };
         self.coord_rtt_ns.clear();
         self.decode_copy_ns.clear();
+        self.convert_gpu_ns.clear();
         self.ack_to_emit_ns.clear();
         self.lookahead_gated_skips = 0;
         self.late_frame_drops = 0;
@@ -250,6 +291,8 @@ impl TimingAccum {
         self.acquire_failed = 0;
         self.final_free_slots = 0;
         self.final_eof = false;
+        self.lease_timeouts = 0;
+        self.stale_gen_acks = 0;
         report
     }
 }
@@ -301,6 +344,16 @@ fn percentile_ms(sorted: &[u64], p: f64) -> f64 {
 /// held by Chromium past its ack), turning what would otherwise be a
 /// permanent session-thread hang into an observable, recoverable skip.
 const ACQUIRE_TIMEOUT_MS: u32 = 1000;
+
+/// Owner-side lease ceiling: how long a delivered slot may sit un-acked before
+/// [`SessionState::reclaim_expired_leases`] takes it back (gen bump + free +
+/// counter). Two orders of magnitude above the p99 ack latency under full load
+/// (coord-RTT tens of ms) and 3× the AcquireSync ceiling, so it can only fire
+/// on a genuinely wedged/vanished consumer — an occluded renderer whose
+/// rAF-paced ack stalled, a dead port, a dropped IPC message. Deliberately NOT
+/// tighter: a reclaim of a slot Chromium is still reading trades one torn
+/// frame for the unwedge, and that trade should stay rare.
+const LEASE_TIMEOUT: Duration = Duration::from_secs(3);
 /// `WAIT_TIMEOUT` (winbase.h `0x00000102`), as it surfaces from
 /// `IDXGIKeyedMutex::AcquireSync`'s raw return code. Its sign bit is 0, so
 /// windows-rs's generated safe wrapper (`HRESULT::ok`, `windows-result` crate,
@@ -423,13 +476,18 @@ fn fold_key_interval(key_interval_us: i64, last_key_pts: i64, pts_us: i64) -> i6
 }
 
 /// Whether a `ConsumeAck` for `slot` may free it: only a currently-busy slot
-/// qualifies. Exactly-once acks are otherwise enforced only by JS bookkeeping
-/// spread across three processes — a duplicate, stale, or out-of-range ack
-/// reaching here would free a slot the renderer may still be reading, letting
-/// the pump overwrite it mid-read: the exact frame reorder/tear the order gate
-/// exists to catch.
-fn ack_frees_slot(free: &[bool], slot: usize) -> bool {
-    free.get(slot) == Some(&false)
+/// whose ack echoes the CURRENT fill generation qualifies. Exactly-once acks
+/// are otherwise enforced only by JS bookkeeping spread across three processes
+/// — a duplicate, stale, or out-of-range ack reaching here would free a slot
+/// the renderer may still be reading, letting the pump overwrite it mid-read:
+/// the exact frame reorder/tear the order gate exists to catch.
+///
+/// The generation check is the ABA immunity the busy flag alone cannot give:
+/// after a lease timeout reclaims + refills a slot, the ORIGINAL occupant's
+/// late ack arrives against a busy slot again — busy-only validation would
+/// free the new frame mid-read. `gen` names WHICH occupancy the ack releases.
+fn ack_frees_slot(free: &[bool], slot_gen: &[u32], slot: usize, gen: u32) -> bool {
+    free.get(slot) == Some(&false) && slot_gen.get(slot) == Some(&gen)
 }
 
 /// recv timeout so the pump makes progress (freed slot -> decode) between
@@ -440,10 +498,16 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(4);
 /// sink the addon wires to its event channel. Carries only plain data.
 pub enum PreviewGpuPoke {
     /// A decoded frame was copied into `slot`; the renderer may import/snapshot
-    /// it, then `consume_ack(slot)` to release it back to the pool.
+    /// it, then `consume_ack(slot, gen)` to release it back to the pool.
     FrameReady {
         stream_id: String,
         slot: u32,
+        /// The slot's fill generation — the fencing token. Bumped on every
+        /// fill; the matching ack must echo it or it is dropped whole
+        /// (ABA immunity on top of the busy check: a stale ack from a
+        /// PREVIOUS occupancy of the same slot can no longer free the
+        /// current one).
+        gen: u32,
         pts_us: i64,
         dur_us: i64,
     },
@@ -464,8 +528,10 @@ type PokeSink = Arc<Mutex<Option<Box<dyn Fn(PreviewGpuPoke) + Send>>>>;
 enum SessionMsg {
     /// Set the decode anchor to this source-microsecond target.
     RequestFrameAt(i64),
-    /// The renderer released this slot; it may be reused.
-    ConsumeAck(u32),
+    /// The renderer released this slot; it may be reused. Carries the fill
+    /// generation the renderer received with the frame — mismatch = stale ack,
+    /// dropped whole.
+    ConsumeAck(u32, u32),
     /// Tear down and exit the thread.
     Close,
 }
@@ -484,10 +550,10 @@ pub struct OpenInfo {
 struct Session {
     tx: Sender<SessionMsg>,
     join: Option<JoinHandle<()>>,
-    #[allow(dead_code)]
     width: u32,
-    #[allow(dead_code)]
     height: u32,
+    /// Slot count actually allocated (drives the `pool_slot_bytes` stamp).
+    pool_size: u32,
     /// Same `Arc` the session thread appends to; `take_timings` drains it.
     timing: Arc<Mutex<TimingAccum>>,
 }
@@ -505,13 +571,21 @@ struct PoolSlot {
 struct SessionState {
     stream: VideoStream,
     /// ffmpeg's device, cloned (AddRef) so it outlives the decoder; the pool
-    /// textures were created on it. The per-frame copy goes through `context`.
+    /// textures were created on it. The per-frame convert goes through `context`.
     _device: ID3D11Device,
     context: ID3D11DeviceContext,
     pool: Vec<PoolSlot>,
+    /// Session-owned NV12→RGBA conversion pass (shader compiled once at open
+    /// with the stream's matrix/range constants baked in).
+    convert: ConvertPass,
     /// Per-slot free flag, owned solely by this thread (acks arrive as messages,
     /// so no cross-thread access -> a plain `Vec<bool>`, no atomics needed).
     free: Vec<bool>,
+    /// Per-slot fill generation — the fencing token. Bumped on every fill
+    /// (and on a lease-timeout reclaim, which is what invalidates the late
+    /// ack); emitted with `FrameReady` and echoed by `ConsumeAck`. Wrapping
+    /// u32: ABA across 2^32 fills of one slot is not a real risk.
+    slot_gen: Vec<u32>,
     width: u32,
     height: u32,
     /// Current decode target (source microseconds). `i64::MIN` before the first
@@ -646,6 +720,9 @@ impl SessionState {
     /// satisfied, or the stream ends. Called after every message and on every
     /// recv timeout, so freed slots get refilled promptly without busy-spinning.
     fn pump(&mut self, poke: &PokeSink, stream_id: &str) {
+        // Lease sweep first, so a slot whose consumer vanished re-enters the
+        // free pool on the same tick that would otherwise report pool-full.
+        self.reclaim_expired_leases();
         loop {
             if self.eof {
                 let free = self.free.iter().filter(|&&f| f).count() as u32;
@@ -763,13 +840,14 @@ impl SessionState {
             }
 
             let copy = unsafe {
-                copy_frame_into_slot(
+                convert_frame_into_slot(
                     &self.context,
+                    &mut self.convert,
                     &self.pool[slot_idx],
+                    slot_idx,
                     &self.stream,
                     &decoded,
-                    self.width,
-                    self.height,
+                    &self.timing,
                 )
             };
             match copy {
@@ -826,6 +904,9 @@ impl SessionState {
 
             let decode_copy_ns = decode_start.elapsed().as_nanos() as u64;
             self.free[slot_idx] = false;
+            // The fill IS the generation boundary: from here this occupancy is
+            // named by the new token, and only an ack echoing it frees the slot.
+            self.slot_gen[slot_idx] = self.slot_gen[slot_idx].wrapping_add(1);
             self.frontier_pts = decoded.pts_us;
             self.last_delivered_pts = decoded.pts_us;
             // Close the ack->next-emit gap for this slot, if it was previously
@@ -859,10 +940,49 @@ impl SessionState {
                 PreviewGpuPoke::FrameReady {
                     stream_id: stream_id.to_string(),
                     slot: slot_idx as u32,
+                    gen: self.slot_gen[slot_idx],
                     pts_us: decoded.pts_us,
                     dur_us: decoded.dur_us,
                 },
             );
+        }
+    }
+
+    /// Owner-side lease timeout: reclaim delivered slots whose ack never came
+    /// back within [`LEASE_TIMEOUT`]. The trade is decided (drainFenceAcks
+    /// precedent): one possibly-torn frame < a permanently wedged session —
+    /// `pool_size` stranded slots stop production for good, and only the OWNER
+    /// can break that. Bumping the generation is what makes the reclaim safe
+    /// to observe: the original occupant's late ack now fails the gen check
+    /// instead of freeing whatever the slot holds by then. The keyed mutex
+    /// still serialises any actual GPU access if Chromium is genuinely
+    /// mid-read (worst case: the next fill's AcquireSync waits/times out).
+    ///
+    /// Runs at the top of every `pump` (each message + each 4ms idle tick), so
+    /// an expiry is noticed within one tick of `LEASE_TIMEOUT`.
+    fn reclaim_expired_leases(&mut self) {
+        let now = Instant::now();
+        for slot in 0..self.pool.len() {
+            if self.free[slot] {
+                continue;
+            }
+            let Some(emit_at) = self.slot_emit[slot] else {
+                continue; // busy-but-never-emitted: not a lease (mid-fill)
+            };
+            if now.duration_since(emit_at) < LEASE_TIMEOUT {
+                continue;
+            }
+            // Take the emit stamp so the (never-arriving) coord-RTT sample is
+            // cancelled with the lease rather than paired with a future ack —
+            // and the stale ack stamp, so the next fill's ack_to_emit doesn't
+            // pair against an ack from a previous occupancy.
+            self.slot_emit[slot] = None;
+            self.slot_ack_at[slot] = None;
+            self.slot_gen[slot] = self.slot_gen[slot].wrapping_add(1);
+            self.free[slot] = true;
+            if let Ok(mut t) = self.timing.lock() {
+                t.note_lease_timeout();
+            }
         }
     }
 }
@@ -916,9 +1036,10 @@ impl Drop for KeyedMutexRelease<'_> {
     }
 }
 
-/// Copy the decoded GPU surface into a pool slot, bracketed by the slot's keyed
-/// mutex (our write vs. Chromium's read) and ffmpeg's device-context lock
-/// (decode thread vs. this copy). Lifted from the poc's in-place slot overwrite.
+/// Convert the decoded NV12 surface into a pool slot's RGBA8 texture (the A′
+/// own-shader pass), bracketed by the slot's keyed mutex (our GPU write vs.
+/// Chromium's read) and ffmpeg's device-context lock (decode thread vs. ALL of
+/// our context use — staging copy, draw, flush and the timing-query poll).
 ///
 /// The initial `AcquireSync` uses a finite timeout (`ACQUIRE_TIMEOUT_MS`)
 /// rather than `INFINITE`: on the happy path a free slot acquires in
@@ -930,14 +1051,16 @@ impl Drop for KeyedMutexRelease<'_> {
 ///
 /// # Safety
 /// `decoded.src_texture` must still be valid (no `next_frame` since it was
-/// produced), and `context`/`stream` must be the ones the surface belongs to.
-unsafe fn copy_frame_into_slot(
+/// produced), and `context`/`stream`/`convert` must be the ones the surface
+/// belongs to.
+unsafe fn convert_frame_into_slot(
     context: &ID3D11DeviceContext,
+    convert: &mut ConvertPass,
     slot: &PoolSlot,
+    slot_idx: usize,
     stream: &VideoStream,
     decoded: &StreamFrame,
-    width: u32,
-    height: u32,
+    timing: &Arc<Mutex<TimingAccum>>,
 ) -> Result<CopyOutcome, String> {
     let src_tex = ID3D11Texture2D::from_raw_borrowed(&decoded.src_texture)
         .ok_or_else(|| "decoded D3D11 texture is null".to_string())?;
@@ -973,33 +1096,27 @@ unsafe fn copy_frame_into_slot(
     if let Some(lock) = stream.lock {
         lock(stream.lock_ctx);
     }
-    let region = D3D11_BOX {
-        left: 0,
-        top: 0,
-        front: 0,
-        right: width,
-        bottom: height,
-        back: 1,
-    };
-    context.CopySubresourceRegion(
-        &slot.texture,
-        0,
-        0,
-        0,
-        0,
-        src_tex,
-        decoded.src_index,
-        Some(&region),
-    );
+    // Previous frame's GPU-time bracket, polled non-blocking while we already
+    // hold the context lock (GetData is context use too).
+    if let Some(gpu_ns) = convert.poll_gpu_time(context) {
+        if let Ok(mut t) = timing.lock() {
+            t.push_convert_gpu(gpu_ns);
+        }
+    }
+    let converted = convert.convert_into_slot(context, src_tex, decoded.src_index, slot_idx);
     context.Flush();
     if let Some(unlock) = stream.unlock {
         unlock(stream.lock_ctx);
     }
+    // Propagate a convert failure only after the lock was paired; the keyed
+    // mutex is still covered by the `Drop` backstop on this early return.
+    converted?;
     // Explicit release so a `ReleaseSync` failure surfaces here (the `Drop`
     // backstop only fires on an unwind / skipped-`release` return).
     release.release()?;
     Ok(CopyOutcome::Copied)
 }
+
 
 /// Fire a poke through the shared sink if one is set. The mutex is held across
 /// the call so concurrent sessions serialise (the addon's sink is a
@@ -1011,12 +1128,20 @@ fn emit(poke: &PokeSink, poke_val: PreviewGpuPoke) {
     }
 }
 
-/// Open the decoder + build the shared NV12 pool on ffmpeg's device. Runs on the
-/// session thread (all COM/ffmpeg objects stay here). Adapted from the poc's
+/// Open the decoder + build the shared RGBA8 pool on ffmpeg's device, plus the
+/// session's NV12→RGBA conversion pass. Runs on the session thread (all
+/// COM/ffmpeg objects stay here). Adapted from the poc's
 /// `poc_open_video_stream` pool-creation block.
+///
+/// `matrix`/`full_range` are the stream's renderer-derived color tags: they
+/// select the conversion constants baked into this session's shader, so the
+/// shared texture is already working-space RGBA and the import side tags it
+/// sRGB-passthrough unconditionally.
 fn init_session(
     path: &str,
     pool_size: u32,
+    matrix: &str,
+    full_range: bool,
     timing: Arc<Mutex<TimingAccum>>,
 ) -> Result<SessionState, String> {
     let stream = VideoStream::open(path)?;
@@ -1033,7 +1158,9 @@ fn init_session(
             .clone();
 
         // Raw D3D11 only shares an NT-handle texture when NTHANDLE + KEYEDMUTEX
-        // are set together. Shared textures reject initial data; fill via copy.
+        // are set together. Shared textures reject initial data; fill via the
+        // conversion pass. RENDER_TARGET: each slot is the conversion's RTV
+        // (same flag pair the RGBA probe validated end-to-end).
         let nt_km = (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0
             | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
         let desc = D3D11_TEXTURE2D_DESC {
@@ -1041,13 +1168,13 @@ fn init_session(
             Height: height,
             MipLevels: 1,
             ArraySize: 1,
-            Format: DXGI_FORMAT_NV12,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
                 Quality: 0,
             },
             Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
             CPUAccessFlags: 0,
             MiscFlags: nt_km,
         };
@@ -1075,10 +1202,15 @@ fn init_session(
             });
         }
 
+        let slot_textures: Vec<ID3D11Texture2D> =
+            pool.iter().map(|s| s.texture.clone()).collect();
+        let convert = ConvertPass::new(&device, width, height, matrix, full_range, &slot_textures)?;
+
         let free = vec![true; pool.len()];
         // Computed before the struct literal (like `free` above): `pool` is moved
         // into its own field within the literal, so `pool.len()` must be captured
         // here rather than inline at the per-slot fields.
+        let slot_gen = vec![0u32; pool.len()];
         let slot_emit = vec![None; pool.len()];
         let slot_ack_at = vec![None; pool.len()];
 
@@ -1087,7 +1219,9 @@ fn init_session(
             _device: device,
             context,
             pool,
+            convert,
             free,
+            slot_gen,
             width,
             height,
             anchor: i64::MIN,
@@ -1112,12 +1246,14 @@ fn session_thread(
     stream_id: String,
     path: String,
     pool_size: u32,
+    matrix: String,
+    full_range: bool,
     rx: Receiver<SessionMsg>,
     init_tx: Sender<Result<OpenInfo, String>>,
     poke: PokeSink,
     timing: Arc<Mutex<TimingAccum>>,
 ) {
-    let mut state = match init_session(&path, pool_size, timing) {
+    let mut state = match init_session(&path, pool_size, &matrix, full_range, timing) {
         Ok(s) => s,
         Err(e) => {
             let _ = init_tx.send(Err(e));
@@ -1144,7 +1280,7 @@ fn session_thread(
         if let Ok(mut t) = state.timing.lock() {
             t.push_recv_block(block_ns);
             match &msg {
-                Ok(SessionMsg::ConsumeAck(_)) => t.note_recv_ack(),
+                Ok(SessionMsg::ConsumeAck(..)) => t.note_recv_ack(),
                 Ok(SessionMsg::RequestFrameAt(_)) => t.note_recv_req(),
                 Err(RecvTimeoutError::Timeout) => t.note_recv_timeout(),
                 _ => {}
@@ -1165,13 +1301,20 @@ fn session_thread(
                 state.pump(&poke, &stream_id);
                 ControlFlow::Continue(())
             }
-            Ok(SessionMsg::ConsumeAck(slot)) => {
-                // A duplicate/stale/out-of-range ack is dropped whole — no
-                // free, no coord-RTT record — see `ack_frees_slot`. The pump
-                // still runs: the mailbox deserves service either way.
-                if ack_frees_slot(&state.free, slot as usize) {
+            Ok(SessionMsg::ConsumeAck(slot, gen)) => {
+                // A duplicate/stale/out-of-range/wrong-generation ack is
+                // dropped whole — no free, no coord-RTT record — see
+                // `ack_frees_slot`. The pump still runs: the mailbox deserves
+                // service either way. Gen mismatches are counted apart from
+                // silence: routine stale acks mean the consumer is answering
+                // leases the owner already reclaimed (a latency finding).
+                if ack_frees_slot(&state.free, &state.slot_gen, slot as usize, gen) {
                     state.record_ack(slot as usize);
                     state.free[slot as usize] = true;
+                } else if state.free.get(slot as usize) == Some(&false) {
+                    if let Ok(mut t) = state.timing.lock() {
+                        t.note_stale_gen_ack();
+                    }
                 }
                 state.pump(&poke, &stream_id);
                 ControlFlow::Continue(())
@@ -1233,9 +1376,19 @@ impl PreviewGpuRegistry {
         *self.poke.lock_recover() = Some(sink);
     }
 
-    /// Open `path` for GPU preview: spawn its decode thread, build the pool, and
-    /// hand back the slot NT handles + dimensions once the thread reports ready.
-    pub fn open(&self, stream_id: &str, path: &str, pool_size: u32) -> Result<OpenInfo, String> {
+    /// Open `path` for GPU preview: spawn its decode thread, build the pool +
+    /// conversion pass, and hand back the slot NT handles + dimensions once the
+    /// thread reports ready. `matrix`/`full_range` are the stream's
+    /// renderer-derived color tags (they pick the conversion constants — see
+    /// `convert::coef_for_matrix`).
+    pub fn open(
+        &self,
+        stream_id: &str,
+        path: &str,
+        pool_size: u32,
+        matrix: &str,
+        full_range: bool,
+    ) -> Result<OpenInfo, String> {
         let mut sessions = self.sessions.lock_recover();
         if sessions.contains_key(stream_id) {
             return Err(format!("preview-gpu session '{stream_id}' is already open"));
@@ -1246,6 +1399,7 @@ impl PreviewGpuRegistry {
         let poke = Arc::clone(&self.poke);
         let sid = stream_id.to_string();
         let path_owned = path.to_string();
+        let matrix_owned = matrix.to_string();
         let pool_size = pool_size.max(1);
         let timing = Arc::new(Mutex::new(TimingAccum::default()));
         let timing_thread = Arc::clone(&timing);
@@ -1257,6 +1411,8 @@ impl PreviewGpuRegistry {
                     sid,
                     path_owned,
                     pool_size,
+                    matrix_owned,
+                    full_range,
                     cmd_rx,
                     init_tx,
                     poke,
@@ -1277,6 +1433,7 @@ impl PreviewGpuRegistry {
                         join: Some(join),
                         width,
                         height,
+                        pool_size: info.slot_handles.len() as u32,
                         timing,
                     },
                 );
@@ -1310,14 +1467,16 @@ impl PreviewGpuRegistry {
     }
 
     /// Mark a slot free again (the renderer released its cross-process refs).
-    pub fn consume_ack(&self, stream_id: &str, slot: u32) -> Result<(), String> {
+    /// `gen` must echo the `FrameReady` that delivered the slot, or the session
+    /// thread drops the ack as stale (fencing token).
+    pub fn consume_ack(&self, stream_id: &str, slot: u32, gen: u32) -> Result<(), String> {
         let sessions = self.sessions.lock_recover();
         let session = sessions
             .get(stream_id)
             .ok_or_else(|| format!("no preview-gpu session '{stream_id}'"))?;
         session
             .tx
-            .send(SessionMsg::ConsumeAck(slot))
+            .send(SessionMsg::ConsumeAck(slot, gen))
             .map_err(|_| format!("preview-gpu session '{stream_id}' thread is gone"))
     }
 
@@ -1333,7 +1492,9 @@ impl PreviewGpuRegistry {
         // through `session` (and so `sessions`); dropping it here (end of this
         // statement) rather than in the tail expression keeps it from outliving
         // the `sessions` guard it's borrowed from.
-        let report = session.timing.lock_recover().drain();
+        let mut report = session.timing.lock_recover().drain();
+        report.pool_slot_bytes =
+            session.width as u64 * session.height as u64 * 4 * session.pool_size as u64;
         Ok(report)
     }
 
@@ -1579,15 +1740,22 @@ mod tests {
     #[test]
     fn ack_frees_slot_accepts_only_a_busy_slot() {
         let free = [true, false, true];
-        // Busy slot: the renderer released it, the ack frees it.
-        assert!(ack_frees_slot(&free, 1));
+        let gen = [7u32, 7, 7];
+        // Busy slot + matching generation: the renderer released it, the ack
+        // frees it.
+        assert!(ack_frees_slot(&free, &gen, 1, 7));
+        // Busy slot, WRONG generation (the ABA case: a late ack from a
+        // previous occupancy after a lease-timeout reclaim + refill): dropped,
+        // or it would free the CURRENT frame mid-read.
+        assert!(!ack_frees_slot(&free, &gen, 1, 6));
+        assert!(!ack_frees_slot(&free, &gen, 1, 8));
         // Already-free slot (duplicate or stale ack): freeing again would let
         // the pump overwrite a slot the renderer may still be reading.
-        assert!(!ack_frees_slot(&free, 0));
-        assert!(!ack_frees_slot(&free, 2));
+        assert!(!ack_frees_slot(&free, &gen, 0, 7));
+        assert!(!ack_frees_slot(&free, &gen, 2, 7));
         // Out-of-range slot: never frees anything.
-        assert!(!ack_frees_slot(&free, 3));
-        assert!(!ack_frees_slot(&free, usize::MAX));
+        assert!(!ack_frees_slot(&free, &gen, 3, 7));
+        assert!(!ack_frees_slot(&free, &gen, usize::MAX, 7));
     }
 
     #[test]
@@ -1670,7 +1838,7 @@ mod tests {
             }
         }));
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        let Ok(_info) = reg.open("s1", p, 2) else {
+        let Ok(_info) = reg.open("s1", p, 2, "bt709", false) else {
             eprintln!("skipping preview-gpu panic test: no d3d11va device on this host");
             return;
         };

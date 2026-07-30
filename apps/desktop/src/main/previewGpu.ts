@@ -1,7 +1,7 @@
 // Main-process manager for native GPU-decode preview sessions. Owns the
 // PERSISTENT shared-texture imports: each pool slot is importSharedTexture'd +
 // sendSharedTexture'd EXACTLY ONCE at open, then kept alive for the whole
-// session so the underlying D3D11 NV12 textures stay reusable. Per-frame
+// session so the underlying D3D11 RGBA textures stay reusable. Per-frame
 // traffic is only frameReady/consumeAck pokes — never a per-frame import/send.
 //
 // Why persistent, not per-frame: per-frame sendSharedTexture is IPC-bound —
@@ -38,6 +38,19 @@ interface GpuSession {
 }
 
 const sessions = new Map<string, GpuSession>()
+
+/// The import tag for every A′ slot texture: the native conversion shader
+/// already produced working-space RGBA, so the browser must treat the bytes
+/// as plain sRGB and do NO color math of its own. This constant + the native
+/// shader constants together ARE the color contract; the source's real tags
+/// travel to native via `previewGpuOpen(matrix, fullRange)` instead.
+const SRGB_PASSTHROUGH: ColorSpace = {
+  primaries: 'bt709',
+  transfer: 'srgb',
+  matrix: 'rgb',
+  range: 'full',
+}
+
 /// One admission authority for every open/close. It greedily reserves coded
 /// pixel AREA (30fps-calibrated, not pixel-rate) plus a hard session slot before
 /// native allocation. The module owns validation, rollback and idempotent lease
@@ -98,8 +111,15 @@ export function hwSessionCount(): number {
 /// A sample is a point in time, not a promise: the count falls asynchronously
 /// (a renderer teardown fires `previewGpu:close` without awaiting it), so
 /// `used < max` at read time does not guarantee the next open succeeds.
+///
+/// `slotVram` is computed HERE from the live session records (the admission
+/// lease knows coded area but not pool size): Σ w×h×4×slots over open
+/// sessions — the observable that decides the A′ ×2.67-bytes question with a
+/// measurement instead of arithmetic.
 export function hwBudget(): PreviewGpuBudgetSnapshot {
-  return previewGpuBudget.snapshot()
+  let usedBytes = 0
+  for (const s of sessions.values()) usedBytes += s.width * s.height * 4 * s.imported.length
+  return { ...previewGpuBudget.snapshot(), slotVram: { usedBytes, bytesPerPixel: 4 } }
 }
 
 /// Tail of the open-serialisation chain. `openPreviewGpu` awaits inside its
@@ -185,7 +205,17 @@ async function doOpenPreviewGpu(
     // the configured label to check the observed one against): an invoke reply is
     // a separate channel, and it loses to frameReady once 2+ sessions are opening.
     win.webContents.send('evt:previewGpu:barrier', { streamId, mode: HW_BARRIER_MODE })
-    const info = backend.previewGpuOpen(streamId, path, poolSize)
+    // A′ color sovereignty: the SOURCE color tags go to native, which converts
+    // NV12→RGBA with its own shader (constants pinned to the conformance
+    // goldens). Chromium never sees the YUV. `derived`/`invalid` ranges fall
+    // to limited — the same fail-closed default the WebCodecs lane uses.
+    const info = backend.previewGpuOpen(
+      streamId,
+      path,
+      poolSize,
+      colorSpace.matrix ?? 'bt709',
+      colorSpace.range === 'full',
+    )
     nativeOpened = true
     if (info.width !== codedWidth || info.height !== codedHeight) {
       throw new Error(
@@ -200,8 +230,13 @@ async function doOpenPreviewGpu(
         textureInfo: {
           codedSize: { width: info.width, height: info.height },
           visibleRect: { x: 0, y: 0, width: info.width, height: info.height },
-          pixelFormat: 'nv12',
-          colorSpace,
+          // The slots are native-converted RGBA (A′): import as 'rgba' tagged
+          // sRGB passthrough, NOT the source's colorSpace — the color math
+          // already happened in the native shader, and this tag is what makes
+          // the preload's createImageBitmap a pure byte copy (ticket-01 probe:
+          // byte-exact both geometries). Chromium gets no YUV to convert.
+          pixelFormat: 'rgba',
+          colorSpace: SRGB_PASSTHROUGH,
           timestamp: 0,
           // info.slots[k].handle is the LE bytes of the slot texture's NT handle.
           handle: { ntHandle: info.slots[k].handle },
@@ -262,9 +297,10 @@ export function requestFrameAtPreviewGpu(backend: NativeDecode, streamId: string
 
 /// Release a slot back to the native pool. Called by the preload's per-frame
 /// loop AFTER createImageBitmap resolves (the ack-after-read contract) — never
-/// before, or the native side could overwrite the slot mid-read.
-export function consumeAckPreviewGpu(backend: NativeDecode, streamId: string, slot: number): void {
-  backend.previewGpuConsumeAck(streamId, slot)
+/// before, or the native side could overwrite the slot mid-read. `gen` echoes
+/// the frameReady's fill generation (fencing token); native drops a mismatch.
+export function consumeAckPreviewGpu(backend: NativeDecode, streamId: string, slot: number, gen: number): void {
+  backend.previewGpuConsumeAck(streamId, slot, gen)
 }
 
 /// Drain a session's per-frame timing samples. Delegates straight to the addon;

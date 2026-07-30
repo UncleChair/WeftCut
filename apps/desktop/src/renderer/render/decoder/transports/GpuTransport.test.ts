@@ -91,12 +91,14 @@ function installFakeSlotFenceDevice(): { signalAll: () => void } {
 }
 
 /// One delegated frame message — what the preload posts under `rendererFence`:
-/// no barrier stamps of its own, `ackDelegated` carrying the obligation.
+/// no barrier stamps of its own, `ackDelegated` carrying the obligation. The
+/// fixed `gen: 1` mirrors a first-fill token; the ack tests assert it echoes.
 function delegatedFrame(streamId: string, slot: number, ptsUs: number, bitmap: ImageBitmap) {
   return {
     kind: "frame",
     streamId,
     slot,
+    gen: 1,
     ptsUs,
     durUs: 33,
     bitmap,
@@ -310,6 +312,7 @@ describe("GpuTransport", () => {
       kind: "consumeAck",
       streamId: "rf1",
       slot: 2,
+      gen: 1,
     });
     t.dispose();
   });
@@ -333,6 +336,7 @@ describe("GpuTransport", () => {
       kind: "consumeAck",
       streamId: "rf2",
       slot: 1,
+      gen: 1,
     });
     t.dispose();
   });
@@ -433,6 +437,7 @@ describe("GpuTransport", () => {
       kind: "consumeAck",
       streamId: "rf6",
       slot: 0,
+      gen: 1,
     });
     t.dispose();
   });

@@ -78,13 +78,18 @@ matrix for the `sw` strategy below.
 
 The native strategy (`--strategy native`, Windows-only; the Standard engine's
 `FfmpegSource` opened with `forceLane: "hardware"`) decodes the **original**
-file — not a proxy — with ffmpeg `d3d11va` hardware decode, copies each decoded
-surface GPU→GPU into a small pool of shared NV12 textures, and hands them to the
-renderer over Electron's `sharedTexture` transport. The renderer snapshots each
-delivered frame to an `ImageBitmap` and pushes it into the **same `FrameRing`**
-the WebCodecs path feeds — so everything downstream (lookahead, `frameAt`, the
-painter) is identical; only the front-end differs. It is preview-only: the proxy
-still builds in the background and export is untouched.
+file — not a proxy — with ffmpeg `d3d11va` hardware decode, converts each
+decoded NV12 surface to RGBA on the decode device with the session's own
+pixel shader (color-sovereign: matrix/range constants derive from the same
+kr/kb source as `Nv12Ingest`, selected by the stream's tags at open), renders
+it into a small pool of shared RGBA8 textures, and hands them to the renderer
+over Electron's `sharedTexture` transport tagged sRGB-passthrough — so the
+browser's `createImageBitmap` is a pure byte copy with no color math left to
+run. The renderer snapshots each delivered frame to an `ImageBitmap` and
+pushes it into the **same `FrameRing`** the WebCodecs path feeds — so
+everything downstream (lookahead, `frameAt`, the painter) is identical; only
+the front-end differs. It is preview-only: the proxy still builds in the
+background and export is untouched.
 
 Because the shipping renderer is sandboxed (`contextIsolation` + `sandbox`), the
 shared-texture receiver runs in the **preload** isolated world, calls
@@ -94,8 +99,14 @@ the `contextBridge`). Each pool slot is imported and sent **once**; per frame th
 only cross-process traffic is a tiny `frameReady` poke and a `consume-ack` — no
 frame pixels traverse IPC. The ack is issued only **after** `createImageBitmap`
 resolves, which is the coherence guarantee that lets the producer safely reuse a
-slot (a finite keyed-mutex acquire timeout backstops it so a stuck consumer can
-never wedge the decode thread).
+slot, and it must echo the frame's fill **generation** (the `frameReady.gen`
+fencing token) — native drops a mismatched ack as stale, and a delivered slot
+whose ack never arrives is reclaimed by the owner after a lease timeout, so a
+wedged consumer costs at most one possibly-torn frame, never the session (a
+finite keyed-mutex acquire timeout backstops the GPU side the same way).
+`previewGpuTakeTimings` prices the conversion itself (`convertGpu`, GPU
+timestamp queries on the decode device) and reports the pool's VRAM
+(`poolSlotBytes` = width×height×4×slots).
 
 **Scope:** the native path targets the `Proxied`-route **8-bit** codecs (HEVC,
 VP9). 10-bit (P010) import is blocked at the transport layer, so 10-bit sources

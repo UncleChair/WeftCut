@@ -35,6 +35,11 @@ interface PortFrameMsg {
   kind: "frame";
   streamId: string;
   slot: number;
+  /// The slot's fill generation (fencing token). An `ackDelegated` frame's ack
+  /// must echo it — native drops a generation mismatch as stale, which is what
+  /// keeps a late ack (of a lease native already reclaimed) from freeing the
+  /// slot's NEXT occupant.
+  gen: number;
   ptsUs: number;
   durUs: number;
   bitmap: ImageBitmap;
@@ -256,7 +261,7 @@ export class GpuTransport implements DecodeTransport {
         // Before `frameCb`, and unconditionally: the slot's release cannot
         // depend on the ring keeping the frame, or on anything painting it.
         const applied = queue.submit(this.streamId, data.slot, data.bitmap, () =>
-          this.postSlotAck(data.slot),
+          this.postSlotAck(data.slot, data.gen),
         );
         barrierApplied = applied.applied;
         barrierDrawMs = applied.drawMs;
@@ -289,8 +294,8 @@ export class GpuTransport implements DecodeTransport {
   /// LIVE, not captured: `dispose()` nulls it, and this is the second line of
   /// defence behind dropping the pending slots — neither an ack nor a poke may
   /// reach a session main is mid-closing.
-  private postSlotAck(slot: number): void {
-    const ack: PreviewGpuSlotAck = { kind: "consumeAck", streamId: this.streamId, slot };
+  private postSlotAck(slot: number, gen: number): void {
+    const ack: PreviewGpuSlotAck = { kind: "consumeAck", streamId: this.streamId, slot, gen };
     try {
       this.port?.postMessage(ack);
     } catch {

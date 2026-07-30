@@ -350,7 +350,7 @@ const barrierModeByStream = new Map<string, HwBarrierMode>()
 // closePreviewGpu releases its own (persistent, per-slot) imports, but the
 // copy this preload holds in `importedByKey` (from setSharedTextureReceiver)
 // is a SEPARATE import that only the preload can release. Skipping this leaks
-// a whole NV12 pool per open/close cycle (decode-bench opens/closes a session
+// a whole slot pool per open/close cycle (decode-bench opens/closes a session
 // per source, so this compounds into GPU OOM across a run).
 // Ordering: release the preload's own imports and prune this stream's
 // announce-queue entries BEFORE awaiting the main-process close, not after.
@@ -421,8 +421,8 @@ ipcRenderer.on('evt:previewGpu:barrier', (_e, { streamId, mode }: { streamId: st
 // serialising opens — rules out "the announce just hasn't arrived yet". The
 // unpaired import must be RELEASED, not dropped: it holds a GPU reference on
 // the slot texture, Electron frees the underlying pool only once every import
-// releases, and nothing else will ever see this one — one leaked NV12 slot per
-// dispose-races-open occurrence, for the process lifetime.
+// releases, and nothing else will ever see this one — one leaked slot texture
+// per dispose-races-open occurrence, for the process lifetime.
 sharedTexture.setSharedTextureReceiver(async (data) => {
   const a = announceQueue.shift()
   if (a) {
@@ -434,7 +434,7 @@ sharedTexture.setSharedTextureReceiver(async (data) => {
 
 // Cross-device read-completion barrier (native-hw frame-REORDER fix).
 //
-// The shared NV12 slot texture is overwritten IN PLACE by the native decode
+// The shared slot texture is overwritten IN PLACE by the native decode
 // thread — on ffmpeg's OWN D3D11 device — as soon as the slot is `consumeAck`ed.
 // Chromium reads that texture (getVideoFrame → createImageBitmap) on the
 // SEPARATE GPU-process device. Unlike a same-process WebCodecs VideoFrame (whose
@@ -579,10 +579,11 @@ const FENCE_DEADLINE_MS = 2 * (1000 / 60)
 const FENCE_FORCED_WAIT_BUDGET_MS = 20
 
 /// A delivered frame whose slot is not acked yet, waiting on `sync`. Acking out
-/// of order is safe: native's `ConsumeAck(slot)` sets a per-slot free flag with
-/// no ordering assumption (preview_gpu/session.rs), so slots are independently
-/// owned and a later frame's fence may signal first.
-type PendingFence = { streamId: string; slot: number; sync: WebGLSync; submittedAt: number }
+/// of order is safe: native's `ConsumeAck(slot, gen)` sets a per-slot free flag
+/// with no ordering assumption (preview_gpu/session.rs), so slots are
+/// independently owned and a later frame's fence may signal first. `gen` is the
+/// fill generation the frame arrived with — the ack must echo it.
+type PendingFence = { streamId: string; slot: number; gen: number; sync: WebGLSync; submittedAt: number }
 const pendingFences: PendingFence[] = []
 
 /// Per-stream fence health, piggybacked onto that stream's next frame message.
@@ -703,7 +704,7 @@ function drainFenceAcks(): void {
     // that is never acked is a permanent leak, and `poolSize` of them wedge the
     // session for good; one possibly-torn frame is strictly the smaller harm.
     // `forcedWaits` is what makes the trade visible rather than silent.
-    void ipcRenderer.invoke('previewGpu:consumeAck', { streamId: p.streamId, slot: p.slot }).catch(() => {})
+    void ipcRenderer.invoke('previewGpu:consumeAck', { streamId: p.streamId, slot: p.slot, gen: p.gen }).catch(() => {})
   }
 }
 
@@ -756,9 +757,9 @@ function dropPendingFencesFor(streamId: string): void {
 ///     main is mid-closing.
 function receiveSlotAck(port: MessagePort, data: unknown): void {
   const msg = data as PreviewGpuSlotAck | null | undefined
-  if (!msg || msg.kind !== 'consumeAck' || typeof msg.slot !== 'number') return
+  if (!msg || msg.kind !== 'consumeAck' || typeof msg.slot !== 'number' || typeof msg.gen !== 'number') return
   if (portByStream.get(msg.streamId) !== port) return
-  void ipcRenderer.invoke('previewGpu:consumeAck', { streamId: msg.streamId, slot: msg.slot }).catch(() => {})
+  void ipcRenderer.invoke('previewGpu:consumeAck', { streamId: msg.streamId, slot: msg.slot, gen: msg.gen }).catch(() => {})
 }
 
 // Per-frame loop — this is where the ACK-AFTER-READ discipline lives. On a
@@ -784,7 +785,7 @@ function receiveSlotAck(port: MessagePort, data: unknown): void {
 // Report the failure to the main world too, matching the eof/error relay below.
 ipcRenderer.on(
   'evt:previewGpu:frameReady',
-  async (_e, { streamId, slot, ptsUs, durUs }: { streamId: string; slot: number; ptsUs: number; durUs: number }) => {
+  async (_e, { streamId, slot, gen, ptsUs, durUs }: { streamId: string; slot: number; gen: number; ptsUs: number; durUs: number }) => {
     // Opportunistic fence drain (no-op unless the fence barrier is running).
     // Free: a frame arriving IS the wake-up the pending acks were waiting for,
     // and doing it here costs no scheduling. The pump only covers the gaps.
@@ -805,7 +806,7 @@ ipcRenderer.on(
     // reasoning as the ack-on-error case below; `getVideoFrame` was never called,
     // so there is no GPU hold to release first.
     if (!imp) {
-      void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot }).catch(() => {})
+      void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot, gen }).catch(() => {})
       return
     }
     const tEntry = performance.now()
@@ -915,7 +916,7 @@ ipcRenderer.on(
         | { waitMs?: number; pendingPeak: number; forcedWaits: number; forcedWaitMsTotal: number }
         | undefined
       if (fenceSync) {
-        pendingFences.push({ streamId, slot, sync: fenceSync, submittedAt: performance.now() })
+        pendingFences.push({ streamId, slot, gen, sync: fenceSync, submittedAt: performance.now() })
         fenceOwnsAck = true
         const stats = fenceStatsFor(streamId)
         stats.pending += 1
@@ -930,7 +931,7 @@ ipcRenderer.on(
       }
       const residentMs = performance.now() - tEntry
       port.postMessage(
-        { kind: 'frame', streamId, slot, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs, barrierMs, barrierDrawMs, barrierReadMs, barrierApplied, fence, ...(delegateToRenderer ? { ackDelegated: true } : {}) },
+        { kind: 'frame', streamId, slot, gen, ptsUs, durUs, bitmap: bmp, gvfMs, cibMs, residentMs, barrierMs, barrierDrawMs, barrierReadMs, barrierApplied, fence, ...(delegateToRenderer ? { ackDelegated: true } : {}) },
         [bmp],
       )
       // AFTER the post, not before it: the obligation travels WITH the message,
@@ -951,7 +952,7 @@ ipcRenderer.on(
       // that point. Everything else, including a throw after either hand-off,
       // still acks here or there exactly once.
       if (!fenceOwnsAck && !rendererOwnsAck) {
-        void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot }).catch(() => {})
+        void ipcRenderer.invoke('previewGpu:consumeAck', { streamId, slot, gen }).catch(() => {})
       }
     }
   },

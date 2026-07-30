@@ -779,10 +779,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('previewGpu:requestFrameAt', (_e, a: { streamId: string; targetUs: number }) =>
     requestFrameAtPreviewGpu(ndBackend(), a.streamId, a.targetUs),
   )
-  ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number }) => {
+  ipcMain.handle('previewGpu:consumeAck', (_e, a: { streamId: string; slot: number; gen: number }) => {
     // Record the round-trip at handler entry (t_ack_received) BEFORE forwarding.
     recordConsumeAck(a.streamId, a.slot, performance.now())
-    return consumeAckPreviewGpu(ndBackend(), a.streamId, a.slot)
+    return consumeAckPreviewGpu(ndBackend(), a.streamId, a.slot, a.gen)
   })
   ipcMain.handle('previewGpu:close', (_e, a: { streamId: string }) => closePreviewGpu(ndBackend(), a.streamId))
   // Read-only budget probe: no `ndBackend()`, so it answers on every platform,

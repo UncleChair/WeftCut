@@ -252,6 +252,12 @@ export class FfmpegSource implements PreviewDecodeSession {
         }
         if (!budgetExceeded && !reservationMismatch) markHwUnusable(this.mediaId, reason);
         this.budgetSpill = budgetExceeded;
+        // Console too, matching onTransportError: an OPEN-time fall to software
+        // was previously visible only as a LogBus lane-trail row, so a bench
+        // DRIFT cell could name the fact but not the cause.
+        console.warn(
+          `[weftcut/decode] decoder hardware-lane error: ${reason} — falling back to software at open (media ${this.mediaId})`,
+        );
         await this.closeTransportForFallback();
         // A dispose that landed during that await already resolved (it saw
         // `transport === null`), so an openLane past this point would resurrect
@@ -415,6 +421,13 @@ export class FfmpegSource implements PreviewDecodeSession {
   private onTransportError(lane: FfmpegLane, reason: string): void {
     if (this._disposed) return;
     if (lane === "hardware" && this.startedHardware && this.transport) {
+      // Console too, not just the LogBus lane-trail row: the trail names the
+      // transition but bench harnesses read the PAGE console, and a HW lane
+      // dying mid-run is the one event whose REASON must survive into a
+      // report ("the lane fell" vs "AcquireSync timed out under 3×4K").
+      console.warn(
+        `[weftcut/decode] decoder hardware-lane error: ${reason} — falling back to software (media ${this.mediaId})`,
+      );
       markHwUnusable(this.mediaId, reason);
       this.budgetSpill = false;
       const dead = this.transport;

@@ -149,7 +149,11 @@ export type HwBarrierMode = 'readback' | 'fence' | 'gpuflush' | 'none' | 'render
 /// neither owns it: the renderer posts it, the preload turns it into the ack. The
 /// preload verifies `streamId` against the port it arrived on, so an ack can only
 /// ever free a slot of the stream whose channel carried it.
-export type PreviewGpuSlotAck = { kind: 'consumeAck'; streamId: string; slot: number }
+/// `gen` echoes the fill generation the frame arrived with (`frameReady.gen`,
+/// the fencing token): native drops an ack whose generation doesn't match the
+/// slot's current fill, which is what makes a late ack from a reclaimed lease
+/// harmless instead of an ABA free of the NEXT frame.
+export type PreviewGpuSlotAck = { kind: 'consumeAck'; streamId: string; slot: number; gen: number }
 
 /// Reply of `previewGpu.open`: decoded stream dimensions + the realized pool
 /// size (native may hand back fewer slots than requested).
@@ -194,6 +198,13 @@ export type PreviewGpuBudgetSnapshot = {
   currency: 'coded-pixel-area'
   sessions: { used: number; max: number }
   codedPixelArea: { used: number; max: number; calibratedFps: 30 }
+  /// Live shared-pool VRAM across every OPEN session: Σ width×height×4 (RGBA8)
+  /// × that session's slot count, from main's session records (admission
+  /// leases don't know pool sizes). The pool-VRAM instrument: admission still
+  /// prices coded AREA only — this field exists so a run can SEE the bytes
+  /// that area implies instead of assuming them (A′ RGBA is ×2.67 the old
+  /// NV12 pool).
+  slotVram: { usedBytes: number; bytesPerPixel: 4 }
 }
 
 /// Per-metric ms summary from the native preview timing accumulator (decode-bench
@@ -213,6 +224,11 @@ export type PreviewGpuTimingSummary = {
 export type PreviewGpuTimingReport = {
   coordRtt: PreviewGpuTimingSummary
   decodeCopy: PreviewGpuTimingSummary
+  /// GPU-side cost of the native NV12→RGBA conversion pass (timestamp queries
+  /// on the decode device). A subsample: one query bracket in flight at a
+  /// time, polled non-blocking, so `count` legitimately trails the delivered
+  /// frame count.
+  convertGpu: PreviewGpuTimingSummary
   ackToEmit: PreviewGpuTimingSummary
   lookaheadGatedSkips: number
   /// Frames the pump discarded as already-late (past the playhead by more than the
@@ -237,6 +253,17 @@ export type PreviewGpuTimingReport = {
   acquireFailed: number
   finalFreeSlots: number
   finalEof: boolean
+  /// Fencing-token protocol counters: delivered slots the owner reclaimed
+  /// after the lease timeout with no ack (each = one possibly-torn frame
+  /// traded against a wedged pool; routine non-zero means the consumer
+  /// stalls), and acks dropped on a generation mismatch (usually the late
+  /// ack of a reclaimed lease — harmless BECAUSE it was dropped).
+  leaseTimeouts: number
+  staleGenAcks: number
+  /// This session's shared-pool VRAM in bytes (width×height×4×slots) — the
+  /// native side of the pool-VRAM instrument (main's budget snapshot carries
+  /// the cross-session sum).
+  poolSlotBytes: number
 }
 
 /// Main-measured renderer round-trip (decode-bench signal attribution): the time

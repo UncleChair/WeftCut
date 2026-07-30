@@ -36,6 +36,10 @@ ffmpeg-next = "8.1"
 windows = { version = "0.58", features = [
   "Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct3D",
   "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
+  # Fxc: runtime D3DCompile for the preview_gpu NV12→RGBA conversion shader
+  # (color-sovereign HW lane — the shader is compiled once per session with the
+  # session's matrix/range constants baked in as #defines).
+  "Win32_Graphics_Direct3D_Fxc",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
