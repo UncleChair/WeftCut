@@ -133,6 +133,21 @@ export class FfmpegSource implements PreviewDecodeSession {
   isBudgetSpill(): boolean {
     return this.ready && this.budgetSpill && this.lane === "software" && !this._disposed;
   }
+  /// True while this source actually HOLDS a main-process admission lease — a
+  /// live transport on the shared-texture hardware lane. `currentLane()` alone
+  /// over-approximates twice: `lane` is assigned before `open` settles and
+  /// survives `closeTransportForFallback` nulling the transport (a window where
+  /// "hardware" owns nothing), and the copy-back lanes (nvdec/vaapi) ride
+  /// `previewSw`, which has no admission budget at all. A reclaim that picks a
+  /// non-holder tears down a live clip and frees nothing.
+  holdsHwSessionLease(): boolean {
+    return (
+      !this._disposed
+      && this.lane === "hardware"
+      && this.transport !== null
+      && !this.usesSwTransport()
+    );
+  }
   /// Cumulative frames this source delivered, for the PerfHUD's per-clip fps
   /// column and the playback bench. Counted at the ring rather than in a
   /// transport so an internal HW→SW lane flip keeps ONE monotonic series — both
@@ -238,6 +253,12 @@ export class FfmpegSource implements PreviewDecodeSession {
         if (!budgetExceeded && !reservationMismatch) markHwUnusable(this.mediaId, reason);
         this.budgetSpill = budgetExceeded;
         await this.closeTransportForFallback();
+        // A dispose that landed during that await already resolved (it saw
+        // `transport === null`), so an openLane past this point would resurrect
+        // a native session nothing can ever close — the one leak `disposeAndWait`
+        // cannot compensate for. Every other await in this recovery path
+        // re-checks; this one must too.
+        if (this._disposed) return;
         try {
           await this.openLane("software", { from: "hardware", reason });
         } catch (swErr) {
@@ -413,9 +434,21 @@ export class FfmpegSource implements PreviewDecodeSession {
   }
 
   async requestFrameAt(tUs: number): Promise<void> {
-    if (!this.ready) await this.ensureReady();
+    if (!this.ready) {
+      try {
+        await this.ensureReady();
+      } catch {
+        // Total engine failure. `_doEnsureReady` already surfaced it through
+        // fireFatal (the Compositor swaps engines on that), and `readyP` caches
+        // the rejection — so without this catch every subsequent per-tick nudge
+        // mints a fresh unhandled rejection for the same, already-reported
+        // failure, forever.
+        return;
+      }
+    }
     this.lastUseMs = performance.now();
     if (this._disposed) return;
+    const prevTargetUs = this.lastTargetUs;
     this.lastTargetUs = tUs;
     // Backward seek past everything cached: the ring now holds ONLY future-dated
     // frames, which `setAnchor` can never evict (front-only). Drop them, or the
@@ -430,6 +463,17 @@ export class FfmpegSource implements PreviewDecodeSession {
       // latch, the `return` below would swallow every later request for the rest
       // of this transport's life — the session would never produce again.
       this.eof = false;
+      this.transport?.resetRequestDedup?.();
+    } else if (this.eof && prevTargetUs !== null && tUs < prevTargetUs) {
+      // Backward seek with NOTHING cached: `strandedAheadOf` is false on an
+      // empty ring by construction, and post-eof lookbehind eviction (the
+      // `setAnchor` below keeps running while `eof` gates requests) drains the
+      // ring to exactly that state. Without this arm the latch has no escape —
+      // the transport is never re-armed and the clip stays black for the rest
+      // of the session. A backward move is the same re-arm the stranded flush
+      // performs; there is just nothing left to flush.
+      this.eof = false;
+      this.transport?.resetRequestDedup?.();
     }
     this.ring.setAnchor(tUs);      // always — drives lookbehind eviction, even post-eof
     if (this.eof) return; // eof seen on the current transport — its own IPC is done,

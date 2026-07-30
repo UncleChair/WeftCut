@@ -188,6 +188,13 @@ export class SourceHandle {
   /// peak, slow `createImageBitmap`).
   private conversionsInFlight = 0;
   private peakConversionsInWindow = 0;
+  /// Bumped by every `decoder.reset()` and ring flush. The decoder-identity
+  /// check below cannot see a `reset()` — the object survives it — so a
+  /// conversion dispatched before a backward-seek reset+flush would land its
+  /// bitmap in the just-flushed ring as a forward-region orphan (`push`'s
+  /// stale guard only rejects frames BEHIND the window). Captured at output
+  /// time, compared after the async hop.
+  private conversionEpoch = 0;
   /// Same measurement as `peakConversionsInWindow` but NOT reset by the 1 s log
   /// window — the playback bench samples once per measured window, so a peak
   /// that resets every second would be whatever the last second happened to
@@ -261,6 +268,7 @@ export class SourceHandle {
         // holding the decoder's buffers across many ticks.
         const ptsUs = this.media.decodeClock.sourceUs(frame.timestamp);
         const durationUs = frame.duration ?? 0;
+        const epoch = this.conversionEpoch;
         this.conversionsInFlight += 1;
         if (this.conversionsInFlight > this.peakConversionsInWindow) {
           this.peakConversionsInWindow = this.conversionsInFlight;
@@ -277,8 +285,9 @@ export class SourceHandle {
             // output() callback and `createImageBitmap` resolution
             // could have replaced `this.decoder`; pushing into the
             // new generation's ring would mix frames from a dead
-            // decoder into the live store.
-            if (this.decoder !== dec) {
+            // decoder into the live store. The epoch check covers what
+            // identity cannot: `reset()` keeps the same object.
+            if (this.decoder !== dec || this.conversionEpoch !== epoch) {
               bitmap.close();
               return;
             }
@@ -378,7 +387,13 @@ export class SourceHandle {
     return {
       decoder: {
         decode: (chunk: EncodedVideoChunk) => handle.decoder?.decode(chunk),
-        reset: () => handle.decoder?.reset(),
+        reset: () => {
+          // Every reset invalidates the conversions already in flight — see
+          // `conversionEpoch`. Bumped here (the pump's seek path) as well as
+          // in `flush()`, so both reset callers agree.
+          handle.conversionEpoch += 1;
+          handle.decoder?.reset();
+        },
         configure: () => {
           if (handle.decoder) handle.decoder.configure(handle.buildConfig());
         },
@@ -502,6 +517,7 @@ export class SourceHandle {
   /// Drop the decode pipeline + cached frames. Safe to re-init via
   /// `ensureReady()`.
   flush(): void {
+    this.conversionEpoch += 1;
     try {
       this.decoder?.reset();
     } catch {
@@ -727,10 +743,18 @@ export class SourceDecoderPool {
   private releaseHandle(layerId: string): void {
     const h = this.handles.get(layerId);
     if (!h) return;
+    const isFfmpeg = h instanceof FfmpegSource;
     const mediaId = h.mediaId;
     h.dispose();
     this.handles.delete(layerId);
 
+    // FFmpeg handles never took a `medias` refcount (acquire's ffmpeg branch
+    // returns before `acquireMedia`), so they must not put one back. With two
+    // engines resolving against ONE mediaId (an engine flip between two
+    // acquires), decrementing here drops the count the WebCodecs handle paid
+    // for and disposes a `SourceMedia` that handle is still decoding from —
+    // its pump holds the dead packetSink and the clip freezes for good.
+    if (isFfmpeg) return;
     const entry = this.medias.get(mediaId);
     if (!entry) return;
     entry.refCount -= 1;
@@ -752,17 +776,23 @@ export class SourceDecoderPool {
         key !== requesterKey
         && !this.priorityKeys.has(key)
         && handle instanceof FfmpegSource
-        && !handle.disposed
-        && handle.currentLane() === "hardware"
+        // Lease holders only, not "lane says hardware": mid-fallback the lane
+        // name survives a nulled transport, and the copy-back lanes hold no
+        // previewGpu lease at all. Reclaiming either tears down a live clip,
+        // frees nothing, and reports success — so the requester retries into
+        // the same full budget and spills anyway.
+        && handle.holdsHwSessionLease()
       ) {
         retained.push([key, handle]);
       }
     }
     if (retained.length === 0) return false;
-    await Promise.all(retained.map(async ([key, handle]) => {
-      await this.releaseFfmpegHandleAndWait(key, handle);
+    // True only if a release actually happened: a victim that lost an identity
+    // race (already released elsewhere) must not count as freed capacity.
+    const released = await Promise.all(retained.map(async ([key, handle]) => {
+      return this.releaseFfmpegHandleAndWait(key, handle);
     }));
-    return true;
+    return released.some(Boolean);
   }
 
   private async recyclePrioritySpills(
@@ -778,12 +808,13 @@ export class SourceDecoderPool {
   private async releaseFfmpegHandleAndWait(
     key: string,
     handle: FfmpegSource,
-  ): Promise<void> {
-    if (this.handles.get(key) !== handle) return;
+  ): Promise<boolean> {
+    if (this.handles.get(key) !== handle) return false;
     // Remove before awaiting so a concurrent acquire cannot receive the
     // disposed handle. FFmpeg sources have no `medias` refcount entry.
     this.handles.delete(key);
     await handle.disposeAndWait();
+    return true;
   }
 
   private startSweeperIfNeeded(): void {

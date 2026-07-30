@@ -338,7 +338,17 @@ export class GpuTransport implements DecodeTransport {
       while (this.pendingTargetUs !== null && !this._disposed) {
         const target = this.pendingTargetUs;
         this.pendingTargetUs = null;
-        await window.api.previewGpu.requestFrameAt({ streamId: this.streamId, targetUs: target });
+        try {
+          await window.api.previewGpu.requestFrameAt({ streamId: this.streamId, targetUs: target });
+        } catch {
+          // A dispose racing an in-flight nudge lets main close the session
+          // first, and the invoke rejects on the unknown stream. That is the
+          // expected shutdown ordering, not an error — and the `void`ed caller
+          // has no handler, so anything escaping here is an unhandled
+          // rejection per dispose. A genuine transport failure still surfaces
+          // through the port's error poke, never through this call.
+          return;
+        }
       }
     } finally {
       this.requestInFlight = false;

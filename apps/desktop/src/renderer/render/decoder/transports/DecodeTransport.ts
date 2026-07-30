@@ -40,4 +40,9 @@ export interface DecodeTransport {
   /// Diagnostics: per-frame preload handoff timings. Hardware lane only — the
   /// SW transport has no preload stage to stamp, so it does not implement this.
   handoffTimings?(): HandoffTimingSummary | null;
+  /// Forget any same-target request dedup. FfmpegSource calls this when it
+  /// flushes/re-arms its ring: a transport that swallowed an exact-repeat
+  /// target as "already sent" would leave the just-emptied ring unfilled.
+  /// Only transports that dedup (SW) implement it.
+  resetRequestDedup?(): void;
 }

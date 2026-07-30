@@ -60,7 +60,7 @@ function installFakePreviewGpu() {
       port = dispatchHandoff(streamId);
     }),
     open: vi.fn(async (_args: { streamId: string }) => {}),
-    requestFrameAt: vi.fn(async () => {}),
+    requestFrameAt: vi.fn(async (_args: { streamId: string; targetUs: number }) => {}),
     close: vi.fn(async (_args: { streamId: string }) => {}),
   };
   (window as unknown as { api: { previewGpu: typeof api } }).api = { previewGpu: api };
@@ -171,6 +171,40 @@ describe("GpuTransport", () => {
 
     expect(liveSessions).toEqual(new Set());
     expect(disposed).toBe(true);
+  });
+
+  it("swallows a rejecting requestFrameAt nudge and keeps pumping", async () => {
+    // A dispose racing an in-flight nudge lets main close the session first,
+    // so the `requestFrameAt` invoke rejects on the unknown stream — expected
+    // shutdown ordering, not an error. `requestFrameAt` voids the pump's
+    // promise, so a rejection escaping the pump is an unhandled rejection per
+    // dispose; and the pump must come back for the next nudge rather than
+    // reading as permanently in-flight.
+    const trap = vi.fn();
+    process.on("unhandledRejection", trap);
+    try {
+      const { api } = installFakePreviewGpu();
+      const t = new GpuTransport();
+      await t.open({ streamId: "nudge-reject", path: "C:/x.mp4" });
+
+      api.requestFrameAt.mockRejectedValueOnce(new Error("unknown stream"));
+      t.requestFrameAt(1000);
+      // Unhandled rejections surface only after the microtask queue drains;
+      // give the loop two macrotask turns so an escape could not hide.
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(trap).not.toHaveBeenCalled();
+
+      t.requestFrameAt(2000);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(api.requestFrameAt).toHaveBeenCalledWith({
+        streamId: "nudge-reject",
+        targetUs: 2000,
+      });
+      t.dispose();
+    } finally {
+      process.off("unhandledRejection", trap);
+    }
   });
 
   it("forwards renderer-probed coded dimensions to main admission", async () => {

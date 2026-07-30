@@ -80,6 +80,38 @@ describe("SourceDecoderPool.acquire engine routing", () => {
   });
 });
 
+describe("SourceDecoderPool media refcounts across engines", () => {
+  it("releasing an ffmpeg handle must not decrement a WebCodecs handle's media refcount", () => {
+    const pool = new SourceDecoderPool({
+      makeFfmpegSource: (init: FfmpegSourceInit) => new FfmpegSource(init, {
+        makeGpu: () => fakeTransport(),
+        makeSw: () => fakeTransport(),
+        pickLane: async () => ({ lane: "software" as const, hwLane: null, device: null }),
+      }),
+    });
+    // Two clips over ONE media, resolved to DIFFERENT engines (an engine flip
+    // between the two acquires: component load settling, a capability probe,
+    // or markFfmpegUnusable firing in the gap). The ffmpeg branch of acquire
+    // never takes a `medias` refcount — so its release must not put one back,
+    // or the count the WebCodecs handle paid for hits 0 and its SourceMedia
+    // (Input + packetSink the pump captured eagerly) is disposed under it.
+    const web = pool.acquire({
+      layerId: "L-web",
+      mediaId: "shared",
+      proxyAssetUrl: "weftcut-media://p.mp4",
+      engine: "webcodecs",
+    } as never) as { media: { disposed: boolean } };
+    pool.acquire({ ...ffmpegInit("L-ff"), mediaId: "shared", engine: "ffmpeg", proxyAssetUrl: "" });
+
+    pool.release("L-ff");
+    expect(web.media.disposed).toBe(false);
+
+    pool.release("L-web"); // the real owner's release still frees it
+    expect(web.media.disposed).toBe(true);
+    pool.dispose();
+  });
+});
+
 describe("SourceDecoderPool hardware priority", () => {
   it("waits for a retained hardware lease to close before retrying an upcoming clip", async () => {
     let finishRetainedClose!: () => void;

@@ -389,6 +389,38 @@ describe("FrameRing byte budget", () => {
     expect(ring.isLookaheadFull()).toBe(true);
   });
 
+  it("counts an entry exactly ON the anchor toward the lookahead floor", () => {
+    // The floor's contract is frames at-or-AFTER the anchor, but the binary
+    // search classes an anchor-exact entry as at-or-before — uncorrected, the
+    // effective floor is 10 or 11 depending on whether the frame grid lands a
+    // PTS exactly on the anchor. One lookbehind entry keeps the whole-ring-
+    // ahead early return out of play, and the tail stays inside the 1 s time
+    // window so only the byte arm answers.
+    const rings = [new FrameRing(), new FrameRing(), new FrameRing(), new FrameRing()];
+    const ring = rings[0]!;
+    ring.push(make4k(), 466_667, 33_333); // lookbehind, still inside 0.5 s
+    for (let i = 0; i < MIN_LOOKAHEAD_FRAMES; i++) {
+      ring.push(make4k(), 500_000 + i * 33_333, 33_333); // first sits AT the anchor
+    }
+    ring.setAnchor(500_000);
+    // Byte arm active, time arm unsatisfied — the floor is the sole decider.
+    expect(ring.retainedBytes).toBeGreaterThan(frameRingByteBudget());
+    expect(ring.lastPtsUs()!).toBeLessThan(500_000 + 1_000_000);
+    expect(ring.isLookaheadFull()).toBe(true);
+  });
+
+  it("stays below the floor at 9 frames ahead even when the first sits on the anchor", () => {
+    const rings = [new FrameRing(), new FrameRing(), new FrameRing(), new FrameRing()];
+    const ring = rings[0]!;
+    ring.push(make4k(), 466_667, 33_333);
+    for (let i = 0; i < MIN_LOOKAHEAD_FRAMES - 1; i++) {
+      ring.push(make4k(), 500_000 + i * 33_333, 33_333);
+    }
+    ring.setAnchor(500_000);
+    expect(ring.retainedBytes).toBeGreaterThan(frameRingByteBudget());
+    expect(ring.isLookaheadFull()).toBe(false);
+  });
+
   it("does NOT trim lookbehind on byte pressure — only its time window evicts", () => {
     // Measured regression guard: an earlier version trimmed lookbehind to
     // reclaim the ~0.5 GB a 4K one holds, and the frames it dropped were

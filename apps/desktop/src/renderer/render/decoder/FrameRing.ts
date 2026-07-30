@@ -181,7 +181,12 @@ export class FrameRing {
   private framesAhead(): number {
     if (this.entries.length === 0) return 0;
     if (this.entries[0]!.ptsUs >= this.anchorUs) return this.entries.length;
-    return this.entries.length - 1 - this.findLatestAtOrBefore(this.anchorUs);
+    const idx = this.findLatestAtOrBefore(this.anchorUs);
+    // "At or after": an entry sitting exactly ON the anchor is ahead-inclusive,
+    // and the binary search classes it as at-or-before — without the correction
+    // the MIN_LOOKAHEAD_FRAMES floor is 10 or 11 depending on grid alignment.
+    const atAnchor = this.entries[idx]!.ptsUs === this.anchorUs ? 1 : 0;
+    return this.entries.length - 1 - idx + atAnchor;
   }
 
   /// Monotonic count of frames accepted into the ring since construction.

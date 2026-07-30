@@ -379,10 +379,13 @@ export class PacketPump {
       } while (this.wakeRequested && !this._disposed);
     } finally {
       this.pumping = false;
+      // Late-kick guard: a requestFrameAt that set `wakeRequested` between
+      // the do/while check and `pumping = false` would otherwise be lost.
+      // In the FINALLY, not after it: the generation-bail returns above exit
+      // with `pumping` cleared but skipped a kick placed after the block, so
+      // a target that landed during their await was dropped for one tick.
+      if (this.wakeRequested && !this._disposed) void this.runPump();
     }
-    // Late-kick guard: a requestFrameAt that set `wakeRequested` between
-    // the do/while check and `pumping = false` would otherwise be lost.
-    if (this.wakeRequested && !this._disposed) void this.runPump();
   }
 
   /// Drain the DPB once at end-of-stream. H.264/HEVC decoders hold

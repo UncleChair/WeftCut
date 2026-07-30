@@ -754,4 +754,119 @@ describe("FfmpegSource — backward seek", () => {
     await src.requestFrameAt(0); // backward past the ring: must re-arm
     expect(gpu.t.requestFrameAt).toHaveBeenLastCalledWith(0);
   });
+
+  it("re-arms a post-eof source whose ring has fully DRAINED (empty-ring latch escape)", async () => {
+    // `strandedAheadOf` is false on an empty ring by construction, and post-eof
+    // lookbehind eviction reaches exactly that state (setAnchor keeps running
+    // while eof gates requests). With the stranded flush as the latch's ONLY
+    // escape, a backward seek then never re-armed the transport — the clip
+    // stayed black for the rest of the session, and `lastUseMs` (stamped before
+    // the gate) kept the idle sweeper from ever reclaiming it either.
+    const gpu = fakeTransport();
+    const src = makeSrc(gpu);
+    await src.ensureReady();
+    gpu.emitFrame(0);
+    gpu.finishEof();
+
+    await src.requestFrameAt(2_000_000); // far past lookbehind: evicts pts 0, ring empties
+    expect(src.ring.size()).toBe(0);
+    expect(gpu.t.requestFrameAt).not.toHaveBeenCalled();
+
+    await src.requestFrameAt(1_000); // backward, nothing cached: must still re-arm
+    expect(gpu.t.requestFrameAt).toHaveBeenLastCalledWith(1_000);
+  });
+
+  it("resets the transport's same-target dedup whenever the eof latch re-arms", async () => {
+    // The SW transport dedups on last-sent target and FfmpegSource latches eof;
+    // the two were introduced by different commits with no shared reset point.
+    // Frame-grid snapping makes exact-repeat targets routine, so a re-arm that
+    // does not clear the dedup can have its very first request swallowed while
+    // the ring it should refill sits empty.
+    const gpu = fakeTransport();
+    const reset = vi.fn();
+    (gpu.t as DecodeTransport).resetRequestDedup = reset;
+    const src = makeSrc(gpu);
+    await src.ensureReady();
+    for (const p of [11_700_000, 11_733_333]) gpu.emitFrame(p);
+
+    await src.requestFrameAt(0); // stranded flush arm
+    expect(reset).toHaveBeenCalledTimes(1);
+
+    gpu.emitFrame(100_000);
+    gpu.finishEof();
+    await src.requestFrameAt(2_000_000); // drain the ring past lookbehind
+    await src.requestFrameAt(1_000); // empty-ring backward arm
+    expect(reset).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("FfmpegSource — dispose racing the recovery path", () => {
+  it("does not resurrect a software transport on a source disposed mid-fallback", async () => {
+    // The HW→SW fallback awaits the failed transport's dispose before opening
+    // software. `disposeAndWait` landing in that window sees `transport ===
+    // null` and resolves instantly — so an openLane past it would open a
+    // native session on a disposed source that NOTHING can ever close (the
+    // dispose latch is already spent). The recovery path must re-check
+    // `_disposed` after every await, this one included.
+    let releaseDispose!: () => void;
+    const disposeGate = new Promise<void>((r) => { releaseDispose = r; });
+    const gpu = fakeTransport({ openRejects: HW_BUDGET_EXCEEDED });
+    vi.mocked(gpu.t.dispose).mockImplementation(() => disposeGate);
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
+    );
+    const ready = src.ensureReady();
+    // Let the rejected hardware open reach the fallback's dispose await.
+    await new Promise((r) => setTimeout(r, 0));
+    const disposed = src.disposeAndWait(); // transport already null → resolves at once
+    releaseDispose();
+    await ready;
+    await disposed;
+    expect(sw.t.open).not.toHaveBeenCalled();
+  });
+
+  it("swallows per-tick nudges after a total open failure instead of re-rejecting each one", async () => {
+    // `ensureReady` caches the rejection and `fireFatal` already reported it;
+    // before the guard, every subsequent `void requestFrameAt(...)` from the
+    // Compositor's tick minted a fresh unhandled rejection for the same
+    // failure, forever.
+    const sw = fakeTransport({ openRejects: "sw-open-boom" });
+    const onFatal = vi.fn();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => sw.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "software" as const, hwLane: null, device: null }) },
+    );
+    src.onFatalError(onFatal);
+    await expect(src.ensureReady()).rejects.toThrow("sw-open-boom");
+    expect(onFatal).toHaveBeenCalledWith(expect.stringContaining("sw-open-boom"));
+    await expect(src.requestFrameAt(500)).resolves.toBeUndefined();
+  });
+
+  it("reports a hardware lease only while a live shared-texture transport holds one", async () => {
+    // The pool's reclaim victim predicate keys on this. `lane === "hardware"`
+    // alone over-approximates: it is assigned before open settles and survives
+    // the fallback nulling the transport — reclaiming such a source tears down
+    // a live clip and frees no lease at all.
+    let releaseDispose!: () => void;
+    const disposeGate = new Promise<void>((r) => { releaseDispose = r; });
+    const gpu = fakeTransport({ openRejects: HW_BUDGET_EXCEEDED });
+    vi.mocked(gpu.t.dispose).mockImplementation(() => disposeGate);
+    const sw = fakeTransport();
+    const src = new FfmpegSource(
+      { layerId: "L", mediaId: "m", sourcePath: "C:/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      { makeGpu: () => gpu.t, makeSw: () => sw.t, pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }) },
+    );
+    const ready = src.ensureReady();
+    await new Promise((r) => setTimeout(r, 0));
+    // Mid-fallback: lane still reads "hardware" but the transport is gone.
+    expect(src.currentLane()).toBe("hardware");
+    expect(src.holdsHwSessionLease()).toBe(false);
+    releaseDispose();
+    await ready;
+    // Settled on the software spill: no lease either.
+    expect(src.currentLane()).toBe("software");
+    expect(src.holdsHwSessionLease()).toBe(false);
+  });
 });

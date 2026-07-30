@@ -178,6 +178,15 @@ export class SwTransport implements DecodeTransport {
     window.api.previewSw.requestFrameAt({ streamId: this.streamId, targetUs: tUs });
   }
 
+  /// Drop the same-target dedup latch. Without this, a ring flush followed by a
+  /// request for the EXACT last-sent target (frame-grid snapping makes exact
+  /// repeats routine) is swallowed here while the ring it should refill sits
+  /// empty — the two latches were introduced by different commits and share no
+  /// reset point unless the caller provides one.
+  resetRequestDedup(): void {
+    this.lastSentTargetUs = null;
+  }
+
   /// Tear down: unsubscribe from frame events, close the native session
   /// (main closes the decode thread). Safe even if `open()` never completed.
   dispose(): void {
