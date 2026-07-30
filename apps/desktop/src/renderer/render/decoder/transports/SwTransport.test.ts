@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 //
-// SwTransport.test.ts — NV12 → NativeNv12Frame wrapping + streamId filter,
-// `window.api.previewSw` faked. The transport must NOT reconstruct a
-// `VideoFrame` (Chromium converts buffer-defined NV12 as BT.601 regardless of
-// the stamped colorSpace — see nv12Frame.ts); frames wrap zero-copy and the
-// Compositor converts them in `Nv12Ingest`.
+// SwTransport.test.ts — frame-message wrapping (NV12 → NativeNv12Frame,
+// I420P10 → TenBitFrame) + streamId filter, `window.api.previewSw` faked. The
+// transport must NOT reconstruct a `VideoFrame` (Chromium converts
+// buffer-defined NV12 as BT.601 regardless of the stamped colorSpace — see
+// nv12Frame.ts); frames wrap zero-copy and the Compositor converts them in
+// its own ingest passes.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isNativeNv12Frame, type NativeNv12Frame } from "../nv12Frame";
+import { isTenBitFrame, type TenBitFrame } from "../tenBitFrame";
 import { SwTransport } from "./SwTransport";
 
 interface FakePreviewSwApi {
@@ -86,6 +88,58 @@ describe("SwTransport", () => {
     t601.dispose();
   });
 
+  // Ticket 03 (issue #10): I420P10 frames — the 10-bit VideoToolbox-lane
+  // sessions — dispatch on the MESSAGE's format tag into the existing ten-bit
+  // adapter (`tenBitFrameFromBytes`), zero-copy, so both producers (WebCodecs
+  // copyToTenBit and this transport) feed one consumer path (TenBitIngest).
+  it("wraps I420P10 frames zero-copy as TenBitFrame via the existing ten-bit adapter", async () => {
+    const { emit } = installApi();
+    const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
+    const got: TenBitFrame[] = [];
+    t.onFrame((frame) => got.push(frame as TenBitFrame));
+    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    // 2x2 I420P10 = u16LE Y (4 samples) + U + V (1 sample each) = 12 bytes.
+    const p10 = new Uint8Array(2 * 2 * 3);
+    emit({ streamId: "s1", format: "I420P10", data: p10, width: 2, height: 2, ptsUs: 42, durUs: 33 });
+    expect(got).toHaveLength(1);
+    const f = got[0]!;
+    expect(isTenBitFrame(f)).toBe(true);
+    expect(f.data).toBe(p10); // zero-copy adoption, no plane copy
+    expect(f.yOffset).toBe(0);
+    expect(f.uOffset).toBe(8);
+    expect(f.vOffset).toBe(10);
+    expect(f.timestamp).toBe(42);
+    // Open-time sourceColor default rides p10 frames too (bt709/limited).
+    expect(f.colorSpace?.matrix).toBe("bt709");
+    t.dispose();
+  });
+
+  it("an NV12-tagged frame on a p10 session still wraps as NativeNv12Frame (per-frame dispatch)", async () => {
+    const { emit } = installApi();
+    const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
+    const got: unknown[] = [];
+    t.onFrame((frame) => got.push(frame));
+    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    emit({ streamId: "s1", format: "NV12", data: new Uint8Array(6), width: 2, height: 2, ptsUs: 0, durUs: 33 });
+    expect(got).toHaveLength(1);
+    expect(isNativeNv12Frame(got[0])).toBe(true);
+    t.dispose();
+  });
+
+  it("drops a layout-drifted I420P10 frame with a warning (the adapter THROWS, never truncates)", async () => {
+    const { emit } = installApi();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
+    const got: number[] = [];
+    t.onFrame((_f, ptsUs) => got.push(ptsUs));
+    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    // 2x2 expects 12 bytes; 11 is a Rust-emitter/adapter layout drift.
+    emit({ streamId: "s1", format: "I420P10", data: new Uint8Array(11), width: 2, height: 2, ptsUs: 0, durUs: 33 });
+    expect(got).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    t.dispose();
+  });
+
   it("drops a layout-drifted frame with a warning instead of crashing the stream", async () => {
     const { emit } = installApi();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -147,6 +201,33 @@ describe("SwTransport", () => {
     // Exact-match: the conditional spread must leave no lane/device keys behind.
     expect(api.open).toHaveBeenCalledWith({ streamId: "s1", path: "C:/x.mov" });
     t.dispose();
+  });
+
+  it("forwards outFormat only for an I420P10 session; NV12/absent stays today's payload", async () => {
+    const { api } = installApi();
+    const t = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "I420P10");
+    await t.open({ streamId: "s1", path: "/tmp/x.mov" });
+    expect(api.open).toHaveBeenCalledWith({
+      streamId: "s1",
+      path: "/tmp/x.mov",
+      lane: "videotoolbox",
+      device: null,
+      outFormat: "I420P10",
+    });
+    t.dispose();
+
+    // An explicit NV12 and an absent format both leave the key off the wire —
+    // the 8-bit open must stay byte-identical to today's.
+    const second = installApi();
+    const t8 = new SwTransport({ lane: "videotoolbox", device: null }, undefined, undefined, "NV12");
+    await t8.open({ streamId: "s2", path: "/tmp/y.mp4" });
+    expect(second.api.open).toHaveBeenCalledWith({
+      streamId: "s2",
+      path: "/tmp/y.mp4",
+      lane: "videotoolbox",
+      device: null,
+    });
+    t8.dispose();
   });
 
   it("forwards a playback-resolution divisor into the native open call", async () => {

@@ -10,6 +10,7 @@
 // per-file incapability is session-scoped; this caches per-format-CLASS
 // capability).
 import type { AppSettingsFs } from './app-settings'
+import { hwEligibleOnLane } from '../shared/hwLaneEligibility'
 
 /// The decode lanes the machine cache can hold a verdict for — the software
 /// lane plus each platform's hardware lanes, named exactly as the component
@@ -89,6 +90,25 @@ export function classKeyOf(codec: string, pixFmt: string | null, width: number, 
   return `${codec}::${pixFmt ?? 'unknown'}:${res}`
 }
 
+/// Inverse of `classKeyOf` for the codec/pix_fmt identity (the resolution class
+/// is dropped — eligibility does not read it). Lives beside `classKeyOf` so the
+/// string form has ONE owner; the renderer's `classKeyOfMedia` twin produces
+/// byte-identical keys, so a key parsed here always round-trips. A null pixFmt
+/// was interpolated as "unknown" at build time and maps back to null. Returns
+/// null for a string not shaped `codec::pixFmt:res` — `resolveHwLane` then
+/// skips the eligibility narrowing rather than inventing a verdict (production
+/// keys are always classKeyOf-shaped; only tests/corruption are not).
+export function parseClassKey(classKey: string): { codec: string; pixFmt: string | null } | null {
+  const sep = classKey.indexOf('::')
+  if (sep <= 0) return null
+  const codec = classKey.slice(0, sep)
+  const rest = classKey.slice(sep + 2)
+  const lastColon = rest.lastIndexOf(':')
+  if (lastColon <= 0 || lastColon === rest.length - 1) return null
+  const pixFmt = rest.slice(0, lastColon)
+  return { codec, pixFmt: pixFmt === 'unknown' ? null : pixFmt }
+}
+
 export interface HwProbeVerdict {
   ok: boolean
   reason: string | null
@@ -117,6 +137,14 @@ export interface HwLaneResolution {
 ///      component whose lanes are empty), return "unavailable" WITHOUT probing —
 ///      the gate that stops a resolver from ever calling into a lane the addon
 ///      never compiled.
+///   1b. Drop advertised lanes the format class is not ELIGIBLE on (the
+///      per-lane seek-validated sets in `shared/hwLaneEligibility.ts` —
+///      issue #10 ticket 03: ProRes/10-bit ride videotoolbox only; every other
+///      lane keeps the 8-bit h264/hevc/vp9 gate). An ineligible lane is never
+///      probed and never cached, so widening the renderer's probe-kick union
+///      cannot change any other lane's behavior. A classKey that does not
+///      parse (test fakes) skips this narrowing — eligibility narrows on
+///      positive knowledge only.
 ///   2. For each candidate lane (highest priority first), enumerate its devices
 ///      (VAAPI: the DRM render nodes; other lanes: a single null device). A lane
 ///      that enumerates zero devices (VAAPI with no render nodes) is skipped.
@@ -133,9 +161,16 @@ export async function resolveHwLane(deps: {
   devices: (lane: DecodeLane) => readonly (string | null)[]
   probe: (lane: DecodeLane, device: string | null) => HwProbeVerdict
 }): Promise<HwLaneResolution> {
-  const candidates = HW_LANE_PRIORITY.filter((l) => deps.lanes.includes(l))
-  if (candidates.length === 0) {
+  const advertised = HW_LANE_PRIORITY.filter((l) => deps.lanes.includes(l))
+  if (advertised.length === 0) {
     return { lane: null, device: null, ok: false, reason: 'hw lane unavailable' }
+  }
+  const cls = parseClassKey(deps.classKey)
+  const candidates = cls === null
+    ? advertised
+    : advertised.filter((l) => hwEligibleOnLane(l, cls.codec, cls.pixFmt))
+  if (candidates.length === 0) {
+    return { lane: null, device: null, ok: false, reason: 'no advertised hw lane is eligible for this format class' }
   }
   for (const lane of candidates) {
     const env = await deps.envKey(lane)

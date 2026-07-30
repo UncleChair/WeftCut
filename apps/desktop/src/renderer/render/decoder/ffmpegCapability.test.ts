@@ -10,32 +10,31 @@ import {
 
 beforeEach(() => resetFfmpegCapabilitySession());
 
-// Task 19: the HW-lane codec allow-list. The one-frame HW probe tests
-// decode-viability, not seek-survival, so eligibility is gated by this static
-// seek-validated set (8-bit H.264/HEVC/VP9) — NOT by the probe alone. This is
-// what stops MPEG-2 (which some drivers HW-decode) from promoting to the HW
-// lane where a backward seek hangs. (Merged in from the deleted
-// decodeCapability.test.ts in Task 9 — this module is the sole home of
-// `hwEligibleCodec` now.)
-describe("hwEligibleCodec", () => {
-  it("admits 8-bit H.264 / HEVC / VP9", () => {
+// Task 19 → issue #10 ticket 03: the HW-lane codec allow-list, now LANE-AWARE.
+// This entry point is the renderer's probe-KICK union over the per-lane sets in
+// shared/hwLaneEligibility.ts (tested per lane in hwLaneEligibility.test.ts):
+// true when ANY lane could host the format. Main's `resolveHwLane` applies the
+// same per-lane predicate, so a union-admitted format that no advertised lane
+// admits still resolves software without probing.
+describe("hwEligibleCodec (probe-kick union over the per-lane sets)", () => {
+  it("admits 8-bit H.264 / HEVC / VP9 (every lane)", () => {
     expect(hwEligibleCodec("h264", "yuv420p")).toBe(true);
     expect(hwEligibleCodec("hevc", "yuv420p")).toBe(true);
     expect(hwEligibleCodec("vp9", "yuv420p")).toBe(true);
   });
 
-  it("rejects out-of-scope codecs (MPEG-2, AV1) regardless of pixel format", () => {
-    // MPEG-2 is the production hang: driver HW-decodes it, one-frame probe
-    // passes, backward seek wedges — must never reach the HW lane.
-    expect(hwEligibleCodec("mpeg2video", "yuv420p")).toBe(false);
-    expect(hwEligibleCodec("av1", "yuv420p")).toBe(false);
-    expect(hwEligibleCodec("prores", "yuv422p10le")).toBe(false);
+  it("admits ProRes and 10-bit formats (the videotoolbox lane hosts them)", () => {
+    expect(hwEligibleCodec("prores", "yuv422p10le")).toBe(true);
+    expect(hwEligibleCodec("hevc", "yuv420p10le")).toBe(true);
+    expect(hwEligibleCodec("hevc", "P010")).toBe(true); // case-insensitive tag
   });
 
-  it("rejects a 10-bit pixel format even for an in-scope codec", () => {
-    expect(hwEligibleCodec("hevc", "yuv420p10le")).toBe(false);
-    expect(hwEligibleCodec("hevc", "P010")).toBe(false); // case-insensitive
-    expect(hwEligibleCodec("h264", "yuv420p10le")).toBe(false);
+  it("rejects codecs no lane admits (MPEG-2, AV1) regardless of pixel format", () => {
+    // MPEG-2 is the production hang: driver HW-decodes it, one-frame probe
+    // passes, backward seek wedges — must never reach any HW lane.
+    expect(hwEligibleCodec("mpeg2video", "yuv420p")).toBe(false);
+    expect(hwEligibleCodec("av1", "yuv420p")).toBe(false);
+    expect(hwEligibleCodec("dnxhd", "yuv422p10le")).toBe(false);
   });
 
   it("rejects a null codec (audio/image — no HW video lane)", () => {

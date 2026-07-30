@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createDecodeCapabilityStore, resolveHwLane, HW_LANE_PRIORITY } from './decode-capability'
+import { createDecodeCapabilityStore, parseClassKey, resolveHwLane, HW_LANE_PRIORITY } from './decode-capability'
 import type { AppSettingsFs } from './app-settings'
 
 function memFs(): AppSettingsFs {
@@ -216,5 +216,88 @@ describe('resolveHwLane (advertisement-gated multi-lane HW probe)', () => {
     })
     expect(r).toEqual({ lane: null, device: null, ok: false, reason: 'no hw lane passed' })
     expect(s.get('videotoolbox', 'h264::yuv420p:uhd', 'gpu:1:2:drv')).toBe(false)
+  })
+
+  // Lane-aware eligibility (issue #10 ticket 03): the walk drops advertised
+  // lanes the format class is not eligible on (shared/hwLaneEligibility.ts) —
+  // an ineligible lane is never probed and never cached, so ProRes/10-bit
+  // reaching the probe on macOS cannot change any other lane's behavior.
+  it('ProRes resolves videotoolbox on a macOS advertisement — the lane the class is eligible on', async () => {
+    const s = store()
+    const probe = vi.fn(() => ({ ok: true, reason: null }))
+    const r = await resolveHwLane({
+      lanes: ['software', 'videotoolbox'], store: s, classKey: 'prores::yuv422p10le:hd', envKey,
+      devices: twoNodeDevices, probe,
+    })
+    expect(r).toEqual({ lane: 'videotoolbox', device: null, ok: true, reason: null })
+    expect(probe.mock.calls).toEqual([['videotoolbox', null]])
+    expect(s.get('videotoolbox', 'prores::yuv422p10le:hd', 'gpu:1:2:drv')).toBe(true)
+  })
+
+  it('ProRes on a Linux advertisement (nvdec/vaapi) resolves software WITHOUT probing', async () => {
+    const s = store()
+    const probe = vi.fn(() => ({ ok: true, reason: null }))
+    const r = await resolveHwLane({
+      lanes: ['software', 'nvdec', 'vaapi'], store: s, classKey: 'prores::yuv422p10le:hd', envKey,
+      devices: twoNodeDevices, probe,
+    })
+    expect(r).toEqual({
+      lane: null, device: null, ok: false,
+      reason: 'no advertised hw lane is eligible for this format class',
+    })
+    expect(probe).not.toHaveBeenCalled()
+    // Nothing cached either: eligibility is a static gate, not a probe verdict.
+    expect(s.get('nvdec', 'prores::yuv422p10le:hd', 'gpu:1:2:drv')).toBeNull()
+  })
+
+  it('10-bit HEVC rides videotoolbox but never the legacy lanes', async () => {
+    const s = store()
+    const probe = vi.fn(() => ({ ok: true, reason: null }))
+    const mac = await resolveHwLane({
+      lanes: ['software', 'videotoolbox'], store: s, classKey: 'hevc::yuv420p10le:uhd', envKey,
+      devices: twoNodeDevices, probe,
+    })
+    expect(mac.lane).toBe('videotoolbox')
+    const win = await resolveHwLane({
+      lanes: ['software', 'd3d11va'], store: store(), classKey: 'hevc::yuv420p10le:uhd', envKey,
+      devices: twoNodeDevices, probe,
+    })
+    expect(win).toEqual({
+      lane: null, device: null, ok: false,
+      reason: 'no advertised hw lane is eligible for this format class',
+    })
+    expect(probe.mock.calls).toEqual([['videotoolbox', null]]) // d3d11va never probed
+  })
+
+  it('a codec no lane admits (MPEG-2) resolves software without probing on every advertisement', async () => {
+    const probe = vi.fn(() => ({ ok: true, reason: null }))
+    for (const lanes of [['software', 'nvdec', 'vaapi'], ['software', 'd3d11va'], ['software', 'videotoolbox']]) {
+      const r = await resolveHwLane({
+        lanes, store: store(), classKey: 'mpeg2video::yuv420p:hd', envKey,
+        devices: twoNodeDevices, probe,
+      })
+      expect(r.lane).toBeNull()
+    }
+    expect(probe).not.toHaveBeenCalled()
+  })
+})
+
+// Inverse of `classKeyOf` (codec/pix_fmt identity only). The renderer's
+// `classKeyOfMedia` twin builds byte-identical keys, so production keys always
+// parse; unparseable strings return null and `resolveHwLane` skips the
+// eligibility narrowing for them (probe still gates).
+describe('parseClassKey', () => {
+  it('round-trips classKeyOf-shaped keys', () => {
+    expect(parseClassKey('prores::yuv422p10le:hd')).toEqual({ codec: 'prores', pixFmt: 'yuv422p10le' })
+    expect(parseClassKey('h264::yuv420p:uhd')).toEqual({ codec: 'h264', pixFmt: 'yuv420p' })
+  })
+  it('maps the "unknown" pix_fmt interpolation back to null', () => {
+    expect(parseClassKey('h264::unknown:sd')).toEqual({ codec: 'h264', pixFmt: null })
+  })
+  it('returns null for non-classKey strings', () => {
+    expect(parseClassKey('k')).toBeNull()
+    expect(parseClassKey('')).toBeNull()
+    expect(parseClassKey('h264::')).toBeNull()
+    expect(parseClassKey('::yuv420p:hd')).toBeNull()
   })
 })

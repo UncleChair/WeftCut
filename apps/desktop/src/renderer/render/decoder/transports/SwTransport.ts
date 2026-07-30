@@ -1,14 +1,17 @@
-// Native-SOFTWARE `DecodeTransport` — the per-frame NV12-over-IPC path
+// Native-SOFTWARE `DecodeTransport` — the per-frame bytes-over-IPC path
 // (transport recap: why we ship bytes, not a shared texture — ADR 0029).
 // `window.api.previewSw.{open,requestFrameAt,close}` carry session commands
-// only. Decoded frames arrive as plain NV12 byte buffers
+// only. Decoded frames arrive as plain byte buffers
 // directly over the contextBridge (no shared texture, no MessagePort — a
 // `previewSw:frame` IPC event per frame), delivered via `onFrame`.
 //
-// Frames are wrapped ZERO-COPY as `NativeNv12Frame`s — never reconstructed as
+// Frames are wrapped ZERO-COPY, dispatched on the message's `format` tag —
+// NV12 as `NativeNv12Frame`s, I420P10 (the 10-bit VideoToolbox-lane sessions,
+// issue #10 ticket 03) as `TenBitFrame`s — never reconstructed as
 // `VideoFrame`s: Chromium's software conversion of a buffer-defined NV12 frame
 // applies BT.601 regardless of the stamped colorSpace (see nv12Frame.ts /
-// ADR 0032), so the Compositor converts these in its own `Nv12Ingest` pass.
+// ADR 0032), so the Compositor converts these in its own ingest passes
+// (`Nv12Ingest` / `TenBitIngest`).
 //
 // preview_sw sends no eof/error to the renderer mid-stream (log-only in
 // main) — `onError` fires ONLY on `open()` failure, and `onEof` is a
@@ -27,6 +30,7 @@
 // decode source — so nothing below changes.
 import type { PreviewSwFrameMsg } from "../../../../shared/ipc";
 import { nv12FrameFromBytes } from "../nv12Frame";
+import { tenBitFrameFromBytes } from "../tenBitFrame";
 import type { DecodeTransport, DecodeTransportOpen, TransportFrame } from "./DecodeTransport";
 
 export class SwTransport implements DecodeTransport {
@@ -64,10 +68,17 @@ export class SwTransport implements DecodeTransport {
   /// `cadenceDiv`: optional output cadence divisor. Decode still advances every
   /// source frame, but native only performs copy-back/scale/pack/IPC for every
   /// Nth frame. Absent or 1 leaves the ordinary path byte-for-byte unchanged.
+  ///
+  /// `outFormat`: optional CPU transport format for the native session. Absent
+  /// or 'NV12' = today's 8-bit path exactly; 'I420P10' opens 10-bit output —
+  /// `FfmpegSource` picks it for a 10-bit source on the videotoolbox lane
+  /// (issue #10 ticket 03). Delivery still dispatches per frame on the
+  /// message's own `format` tag, never on this request.
   constructor(
     private readonly accel?: { lane: string; device: string | null },
     private readonly scaleDiv?: number,
     private readonly cadenceDiv?: number,
+    private readonly outFormat?: "NV12" | "I420P10",
   ) {}
 
   /// Subscribe to the frame event, then open the native session. Throws on
@@ -89,6 +100,9 @@ export class SwTransport implements DecodeTransport {
         ...(this.cadenceDiv !== undefined && this.cadenceDiv > 1
           ? { cadenceDiv: this.cadenceDiv }
           : {}),
+        // Only a NON-default format rides the wire: an NV12 open must stay
+        // byte-identical to today's payload (mirrors scaleDiv/cadenceDiv).
+        ...(this.outFormat === "I420P10" ? { outFormat: this.outFormat } : {}),
       });
     } catch (err) {
       // Open failure: surface it as the terminal error BEFORE rethrowing —
@@ -102,24 +116,28 @@ export class SwTransport implements DecodeTransport {
     }
   }
 
-  /// Wrap one NV12 frame message as a `NativeNv12Frame` — zero-copy: the
-  /// structured-cloned IPC bytes are adopted as the frame's planes. A
-  /// layout-drifted buffer (nv12FrameFromBytes throws) must not crash the
-  /// `onFrame` callback (mirrors the GPU transport's non-fatal posture for a
-  /// bad port message).
+  /// Wrap one frame message zero-copy — the structured-cloned IPC bytes are
+  /// adopted as the frame's planes — dispatched on the message's `format` tag:
+  /// NV12 → `NativeNv12Frame` (`Nv12Ingest`), I420P10 → `TenBitFrame` via the
+  /// existing ten-bit adapter (`tenBitFrameFromBytes` → `TenBitIngest`; both
+  /// producers feed one consumer path). A layout-drifted buffer (either
+  /// adapter THROWS — never truncates, the landmine contract) must not crash
+  /// the `onFrame` callback (mirrors the GPU transport's non-fatal posture for
+  /// a bad port message): the frame is dropped with a warning.
   private handleFrame(f: PreviewSwFrameMsg): void {
     if (f.streamId !== this.streamId) return;
     if (this._disposed) return;
     let frame: TransportFrame;
     try {
-      frame = nv12FrameFromBytes({
+      const init = {
         data: f.data,
         width: f.width,
         height: f.height,
         timestamp: f.ptsUs,
         duration: f.durUs,
         colorSpace: this.colorSpaceFor(),
-      });
+      };
+      frame = f.format === "I420P10" ? tenBitFrameFromBytes(init) : nv12FrameFromBytes(init);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn(`[weftcut/pixi] preview-sw ${this.streamId} frame wrap failed:`, e);

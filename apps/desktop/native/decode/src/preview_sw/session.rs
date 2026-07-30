@@ -3,8 +3,9 @@
 //! A strict simplification of `preview_gpu/session.rs`. Each preview session owns
 //! a dedicated OS thread that opens a [`SwVideoStream`] and runs a
 //! DECODE-ON-REQUEST loop: napi-side commands (`request_frame_at` / `close`) post
-//! messages over an mpsc channel; decoded frames leave the thread as owned NV12
-//! [`SwFramePoke::Frame`] bytes through a shared sink.
+//! messages over an mpsc channel; decoded frames leave the thread as owned
+//! [`SwFramePoke::Frame`] bytes (NV12, or tightly-packed I420P10 for a 10-bit
+//! session — the frame's `format` says which) through a shared sink.
 //!
 //! What this DROPS vs. the GPU mirror (and why): there is no D3D11 anywhere — no
 //! shared-texture pool, no keyed mutex, no slot free-list, no `ConsumeAck`
@@ -115,8 +116,9 @@ pub struct PreviewSwOpenInfo {
 /// to its event channel. Every variant carries `stream_id` so a single sink
 /// can route to the right per-stream callback.
 pub enum SwFramePoke {
-    /// A decoded frame, owned NV12 bytes + timing/color. The consumer keeps or
-    /// drops it freely — nothing on the session thread references it after this.
+    /// A decoded frame, owned packed bytes (`frame.format` names the layout:
+    /// NV12 or I420P10) + timing/color. The consumer keeps or drops it freely —
+    /// nothing on the session thread references it after this.
     Frame { stream_id: String, frame: SwFrame },
     /// The stream reached its end; no more frames until a `request_frame_at` seeks
     /// backward.
@@ -444,6 +446,7 @@ fn session_thread(
     stream_id: String,
     path: String,
     accel: DecodeAccel,
+    out_format: SwOutFormat,
     out_scale: OutScale,
     output_cadence: OutputCadence,
     rx: Receiver<SwSessionMsg>,
@@ -452,7 +455,7 @@ fn session_thread(
     shutdown: Arc<AtomicBool>,
 ) {
     let mut stream =
-        match SwVideoStream::open_with_accel(&path, SwOutFormat::Nv12, accel, out_scale) {
+        match SwVideoStream::open_with_accel(&path, out_format, accel, out_scale) {
             Ok(s) => s,
             Err(e) => {
                 let _ = init_tx.send(Err(e));
@@ -614,19 +617,25 @@ impl PreviewSwRegistry {
             stream_id,
             path,
             accel,
+            SwOutFormat::Nv12,
             out_scale,
             OutputCadence::FULL,
         )
     }
 
     /// Preview-only extension of [`open_with_accel`](Self::open_with_accel):
-    /// `output_cadence` selects which decoded frames are packed and shipped.
-    /// The identity cadence preserves every existing caller exactly.
+    /// `output_cadence` selects which decoded frames are packed and shipped,
+    /// and `out_format` the CPU transport format the session packs into —
+    /// NV12 (every existing caller), or I420P10 for a 10-bit source on the
+    /// VideoToolbox lane (issue #10 ticket 03), whose frame pokes then carry
+    /// tightly-packed u16LE planes into the renderer's ten-bit adapter. The
+    /// identity cadence + NV12 preserve every existing caller exactly.
     pub fn open_with_accel_and_cadence(
         &self,
         stream_id: &str,
         path: &str,
         accel: DecodeAccel,
+        out_format: SwOutFormat,
         out_scale: OutScale,
         output_cadence: OutputCadence,
     ) -> Result<PreviewSwOpenInfo, String> {
@@ -655,6 +664,7 @@ impl PreviewSwRegistry {
                     sid,
                     path_owned,
                     accel,
+                    out_format,
                     out_scale,
                     output_cadence,
                     cmd_rx,
@@ -917,6 +927,52 @@ mod tests {
         assert_eq!(frames[0].0, 192);
         assert_eq!(frames[0].1, 144);
         assert_eq!(frames[0].2, (192 * 144) + (192 * 144 / 2));
+    }
+
+    // Ticket 03 (issue #10): a 10-bit source on the VideoToolbox lane opens
+    // with I420P10 output through the WIRED registry path — the session thread
+    // decodes on the OS media engine, copies back, and pokes tightly-packed
+    // u16LE I420P10 frames whose byte length is exactly what the renderer's
+    // `tenBitFrameFromBytes` adapter expects (w*h*3 for even dims; a drift
+    // there throws, so the length IS the contract). HEVC Main10 rather than
+    // ProRes so the hw path truly engages on EVERY macOS host (the ProRes VT
+    // decoder needs a ProRes-engine chip — see the decoder tests).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_session_delivers_i420p10_frames_through_the_registry() {
+        let got: Arc<Mutex<Vec<(u32, u32, SwOutFormat, usize)>>> = Arc::new(Mutex::new(vec![]));
+        let g2 = got.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { frame, .. } = poke {
+                g2.lock()
+                    .unwrap()
+                    .push((frame.width, frame.height, frame.format, frame.data.len()));
+            }
+        }));
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_hevc10.mp4");
+        let info = reg
+            .open_with_accel_and_cadence(
+                "vtp10",
+                p,
+                DecodeAccel::VideoToolbox,
+                SwOutFormat::I420p10,
+                OutScale::FULL,
+                OutputCadence::FULL,
+            )
+            .expect("open HEVC Main10 on videotoolbox with I420P10 output");
+        assert_eq!((info.width, info.height), (192, 144));
+        let _ = reg.request_frame_at("vtp10", 0);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let _ = reg.close("vtp10");
+        let frames = got.lock().unwrap();
+        assert!(!frames.is_empty(), "expected at least one frame poke");
+        assert_eq!(frames[0].2, SwOutFormat::I420p10, "frame format tag");
+        // u16LE Y (w*h) + U + V at (w/2)*(h/2) → 3 bytes/px on even dims — the
+        // exact `tenBitFrameFromBytes` layout.
+        assert_eq!(frames[0].0, 192);
+        assert_eq!(frames[0].1, 144);
+        assert_eq!(frames[0].3, 192 * 144 * 3);
     }
 
     #[test]

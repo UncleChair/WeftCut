@@ -80,7 +80,13 @@ async function runChartLeg(label: string, fixture: string): Promise<void> {
   }
   expect(manifest.width).toBe(CANVAS.width) // 1:1 chart→composition mapping
 
-  const { app, page } = await launchApp()
+  // Pin the resolver to the software lane: ProRes is videotoolbox-eligible
+  // since the lane-aware widening (VT lane ticket 03), so on a ProRes-engine
+  // Mac this spec's clip would otherwise ride the HW lane and never exercise
+  // the SOFTWARE path it gates. Forcing a lane the addon never advertises
+  // ('software' is not an HW lane) leaves the HW resolver no candidate —
+  // clean software fallback, every host.
+  const { app, page } = await launchApp({ env: { WEFTCUT_FORCE_HW_LANE: 'software' } })
   const consoleLines: string[] = []
   page.on('console', (m) => consoleLines.push(`[${m.type()}] ${m.text()}`))
   page.on('pageerror', (e) => consoleLines.push(`[pageerror] ${String(e)}`))

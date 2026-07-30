@@ -84,9 +84,11 @@ pub struct PreviewSwOpenInfoJs {
     pub height: u32,
 }
 
-/// One software-decoded frame delivered to JS. `data` is tightly-packed 8-bit
-/// NV12 (`Y` plane `w*h` then interleaved `UV` `w*h/2`); `format` is always
-/// `"NV12"`. `pts_us`/`dur_us` cross as `f64` (napi has no ergonomic `i64`
+/// One software-decoded frame delivered to JS. `data` is tightly packed per
+/// `format`: `"NV12"` (8-bit: `Y` plane `w*h` then interleaved `UV` `w*h/2`) or
+/// `"I420P10"` (u16LE planes `Y` then `U` then `V`, the `copyToTenBit` layout —
+/// the 10-bit VideoToolbox-lane sessions, issue #10 ticket 03).
+/// `pts_us`/`dur_us` cross as `f64` (napi has no ergonomic `i64`
 /// binding — matches the `preview_gpu` `target_us` convention). Color tags are
 /// canonical FFmpeg string names (`bt709`, `tv`, …) or `null` where the stream
 /// leaves them unspecified. `width`/`height` are the SHIPPED dimensions
@@ -729,6 +731,14 @@ impl NativeDecode {
     /// `cadence_div` is also preview-only (absent = 1 = every frame). Decode
     /// still consumes every source frame, but only every Nth frame proceeds to
     /// copy-back/swscale/packing and IPC.
+    ///
+    /// `out_format` selects the CPU transport format the session packs into
+    /// (issue #10 ticket 03): absent/`"NV12"` = 8-bit NV12 (every pre-existing
+    /// caller, byte-for-byte); `"I420P10"` = tightly-packed u16LE planes (the
+    /// `copyToTenBit` layout), which the renderer picks for a 10-bit source on
+    /// the VideoToolbox lane. Each frame's `format` tag names what it carries,
+    /// so an unknown string falls back to NV12 defensively (mirrors `lane`) —
+    /// the renderer dispatches per frame, never on what it asked for.
     #[napi]
     pub fn preview_sw_open(
         &self,
@@ -739,8 +749,9 @@ impl NativeDecode {
         device: Option<String>,
         scale_div: Option<u32>,
         cadence_div: Option<u32>,
+        out_format: Option<String>,
     ) -> napi::Result<PreviewSwOpenInfoJs> {
-        use crate::preview_sw::decoder::{DecodeAccel, OutScale, OutputCadence};
+        use crate::preview_sw::decoder::{DecodeAccel, OutScale, OutputCadence, SwOutFormat};
         let accel = match lane.as_deref() {
             None | Some("software") => DecodeAccel::Software,
             Some("nvdec") => DecodeAccel::Nvdec,
@@ -751,6 +762,11 @@ impl NativeDecode {
             // Unknown lane: fall back to software rather than error — the resolver
             // only opens lanes it has already probed, so this is defensive.
             Some(_) => DecodeAccel::Software,
+        };
+        let out_format = match out_format.as_deref() {
+            Some("I420P10") => SwOutFormat::I420p10,
+            // Absent, "NV12", or unknown: the 8-bit default (see doc above).
+            _ => SwOutFormat::Nv12,
         };
         let out_scale = scale_div.map_or(OutScale::FULL, OutScale::from_divisor);
         let output_cadence =
@@ -772,6 +788,7 @@ impl NativeDecode {
             &stream_id,
             &path,
             accel,
+            out_format,
             out_scale,
             output_cadence,
         ) {

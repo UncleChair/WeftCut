@@ -65,7 +65,13 @@ test('preview-sw: Compositor uses the ffmpeg engine\'s software lane for the Nat
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-proj-')
   const OUT_DIR = tmpDir('weftcut-e2e-preview-sw-')
 
-  const { app, page } = await launchApp()
+  // Pin the resolver to the software lane: ProRes is videotoolbox-eligible
+  // since the lane-aware widening (VT lane ticket 03), so on a ProRes-engine
+  // Mac this spec's clip would otherwise ride the HW lane and never exercise
+  // the SOFTWARE path it gates. Forcing a lane the addon never advertises
+  // ('software' is not an HW lane) leaves the HW resolver no candidate —
+  // clean software fallback, every host.
+  const { app, page } = await launchApp({ env: { WEFTCUT_FORCE_HW_LANE: 'software' } })
   // Surface renderer console noise (warnings are findings per the task).
   const consoleLines: string[] = []
   page.on('console', (m) => consoleLines.push(`[${m.type()}] ${m.text()}`))
@@ -249,7 +255,13 @@ test('preview-sw: 4K ProRes software preview stays within the memory ratchet (P3
   test.setTimeout(240_000)
   const PROJECT_PARENT = tmpDir('weftcut-e2e-preview-sw-proj-')
 
-  const { app, page } = await launchApp()
+  // Pin the resolver to the software lane: ProRes is videotoolbox-eligible
+  // since the lane-aware widening (VT lane ticket 03), so on a ProRes-engine
+  // Mac this spec's clip would otherwise ride the HW lane and never exercise
+  // the SOFTWARE path it gates. Forcing a lane the addon never advertises
+  // ('software' is not an HW lane) leaves the HW resolver no candidate —
+  // clean software fallback, every host.
+  const { app, page } = await launchApp({ env: { WEFTCUT_FORCE_HW_LANE: 'software' } })
   let toggledOn = false
   try {
     await newProject(page, {

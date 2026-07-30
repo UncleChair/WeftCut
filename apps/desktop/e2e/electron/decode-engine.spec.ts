@@ -266,9 +266,14 @@ test.describe('decode-engine resolution (Electron)', () => {
 
   // Cell 2 — auto + ProRes: the ffmpeg engine again (no toggle needed — `auto`
   // doesn't care that ProRes is WebCodecs-blind, it just prefers ffmpeg
-  // outright). ProRes isn't in `hwEligibleCodec`'s allow-list (h264/hevc/vp9
-  // only), so `FfmpegSource` lands on its SOFTWARE lane ("sw" in
-  // `sourceKind`). This test doubles as the NO-AUTO-PROXY check (Task 13):
+  // outright). The LANE is host-dependent since eligibility went lane-aware
+  // (VT lane ticket 03): ProRes is eligible on the macOS videotoolbox lane, so
+  // a ProRes-engine Mac (M1 Pro/Max, M2+) resolves the HW lane ("native-gpu")
+  // while every other host (base M1 — the VT ProRes probe declines — Linux,
+  // Windows) lands on SOFTWARE ("sw"). This cell asserts the ENGINE axis only
+  // (ffmpeg on the original), lane-agnostic; the lane axis has its own gates
+  // (preview-hw-conformance per lane, preview-sw-conformance pinned software).
+  // This test doubles as the NO-AUTO-PROXY check (Task 13):
   // the backend still builds a background quick-proxy for this NativeSw-
   // routed clip (decode_route.rs — a still-current, unrelated backend
   // concept; see the `mediaDecodeRouteKind` wait below), but
@@ -303,8 +308,10 @@ test.describe('decode-engine resolution (Electron)', () => {
         { timeout: 90_000, polling: 500 },
       )
       await seek(page, SEEK_US)
-      const probe1 = await waitForBuiltKey(page, layerId, 'sw', 'ffmpeg:original:')
-      expect(probe1.sourceKind).toBe('sw')
+      // Lane-agnostic wait (sourceKind null): 'sw' or 'native-gpu' per host,
+      // never 'webcodecs' — the engine pin is what this cell proves.
+      const probe1 = await waitForBuiltKey(page, layerId, null, 'ffmpeg:original:')
+      expect(['sw', 'native-gpu']).toContain(probe1.sourceKind)
       expect(probe1.builtFromKey!.startsWith('ffmpeg:original:')).toBe(true)
 
       // Wait for the background quick-proxy job to actually land, then force
@@ -313,7 +320,7 @@ test.describe('decode-engine resolution (Electron)', () => {
       await waitForJobComplete(page, mediaId, 'quick_proxy')
       await seek(page, 0)
       const probe2 = await probeNow(page, layerId)
-      expect(probe2.sourceKind).toBe('sw')
+      expect(probe2.sourceKind).toBe(probe1.sourceKind)
       expect(probe2.builtFromKey).toBe(probe1.builtFromKey)
     } finally {
       await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'auto' } }).catch(() => {})
@@ -522,8 +529,9 @@ test.describe('decode-engine resolution (Electron)', () => {
       await waitForPreviewBridge(page)
       await seek(page, SEEK_US)
       // Build the ffmpeg-on-original clip first — the "existing clip" the engine
-      // switch must reconcile.
-      const probe1 = await waitForBuiltKey(page, layerId, 'sw', 'ffmpeg:original:')
+      // switch must reconcile. Lane-agnostic (see Cell 2): ProRes rides the
+      // videotoolbox lane on a ProRes-engine Mac, software everywhere else.
+      const probe1 = await waitForBuiltKey(page, layerId, null, 'ffmpeg:original:')
       expect(probe1.builtFromKey!.startsWith('ffmpeg:original:')).toBe(true)
 
       // Now pin Lite: webcodecs cannot decode ProRes, so the live clip must flip

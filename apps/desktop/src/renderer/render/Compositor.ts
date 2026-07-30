@@ -8,7 +8,6 @@
 // Plan: docs/render.md
 
 import { Application, Container, Texture } from "pixi.js";
-import type { WebGLRenderer } from "pixi.js";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
@@ -232,6 +231,12 @@ export interface ActiveClipProbe {
   boundFramePtsUs: number | null;
   boundFrameDurationUs: number | null;
   boundFrameSourceKey: string | null;
+  /// Which ingest path produced the bound pixels — `"p10"` (TenBitIngest),
+  /// `"nv12"` (Nv12Ingest), `"browser"` (snapshot of a decoder-produced
+  /// frame), or null before the first bind. The 10-bit VideoToolbox
+  /// conformance variants assert `"p10"` to prove the frame rode the ten-bit
+  /// ingest (issue #10 ticket 03).
+  boundFrameKind: "p10" | "nv12" | "browser" | null;
   /// The resolved HW lane (`nvdec`|`vaapi`|`videotoolbox`|`d3d11va`) when the
   /// active clip's source is a `FfmpegSource` on its hardware lane, else null
   /// (software lane, a WebCodecs source, or no matching clip). The
@@ -360,6 +365,12 @@ interface ActiveClip {
   boundFramePtsUs: number | null;
   boundFrameDurationUs: number | null;
   boundFrameSourceKey: string | null;
+  /// Which ingest path produced the pixels currently bound to `sprite` —
+  /// `"p10"` (TenBitIngest), `"nv12"` (Nv12Ingest) or `"browser"` (the
+  /// snapshot path for decoder-produced frames). E2E-observable via
+  /// `activeClipProbe`, so the 10-bit conformance variants can assert the
+  /// frame actually rode the ten-bit ingest rather than inferring it.
+  boundFrameKind: "p10" | "nv12" | "browser" | null;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
   /// found `ring.frameAt(srcTUs)` returned null. Used so the
   /// `frameAt → null` log fires once per transition rather than
@@ -515,10 +526,9 @@ export class Compositor {
   private compositionWidth = 1920;
   private compositionHeight = 1080;
   private disposed = false;
-  /// Lazily created on the first TenBitFrame. Null in preview (TenBitFrames
-  /// never reach the preview ring) and in WebGPU export contexts (10-bit
-  /// export forces the WebGL backend, so reaching this non-null on WebGPU
-  /// is a wiring bug caught by ensureTenBitIngest).
+  /// Lazily created on the first TenBitFrame — the 10-bit export lane AND the
+  /// 10-bit VideoToolbox preview lane (issue #10 ticket 03) both ring these.
+  /// Backend posture: see ensureTenBitIngest.
   private tenBitIngest: TenBitIngest | null = null;
   /// Lazily created on the first NativeNv12Frame — the 8-bit native export
   /// lane AND the native SW preview lane both ring these (CPU planes convert
@@ -1501,6 +1511,7 @@ export class Compositor {
       boundFramePtsUs: clip.boundFramePtsUs,
       boundFrameDurationUs: clip.boundFrameDurationUs,
       boundFrameSourceKey: clip.boundFrameSourceKey,
+      boundFrameKind: clip.boundFrameKind,
       hwLane: s instanceof FfmpegSource ? s.currentHwLane() : null,
       builtFromKey: clip.builtFromKey,
     };
@@ -1565,22 +1576,14 @@ export class Compositor {
   // private
   // ============================================================
 
-  /// Lazily construct the 10-bit ingest. TenBitFrames only flow when the
-  /// export worker runs the WebGL backend (bitDepth=10 forces preference
-  /// "webgl"), so reaching this on a WebGPU renderer is a wiring bug — fail
-  /// loudly rather than mis-render.
+  /// Lazily construct the 10-bit ingest. Backend-agnostic (GLSL + WGSL) since
+  /// issue #10 ticket 03: the 10-bit export worker still forces WebGL
+  /// (rgba16float compositing), but the 10-bit VideoToolbox PREVIEW lane rings
+  /// TenBitFrames on the WebGPU-preferring preview renderer too — same
+  /// posture as ensureNv12Ingest.
   private ensureTenBitIngest(): TenBitIngest {
     if (!this.tenBitIngest) {
-      const renderer = this.app.renderer;
-      // `"gl" in renderer` distinguishes WebGLRenderer (exposes `gl`) from
-      // WebGPURenderer (exposes `gpu`) without importing WebGLRenderer as a
-      // value.
-      if (!("gl" in renderer)) {
-        throw new Error(
-          "TenBitFrame reached a non-WebGL renderer — 10-bit export requires the WebGL backend",
-        );
-      }
-      this.tenBitIngest = new TenBitIngest(renderer as WebGLRenderer);
+      this.tenBitIngest = new TenBitIngest(this.app.renderer);
     }
     return this.tenBitIngest;
   }
@@ -2025,6 +2028,7 @@ export class Compositor {
       boundFramePtsUs: null,
       boundFrameDurationUs: null,
       boundFrameSourceKey: null,
+      boundFrameKind: null,
       loggedNull: false,
     };
     this.clips.set(layer.id, clip);
@@ -2212,6 +2216,7 @@ export class Compositor {
         const texture = this.ensureTenBitIngest().textureFor(clip.layerId, frame);
         stageAdd(STAGE.TenBitIngest, tTenBit);
         clip.sprite.bindExternalTexture(texture);
+        clip.boundFrameKind = "p10";
       } else if (isNativeNv12Frame(frame)) {
         // Native 8-bit CPU-plane frames (export relay AND the SW preview
         // lane) convert in OUR shader — Chromium's software conversion of
@@ -2221,10 +2226,12 @@ export class Compositor {
         const texture = this.ensureNv12Ingest().textureFor(clip.layerId, frame);
         stageAdd(STAGE.Nv12Ingest, tNv12);
         clip.sprite.bindExternalTexture(texture);
+        clip.boundFrameKind = "nv12";
       } else {
         const tUpload = stageNow();
         clip.sprite.updateFrame(frame);
         stageAdd(STAGE.BitmapUpload, tUpload);
+        clip.boundFrameKind = "browser";
       }
       clip.boundFramePtsUs = selected.ptsUs;
       clip.boundFrameDurationUs = selected.durationUs;

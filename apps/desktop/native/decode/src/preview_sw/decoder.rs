@@ -286,10 +286,11 @@ pub struct SwColorTags {
     pub transfer: Option<String>,
 }
 
-/// Target pixel format a stream packs decoded frames into. The preview lane is
-/// NV12-only ([`SwVideoStream::open`]); the export lane picks per session
-/// (`export_sw::ExportOutFormat`). `wire_name` is the tag JS sees on the frame
-/// wire structs.
+/// Target pixel format a stream packs decoded frames into. Both lanes pick per
+/// session: export via `export_sw::ExportOutFormat`, preview via
+/// `preview_sw_open`'s `out_format` (NV12 default; I420P10 for a 10-bit source
+/// on the VideoToolbox lane — issue #10 ticket 03). `wire_name` is the tag JS
+/// sees on the frame wire structs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SwOutFormat {
     /// 8-bit: `Y` plane `w*h` bytes, then interleaved `UV` `w*h/2` bytes.
@@ -1278,6 +1279,40 @@ mod tests {
     }
 
     #[test]
+    fn scaled_i420p10_pack_ships_the_target_dims_worth_of_bytes() {
+        // Ticket 03 (issue #10): the playback-resolution downscale must apply
+        // to p10 frames too — I420P10 doubles IPC bandwidth vs NV12 (~24.9 MB
+        // per 4K frame), so the divisor is what keeps 4K bounded. A downscaled
+        // p10 frame must still satisfy the renderer adapter's layout contract
+        // (`tenBitFrameFromBytes` computes w*h*2 + 2*(w>>1)*(h>>1)*2 and THROWS
+        // on any mismatch): the packed length follows the TARGET dims exactly.
+        use ffmpeg_next::format::Pixel;
+        use ffmpeg_next::util::frame::video::Video as VideoFrame;
+        const W: u32 = 1280;
+        const H: u32 = 720;
+        // 4:2:2 10-bit source — ProRes 422's decode format — so the pass also
+        // covers the 422→420 chroma fold alongside the resize.
+        let mut src = VideoFrame::new(Pixel::YUV422P10LE, W, H);
+        for p in 0..src.planes() {
+            for (i, b) in src.data_mut(p).iter_mut().enumerate() {
+                *b = (i % 251) as u8;
+            }
+        }
+        let mut scratch = VideoFrame::empty();
+        for div in [2u32, 4] {
+            let (dw, dh) = OutScale::from_divisor(div).dims_for(W, H);
+            assert_eq!((dw % 2, dh % 2), (0, 0), "downscale must stay even");
+            let scaled = super::frame_to_i420p10(&src, W, H, dw, dh, &mut scratch).unwrap();
+            let expected =
+                (dw * dh * 2 + 2 * ((dw >> 1) * (dh >> 1) * 2)) as usize; // = w*h*3, adapter layout
+            assert_eq!(scaled.len(), expected, "div {div} packed length");
+        }
+        // Full resolution stays the pre-scaling shape.
+        let full = super::frame_to_i420p10(&src, W, H, W, H, &mut VideoFrame::empty()).unwrap();
+        assert_eq!(full.len(), (W * H * 3) as usize);
+    }
+
+    #[test]
     fn open_defaults_to_full_output_size() {
         // Every non-preview caller (`open`, `open_with_format`, the hw probe)
         // takes this default; export depends on it.
@@ -1507,6 +1542,127 @@ mod tests {
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_h264.mp4");
         probe_hw_first_frame(p, DecodeAccel::VideoToolbox)
             .expect("VideoToolbox H.264 probe must confirm a hw surface");
+    }
+
+    // Ticket 03 (issue #10): the ProRes probe verdict is HOST-CLASS dependent —
+    // ffmpeg's videotoolbox hwaccel creates the VT session with
+    // `kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder`
+    // for every codec but HEVC (release/8.x), and the ProRes HARDWARE decoder
+    // only exists on Apple Silicon with ProRes engines (M1 Pro/Max, M2+). On a
+    // base M1 `VTIsHardwareDecodeSupported(prores) == false`, so session
+    // create returns kVTCouldNotFindVideoDecoderErr and the decoder falls back
+    // to its software format — which the probe must report as a CLEAN decline
+    // (the resolver's silent software fallback), never a panic/abort. On a
+    // ProRes-engine Mac the same probe confirms the hw surface. Both outcomes
+    // are asserted; which one runs follows the silicon.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_prores_probe_confirms_hw_or_declines_cleanly() {
+        use super::{probe_hw_first_frame, DecodeAccel};
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        match probe_hw_first_frame(p, DecodeAccel::VideoToolbox) {
+            Ok(()) => println!("ProRes VT probe: hw surface confirmed (ProRes-engine host)"),
+            Err(reason) => {
+                println!("ProRes VT probe declined cleanly: {reason}");
+                assert!(
+                    reason.contains("not the hw surface"),
+                    "decline must be the software-format verdict, got: {reason}"
+                );
+            }
+        }
+    }
+
+    // Ticket 03: 10-bit HEVC (Main10) IS hardware-decoded by VideoToolbox on
+    // every supported Mac (the HEVC engine is in every Apple Silicon media
+    // block, and ffmpeg's HEVC hwaccel uses Enable, not Require) — so this is
+    // the DETERMINISTIC 10-bit hw-surface proof on any macOS host, ProRes
+    // engine or not. Fixture: tiny_hevc10.mp4 — 192x144 HEVC Main 10
+    // yuv420p10le, 12 frames, generated with:
+    //   ffmpeg -f lavfi -i testsrc2=size=192x144:rate=12:duration=1 \
+    //     -an -c:v libx265 -profile:v main10 -pix_fmt yuv420p10le -crf 28 \
+    //     -tag:v hvc1 tiny_hevc10.mp4
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_probe_confirms_hw_decode_for_hevc_main10() {
+        use super::{probe_hw_first_frame, DecodeAccel};
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_hevc10.mp4");
+        probe_hw_first_frame(p, DecodeAccel::VideoToolbox)
+            .expect("VideoToolbox HEVC Main10 probe must confirm a hw surface");
+    }
+
+    // Ticket 03: a 10-bit source decoded ON the VideoToolbox lane ships the
+    // I420P10 transport shape — `av_hwframe_transfer_data` lands a 10-bit CPU
+    // frame (P010 for Main10 surfaces) and ONE swscale pass packs it (never
+    // through an 8-bit intermediate), byte-matching the renderer's
+    // `tenBitFrameFromBytes` layout: u16LE Y (w*h) then U, V at
+    // (w>>1)×(h>>1) → 3 bytes/px. HEVC Main10 so the hw path truly engages on
+    // this host (see the probe test above).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_copyback_ships_i420p10_transport_shape() {
+        use super::DecodeAccel;
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_hevc10.mp4");
+        let mut s = SwVideoStream::open_with_accel(
+            p,
+            SwOutFormat::I420p10,
+            DecodeAccel::VideoToolbox,
+            OutScale::FULL,
+        )
+        .expect("open HEVC Main10 on videotoolbox");
+        let mut frames = 0u32;
+        let mut luma_varies = false;
+        while let Some(f) = s.next_frame().expect("decode") {
+            assert_eq!(f.format, SwOutFormat::I420p10);
+            assert_eq!(f.width, 192);
+            assert_eq!(f.height, 144);
+            assert_eq!(f.data.len(), 192 * 144 * 3);
+            // u16LE samples are 10-bit (0..=1023): the high byte of every pair
+            // must stay under 4, or the pack is not the 10-bit layout at all.
+            let y = &f.data[..192 * 144 * 2];
+            assert!(
+                y.chunks_exact(2).all(|px| px[1] < 4),
+                "a luma sample exceeds 10 bits — not I420P10 packing"
+            );
+            if y.chunks_exact(2).any(|px| px != [y[0], y[1]]) {
+                luma_varies = true;
+            }
+            frames += 1;
+        }
+        assert_eq!(frames, 12, "fixture carries 12 frames (12 fps x 1 s)");
+        assert!(luma_varies, "decoded luma is uniform — black/garbage frames");
+    }
+
+    // Ticket 03: the same I420P10 session shape for ProRes — the codec the
+    // lane exists for. On a ProRes-engine Mac this is a true hw copy-back; on
+    // a base M1 the VT hwaccel init declines and libavcodec decodes the SAME
+    // open on the CPU — and the packed bytes are IDENTICAL either way (the
+    // ship-bytes contract: nothing downstream can tell which produced them),
+    // so the SHAPE assertion is host-independent.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn videotoolbox_prores_session_ships_i420p10_transport_shape() {
+        use super::DecodeAccel;
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        let mut s = SwVideoStream::open_with_accel(
+            p,
+            SwOutFormat::I420p10,
+            DecodeAccel::VideoToolbox,
+            OutScale::FULL,
+        )
+        .expect("open ProRes on videotoolbox");
+        let mut frames = 0u32;
+        while let Some(f) = s.next_frame().expect("decode") {
+            assert_eq!(f.format, SwOutFormat::I420p10);
+            assert_eq!(f.data.len(), 320 * 240 * 3);
+            frames += 1;
+        }
+        assert_eq!(frames, 8, "fixture carries 8 frames (8 fps x 1 s)");
     }
 
     #[cfg(target_os = "macos")]

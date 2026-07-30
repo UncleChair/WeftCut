@@ -27,6 +27,11 @@ import type { NativeDecode } from '@weftcut/native-decode'
 ///
 /// `cadenceDiv` selects producer output cadence (null = 1 = every frame).
 /// Native skips unselected frames before copy-back/swscale/packing and IPC.
+///
+/// `outFormat` selects the session's CPU transport format (null = 'NV12' =
+/// today's path byte-for-byte): 'I420P10' opens 10-bit output — the renderer
+/// asks for it on the videotoolbox lane for a 10-bit source (issue #10 ticket
+/// 03) — and every relayed frame carries the matching `format` tag.
 export function openPreviewSw(
   backend: NativeDecode,
   win: BrowserWindow,
@@ -36,12 +41,13 @@ export function openPreviewSw(
   device: string | null,
   scaleDiv: number | null,
   cadenceDiv: number | null,
+  outFormat: string | null,
 ): { width: number; height: number } {
   const info = backend.previewSwOpen(streamId, path, (err: Error | null, frame) => {
     if (err) return
     if (win.isDestroyed()) return // renderer reloaded/closed mid-stream → webContents.send would throw
     win.webContents.send('previewSw:frame', frame)
-  }, lane, device, scaleDiv, cadenceDiv)
+  }, lane, device, scaleDiv, cadenceDiv, outFormat)
   return { width: info.width, height: info.height }
 }
 

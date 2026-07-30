@@ -12,6 +12,7 @@ import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
+import { isTenBitPixFmt } from "../../../shared/hwLaneEligibility";
 import type { FfmpegLaneResolution } from "./ffmpegCapability";
 import { noteLaneOpen } from "./ffmpegLaneTrail";
 import {
@@ -65,6 +66,10 @@ interface FfmpegSourceDeps {
     accel?: { lane: string; device: string | null };
     scaleDiv: BudgetSpillScaleDiv;
     cadenceDiv: BudgetSpillCadenceDiv;
+    /// Present ONLY for the 10-bit videotoolbox profile (I420P10); every other
+    /// byte-shipping open stays NV12 with no key, so exact-match seam tests
+    /// keep reading today's payload.
+    outFormat?: "I420P10";
   }) => DecodeTransport;
   pickLane?: typeof pickInitialLane;
   /// The owning preview pool may synchronously reclaim retained hardware
@@ -376,6 +381,13 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// One constructor seam owns every byte-shipping profile. The formal spill
   /// is selected only after a budget refusal; ordinary software and the
   /// copy-back lanes preserve the user's resolution and full cadence.
+  ///
+  /// The transport FORMAT is decided here too (issue #10 ticket 03): a 10-bit
+  /// source on the videotoolbox lane opens I420P10, so ProRes/10-bit frames
+  /// ride the ten-bit adapter instead of being quantized to NV12. Every other
+  /// open — plain software (including the HW→SW fallback of the same media),
+  /// the Linux copy-back lanes, 8-bit sources on videotoolbox — stays NV12
+  /// exactly; the software lane's 10-bit behavior is deliberately NOT widened.
   private makeSoftwareTransport(accel?: { lane: string; device: string | null }): DecodeTransport {
     const profile = resolveBudgetSpillProfile({
       budgetExceeded: this.budgetSpill,
@@ -383,10 +395,12 @@ export class FfmpegSource implements PreviewDecodeSession {
       codedHeight: this.init.height,
       playbackScaleDiv: this.scaleDiv,
     });
+    const tenBit = accel?.lane === "videotoolbox" && isTenBitPixFmt(this.init.pixFmt ?? null);
     return this.deps.makeSw?.({
       ...(accel ? { accel } : {}),
       ...profile,
-    }) ?? new SwTransport(accel, profile.scaleDiv, profile.cadenceDiv);
+      ...(tenBit ? { outFormat: "I420P10" as const } : {}),
+    }) ?? new SwTransport(accel, profile.scaleDiv, profile.cadenceDiv, tenBit ? "I420P10" : undefined);
   }
 
   /// True when the CURRENT lane ships frames through `SwTransport` — plain

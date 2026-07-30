@@ -1,9 +1,10 @@
 // Lookahead/lookbehind frame ring for one source — the preview-side
 // FrameStore. Holds decoded frames from either preview lane:
-// `ImageBitmap`s (WebCodecs snapshots, native GPU lane) or
-// `NativeNv12Frame`s (native SW lane's CPU planes, converted later in the
-// Compositor's `Nv12Ingest` — see nv12Frame.ts); the ring treats both
-// alike through their shared `close()`. Anchor / eviction / lookup
+// `ImageBitmap`s (WebCodecs snapshots, native GPU lane) or CPU-plane frames
+// from the native SW transport — `NativeNv12Frame`s, plus `TenBitFrame`s for
+// a 10-bit videotoolbox-lane session — converted later in the Compositor's
+// ingest passes (see nv12Frame.ts / tenBitFrame.ts); the ring treats every
+// kind alike through the shared `close()`. Anchor / eviction / lookup
 // semantics live on the methods below.
 //
 // Plan: docs/render.md §Decoder pool — 1 s lookahead / 0.5 s lookbehind per clip
@@ -14,6 +15,7 @@ import {
   unregisterFrameRing,
 } from "./frameRingBudget";
 import { isNativeNv12Frame } from "./nv12Frame";
+import { isTenBitFrame } from "./tenBitFrame";
 import type { TransportFrame } from "./transports/DecodeTransport";
 
 const DEFAULT_LOOKAHEAD_US = 1_000_000;
@@ -155,7 +157,10 @@ export class FrameRing {
   }
 
   private static bytesOf(frame: TransportFrame): number {
-    return isNativeNv12Frame(frame)
+    // CPU-plane kinds carry their exact byte cost (NV12 = 1.5 B/px, I420P10 =
+    // 3 B/px — the honest figure the p10 lane's doubled bandwidth must show up
+    // as); an ImageBitmap is GPU-backed RGBA, estimated w×h×4.
+    return isNativeNv12Frame(frame) || isTenBitFrame(frame)
       ? frame.data.byteLength
       : frame.width * frame.height * 4;
   }

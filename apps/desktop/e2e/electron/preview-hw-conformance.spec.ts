@@ -48,6 +48,20 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from '.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
 const H264 = path.resolve(MEDIA_DIR, 'test_1080p_h264.mp4')
+// 10-bit fixtures for the videotoolbox p10 variants (VT lane ticket 03). Both
+// 1080p30, ≥ 1 s, already in the generator matrix. The SSIM leg normalizes
+// BOTH sides through `format=yuv420p`, so a 10-bit source works unmodified as
+// a structural 0.98 gate.
+// - ProRes 422 HQ (yuv422p10le): the codec the lane exists for. ffmpeg's VT
+//   hwaccel REQUIREs the hardware ProRes decoder (release/8.x), which only
+//   ProRes-engine chips carry (M1 Pro/Max, M2+) — on a base M1 the probe
+//   declines and this variant SKIPS cleanly (software fallback proven by the
+//   skip path itself).
+// - HEVC Main10 (yuv420p10le): hardware-decoded by every Apple Silicon media
+//   block, so the I420P10 transport → ten-bit ingest path gates GREEN on any
+//   Mac host, ProRes engine or not.
+const PRORES = path.resolve(MEDIA_DIR, 'test_1080p_30fps_prores.mov')
+const HEVC10 = path.resolve(MEDIA_DIR, 'test_1080p_gradient10.mp4')
 
 // Composition + probe target. 500 ms @30 fps = source frame 15; the clip is
 // placed 1:1 at t=0, so composition-time 500 ms maps to source frame 15 exactly.
@@ -78,12 +92,21 @@ interface HwVariant {
   id: string
   codec: string
   fixture: string
+  /// Which ingest path the bound frame must have taken (`ActiveClipProbe.
+  /// boundFrameKind`): copy-back 8-bit ships NV12 → Nv12Ingest; copy-back
+  /// 10-bit ships I420P10 → TenBitIngest ('p10', VT lane ticket 03); the
+  /// Windows shared-texture lane binds an ImageBitmap snapshot ('browser').
+  frameKind: 'nv12' | 'p10' | 'browser'
 }
 const VARIANTS: readonly HwVariant[] = [
-  { lane: 'nvdec', id: 'nvdec-h264', codec: 'H.264', fixture: H264 },
-  { lane: 'vaapi', id: 'vaapi-h264', codec: 'H.264', fixture: H264 },
-  { lane: 'd3d11va', id: 'd3d11va-h264', codec: 'H.264', fixture: H264 },
-  { lane: 'videotoolbox', id: 'videotoolbox-h264', codec: 'H.264', fixture: H264 },
+  { lane: 'nvdec', id: 'nvdec-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12' },
+  { lane: 'vaapi', id: 'vaapi-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12' },
+  { lane: 'd3d11va', id: 'd3d11va-h264', codec: 'H.264', fixture: H264, frameKind: 'browser' },
+  { lane: 'videotoolbox', id: 'videotoolbox-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12' },
+  // VT lane ticket 03 — the I420P10 preview transport variants (see the
+  // fixture notes above for which hosts each engages on).
+  { lane: 'videotoolbox', id: 'videotoolbox-prores', codec: 'ProRes', fixture: PRORES, frameKind: 'p10' },
+  { lane: 'videotoolbox', id: 'videotoolbox-hevc10', codec: 'HEVC Main10', fixture: HEVC10, frameKind: 'p10' },
 ]
 
 /// ffmpeg binary: honor an explicit `FFMPEG` override, else rely on PATH.
@@ -101,7 +124,7 @@ function parseSsimAll(stderr: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-for (const { lane, id, codec, fixture } of VARIANTS) {
+for (const { lane, id, codec, fixture, frameKind } of VARIANTS) {
   test(`preview-hw: ffmpeg engine decodes interframe ${codec} on the ${lane} copy-back lane + SSIM (issue #5 Block C3) @serial`, async () => {
     test.skip(!existsSync(fixture), `${codec} fixture not found at ${fixture} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(240_000)
@@ -176,6 +199,7 @@ for (const { lane, id, codec, fixture } of VARIANTS) {
             spriteBound: boolean
             spriteWidth: number
             spriteHeight: number
+            boundFrameKind: string | null
           } | null } }).__weftcutTest.activeClipProbe(id)
           if (!p) return null
           if (p.sourceKind !== 'native-gpu' && p.sourceKind !== 'sw') return null
@@ -193,6 +217,7 @@ for (const { lane, id, codec, fixture } of VARIANTS) {
         spriteBound: boolean
         spriteWidth: number
         spriteHeight: number
+        boundFrameKind: string | null
       }
 
       // ── CLEAN SKIP when the forced lane didn't engage on this machine ───────
@@ -210,6 +235,9 @@ for (const { lane, id, codec, fixture } of VARIANTS) {
       expect(probe.spriteBound).toBe(true)
       expect(probe.spriteWidth).toBe(CANVAS.width)
       expect(probe.spriteHeight).toBe(CANVAS.height)
+      // …through the RIGHT ingest: 'p10' proves the 10-bit variants really rode
+      // the I420P10 transport → TenBitIngest, not a silent NV12 quantize.
+      expect(probe.boundFrameKind).toBe(frameKind)
 
       // ── Rendered preview frame matches an ffmpeg reference (SSIM ≥ 0.98) ─────
       const ffmpeg = ffmpegBin()

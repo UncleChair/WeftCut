@@ -279,6 +279,12 @@ export type PreviewGpuMainTiming = { rendererRoundTripMs: PreviewGpuTimingSummar
 /// are canonical FFmpeg string names or absent where the stream leaves them
 /// unspecified.
 ///
+/// `format` discriminates the packed layout — NV12 (8-bit, every session
+/// historically) or I420P10 (tightly-packed u16LE Y then U then V planes, the
+/// `copyToTenBit` layout — the 10-bit VideoToolbox-lane sessions, issue #10
+/// ticket 03). The transport dispatches PER FRAME on this tag, never on what
+/// it asked for at open.
+///
 /// `width`/`height` are the SHIPPED dimensions, which are the media's ONLY at
 /// `scaleDiv` 1 — a downscaled preview frame is smaller, and `data.byteLength`
 /// follows these two, never the media's. The Compositor renormalizes with
@@ -289,7 +295,7 @@ export type PreviewSwFrameMsg = {
   durUs: number
   width: number
   height: number
-  format: 'NV12'
+  format: 'NV12' | 'I420P10'
   colorMatrix?: string
   colorRange?: string
   colorPrimaries?: string
@@ -506,7 +512,12 @@ export interface WeftcutApi {
     /// `cadenceDiv` is preview-only (absent = 1 = every frame). Native decodes
     /// every frame for reference correctness, then skips unselected frames
     /// before copy-back/scale/packing and IPC.
-    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null }): Promise<{ width: number; height: number }>
+    ///
+    /// `outFormat` selects the session's CPU transport format (absent = NV12 =
+    /// today's path byte-for-byte): 'I420P10' opens 10-bit output for a 10-bit
+    /// source on the videotoolbox lane (issue #10 ticket 03); every frame then
+    /// carries the matching `format` tag.
+    open(args: { streamId: string; path: string; lane?: string | null; device?: string | null; scaleDiv?: number | null; cadenceDiv?: number | null; outFormat?: 'NV12' | 'I420P10' | null }): Promise<{ width: number; height: number }>
     requestFrameAt(args: { streamId: string; targetUs: number }): void
     close(args: { streamId: string }): void
     onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void

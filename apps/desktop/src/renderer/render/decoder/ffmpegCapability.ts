@@ -5,6 +5,7 @@
 // reload; the persisted machine truth is main's capability cache, never these
 // maps/sets.
 import type { FfmpegLane } from "./decodeEngine";
+import { hwEligibleOnAnyLane } from "../../../shared/hwLaneEligibility";
 
 /// TWIN of main's `classKeyOf` (src/main/decode-capability.ts) — MUST produce a
 /// BYTE-IDENTICAL format string so a renderer-derived key hits the exact cache
@@ -32,20 +33,22 @@ export function classKeyOfMedia(m: {
 /// SEEK-SURVIVAL. A codec can decode forward cleanly yet HANG the D3D11 preview
 /// session indefinitely on a backward seek (observed: MPEG-2 on an RTX 3050 —
 /// the driver HW-decodes it, the one-frame probe says ok, then playback wedges
-/// on a backward seek with no recovery). This list encodes the seek-VALIDATED
-/// HW scope (via decode-bench: 8-bit H.264 / HEVC / VP9),
-/// gating which codecs are even PROBE-ELIGIBLE for tier 1 (spec P1: "lists may
+/// on a backward seek with no recovery). The list encodes the seek-VALIDATED
+/// HW scope, gating which codecs are even PROBE-ELIGIBLE (spec P1: "lists may
 /// seed or short-circuit probes"). It NARROWS what's eligible; it never
-/// overrules a probe's negative verdict. Eligible = codec ∈ {h264, hevc, vp9}
-/// AND an 8-bit pixel format — anything carrying a 10-bit tag ("10le" / "p010",
-/// case-insensitive) is excluded. Callers gate the HW-probe kick on this
-/// (PixiPreview.resolveSource) so an ineligible codec never lights the HW lane;
-/// the pure resolver stays untouched.
+/// overrules a probe's negative verdict.
+///
+/// LANE-AWARE since issue #10 ticket 03: the per-lane sets live in
+/// `shared/hwLaneEligibility.ts` (videotoolbox admits ProRes + 10-bit; every
+/// other lane keeps 8-bit h264/hevc/vp9). This entry point is the renderer's
+/// probe-KICK union — true when ANY lane could host the format — because the
+/// renderer does not know the lane before main's advertisement-gated walk
+/// (`resolveHwLane`) resolves it; that walk applies the same per-lane predicate,
+/// so an eligible-nowhere-advertised format resolves software without probing.
+/// Callers gate the HW-probe kick on this so an everywhere-ineligible codec
+/// never lights the HW lane; the pure resolver stays untouched.
 export function hwEligibleCodec(codec: string | null, pixFmt: string | null): boolean {
-  if (codec !== "h264" && codec !== "hevc" && codec !== "vp9") return false;
-  const pf = (pixFmt ?? "").toLowerCase();
-  if (pf.includes("10le") || pf.includes("p010")) return false;
-  return true;
+  return hwEligibleOnAnyLane(codec, pixFmt);
 }
 
 /// Sticky per-media "never try HW again this session" marker. Set when a

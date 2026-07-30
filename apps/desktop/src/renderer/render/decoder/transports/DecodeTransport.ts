@@ -1,14 +1,16 @@
 // The single seam between FfmpegSource and a concrete native decode transport.
 // Frames arrive ready-to-ring; the transport hides IPC shape, color-space
 // derivation, and per-frame coalescing. The GPU lane delivers ImageBitmaps
-// (decoder-produced conversion — trustworthy); the SW lane delivers
-// NativeNv12Frames (CPU planes convert in OUR shader, never the browser's —
-// see nv12Frame.ts / ADR 0032).
+// (decoder-produced conversion — trustworthy); the SW lane delivers CPU-plane
+// frames — NativeNv12Frames, or TenBitFrames for a 10-bit VideoToolbox-lane
+// session (issue #10 ticket 03) — which convert in OUR shaders, never the
+// browser's (see nv12Frame.ts / tenBitFrame.ts / ADR 0032).
 import type { NativeNv12Frame } from "../nv12Frame";
+import type { TenBitFrame } from "../tenBitFrame";
 import type { HandoffTimingSummary } from "./handoffTimings";
 
 /// What a transport can push into the preview `FrameRing`.
-export type TransportFrame = ImageBitmap | NativeNv12Frame;
+export type TransportFrame = ImageBitmap | NativeNv12Frame | TenBitFrame;
 
 export interface DecodeTransportOpen {
   streamId: string;

@@ -424,6 +424,105 @@ describe("FfmpegSource — hardware transport routing by HW lane (C2.2)", () => 
   });
 });
 
+// Ticket 03 (issue #10): the transport FORMAT decision at the byte-shipping
+// seam. A 10-bit source on the videotoolbox lane opens I420P10; every other
+// combination stays NV12 (no `outFormat` key at all — the seam's exact-match
+// payload IS the regression guard for "software behavior unchanged").
+describe("FfmpegSource — I420P10 profile for a 10-bit source on the videotoolbox lane", () => {
+  const proresInit = {
+    layerId: "L", mediaId: "m", sourcePath: "/tmp/x.mov",
+    codec: "prores", pixFmt: "yuv422p10le", componentAvailable: true,
+  };
+
+  it("opens the videotoolbox transport with outFormat I420P10 for a 10-bit source", async () => {
+    const makeSw = vi.fn(() => fakeTransport().t);
+    const src = new FfmpegSource(proresInit, {
+      makeSw,
+      pickLane: async () => ({ lane: "hardware" as const, hwLane: "videotoolbox", device: null }),
+    });
+    await src.ensureReady();
+    expect(makeSw).toHaveBeenCalledWith({
+      accel: { lane: "videotoolbox", device: null },
+      scaleDiv: 1,
+      cadenceDiv: 1,
+      outFormat: "I420P10",
+    });
+  });
+
+  it("applies the playback-resolution divisor to the p10 profile (4K IPC stays bounded)", async () => {
+    const makeSw = vi.fn(() => fakeTransport().t);
+    const src = new FfmpegSource(
+      { ...proresInit, width: 3840, height: 2160, playbackScaleDiv: 2 },
+      {
+        makeSw,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "videotoolbox", device: null }),
+      },
+    );
+    await src.ensureReady();
+    // Same divisor path as NV12 — native downscales BEFORE packing, so a ½-res
+    // p10 frame crosses IPC at a quarter of the bytes (and still satisfies the
+    // adapter's layout contract; the Rust side owns the even-dim math).
+    expect(makeSw).toHaveBeenCalledWith({
+      accel: { lane: "videotoolbox", device: null },
+      scaleDiv: 2,
+      cadenceDiv: 1,
+      outFormat: "I420P10",
+    });
+  });
+
+  it("keeps an 8-bit source on the videotoolbox lane NV12 (no outFormat key)", async () => {
+    const makeSw = vi.fn(() => fakeTransport().t);
+    const src = new FfmpegSource(
+      { ...proresInit, sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p" },
+      {
+        makeSw,
+        pickLane: async () => ({ lane: "hardware" as const, hwLane: "videotoolbox", device: null }),
+      },
+    );
+    await src.ensureReady();
+    expect(makeSw).toHaveBeenCalledWith({
+      accel: { lane: "videotoolbox", device: null },
+      scaleDiv: 1,
+      cadenceDiv: 1,
+    });
+  });
+
+  it("keeps the software lane NV12 for the SAME 10-bit source (probe declined — fallback intact, output not widened)", async () => {
+    const makeSw = vi.fn(() => fakeTransport().t);
+    const src = new FfmpegSource(proresInit, {
+      makeSw,
+      // The VT probe failed on this host (e.g. no ProRes engine): software lane.
+      pickLane: async () => ({ lane: "software" as const, hwLane: null, device: null }),
+    });
+    await src.ensureReady();
+    expect(src.currentLane()).toBe("software");
+    expect(makeSw).toHaveBeenCalledWith({ scaleDiv: 1, cadenceDiv: 1 });
+  });
+
+  it("the in-place HW→SW fallback re-opens NV12, not p10 (the software lane is never widened)", async () => {
+    const opened: ReturnType<typeof fakeTransport>[] = [];
+    const profiles: unknown[] = [];
+    const makeSw = vi.fn((profile?: unknown) => {
+      profiles.push(profile);
+      const t = fakeTransport();
+      opened.push(t);
+      return t.t;
+    });
+    const src = new FfmpegSource(proresInit, {
+      makeSw,
+      pickLane: async () => ({ lane: "hardware" as const, hwLane: "videotoolbox", device: null }),
+    });
+    await src.ensureReady();
+    expect(profiles[0]).toMatchObject({ outFormat: "I420P10" });
+    // A runtime videotoolbox transport failure falls to software in place…
+    opened[0]!.fail("vt session died");
+    await vi.waitFor(() => expect(makeSw).toHaveBeenCalledTimes(2));
+    expect(src.currentLane()).toBe("software");
+    // …and the software re-open carries NO outFormat key: NV12, today's path.
+    expect(profiles[1]).toEqual({ scaleDiv: 1, cadenceDiv: 1 });
+  });
+});
+
 describe("FfmpegSource — HW open failure: capacity vs capability", () => {
   // `markHwUnusable` is a sticky per-MEDIA, session-lifetime verdict. The
   // concurrent-HW-session budget is a transient CAPACITY limit, so recording it
