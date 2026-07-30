@@ -44,7 +44,7 @@ napi-derive = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "signal", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-schemars = "0.8"
+schemars = "1"
 
 # Domain primitives
 imbl = { version = "7", features = ["serde"] }
