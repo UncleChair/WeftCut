@@ -63,6 +63,7 @@ export function outputName({
   gradientH264Bf,
   gradientAv1,
   gradientH2644k,
+  h264Interframe,
   eostail,
   imageset,
   audiotones,
@@ -87,6 +88,7 @@ export function outputName({
   if (gradientH264Bf) return 'test_1080p_gradient10_h264_bf.mp4'
   if (gradientAv1) return 'test_1080p_gradient10_av1.mp4'
   if (gradientH2644k) return 'test_2160p_gradient10_h264.mp4'
+  if (h264Interframe) return 'test_1080p_h264.mp4'
   const container = format ?? 'mp4'
   if (container === 'prores') return `test_1080p_${fps}fps_prores.mov`
   if (eostail) return `test_1080p_${fps}fps_eostail.${container}`
@@ -599,6 +601,25 @@ function generateGradient(entry, outputDir, run) {
   console.log(`Done: ${output}`)
 }
 
+/// The interframe 8-bit H.264 clip the lane-parameterized preview HW
+/// conformance gates decode (preview-hw-conformance.spec.ts): 1080p30, 2 s,
+/// one-second GOPs so a mid-clip seek exercises real interframe decode on
+/// every HW lane (NVDEC/VAAPI/d3d11va/VideoToolbox). Same CLI shape the spec
+/// historically documented for hand-generation, now a matrix recipe.
+function generateH264Interframe(outputDir, run) {
+  const output = 'test_1080p_h264.mp4'
+  const args = [
+    '-y', '-f', 'lavfi', '-i', `testsrc2=size=${WIDTH}x${HEIGHT}:rate=30:duration=2`,
+    '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+    '-g', '30', '-keyint_min', '30',
+    '-an', output,
+  ]
+
+  console.log(`Generating ${output} (8-bit interframe H.264, 1080p30, 2s)`)
+  run(args, { cwd: outputDir })
+  console.log(`Done: ${output}`)
+}
+
 function drawtextFilters(fps, font) {
   const common = `fontfile='${font}':fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=8`
   return [
@@ -705,6 +726,7 @@ export function generateFixture(entry, {
   if (entry.audioTimingLong) return generateLongAudioTiming(outputDir, atomicRun)
   if (entry.color) return generateColor(entry, outputDir, atomicRun)
   if (entry.colorProres) return generateColorProres(entry, outputDir, atomicRun)
+  if (entry.h264Interframe) return generateH264Interframe(outputDir, atomicRun)
   if (
     entry.gradient
     || entry.gradientH264
@@ -739,6 +761,7 @@ const BOOLEAN_FLAGS = new Map([
   ['--gradient-h264-bf', 'gradientH264Bf'],
   ['--gradient-av1', 'gradientAv1'],
   ['--gradient-h264-4k', 'gradientH2644k'],
+  ['--h264-interframe', 'h264Interframe'],
 ])
 
 export function parseArgs(argv) {
@@ -791,6 +814,7 @@ Generate one deterministic fixture in the current directory.
   --color-prores [--color-prores-enc 709ltd|601ltd]
   --gradient | --gradient-h264 | --gradient-h264-bf
   --gradient-av1 | --gradient-h264-4k
+  --h264-interframe
   --output-dir PATH`)
 }
 

@@ -223,11 +223,14 @@ test.describe('decode-engine resolution (Electron)', () => {
   // webcodecs-original tier" ordering is gone). H.264 8-bit yuv420p IS
   // d3d11va-decodable, so `pickInitialLane`'s GPU probe puts `FfmpegSource` on
   // its hardware lane ("native-gpu" in `sourceKind`) on a real GPU box.
-  // HW-availability guard: the native `capabilities()` advertises a HW decode
-  // lane only on Windows (d3d11va) and Linux (nvdec/vaapi); macOS is
-  // software-only, so the engine correctly resolves the SOFTWARE lane and there
-  // is no `native-gpu` to observe. The cell then SKIPS (it does not fail),
-  // matching the sibling HW specs (preview-gpu-order, preview-hw-conformance).
+  // HW-availability guard: the native `capabilities()` advertises the
+  // platform's HW decode lanes — d3d11va (Windows), nvdec/vaapi (Linux),
+  // videotoolbox (macOS, issue #10) — but an advertised lane can still decline
+  // at probe time (no GPU, driver refusal, CI). The engine then correctly
+  // resolves the SOFTWARE lane and there is no `native-gpu` to observe; the
+  // cell SKIPS (it does not fail), matching the sibling HW specs
+  // (preview-gpu-order, preview-hw-conformance). Self-clearing: keyed on the
+  // runtime-resolved lane, not a platform string (878795f2).
   test('auto + H.264: resolves ffmpeg on the original — hardware lane when the GPU probe passes', async () => {
     test.setTimeout(180_000)
     const { app, page } = await launchApp()
@@ -251,7 +254,7 @@ test.describe('decode-engine resolution (Electron)', () => {
       const probe = await waitForBuiltKey(page, layerId, null, 'ffmpeg:original:')
       test.skip(
         probe.sourceKind !== 'native-gpu',
-        `H.264 HW lane not engaged on this host (sourceKind=${probe.sourceKind}) — no HW decode lane advertised (expected on macOS)`,
+        `H.264 HW lane not engaged on this host (sourceKind=${probe.sourceKind}) — no advertised HW lane passed its probe`,
       )
       expect(probe.sourceKind).toBe('native-gpu')
       expect(probe.builtFromKey!.startsWith('ffmpeg:original:')).toBe(true)
