@@ -1,6 +1,7 @@
 import { Checkbox } from "@base-ui/react/checkbox";
 import { CheckIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { blurAfterMouseActivation } from "./blurAfterMouseActivation";
 
 interface AppCheckboxProps {
   checked: boolean;
@@ -28,6 +29,7 @@ export function AppCheckbox({
       disabled={disabled ?? false}
       aria-label={ariaLabel}
       onCheckedChange={(next) => onCheckedChange(next)}
+      onClick={blurAfterMouseActivation}
     >
       <Checkbox.Indicator className="app-checkbox-indicator">
         <CheckIcon size={12} aria-hidden />

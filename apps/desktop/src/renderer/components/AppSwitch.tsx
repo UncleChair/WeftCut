@@ -1,5 +1,6 @@
 import { Switch } from "@base-ui/react/switch";
 import { cn } from "@/lib/utils";
+import { blurAfterMouseActivation } from "./blurAfterMouseActivation";
 
 interface AppSwitchProps {
   checked: boolean;
@@ -31,6 +32,7 @@ export function AppSwitch({
       aria-label={ariaLabel}
       data-testid={testId}
       onCheckedChange={(next) => onCheckedChange(next)}
+      onClick={blurAfterMouseActivation}
     >
       <Switch.Thumb className="app-switch-thumb" />
     </Switch.Root>
