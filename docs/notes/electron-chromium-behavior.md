@@ -65,6 +65,60 @@ Caught by the saturated-chart SSIM gate: the native-decode lane's HD frames conv
 
 Rule: never hand a buffer-defined YUV frame to the browser for color conversion. CPU planes from the native decode lanes (export relay AND the SW preview transport) carry their own kinds (`NativeNv12Frame` / `TenBitFrame`) and convert in owned shaders (`Nv12Ingest` / `TenBitIngest`, matrix selected from the stamped `colorSpace` via `coefForMatrix`). Policy: ADR 0032. Third member of the platform color-gap family, alongside `VideoEncoder` ignoring `colorSpace` (below) and WebGPU `copyExternalImageToTexture` converting as BT.709/limited regardless of tags (ADR 0021's offender list).
 
+## macOS menu accelerators do NOT preempt the renderer — `preventDefault()` wins
+
+Measured 2026-07-30 on Electron 42.4.1, macOS (Darwin 25.5.0, Apple silicon) — a different
+platform and date from this file's header. Standalone probe: a bare window with a focused,
+text-selected `<input>`, a **page-world** `keydown` recorder, and a **real** `Cmd+C`
+delivered through AppKit via `osascript … keystroke "c" using command down`.
+`webContents.sendInputEvent` cannot probe this — it injects past AppKit, so menu key
+equivalents never run and every variant looks identical.
+
+| Application menu installed | native copy happened | renderer saw the keydown |
+| --- | --- | --- |
+| `[appMenu, editMenu]` roles, default accelerators | yes | yes |
+| …same, but the renderer calls `preventDefault()` | **no** | yes |
+| Edit items as roles with `accelerator: ''` | no | yes |
+| Edit items as roles with `registerAccelerator: false` | yes | yes |
+| `[appMenu]` only — menu exists, no Edit menu | no | yes |
+| `setApplicationMenu(null)` — no menu at all | **yes** | yes |
+
+The renderer observed the chord in **every** configuration, including the ones where the
+native role also fired. The `preventDefault()` verdict was re-run 4× alternating
+(prevent → no copy, pass → copy) with no flake, and holds for a **destructive** role too:
+against `role: 'close'` (Cmd+W), `preventDefault()` left the window open, and without it
+the window closed.
+
+Rules:
+
+- **The renderer is upstream of the application menu on macOS.** `useShortcuts` can own any
+  chord by calling `preventDefault()`; the matching menu role then does not fire. So a full,
+  standard, discoverable menu **with real accelerators** can coexist with renderer
+  ownership — no display-only menu items, and no renderer reimplementation of text-field
+  clipboard/undo. Focus-aware dispatch falls out for free: don't prevent when a text input
+  has focus and the native role serves it.
+- **Never try to strip an accelerator off a role item.** `accelerator: ''` silently kills the
+  role's native behavior; `registerAccelerator: false` is ignored on macOS (the accelerator
+  still fires). Either include the role normally or omit the item.
+- Electron's **default** menu binds `Cmd+R`/`Shift+Cmd+R` (reload) and `Alt+Cmd+I`
+  (DevTools) in **production** too, plus `Cmd+W` → Close Window and `Cmd+Z` →
+  `webContents.undo()` (DOM text undo, never project history). An app that keeps the default
+  menu ships all four. `role: 'viewMenu'` re-adds reload + DevTools, so build View by hand.
+- `role: 'appMenu'` contains no Settings/Preferences slot — `Cmd+,` must be a custom item.
+
+⚠ Caveat: the last table row is the odd one — *no* menu yields a working native Cmd+C, yet a
+menu **without** a copy role does not. Treat that asymmetry as an Electron 42 implementation
+detail rather than a contract, and ship the standard Edit menu instead of relying on it.
+
+History: ADR 0031 assumed the opposite — that macOS menu accelerators "are resolved by the
+browser process (on macOS via the AppKit main-menu responder chain) and preempt the
+renderer's keydown listener" — and its deferred Stage 2 was designed around that premise
+(Cmd+Z/C/V display-only, renderer clipboard fallback). That premise is false on Electron 42;
+the ADR's own "run a probe before implementing" instruction is what this entry answers, and
+Stage 2 was redesigned accordingly. The ADR's separate claim that
+`setApplicationMenu(null)` "breaks Cmd+C/V in the app's text inputs" is also false here,
+though the near-miss variant (a menu lacking the copy role) does break it.
+
 ## Not re-probed (kept as known Blink behavior)
 
 These WebCodecs behaviors live in the same Blink core WebView2 used, so they were carried forward without re-probing: Hi10P software-decodes but needs `flush()`; a lone IDR frame parks in the decoder's reorder buffer until `flush()`; held `VideoFrame`s pin the ~13-slot hardware decoder pool (ADR 0004); `VideoEncoder` ignores `VideoFrame.colorSpace` and tags color by resolution.

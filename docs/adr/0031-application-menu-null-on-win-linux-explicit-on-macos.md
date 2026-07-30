@@ -3,6 +3,13 @@ status: accepted
 ---
 # 0031 — Application menu: `null` on Windows/Linux, explicit minimal menu on macOS
 
+> **Revised 2026-07-30 by the probe this ADR asked for.** Stage 1 (Windows/Linux) stands
+> as written and is implemented. The macOS half changed: the probe overturned this ADR's
+> premise that macOS menu accelerators preempt the renderer, so **Stage 2 was redesigned**
+> — see "Probe verdicts" and the rewritten Stage 2 below. Verdict details live in
+> `docs/notes/electron-chromium-behavior.md`; the implementation plan lives in
+> `.scratch/macos-native-menu/`.
+
 ## Context
 Every WeftCut keyboard shortcut is dispatched in the **renderer** by `useShortcuts`
 (`src/renderer/shortcuts/`): a `window` keydown listener with capture/bubble phases,
@@ -57,7 +64,7 @@ macOS. Land it in two stages.
   `before-input-event` handler in `hardenWindow`, gated on `isDev`. No native menu is
   installed in dev or prod, so dev and prod share one code path.
 
-**Stage 2 — macOS (designed here, deferred):**
+**Stage 2 — macOS (superseded as designed; see "Probe verdicts" and "Stage 2, revised"):**
 - Install an **explicit minimal** native menu: an App menu (About/Hide/Quit as roles), an
   Edit menu (cut/copy/paste/selectAll as roles), and a Window menu. File/View/Insert/
   Export/Tools do **not** enter the native menu — they remain renderer-only top-bar menus,
@@ -75,6 +82,60 @@ macOS. Land it in two stages.
   verdict in `docs/notes/electron-chromium-behavior.md`, and let it decide whether the
   renderer clipboard fallback is strictly required.
 
+## Probe verdicts (2026-07-30, Electron 42.4.1 / macOS)
+The Stage 2 probe ran. Full matrix in `docs/notes/electron-chromium-behavior.md`; three
+results correct this ADR's text above.
+
+1. **The premise is false.** macOS menu accelerators do **not** preempt the renderer. The
+   renderer's keydown listener fires in every menu configuration, *and* a renderer
+   `preventDefault()` suppresses the matching menu role — verified on `role: 'copy'`
+   (4/4 alternating) and on the destructive `role: 'close'` (Cmd+W left the window open).
+   The renderer is upstream; the menu is downstream.
+2. **"Roles but no accelerators" does not work** — the literal question this ADR deferred.
+   `accelerator: ''` kills the role's native behavior, and `registerAccelerator: false` is
+   ignored on macOS (the accelerator still fires). A role item is all-or-nothing.
+3. **`setApplicationMenu(null)` does not break Cmd+C/V** on Electron 42 (contradicting the
+   second "Rejected" bullet below): with no menu at all, a text input still copies natively.
+   A menu that *exists without* a copy role is what breaks it. Treat this asymmetry as an
+   implementation detail, not a contract — it is not a reason to ship macOS menu-less.
+
+Because of (1), the renderer needs no clipboard/undo reimplementation and no display-only
+menu items: it already `preventDefault()`s the chords it consumes, and `fireWhenEditing:
+false` actions already stand down inside text inputs — which is exactly when the native role
+should serve. Installing a real menu is therefore **additive** to the existing dispatcher.
+
+## Stage 2, revised — divide by ownership, don't duplicate
+The native menu is not a second copy of `AppMenuBar`; it is the **OS-integration surface**,
+and the in-app bar stays the **application command surface**. Note the in-app bar is the more
+available of the two on macOS: `.app-header` renders in fullscreen, where the system hides
+the native menu bar behind a hover reveal. Fullscreen is therefore **not** an argument for
+moving commands into the native menu.
+
+- **Native menu** — `appMenu` / `editMenu` / `windowMenu` roles verbatim (About, Services,
+  Hide, Quit, the clipboard items, Substitutions/Speech, Minimize, Zoom, Bring All to Front),
+  plus the few items Mac convention demands: a File projection, View → Enter Full Screen
+  (`role: 'togglefullscreen'`), and **Settings under `Cmd+,`** (the `appMenu` role has no
+  Settings slot; today Settings hides in the in-app File menu, where no Mac user looks).
+  Build View **by hand** — `role: 'viewMenu'` re-adds Reload and DevTools.
+- **In-app `AppMenuBar`** — Insert, View (workspace profiles), timeline actions, Help, Dev
+  stay renderer-only and stay primary. Identical on all three platforms and in fullscreen.
+- **Overlap is expected**: File/Edit/View appear in both. The native one is a thin projection
+  whose items dispatch the *same* actions over IPC.
+- **Generate, never hand-write a second list.** Labels and accelerators come from the
+  `shortcuts/defs.ts` catalogue so the two surfaces cannot drift.
+- **Keep the native menu small, for one concrete reason:** the in-app items derive `disabled`
+  from live state (`busy`, `canUndo`, `canRedo`, `canBlade`, `exportLocked`), while a native
+  `MenuItem` is a main-process object — every one of those transitions would have to be
+  pushed over IPC and re-applied. That sync cost, not the labels, is what full parity buys.
+
+Replacing the default menu is also a **safety** fix independent of any of the above:
+Electron's default menu ships `Cmd+R` / `Shift+Cmd+R` reload and `Alt+Cmd+I` DevTools **in
+production**, and a renderer reload discards unsaved in-memory timeline state.
+
+Open decision left to implementation: whether `Cmd+W` keeps the Mac convention (close the
+window) or maps to the renderer's `closeProject` ("save and close"). Per verdict (1) either
+is now reachable; it is a product call, not a technical constraint.
+
 ## Consequences
 - **+** Windows/Linux: the default menu no longer intercepts keys; the renderer's
   `useShortcuts` + rebindable `keybindings.json` becomes the single, uncontested owner of
@@ -87,8 +148,18 @@ macOS. Land it in two stages.
 - **−/staged** macOS keeps the default menu until Stage 2, so the original "shortcuts
   unavailable in some states" symptom persists on macOS in the interim — an accepted,
   time-boxed gap given Windows/Linux is the current first-class target.
+  **Corrected by the probe:** the symptom on macOS is narrower than assumed — the renderer
+  does receive every chord. What the default menu actually costs is that unconsumed chords
+  reach a *wrong* handler (Cmd+W closes the window, Cmd+Z runs DOM undo) and that Reload +
+  DevTools ship to end users. The gap is a safety and correctness one, not a dead-keys one.
 - Rejected — **`registerAccelerator: false` everywhere (option 1):** on frameless
   Windows/Linux the native menu never renders, so it buys nothing over `null` while adding
   per-item accelerator bookkeeping; and it is ignored on macOS anyway.
+  (Probe confirms the macOS half: `registerAccelerator: false` on a role item still fires
+  the accelerator.)
 - Rejected — **`setApplicationMenu(null)` everywhere (pure option 2):** destroys the macOS
   Edit menu and breaks Cmd+C/V in the app's text inputs.
+  **This rationale is false on Electron 42** — with no menu at all, a text input still
+  copies natively. The conclusion survives on other grounds: macOS wants a real menu for
+  platform conventions (App/Edit/Window, `Cmd+,`), and going menu-less would rely on the
+  fragile asymmetry recorded in the notes file.

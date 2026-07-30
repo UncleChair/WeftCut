@@ -68,10 +68,13 @@ export function matchDevKeyAction(input: KeyInput, isDev: boolean): DevKeyAction
 // bar), so a native menu never renders yet its accelerators still preempt the
 // renderer's useShortcuts for chords like Mod+W / Mod+C / Mod+Z. Clearing it makes
 // the renderer the single, uncontested owner of every shortcut.
-// Everything else (incl. macOS): false. The macOS branch is load-bearing —
-// clearing the menu would destroy the Edit menu whose native accelerators make
-// Cmd+C/V work inside text inputs; macOS keeps its default menu until the deferred
-// Stage 2. See ADR 0031.
+// Everything else (incl. macOS): false. macOS is destined for an EXPLICIT menu
+// rather than null (ADR 0031 Stage 2, revised): it wants the App/Edit/Window roles
+// for platform conventions, and the default menu it runs today ships Reload +
+// DevTools to end users. The reason this comment used to give — "clearing the menu
+// breaks Cmd+C/V in text inputs" — was measured FALSE on Electron 42; the renderer
+// is upstream of the menu and a preventDefault() beats a role. See
+// docs/notes/electron-chromium-behavior.md.
 export function shouldClearApplicationMenu(platform: NodeJS.Platform): boolean {
   return platform === 'win32' || platform === 'linux'
 }
