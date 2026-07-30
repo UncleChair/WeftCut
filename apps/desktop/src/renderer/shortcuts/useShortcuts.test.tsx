@@ -27,8 +27,27 @@ function Harness({
   return null;
 }
 
-function dispatchKey(target: Element, key: string): KeyboardEvent {
-  const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+function dispatchKey(
+  target: Element,
+  key: string,
+  init?: KeyboardEventInit,
+): KeyboardEvent {
+  const ev = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  target.dispatchEvent(ev);
+  return ev;
+}
+
+function dispatchKeyUp(target: Element, key: string): KeyboardEvent {
+  const ev = new KeyboardEvent("keyup", {
+    key,
+    bubbles: true,
+    cancelable: true,
+  });
   target.dispatchEvent(ev);
   return ev;
 }
@@ -71,6 +90,78 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     expect(ev.defaultPrevented).toBe(true);
 
     trigger.remove();
+  });
+
+  it("consumes Space auto-repeat instead of leaking it to the focused control", () => {
+    const togglePlay = vi.fn();
+    render(<Harness handlers={{ togglePlay }} />);
+
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    const chromeSpy = vi.fn();
+    trigger.addEventListener("keydown", chromeSpy);
+    trigger.focus();
+
+    dispatchKey(trigger, " ");
+    const repeat = dispatchKey(trigger, " ", { repeat: true });
+
+    // The repeat must not re-fire the action, but it MUST still be
+    // consumed: an unprevented repeat keydown re-arms the native button's
+    // Space activation, and its keyup click would toggle the control on
+    // top of playback (the original double-fire).
+    expect(togglePlay).toHaveBeenCalledTimes(1);
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(chromeSpy).not.toHaveBeenCalled();
+
+    trigger.remove();
+  });
+
+  it("consumes the keyup paired with a consumed keydown (Base UI spans activate on keyup)", () => {
+    const togglePlay = vi.fn();
+    render(<Harness handlers={{ togglePlay }} />);
+
+    // Stand-in for Base UI Switch.Root: nativeButton=false renders a
+    // <span role="switch"> that Base UI toggles from its OWN keyup handler,
+    // ignoring the keydown's defaultPrevented — only stopping the keyup
+    // before it reaches the element keeps the switch from firing.
+    const span = document.createElement("span");
+    span.setAttribute("role", "switch");
+    span.tabIndex = 0;
+    document.body.appendChild(span);
+    const keyupSpy = vi.fn();
+    span.addEventListener("keyup", keyupSpy);
+    span.focus();
+
+    dispatchKey(span, " ");
+    const up = dispatchKeyUp(span, " ");
+
+    expect(togglePlay).toHaveBeenCalledTimes(1);
+    expect(up.defaultPrevented).toBe(true);
+    expect(keyupSpy).not.toHaveBeenCalled();
+
+    // A keyup with no consumed keydown behind it passes through untouched.
+    const strayUp = dispatchKeyUp(span, " ");
+    expect(strayUp.defaultPrevented).toBe(false);
+    expect(keyupSpy).toHaveBeenCalledTimes(1);
+
+    span.remove();
+  });
+
+  it("re-fires repeatable actions on auto-repeat and keeps repeats native while editing", () => {
+    const seekFrameForward = vi.fn();
+    render(<Harness handlers={{ seekFrameForward }} />);
+
+    dispatchKey(document.body, "ArrowRight");
+    dispatchKey(document.body, "ArrowRight", { repeat: true });
+    expect(seekFrameForward).toHaveBeenCalledTimes(2);
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    const ev = dispatchKey(input, "ArrowRight", { repeat: true });
+    expect(seekFrameForward).toHaveBeenCalledTimes(2);
+    expect(ev.defaultPrevented).toBe(false);
+    input.remove();
   });
 
   it("yields Space when focus is inside an open overlay (role=menu)", () => {

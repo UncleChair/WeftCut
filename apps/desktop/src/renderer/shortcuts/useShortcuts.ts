@@ -95,6 +95,8 @@ function isInTransientWidget(target: EventTarget | null): boolean {
 ///
 /// Dispatch rules: always `preventDefault` + `stopPropagation` on a matched
 /// event; `repeatable` / `fireWhenEditing` semantics live on `ActionDef`.
+/// A consumed keydown also consumes its paired keyup — down and up belong
+/// to one consumer (Base UI's non-native controls activate on keyup).
 ///
 /// Two phases:
 /// - `captureGlobal` actions dispatch in the **capture** phase (on `window`,
@@ -123,6 +125,17 @@ export function useShortcuts({
     const captureEntries = entries.filter((e) => e.captureGlobal);
     const bubbleEntries = entries.filter((e) => !e.captureGlobal);
 
+    // Physical keys whose keydown this instance consumed. The paired keyup
+    // must be consumed too: Base UI Switch/Checkbox render non-native
+    // elements (nativeButton=false → <span role="switch">) that activate
+    // from Base UI's own keyup handler WITHOUT checking whether the keydown
+    // was prevented — a keyup that escapes toggles the focused control on
+    // top of the action that consumed the press.
+    const consumedCodes = new Set<string>();
+    // `code` identifies the physical key across the down/up pair even if
+    // modifiers change mid-hold; synthetic events (jsdom) may omit it.
+    const codeOf = (e: KeyboardEvent) => e.code || `key:${e.key.toLowerCase()}`;
+
     function dispatch(e: KeyboardEvent, candidates: ResolvedEntry[]): void {
       if (disabledRef.current) return;
       // Color-pick session = modal: the overlay owns the keyboard (Esc/S); every
@@ -132,7 +145,6 @@ export function useShortcuts({
       const editing = isEditableTarget(e.target);
       const inWidget = isInTransientWidget(e.target);
       for (const entry of candidates) {
-        if (e.repeat && !entry.repeatable) continue;
         if (!matchEvent(entry.parsed, e)) continue;
         // Yield to the focused context: text editors (unless the action opts
         // into firing while editing) and open transient widgets that own the
@@ -143,6 +155,13 @@ export function useShortcuts({
         if (!fn) return;
         e.preventDefault();
         e.stopPropagation();
+        consumedCodes.add(codeOf(e));
+        // Auto-repeat of a non-repeatable action is consumed WITHOUT
+        // re-firing. An unprevented repeat keydown would reach the focused
+        // control and re-arm a native button's Space activation (:active,
+        // then click on keyup) — toggling the control on top of the action
+        // that consumed the first press.
+        if (e.repeat && !entry.repeatable) return;
         runWithLogging(entry.id, fn);
         return;
       }
@@ -150,11 +169,24 @@ export function useShortcuts({
 
     const onKeyCapture = (e: KeyboardEvent) => dispatch(e, captureEntries);
     const onKey = (e: KeyboardEvent) => dispatch(e, bubbleEntries);
+    const onKeyUpCapture = (e: KeyboardEvent) => {
+      if (consumedCodes.delete(codeOf(e))) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    // Alt-Tab away mid-hold loses the keyup; a stale entry would silently
+    // eat the next unrelated press of that key after refocus.
+    const onWindowBlur = () => consumedCodes.clear();
     window.addEventListener("keydown", onKeyCapture, true);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUpCapture, true);
+    window.addEventListener("blur", onWindowBlur);
     return () => {
       window.removeEventListener("keydown", onKeyCapture, true);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUpCapture, true);
+      window.removeEventListener("blur", onWindowBlur);
     };
   }, [entries]);
 }

@@ -52,8 +52,11 @@ export interface ActionDef {
   /// (derived at `resolveEntries`). Set only to force the opposite for
   /// one action — e.g. copy/paste stay native inside text fields.
   fireWhenEditing?: boolean;
-  /// Key-repeat events (`e.repeat === true`) are dropped unless true.
-  /// Set for bindings the user holds down (undo/redo, arrow seeks).
+  /// Key-repeat events (`e.repeat === true`) re-fire the handler only
+  /// when true; otherwise repeats are consumed without firing — letting
+  /// one through would re-arm the focused control's native Space
+  /// activation. Set for bindings the user holds down (undo/redo,
+  /// arrow seeks).
   repeatable?: boolean;
   /// Dispatch in the keydown CAPTURE phase so the binding wins over a
   /// focused chrome control that would otherwise consume the key
