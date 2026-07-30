@@ -80,6 +80,19 @@ function isInTransientWidget(target: EventTarget | null): boolean {
   return target.closest(TRANSIENT_WIDGET_SELECTOR) !== null;
 }
 
+/// True while a modal renderer surface owns the keyboard and EVERY app action
+/// must stay dead — today the color-pick session, whose overlay owns Esc/S.
+///
+/// Shared with the macOS native menu (`menu/nativeMenu.ts`) because the two
+/// entry points fail differently: the dispatcher below stands down by returning
+/// WITHOUT `preventDefault()`, which is exactly what lets an unconsumed chord
+/// fall through to a native menu accelerator. Without this guard on both sides,
+/// suspending the dispatcher would hand the action to the menu instead of
+/// dropping it.
+export function appActionsSuspended(): boolean {
+  return usePickSessionStore.getState().session !== null;
+}
+
 /// Mounts a `window` keydown listener that dispatches to the handlers
 /// passed in. Handler identities are read through a ref each event so
 /// React's render churn doesn't force the listener to reattach.
@@ -141,7 +154,7 @@ export function useShortcuts({
       // Color-pick session = modal: the overlay owns the keyboard (Esc/S); every
       // app shortcut — including captureGlobal ones registered before the
       // overlay's listener — must stay dead until the session settles.
-      if (usePickSessionStore.getState().session) return;
+      if (appActionsSuspended()) return;
       const editing = isEditableTarget(e.target);
       const inWidget = isInTransientWidget(e.target);
       for (const entry of candidates) {

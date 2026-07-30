@@ -15,6 +15,7 @@
 // `event.key`, while those names explicitly describe a physical key.
 
 import { isMac } from "@/platform";
+import { chordModifier, type ChordModifier } from "../../shared/chords";
 
 export interface ParsedBinding {
   ctrl: boolean;
@@ -39,20 +40,15 @@ export function parseBinding(spec: string): ParsedBinding {
   let shift = false;
   let alt = false;
   for (const raw of parts.slice(0, -1)) {
-    const m = raw.toLowerCase();
-    if (m === "mod") {
-      if (isMac) meta = true;
-      else ctrl = true;
-    } else if (m === "ctrl" || m === "control") {
-      ctrl = true;
-    } else if (m === "cmd" || m === "meta" || m === "command") {
-      meta = true;
-    } else if (m === "shift") {
-      shift = true;
-    } else if (m === "alt" || m === "option" || m === "opt") {
-      alt = true;
-    } else {
-      throw new Error(`shortcuts: unknown modifier "${raw}" in "${spec}"`);
+    switch (chordModifier(raw)) {
+      // The one token whose meaning is platform-dependent; see the header.
+      case "mod": if (isMac) meta = true; else ctrl = true; break;
+      case "ctrl": ctrl = true; break;
+      case "meta": meta = true; break;
+      case "shift": shift = true; break;
+      case "alt": alt = true; break;
+      default:
+        throw new Error(`shortcuts: unknown modifier "${raw}" in "${spec}"`);
     }
   }
   const code = physicalPunctuationCode(last);
@@ -104,22 +100,26 @@ export function isChord(spec: ParsedBinding): boolean {
   return spec.ctrl || spec.meta || spec.alt;
 }
 
+/// How each modifier prints. Untranslated — keyboard labels are universal.
+const MODIFIER_LABELS: Record<ChordModifier, string> = {
+  mod: isMac ? "Cmd" : "Ctrl",
+  ctrl: "Ctrl",
+  meta: "Cmd",
+  shift: "Shift",
+  alt: isMac ? "Option" : "Alt",
+};
+
 /// Display the binding as a human-readable label — `"Mod+Shift+S"` →
 /// `"Ctrl+Shift+S"` on Windows/Linux and `"Cmd+Shift+S"` on macOS.
-/// Modifier names stay untranslated — keyboard labels are universal.
 export function resolveAccelerator(spec: string): string {
   const parts = spec.split("+").map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0) return "";
   const out: string[] = [];
   for (const raw of parts.slice(0, -1)) {
-    const m = raw.toLowerCase();
-    if (m === "mod") out.push(isMac ? "Cmd" : "Ctrl");
-    else if (m === "ctrl" || m === "control") out.push("Ctrl");
-    else if (m === "cmd" || m === "meta" || m === "command") out.push("Cmd");
-    else if (m === "shift") out.push("Shift");
-    else if (m === "alt" || m === "option" || m === "opt")
-      out.push(isMac ? "Option" : "Alt");
-    else out.push(raw);
+    const modifier = chordModifier(raw);
+    // An unknown token is shown verbatim rather than dropped — a hint that
+    // reads oddly beats one that quietly omits half the chord.
+    out.push(modifier ? MODIFIER_LABELS[modifier] : raw);
   }
   // Non-empty (guarded above), so the last element is defined.
   const last = parts[parts.length - 1]!;

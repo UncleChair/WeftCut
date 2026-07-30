@@ -108,12 +108,9 @@ async function hwEnvKey(): Promise<string> {
 }
 
 /// (Re)install the macOS application menu from the renderer's latest
-/// projection — null before the first sync, i.e. the menu that exists while the
-/// window is still loading. macOS only: Windows/Linux run menu-less, and
-/// installing one there would put accelerators back in front of the renderer's
-/// dispatcher (ADR 0031 Stage 1). Chosen items travel back as `menu:action`,
-/// which the renderer runs through the SAME handler map as `useShortcuts` —
-/// one implementation, two entry points.
+/// projection — null before its first sync, i.e. the menu on show while the
+/// window is still loading. Chosen items travel back as `menu:action`, which the
+/// renderer runs through the same handler map `useShortcuts` dispatches into.
 function installApplicationMenu(projection: MenuProjection | null): void {
   if (process.platform !== 'darwin') return
   Menu.setApplicationMenu(
@@ -331,12 +328,9 @@ app.whenReady().then(async () => {
   nativeTheme.themeSource = 'dark'
 
   // App-global (not per-window): Electron's DEFAULT application menu never goes
-  // live on any platform. Windows/Linux get no menu at all (the window is
-  // frameless; the renderer draws its own bar), macOS gets the explicit one from
-  // ./appMenu — the OS-integration surface, and what keeps a production build
-  // from shipping the default menu's Cmd+R reload and Alt+Cmd+I DevTools.
-  // Either way dev reload/DevTools/fullscreen come from hardenWindow's
-  // before-input-event seam, so dev and prod share one code path. See ADR 0031.
+  // live on any platform — Windows/Linux get no menu at all, macOS the explicit
+  // one from ./appMenu. Either way dev reload/DevTools/fullscreen come from
+  // hardenWindow's before-input-event seam, so dev and prod share one code path.
   if (shouldClearApplicationMenu(process.platform)) Menu.setApplicationMenu(null)
   else installApplicationMenu(null)
 

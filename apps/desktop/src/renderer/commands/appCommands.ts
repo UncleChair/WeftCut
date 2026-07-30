@@ -15,9 +15,9 @@ export interface AppCommandFlags {
   exportLocked: boolean;
 }
 
-/// Insert-menu entries with no catalogue action of their own. Settings used to
-/// live here too; it became a real action (Cmd+, — the slot the macOS App menu
-/// projects) and now arrives through the HandlerMap like any other.
+/// Menu entries with no catalogue action of their own. An action that HAS a
+/// binding must not be listed here — it already arrives through the HandlerMap
+/// above, and adding it doubles it in the palette.
 export interface MenuCommandDeps {
   addColorLayer: () => void | Promise<void>;
   addTextLayer: () => void | Promise<void>;

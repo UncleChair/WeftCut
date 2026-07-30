@@ -69,14 +69,10 @@ export function matchDevKeyAction(input: KeyInput, isDev: boolean): DevKeyAction
 // renderer's useShortcuts for chords like Mod+W / Mod+C / Mod+Z. Clearing it makes
 // the renderer the single, uncontested owner of every shortcut.
 // Everything else (incl. macOS): false. macOS installs an EXPLICIT menu instead
-// of clearing (src/main/appMenu.ts, ADR 0031 Stage 2 revised): it wants the
-// App/Edit/Window roles for platform conventions, and Electron's default menu
-// ships Reload + DevTools to end users. Returning false here is therefore only
-// half the macOS answer — the caller must install that menu, or the default one
-// stays live. The reason this comment used to give — "clearing the menu breaks
-// Cmd+C/V in text inputs" — was measured FALSE on Electron 42; the renderer is
-// upstream of the menu and a preventDefault() beats a role. See
-// docs/notes/electron-chromium-behavior.md.
+// of clearing (src/main/appMenu.ts): the menu bar belongs to the system there,
+// and it wants the App/Edit/Window roles. Returning false is therefore only
+// half the macOS answer — the caller must install that menu, or Electron's
+// default one (Reload, DevTools, a Cmd+W that closes the window) stays live.
 export function shouldClearApplicationMenu(platform: NodeJS.Platform): boolean {
   return platform === 'win32' || platform === 'linux'
 }

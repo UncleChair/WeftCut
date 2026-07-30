@@ -83,6 +83,13 @@ equivalents never run and every variant looks identical.
 | `[appMenu]` only — menu exists, no Edit menu | no | yes |
 | `setApplicationMenu(null)` — no menu at all | **yes** | yes |
 
+**Custom items behave exactly like roles here** (re-probed the same way when the menu was
+built): a `{ label, accelerator: 'CommandOrControl+S', click }` item did **not** fire when
+the renderer called `preventDefault()` on Cmd+S, and an otherwise identical item on a chord
+the renderer let through **did** fire. So a menu of the app's own commands cannot
+double-dispatch against `useShortcuts`, and the rule below is about the menu, not about
+roles specifically.
+
 The renderer observed the chord in **every** configuration, including the ones where the
 native role also fired. The `preventDefault()` verdict was re-run 4× alternating
 (prevent → no copy, pass → copy) with no flake, and holds for a **destructive** role too:

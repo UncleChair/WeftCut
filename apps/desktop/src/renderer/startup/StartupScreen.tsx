@@ -1,7 +1,7 @@
 import { open as openDialog } from "@/bridge/dialog";
 import { documentDir } from "@/bridge/path";
 import type { TFunction } from "i18next";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -11,7 +11,11 @@ import {
 } from "../i18n";
 import { setLocale, wireAppSettingsStream } from "../settings/appSettingsStore";
 import { useNativeMenu } from "../menu/nativeMenu";
-import type { OverrideMap } from "../shortcuts/useShortcuts";
+import {
+  useShortcuts,
+  type HandlerMap,
+  type OverrideMap,
+} from "../shortcuts/useShortcuts";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { AppDialog } from "../components/AppDialog";
@@ -65,14 +69,20 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   // useful than restoring a stale expansion. Deliberately not persisted.
   const [recentsExpanded, setRecentsExpanded] = useState(false);
 
-  // The macOS App menu's Settings item — the only action this surface can run,
-  // so it is the only one it projects (the editor projects File as well). Cmd+,
-  // must work before any project exists, which is exactly where a Mac user
-  // reaches for preferences. Inert off macOS. See menu/nativeMenu.ts.
-  useNativeMenu({
-    handlers: { openSettings: () => setSettingsOpen(true) },
-    overrides: keybindings as OverrideMap,
-  });
+  // Settings is the only catalogued action this screen can run — there is no
+  // project yet to save or export — so it is the only one it dispatches and the
+  // only one it projects into the macOS App menu (the editor projects File as
+  // well). Both, because Cmd+, must work before any project exists: the
+  // dispatcher serves every platform, the menu adds the Mac convention.
+  // `keybindings` is a Record<string, string[]> from main; the cast narrows it
+  // to the catalogue's ids, exactly as App.tsx does.
+  const settingsHandlers = useMemo<HandlerMap>(
+    () => ({ openSettings: () => setSettingsOpen(true) }),
+    [],
+  );
+  const settingsOverrides = keybindings as OverrideMap;
+  useShortcuts({ handlers: settingsHandlers, overrides: settingsOverrides });
+  useNativeMenu({ handlers: settingsHandlers, overrides: settingsOverrides });
 
   // A first-launch user on a foreign locale needs a way to switch *before*
   // they can read any of the buttons. Mirrors the editor's header toggle.
@@ -96,6 +106,16 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   useEffect(() => {
     void refreshRecents();
   }, [refreshRecents]);
+
+  // Effective bindings are needed before the Settings dialog is ever opened:
+  // this screen dispatches Cmd+, itself and projects that chord into the macOS
+  // App menu. Reading them only alongside the dialog (below) would show — and
+  // on macOS bind — the catalogue default to a user who had rebound it.
+  useEffect(() => {
+    keybindingsGet()
+      .then(setKeybindings)
+      .catch(() => {});
+  }, []);
 
   // The settings panel reads app-level stores that are otherwise only wired
   // inside the editor (`useAppWiring`). Hydrate them for the dialog's

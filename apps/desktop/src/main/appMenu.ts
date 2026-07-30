@@ -1,45 +1,17 @@
-// The macOS application menu — WeftCut's OS-integration surface.
+// The macOS application menu, built explicitly so Electron's default one — which
+// ships Cmd+R reload and Alt+Cmd+I DevTools to end users — never goes live.
 //
-// Windows/Linux run with NO application menu at all (`setApplicationMenu(null)`,
-// see inputPolicy.ts): the window is frameless there and the renderer draws its
-// own bar. macOS cannot do that — the menu bar belongs to the system — so this
-// module builds an EXPLICIT one, and Electron's default menu never goes live.
+// Owns the STRUCTURE and nothing else: which action ids appear, in what order,
+// in which submenu, plus every role item. Labels and accelerators arrive from
+// the renderer as a `MenuProjection` (src/shared/menu.ts owns that contract).
+// Windows/Linux install no menu at all — see inputPolicy.ts. Why any of this:
+// ADR 0031 Stage 2.
 //
-// Why explicit rather than default (ADR 0031, Stage 2):
-//   • the default menu binds Cmd+R / Shift+Cmd+R (reload) and Alt+Cmd+I
-//     (DevTools) in PRODUCTION, and a renderer reload discards unsaved
-//     in-memory timeline state;
-//   • its Cmd+W closes the window and its Cmd+Z runs `webContents.undo()`
-//     (DOM text undo, never project history) — both the wrong handler for this
-//     app's own actions;
-//   • `role: 'appMenu'` has no Settings slot, and File is empty, so the two
-//     places a Mac user looks first hold nothing.
-//
-// The renderer stays the owner of every app shortcut. It is UPSTREAM of the
-// menu on macOS: `useShortcuts` sees every chord first and its
-// `preventDefault()` suppresses the matching menu item — measured, not assumed
-// (docs/notes/electron-chromium-behavior.md). So the accelerators below are a
-// display of what the renderer already owns, and the `click` path only runs
-// when the renderer did NOT consume the chord (or the user reached for the
-// mouse). Either way one dispatch, never two.
-//
-// Two rules the same notes file makes non-negotiable:
-//   1. Never strip an accelerator off a ROLE item. `accelerator: ''` silently
-//      kills the role's native behaviour and `registerAccelerator: false` is
-//      ignored on macOS. Include a role whole, or omit it.
-//   2. Build View by hand. `role: 'viewMenu'` re-adds Reload and DevTools.
-//
-// Labels and accelerators are never written here — they arrive as a
-// `MenuProjection` generated from the renderer's action catalogue and effective
-// keybindings (src/shared/menu.ts explains the direction of that handoff). This
-// module owns only the STRUCTURE: which ids appear, in what order, in which
-// submenu, plus every role item.
-//
-// The template is a pure function so the shape is unit-testable without
-// launching a BrowserWindow; only `electron` TYPES are imported here (erased at
-// runtime). Installation lives in src/main/index.ts.
+// Pure — `electron` TYPES only, no runtime import — so the shape is testable
+// without a BrowserWindow. Installation lives in src/main/index.ts.
 import type { MenuItemConstructorOptions } from 'electron'
 
+import { chordModifier, type ChordModifier } from '../shared/chords.js'
 import {
   DEFAULT_MENU_LABELS,
   MENU_ACTION_IDS,
@@ -69,7 +41,6 @@ export interface AppMenuDeps {
   appName: string
 }
 
-/// The macOS menu bar.
 export function buildApplicationMenuTemplate(deps: AppMenuDeps): MenuItemConstructorOptions[] {
   const label = (key: MenuLabelKey): string =>
     deps.projection?.labels[key] ?? DEFAULT_MENU_LABELS[key]
@@ -77,9 +48,9 @@ export function buildApplicationMenuTemplate(deps: AppMenuDeps): MenuItemConstru
   const file = fileSubmenu(deps)
 
   return [
-    // Hand-built for one reason: `role: 'appMenu'` has no Settings slot, and
-    // Cmd+, is where every Mac user reaches for preferences. Everything else in
-    // it stays a role, so About/Services/Hide/Quit keep their native behaviour.
+    // Hand-built for one reason: `role: 'appMenu'` has no Settings slot. Every
+    // other entry stays a role, so About/Services/Hide/Quit keep AppKit's
+    // behaviour and placement.
     {
       label: deps.appName,
       submenu: sections([
@@ -94,11 +65,16 @@ export function buildApplicationMenuTemplate(deps: AppMenuDeps): MenuItemConstru
     // `fileSubmenu`. No Close Window item: Cmd+W belongs to `closeProject`
     // ("Save and Close"), the app's own action on every platform.
     ...(file.length > 0 ? [{ label: label('menu.file'), submenu: file }] : []),
+    // LANDMINE: take a role whole or omit it. `accelerator: ''` silently kills
+    // the role's native behaviour and `registerAccelerator: false` is ignored on
+    // macOS, so there is no way to keep this menu's clipboard items while
+    // freeing their chords — and no need to
+    // (docs/notes/electron-chromium-behavior.md).
     { role: 'editMenu' },
-    // Hand-built, per rule 2 above. `togglefullscreen` is the one View item Mac
-    // convention expects; the in-app View menu (workspace profiles) stays
-    // renderer-only and stays primary — `.app-header` is visible in fullscreen,
-    // where the system hides this bar behind a hover reveal.
+    // LANDMINE: never `role: 'viewMenu'` — it re-adds Reload and DevTools.
+    // Fullscreen is the one View item Mac convention expects; the in-app View
+    // menu (workspace profiles) stays renderer-only and stays primary, since
+    // `.app-header` is visible in fullscreen and this bar is not.
     { label: label('menu.view'), submenu: [{ role: 'togglefullscreen' }] },
     { role: 'windowMenu' },
   ]
@@ -124,8 +100,12 @@ function item(deps: AppMenuDeps, actionId: MenuActionId): MenuItemConstructorOpt
   return [
     {
       label: projected.label,
-      // Omitted, never empty: an empty accelerator is what kills a role's
-      // native behaviour, so the codebase never spells one that way.
+      // The accelerator does not make this item the chord's handler: the
+      // renderer sees the chord first and its `preventDefault()` suppresses this
+      // item, so `click` runs only for a mouse pick or a chord the renderer let
+      // through. Measured for custom items as well as roles
+      // (docs/notes/electron-chromium-behavior.md) — the whole design rests on
+      // it. Omitted rather than empty when the chord has no Electron spelling.
       ...(accelerator ? { accelerator } : {}),
       click: () => deps.dispatch(actionId),
     },
@@ -141,20 +121,15 @@ function sections(groups: MenuItemConstructorOptions[][]): MenuItemConstructorOp
   )
 }
 
-/// Modifier tokens as the binding parser spells them (`shortcuts/match.ts`) →
-/// Electron's. `Mod` is the parser's "Cmd on macOS, Ctrl elsewhere" token and
-/// maps to Electron's equivalent rather than being resolved here.
-const MODIFIERS: Record<string, string> = {
+/// Each canonical modifier in Electron's spelling. The accepted SPELLINGS live
+/// in shared/chords.ts, so a token added there reaches this converter too.
+/// `mod` keeps Electron's own platform-dependent token rather than resolving.
+const ELECTRON_MODIFIERS: Record<ChordModifier, string> = {
   mod: 'CommandOrControl',
   ctrl: 'Control',
-  control: 'Control',
-  cmd: 'Command',
   meta: 'Command',
-  command: 'Command',
   shift: 'Shift',
   alt: 'Alt',
-  option: 'Alt',
-  opt: 'Alt',
 }
 
 /// Key names the two notations spell differently. Anything not here is either a
@@ -177,8 +152,6 @@ const KEYS: Record<string, string> = {
   End: 'End',
   PageUp: 'PageUp',
   PageDown: 'PageDown',
-  Plus: 'Plus',
-  '+': 'Plus',
 }
 
 /// Convert one catalogue chord ("Mod+Shift+S") to an Electron accelerator, or
@@ -194,9 +167,9 @@ export function toElectronAccelerator(chord: string): string | null {
   const key = parts[parts.length - 1]!
   const out: string[] = []
   for (const raw of parts.slice(0, -1)) {
-    const modifier = MODIFIERS[raw.toLowerCase()]
+    const modifier = chordModifier(raw)
     if (!modifier) return null
-    out.push(modifier)
+    out.push(ELECTRON_MODIFIERS[modifier])
   }
   const resolved = KEYS[key] ?? (key.length === 1 ? key.toUpperCase() : functionKey(key))
   if (!resolved) return null

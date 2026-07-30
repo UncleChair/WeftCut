@@ -1,25 +1,13 @@
-// Contract for the macOS native application menu — the renderer → main
-// projection that keeps the two menu surfaces from drifting.
+// Contract for the macOS native application menu: what the renderer pushes to
+// main so the native items and the in-app `AppMenuBar` cannot drift.
 //
-// Two surfaces exist on macOS and they divide by OWNERSHIP, not by duplication
-// (ADR 0031 Stage 2, revised):
-//   • the native menu  — OS integration: the App/Edit/Window roles, a File
-//     projection, View → Enter Full Screen, Settings at Cmd+,;
-//   • the in-app AppMenuBar — the application command surface, and the primary
-//     one: `.app-header` still renders in fullscreen, where the system hides
-//     the native bar behind a hover reveal.
-//
-// Overlap in File is expected; the native items dispatch the SAME renderer
-// actions. What must never happen is a second hand-written list of labels and
-// accelerators, so the projection below is generated from the renderer's action
-// catalogue (`shortcuts/defs.ts`) plus the user's effective keybindings.
-//
-// Why the RENDERER supplies it rather than main reading the catalogue: labels
-// are i18n keys resolved by i18next (the user switches locale in-app, and main
-// has no i18next), and the effective binding is defaults ⊕ per-user overrides,
-// which the renderer already resolves for its own menu hints. One resolver,
-// both surfaces. Main owns the structure — which ids appear, in what order, in
-// which submenu, and every role item.
+// The split — main owns the menu's structure, the renderer owns every label and
+// accelerator in it. Why that direction: labels are i18n keys only i18next can
+// resolve (the user switches locale in-app; main has no i18next), and the
+// effective binding is catalogue defaults ⊕ `keybindings.json` overrides, which
+// the renderer already resolves for its own menu hints. One resolver, both
+// surfaces. Which items exist and where: src/main/appMenu.ts. Why the two
+// surfaces divide the way they do: ADR 0031 Stage 2.
 //
 // Types + plain data only: main, preload and the renderer all import this, so
 // it must stay free of DOM and Electron types.
