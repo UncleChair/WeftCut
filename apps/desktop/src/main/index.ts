@@ -144,7 +144,7 @@ async function createWindow(): Promise<BrowserWindow> {
     // electron-builder (embedded in the exe + installer — see
     // electron-builder.yml), and build/ is not bundled into the app, so we point
     // at the raster master only in dev, where the repo tree is on disk.
-    ...(isDev ? { icon: path.join(__dirname, '../../build/icon.png') } : {}),
+    ...(isDev ? { icon: path.join(import.meta.dirname, '../../build/icon.png') } : {}),
     // Show immediately. A frameless (`frame:false`) window combined with
     // `show:false` + a deferred `ready-to-show` show does NOT reliably surface
     // on Windows (ready-to-show may not fire) — the window stays hidden. With a
@@ -169,7 +169,7 @@ async function createWindow(): Promise<BrowserWindow> {
       : { frame: false }),
     backgroundColor: '#0a0a0a',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(import.meta.dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -218,7 +218,7 @@ async function createWindow(): Promise<BrowserWindow> {
   if (isDev) {
     await win.loadURL(process.env['ELECTRON_RENDERER_URL']!)
   } else {
-    await win.loadFile(path.join(__dirname, '../renderer/index.html'))
+    await win.loadFile(path.join(import.meta.dirname, '../renderer/index.html'))
   }
 
   void warnIfElevatedWindows(win)
@@ -280,7 +280,7 @@ app.whenReady().then(async () => {
   // has no bundled dir → falls back to system/auto-download as before.
   const ffmpegDir = app.isPackaged
     ? path.join(process.resourcesPath, 'ffmpeg')
-    : path.join(__dirname, '../../resources/ffmpeg', process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux')
+    : path.join(import.meta.dirname, '../../resources/ffmpeg', process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux')
   const ffmpegBin = path.join(ffmpegDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
   if (fs.existsSync(ffmpegBin)) {
     process.env.PATH = ffmpegDir + path.delimiter + (process.env.PATH ?? '')

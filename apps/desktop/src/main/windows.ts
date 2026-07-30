@@ -168,7 +168,7 @@ export function createSecondary(label: string, opts?: SecondaryWinOpts): void {
   win = new BrowserWindow({
     ...secondaryWindowConfig(opts),
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(import.meta.dirname, '../preload/index.js'),
       contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
     },
   })
@@ -198,7 +198,7 @@ export function createSecondary(label: string, opts?: SecondaryWinOpts): void {
     const file = u.pathname === '/' ? 'index.html' : u.pathname.replace(/^\/+/, '')
     // Reconcile loadFile's option semantics against the installed Electron 42:
     // `search` is the query string (sans leading '?'), `hash` the fragment (sans '#').
-    void win.loadFile(path.join(__dirname, '../renderer', file), {
+    void win.loadFile(path.join(import.meta.dirname, '../renderer', file), {
       search: u.search ? u.search.slice(1) : undefined,
       hash: u.hash ? u.hash.slice(1) : undefined,
     })

@@ -8,13 +8,13 @@ import type { UserMotifStore } from "./store";
  * PRODUCTION-ONLY: base dir of built-in served assets. Mirrors the ffmpeg-sidecar
  * resolution (`src/main/index.ts`): packaged → `<resources>/motifs/builtin`;
  * dev → `apps/desktop/src/shared/motifs/builtin` relative to the bundled main
- * (`__dirname = apps/desktop/out/main`, so `../../src/...`). NOT used by unit
- * tests (they pass an explicit dir to `resolveMotifFile`).
+ * (`import.meta.dirname = apps/desktop/out/main`, so `../../src/...`). NOT used
+ * by unit tests (they pass an explicit dir to `resolveMotifFile`).
  */
 export function builtinAssetDir(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, "motifs", "builtin")
-    : path.join(__dirname, "../../src/shared/motifs/builtin");
+    : path.join(import.meta.dirname, "../../src/shared/motifs/builtin");
 }
 
 /** Guess a Content-Type from a file extension. Mirrors `content_type_for`. */
