@@ -26,19 +26,24 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
+  /* macOS: begin content to the RIGHT of the native traffic lights. The inset
+     comes from Chromium (titleBarOverlay in src/main/index.ts publishes the real
+     button geometry as env(titlebar-area-*)) rather than a hardcoded width, for
+     two reasons: it is the browser's own safe-content edge, and it updates in
+     lockstep with the native frame — including at the START of the
+     leave-fullscreen animation, ~500ms before Electron's 'leave-full-screen'
+     event lands. Driving this off that event instead left the title overlapping
+     the reappearing buttons for the length of the animation.
+     The fallback covers every no-overlay case — macOS fullscreen (buttons
+     hidden) and Win/Linux (no traffic lights at all) — so no platform or
+     fullscreen selector is needed. max() so a narrow overlay can never shrink
+     the header's own padding. */
+  padding-left: max(16px, env(titlebar-area-x, 16px));
+  /* Never shorter than the band the buttons occupy, or they'd hang below the
+     bar onto the content. 0 without an overlay — the height stays intrinsic. */
+  min-height: env(titlebar-area-height, 0px);
   border-bottom: 1px solid var(--border-soft);
   user-select: none;
-}
-
-/* macOS: the native traffic lights sit top-left (titleBarStyle: 'hidden'), so
-   inset the header's left edge to clear them. Native fullscreen hides the
-   buttons, so the inset drops back to the normal padding then. */
-html.platform-mac .app-header {
-  padding-left: 80px;
-}
-
-html.platform-mac.app-window-fullscreen .app-header {
-  padding-left: 16px;
 }
 
 .app-header h1 {

@@ -34,8 +34,11 @@ const showSplashDebugControl =
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
 
-// macOS uses `titleBarStyle: 'hidden'` (native traffic lights). Tag <html> so
-// the CSS insets each self-drawn titlebar's left edge to clear those buttons.
+// macOS uses `titleBarStyle: 'hidden'`, so the window keeps the OS-drawn traffic
+// lights and its native rounded frame. Tag <html> for the chrome that differs on
+// that basis (base.css suppresses the self-drawn window edge). The titlebar
+// insets do NOT use this class — they read env(titlebar-area-*), which is empty
+// off macOS, so those rules stay platform-agnostic.
 // Applies to every renderer surface (main + Performance Monitor) that shares this bundle.
 if (isMac) document.documentElement.classList.add("platform-mac");
 
@@ -118,8 +121,13 @@ function Root() {
     const unlisten = currentWindow.onMaximizeChange((maximized) => {
       if (!cancelled) setMaximized(maximized);
     });
-    // Freshly created windows are never fullscreen, so no initial query is
-    // needed — only track subsequent enter/leave transitions.
+    // Only enter/leave transitions are tracked — no initial query, because the
+    // one state this class drives (the self-drawn edge) can't be wrong at boot:
+    // a window CAN now be restored straight into fullscreen, but only on macOS
+    // (sanitizeGeometry forces fullScreen false elsewhere), and macOS suppresses
+    // the self-drawn edge entirely in favour of the native frame. The
+    // traffic-light inset is not involved — that reads env(titlebar-area-*),
+    // which is already correct on the first paint.
     const unlistenFullscreen = currentWindow.onFullscreenChange((fullscreen) => {
       if (!cancelled) setFullscreen(fullscreen);
     });

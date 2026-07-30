@@ -57,17 +57,16 @@
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
-  height: 34px;
-  padding-left: 12px;
+  /* This popup keeps the native traffic lights on macOS (windowConfig.ts), so
+     the bar must contain them and the title must start clear of them. Both come
+     from Chromium's published button geometry (titleBarOverlay) — see
+     .app-header in app.css for why that beats a hardcoded inset. The fallbacks
+     are the Win/Linux values, where the renderer draws its own caption. */
+  height: max(34px, env(titlebar-area-height, 34px));
+  padding-left: max(12px, env(titlebar-area-x, 12px));
   border-bottom: 1px solid var(--border-soft);
   background: var(--background);
   user-select: none;
-}
-
-/* macOS: this popup keeps the native traffic lights (see windowConfig.ts), so
-   inset the title's left edge to clear them. */
-html.platform-mac .perf-titlebar {
-  padding-left: 72px;
 }
 
 .perf-titlebar-title {

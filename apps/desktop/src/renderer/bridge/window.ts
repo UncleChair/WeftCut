@@ -27,9 +27,13 @@ export function getCurrentWindow() {
           cb(!!(p as { isMaximized?: boolean } | undefined)?.isMaximized),
         ),
       ),
-    // macOS native fullscreen (green button) enter/leave, emitted by main
-    // (src/main/index.ts). Used to drop the traffic-light inset while the
-    // buttons are hidden in fullscreen. Returns the subscription's unlisten.
+    // Native fullscreen enter/leave, emitted by main (src/main/index.ts): the
+    // macOS green button, or F11 on Win/Linux. Used to drop the renderer's
+    // self-drawn window edge (base.css .app-window-fullscreen) while the window
+    // owns the screen. NOT the macOS traffic-light inset — these events land only
+    // after the fullscreen animation ends, too late to keep the title off the
+    // reappearing buttons; that inset reads env(titlebar-area-x) instead.
+    // Returns the subscription's unlisten.
     onFullscreenChange: (cb: (isFullscreen: boolean) => void) =>
       Promise.resolve(
         window.api.on('window:fullscreen-changed', (p) =>

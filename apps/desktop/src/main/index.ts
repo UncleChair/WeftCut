@@ -4,7 +4,7 @@ import os from 'node:os'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64, setMotifStore } from './motif/capture.js'
@@ -137,7 +137,16 @@ async function createWindow(): Promise<BrowserWindow> {
     height: geometry.height,
     // Restored only on macOS, where the green traffic light can also LEAVE
     // fullscreen; see sanitizeGeometry on why Win/Linux never restores it.
-    fullscreen: geometry.fullScreen,
+    // LANDMINE: spread in only when actually TRUE. Passing `fullscreen: false`
+    // (the value on every normal launch) makes Electron DISABLE the window's
+    // fullscreen capability outright — isFullScreenable() goes false and the
+    // green stoplight degrades to a plain zoom, silently losing native
+    // fullscreen. Verified on Electron 42: omitting the key gives a
+    // fullscreenable window, passing `false` or even `undefined` does not.
+    ...(geometry.fullScreen ? { fullscreen: true as const } : {}),
+    // Restates the default, so the trap above can't creep back in via another
+    // option; the e2e window-chrome spec guards the resulting capability.
+    fullscreenable: true,
     ...MAIN_WINDOW_MINIMUM_SIZE,
     // Dev only: electron-vite runs the bare electron.exe, whose taskbar/Alt-Tab
     // icon is Electron's default. The PACKAGED app gets its icon from
@@ -162,10 +171,26 @@ async function createWindow(): Promise<BrowserWindow> {
     //   • Windows / Linux — a fully frameless window; the renderer draws its own
     //     titlebar (app-header / startup-titlebar / agent-titlebar) + caption
     //     buttons, since those platforms have no traffic-light equivalent.
-    // trafficLightPosition nudges the buttons to sit vertically centred in our
-    // slim (~30–37px) titlebars rather than the taller macOS default.
+    // trafficLightPosition centres the buttons in our slim caption bars instead
+    // of the taller macOS default. The buttons occupy a 14px-tall band whose TOP
+    // is `y` (measured on Electron 42; fractional values round to whole points),
+    // so centring in a bar of height H means y = (H - 14) / 2. H here is
+    // .app-header's intrinsic height — 42.5px, content-driven — giving y = 14.
+    // Chromium then reports env(titlebar-area-height) as 2y + 14 = 42px, and the
+    // band's centre is always exactly half of that, so the invariant is simply
+    // "bar height == env(titlebar-area-height)". The other caption bars (startup
+    // strip, agent-mode row) SIZE themselves to that env value and are therefore
+    // centred by construction; only .app-header has a height of its own, so this
+    // one number has to match it. The e2e window-chrome spec fails if it drifts.
+    // titleBarOverlay exposes the button geometry to CSS as
+    // env(titlebar-area-*), which is how the renderer insets its titlebars —
+    // Chromium updates those in lockstep with the native frame, including at the
+    // START of the leave-fullscreen animation (~500ms before Electron's
+    // 'leave-full-screen' fires), so the title never overlaps the reappearing
+    // buttons. macOS ONLY: on Windows the same flag makes the OS draw its own
+    // caption buttons on top of our <WindowControls/>.
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 13, y: 11 } }
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 13, y: 14 }, titleBarOverlay: true }
       : { frame: false }),
     backgroundColor: '#0a0a0a',
     webPreferences: {
@@ -201,9 +226,12 @@ async function createWindow(): Promise<BrowserWindow> {
   win.on('maximize', sendMaximizeState)
   win.on('unmaximize', sendMaximizeState)
 
-  // macOS: the native green button enters/leaves fullscreen. Forward the state
-  // so the renderer can drop the traffic-light inset while fullscreen hides the
-  // buttons (see platform-mac CSS). Harmless on Win/Linux (F11 dev fullscreen).
+  // Forward the fullscreen state so the renderer can drop its self-drawn window
+  // edge (base.css .app-window-fullscreen) while the window owns the screen.
+  // NOT used for the macOS traffic-light inset: these events land only AFTER the
+  // fullscreen animation finishes, so driving the inset off them left the title
+  // overlapping the reappearing buttons for the length of the exit animation.
+  // That inset now reads env(titlebar-area-x) instead (titleBarOverlay above).
   const sendFullscreenState = () =>
     win.webContents.send('evt:window:fullscreen-changed', { isFullscreen: win.isFullScreen() })
   win.on('enter-full-screen', sendFullscreenState)
@@ -267,6 +295,18 @@ app.whenReady().then(async () => {
   // under generic "electron.exe" and won't adopt our window icon. Match the
   // packaged appId (electron-builder.yml) so dev and prod share one identity.
   app.setAppUserModelId('dev.weftcut.desktop')
+
+  // WeftCut's UI is dark-only (base.css pins `color-scheme: dark`), so declare
+  // that to the OS instead of inheriting the system appearance. macOS draws the
+  // traffic lights through the WINDOW's appearance, and its light-chrome
+  // INACTIVE state is a dark grey disc meant for a light titlebar — invisible
+  // against our #0a0a0a caption, so an unfocused window looked like it had no
+  // buttons at all on a light-mode host. `color-scheme` can't reach them: it
+  // only governs what Chromium paints, not NSWindow's own controls. Set before
+  // the first window (and before any native menu/dialog) so nothing paints
+  // light first; it also carries the dark appearance into native menus, sheets,
+  // and the file picker.
+  nativeTheme.themeSource = 'dark'
 
   // App-global (not per-window): drop the native default menu so its accelerators
   // stop preempting the renderer's useShortcuts dispatcher. shouldClearApplicationMenu

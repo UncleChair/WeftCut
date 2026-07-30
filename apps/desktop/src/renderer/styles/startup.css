@@ -325,29 +325,25 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 34px;
+  /* Tall enough to contain the macOS traffic lights, which the OS draws over
+     this strip — a shorter bar leaves them hanging onto the content below.
+     env() is 0/unset without an overlay (Win/Linux, macOS fullscreen), so the
+     34px fallback is the Win/Linux height. See .app-header for the full note. */
+  height: max(34px, env(titlebar-area-height, 34px));
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
   gap: 8px;
+  /* Keep the settings button clear of the traffic lights. Mirrors .app-header:
+     Chromium's own safe-content edge, which also restores itself as the
+     leave-fullscreen animation starts rather than after it finishes. */
+  padding-left: env(titlebar-area-x, 0px);
   user-select: none;
   z-index: 10;
 }
 
 .startup-titlebar .window-controls {
   margin: 0;
-}
-
-/* macOS: the native traffic lights sit top-left (titleBarStyle: 'hidden'),
- * so inset the titlebar's left edge for the settings button to clear them.
- * Mirrors .app-header; native fullscreen hides the buttons, dropping the
- * inset. */
-html.platform-mac .startup-titlebar {
-  padding-left: 80px;
-}
-
-html.platform-mac.app-window-fullscreen .startup-titlebar {
-  padding-left: 0;
 }
 
 /* Top-left settings entry. The titlebar is justify-content: flex-end (the

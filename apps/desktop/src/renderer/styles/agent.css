@@ -13,7 +13,11 @@
   inset: 0;
   display: grid;
   grid-template-columns: 1fr 360px;
-  grid-template-rows: 30px 1fr 80px;
+  /* The titlebar row must contain the macOS traffic lights the OS draws over it
+     — at 30px they hung 6px past the strip onto the black preview. env() is
+     unset without an overlay (Win/Linux, macOS fullscreen), so 30px stays the
+     Win/Linux height. See .app-header in app.css. */
+  grid-template-rows: max(30px, env(titlebar-area-height, 30px)) 1fr 80px;
   grid-template-areas:
     "titlebar titlebar"
     "preview  record"

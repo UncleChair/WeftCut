@@ -29,6 +29,20 @@ describe('secondaryWindowConfig', () => {
     expect(c.frame).toBe(true)
     expect(c.titleBarStyle).toBe('hidden')
     expect(c.trafficLightPosition).toEqual({ x: 10, y: 10 })
+    // The popup's titlebar insets itself from env(titlebar-area-*) (perf.css),
+    // which only exists when the overlay APIs are enabled.
+    expect(c.titleBarOverlay).toBe(true)
+  })
+
+  it('never enables the overlay APIs off macOS', () => {
+    // On Windows titleBarOverlay makes the OS paint native caption buttons —
+    // they would sit on top of the renderer's own <WindowControls/>.
+    for (const platform of ['win32', 'linux'] as const) {
+      expect(secondaryWindowConfig({ decorations: false }, platform).titleBarOverlay).toBeUndefined()
+      expect(secondaryWindowConfig({ decorations: true }, platform).titleBarOverlay).toBeUndefined()
+    }
+    // Nor for a DECORATED macOS popup: it has a native titlebar already.
+    expect(secondaryWindowConfig({ decorations: true }, 'darwin').titleBarOverlay).toBeUndefined()
   })
 
   it('threads sizing + title + resizable through', () => {

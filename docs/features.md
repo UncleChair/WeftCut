@@ -269,3 +269,53 @@ bounds; `isMaximized()` reads false). Fullscreen is restored only on
 macOS, where the green traffic light can also leave it; on Windows/Linux
 F11 is dev-gated, so a restored fullscreen would be inescapable in a
 release build.
+
+**Landmine — restoring fullscreen must not pass `false`.** Electron reads an
+explicit `fullscreen: false` in the constructor as "disable this window's
+fullscreen capability": `isFullScreenable()` goes false, the macOS green
+stoplight degrades to a plain zoom, and `setFullScreen(true)` becomes a
+silent no-op. Since the saved flag is false on every normal launch, feeding
+it straight to the constructor turned native fullscreen off for everyone.
+The key is spread in only when actually true. Passing `undefined` disables
+it just the same — only omitting the key works. Guarded by
+`e2e/electron/window-chrome.spec.ts`.
+
+## macOS window caption
+
+The main window is frameless on Windows/Linux (the renderer draws
+`<WindowControls/>`), but on macOS it uses `titleBarStyle: 'hidden'` and keeps
+the OS-drawn traffic lights — so the green button gives real native fullscreen
+and the window keeps its native rounded frame and shadow. Two things that
+follow from that, both of which were wrong once:
+
+**The inset comes from CSS, not IPC.** Each self-drawn bar
+(`.app-header`, `.startup-titlebar`, `.perf-titlebar`, the agent-mode
+titlebar row) starts its content at `env(titlebar-area-x)` and is at least
+`env(titlebar-area-height)` tall — the real button geometry, published by
+`titleBarOverlay: true`. The fallback in each `env()` covers every
+no-overlay case (macOS fullscreen, and Win/Linux where there are no traffic
+lights), so none of these rules needs a platform or fullscreen selector.
+Driving the inset off the `enter-/leave-full-screen` IPC events instead is
+what produced the visible bug: those land only *after* the fullscreen
+animation, ~500ms after Chromium has already moved the buttons, so the title
+overlapped them for the whole exit animation. `titleBarOverlay` is macOS-only
+— on Windows the same flag has the OS paint native caption buttons over ours.
+
+**Centring is one number, and it is derived.** The buttons occupy a 14px-tall
+band whose top is `trafficLightPosition.y` (fractional values round to whole
+points), and Chromium reports `env(titlebar-area-height)` as `2y + 14` — so the
+band's centre is always exactly half that env value. The invariant that follows:
+**a bar is vertically centred if and only if its own height equals
+`env(titlebar-area-height)`**. Bars that size themselves to the env value
+satisfy it for free; `.app-header` is the only one with a height of its own
+(42.5px, content-driven), so `y = (42.5 - 14) / 2 = 14`. Getting this wrong is
+not subtle — at the previous `y = 11` the buttons sat 3px high in the editor.
+
+**The window's appearance must be declared.** macOS draws the traffic lights
+through the *window's* appearance, so with `nativeTheme.themeSource` left at
+`'system'` a light-mode host drew the INACTIVE buttons in light-chrome grey —
+invisible against the `#0a0a0a` caption, making an unfocused window look like
+it had no buttons at all. `color-scheme: dark` cannot reach them; it governs
+only what Chromium paints. `themeSource = 'dark'` is set before the first
+window, which also carries the dark appearance into native menus, sheets, and
+the file picker.

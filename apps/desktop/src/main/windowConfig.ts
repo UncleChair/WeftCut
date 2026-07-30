@@ -37,6 +37,11 @@ export interface SecondaryWindowConfig {
   // buttons — see WindowControls). Undefined on Win/Linux (truly frameless).
   titleBarStyle?: 'hidden'
   trafficLightPosition?: { x: number; y: number }
+  // Publishes the traffic-light geometry to CSS as env(titlebar-area-*) so the
+  // popup's own titlebar insets itself from the real buttons instead of a
+  // hardcoded width (perf.css). macOS only — on Windows this flag would have the
+  // OS paint native caption buttons over the renderer's own.
+  titleBarOverlay?: true
   backgroundColor: string
 }
 
@@ -62,7 +67,11 @@ export function secondaryWindowConfig(
     // caption buttons suppressed on macOS, the popup would be un-closable.
     frame: frameless && !isMac ? false : true,
     ...(frameless && isMac
-      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 10, y: 10 } }
+      ? {
+          titleBarStyle: 'hidden' as const,
+          trafficLightPosition: { x: 10, y: 10 },
+          titleBarOverlay: true as const,
+        }
       : {}),
     backgroundColor: '#0a0a0a',
   }
