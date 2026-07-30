@@ -68,6 +68,9 @@ export class AudioMixer {
   private source: ConformSource | null = null;
   private sourcePending = false;
   private readFailedWarned = false;
+  /// Latched by `dispose()`. `openSource`'s continuation checks it — the
+  /// conform fetch can outlive the layer that asked for it.
+  private disposed = false;
 
   private view: AudioView;
   private layerTStartUs: number;
@@ -114,7 +117,14 @@ export class AudioMixer {
     if (this.sourcePending) return;
     this.sourcePending = true;
     try {
-      this.source = await ConformSource.open(url);
+      const source = await ConformSource.open(url);
+      // A dispose that landed during the fetch already severed this mixer's
+      // graph and nulled `source` — assigning here would resurrect it:
+      // `installPanGraph` rebuilds and reconnects a fresh pan graph (leaked
+      // AudioNodes), and a disposed mixer reporting `source !== null` is one
+      // stray `tick()` away from scheduling audio out of a dead object.
+      if (this.disposed) return;
+      this.source = source;
       this.installPanGraph(this.source.header.channels);
       this.deriveFromView();
     } catch (e) {
@@ -449,6 +459,7 @@ export class AudioMixer {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.teardown(false);
     try {
       this.gainNode.disconnect();

@@ -200,6 +200,13 @@ export class PlaybackEngine {
   /// snaps in within 50 ms of the user releasing the drag.
   seek(tUs: number): void {
     this.clock.setPosition(tUs);
+    // `setPosition` while playing RE-ANCHORS the clock; the compositor must
+    // see the fresh anchor BEFORE the composite below, or its audio pass maps
+    // the new position through the old anchor — for a backward in-play seek
+    // that crosses a chunk boundary, that plans an immediate-start chunk the
+    // old schedule is still playing over (a frame of doubled audio the next
+    // tick's teardown cannot recall once the read wins the rAF race).
+    this.compositor.setClockAnchor(this.clock.getAnchor());
     // In-play seek flushes the decoder rings — arm the underrun
     // tracker's grace window so the rebuild interval doesn't count as
     // dropped frames on every timeline click during playback.
@@ -368,6 +375,11 @@ export class PlaybackEngine {
         // `Compositor.fpsNum`).
         const parkUs = this.compositor.lastFrameAnchorUs(endUs);
         this.clock.setPosition(parkUs);
+        // Same anchor-forwarding rule as seek(): the park re-anchored the
+        // clock while `Compositor.playing` is still true, so the composite
+        // below runs an audio pass — against the stale anchor unless it is
+        // refreshed here first.
+        this.compositor.setClockAnchor(this.clock.getAnchor());
         this.compositor.setAnchorTime(parkUs);
         this.compositor.compositeFrame(parkUs);
         if (parkUs !== this.lastEmittedUs) {

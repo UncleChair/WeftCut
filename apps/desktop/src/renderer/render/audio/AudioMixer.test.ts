@@ -7,7 +7,12 @@ const conform = vi.hoisted(() => {
     resolve: () => void;
     reject: () => void;
   }
-  return { pending: [] as PendingRead[] };
+  return {
+    pending: [] as PendingRead[],
+    /// When set, `ConformSource.open` parks on it — lets a test land dispose()
+    /// inside the open's in-flight window.
+    openGate: null as Promise<void> | null,
+  };
 });
 
 vi.mock("./conformSource", () => ({
@@ -15,6 +20,7 @@ vi.mock("./conformSource", () => ({
     readonly header = { channels: 1 };
 
     static async open(): Promise<unknown> {
+      if (conform.openGate) await conform.openGate;
       return new this();
     }
 
@@ -131,7 +137,28 @@ function createMixer(): { ctx: FakeAudioContext; mixer: AudioMixer } {
 
 afterEach(() => {
   conform.pending.length = 0;
+  conform.openGate = null;
   vi.restoreAllMocks();
+});
+
+describe("AudioMixer dispose racing the conform open", () => {
+  it("a dispose during the conform fetch must not resurrect the mixer", async () => {
+    // The ctor fires `openSource` and the conform header fetch can outlive the
+    // layer that asked for it (delete an Audio layer within the fetch's
+    // latency). Before the disposed latch, the continuation re-assigned
+    // `source` and rebuilt + reconnected a pan graph on the severed output —
+    // leaked AudioNodes, and a disposed mixer one stray tick away from
+    // scheduling audio out of a dead object.
+    let releaseOpen!: () => void;
+    conform.openGate = new Promise<void>((r) => { releaseOpen = r; });
+    const { mixer } = createMixer();
+    mixer.dispose(); // open still in flight
+    releaseOpen();
+    await flush();
+    // A resurrected source would schedule reads; a disposed mixer stays inert.
+    mixer.tick(0, true, 1_000_000, { compUs: 0, ctxTime: 10 });
+    expect(conform.pending).toHaveLength(0);
+  });
 });
 
 describe("AudioMixer seek scheduling", () => {

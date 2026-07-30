@@ -219,6 +219,36 @@ describe("UnderrunTracker", () => {
     expect(tracker.snapshot().droppedFrames).toBe(1);
   });
 
+  it("carries an unexpired grace across beginPlay into the session it was armed for", () => {
+    // play() arms the warm-up gate up to 250 ms before the master clock is
+    // released, so a seek inside that window arms grace for exactly the ring
+    // rebuild this session opens with. beginPlay clearing it would let that
+    // rebuild score dropped frames the grace was armed against.
+    const { tracker, advance } = makeTracker({ graceMaxMs: 1_000 });
+    tracker.noteSeekWhilePlaying(); // t=0 → grace deadline t=1000
+    advance(100);
+    tracker.beginPlay(); // inside the deadline — grace survives
+    tracker.judgeSweep(true, 0); // the rebuild's stale sweep → suppressed
+    expect(tracker.snapshot().droppedFrames).toBe(0);
+    advance(16);
+    tracker.judgeSweep(false, FRAME_US); // re-primed → grace clears
+    advance(16);
+    tracker.judgeSweep(true, 2 * FRAME_US); // judged normally again
+    expect(tracker.snapshot().droppedFrames).toBe(1);
+  });
+
+  it("does not carry an expired grace into a new play session", () => {
+    // The survival rule is the DEADLINE, not the armed flag: a grace whose
+    // window already lapsed before the clock released would otherwise be an
+    // eternal one for the session that follows.
+    const { tracker, advance } = makeTracker({ graceMaxMs: 1_000 });
+    tracker.noteSeekWhilePlaying(); // t=0 → grace deadline t=1000
+    advance(1_001);
+    tracker.beginPlay(); // deadline already passed — grace must not survive
+    tracker.judgeSweep(true, 0);
+    expect(tracker.snapshot().droppedFrames).toBe(1);
+  });
+
   it("beginPlay resets counters and notifies the store", () => {
     const { tracker, emissions } = makeTracker();
     tracker.beginPlay();

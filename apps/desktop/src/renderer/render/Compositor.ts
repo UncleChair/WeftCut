@@ -727,11 +727,14 @@ export class Compositor {
     // Stale-size RTs are destroyed as they come back (see TransitionRtPool).
     this.transitionNodes?.setSize(width, height);
     // Evict image sprites so the next composite re-creates them at the new
-    // cap; same dispose pair the per-frame sweep uses.
+    // cap; same dispose pair the per-frame sweep uses. The load reservation
+    // goes with the sprite it belongs to — a survivor here would let a stale
+    // completion delete the re-created sprite's entry (see ensureImage).
     for (const [layerId, i] of this.images) {
       i.sprite.dispose();
       i.effects.dispose();
       this.images.delete(layerId);
+      this.imageLoadPromises.delete(layerId);
     }
     this.scheduleRepaint();
   }
@@ -921,6 +924,10 @@ export class Compositor {
         i.sprite.dispose();
         i.effects.dispose();
         this.images.delete(layerId);
+        // Delete + undo restores the same layer id; a reservation left behind
+        // here is exactly the stale completion ensureImage's identity check
+        // defends against — clean it at the source too.
+        this.imageLoadPromises.delete(layerId);
       }
     }
     for (const [layerId, c] of this.colors) {
@@ -1124,6 +1131,13 @@ export class Compositor {
     // hidden. Everything below this point is visual/presentation-only work.
     if (!this.presentationVisible) {
       this.presentationDirty = true;
+      // The tick clock must be stamped on THIS exit too: composites keep
+      // running every frame while the tab is hidden, and a frozen
+      // `lastTickMs` turns the whole hidden interval into one giant "late
+      // tick" the moment the tab is shown again — a false lateFrame, a lit
+      // indicator, and a warn row blaming a render loop that never stalled.
+      // Same contract as the scrub/pause path in the visible tail.
+      if (this.mode === "preview") this.underrun.tickDecay();
       // The `compositeMsLast` stamp at the tail never sees this exit, so this
       // bracket is the only account of an audio-only (hidden-tab) frame.
       stageAdd(STAGE.Composite, compositeStart);
@@ -1503,6 +1517,7 @@ export class Compositor {
     this.clips.clear();
     for (const i of this.images.values()) { i.sprite.dispose(); i.effects.dispose(); }
     this.images.clear();
+    this.imageLoadPromises.clear();
     for (const c of this.colors.values()) { c.sprite.dispose(); c.effects.dispose(); }
     this.colors.clear();
     for (const t of this.texts.values()) { t.sprite.dispose(); t.effects.dispose(); }
@@ -2278,7 +2293,15 @@ export class Compositor {
     const loadPromise = sprite.loadFromAsset(url).then(() => {
       // Trigger a repaint once the bitmap lands.
       this.scheduleRepaint();
-      this.imageLoadPromises.delete(layer.id);
+      // Identity-checked, never key-only: a stale completion (this sprite was
+      // evicted and the layer re-ensured while the load was in flight) must
+      // not delete the NEW sprite's reservation — `preloadImages` would then
+      // see nothing pending and the export frame loop would race the
+      // still-loading bitmap into a transparent image layer. Same ABA the
+      // AudioMixer's identity-owned chunk slots close.
+      if (this.imageLoadPromises.get(layer.id) === loadPromise) {
+        this.imageLoadPromises.delete(layer.id);
+      }
     });
     this.imageLoadPromises.set(layer.id, loadPromise);
     void loadPromise;

@@ -209,12 +209,18 @@ export class UnderrunTracker {
     this.lateFrames = 0;
     this.lastDropFrameUs = null;
     this.lastLateFrameUs = null;
+    // An UNEXPIRED grace survives session start. play() arms the warm-up
+    // gate up to 250 ms before the clock is released, and a seek inside
+    // that window arms grace for exactly the ring rebuild the session will
+    // open with — clearing it here (the old behavior) let that rebuild
+    // score dropped+late frames the grace was armed against.
+    const keepGrace = this.graceArmed && this.now() < this.graceDeadlineMs;
     // Drop the stamp, not just the counts: the pause before this play
     // would otherwise difference into one session-opening late tick.
     this.lastTickMs = null;
     this.active = false;
     this.activeUntilMs = 0;
-    this.graceArmed = false;
+    this.graceArmed = keepGrace;
     this.sessionConsumed = false;
     this.emit(true);
   }
