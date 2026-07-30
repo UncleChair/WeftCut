@@ -9,6 +9,11 @@ status: accepted
 > — see "Probe verdicts" and the rewritten Stage 2 below. Verdict details live in
 > `docs/notes/electron-chromium-behavior.md`; the implementation plan lives in
 > `.scratch/macos-native-menu/`.
+>
+> **Stage 2 implemented 2026-07-30** as revised (`src/main/appMenu.ts`,
+> `src/shared/menu.ts`, `src/renderer/menu/nativeMenu.ts`, gated by
+> `e2e/electron/menu.spec.ts`). The open decisions below are settled — see
+> "Stage 2 as built".
 
 ## Context
 Every WeftCut keyboard shortcut is dispatched in the **renderer** by `useShortcuts`
@@ -136,6 +141,33 @@ Open decision left to implementation: whether `Cmd+W` keeps the Mac convention (
 window) or maps to the renderer's `closeProject` ("save and close"). Per verdict (1) either
 is now reachable; it is a product call, not a technical constraint.
 
+## Stage 2 as built (2026-07-30)
+The shape above shipped unchanged. Four decisions it left open, and how they landed:
+
+- **`Cmd+W` maps to `closeProject`**, and the native menu has **no Close Window item** at
+  all. Not really a coin-flip once verdict (1) is taken seriously: the renderer already
+  binds `Mod+W` to `closeProject` on every platform and `preventDefault()`s it, so a native
+  `role: 'close'` would sit in File and do nothing whenever the editor is mounted. The
+  single-window app still closes from the red traffic light.
+- **Settings is a real catalogue action** (`openSettings`, `Mod+Comma`) rather than an
+  accelerator hard-typed into the menu — so it is rebindable, listed in Settings →
+  Keyboard, and identical on Windows/Linux, where the in-app File → Settings entry (which
+  **stays**, on all platforms) now renders the same chord as its hint.
+- **Dev reload/DevTools stay out of the menu**, in `hardenWindow`'s `before-input-event`
+  seam, matching Stage 1. Dev and prod ship the same menu on every platform.
+- **Labels and accelerators are pushed by the renderer**, not read by main. Main cannot
+  resolve an i18n key (no i18next) and would otherwise duplicate the defaults ⊕
+  `keybindings.json` resolution the renderer already does; so the renderer sends a
+  `MenuProjection` (`src/shared/menu.ts`) on mount, on locale switch, and on rebind, and
+  main owns only the structure. A consequence worth knowing: the projection describes what
+  the CURRENT surface can run, so items are **omitted** rather than disabled — the startup
+  screen shows Settings and no File menu. That is what keeps the "no live-state IPC"
+  constraint above honest.
+
+Electron's role labels (Edit, Window, Minimize…) stay English whatever the app locale is;
+only our own titles and items translate. Accepted — it is Electron's behaviour, not a
+choice this menu can make.
+
 ## Consequences
 - **+** Windows/Linux: the default menu no longer intercepts keys; the renderer's
   `useShortcuts` + rebindable `keybindings.json` becomes the single, uncontested owner of
@@ -152,6 +184,12 @@ is now reachable; it is a product call, not a technical constraint.
   does receive every chord. What the default menu actually costs is that unconsumed chords
   reach a *wrong* handler (Cmd+W closes the window, Cmd+Z runs DOM undo) and that Reload +
   DevTools ship to end users. The gap is a safety and correctness one, not a dead-keys one.
+  **Closed 2026-07-30** — Stage 2 shipped; `e2e/electron/menu.spec.ts` keeps it closed.
+- **−** The native menu now depends on a renderer that has mounted: between `app.whenReady`
+  and the first `menu:sync` it is roles only (no File, no Settings), and a renderer that
+  never paints leaves it that way. Acceptable because everything safety-critical — the
+  absence of reload/DevTools, the App/Edit/Window roles — is in the boot menu already;
+  only the app's own commands wait.
 - Rejected — **`registerAccelerator: false` everywhere (option 1):** on frameless
   Windows/Linux the native menu never renders, so it buys nothing over `null` while adding
   per-item accelerator bookkeeping; and it is ignored on macOS anyway.
