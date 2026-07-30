@@ -255,6 +255,30 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     input.remove();
   });
 
+  it("dispatches project undo/redo but leaves text-field undo to the platform", () => {
+    // Inside a text field Cmd+Z means "undo my typing" — served by the macOS
+    // Edit menu's `role: 'undo'` and by Chromium's editor elsewhere, but only
+    // if this dispatcher does not consume the chord. Consuming it reverted a
+    // project edit while the user watched an unchanged text box.
+    const undo = vi.fn();
+    const redo = vi.fn();
+    render(<Harness handlers={{ undo, redo }} />);
+
+    expect(dispatchBinding(document.body, "Mod+Z").defaultPrevented).toBe(true);
+    expect(dispatchBinding(document.body, "Mod+Shift+Z").defaultPrevented).toBe(true);
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(redo).toHaveBeenCalledTimes(1);
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    expect(dispatchBinding(input, "Mod+Z").defaultPrevented).toBe(false);
+    expect(dispatchBinding(input, "Mod+Shift+Z").defaultPrevented).toBe(false);
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(redo).toHaveBeenCalledTimes(1);
+    input.remove();
+  });
+
   it("shortcuts are inert while a color-pick session is active", () => {
     const togglePlay = vi.fn();
     render(<Harness handlers={{ togglePlay }} />);

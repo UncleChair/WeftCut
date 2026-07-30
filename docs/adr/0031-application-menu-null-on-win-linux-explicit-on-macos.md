@@ -155,6 +155,12 @@ The shape above shipped unchanged. Four decisions it left open, and how they lan
   **stays**, on all platforms) now renders the same chord as its hint.
 - **Dev reload/DevTools stay out of the menu**, in `hardenWindow`'s `before-input-event`
   seam, matching Stage 1. Dev and prod ship the same menu on every platform.
+- **`undo` / `redo` joined the `fireWhenEditing: false` set.** The design says a
+  renderer action stands down inside a text field so the native role can serve — but only
+  copy/paste actually carried that flag, so `Cmd+Z` in a text input consumed the chord,
+  suppressed both the Edit menu's `role: 'undo'` and Chromium's own editor undo, and
+  reverted a *project* edit while the user watched an unchanged text box. Standing down
+  fixes text undo on every platform; project undo is unchanged everywhere else.
 - **Labels and accelerators are pushed by the renderer**, not read by main. Main cannot
   resolve an i18n key (no i18next) and would otherwise duplicate the defaults ⊕
   `keybindings.json` resolution the renderer already does; so the renderer sends a

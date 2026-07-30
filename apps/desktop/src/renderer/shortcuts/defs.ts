@@ -75,8 +75,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   save:            { defaultKeys: ["Mod+S"],               labelKey: "actions.save" },
   saveAs:          { defaultKeys: ["Mod+Shift+S"],         labelKey: "actions.save_as" },
   closeProject:    { defaultKeys: ["Mod+W"],               labelKey: "actions.save_and_close" },
-  undo:            { defaultKeys: ["Mod+Z"],               labelKey: "actions.undo", repeatable: true },
-  redo:            { defaultKeys: ["Mod+Shift+Z"],         labelKey: "actions.redo", repeatable: true },
+  // Project history, and only outside a text field: inside one, Cmd+Z means
+  // "undo my typing", which the platform already does — the macOS Edit menu's
+  // `role: 'undo'` and Chromium's own editor elsewhere. Consuming the chord
+  // there (the chord default) suppressed both and silently reverted a project
+  // edit instead. Same reasoning as copy/paste below.
+  undo:            { defaultKeys: ["Mod+Z"],               labelKey: "actions.undo", repeatable: true, fireWhenEditing: false },
+  redo:            { defaultKeys: ["Mod+Shift+Z"],         labelKey: "actions.redo", repeatable: true, fireWhenEditing: false },
   // captureGlobal: Space must toggle playback even when focus is parked on a
   // menubar trigger / toolbar button after a click — a Base UI trigger would
   // otherwise treat Space as "open the menu".
