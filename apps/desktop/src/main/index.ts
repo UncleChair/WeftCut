@@ -14,6 +14,7 @@ import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { shouldClearApplicationMenu } from './inputPolicy.js'
+import { buildApplicationMenuTemplate } from './appMenu.js'
 import { broadcastEvent } from './broadcast.js'
 import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
@@ -308,11 +309,17 @@ app.whenReady().then(async () => {
   // and the file picker.
   nativeTheme.themeSource = 'dark'
 
-  // App-global (not per-window): drop the native default menu so its accelerators
-  // stop preempting the renderer's useShortcuts dispatcher. shouldClearApplicationMenu
-  // owns the per-platform decision; dev reload/DevTools/fullscreen are reprovided
-  // through hardenWindow's before-input-event seam. See ADR 0031.
+  // App-global (not per-window): Electron's DEFAULT application menu never goes
+  // live on any platform. Windows/Linux get no menu at all (the window is
+  // frameless; the renderer draws its own bar), macOS gets the explicit one from
+  // ./appMenu — the OS-integration surface, and what keeps a production build
+  // from shipping the default menu's Cmd+R reload and Alt+Cmd+I DevTools.
+  // Either way dev reload/DevTools/fullscreen come from hardenWindow's
+  // before-input-event seam, so dev and prod share one code path. See ADR 0031.
   if (shouldClearApplicationMenu(process.platform)) Menu.setApplicationMenu(null)
+  else if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildApplicationMenuTemplate()))
+  }
 
   // Bundled ffmpeg: ffmpeg-sidecar resolves "ffmpeg" via PATH when no binary sits
   // adjacent to the exe (ffmpeg_sidecar::paths::ffmpeg_path). Prepend the packaged dir so the
