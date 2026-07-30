@@ -59,9 +59,13 @@ describe("PreviewSection", () => {
     expect(screen.getByRole("radio", { name: /Standard/ })).toBeTruthy();
     expect(screen.getByRole("radio", { name: /Lite/ })).toBeTruthy();
     expect(screen.getByText("Picks the best engine for each clip")).toBeTruthy();
-    expect(screen.getByText("Decodes every format")).toBeTruthy();
     expect(
-      screen.getByText("Lighter on resources; supports fewer formats"),
+      screen.getByText("Decodes every format, accurate colors"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Lighter on resources; supports fewer formats; colors may be slightly off",
+      ),
     ).toBeTruthy();
   });
 

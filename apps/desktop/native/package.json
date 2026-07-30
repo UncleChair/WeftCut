@@ -6,6 +6,6 @@
   "types": "index.d.ts",
   "files": ["index.js", "index.d.ts", "*.node"],
   "napi": { "binaryName": "weftcut-core" },
-  "devDependencies": { "@napi-rs/cli": "^3.6.2" },
+  "devDependencies": { "@napi-rs/cli": "^3.8.1" },
   "scripts": { "build": "napi build --platform --release" }
 }
