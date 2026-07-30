@@ -422,6 +422,16 @@ fn fold_key_interval(key_interval_us: i64, last_key_pts: i64, pts_us: i64) -> i6
     (key_interval_us * 3 + (pts_us - last_key_pts)) / 4
 }
 
+/// Whether a `ConsumeAck` for `slot` may free it: only a currently-busy slot
+/// qualifies. Exactly-once acks are otherwise enforced only by JS bookkeeping
+/// spread across three processes — a duplicate, stale, or out-of-range ack
+/// reaching here would free a slot the renderer may still be reading, letting
+/// the pump overwrite it mid-read: the exact frame reorder/tear the order gate
+/// exists to catch.
+fn ack_frees_slot(free: &[bool], slot: usize) -> bool {
+    free.get(slot) == Some(&false)
+}
+
 /// recv timeout so the pump makes progress (freed slot -> decode) between
 /// messages without busy-spinning.
 const RECV_TIMEOUT: Duration = Duration::from_millis(4);
@@ -675,6 +685,13 @@ impl SessionState {
                 Ok(Some(f)) => f,
                 Ok(None) => {
                     self.eof = true;
+                    // Every pump exit must stamp the terminal snapshot, or a
+                    // `take_timings` in this window reads the PREVIOUS exit's
+                    // final_* (see `note_lookahead_gated_skip`'s landmine).
+                    let free = self.free.iter().filter(|&&f| f).count() as u32;
+                    if let Ok(mut t) = self.timing.lock() {
+                        t.note_eof_return(free, true);
+                    }
                     emit(
                         poke,
                         PreviewGpuPoke::Eof {
@@ -685,8 +702,14 @@ impl SessionState {
                 }
                 Err(e) => {
                     // Halt the pump so we don't spin on a persistent error; a
-                    // later seek reopens decoding.
+                    // later seek reopens decoding. The halt IS the eof state,
+                    // so stamp the terminal snapshot the same way (every pump
+                    // exit must — see `note_lookahead_gated_skip`'s landmine).
                     self.eof = true;
+                    let free = self.free.iter().filter(|&&f| f).count() as u32;
+                    if let Ok(mut t) = self.timing.lock() {
+                        t.note_eof_return(free, true);
+                    }
                     emit(
                         poke,
                         PreviewGpuPoke::Error {
@@ -758,6 +781,12 @@ impl SessionState {
                     // to the session loop so it re-services its mailbox
                     // (including a pending `Close`) instead of retrying in a
                     // tight loop against a slot that may stay stuck.
+                    //
+                    // The frame WAS consumed from the stream whether or not
+                    // the copy landed: the frontier is the decoder's position,
+                    // not the delivery's, or the lookahead gate and
+                    // `needs_seek` drift off the real position.
+                    self.frontier_pts = decoded.pts_us;
                     let free = self.free.iter().filter(|&&f| f).count() as u32;
                     if let Ok(mut t) = self.timing.lock() {
                         t.note_acquire_failed(free, self.eof);
@@ -773,6 +802,16 @@ impl SessionState {
                 }
                 Err(e) => {
                     self.eof = true;
+                    // The frame was consumed from the stream even though the
+                    // copy failed — the frontier is the decoder's position,
+                    // not the delivery's. And every pump exit must stamp the
+                    // terminal snapshot (see `note_lookahead_gated_skip`'s
+                    // landmine); this error-halt is the eof state.
+                    self.frontier_pts = decoded.pts_us;
+                    let free = self.free.iter().filter(|&&f| f).count() as u32;
+                    if let Ok(mut t) = self.timing.lock() {
+                        t.note_eof_return(free, true);
+                    }
                     emit(
                         poke,
                         PreviewGpuPoke::Error {
@@ -1127,9 +1166,12 @@ fn session_thread(
                 ControlFlow::Continue(())
             }
             Ok(SessionMsg::ConsumeAck(slot)) => {
-                state.record_ack(slot as usize);
-                if let Some(f) = state.free.get_mut(slot as usize) {
-                    *f = true;
+                // A duplicate/stale/out-of-range ack is dropped whole — no
+                // free, no coord-RTT record — see `ack_frees_slot`. The pump
+                // still runs: the mailbox deserves service either way.
+                if ack_frees_slot(&state.free, slot as usize) {
+                    state.record_ack(slot as usize);
+                    state.free[slot as usize] = true;
                 }
                 state.pump(&poke, &stream_id);
                 ControlFlow::Continue(())
@@ -1532,6 +1574,20 @@ mod tests {
             (2_900_000..=3_000_000).contains(&k),
             "expected convergence toward the 3s GOP, got {k}"
         );
+    }
+
+    #[test]
+    fn ack_frees_slot_accepts_only_a_busy_slot() {
+        let free = [true, false, true];
+        // Busy slot: the renderer released it, the ack frees it.
+        assert!(ack_frees_slot(&free, 1));
+        // Already-free slot (duplicate or stale ack): freeing again would let
+        // the pump overwrite a slot the renderer may still be reading.
+        assert!(!ack_frees_slot(&free, 0));
+        assert!(!ack_frees_slot(&free, 2));
+        // Out-of-range slot: never frees anything.
+        assert!(!ack_frees_slot(&free, 3));
+        assert!(!ack_frees_slot(&free, usize::MAX));
     }
 
     #[test]

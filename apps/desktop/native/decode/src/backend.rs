@@ -684,23 +684,39 @@ impl NativeDecode {
         let out_scale = scale_div.map_or(OutScale::FULL, OutScale::from_divisor);
         let output_cadence =
             cadence_div.map_or(OutputCadence::FULL, OutputCadence::from_divisor);
-        self.preview_sw_sinks
-            .lock_recover()
-            .insert(stream_id.clone(), on_frame);
-        let info = self
-            .preview_sw
-            .open_with_accel_and_cadence(
-                &stream_id,
-                &path,
-                accel,
-                out_scale,
-                output_cadence,
-            )
-            .map_err(napi::Error::from_reason)?;
-        Ok(PreviewSwOpenInfoJs {
-            width: info.width,
-            height: info.height,
-        })
+        // Check-then-insert under ONE guard: a reused LIVE stream id must be
+        // refused before the insert, or the live session's sink is replaced
+        // right before the open below fails with "already open" — silencing a
+        // healthy session.
+        {
+            let mut sinks = self.preview_sw_sinks.lock_recover();
+            if sinks.contains_key(&stream_id) {
+                return Err(napi::Error::from_reason(format!(
+                    "preview-sw sink '{stream_id}' already registered"
+                )));
+            }
+            sinks.insert(stream_id.clone(), on_frame);
+        }
+        match self.preview_sw.open_with_accel_and_cadence(
+            &stream_id,
+            &path,
+            accel,
+            out_scale,
+            output_cadence,
+        ) {
+            Ok(info) => Ok(PreviewSwOpenInfoJs {
+                width: info.width,
+                height: info.height,
+            }),
+            Err(e) => {
+                // Open failed — drop the callback we optimistically registered
+                // so a failed open never leaves a dangling sink entry. Failed
+                // opens are routine here: hw copy-back lanes open
+                // optimistically and fall back to software.
+                self.preview_sw_sinks.lock_recover().remove(&stream_id);
+                Err(napi::Error::from_reason(e))
+            }
+        }
     }
 
     /// Move the session's decode anchor. `target_us` is an `f64` (napi has no

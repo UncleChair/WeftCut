@@ -293,9 +293,13 @@ fn serve_request(
     stream_id: &str,
     shutdown: &AtomicBool,
 ) {
-    let forward = cursor
-        .last_target_us
-        .is_some_and(|lt| target_us >= lt && target_us - cursor.frontier_us <= FORWARD_CONTINUE_US);
+    // Saturating, as the GPU twin is at every equivalent site: `target_us`
+    // arrives as `f64 as i64` from napi, so an absurd JS value sits at the i64
+    // extremes, where plain `-` panics in debug and wraps (misclassifying
+    // forward/backward) in release.
+    let forward = cursor.last_target_us.is_some_and(|lt| {
+        target_us >= lt && target_us.saturating_sub(cursor.frontier_us) <= FORWARD_CONTINUE_US
+    });
 
     // Forward past a drained stream: there is nothing left to decode and the
     // consumer was already told. Re-seeking to rediscover EOF is the tail cost
@@ -318,6 +322,14 @@ fn serve_request(
                 }
                 cursor.pending = None;
                 cursor.ended = true;
+                // The frontier must track the requested target on an EOF
+                // landing: left stale, every post-EOF tick further than
+                // FORWARD_CONTINUE_US past it fails the forward test and pays a
+                // fresh seek+flush+probe to rediscover the same EOF, forever.
+                // Advanced, the retry cadence collapses to one seek per
+                // FORWARD_CONTINUE_US of playhead advance — which doubles as
+                // self-heal for still-growing files.
+                cursor.frontier_us = cursor.frontier_us.max(target_us);
                 emit(
                     sink,
                     SwFramePoke::Eof {
@@ -359,6 +371,12 @@ fn serve_request(
                     }
                     Ok(None) => {
                         cursor.ended = true;
+                        // Same constraint as the seek-landing EOF arm above: an
+                        // indexed container's far-forward seek lands on the tail
+                        // keyframe and EOF surfaces HERE, with the frontier at
+                        // the tail frame's pts — stale, every later tick past
+                        // the continue-window would re-seek forever.
+                        cursor.frontier_us = cursor.frontier_us.max(target_us);
                         emit(
                             sink,
                             SwFramePoke::Eof {
@@ -385,12 +403,12 @@ fn serve_request(
         // prefix decoded only as a reference, or (on a forward continuation) a
         // frame the consumer already holds. `.max(1)` guards a 0/unknown duration
         // so the covering frame (pts ≈ target) is never skipped.
-        if frame.pts_us + frame.dur_us.max(1) <= target_us {
+        if frame.pts_us.saturating_add(frame.dur_us.max(1)) <= target_us {
             continue;
         }
         // Past the horizon: enough is ready. Stash it, so the next forward
         // request resumes here and this frame is never decoded twice.
-        if frame.pts_us > target_us + LOOKAHEAD_HORIZON_US {
+        if frame.pts_us > target_us.saturating_add(LOOKAHEAD_HORIZON_US) {
             cursor.pending = Some(frame);
             return;
         }
@@ -1213,6 +1231,52 @@ mod tests {
             eofs.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "each post-eof tick re-discovered eof instead of short-circuiting"
+        );
+    }
+
+    #[test]
+    fn far_past_eof_ticks_do_not_reseek() {
+        // A target FURTHER than FORWARD_CONTINUE_US past the material (a
+        // playhead parked way past a short clip): the seek lands at the tail
+        // and EOF is rediscovered — once. Before the EOF arms advanced the
+        // frontier, the gap to the stale frontier failed the forward test on
+        // EVERY subsequent tick, so each one paid a fresh seek+flush+probe and
+        // emitted another Eof poke, forever.
+        let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
+        let eofs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let f2 = frames.clone();
+        let e2 = eofs.clone();
+        let reg = PreviewSwRegistry::new();
+        reg.set_frame_sink(Box::new(move |poke| match poke {
+            SwFramePoke::Frame { frame, .. } => f2.lock().unwrap().push(frame.pts_us),
+            SwFramePoke::Eof { .. } => {
+                e2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            SwFramePoke::Error { .. } => {}
+        }));
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        reg.open("feof1".into(), p.into()).expect("open");
+        // The fixture is 1 s; 5 s is > FORWARD_CONTINUE_US past its tail, and
+        // the tail frame itself is past-discarded — the request yields only an
+        // Eof poke. The +33 ms ticks after it stay within the continue window
+        // of the advanced frontier, so the drained cursor must absorb them.
+        for t in [5_000_000, 5_033_000, 5_066_000, 5_099_000] {
+            let _ = reg.request_frame_at("feof1".into(), t);
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        let _ = reg.close("feof1".into());
+        let pts = frames.lock().unwrap();
+        assert!(
+            pts.is_empty(),
+            "a far-past-EOF target must deliver no frames: {pts:?}"
+        );
+        assert_eq!(
+            eofs.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "each far-past-eof tick re-seeked and re-discovered eof instead of going quiet"
         );
     }
 
