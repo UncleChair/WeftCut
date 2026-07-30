@@ -848,8 +848,7 @@ fn ensure_scratch(scratch: &mut VideoFrame, fmt: Pixel, w: u32, h: u32) {
 /// bytes at `(dst_w, dst_h)`. If it is already NV12 AND no resize is asked for
 /// (e.g. a codec that decodes to NV12 directly, at full playback resolution) pack
 /// it as-is; otherwise swscale it through the caller's reused `scratch` frame
-/// first. Mirrors `preview_gpu::frame_to_nv12` minus the D3D11 hw-transfer branch
-/// (a SW frame is already in system memory).
+/// first. No D3D11 hw-transfer branch — a SW frame is already in system memory.
 ///
 /// The returned `Vec` is a fresh per-frame allocation by design — it is handed to
 /// JS and outlives the stream, so only the swscale destination is pooled.

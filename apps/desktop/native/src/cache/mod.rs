@@ -146,13 +146,6 @@ impl CacheLayout {
         self.root.read().expect("cache root lock poisoned").clone()
     }
 
-    /// Current cache root, cloned by value. Callers that need to compose
-    /// further paths under the root should still prefer the typed methods
-    /// (`proxies_dir`, etc.) rather than reaching for `root()`.
-    pub fn root(&self) -> PathBuf {
-        self.current_root()
-    }
-
     pub fn proxies_dir(&self) -> PathBuf {
         self.current_root().join("proxies")
     }

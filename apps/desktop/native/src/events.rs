@@ -2,6 +2,7 @@
 //! napi `ThreadsafeFunction`. The production impl wraps one TSFN; the test
 //! impl records emits.
 
+#[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
@@ -34,11 +35,13 @@ impl EventSink for TsfnEventSink {
 }
 
 /// Test sink: records `(event, payload)` for assertions.
+#[cfg(test)]
 #[derive(Clone, Default)]
 pub struct VecEventSink {
     pub events: Arc<Mutex<Vec<(String, Value)>>>,
 }
 
+#[cfg(test)]
 impl VecEventSink {
     pub fn new() -> Self {
         Self::default()
@@ -53,6 +56,7 @@ impl VecEventSink {
     }
 }
 
+#[cfg(test)]
 impl EventSink for VecEventSink {
     fn emit(&self, event: &str, payload: Value) {
         self.events

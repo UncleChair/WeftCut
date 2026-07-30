@@ -108,12 +108,6 @@ impl ToolResult {
             .map_err(|e| McpToolError::internal_error(format!("serialize result: {e}"), None))?;
         Ok(Self::text(s))
     }
-    pub fn empty() -> Self {
-        Self {
-            content: vec![],
-            is_error: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -8,4 +8,4 @@
 
 pub mod decoder;
 mod session;
-pub use session::{PreviewSwOpenInfo, PreviewSwRegistry, SwFramePoke};
+pub use session::{PreviewSwRegistry, SwFramePoke};

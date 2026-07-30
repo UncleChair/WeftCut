@@ -45,7 +45,9 @@ pub enum TranscriptFormat {
 }
 
 impl RawTranscript {
-    /// The style tag of this payload.
+    /// The style tag of this payload. Production code branches on the enum
+    /// directly (`parse_raw`); tests use this to assert round-trip tagging.
+    #[cfg(test)]
     pub fn format(&self) -> TranscriptFormat {
         match self {
             RawTranscript::Srt(_) => TranscriptFormat::Srt,
