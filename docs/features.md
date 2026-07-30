@@ -226,3 +226,46 @@ see `docs/notes/electron-chromium-behavior.md` § EyeDropper. The
 composition buffer is an 8-bit extract — HDR/10-bit picks read the
 tone-mapped value. The window snapshot is frozen at session start; UI
 changes mid-session are not reflected.
+
+## Window geometry memory
+
+The main window reopens at last session's position, size, and maximize
+state, persisted to `<userData>/window_geometry.json` (`main/windowGeometry.ts`,
+wired in `main/windows.ts`). Writes are debounced through drags and flushed
+on window close and before quit. A move never dirties the Project or enters
+undo — it is app-level state, like the Workspace layout.
+
+**Restore is validated, never trusted.** A saved rect may name a monitor
+that has been unplugged or a resolution that has shrunk, and this window is
+frameless on Windows/Linux — no OS titlebar, no system Move menu — so an
+off-screen restore would be unrecoverable without deleting the file.
+`sanitizeGeometry` requires the rect to present a grabbable strip
+(≥120×48px) on some display's work area, clamps the size to the host
+display, and otherwise falls back to a centered default. A window
+deliberately straddling two monitors or hanging past an edge survives;
+that is a deliberate divergence from `electron-window-state`, whose
+full-containment rule discards both.
+
+**Landmine — the save/restore ratchet.** Electron's bounds API is not
+idempotent on a fractionally-scaled display: hand a rect to the
+`BrowserWindow` constructor and the value read back differs, because the
+DIP↔physical conversion rounds in both directions. Measured at
+`scaleFactor` 1.1, feeding each accessor's own output back into the
+constructor grows the window monotonically — `ctor → getBounds` runs
+1182 → 1189 → 1196 → 1202 → 1209, and `getContentBounds` /
+`useContentSize` / `setBounds` all ratchet too, so no accessor pair fixes
+it. Persisting what you measure therefore inflates the window every launch
+until it hits the screen edge. The fix breaks the feedback loop instead:
+`rememberGeometry` keeps persisting the rect it *requested* while the
+measurement stays within `BOUNDS_DEADBAND_PX`, and abandons the deadband
+permanently at the first genuine resize. `e2e/electron/window-geometry.spec.ts`
+gates it by asserting three untouched launches leave byte-identical
+geometry on disk.
+
+**Also load-bearing:** capture `getNormalBounds()`, not `getBounds()` —
+the latter reports the *maximized* rect, so persisting it makes "restore
+down" a no-op next launch. Minimized windows are skipped (unreliable
+bounds; `isMaximized()` reads false). Fullscreen is restored only on
+macOS, where the green traffic light can also leave it; on Windows/Linux
+F11 is dev-gated, so a restored fullscreen would be inescapable in a
+release build.

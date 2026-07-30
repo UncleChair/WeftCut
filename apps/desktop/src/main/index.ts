@@ -11,7 +11,7 @@ import { setRuntimeSource, captureMotifFrameB64, setMotifStore } from './motif/c
 import { UserMotifStore } from './motif/store.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
-import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
+import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry } from './windows.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { shouldClearApplicationMenu } from './inputPolicy.js'
 import { broadcastEvent } from './broadcast.js'
@@ -26,7 +26,7 @@ import { recordFrameReadySent, recordConsumeAck, takeMainTimings } from './previ
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw } from './previewSw.js'
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
 import { loadNativeDecode } from './native-decode.js'
-import { MAIN_WINDOW_MINIMUM_SIZE } from './mainWindowConfig.js'
+import { MAIN_WINDOW_MINIMUM_SIZE, MAIN_WINDOW_GEOMETRY_DEFAULTS, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
 import { openPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
@@ -74,6 +74,12 @@ let motifWatcher: MotifWatcher | null = null
 // Held at module scope so the before-quit handler can flush the debounced
 // Workspace-layout write before the process exits.
 let workspaceStore: import('./workspace.js').WorkspaceStore | null = null
+// Same reason, plus createWindow() reads it — and createWindow is also invoked
+// from `app.on('activate')` (macOS re-open) with no arguments, so the store
+// cannot be threaded in as a parameter. Null until whenReady constructs it;
+// window creation happens later in that same closure, so the main window always
+// sees it. A null store degrades to "no geometry memory", never to a crash.
+let windowGeometryStore: import('./windowGeometry.js').WindowGeometryStore | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
@@ -118,9 +124,20 @@ function enumerateDrmRenderNodes(): string[] {
 }
 
 async function createWindow(): Promise<BrowserWindow> {
+  // Last session's position/size, validated against the monitors attached RIGHT
+  // NOW (windowGeometry.ts). Spread into the constructor rather than applied
+  // after — `show: true` below means a post-construction setBounds() would be a
+  // visible jump. Falls back to a centered 1440×900 whenever the saved rect is
+  // missing, stale, or unreachable.
+  const geometry = restoreGeometry(windowGeometryStore, MAIN_WINDOW_LABEL, MAIN_WINDOW_GEOMETRY_DEFAULTS)
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    x: geometry.x,
+    y: geometry.y,
+    width: geometry.width,
+    height: geometry.height,
+    // Restored only on macOS, where the green traffic light can also LEAVE
+    // fullscreen; see sanitizeGeometry on why Win/Linux never restores it.
+    fullscreen: geometry.fullScreen,
     ...MAIN_WINDOW_MINIMUM_SIZE,
     // Dev only: electron-vite runs the bare electron.exe, whose taskbar/Alt-Tab
     // icon is Electron's default. The PACKAGED app gets its icon from
@@ -160,8 +177,19 @@ async function createWindow(): Promise<BrowserWindow> {
     },
   })
 
+  // BrowserWindow has no `maximized` constructor option, so this is the one
+  // restored field that must be applied after the fact. Kept in the SAME tick as
+  // the constructor (nothing below awaits before the content loads) so Chromium
+  // has not painted a frame at the un-maximized size yet — no visible snap.
+  if (geometry.maximized) win.maximize()
+
   mainWindow = win
   hardenWindow(win)
+  // Start tracking moves/resizes. Wired after the restore above so the initial
+  // maximize() doesn't bounce straight back into the store. `geometry` is passed
+  // back in as the deadband baseline — without it the window grows a few pixels
+  // on every launch (windowGeometry.ts, BOUNDS_DEADBAND_PX).
+  rememberGeometry(win, MAIN_WINDOW_LABEL, windowGeometryStore, geometry)
 
   // The renderer draws its own caption buttons (frameless window); their
   // maximize/restore glyph cares only about maximize-STATE transitions, not
@@ -546,6 +574,17 @@ app.whenReady().then(async () => {
   const { createWorkspaceStore } = await import('./workspace.js')
   const workspace = createWorkspaceStore({ fs: atomicFs, path: path.join(app.getPath('userData'), 'workspaces.json'), dir: app.getPath('userData') })
   workspaceStore = workspace
+  // Window position/size memory — persists <userData>/window_geometry.json.
+  // Must be constructed BEFORE createWindow() below (it reads the saved rect to
+  // build the BrowserWindow options). Debounced writes; flushed on window close
+  // and on quit. e2e launches mint a fresh userData dir per app (see
+  // e2e/electron/helpers/driver.ts), so specs always get the centered default.
+  const { createWindowGeometryStore } = await import('./windowGeometry.js')
+  windowGeometryStore = createWindowGeometryStore({
+    fs: atomicFs,
+    path: path.join(app.getPath('userData'), 'window_geometry.json'),
+    dir: app.getPath('userData'),
+  })
   // Recent-projects list + startup prefs — persists <userData>/recents.json.
   const { createRecentsStore } = await import('./recents.js')
   const recents = createRecentsStore({
@@ -1331,6 +1370,10 @@ app.on('before-quit', (event) => {
   // Flush the debounced Workspace-layout write synchronously — an arrangement
   // change made inside the debounce window would otherwise be dropped on quit.
   workspaceStore?.flush()
+  // Same for window geometry. The window's own `close` handler also flushes
+  // (covering macOS ⌘W, which never quits); this covers quitting via the app
+  // menu / Cmd+Q, where before-quit precedes the window close.
+  windowGeometryStore?.flush()
   if (quitFlushed || !tsHost) return
   event.preventDefault()
   quitFlushed = true

@@ -1,9 +1,17 @@
 import path from 'node:path'
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, screen, shell } from 'electron'
 import { secondaryWindowConfig, type SecondaryWinOpts } from './windowConfig.js'
 import { broadcastEvent } from './broadcast.js'
 import { isPageZoomShortcut, matchDevKeyAction } from './inputPolicy.js'
 import { WIN_CLOSED_EVENT, WIN_OPENED_EVENT } from '../shared/windowEvents.js'
+import {
+  sanitizeGeometry,
+  withinDeadband,
+  type GeometryDefaults,
+  type Rect,
+  type RestoredGeometry,
+  type WindowGeometryStore,
+} from './windowGeometry.js'
 
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
@@ -49,6 +57,100 @@ export function hardenWindow(win: BrowserWindow, opts?: { allowExternalOpen?: bo
     const dev = process.env['ELECTRON_RENDERER_URL']
     const allowed = dev ? url.startsWith(dev) : url.startsWith('file://')
     if (!allowed) e.preventDefault()
+  })
+}
+
+/// Read the saved geometry for `label` and validate it against the CURRENT
+/// display set, yielding BrowserWindow constructor options. The `screen` module
+/// is only usable after app-ready, which every caller here already is.
+///
+/// The result MUST be spread into the `new BrowserWindow({...})` call rather
+/// than applied afterwards with setBounds(): the main window is created with
+/// `show: true` (a frameless window plus `show:false` does not reliably surface
+/// on Windows — see index.ts), so a post-construction move would be a visible
+/// jump. `maximized` is the one field with no constructor equivalent — index.ts
+/// applies it with `win.maximize()` in the same tick. Pass this same object back
+/// to `rememberGeometry` as its deadband baseline.
+export function restoreGeometry(
+  store: WindowGeometryStore | null,
+  label: string,
+  defaults: GeometryDefaults,
+): RestoredGeometry {
+  return sanitizeGeometry(store?.get(label) ?? null, screen.getAllDisplays(), defaults)
+}
+
+/// Persist `win`'s geometry as the user moves/resizes it.
+///
+/// LANDMINE: capture getNormalBounds(), NOT getBounds(). While maximized (or
+/// fullscreen) getBounds() returns the *maximized* rect — persist that and the
+/// next launch restores a window whose "restore down" size equals its maximized
+/// size, so un-maximizing appears to do nothing. getNormalBounds() is Electron's
+/// accessor for the pre-maximize rect and is exactly what we want to keep.
+///
+/// Minimized windows are skipped: their reported bounds are unreliable on
+/// Windows and `isMaximized()` reads false even for a window that was maximized
+/// before being minimized — capturing there would silently drop the maximize
+/// state. Keeping the last known-good record is strictly better.
+///
+/// `requested` is `restoreGeometry`'s own return value — the exact object spread
+/// into the BrowserWindow constructor — and passing it is what stops the window
+/// growing a few pixels per launch. Electron reports back a slightly different
+/// rect than it was given on a fractionally-scaled display (see
+/// BOUNDS_DEADBAND_PX for the measured ratchet), so while the measurement stays
+/// within that slop we persist `requested` verbatim rather than the measurement.
+/// The deadband is dropped PERMANENTLY at the first genuine resize, so the only
+/// thing it can cost is a sub-16px nudge made as the very first gesture of a
+/// session — everything after that is recorded exactly.
+export function rememberGeometry(
+  win: BrowserWindow,
+  label: string,
+  store: WindowGeometryStore | null,
+  requested?: RestoredGeometry,
+): void {
+  if (!store) return
+  // The rect we asked for, held until a real resize proves the user has moved
+  // off it. null → trust measurements verbatim from here on.
+  //
+  // A first launch requests a SIZE but no position (x/y absent so Chromium
+  // centers). Filling the gap from the window's actual placement makes the
+  // baseline complete, so even the very first session persists the size we asked
+  // for rather than the inflated readback — the ratchet never gets a first step.
+  let baseline: Rect | null = null
+  if (requested) {
+    const placed = win.getNormalBounds()
+    baseline = {
+      x: requested.x ?? placed.x,
+      y: requested.y ?? placed.y,
+      width: requested.width,
+      height: requested.height,
+    }
+  }
+  const capture = (): void => {
+    if (win.isDestroyed() || win.isMinimized()) return
+    const measured = win.getNormalBounds()
+    if (baseline && !withinDeadband(measured, baseline)) baseline = null
+    store.remember(label, {
+      bounds: baseline ?? measured,
+      maximized: win.isMaximized(),
+      fullScreen: win.isFullScreen(),
+    })
+  }
+  // `resize`/`move` fire continuously through a drag — the store debounces them.
+  win.on('resize', capture)
+  win.on('move', capture)
+  // Discrete state flips: capture so the flag is recorded even when the drag
+  // handlers never run (Win+Up, double-click drag region, macOS green button).
+  win.on('maximize', capture)
+  win.on('unmaximize', capture)
+  win.on('enter-full-screen', capture)
+  win.on('leave-full-screen', capture)
+  // `close` fires while the window is still alive, so bounds are readable here.
+  // Flush synchronously: a move inside the debounce window would otherwise die
+  // with the window. This also covers macOS ⌘W, which closes without quitting
+  // and so never reaches the before-quit flush in index.ts.
+  win.on('close', () => {
+    capture()
+    store.flush()
   })
 }
 
