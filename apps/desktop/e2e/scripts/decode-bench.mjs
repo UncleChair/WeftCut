@@ -41,12 +41,13 @@ if (!["webcodecs", "native", "sw", "native-copyback"].includes(STRATEGY)) {
   console.error(`[decode-bench] invalid --strategy '${STRATEGY}' (expected webcodecs|native|sw|native-copyback)`);
   process.exit(1);
 }
-// The Linux HW copy-back lane to pin via WEFTCUT_FORCE_HW_LANE. Only meaningful
-// for `native-copyback`; the app leaves the lane UNFORCED and this env just
-// filters the resolver to one advertised HW lane (see ADR 0034).
+// The HW copy-back lane to pin via WEFTCUT_FORCE_HW_LANE (Linux: nvdec/vaapi,
+// ADR 0034; macOS: videotoolbox, issue #10). Only meaningful for
+// `native-copyback`; the app leaves the lane UNFORCED and this env just
+// filters the resolver to one advertised HW lane.
 const HW_LANE = arg("hw-lane", "nvdec");
-if (STRATEGY === "native-copyback" && HW_LANE !== "nvdec" && HW_LANE !== "vaapi") {
-  console.error(`[decode-bench] invalid --hw-lane '${HW_LANE}' (expected nvdec|vaapi)`);
+if (STRATEGY === "native-copyback" && !["nvdec", "vaapi", "videotoolbox"].includes(HW_LANE)) {
+  console.error(`[decode-bench] invalid --hw-lane '${HW_LANE}' (expected nvdec|vaapi|videotoolbox)`);
   process.exit(1);
 }
 // Env for every electron.launch: the copy-back strategy pins the resolver to one
