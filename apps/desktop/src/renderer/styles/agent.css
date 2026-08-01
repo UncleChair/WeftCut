@@ -122,8 +122,9 @@
 }
 
 /* Record-panel width sash: overlays the 6px inter-column gap with a few px
-   of extra hit area each side. The black gap stays the visual separator —
-   the sash only carries the col-resize affordance and a hover/focus tint.
+   of extra hit area each side. Matches the dockview sashes in the main
+   workspace: the black gap stays the visual separator and hover shows no
+   tint — the sash only carries the ew-resize cursor affordance.
    Keyboard support (role=separator + arrow keys) lives in AgentMode.tsx. */
 .agent-width-sash {
   position: absolute;
@@ -135,14 +136,12 @@
      panel's edge, so its midpoint sits 3px left of that edge. */
   right: calc(var(--agent-record-width, 360px) - 2px);
   width: 10px;
-  cursor: col-resize;
+  cursor: ew-resize;
   touch-action: none;
   user-select: none;
 }
 
-.agent-width-sash:hover,
 .agent-width-sash:focus-visible {
-  background: color-mix(in srgb, var(--ring) 25%, transparent);
   outline: none;
 }
 
