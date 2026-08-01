@@ -306,9 +306,10 @@ draft to preview and install — the same path an agent-authored Motif would tak
 ### Status display
 
 Each Motif layer reports a bake phase — `idle | warming{progress} | rastering{progress} | ready | error`.
-A **status dot** on the timeline layer block and a line in the **property panel** reflect
-it: warming shows L0 coverage filling ahead of the playhead, a persisted (L2) sequence
-reads as ready immediately, error is surfaced, idle shows nothing.
+A **status dot** on the timeline layer block reflects it: warming shows L0 coverage filling
+ahead of the playhead, a persisted (L2) sequence reads as ready immediately, error is
+surfaced, idle shows nothing. The **property panel** adds a status line only while a bake is
+in flight or failed — idle and ready earn no standing row there.
 
 ## Compositor integration
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "../i18n";
 import type { LayerSummary, ProjectSummary, TrackSummary } from "../ipc";
 
@@ -19,6 +19,8 @@ import { updateLayer, updateLayerParams, moveLayer, trimLayer } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection, setLayerSelection } from "../state/selectionStore";
 import { setAudioUnits } from "../state/audioUnitsStore";
+import { setLayerBakeStatuses } from "../timeline/motifBakeStatusStore";
+import { clearPropSectionMemory } from "../properties/PropSection";
 
 // Mock AppSwitch to a plain button so jsdom never hits Base UI's PointerEvent
 // constructor (which jsdom doesn't implement) — same convention as
@@ -50,6 +52,9 @@ afterEach(() => {
   vi.clearAllMocks();
   useProjectStore.getState().apply(null);
   clearLayerSelection();
+  clearPropSectionMemory();
+  setLayerBakeStatuses({});
+  setAudioUnits("frames");
 });
 
 function colorTrack(): TrackSummary {
@@ -105,10 +110,11 @@ describe("AttributePanel boundary", () => {
     );
 
     expect(screen.getByRole("complementary", { name: "Properties" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Color" })).toBeTruthy();
+    const colorSection = screen.getByRole("region", { name: "Color" });
+    expect(colorSection).toBeTruthy();
     expect(screen.queryByText("Effects")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("Color"), {
+    fireEvent.change(within(colorSection).getByLabelText("Color"), {
       target: { value: "#ff0000" },
     });
 
@@ -174,29 +180,51 @@ function envelope(): HTMLElement {
   return screen.getByRole("region", { name: "Layer" });
 }
 
+function advanced(): HTMLElement {
+  return screen.getByRole("region", { name: "Advanced" });
+}
+
+// The advanced bucket defaults collapsed; expanding it mounts its rows.
+function expandAdvanced(): void {
+  fireEvent.click(within(advanced()).getByRole("button", { name: "Advanced" }));
+}
+
 describe("AttributePanel Layer envelope", () => {
-  it("shows label, kind, track, group, enabled, locked, Start, End, and duration for the primary Layer", () => {
+  it("shows identity as one meta line (kind · track · group) and keeps Label/Enabled/Duration core", () => {
     summaryWithGroups([{ id: "g1", label: "Intro", layer_ids: ["layer-1"] }]);
     renderPanel(colorTrack());
 
+    expect(screen.getByText("Color · Visual · Intro")).toBeTruthy();
     const env = envelope();
     expect(within(env).getByLabelText("Label")).toHaveProperty("value", "Card");
-    // Kind + Track + group state are read-only context, not edit surfaces.
-    expect(within(env).getByText("Color")).toBeTruthy();
-    expect(within(env).getByText("Visual")).toBeTruthy();
-    expect(within(env).getByText("Intro")).toBeTruthy();
     expect(within(env).getByRole("switch", { name: "Enabled" }).getAttribute("aria-checked")).toBe("true");
-    expect(within(env).getByRole("switch", { name: "Locked" }).getAttribute("aria-checked")).toBe("false");
-    // 30 fps: 0 µs → 00:00:00:00, 2 s → 00:00:02:00; duration = End − Start.
-    expect(within(env).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
-    expect(within(env).getByLabelText("End")).toHaveProperty("value", "00:00:02:00");
+    // 30 fps: 2 s → 00:00:02:00; duration = End − Start.
     expect(within(env).getByLabelText("Duration")).toHaveProperty("value", "00:00:02:00");
+    // The End field is gone; Locked + Start sit in the collapsed advanced bucket.
+    expect(screen.queryByLabelText("End")).toBeNull();
+    expect(screen.queryByLabelText("Start")).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Locked" })).toBeNull();
+    expandAdvanced();
+    expect(within(advanced()).getByRole("switch", { name: "Locked" }).getAttribute("aria-checked")).toBe("false");
+    expect(within(advanced()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
   });
 
-  it("shows an explicit none state when the Layer belongs to no group", () => {
+  it("falls back to a localized none when the Layer belongs to no group", () => {
     summaryWithGroups([]);
     renderPanel(colorTrack());
-    expect(within(envelope()).getByText("None")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · None")).toBeTruthy();
+  });
+
+  it("shows the media label as a second meta line for media kinds only", () => {
+    summaryWithGroups([]);
+    renderPanel(audioTrack(), "layer-a1");
+    expect(screen.getByText("Audio · A1 · None")).toBeTruthy();
+    expect(screen.getByText("voice.wav")).toBeTruthy();
+    cleanup();
+    clearPropSectionMemory();
+    summaryWithGroups([]);
+    renderPanel(colorTrack());
+    expect(screen.queryByText("voice.wav")).toBeNull();
   });
 });
 
@@ -212,7 +240,8 @@ describe("AttributePanel envelope command routing", () => {
     fireEvent.click(within(env).getByRole("switch", { name: "Enabled" }));
     await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledWith("layer-1", { enabled: false }));
 
-    fireEvent.click(within(env).getByRole("switch", { name: "Locked" }));
+    expandAdvanced();
+    fireEvent.click(within(advanced()).getByRole("switch", { name: "Locked" }));
     await vi.waitFor(() => expect(updateLayer).toHaveBeenCalledWith("layer-1", { locked: true }));
 
     expect(onMutated).toHaveBeenCalledTimes(3);
@@ -222,7 +251,8 @@ describe("AttributePanel envelope command routing", () => {
 
   it("routes Start through the group-aware move command with the Layer's current Track", async () => {
     const onMutated = renderPanel(colorTrack());
-    const start = within(envelope()).getByLabelText("Start");
+    expandAdvanced();
+    const start = within(advanced()).getByLabelText("Start");
     fireEvent.change(start, { target: { value: "00:00:01:00" } });
     fireEvent.blur(start);
     await vi.waitFor(() =>
@@ -240,18 +270,22 @@ describe("AttributePanel envelope command routing", () => {
   it("offers the audio-units selector on an audio layer only", () => {
     summaryWithGroups([]);
     renderPanel(audioTrack(), "layer-a1");
-    expect(within(envelope()).getByLabelText("Audio units")).toBeTruthy();
+    expandAdvanced();
+    expect(within(advanced()).getByLabelText("Audio units")).toBeTruthy();
     cleanup();
+    clearPropSectionMemory();
     summaryWithGroups([]);
     renderPanel(colorTrack());
-    expect(within(envelope()).queryByLabelText("Audio units")).toBeNull();
+    expandAdvanced();
+    expect(within(advanced()).queryByLabelText("Audio units")).toBeNull();
   });
 
   it("round-trips a sample-grid position through the Start field in samples", async () => {
     summaryWithGroups([]);
     setAudioUnits("samples");
     const onMutated = renderPanel(audioTrack(), "layer-a1");
-    const start = within(envelope()).getByLabelText("Start");
+    expandAdvanced();
+    const start = within(advanced()).getByLabelText("Start");
     // The field READS the mixer's sample index for the stored µs…
     expect(start).toHaveProperty("value", "0");
     // …and a typed index commits the exact µs of THAT sample. 1608 → 33_500 µs, which
@@ -265,34 +299,29 @@ describe("AttributePanel envelope command routing", () => {
       expect(moveLayer).toHaveBeenCalledWith("layer-a1", "track-a", 33_500, true),
     );
     expect(onMutated).toHaveBeenCalledOnce();
-    setAudioUnits("frames");
   });
 
   it("reads the same audio time in milliseconds when the unit is switched", () => {
     summaryWithGroups([]);
     setAudioUnits("ms");
     renderPanel(audioTrack(), "layer-a1");
-    const env = envelope();
-    expect(within(env).getByLabelText("Start")).toHaveProperty("value", "00:00:00.000");
-    expect(within(env).getByLabelText("End")).toHaveProperty("value", "00:00:04.000");
+    expandAdvanced();
+    expect(within(advanced()).getByLabelText("Start")).toHaveProperty("value", "00:00:00.000");
     setAudioUnits("frames");
     // …and the visual layer's readouts are untouched by the mode.
     cleanup();
+    clearPropSectionMemory();
     setAudioUnits("ms");
     summaryWithGroups([]);
     renderPanel(colorTrack());
-    expect(within(envelope()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
+    expandAdvanced();
+    expect(within(advanced()).getByLabelText("Start")).toHaveProperty("value", "00:00:00:00");
     setAudioUnits("frames");
   });
 
-  it("routes End and duration through the group-aware trim command", async () => {
+  it("routes duration through the group-aware trim command", async () => {
     const onMutated = renderPanel(colorTrack());
     const env = envelope();
-
-    const end = within(env).getByLabelText("End");
-    fireEvent.change(end, { target: { value: "00:00:03:00" } });
-    fireEvent.blur(end);
-    await vi.waitFor(() => expect(trimLayer).toHaveBeenCalledWith("layer-1", "out", 3_000_000));
 
     // Duration 1 s from t_start 0 → trim the out-edge to 1 s.
     const dur = within(env).getByLabelText("Duration");
@@ -301,20 +330,17 @@ describe("AttributePanel envelope command routing", () => {
     await vi.waitFor(() => expect(trimLayer).toHaveBeenCalledWith("layer-1", "out", 1_000_000));
 
     expect(moveLayer).not.toHaveBeenCalled();
-    expect(onMutated).toHaveBeenCalledTimes(2);
+    expect(onMutated).toHaveBeenCalledOnce();
   });
 
   it("issues no command when an edit re-enters the current value (no no-op undo)", async () => {
     renderPanel(colorTrack());
     const env = envelope();
+    expandAdvanced();
 
-    const start = within(env).getByLabelText("Start");
+    const start = within(advanced()).getByLabelText("Start");
     fireEvent.change(start, { target: { value: "00:00:00:00" } });
     fireEvent.blur(start);
-
-    const end = within(env).getByLabelText("End");
-    fireEvent.change(end, { target: { value: "00:00:02:00" } });
-    fireEvent.blur(end);
 
     const dur = within(env).getByLabelText("Duration");
     fireEvent.change(dur, { target: { value: "00:00:02:00" } });
@@ -332,7 +358,8 @@ describe("AttributePanel envelope command routing", () => {
 
   it("rejects an invalid timecode by reverting the field without a command", async () => {
     renderPanel(colorTrack());
-    const start = within(envelope()).getByLabelText("Start");
+    expandAdvanced();
+    const start = within(advanced()).getByLabelText("Start");
     fireEvent.change(start, { target: { value: "not-a-timecode" } });
     fireEvent.blur(start);
     await new Promise((r) => setTimeout(r, 50));
@@ -345,11 +372,11 @@ describe("AttributePanel envelope command routing", () => {
     locked.layers[0] = { ...locked.layers[0], locked: true } as LayerSummary;
     renderPanel(locked);
     const env = envelope();
-    expect(within(env).getByLabelText("Start")).toHaveProperty("disabled", true);
-    expect(within(env).getByLabelText("End")).toHaveProperty("disabled", true);
+    expandAdvanced();
+    expect(within(advanced()).getByLabelText("Start")).toHaveProperty("disabled", true);
     expect(within(env).getByLabelText("Duration")).toHaveProperty("disabled", true);
     expect(within(env).getByLabelText("Label")).toHaveProperty("disabled", false);
-    expect(within(env).getByRole("switch", { name: "Locked" })).toHaveProperty("disabled", false);
+    expect(within(advanced()).getByRole("switch", { name: "Locked" })).toHaveProperty("disabled", false);
   });
 });
 
@@ -393,6 +420,140 @@ function audioTrack(): TrackSummary {
   };
 }
 
+function videoTrack(): TrackSummary {
+  return {
+    id: "track-v",
+    kind: "Video",
+    label: "V1",
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: null,
+    transient: false,
+    layers: [
+      {
+        id: "layer-v1",
+        kind: "VideoClip",
+        label: "Clip",
+        t_start_us: 0,
+        t_end_us: 2_000_000,
+        enabled: true,
+        locked: false,
+        color_hint: "#000000",
+        effects: [],
+        params: {
+          kind: "VideoClip",
+          media_id: "m1",
+          media_label: "clip.mp4",
+          src_in_us: 0,
+          src_out_us: 2_000_000,
+          x: { mode: "Static", value: 0 },
+          y: { mode: "Static", value: 0 },
+          scale_x: { mode: "Static", value: 1 },
+          scale_y: { mode: "Static", value: 1 },
+          rotation_deg: { mode: "Static", value: 0 },
+          opacity: { mode: "Static", value: 1 },
+          speed: 1,
+          flip_h: false,
+          flip_v: false,
+          fade_in_us: 0,
+          fade_out_us: 0,
+        },
+      } as LayerSummary,
+    ],
+  };
+}
+
+function motifTrack(): TrackSummary {
+  return {
+    id: "track-m",
+    kind: "Video",
+    label: "V1",
+    enabled: true,
+    locked: false,
+    muted: false,
+    solo: false,
+    role: null,
+    transient: false,
+    layers: [
+      {
+        id: "layer-m1",
+        kind: "Motif",
+        label: "Badge",
+        t_start_us: 0,
+        t_end_us: 2_000_000,
+        enabled: true,
+        locked: false,
+        color_hint: "#000000",
+        effects: [],
+        params: {
+          kind: "Motif",
+          motif_id: "builtin/removed",
+          x: { mode: "Static", value: 0 },
+          y: { mode: "Static", value: 0 },
+          scale_x: { mode: "Static", value: 1 },
+          scale_y: { mode: "Static", value: 1 },
+          rotation_deg: { mode: "Static", value: 0 },
+          opacity: { mode: "Static", value: 1 },
+          src_in_us: 0,
+          props: {},
+        },
+      } as LayerSummary,
+    ],
+  };
+}
+
+describe("AttributePanel advanced bucket membership", () => {
+  it("keeps a Video layer's fades/flips hidden until the bucket is expanded", () => {
+    renderPanel(videoTrack(), "layer-v1");
+    // Core stands by default…
+    expect(screen.getByLabelText("Duration")).toBeTruthy();
+    expect(screen.getByLabelText("Speed")).toBeTruthy();
+    // …the media label moved to the meta line…
+    expect(screen.getByText("clip.mp4")).toBeTruthy();
+    // …and Start + the kind-advanced rows wait inside the collapsed bucket.
+    expect(screen.queryByLabelText("Start")).toBeNull();
+    expect(screen.queryByLabelText("Fade in")).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Flip horizontal" })).toBeNull();
+
+    expandAdvanced();
+    const adv = advanced();
+    expect(within(adv).getByRole("switch", { name: "Locked" })).toBeTruthy();
+    expect(within(adv).getByLabelText("Start")).toBeTruthy();
+    expect(within(adv).getByLabelText("Fade in")).toBeTruthy();
+    expect(within(adv).getByLabelText("Fade out")).toBeTruthy();
+    expect(within(adv).getByRole("switch", { name: "Flip horizontal" })).toBeTruthy();
+    expect(within(adv).getByRole("switch", { name: "Flip vertical" })).toBeTruthy();
+  });
+
+  it("renders the bucket (Locked + Start) even for a Color layer", () => {
+    renderPanel(colorTrack());
+    expandAdvanced();
+    expect(within(advanced()).getByRole("switch", { name: "Locked" })).toBeTruthy();
+    expect(within(advanced()).getByLabelText("Start")).toBeTruthy();
+  });
+
+  it("hides a Motif layer's bake status unless a bake is active or failed", () => {
+    renderPanel(motifTrack(), "layer-m1");
+    // No status entry at all → idle → no standing row.
+    expect(document.querySelector(".prop-bake-status")).toBeNull();
+
+    act(() => setLayerBakeStatuses({ "layer-m1": { phase: "warming", done: 1, total: 4 } }));
+    expect(document.querySelector(".prop-bake-status")?.textContent).toContain("Warming preview");
+
+    act(() => setLayerBakeStatuses({ "layer-m1": { phase: "baking", done: 2, total: 4 } }));
+    expect(document.querySelector(".prop-bake-status")?.textContent).toContain("Pre-baking");
+
+    act(() => setLayerBakeStatuses({ "layer-m1": { phase: "error", done: 2, total: 4 } }));
+    expect(document.querySelector(".prop-bake-status")?.textContent).toContain("Pre-bake failed");
+
+    // Ready goes quiet again — a finished bake earns no standing row.
+    act(() => setLayerBakeStatuses({ "layer-m1": { phase: "ready", done: 4, total: 4 } }));
+    expect(document.querySelector(".prop-bake-status")).toBeNull();
+  });
+});
+
 describe("AttributePanel multi-selection", () => {
   it("identifies which primary layer is edited when several layers are selected", () => {
     setLayerSelection("layer-1", ["layer-1", "layer-2"]);
@@ -410,14 +571,16 @@ describe("AttributePanel multi-selection", () => {
 });
 
 describe("AttributePanel Audio fields", () => {
-  it("exposes per-Layer gain, pan, fades, mute, and Audio Role", async () => {
+  it("exposes per-Layer gain and fades core; pan, mute, and Role in the advanced bucket", async () => {
     const onMutated = renderPanel(audioTrack(), "layer-a1");
 
-    // gain/pan are keyframable rows (labels come from the param descriptors).
+    // gain is a keyframable core row (labels come from the param descriptors).
     expect(screen.getByText("Gain (dB)")).toBeTruthy();
-    expect(screen.getByText("Pan")).toBeTruthy();
-    expect(screen.getByLabelText("Role")).toBeTruthy();
-    expect(screen.getByRole("switch", { name: "Mute" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByText("Pan")).toBeNull();
+    expandAdvanced();
+    expect(within(advanced()).getByText("Pan")).toBeTruthy();
+    expect(within(advanced()).getByLabelText("Role")).toBeTruthy();
+    expect(within(advanced()).getByRole("switch", { name: "Mute" }).getAttribute("aria-checked")).toBe("false");
 
     const fadeIn = screen.getByLabelText("Fade in");
     expect(fadeIn).toHaveProperty("value", "00:00:00:00");

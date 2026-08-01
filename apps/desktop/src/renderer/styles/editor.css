@@ -562,6 +562,39 @@
   gap: 6px;
 }
 
+/* Collapsible section header — same look as `.property-panel h3`, plus the
+   chevron affordance. */
+.prop-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-gray-300);
+  letter-spacing: 0.02em;
+}
+
+.prop-section-header:hover {
+  color: var(--foreground);
+}
+
+/* Two half-width anim rows side by side (position X|Y, scale X|Y); wraps to
+   a single column when the panel can't fit two ~120 px fields. */
+.prop-field-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.prop-field-pair > .anim-field {
+  flex: 1 1 120px;
+  min-width: 120px;
+}
+
 /* Effect chain cards. The grip is a pointer-only reorder affordance; Dockview
    docking starts exclusively from the native tab chrome, so no style here may
    imply an HTML5 drag source. */
