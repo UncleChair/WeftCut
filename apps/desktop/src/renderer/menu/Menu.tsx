@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Menubar } from "@base-ui/react/menubar";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import {
   resolveAccelerator,
 } from "../shortcuts/match";
@@ -106,6 +106,45 @@ export function MenuItem({
         </span>
       )}
     </MenuPrimitive.Item>
+  );
+}
+
+interface SubMenuProps {
+  /// Label rendered on the trigger row.
+  label: string;
+  disabled?: boolean;
+  /// `MenuItem` / `MenuSeparator` / `MenuHeading` children.
+  children: ReactNode;
+}
+
+/// A nested dropdown inside a Menu. Base UI's SubmenuRoot supplies hover
+/// intent, ArrowRight/Left open/close, and Escape handling; nested inside a
+/// Menu its Positioner defaults to side=inline-end/align=start, so the popup
+/// opens to the trigger's right edge with no extra placement props. The
+/// trigger row reuses the .app-menu-item styles (plus a right chevron) so it
+/// lines up with plain items.
+export function SubMenu({ label, disabled, children }: SubMenuProps) {
+  return (
+    <MenuPrimitive.SubmenuRoot>
+      <MenuPrimitive.SubmenuTrigger
+        className="app-menu-item app-submenu-trigger"
+        disabled={disabled ?? false}
+      >
+        {/* Empty check-column spacer so the label aligns with MenuItem rows. */}
+        <span className="app-menu-item-check" aria-hidden="true" />
+        <span className="app-menu-item-label">{label}</span>
+        <span className="app-submenu-chevron" aria-hidden="true">
+          <ChevronRightIcon size={12} />
+        </span>
+      </MenuPrimitive.SubmenuTrigger>
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner className="app-popup-positioner">
+          <MenuPrimitive.Popup className="app-menu-list">
+            {children}
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.SubmenuRoot>
   );
 }
 

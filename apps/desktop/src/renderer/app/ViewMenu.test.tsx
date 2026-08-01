@@ -60,7 +60,7 @@ function workspaceProfiles(
 ): ViewMenuWorkspaces {
   return {
     profiles: [
-      { id: EDITING_WORKSPACE_ID, name: "Editing", isBuiltin: true },
+      { id: EDITING_WORKSPACE_ID, name: "Default Layout", isBuiltin: true },
       { id: "ws-1", name: "Cutting", isBuiltin: false },
     ],
     activeId: "ws-1",
@@ -77,6 +77,12 @@ function workspaceProfiles(
 
 const openView = () =>
   fireEvent.click(screen.getByRole("button", { name: /View/ }));
+
+// Workspace controls live one level down under the Workspaces submenu.
+const openWorkspaces = async () => {
+  openView();
+  fireEvent.click(await screen.findByText("Workspaces"));
+};
 
 describe("ViewMenu workspace controls", () => {
   it("focuses or reopens singleton Panels and exposes close/reset recovery", async () => {
@@ -108,12 +114,12 @@ describe("ViewMenu workspace controls", () => {
     expect(workspaceController.closeActivePanel).toHaveBeenCalledOnce();
 
     // With no profiles wired yet, Reset falls back to the adapter's built-in rebuild.
-    openView();
+    await openWorkspaces();
     fireEvent.click(await screen.findByText("Reset Workspace"));
     expect(workspaceController.resetWorkspace).toHaveBeenCalledOnce();
   });
 
-  it("lists Editing + custom Workspaces and drives switch, save, save-as, rename, delete, reset", async () => {
+  it("lists Default Layout + custom Workspaces and drives switch, save, save-as, rename, delete, reset", async () => {
     const profiles = workspaceProfiles();
     render(
       <ViewMenu
@@ -125,34 +131,34 @@ describe("ViewMenu workspace controls", () => {
     );
 
     // Both workspaces are listed; switching activates the other one.
-    openView();
+    await openWorkspaces();
     expect(await screen.findByText("Cutting")).toBeTruthy(); // custom profile listed
-    fireEvent.click(await screen.findByText("Editing"));
+    fireEvent.click(await screen.findByText("Default Layout"));
     expect(profiles.onSwitch).toHaveBeenCalledWith(EDITING_WORKSPACE_ID);
 
-    openView();
+    await openWorkspaces();
     fireEvent.click(await screen.findByText("Save Workspace"));
     expect(profiles.onSave).toHaveBeenCalledOnce();
 
-    openView();
-    fireEvent.click(await screen.findByText("Save Workspace As…"));
+    await openWorkspaces();
+    fireEvent.click(await screen.findByText("Save as New Workspace…"));
     expect(profiles.onSaveAs).toHaveBeenCalledOnce();
 
-    openView();
+    await openWorkspaces();
     fireEvent.click(await screen.findByText("Rename Workspace…"));
     expect(profiles.onRename).toHaveBeenCalledWith("ws-1");
 
-    openView();
+    await openWorkspaces();
     fireEvent.click(await screen.findByText("Delete Workspace"));
     expect(profiles.onDelete).toHaveBeenCalledWith("ws-1");
 
     // Reset now goes through the profiles API (restore the saved baseline).
-    openView();
+    await openWorkspaces();
     fireEvent.click(await screen.findByText("Reset Workspace"));
     expect(profiles.onReset).toHaveBeenCalledOnce();
   });
 
-  it("disables Save / Rename / Delete while the built-in Editing profile is active", async () => {
+  it("disables Save / Rename / Delete while the built-in Default Layout profile is active", async () => {
     const profiles = workspaceProfiles({ activeId: EDITING_WORKSPACE_ID, activeIsBuiltin: true });
     render(
       <ViewMenu
@@ -163,7 +169,7 @@ describe("ViewMenu workspace controls", () => {
       />,
     );
 
-    openView();
+    await openWorkspaces();
     // Base UI renders disabled items with aria-disabled; clicks must be inert.
     for (const label of ["Save Workspace", "Rename Workspace…", "Delete Workspace"]) {
       const item = await screen.findByText(label);
@@ -171,7 +177,7 @@ describe("ViewMenu workspace controls", () => {
     }
     // Save As stays available on the built-in Workspace.
     expect(
-      (await screen.findByText("Save Workspace As…")).closest('[aria-disabled="true"]'),
+      (await screen.findByText("Save as New Workspace…")).closest('[aria-disabled="true"]'),
     ).toBeNull();
   });
 });

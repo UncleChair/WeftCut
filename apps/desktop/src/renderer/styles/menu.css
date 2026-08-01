@@ -108,6 +108,15 @@
   white-space: nowrap;
 }
 
+/* Submenu trigger's right chevron — same right-aligned slot as the
+ * accelerator, so rows with and without shortcuts stay aligned. */
+.app-submenu-chevron {
+  margin-left: 24px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted-foreground);
+}
+
 .app-menu-item[data-disabled] .app-menu-item-accelerator {
   color: var(--color-gray-600);
 }

@@ -33,7 +33,7 @@ export function WorkspaceNameDialog({
   const title =
     mode === "rename"
       ? t("workspace_name.rename_title", { defaultValue: "Rename Workspace" })
-      : t("workspace_name.save_as_title", { defaultValue: "Save Workspace As" });
+      : t("workspace_name.save_as_title", { defaultValue: "Save as New Workspace" });
   return (
     <AppDialog
       title={title}

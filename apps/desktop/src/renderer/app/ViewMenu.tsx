@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 
-import { Menu, MenuHeading, MenuItem, MenuSeparator } from "../menu/Menu";
+import { Menu, MenuHeading, MenuItem, MenuSeparator, SubMenu } from "../menu/Menu";
 import { toggleDisplayMode, useDisplayMode } from "../settings/appSettingsStore";
 import {
   PANEL_KINDS,
@@ -14,13 +14,13 @@ import type { WorkspaceProfileInfo } from "../workspace/useWorkspacePersistence"
 
 /// The View-menu Workspace controls, backed by the app-level Workspace document
 /// (main-process store). The active-profile operations (Save / Rename / Delete)
-/// are disabled for the immutable built-in Editing profile; Save As is always
-/// available. Save As + Rename raise a name dialog owned by App, so their menu
-/// handlers take no name here.
+/// are disabled for the immutable built-in Default Layout profile; Save As is
+/// always available. Save As + Rename raise a name dialog owned by App, so
+/// their menu handlers take no name here.
 export interface ViewMenuWorkspaces {
   profiles: WorkspaceProfileInfo[];
   activeId: string;
-  /** True when the active profile is the immutable built-in Editing profile. */
+  /** True when the active profile is the immutable built-in Default Layout profile. */
   activeIsBuiltin: boolean;
   onSwitch: (id: string) => void;
   onSave: () => void;
@@ -30,11 +30,12 @@ export interface ViewMenuWorkspaces {
   onDelete: (id: string) => void;
 }
 
-/// The View menu — Workspace profiles (switch / save / save-as / rename /
-/// delete / reset), Panel recovery (open/focus/close), and the A/B-roll vs
-/// Show-All track-display radio. The display setting is the same one the inline
-/// pill + `T` shortcut drive; the checkmark reads the app-pref store so it stays
-/// in sync however it changed.
+/// The View menu — Panels (open/focus/close) flat at the top, Workspace
+/// profiles + management under the Workspaces submenu (low-frequency ops stay
+/// one level down), then the A/B-roll vs Show-All track-display radio and the
+/// Agent-mode entry. The display setting is the same one the inline pill +
+/// `T` shortcut drive; the checkmark reads the app-pref store so it stays in
+/// sync however it changed.
 interface ViewMenuProps {
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
@@ -62,53 +63,6 @@ export function ViewMenu({
   return (
     <Menu label={t("menu.view", { defaultValue: "View" })}>
       <MenuHeading
-        label={t("view.workspaces_heading", { defaultValue: "Workspaces" })}
-      />
-      {(workspaceProfiles?.profiles ?? []).map((profile) => (
-        <MenuItem
-          key={profile.id}
-          label={
-            profile.isBuiltin
-              ? t("view.workspace_editing", { defaultValue: "Editing" })
-              : profile.name
-          }
-          checked={profile.id === workspaceProfiles?.activeId}
-          onSelect={() => workspaceProfiles?.onSwitch(profile.id)}
-        />
-      ))}
-      <MenuItem
-        label={t("view.save_workspace", { defaultValue: "Save Workspace" })}
-        disabled={!workspaceProfiles || workspaceProfiles.activeIsBuiltin}
-        onSelect={() => workspaceProfiles?.onSave()}
-      />
-      <MenuItem
-        label={t("view.save_workspace_as", {
-          defaultValue: "Save Workspace As…",
-        })}
-        disabled={!workspaceProfiles}
-        onSelect={() => workspaceProfiles?.onSaveAs()}
-      />
-      <MenuItem
-        label={t("view.rename_workspace", { defaultValue: "Rename Workspace…" })}
-        disabled={!workspaceProfiles || workspaceProfiles.activeIsBuiltin}
-        onSelect={() => {
-          if (workspaceProfiles) workspaceProfiles.onRename(workspaceProfiles.activeId);
-        }}
-      />
-      <MenuItem
-        label={t("view.delete_workspace", { defaultValue: "Delete Workspace" })}
-        disabled={!workspaceProfiles || workspaceProfiles.activeIsBuiltin}
-        onSelect={() => {
-          if (workspaceProfiles) workspaceProfiles.onDelete(workspaceProfiles.activeId);
-        }}
-      />
-      <MenuItem
-        label={t("view.reset_workspace", { defaultValue: "Reset Workspace" })}
-        disabled={!onReset}
-        onSelect={() => onReset?.()}
-      />
-      <MenuSeparator />
-      <MenuHeading
         label={t("view.panels_heading", { defaultValue: "Panels" })}
       />
       {PANEL_KINDS.map((kind) => (
@@ -127,6 +81,59 @@ export function ViewMenu({
         disabled={!workspaceController || workspaceSnapshot.activePanel === null}
         onSelect={() => workspaceController?.closeActivePanel()}
       />
+      <MenuSeparator />
+      <SubMenu
+        label={t("view.workspaces_heading", { defaultValue: "Workspaces" })}
+      >
+        {(workspaceProfiles?.profiles ?? []).map((profile) => (
+          <MenuItem
+            key={profile.id}
+            label={
+              profile.isBuiltin
+                ? t("view.workspace_editing", { defaultValue: "Default Layout" })
+                : profile.name
+            }
+            checked={profile.id === workspaceProfiles?.activeId}
+            onSelect={() => workspaceProfiles?.onSwitch(profile.id)}
+          />
+        ))}
+        <MenuSeparator />
+        <MenuItem
+          label={t("view.save_workspace", { defaultValue: "Save Workspace" })}
+          disabled={!workspaceProfiles || workspaceProfiles.activeIsBuiltin}
+          onSelect={() => workspaceProfiles?.onSave()}
+        />
+        <MenuItem
+          label={t("view.save_workspace_as", {
+            defaultValue: "Save as New Workspace…",
+          })}
+          disabled={!workspaceProfiles}
+          onSelect={() => workspaceProfiles?.onSaveAs()}
+        />
+        <MenuItem
+          label={t("view.rename_workspace", { defaultValue: "Rename Workspace…" })}
+          disabled={!workspaceProfiles || workspaceProfiles.activeIsBuiltin}
+          onSelect={() => {
+            if (workspaceProfiles) workspaceProfiles.onRename(workspaceProfiles.activeId);
+          }}
+        />
+        <MenuItem
+          label={t("view.delete_workspace", { defaultValue: "Delete Workspace" })}
+          disabled={!workspaceProfiles || workspaceProfiles.activeIsBuiltin}
+          onSelect={() => {
+            if (workspaceProfiles) workspaceProfiles.onDelete(workspaceProfiles.activeId);
+          }}
+        />
+        {/* Reset is layout recovery, not profile management — and the only op
+            available on the built-in profile — so it sits below its own
+            separator. */}
+        <MenuSeparator />
+        <MenuItem
+          label={t("view.reset_workspace", { defaultValue: "Reset Workspace" })}
+          disabled={!onReset}
+          onSelect={() => onReset?.()}
+        />
+      </SubMenu>
       <MenuSeparator />
       <MenuHeading
         label={t("view.display_mode_heading", {
