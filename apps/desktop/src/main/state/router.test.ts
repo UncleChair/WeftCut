@@ -24,7 +24,7 @@ const ALL_CHANNELS: readonly string[] = [
   'restyle_captions', 'add_motif',
   // router special-cases (summary / settings / persistence seam / agent-session)
   'project_summary', 'get_project_settings', 'project_open', 'project_save_as',
-  'project_new_workspace', 'project_save', 'agent_session_end',
+  'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
   // motif route (TS authoring + read + install + staleness — Phase 2/3)
   'list_motifs', 'get_motif_source', 'write_motif_draft', 'amend_motif_draft',
   'create_edit_draft', 'import_motif', 'delete_motif', 'install_motif',
@@ -84,7 +84,7 @@ describe('router partition gate', () => {
     // check here will catch it before the partition gate silently hides the duplicate.
     const SPECIAL: ReadonlySet<string> = new Set([
       'project_open', 'project_save', 'project_save_as', 'project_new_workspace',
-      'project_summary', 'get_project_settings', 'agent_session_end',
+      'project_summary', 'get_project_settings', 'agent_session_end', 'agent_session_begin',
     ])
     const buckets: Array<[string, ReadonlySet<string>]> = [
       ['PURE_NATIVE', PURE_NATIVE], ['PERSISTENCE', PERSISTENCE],
@@ -113,6 +113,7 @@ describe('routeChannel', () => {
     expect(routeChannel('project_new_workspace').kind).toBe('newWorkspace')
     expect(routeChannel('project_save').kind).toBe('save')
     expect(routeChannel('agent_session_end').kind).toBe('agentSessionEnd')
+    expect(routeChannel('agent_session_begin').kind).toBe('agentSessionBegin')
   })
   it('routes add_motif to command (Phase 4a-ii §2.2 — pure TS mutation, blocked sets ∅)', () => {
     expect(routeChannel('add_motif').kind).toBe('command')

@@ -145,6 +145,7 @@ const enUS = {
     save_workspace_as: "Save Workspace As…",
     rename_workspace: "Rename Workspace…",
     delete_workspace: "Delete Workspace",
+    enter_agent_mode: "Enter Agent Mode",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -161,6 +162,7 @@ const enUS = {
       "role-mixer": "Role Mixer",
       effect: "Effect",
       nearby: "Nearby",
+      agent: "Agent",
     },
     position: {
       left: "left",
@@ -210,6 +212,8 @@ const enUS = {
     motifs: "Motifs…",
     motifs_hint:
       "Pick a motif overlay (lower third, title card, callout, …) and drop it on the timeline.",
+    open_agent_panel: "Open Agent Panel",
+    enter_agent_mode: "Enter Agent Mode",
     // Not menu items — these labels show up in the Settings → Keyboard
     // panel for shortcuts that don't have a menu home (transport,
     // timeline edits).
@@ -421,6 +425,7 @@ const enUS = {
     running_pill: "Agent: {{count}} running",
     running_pill_hint: "Agent operations are still finishing in the background.",
     restored_to: "Restored to \"{{label}}\"",
+    manual_reason: "Manual session",
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",

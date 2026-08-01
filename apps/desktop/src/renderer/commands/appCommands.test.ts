@@ -23,6 +23,7 @@ const handlers: HandlerMap = {
 const menu = {
   addColorLayer: noop, addTextLayer: noop,
   openMotifPicker: noop,
+  openAgentPanel: noop, enterAgentMode: noop,
 };
 
 const flags = { busy: false, canUndo: true, canRedo: false, canBlade: true, exportLocked: true };
@@ -42,9 +43,15 @@ describe("buildAppCommands", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("appends the three menu-only commands", () => {
+  it("appends the menu-only commands", () => {
     const ids = buildAppCommands(handlers, menu, flags).map((d) => d.id);
-    for (const id of ["addColorLayer", "addTextLayer", "openMotifPicker"]) {
+    for (const id of [
+      "addColorLayer",
+      "addTextLayer",
+      "openMotifPicker",
+      "openAgentPanel",
+      "enterAgentMode",
+    ]) {
       expect(ids).toContain(id);
     }
   });

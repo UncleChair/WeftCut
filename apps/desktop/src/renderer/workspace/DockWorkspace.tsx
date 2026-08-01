@@ -32,6 +32,7 @@ import { CaptionPanel } from "../panels/CaptionPanel";
 import { EffectPanel } from "../panels/EffectPanel";
 import { NearbyPanel } from "../panels/NearbyPanel";
 import { RoleMixerPanel } from "../panels/RoleMixerPanel";
+import { RecordPanel } from "../agent/RecordPanel";
 import {
   importCancel,
   updateLayer,
@@ -306,6 +307,22 @@ function NearbyDockPanel() {
   );
 }
 
+/// The record panel outside agent mode: the dock workspace only mounts in
+/// editor mode (App swaps the whole body for AgentMode while a session is
+/// active), so there is no session window to filter by here — the epoch
+/// start shows every agent-attributed entry in the log stream.
+const AGENT_PANEL_WINDOW_START = new Date(0).toISOString();
+
+function AgentDockPanel() {
+  const contracts = useContracts();
+  return (
+    <RecordPanel
+      sessionStartedAt={AGENT_PANEL_WINDOW_START}
+      lockReason={contracts.summary?.history.lock_reason ?? null}
+    />
+  );
+}
+
 const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   media: MediaDockPanel,
   preview: PreviewDockPanel,
@@ -315,6 +332,7 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   "role-mixer": RoleMixerDockPanel,
   effect: EffectDockPanel,
   nearby: NearbyDockPanel,
+  agent: AgentDockPanel,
 };
 
 export function WeftCutPanelRenderer({

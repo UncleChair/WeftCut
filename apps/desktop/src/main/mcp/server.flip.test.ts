@@ -96,7 +96,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn()
     ts.beginAgentSessionSlot = spy
     await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'begin_agent_session', { reason: 'cleanup' })
-    expect(spy).toHaveBeenCalledWith('cleanup')
+    expect(spy).toHaveBeenCalledWith('cleanup', 'mcp')
   })
 
   // ADR 0036: transcribe_clip selects by user preference THEN availability.

@@ -8,9 +8,11 @@ import {
 } from "../ipc";
 import { useLogStore } from "../logs/store";
 
-/// Agent-mode record panel — filtered + grouped view of the log stream
-/// that agent-attributed entries produce while a session is active
-/// (design: `docs/mcp.md`, agent sessions).
+/// Agent record panel — filtered + grouped view of the log stream
+/// that agent-attributed entries produce (design: `docs/mcp.md`,
+/// agent sessions). Rendered in two surfaces: inside AgentMode (windowed
+/// to the active session) and as the dockable "Agent" panel (full
+/// history — the dock only mounts outside agent mode).
 ///
 /// Filter: source.kind === "Agent" AND ts >= session.started_at
 /// (this-session-only window).

@@ -428,15 +428,17 @@ impl Backend {
         Ok(())
     }
 
-    /// Open the agent-session slot: installs a new session with `client = "mcp"`
-    /// and the given `reason`, then emits `agent_session:changed` so the UI
+    /// Open the agent-session slot: installs a new session with the given
+    /// `client` ("mcp" for tool-initiated sessions, "local" for UI-initiated
+    /// ones) and `reason`, then emits `agent_session:changed` so the UI
     /// switches to agent mode. Called by the TS MCP host after `actor.mcpCall`
-    /// mints the auto-checkpoint. Idempotent — a second call while
+    /// mints the auto-checkpoint, or by the `agent_session_begin` renderer
+    /// channel. Idempotent — a second call while
     /// a session is already open replaces it (last writer wins, as per slot API).
     #[napi]
-    pub fn begin_agent_session_slot(&self, reason: String) {
+    pub fn begin_agent_session_slot(&self, reason: String, client: String) {
         let session = crate::agent_session::AgentSession {
-            client: "mcp".into(),
+            client,
             reason,
             started_at: Utc::now(),
         };

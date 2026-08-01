@@ -1,5 +1,6 @@
 //! Agent-session slot — tracks whether the human's UI is currently in
-//! agent mode (an MCP client has called `begin_agent_session`).
+//! agent mode (an MCP client has called `begin_agent_session`, or the
+//! human entered locally via the `agent_session_begin` channel).
 //!
 //! Why this lives outside the project actor:
 //!  - View-mode is not project data; mutating it shouldn't dirty the

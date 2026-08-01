@@ -49,8 +49,9 @@ export interface TsActorHostDeps {
   readFile: (p: string) => string
   /** Current workspace directory (cached from backend). Null before first open/newWorkspace. */
   workspaceDir: () => string | null
-  /** Flip the Rust agent-session slot ON/OFF (backend.beginAgentSessionSlot / endAgentSessionSlot). */
-  beginAgentSessionSlot?: (reason: string) => void
+  /** Flip the Rust agent-session slot ON/OFF (backend.beginAgentSessionSlot / endAgentSessionSlot).
+   *  `client` attributes the session: 'mcp' for tool-initiated, 'local' for UI-initiated. */
+  beginAgentSessionSlot?: (reason: string, client: string) => void
   endAgentSessionSlot?: () => void
   /** Emit a record-panel LogBus pin-row via the Rust log surface.
    *  Optional → no-op when omitted (tests that do not care about logging).
@@ -120,7 +121,7 @@ export interface TsActorHost {
    *  watcher can refresh the actor catalog when a Motif appears on disk with no
    *  store-mutating tool call (otherwise add_motif rejects it). */
   refreshMotifCatalog: () => void
-  beginAgentSessionSlot: (reason: string) => void
+  beginAgentSessionSlot: (reason: string, client: string) => void
   start: () => void
   stop: () => void
 }
@@ -375,6 +376,25 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
           unlockHistory: () => actor.unlockHistory(),
         })
         return null
+      case 'agentSessionBegin': {
+        // UI-initiated session — mirrors the MCP path in server.ts: mint the
+        // auto-checkpoint through the same actor arm, then flip the Rust slot.
+        // `client` attributes the session ('local' from the UI; 'mcp' on the
+        // tool path). The checkpoint pin-row is emitted here (not via the host
+        // mcpCall wrapper) so the log attributes the real client, not 'mcp'.
+        const reason = typeof args.reason === 'string' ? args.reason.trim() : ''
+        if (reason === '') return reject('agent_session_begin: reason must be non-empty')
+        const client =
+          typeof args.client === 'string' && args.client.trim() !== '' ? args.client : 'local'
+        const r = actor.mcpCall('begin_agent_session', JSON.stringify({ reason }))
+        if (!r.ok) return reject(`agent_session_begin failed: ${JSON.stringify(r.error)}`)
+        try {
+          const payload = JSON.parse(r.result.content[0]?.text ?? '{}') as { checkpoint_id?: string }
+          emitCheckpointLog(payload.checkpoint_id ?? '', `Pre-agent: ${reason}`, { kind: 'Agent', client })
+        } catch (err) { console.warn('[ts-actor-host] emitLog failed (agent_session_begin)', err) }
+        deps.beginAgentSessionSlot?.(reason, client)
+        return null
+      }
       case 'hybrid': {
         const hybridResult = await runHybrid(route.tool, args, hybridDeps)
         return hybridResult
@@ -478,7 +498,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     hybridDeps,
     motifTool: runMotif,
     refreshMotifCatalog,
-    beginAgentSessionSlot(reason: string) { deps.beginAgentSessionSlot?.(reason) },
+    beginAgentSessionSlot(reason: string, client: string) { deps.beginAgentSessionSlot?.(reason, client) },
     start() {
       if (!unsub) unsub = actor.subscribe(emitChange)
       autosave.start()

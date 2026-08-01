@@ -22,6 +22,8 @@ export interface MenuCommandDeps {
   addColorLayer: () => void | Promise<void>;
   addTextLayer: () => void | Promise<void>;
   openMotifPicker: () => void;
+  openAgentPanel: () => void;
+  enterAgentMode: () => void | Promise<void>;
 }
 
 export function buildAppCommands(
@@ -60,6 +62,8 @@ export function buildAppCommands(
     { id: "addColorLayer", labelKey: "actions.add_color_layer", run: menu.addColorLayer },
     { id: "addTextLayer", labelKey: "actions.add_text_layer", run: menu.addTextLayer },
     { id: "openMotifPicker", labelKey: "actions.motifs", run: menu.openMotifPicker },
+    { id: "openAgentPanel", labelKey: "actions.open_agent_panel", run: menu.openAgentPanel },
+    { id: "enterAgentMode", labelKey: "actions.enter_agent_mode", run: menu.enterAgentMode },
   );
   return defs;
 }

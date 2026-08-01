@@ -148,6 +148,7 @@ const zhCN: Resources = {
     save_workspace_as: "工作区另存为…",
     rename_workspace: "重命名工作区…",
     delete_workspace: "删除工作区",
+    enter_agent_mode: "进入 Agent 模式",
   },
   dock_workspace: {
     editing_label: "编辑工作区",
@@ -164,6 +165,7 @@ const zhCN: Resources = {
       "role-mixer": "角色混音",
       effect: "效果",
       nearby: "附近",
+      agent: "代理",
     },
     position: {
       left: "左侧",
@@ -210,6 +212,8 @@ const zhCN: Resources = {
     settings_hint: "偏好设置、快捷键与 API 密钥。",
     motifs: "Motifs…",
     motifs_hint: "选择 Motif 叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
+    open_agent_panel: "打开代理面板",
+    enter_agent_mode: "进入 Agent 模式",
     toggle_play: "播放 / 暂停",
     delete_selected: "删除选中的图层",
     copy_selected: "复制选中的片段",
@@ -414,6 +418,7 @@ const zhCN: Resources = {
     running_pill: "代理：{{count}} 个进行中",
     running_pill_hint: "代理的后台操作仍在继续。",
     restored_to: "已恢复到「{{label}}」",
+    manual_reason: "手动会话",
   },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AGENT_SESSION_EVENTS,
+  agentSessionBegin,
   agentSessionEnd,
   agentSessionGet,
   keybindingsGet,
@@ -33,6 +34,7 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
   setKeybindings: React.Dispatch<React.SetStateAction<KeybindingsMap>>;
   agentSession: AgentSession | null;
   exitAgentMode: () => Promise<void>;
+  enterAgentMode: (reason: string) => Promise<void>;
   staleMotifs: MotifStaleEntry[];
   setStaleMotifs: React.Dispatch<React.SetStateAction<MotifStaleEntry[]>>;
 } {
@@ -109,6 +111,14 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
       await agentSessionEnd();
     } catch (e) {
       console.warn("agent_session_end failed:", e);
+    }
+  }, []);
+
+  const enterAgentMode = useCallback(async (reason: string) => {
+    try {
+      await agentSessionBegin(reason);
+    } catch (e) {
+      console.warn("agent_session_begin failed:", e);
     }
   }, []);
 
@@ -228,6 +238,7 @@ export function useAppWiring(deps: { refresh: () => Promise<void> }): {
     setKeybindings,
     agentSession,
     exitAgentMode,
+    enterAgentMode,
     staleMotifs,
     setStaleMotifs,
   };

@@ -205,7 +205,7 @@ Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 - `list_checkpoints()` / `restore_checkpoint { checkpoint_id }` — restore clears redo and replaces the current snapshot.
 - `undo()` / `redo()`
 - `lock_history { reason }` / `unlock_history()` — freeze undo while a tool batch runs; the UI shows the reason.
-- `begin_agent_session { reason }` — flips the human's UI into a simplified preview / scrub / record-only layout. Auto-checkpoints. The human ends the session via the UI; the agent has no symmetric tool.
+- `begin_agent_session { reason }` — flips the human's UI into a simplified preview / scrub / record-only layout. Auto-checkpoints. The human can also enter agent mode locally (View menu / command palette, client `local`); the human ends the session via the UI; the agent has no symmetric tool.
 - `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable.
 
 ### Render

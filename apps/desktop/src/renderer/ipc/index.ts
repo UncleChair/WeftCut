@@ -783,9 +783,11 @@ export async function projectRestoreCheckpoint(checkpointId: string): Promise<vo
 }
 
 // ============================================================
-// Agent session — view mode controlled by MCP. UI shows agent mode
-// when `agent_session_get` returns Some(...); editor mode otherwise.
-// The frontend ONLY exits (`agent_session_end`); entry is MCP-only.
+// Agent session — view mode shared by MCP and the local UI. UI shows
+// agent mode when `agent_session_get` returns Some(...); editor mode
+// otherwise. Entry: the `begin_agent_session` MCP tool or the local
+// `agent_session_begin` channel (View menu / command palette); exit:
+// `agent_session_end`.
 // ============================================================
 
 export interface AgentSession {
@@ -805,6 +807,13 @@ export async function agentSessionGet(): Promise<AgentSession | null> {
 
 export async function agentSessionEnd(): Promise<void> {
   return invoke<void>("agent_session_end");
+}
+
+/// Begin a local agent session (client "local"): mints the same
+/// "Pre-agent: {reason}" auto-checkpoint the MCP tool creates, then flips
+/// the UI into agent mode via the `agent_session:changed` event.
+export async function agentSessionBegin(reason: string): Promise<void> {
+  return invoke<void>("agent_session_begin", { reason, client: "local" });
 }
 
 // ============================================================

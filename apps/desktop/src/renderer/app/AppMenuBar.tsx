@@ -45,6 +45,7 @@ interface AppMenuBarProps {
   onOpenExport: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
+  onEnterAgentMode: () => void;
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
   workspaceProfiles: ViewMenuWorkspaces | null;
@@ -104,6 +105,7 @@ export function AppMenuBar({
   onOpenExport,
   onOpenSettings,
   onOpenSearch,
+  onEnterAgentMode,
   workspaceController,
   workspaceSnapshot,
   workspaceProfiles,
@@ -222,6 +224,7 @@ export function AppMenuBar({
             workspaceController={workspaceController}
             workspaceSnapshot={workspaceSnapshot}
             workspaceProfiles={workspaceProfiles}
+            onEnterAgentMode={onEnterAgentMode}
           />
 
 

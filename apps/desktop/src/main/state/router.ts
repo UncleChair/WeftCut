@@ -13,6 +13,7 @@ export type Route =
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' }
   | { kind: 'agentSessionEnd' } // agentSessionEnd seam: endSlot + unlockHistory
+  | { kind: 'agentSessionBegin' } // UI-initiated session: checkpoint + beginSlot (mirrors the MCP tool path)
   | { kind: 'appSettings' }   // app-level prefs store, owned in TS main (config-dir)
   | { kind: 'workspace' }     // app-level Dock arrangement document, owned in TS main (config-dir)
   | { kind: 'viewState' }     // per-workspace view.json store, owned in TS main
@@ -67,6 +68,7 @@ export function routeChannel(channel: string): Route {
     case 'project_new_workspace': return { kind: 'newWorkspace' }
     case 'project_save': return { kind: 'save' }
     case 'agent_session_end': return { kind: 'agentSessionEnd' }
+    case 'agent_session_begin': return { kind: 'agentSessionBegin' }
     case 'app_settings_get':
     case 'app_settings_set': return { kind: 'appSettings' }
     case 'workspace_get':

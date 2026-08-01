@@ -39,12 +39,17 @@ interface ViewMenuProps {
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
   workspaceProfiles: ViewMenuWorkspaces | null;
+  /// Local agent-mode entry. While a session is active the whole menu bar
+  /// is swapped out for AgentMode, so this item is the enter path only —
+  /// exit stays on AgentMode's "Exit to editor" button.
+  onEnterAgentMode: () => void;
 }
 
 export function ViewMenu({
   workspaceController,
   workspaceSnapshot,
   workspaceProfiles,
+  onEnterAgentMode,
 }: ViewMenuProps) {
   const { t } = useTranslation();
   const mode = useDisplayMode();
@@ -146,6 +151,11 @@ export function ViewMenu({
         onSelect={() => {
           if (mode !== "ShowAll") void toggleDisplayMode();
         }}
+      />
+      <MenuSeparator />
+      <MenuItem
+        label={t("view.enter_agent_mode", { defaultValue: "Enter Agent Mode" })}
+        onSelect={onEnterAgentMode}
       />
     </Menu>
   );

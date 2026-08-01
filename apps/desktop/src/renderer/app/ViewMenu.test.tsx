@@ -85,6 +85,7 @@ describe("ViewMenu workspace controls", () => {
       <ViewMenu
         workspaceController={workspaceController}
         workspaceProfiles={null}
+        onEnterAgentMode={vi.fn()}
         workspaceSnapshot={{
           openPanels: new Set(["preview", "timeline"]),
           activePanel: "preview",
@@ -118,6 +119,7 @@ describe("ViewMenu workspace controls", () => {
       <ViewMenu
         workspaceController={controller()}
         workspaceProfiles={profiles}
+        onEnterAgentMode={vi.fn()}
         workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
       />,
     );
@@ -156,6 +158,7 @@ describe("ViewMenu workspace controls", () => {
       <ViewMenu
         workspaceController={controller()}
         workspaceProfiles={profiles}
+        onEnterAgentMode={vi.fn()}
         workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
       />,
     );

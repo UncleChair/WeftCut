@@ -16,6 +16,7 @@ export const PANEL_KINDS = [
   "role-mixer",
   "effect",
   "nearby",
+  "agent",
 ] as const;
 
 export type PanelKind = (typeof PANEL_KINDS)[number];
@@ -85,6 +86,12 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     titleKey: "dock_workspace.panels.nearby",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
+  },
+  agent: {
+    kind: "agent",
+    titleKey: "dock_workspace.panels.agent",
+    ...TOOL_MINIMUM,
+    initiallyOpen: false,
   },
 };
 

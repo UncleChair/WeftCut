@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { createTsActorHost } from '../ts-actor-host'
 
 function makeDeps(overrides: {
-  beginAgentSessionSlot?: (reason: string) => void
+  beginAgentSessionSlot?: (reason: string, client: string) => void
   endAgentSessionSlot?: () => void
 } = {}) {
   const noopFs = { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} }
@@ -55,12 +55,35 @@ describe('TsActorHost agent-session-end seam', () => {
   it('beginAgentSessionSlot delegates to deps.beginAgentSessionSlot with the reason', () => {
     const spy = vi.fn()
     const host = createTsActorHost(makeDeps({ beginAgentSessionSlot: spy }))
-    host.beginAgentSessionSlot('testing')
-    expect(spy).toHaveBeenCalledWith('testing')
+    host.beginAgentSessionSlot('testing', 'local')
+    expect(spy).toHaveBeenCalledWith('testing', 'local')
   })
 
   it('beginAgentSessionSlot is a no-op when dep is absent', () => {
     const host = createTsActorHost(makeDeps())
-    expect(() => host.beginAgentSessionSlot('noop')).not.toThrow()
+    expect(() => host.beginAgentSessionSlot('noop', 'local')).not.toThrow()
+  })
+
+  it('handleInvoke(agent_session_begin) mints the Pre-agent checkpoint, then flips the slot', async () => {
+    const calls: Array<[string, string]> = []
+    const host = createTsActorHost(makeDeps({
+      beginAgentSessionSlot: (reason, client) => calls.push([reason, client]),
+    }))
+    host.start()
+    await host.handleInvoke('agent_session_begin', { reason: 'manual pass', client: 'local' })
+    expect(calls).toEqual([['manual pass', 'local']])
+    // Same auto-checkpoint the MCP tool creates (actor.ts begin_agent_session arm).
+    expect(host.actor.listCheckpoints().map((c) => c.label)).toContain('Pre-agent: manual pass')
+    host.stop()
+  })
+
+  it('handleInvoke(agent_session_begin) defaults the client to local and rejects an empty reason', async () => {
+    const spy = vi.fn()
+    const host = createTsActorHost(makeDeps({ beginAgentSessionSlot: spy }))
+    host.start()
+    await host.handleInvoke('agent_session_begin', { reason: 'ui' })
+    expect(spy).toHaveBeenCalledWith('ui', 'local')
+    await expect(host.handleInvoke('agent_session_begin', { reason: '  ' })).rejects.toThrow(/reason/)
+    host.stop()
   })
 })

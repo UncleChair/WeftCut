@@ -338,9 +338,9 @@ function fakeDockview(
 }
 
 describe("Dock Panel registry", () => {
-  it("registers exactly the eight semantic singleton kinds", () => {
-    expect(PANEL_KINDS).toHaveLength(8);
-    expect(new Set(PANEL_KINDS).size).toBe(8);
+  it("registers exactly the nine semantic singleton kinds", () => {
+    expect(PANEL_KINDS).toHaveLength(9);
+    expect(new Set(PANEL_KINDS).size).toBe(9);
     expect(Object.keys(PANEL_REGISTRY)).toEqual([...PANEL_KINDS]);
     expect(EDITING_OPEN_PANEL_KINDS).toEqual([
       "media",

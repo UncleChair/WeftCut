@@ -19,10 +19,10 @@ import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 
 /// Agent mode — the simplified preview / mini-timeline / record-panel
-/// layout the human sees while an MCP-initiated agent session is
-/// active. Entered only via the `begin_agent_session` MCP tool (see
-/// `agent_session.rs` in the Rust crate); exited via the persistent
-/// "Exit to editor" button in the record-panel header.
+/// layout the human sees while an agent session is active. Entered via
+/// the `begin_agent_session` MCP tool or locally via the View menu /
+/// command palette (`agent_session_begin` channel); exited via the
+/// persistent "Exit to editor" button in the record-panel header.
 ///
 /// Layout: preview top-left (expanding), mini timeline bottom-left
 /// (fixed ~80 px), record panel right (fixed ~360 px). See docs/mcp.md.

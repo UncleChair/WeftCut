@@ -352,6 +352,7 @@ export function App({ onCloseProject }: AppProps) {
     setKeybindings,
     agentSession,
     exitAgentMode,
+    enterAgentMode,
     staleMotifs,
     setStaleMotifs,
   } = useAppWiring({ refresh });
@@ -671,6 +672,13 @@ export function App({ onCloseProject }: AppProps) {
     await refresh();
   }, [refresh]);
 
+  // Local agent-mode entry (View menu + palette). The reason labels the
+  // record-panel header and the "Pre-agent: …" auto-checkpoint.
+  const handleEnterAgentMode = useCallback(
+    () => enterAgentMode(t("agent_mode.manual_reason")),
+    [enterAgentMode, t],
+  );
+
   useCommandProvider(() =>
     buildAppCommands(
       shortcutHandlers,
@@ -678,6 +686,8 @@ export function App({ onCloseProject }: AppProps) {
         addColorLayer: handleAddColorLayer,
         addTextLayer: handleAddTextLayer,
         openMotifPicker: () => setMotifPickerOpen(true),
+        openAgentPanel: () => workspaceController?.openPanel("agent"),
+        enterAgentMode: handleEnterAgentMode,
       },
       {
         busy,
@@ -787,6 +797,7 @@ export function App({ onCloseProject }: AppProps) {
           onOpenExport={() => setExportDialogOpen(true)}
           onOpenSettings={() => openSettings("general")}
           onOpenSearch={() => setPaletteOpen(true)}
+          onEnterAgentMode={handleEnterAgentMode}
           workspaceController={workspaceController}
           workspaceSnapshot={workspaceSnapshot}
           workspaceProfiles={viewMenuWorkspaces}
