@@ -139,7 +139,7 @@
 .weft-dock-panel > .preview,
 .weft-dock-panel > .timeline,
 .weft-dock-panel > .media-pool,
-.weft-dock-panel > .agent-record-body {
+.weft-dock-panel > .agent-panel {
   width: 100%;
   height: 100%;
 }

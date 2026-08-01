@@ -32,7 +32,7 @@ import { CaptionPanel } from "../panels/CaptionPanel";
 import { EffectPanel } from "../panels/EffectPanel";
 import { NearbyPanel } from "../panels/NearbyPanel";
 import { RoleMixerPanel } from "../panels/RoleMixerPanel";
-import { RecordPanel } from "../agent/RecordPanel";
+import { AgentPanel } from "../agent/AgentPanel";
 import {
   importCancel,
   updateLayer,
@@ -307,16 +307,18 @@ function NearbyDockPanel() {
   );
 }
 
-/// The record panel outside agent mode: the dock workspace only mounts in
+/// The agent panel outside agent mode: the dock workspace only mounts in
 /// editor mode (App swaps the whole body for AgentMode while a session is
-/// active), so there is no session window to filter by here — the epoch
-/// start shows every agent-attributed entry in the log stream.
+/// active), so there is no live session to headline — the shared AgentPanel
+/// falls back to the plain panel title, and the epoch window start shows
+/// every agent-attributed entry in the log stream.
 const AGENT_PANEL_WINDOW_START = new Date(0).toISOString();
 
 function AgentDockPanel() {
   const contracts = useContracts();
   return (
-    <RecordPanel
+    <AgentPanel
+      session={null}
       sessionStartedAt={AGENT_PANEL_WINDOW_START}
       lockReason={contracts.summary?.history.lock_reason ?? null}
     />

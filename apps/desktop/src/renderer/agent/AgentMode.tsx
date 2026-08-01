@@ -17,7 +17,7 @@ import {
   type PreviewSurfaceHandle,
 } from "../preview/PreviewSurface";
 import { MiniTimeline } from "./MiniTimeline";
-import { RecordPanel } from "./RecordPanel";
+import { AgentPanel } from "./AgentPanel";
 import { setPlayheadTimeUs } from "../state/playheadStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
@@ -29,8 +29,11 @@ import { WindowControls } from "../components/WindowControls";
 /// persistent "Exit to editor" button in the titlebar's top-right.
 ///
 /// Layout: preview top-left (expanding), mini timeline bottom-left
-/// (fixed ~80 px), record panel right (default 360 px, resizable via the
-/// sash in the column gap). See docs/mcp.md.
+/// (fixed ~80 px), agent panel right (default 360 px, resizable via the
+/// sash in the column gap — the panes otherwise stay put: no dragging,
+/// no docking). The right pane is the shared AgentPanel component (title
+/// info on top, record stream below), the same surface the editor dock's
+/// "Agent" panel renders. See docs/mcp.md.
 /// Both the menu bar and editor-mode status bar are hidden — in
 /// agent mode the record panel IS the surface for activity.
 interface AgentModeProps {
@@ -153,8 +156,8 @@ export const AgentMode = forwardRef(function AgentMode(
       </section>
 
       <section className="agent-record">
-        <RecordPanelHeader session={session} />
-        <RecordPanel
+        <AgentPanel
+          session={session}
           sessionStartedAt={session.started_at}
           lockReason={summary?.history.lock_reason ?? null}
         />
@@ -176,20 +179,4 @@ export const AgentMode = forwardRef(function AgentMode(
     </div>
   );
 });
-
-function RecordPanelHeader({ session }: { session: AgentSession }) {
-  const { t } = useTranslation();
-  return (
-    <header className="agent-record-header">
-      <div className="agent-record-title">
-        <span className="agent-record-client">
-          {t("agent_mode.client_label", { client: session.client })}
-        </span>
-        <span className="agent-record-reason" title={session.reason}>
-          {session.reason}
-        </span>
-      </div>
-    </header>
-  );
-}
 
