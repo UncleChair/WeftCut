@@ -145,7 +145,15 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
 
 // ── top-level view types (mirror commands/mod.rs:150-238 + build_project_summary) ──
 
-export interface CompositionSummary { width: number; height: number; fps_num: number; fps_den: number; duration_pinned: boolean }
+export interface CompositionSummary {
+  width: number; height: number; fps_num: number; fps_den: number; duration_pinned: boolean
+  /** Would a `set_composition { fps }` be rejected right now? True once the
+   *  timeline holds a layer OR any stored snapshot/checkpoint does (spec R2-D1,
+   *  history-scoped — see actor.setComposition). Lets the settings panel disable
+   *  the rate control instead of offering a click that always errors. Read-only:
+   *  the actor's own check stays the source of truth. */
+  fps_locked: boolean
+}
 export interface HistoryView { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
 export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
 export interface GroupSummary { id: string; label: string | null; layer_ids: string[] }
@@ -257,7 +265,8 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
   const view: ProjectSummary = {
     project_id: p.project_id, name: p.metadata.name,
     composition: { width: p.composition.width, height: p.composition.height, fps_num: p.composition.fps.num,
-      fps_den: p.composition.fps.den, duration_pinned: p.composition.duration_pinned },
+      fps_den: p.composition.fps.den, duration_pinned: p.composition.duration_pinned,
+      fps_locked: history.holds_layer_anywhere },
     track_count: p.tracks.length, layer_count, duration_us: p.composition.duration_us,
     history: { cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo },
     media, tracks, markers, transitions, groups, audio_roles,

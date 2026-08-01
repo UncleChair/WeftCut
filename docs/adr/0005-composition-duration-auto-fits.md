@@ -49,8 +49,20 @@ A boolean pin separates the two semantics cleanly. The pin flips on only when `s
 - **One extra serialized field.** `#[serde(default)]` keeps old projects readable; the first layer edit re-syncs duration to `max_end`, which matches what the user already sees. No migration step.
 - **A pinned project still grows.** Setting the pin doesn't freeze the value — `max_end > duration_us` always wins, otherwise `add_layer` would silently push a layer past the composition end. The invariant `duration_us >= max(layer.t_end_us)` is preserved.
 - **Passive shrinks ride existing history entries.** The layer-edit commit that triggered the shrink owns the duration delta; no separate history entry. Older snapshots stay coherent because `duration_us >= max_end` already held in each one and continues to hold.
-- **Existing `set_composition` undo semantics survive.** A `set_composition { duration_us }` patch records as one entry (see `docs/features.md#undo-stack-scope`); the pin flip rides on the same commit.
-- **`duration_pinned` is editing state, not canvas setup.** It must not go through `replace_composition_canvas_everywhere` — it lives per-snapshot like `duration_us` itself. `set_composition`'s existing canvas-vs-duration split already does this correctly because the pin is written together with the duration delta.
+
+> **Superseded (undo semantics only).** The two bullets that followed here said a
+> `set_composition { duration_us }` patch records one history entry, and that
+> `duration_pinned` must therefore *not* travel through the canvas fan-out
+> because it is "editing state, not canvas setup". Both were premises about
+> keeping older snapshots coherent, and both are now obsolete: the composition
+> envelope — duration and pin included — is unrecorded, and the fan-out applies
+> the patch as a **transform run per snapshot** rather than a value copied
+> across them. `apply_duration_autofit` therefore floors the pinned value at
+> *each* snapshot's own high-water mark, which preserves the very invariant
+> those bullets were protecting (`duration_us >= max_end`, per snapshot) without
+> a history entry. Everything else in this ADR — the auto-fit rule, the pin, the
+> overflow guard, `fit_composition_to_layers` — stands unchanged.
+> Current contract: `docs/features.md#undo-stack-scope`.
 
 ## Code touch points
 

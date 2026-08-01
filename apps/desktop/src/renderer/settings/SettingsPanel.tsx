@@ -51,6 +51,8 @@ import {
   useTailSnapStrengthPx,
 } from "./appSettingsStore";
 import { setPreferProxies, useProxyPrefStore } from "../state/proxyPreferenceStore";
+import { CANVAS_PRESETS } from "../startup/canvasPresets";
+import { STANDARD_HEIGHTS } from "../render/exportSettings";
 
 const TAIL_SNAP_MIN_PX = 2;
 const TAIL_SNAP_MAX_PX = 80;
@@ -71,15 +73,21 @@ const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
   { id: "agent", labelKey: "settings.cat_agent" },
 ];
 
-interface CompositionState {
+export interface CompositionState {
   durationUs: number;
   durationPinned: boolean;
   /// Live `max(layer.t_end_us)` — the floor a pinned duration can't sit
-  /// below. Pre-validation only; the Rust-side overflow guard is the
+  /// below. Pre-validation only; the actor-side overflow guard is the
   /// source of truth.
   layersMaxEndUs: number;
   fpsNum: number;
   fpsDen: number;
+  width: number;
+  height: number;
+  /// `set_composition { fps }` would be rejected (spec R2-D1, history-scoped).
+  /// Straight from the summary — never recomputed here, because the condition
+  /// spans stored snapshots the renderer cannot see.
+  fpsLocked: boolean;
 }
 
 interface Props {
@@ -271,8 +279,18 @@ export function SettingsPanel({
             >
               <p className="settings-blurb">{t("settings.project_scope_blurb")}</p>
               <section className="settings-section">
-                <h3>{t("settings.composition_heading")}</h3>
-                <p className="settings-blurb">{t("settings.composition_blurb")}</p>
+                <h3>{t("settings.canvas_heading")}</h3>
+                <p className="settings-blurb">{t("settings.canvas_blurb")}</p>
+                <CanvasSection
+                  composition={composition}
+                  onChanged={onCompositionChanged}
+                  onError={setError}
+                />
+              </section>
+
+              <section className="settings-section">
+                <h3>{t("settings.duration_heading")}</h3>
+                <p className="settings-blurb">{t("settings.duration_blurb")}</p>
                 <CompositionSection
                   composition={composition}
                   onChanged={onCompositionChanged}
@@ -775,6 +793,261 @@ export function DataLocationSection({
           </div>
         </AppDialog>
       )}
+    </>
+  );
+}
+
+/// 16:9 resolution presets, largest first — the same ladder export offers as
+/// downscale targets (`STANDARD_HEIGHTS`), widened to full dimensions here.
+/// Every width lands even (480 → 854, not 853) because an odd dimension would be
+/// silently shaved by the encoder's `makeEven` at export time.
+const RESOLUTION_PRESETS: ReadonlyArray<{ width: number; height: number }> =
+  STANDARD_HEIGHTS.map((height) => {
+    const w = Math.round((height * 16) / 9);
+    return { width: w % 2 === 0 ? w : w + 1, height };
+  });
+
+/// Authorable rates = the new-project preset table's rates, deduped. Sharing that
+/// list is deliberate: a rate offered at creation but not here (or vice versa)
+/// would be a trap, since the choice is effectively one-way (see the rate lock).
+const FPS_OPTIONS: ReadonlyArray<{ num: number; den: number }> = (() => {
+  const seen = new Set<string>();
+  const out: Array<{ num: number; den: number }> = [];
+  for (const { preset } of CANVAS_PRESETS) {
+    const key = `${preset.fpsNum}/${preset.fpsDen}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ num: preset.fpsNum, den: preset.fpsDen });
+  }
+  return out;
+})();
+
+/// Rounded for reading only — the exact rational is what travels over the wire
+/// (30000/1001 is not 29.97 to ffmpeg). Trailing zeros trimmed: 29.970 → 29.97.
+function formatFps(num: number, den: number): string {
+  if (den === 1) return String(num);
+  return (num / den).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+/// Canvas bounds. Even because yuv420 encoders need it; 8K as the ceiling
+/// because canvas size drives the transition RT pool and every sprite's texture
+/// allocation, and 16 as a floor so a half-typed "1" can't land as a 1×1 canvas.
+const CANVAS_MIN = 16;
+const CANVAS_MAX = 7680;
+const CANVAS_MAX_PIXELS = 7680 * 4320;
+
+/// Canvas size + frame rate. Both are composition SETUP: neither records onto the
+/// undo stack (the patch is applied to every history snapshot), which is why this
+/// lives in its own section away from the duration control.
+/// Exported for CanvasSection.test.tsx (same arrangement as DataLocationSection).
+export function CanvasSection({
+  composition,
+  onChanged,
+  onError,
+}: {
+  composition: CompositionState | null;
+  onChanged: () => Promise<void> | void;
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  /// Draft is a PAIR, and there is an explicit Apply: committing each field on its
+  /// own blur would walk through a bogus intermediate canvas (1920×1080 → 3840×2160
+  /// via 3840×1080), and each intermediate really lands — evicting and rebuilding
+  /// every image sprite and patching every snapshot for a size nobody asked for.
+  const [draft, setDraft] = useState<{ width: number; height: number } | null>(null);
+  /// Section-wide lock, engaged on every mount. Nothing here is undoable and the
+  /// rate is effectively one-way, so an idle mis-click carries a cost no Ctrl-Z
+  /// pays back — the switch is as much the warning as it is the guard. Deliberately
+  /// NOT persisted: re-locking each time the dialog opens is the point.
+  const [locked, setLocked] = useState(true);
+  /// "Custom" is a MODE, not a size. Selecting it only reveals the fields; the
+  /// patch still waits for Apply. Sticky until a preset is picked, so applying a
+  /// size that happens to match a preset doesn't yank the fields away mid-edit.
+  const [customMode, setCustomMode] = useState(false);
+
+  // Re-seed from upstream whenever the canvas changes under us (a preset click,
+  // another surface's patch). A live draft is left alone — that's the user typing.
+  useEffect(() => {
+    setDraft(null);
+  }, [composition?.width, composition?.height]);
+
+  // Re-locking must also drop any half-typed draft and leave custom mode, so
+  // releasing the lock again never resumes an edit the user has walked away from.
+  const relock = () => {
+    setLocked(true);
+    setDraft(null);
+    setCustomMode(false);
+  };
+
+  const disabled = composition === null || busy || locked;
+  const width = draft?.width ?? composition?.width ?? 0;
+  const height = draft?.height ?? composition?.height ?? 0;
+  const dirty =
+    composition !== null && (width !== composition.width || height !== composition.height);
+
+  /// Pure validator, run on every keystroke so feedback arrives while typing.
+  const sizeError = ((): string | null => {
+    if (composition === null || !dirty) return null;
+    for (const v of [width, height]) {
+      if (v < CANVAS_MIN || v > CANVAS_MAX) {
+        return t("settings.canvas_size_range", { min: CANVAS_MIN, max: CANVAS_MAX });
+      }
+      // A fractional value belongs to the even/whole rule, not the range one —
+      // "1920.5 must be between 16 and 7680" reads as a lie.
+      if (!Number.isInteger(v) || v % 2 !== 0) return t("settings.canvas_size_odd");
+    }
+    if (width * height > CANVAS_MAX_PIXELS) {
+      return t("settings.canvas_size_too_many_pixels");
+    }
+    return null;
+  })();
+
+  const patch = async (fields: Record<string, unknown>) => {
+    if (composition === null || busy) return;
+    setBusy(true);
+    onError("");
+    try {
+      await setComposition(fields);
+      await onChanged();
+      setDraft(null);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /// A size off the preset ladder forces custom mode: the ladder can't represent
+  /// it, so the fields are the only honest readout (and a project can arrive here
+  /// with any size an MCP caller set).
+  const matchesPreset =
+    composition !== null &&
+    RESOLUTION_PRESETS.some((p) => p.width === composition.width && p.height === composition.height);
+  const isCustom = composition !== null && (customMode || !matchesPreset);
+  const presetValue =
+    composition === null ? "" : isCustom ? "custom" : `${composition.width}x${composition.height}`;
+
+  const fpsValue = composition === null ? "" : `${composition.fpsNum}/${composition.fpsDen}`;
+  /// A project can carry a rate this list doesn't offer (an MCP `set_composition`
+  /// takes any rational). Surface it rather than rendering a blank trigger.
+  const fpsOptions = [
+    ...(composition !== null && !FPS_OPTIONS.some((f) => f.num === composition.fpsNum && f.den === composition.fpsDen)
+      ? [{ num: composition.fpsNum, den: composition.fpsDen }]
+      : []),
+    ...FPS_OPTIONS,
+  ];
+
+  return (
+    <>
+      <label className="settings-toggle-row">
+        <AppSwitch
+          checked={locked}
+          disabled={composition === null || busy}
+          onCheckedChange={(next) => {
+            if (next) relock();
+            else setLocked(false);
+          }}
+        />
+        <span>
+          <span className="settings-toggle-label">{t("settings.canvas_lock")}</span>
+          <span className="settings-toggle-hint">{t("settings.canvas_lock_hint")}</span>
+        </span>
+      </label>
+
+      <div className="settings-control-row">
+        <span className="settings-toggle-label">{t("settings.canvas_resolution")}</span>
+        <AppSelect
+          className="settings-select"
+          value={presetValue}
+          disabled={disabled}
+          ariaLabel={t("settings.canvas_resolution")}
+          onValueChange={(v) => {
+            // "Custom" only switches the editor on — no patch until Apply. Picking a
+            // preset is the one path that leaves custom mode.
+            if (v === "custom") {
+              setCustomMode(true);
+              return;
+            }
+            setCustomMode(false);
+            const [w, h] = v.split("x").map(Number);
+            void patch({ width: w, height: h });
+          }}
+          options={[
+            ...RESOLUTION_PRESETS.map((p) => ({
+              value: `${p.width}x${p.height}`,
+              label: `${p.width} × ${p.height}`,
+            })),
+            { value: "custom", label: t("settings.canvas_resolution_custom") },
+          ]}
+        />
+      </div>
+
+      {isCustom && (
+        <>
+          <div className="settings-control-row">
+            <span className="settings-toggle-label">{t("settings.canvas_custom_size")}</span>
+            <div className="settings-size-fields">
+              {/* Deliberately NO min/max on the fields: Base UI clamps the value it
+                  reports while leaving the typed text alone, so a typed 9000 would
+                  read 9000 and Apply 7680. One authority (the validator below), one
+                  visible message. `step` only drives the +/- steppers — it does not
+                  snap typed input, so the even rule needs the validator too. */}
+              <AppNumberField
+                value={width}
+                disabled={disabled}
+                step={2}
+                align="center"
+                ariaLabel={t("settings.canvas_width")}
+                onValueChange={(v) => setDraft({ width: v, height })}
+              />
+              <span aria-hidden="true">×</span>
+              <AppNumberField
+                value={height}
+                disabled={disabled}
+                step={2}
+                align="center"
+                ariaLabel={t("settings.canvas_height")}
+                onValueChange={(v) => setDraft({ width, height: v })}
+              />
+              <Button
+                variant="secondary"
+                disabled={disabled || !dirty || sizeError !== null}
+                onClick={() => void patch({ width, height })}
+              >
+                {t("settings.canvas_apply")}
+              </Button>
+            </div>
+          </div>
+          {sizeError !== null && (
+            <p className="settings-error" role="alert">
+              {sizeError}
+            </p>
+          )}
+        </>
+      )}
+
+      <div className="settings-control-row">
+        <span className="settings-toggle-label">{t("settings.canvas_fps")}</span>
+        <AppSelect
+          className="settings-select"
+          value={fpsValue}
+          disabled={disabled || (composition?.fpsLocked ?? false)}
+          ariaLabel={t("settings.canvas_fps")}
+          onValueChange={(v) => {
+            const [num, den] = v.split("/").map(Number);
+            void patch({ fps: { num, den } });
+          }}
+          options={fpsOptions.map((f) => ({
+            value: `${f.num}/${f.den}`,
+            label: `${formatFps(f.num, f.den)} fps`,
+          }))}
+        />
+      </div>
+      {/* One unconditional statement of the rule rather than a locked/unlocked
+          pair: it reads the same either way, and the disabled control already
+          says which side of it this project is on. */}
+      <p className="settings-toggle-hint">{t("settings.canvas_fps_hint")}</p>
     </>
   );
 }

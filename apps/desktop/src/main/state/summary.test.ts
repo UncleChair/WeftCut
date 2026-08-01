@@ -99,13 +99,30 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
     expect(s.name).toBe('demo')
     expect([s.track_count, s.layer_count]).toEqual([2, 0]) // A-roll + B-roll, no layers
-    expect(s.composition).toEqual({ width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false })
+    // fps_locked false on a blank project: nothing in the stack has ever held a layer.
+    expect(s.composition).toEqual({ width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false })
     expect(s.audio_roles.map((r) => r.role)).toEqual(['dialogue', 'music', 'sfx', 'voiceover']) // ALL order
     expect(s.audio_roles[0]).toEqual({ role: 'dialogue', gain_db: 0, muted: false, solo: false }) // defaults filled
     expect([s.history.cursor, s.history.len, s.history.can_undo, s.history.can_redo]).toEqual([0, 1, false, false])
     expect(s.history.lock_reason).toBeUndefined() // skip_serializing_if=Option::is_none → absent
     expect([s.media, s.markers, s.groups]).toEqual([[], [], []])
   })
+  /// The settings panel disables its rate control off this one flag, so it has to
+  /// carry the HISTORY-scoped truth, not just "are there layers right now".
+  it('composition.fps_locked follows the stored history, not the live layer count', () => {
+    const gen = seededGen()
+    const initial = blankProject(gen, 'lock')
+    const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
+    const added = actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER).composition.fps_locked).toBe(true)
+
+    // Delete it: the timeline is empty again, but undo still reaches the layer.
+    expect(actor.dispatch('delete_layer', { layer: added.ok ? added.value : '' }).ok).toBe(true)
+    const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
+    expect(s.layer_count).toBe(0)
+    expect(s.composition.fps_locked).toBe(true)
+  })
+
   it('a built project: track kind, layer kind/color_hint, media sorted desc + label', () => {
     const gen = seededGen()
     const initial = blankProject(gen, 'demo')

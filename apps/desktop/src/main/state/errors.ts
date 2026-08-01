@@ -87,15 +87,23 @@ export type CommandError =
   // a short layer can collapse and reject the whole operation. So the rate is
   // immutable once the timeline holds a layer.
   //
-  // Deliberately a hard rejection, not a confirmation flag or a convert workflow.
-  // There is NO UI caller — `SettingsPanel` only reads fps to format timecode — so
-  // the lock removes no existing user capability; it turns an MCP patch that looked
-  // like an ordinary setting into an actionable error. `layer_count` is the blocking
+  // Deliberately a hard rejection, not a confirmation flag or a convert workflow —
+  // the same shape Premiere and Resolve both settled on (their rate field greys out
+  // once the timeline, respectively the media pool, is non-empty; the prescribed
+  // escape is a fresh timeline, never an undo). `layer_count` is the blocking
   // condition made legible, and `current` tells the caller what rate it is stuck
   // with without a second round trip. Rate conversion, if ever wanted, is
   // `duplicate timeline → convert` with the rounding previewed — a feature of its
-  // own, not a settings patch. A LAYER-LESS project is still freely re-rateable.
-  | { error: 'FpsLockedByContent'; current: Rational; requested: Rational; layer_count: number }
+  // own, not a settings patch.
+  //
+  // `locked_by` names the SCOPE that blocked, because the judgement spans the
+  // stored history, not just the live state (see setComposition): `current` = the
+  // timeline holds layers right now, `history` = it doesn't, but some snapshot or
+  // checkpoint does, so undo could still resurrect old-grid layers. The two carry
+  // the same remedy (empty the timeline, then reopen the project — `replace_state`
+  // resets the stack) and differ only in what the message can honestly say; with
+  // `history`, `layer_count` is 0 and must NOT be read as "nothing is blocking".
+  | { error: 'FpsLockedByContent'; current: Rational; requested: Rational; layer_count: number; locked_by: 'current' | 'history' }
   | { error: 'InvalidArgument'; field: string; detail: string }
   | { error: 'Backend'; detail: string }
 

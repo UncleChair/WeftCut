@@ -30,7 +30,7 @@ function fixtureSummary(): ProjectSummary {
   return {
     project_id: "p1",
     name: "fixture",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false },
+    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
     track_count: 1,
     layer_count: 2,
     duration_us: 10_000_000,

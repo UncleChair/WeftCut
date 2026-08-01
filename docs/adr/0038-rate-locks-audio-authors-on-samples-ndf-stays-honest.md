@@ -36,20 +36,30 @@ be placed, and the value stored was not the value rendered.
 layer_count }` when a layer exists anywhere. The rejection happens before any draft
 work, so it mints no op id, records no history and emits nothing.
 
-Not a convert workflow and not a confirmation flag. There is **no UI caller** —
-`SettingsPanel` only reads fps to format timecode — so locking removes no existing
-user capability; it converts a silently destructive settings patch into an
-actionable error for an agent. It also pins the timecode policy at creation and
-deletes the whole rate-migration question downstream. If rate conversion is ever
-wanted it is *duplicate timeline → convert*, previewing the rounding and leaving the
-original intact: a feature, not a patch.
+> **Amended twice since.** (1) The condition is now **history-scoped**: a layer in
+> the live timeline *or* in any stored snapshot / checkpoint locks the rate, and
+> the error carries `locked_by: current | history` to say which. That followed
+> from making the rate change unrecorded — the write reaches every snapshot, so
+> the judgement has to as well, or `undo` becomes a backdoor that returns
+> old-grid layers at the new rate. (2) There **is** a UI caller now: the Settings
+> → Canvas section offers the rate, disabled off `composition.fps_locked`. The
+> lock's substance is unchanged; only its scope and its audience are.
+> Current contract: `docs/features.md#undo-stack-scope`.
+
+Not a convert workflow and not a confirmation flag — the same shape Premiere and
+Resolve both settled on. It pins the timecode policy at creation and deletes the
+whole rate-migration question downstream. If rate conversion is ever wanted it is
+*duplicate timeline → convert*, previewing the rounding and leaving the original
+intact: a feature, not a patch.
 
 **"Content" means at least one layer.** Markers, a pinned duration, and
 imported-but-unplaced media do not lock it: a fresh project has two tracks and no
 layers, and marker re-snapping is lossless, so a stray marker must not brick the
 rate. That threshold also keeps a future "dropping the first clip offers to match
 the sequence rate" flow reachable — it sets fps while the timeline is still
-layer-less, then adds.
+layer-less, then adds. (Per the amendment above, "at least one layer" is now read
+across the stored history, not only the live state — the *kind* of content that
+counts is unchanged.)
 
 Because the list is now the only way to pick a rate, it must be complete:
 23.976 / 24 / 25 / 30 / 50 / 59.94 / 60 and 29.97, plus 4K at 30 and 60. There is

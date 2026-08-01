@@ -433,12 +433,65 @@ describe('dispatch: set_composition full', () => {
         current: { num: 30, den: 1 },
         requested: { num: 24, den: 1 },
         layer_count: 2,
+        locked_by: 'current',
       })
     }
     // Mints no op_id, records nothing, emits nothing, changes nothing.
     expect(JSON.stringify(actor.snapshot())).toBe(before)
     expect(actor.historyStatus().len).toBe(historyBefore)
     expect(events).toEqual([])
+  })
+
+  // ── The lock's history scope ─────────────────────────────────────────────────
+  // The whole point: an unrecorded rate change lands in EVERY snapshot, so judging
+  // the lock on the current state alone would leave undo as a backdoor that hands
+  // back old-grid layers at the new rate.
+  it('fps stays locked after the layers are deleted — undo could still resurrect them', () => {
+    const actor = withTwoLayers()
+    for (const t of actor.snapshot().tracks) {
+      for (const l of t.layers) expect(actor.dispatch('delete_layer', { layer: l.id }).ok).toBe(true)
+    }
+    expect(actor.snapshot().tracks.every((t) => t.layers.length === 0)).toBe(true)
+
+    const r = actor.dispatch('set_composition', { fps: { num: 24, den: 1 } })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      // layer_count is the LIVE count and is honestly 0; locked_by is what carries
+      // the real reason, so a caller must not read 0 as "nothing is blocking".
+      expect(r.error).toEqual({
+        error: 'FpsLockedByContent',
+        current: { num: 30, den: 1 },
+        requested: { num: 24, den: 1 },
+        layer_count: 0,
+        locked_by: 'history',
+      })
+    }
+    // And the undo path it protects still returns the layers at the ORIGINAL rate.
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot().composition.fps).toEqual({ num: 30, den: 1 })
+  })
+
+  it('a checkpoint holding a layer locks the rate even with an empty stack head', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc-cp')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const layer = actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(layer.ok).toBe(true)
+    actor.checkpoint('before the purge')
+    expect(actor.dispatch('delete_layer', { layer: layer.ok ? layer.value : '' }).ok).toBe(true)
+
+    const r = actor.dispatch('set_composition', { fps: { num: 24, den: 1 } })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatchObject({ error: 'FpsLockedByContent', locked_by: 'history' })
+  })
+
+  it('a project that has never held a layer is freely re-rateable', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc-virgin')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    // Markers and a pinned duration are stored history too, but neither locks (R2-D2).
+    expect(actor.dispatch('add_marker', { t_us: 100_000, end_t_us: 400_000, label: 'm' }).ok).toBe(true)
+    expect(actor.dispatch('set_composition', { duration_us: 5_000_000 }).ok).toBe(true)
+    expect(actor.dispatch('set_composition', { fps: { num: 24, den: 1 } }).ok).toBe(true)
+    expect(actor.snapshot().composition.fps).toEqual({ num: 24, den: 1 })
   })
 
   it('a locked fps patch consumes no op_id', () => {
@@ -457,14 +510,17 @@ describe('dispatch: set_composition full', () => {
     expect(nextLayerId(true)).toBe(nextLayerId(false))
   })
 
-  it('fps change on a LAYER-LESS project succeeds, re-snaps markers + duration, and is undoable', () => {
+  it('fps change on a LAYER-LESS project re-snaps markers + duration in EVERY snapshot, unrecorded', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'sc-empty')
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
     // Markers and a pinned duration do NOT lock the rate (R2-D2) — and both must
     // land canonical on the new grid or the grid backstop rejects the whole change.
-    expect(actor.dispatch('add_marker', { t_us: 100_000, end_t_us: 400_000, label: 'm' }).ok).toBe(true)
+    // TWO recorded marker adds, so the stack holds an intermediate snapshot with a
+    // marker in it — that older snapshot is what the per-snapshot re-snap is for.
+    expect(actor.dispatch('add_marker', { t_us: 100_000, end_t_us: 400_000, label: 'm1' }).ok).toBe(true)
+    expect(actor.dispatch('add_marker', { t_us: 700_000, label: 'm2' }).ok).toBe(true)
     expect(actor.dispatch('set_composition', { duration_us: 5_000_000 }).ok).toBe(true)
-    const before = JSON.stringify(actor.snapshot())
+    const historyBefore = actor.historyStatus().len
 
     expect(actor.dispatch('set_composition', { fps: { num: 30_000, den: 1001 } }).ok).toBe(true)
     const after = actor.snapshot()
@@ -474,10 +530,67 @@ describe('dispatch: set_composition full', () => {
     expect(after.composition.duration_us).toBe(5_005_000)
     expect(after.markers[0].t_us).toBe(100_100) // frame 3
     expect(after.markers[0].end_t_us).toBe(400_400) // frame 12
-    expect(actor.dispatch('undo', {}).ok).toBe(true) // recorded → undoable
-    expect(JSON.stringify(actor.snapshot())).toBe(before)
-    expect(actor.dispatch('redo', {}).ok).toBe(true) // snapshots, not commands
+    expect(actor.historyStatus().len).toBe(historyBefore) // unrecorded — no new entry
+
+    // Undo back over the second marker add. The rate persists (patched into that
+    // snapshot too) and — the reason the re-snap must be per-snapshot — the marker
+    // it restores is canonical on the NEW grid, not the rate it was authored at.
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    const older = actor.snapshot()
+    expect(older.markers).toHaveLength(1)
+    expect(older.composition.fps).toEqual({ num: 30_000, den: 1001 })
+    expect(older.markers[0].t_us).toBe(100_100)
+    expect(older.markers[0].end_t_us).toBe(400_400)
+    expect(actor.dispatch('undo', {}).ok).toBe(true) // back to Initial
     expect(actor.snapshot().composition.fps).toEqual({ num: 30_000, den: 1001 })
+    expect(actor.snapshot().markers).toEqual([])
+  })
+
+  it('a pinned duration is unrecorded and floored per snapshot at that snapshot\'s own content end', () => {
+    // Snapshot A holds a 10 s layer; the head trims it to 2 s. Pinning 3 s must NOT
+    // copy 3 s into A — that would leave A's own layer stranded 7 s past the end.
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc-guard')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const added = actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 10_000_000 })
+    expect(added.ok).toBe(true)
+    const layerId = added.ok ? (added.value as string) : ''
+    expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 2_000_000 }).ok).toBe(true)
+    const historyBefore = actor.historyStatus().len
+
+    expect(actor.dispatch('set_composition', { duration_us: 3_000_000 }).ok).toBe(true)
+    expect(actor.snapshot().composition.duration_us).toBe(3_000_000)
+    expect(actor.snapshot().composition.duration_pinned).toBe(true)
+    expect(actor.historyStatus().len).toBe(historyBefore) // unrecorded
+
+    // Undo back to the 10 s-layer snapshot: pin survives (unrecorded), but the value
+    // is that snapshot's own content end, so nothing is stranded.
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    const back = actor.snapshot()
+    expect(back.tracks[0].layers[0].t_end_us).toBe(10_000_000)
+    expect(back.composition.duration_pinned).toBe(true)
+    expect(back.composition.duration_us).toBe(10_000_000)
+    // The invariant this all exists to protect, asserted directly.
+    const maxEnd = Math.max(...back.tracks.flatMap((t) => t.layers.map((l) => l.t_end_us)))
+    expect(back.composition.duration_us).toBeGreaterThanOrEqual(maxEnd)
+  })
+
+  it('fit_composition_to_layers is unrecorded and refits each snapshot to its own high-water mark', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc-fit')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const added = actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 4_000_000 })
+    const layerId = added.ok ? (added.value as string) : ''
+    expect(actor.dispatch('trim_layer', { layer: layerId, edge: 'out', new_t_us: 1_000_000 }).ok).toBe(true)
+    expect(actor.dispatch('set_composition', { duration_us: 9_000_000 }).ok).toBe(true)
+    const historyBefore = actor.historyStatus().len
+
+    expect(actor.dispatch('fit_composition_to_layers', {}).ok).toBe(true)
+    expect(actor.snapshot().composition.duration_pinned).toBe(false)
+    expect(actor.snapshot().composition.duration_us).toBe(1_000_000) // head's own content end
+    expect(actor.historyStatus().len).toBe(historyBefore) // unrecorded
+
+    expect(actor.dispatch('undo', {}).ok).toBe(true) // the 4 s-layer snapshot
+    expect(actor.snapshot().composition.duration_pinned).toBe(false) // unpin survived
+    expect(actor.snapshot().composition.duration_us).toBe(4_000_000) // ITS own mark, not 1 s
   })
   it('canvas-only change is unrecorded and survives undo of a prior edit', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'sc2')

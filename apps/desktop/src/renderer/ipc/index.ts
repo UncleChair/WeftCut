@@ -16,6 +16,13 @@ export interface CompositionSummary {
   /// longer mutate `duration_us` (except the `>= max(layer.t_end_us)`
   /// overflow guard). `fit_composition_to_layers` clears it.
   duration_pinned: boolean;
+  /// True when `set_composition { fps }` would be rejected — the timeline holds
+  /// a layer, or some history snapshot / checkpoint does (an unrecorded rate
+  /// change lands in all of them, so undo would otherwise resurrect layers
+  /// quantized to the old grid). The rate becomes settable again only on a
+  /// project whose history has never held a layer, i.e. after emptying the
+  /// timeline and reopening the project.
+  fps_locked: boolean;
 }
 
 export interface HistoryView {

@@ -182,14 +182,16 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
-  function broadcastUnrecorded(summary: string, snapshot: Project): void {
+  function broadcastUnrecorded(summary: string, snapshot: Project, diff: DiffHint = { kind: 'Coarse' }): void {
     const opId = idGen() // the unrecorded broadcast's own deterministic id
-    emit({ op_id: opId, actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: { kind: 'Coarse' } })
+    emit({ op_id: opId, actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: diff })
   }
 
-  // ── set_composition — atomic combined probe validate; an fps change is LOCKED
-  //    once the timeline holds a layer and otherwise re-snaps duration + markers;
-  //    the non-fps canvas path replaces canvas in EVERY snapshot (survives undo). ──
+  // ── set_composition — the WHOLE composition envelope is setup, never editing:
+  //    one atomic probe validate, then one unrecorded patch fanned out over every
+  //    snapshot + checkpoint. Undo walks past a canvas/rate/duration change without
+  //    reverting it (docs/features.md #undo-stack-scope); an fps change is LOCKED
+  //    once ANY stored snapshot holds a layer. ──
   function setComposition(patch: Record<string, unknown>): void {
     const cur = current()
     const CANVAS_KEYS = ['width', 'height', 'fps', 'sample_rate', 'channels', 'color_space', 'background']
@@ -198,9 +200,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const fpsChanged = patch.fps !== undefined && (newFps.num !== cur.composition.fps.num || newFps.den !== cur.composition.fps.den)
 
     // ── The rate lock (spec R2-D1/R2-D2) ─────────────────────────────────────
-    // Reject BEFORE any draft work, so a locked project mints no op_id, records no
-    // history entry and emits nothing (the `commit` contract at :148 covers a
-    // failed validate; this failure never reaches commit at all).
+    // Reject BEFORE any draft work, so a locked project mints no op_id, patches no
+    // snapshot and emits nothing.
     //
     // "Temporal content" is deliberately ONE LAYER ON ANY TRACK — not markers, not
     // a pinned duration, not imported-but-unplaced media. `blankProject` mints two
@@ -209,25 +210,50 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // threshold is also what keeps a future "dropping the first clip offers to match
     // the sequence rate" flow reachable — it sets fps while the timeline is still
     // layer-less, then adds.
+    //
+    // The judgement spans the STORED HISTORY, not just the current state, because
+    // the write does: an unrecorded rate change lands in every snapshot, so a
+    // current-state-only test would let `undo` / `restore_checkpoint` resurrect
+    // layers authored on the old grid into a project now running at the new rate.
+    // Neither revert path re-validates, so nothing downstream would catch it.
+    // Hence: judgement scope == write scope (History.storedSnapshotsHoldLayer).
+    // The practical reading is "the rate is settable until the timeline has ever
+    // held anything", and the escape hatch is the one every NLE prescribes —
+    // empty the timeline, then reopen the project (`replace_state` resets the
+    // stack and checkpoints, so the history-scope condition clears with it).
     if (fpsChanged) {
       const layerCount = cur.tracks.reduce((n, t) => n + t.layers.length, 0)
-      if (layerCount > 0) {
-        throw new CommandFailure({ error: 'FpsLockedByContent', current: cur.composition.fps, requested: newFps, layer_count: layerCount })
+      // `storedSnapshotsHoldLayer` subsumes the current state; test the live count
+      // first so `locked_by` names the scope the caller can actually act on.
+      const lockedByCurrent = layerCount > 0
+      if (lockedByCurrent || history.storedSnapshotsHoldLayer()) {
+        throw new CommandFailure({
+          error: 'FpsLockedByContent', current: cur.composition.fps, requested: newFps,
+          layer_count: layerCount, locked_by: lockedByCurrent ? 'current' : 'history',
+        })
       }
     }
 
     const durationChange = typeof patch.duration_us === 'number'
       ? snapFrameRound(patch.duration_us, newFps.num, newFps.den) : undefined
 
-    // Build the combined probe (canvas + duration + fps re-snap + autofit).
+    // The whole patch as a recipe that is correct for ANY stored snapshot, not
+    // just the current one — this is what makes the unrecorded fan-out sound:
+    //   · canvas fields copy verbatim (they describe the output, not the content),
+    //   · the fps re-snap runs against THAT snapshot's own markers and layers,
+    //   · `applyDurationAutofit` floors a pinned duration at THAT snapshot's own
+    //     content high-water mark, so no snapshot ends up shorter than its own
+    //     content — the overflow guard doubles as the per-snapshot safety net that
+    //     used to be the reason a duration write had to record at all.
     const buildProbe = (d: Project): void => {
       applyCanvasFields(d.composition, patch)
       if (durationChange !== undefined) { d.composition.duration_us = durationChange; d.composition.duration_pinned = true }
       if (fpsChanged) {
         const nf = d.composition.fps
-        // The layer loop is unreachable BY CONSTRUCTION now that the rate lock
-        // above rejects any fps change on a project holding a layer — and it stays
-        // on purpose, as the correctness backstop for the two ways that can change:
+        // The layer loop is unreachable BY CONSTRUCTION — and more thoroughly so
+        // than before: the history-scoped rate lock means EVERY snapshot this
+        // recipe runs over is layer-less, not just the current one. It stays on
+        // purpose, as the correctness backstop for the two ways that can change:
         // a future "match the sequence to the first clip" flow (which sets the rate
         // while still layer-less, then adds), and any relaxation of the lock. The
         // marker + duration re-snap below is NOT dead: a layer-less project can hold
@@ -263,29 +289,38 @@ export function createActor(opts: ActorOptions): ActorHandle {
       applyDurationAutofit(d)
     }
 
-    if (fpsChanged) {
-      // Layer geometry changed → one recorded commit of the probe.
-      commit('Updated composition fps', [], { kind: 'Composition' }, buildProbe)
-      return
-    }
-
-    // Non-fps: validate the combined probe FIRST (atomicity — never apply canvas
-    // everywhere and then fail on the duration commit).
+    // Validate the CURRENT probe first, then fan out — atomicity: a rejected patch
+    // must not leave half the envelope applied across the stack. Only the current
+    // probe is validated: older snapshots are correct by construction (the recipe
+    // re-snaps and floors per snapshot), and they were already valid at the rate
+    // and content they hold.
+    if (!canvasChanges && durationChange === undefined) return // empty patch → no event
     const probe = produce(cur, buildProbe)
     runValidate(probe)
+    if (probe === cur) return // nothing actually moved → no op_id, no broadcast
 
-    if (canvasChanges) {
-      const newCanvas = produce(cur.composition, (c: Composition) => applyCanvasFields(c, patch))
-      history.replaceCompositionCanvasEverywhere(newCanvas)
-      broadcastUnrecorded('Updated composition canvas', current())
-    }
-    if (durationChange !== undefined) {
-      commit('Updated composition duration', [], { kind: 'Composition' }, (d) => {
-        d.composition.duration_us = durationChange
-        d.composition.duration_pinned = true
-        applyDurationAutofit(d)
-      })
-    }
+    history.replaceCompositionEverywhere((p) => produce(p, buildProbe))
+    broadcastUnrecorded(compositionSummary(fpsChanged, canvasChanges, durationChange !== undefined),
+      current(), { kind: 'Composition' })
+  }
+
+  function fitCompositionToLayers(): null {
+    const probe = produce(current(), applyFitComposition)
+    runValidate(probe)
+    if (probe === current()) return null // already unpinned and fitted → no event
+    history.replaceCompositionEverywhere((p) => produce(p, applyFitComposition))
+    broadcastUnrecorded('Fit composition duration to layers', current(), { kind: 'Composition' })
+    return null
+  }
+
+  /** Event summary for an unrecorded composition patch. Unrecorded events never
+   *  reach the history panel, so this is log/e2e-facing only — but the three
+   *  original strings are load-bearing there, so they stay verbatim. */
+  function compositionSummary(fps: boolean, canvas: boolean, duration: boolean): string {
+    if (fps) return 'Updated composition fps'
+    if (canvas && duration) return 'Updated composition canvas and duration'
+    if (canvas) return 'Updated composition canvas'
+    return 'Updated composition duration'
   }
   /** Copy the present canvas fields of `patch` into a composition draft
    *  (history.rs:391 apply_canvas_fields covers exactly these 7). */
@@ -608,7 +643,12 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_layer_params': commit('Updated layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog)); return { ok: true, value: null }
         case 'update_layer_param_track': commit('Keyframed layer param', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>)); return { ok: true, value: null }
         case 'update_layer_param_tracks': commit('Keyframed layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t) }); return { ok: true, value: null }
-        case 'fit_composition_to_layers': commit('Fit composition duration to layers', [], { kind: 'Composition' }, (d) => applyFitComposition(d)); return { ok: true, value: null }
+        // Clearing the pin is the inverse of set_composition{duration_us} and rides
+        // the same unrecorded fan-out. Per snapshot it means "unpin, then refit to
+        // MY OWN layer high-water mark" — the snapshot with the long layer keeps its
+        // long duration, the one with none collapses to zero. A single fitted value
+        // copied everywhere would be wrong for every snapshot but the current.
+        case 'fit_composition_to_layers': return { ok: true, value: fitCompositionToLayers() }
         case 'update_marker': commit('Updated marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
         case 'remove_marker': commit('Removed marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
         case 'delete_track': commit('Deleted track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }

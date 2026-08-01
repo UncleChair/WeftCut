@@ -177,10 +177,16 @@ Groups (see [features.md §Groups](features.md#groups)):
 Markers + composition:
 - `add_marker { t_us, label, color, end_t_us? }` → `MarkerId`
 - `update_marker { marker_id, patch }` / `remove_marker { marker_id }`
-- `set_composition { patch }` — `fps` is locked once any track holds a layer
-  (`FpsLockedByContent`, carrying the current rate, the requested rate and the
-  layer count). Set the rate on an empty timeline; markers, a pinned duration and
-  unplaced media do not lock it. `sample_rate` is an export target, not a grid, and
+- `set_composition { patch }` — nothing in this tool records onto the undo stack;
+  the patch is applied to every history snapshot, so undo walks past it. `fps` is
+  locked once the timeline holds a layer **or any history snapshot / checkpoint
+  does** (`FpsLockedByContent`, carrying the current rate, the requested rate, the
+  live layer count and `locked_by: "current" | "history"`). With `locked_by:
+  "history"` the layer count is 0 and the timeline looks empty — the rate is still
+  refused because undo could bring old-grid layers back. Set the rate on a project
+  that has never held a layer; to clear a history-scoped lock, empty the timeline
+  and reopen the project (opening resets history). Markers, a pinned duration and
+  unplaced media never lock it. `sample_rate` is an export target, not a grid, and
   is never locked.
 
 Catalog:

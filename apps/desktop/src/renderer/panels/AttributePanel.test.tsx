@@ -157,7 +157,7 @@ function summaryWithGroups(groups: ProjectSummary["groups"]): void {
   useProjectStore.getState().apply({
     project_id: "p",
     name: "P",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false },
+    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
     track_count: 1,
     layer_count: 1,
     duration_us: 2_000_000,

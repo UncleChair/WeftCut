@@ -1,7 +1,8 @@
 // apps/desktop/src/main/state/history.test.ts
 import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
-import { blankProject, type Composition, type Project } from './model'
+import { blankProject, type Layer, type Project } from './model'
+import { colorParams } from './mutations/add'
 import { History, type HistoryEntry } from './history'
 import type { MediaItem } from './model'
 
@@ -81,17 +82,17 @@ describe('History', () => {
   })
 })
 
-describe('replaceCompositionCanvasEverywhere', () => {
-  it('patches the 7 canvas fields into every snapshot, leaving duration + cursor untouched', () => {
+describe('replaceCompositionEverywhere', () => {
+  it('runs the transform over every snapshot, leaving the cursor untouched', () => {
     const gen = seededGen()
     const p0 = blankProject(gen, 'h')
     const h = new History(p0, { kind: 'User' }, gen())
     // record a second snapshot that differs (a duration change)
     const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000, duration_pinned: true } }
     h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
-    const newCanvas: Composition = { ...p0.composition, width: 1280, height: 720, fps: { num: 24, den: 1 }, background: { r: 10, g: 20, b: 30, a: 255 } }
-    h.replaceCompositionCanvasEverywhere(newCanvas)
-    // head (p1): canvas patched, duration preserved (canvas-replace copies only the 7 canvas fields)
+    const canvas = { width: 1280, height: 720, fps: { num: 24, den: 1 }, background: { r: 10, g: 20, b: 30, a: 255 } }
+    h.replaceCompositionEverywhere((p) => ({ ...p, composition: { ...p.composition, ...canvas } }))
+    // head (p1): canvas patched, this transform leaves duration alone
     expect(h.current().composition.width).toBe(1280)
     expect(h.current().composition.fps).toEqual({ num: 24, den: 1 })
     expect(h.current().composition.duration_us).toBe(5_000_000)
@@ -100,6 +101,58 @@ describe('replaceCompositionCanvasEverywhere', () => {
     const initial = h.undo()!
     expect(initial.composition.width).toBe(1280)
     expect(initial.composition.duration_us).toBe(0)
+  })
+
+  /// A transform, not a value copy, precisely so it can read each snapshot: this is
+  /// the shape the actor's duration overflow guard relies on.
+  it('the transform sees each snapshot, so per-snapshot results can differ', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'h2')
+    const h = new History(p0, { kind: 'User' }, gen())
+    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    h.replaceCompositionEverywhere((p) => ({
+      ...p, composition: { ...p.composition, duration_us: Math.max(p.composition.duration_us, 1_000_000) },
+    }))
+    expect(h.current().composition.duration_us).toBe(5_000_000) // its own value won
+    expect(h.undo()!.composition.duration_us).toBe(1_000_000) // the floor won
+  })
+})
+
+describe('storedSnapshotsHoldLayer', () => {
+  const LAYER: Layer = {
+    id: 'layer-1', label: null, t_start_us: 0, t_end_us: 1_000_000,
+    enabled: true, locked: false, metadata: {},
+    params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1920, 1080), effects: [],
+  }
+  function withLayer(p: Project): Project {
+    return { ...p, tracks: p.tracks.map((t, i) => (i === 0 ? { ...t, layers: [LAYER] } : t)) }
+  }
+
+  it('is false for a stack that has never held a layer', () => {
+    const gen = seededGen(); const p0 = blankProject(gen, 's1')
+    expect(new History(p0, { kind: 'User' }, gen()).storedSnapshotsHoldLayer()).toBe(false)
+  })
+
+  /// The undo backdoor the fps lock closes: the CURRENT state is layer-less, but an
+  /// older snapshot is not, so a rate change would land in that snapshot too and undo
+  /// would hand back layers quantized to the old grid.
+  it('is true when only an OLDER snapshot holds a layer', () => {
+    const gen = seededGen(); const p0 = blankProject(gen, 's2')
+    const h = new History(withLayer(p0), { kind: 'User' }, gen())
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'deleted it', affected: [], snapshot: p0 })
+    expect(h.current().tracks.every((t) => t.layers.length === 0)).toBe(true)
+    expect(h.storedSnapshotsHoldLayer()).toBe(true)
+  })
+
+  /// The second backdoor: restore_checkpoint reaches snapshots the stack no longer has.
+  it('is true when only a CHECKPOINT holds a layer', () => {
+    const gen = seededGen(); const p0 = blankProject(gen, 's3')
+    const h = new History(withLayer(p0), { kind: 'User' }, gen())
+    h.checkpoint('has a layer', { kind: 'User' }, gen())
+    // Wipe the stack down to a layer-less head; the checkpoint still holds one.
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'deleted it', affected: [], snapshot: p0 })
+    expect(h.storedSnapshotsHoldLayer()).toBe(true)
   })
 })
 

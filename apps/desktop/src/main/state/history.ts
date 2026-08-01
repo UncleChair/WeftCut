@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/history.ts
-import type { Composition, MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
+import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -20,7 +20,15 @@ export interface HistoryEntry {
 interface NamedCheckpoint { id: Uuid; label: string; actor: Actor; created_at: string; snapshot: Project }
 export interface HistoryEntrySummary { op_id: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[] }
 export interface HistoryView { ops: HistoryEntrySummary[]; cursor: number; len: number; checkpoints: Array<{ id: Uuid; label: string; actor: Actor; created_at: string }>; lock_reason?: string }
-export interface HistoryStatus { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
+export interface HistoryStatus {
+  cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string
+  /** storedSnapshotsHoldLayer() — the fps rate lock's condition, carried here
+   *  because only History can answer it and the settings UI has to disable the
+   *  rate control BEFORE the user tries. Not part of the `HistoryView` wire
+   *  shape: buildProjectSummary folds it into `composition.fps_locked`, where a
+   *  consumer will actually look for it. */
+  holds_layer_anywhere: boolean
+}
 
 const DEFAULT_CAP = 200
 
@@ -148,21 +156,36 @@ export class History {
     for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, media_pool: pool }
   }
 
-  /** native/src/state/history.rs:246 — copy the 7 canvas fields (width/height/
-   *  fps/sample_rate/channels/color_space/background) into EVERY snapshot +
-   *  checkpoint. Composition canvas is preference-shaped, so the change must
-   *  survive undo/redo (cursor unchanged; never recorded). duration_us /
-   *  duration_pinned are NOT canvas fields and are left untouched. */
-  replaceCompositionCanvasEverywhere(canvas: Composition): void {
-    const patch = (p: Project): Project => ({
-      ...p,
-      composition: { ...p.composition,
-        width: canvas.width, height: canvas.height, fps: canvas.fps,
-        sample_rate: canvas.sample_rate, channels: canvas.channels,
-        color_space: canvas.color_space, background: canvas.background },
-    })
-    for (const e of this.snapshots) e.snapshot = patch(e.snapshot)
-    for (const cp of this.checkpoints.values()) cp.snapshot = patch(cp.snapshot)
+  /** Supersedes native/src/state/history.rs:246 replace_composition_canvas: the
+   *  WHOLE composition envelope is preference-shaped now (docs/features.md
+   *  #undo-stack-scope), so `set_composition` never records and instead runs its
+   *  patch over EVERY snapshot + checkpoint (cursor unchanged).
+   *
+   *  A transform, not a field copy, because two of the fields cannot be copied
+   *  verbatim into an older snapshot: an fps change must re-snap THAT snapshot's
+   *  own markers to the new grid, and a pinned `duration_us` must be floored at
+   *  THAT snapshot's own content high-water mark or the older snapshot would
+   *  strand a layer past the composition end. The actor supplies the transform
+   *  (it owns the snap + autofit rules); History only fans it out. */
+  replaceCompositionEverywhere(transform: (p: Project) => Project): void {
+    for (const e of this.snapshots) e.snapshot = transform(e.snapshot)
+    for (const cp of this.checkpoints.values()) cp.snapshot = transform(cp.snapshot)
+  }
+
+  /** Does ANY stored snapshot or checkpoint hold a layer? The history-scope half
+   *  of the fps rate lock (spec R2-D1): because an fps change is unrecorded it
+   *  lands in every stored snapshot, so judging the lock on the CURRENT state
+   *  alone would let `undo` (or `restore_checkpoint`) resurrect layers that were
+   *  authored on the old grid into a project now running at the new rate — a
+   *  state no validate pass ever sees. Judgement scope must equal write scope.
+   *
+   *  `snapshots` includes the cursor's own entry, so this subsumes the current
+   *  state; the actor tests the current layer count first only to report WHICH
+   *  scope blocked (`locked_by`). */
+  storedSnapshotsHoldLayer(): boolean {
+    const holds = (p: Project): boolean => p.tracks.some((t) => t.layers.length > 0)
+    return this.snapshots.some((e) => holds(e.snapshot))
+      || [...this.checkpoints.values()].some((cp) => holds(cp.snapshot))
   }
 
   view(limit: number): HistoryView {
@@ -175,7 +198,10 @@ export class History {
     return v
   }
   status(): HistoryStatus {
-    const s: HistoryStatus = { cursor: this.cursor, len: this.snapshots.length, can_undo: this.canUndo(), can_redo: this.canRedo() }
+    const s: HistoryStatus = {
+      cursor: this.cursor, len: this.snapshots.length, can_undo: this.canUndo(), can_redo: this.canRedo(),
+      holds_layer_anywhere: this.storedSnapshotsHoldLayer(),
+    }
     if (this.lockReasonStr !== null) s.lock_reason = this.lockReasonStr
     return s
   }

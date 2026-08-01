@@ -15,8 +15,12 @@ per-op record vs unrecorded routing in `state/actor.ts` (tests:
 
 **Recording rule.** A state mutation records a `HistoryEntry` iff it changes
 the timeline structure of the currently-loaded project — layers, tracks,
-markers, transitions, composition `duration_us`, or layers cascade-deleted
-by a media removal. Everything else broadcasts a non-recorded `ChangeEvent`.
+markers, transitions, or layers cascade-deleted by a media removal.
+Everything else broadcasts a non-recorded `ChangeEvent`. The **whole
+composition envelope** is on the non-recording side: size, rate, colour and
+audio-target fields *and* `duration_us` / `duration_pinned`. It is project
+setup, not editing — `set_composition` and `fit_composition_to_layers` never
+add an entry, and Ctrl-Z walks straight past them.
 
 | Op | Recorded? |
 |---|---|
@@ -29,11 +33,8 @@ by a media removal. Everything else broadcasts a non-recorded `ChangeEvent`.
 | `set_media_workspace_paths`, `set_media_derivatives` | no |
 | `remove_media`, no references / `force=false` | no — mirror import |
 | `remove_media`, `force=true` cascade-delete | yes (layers actually got deleted) |
-| `set_composition` canvas-only fields (`width`/`height`/`sample_rate`/`channels`/`color_space`/`background`) | no — setup, not editing |
-| `set_composition` patch containing `duration_us` | yes (also sets `duration_pinned = true`) |
-| `set_composition` patch changing `fps` | yes — re-snaps every layer's `t_start_us`/`t_end_us` to the new grid |
-| `set_composition` mixed patch (canvas + duration, no fps change) | **split internally**: canvas part patched everywhere; duration delta recorded as one entry |
-| `fit_composition_to_layers` | yes (clears `duration_pinned`; the duration shrink rides the same entry) |
+| `set_composition`, any field or mix of fields | **no** — setup, not editing. One patch, applied to every snapshot + checkpoint |
+| `fit_composition_to_layers` | no — same fan-out; each snapshot unpins and refits to **its own** high-water mark |
 | Passive duration shrink on layer delete / inward trim (unpinned) | **no separate entry** — rides the layer-edit commit that triggered it |
 | `replace_state` (open / new project) | **no** — resets `History` to a fresh one-entry stack and clears checkpoints |
 | `undo`, `redo` | cursor-only, no new entry |
@@ -43,12 +44,46 @@ by a media removal. Everything else broadcasts a non-recorded `ChangeEvent`.
 can break, so `add_media_item` patches every snapshot in place. `remove_media`
 lacks that property when layers reference the media, hence the split: the
 no-reference branch behaves like an import; the cascade branch records
-because deleting layers is a real edit. `set_composition` has the same
-shape — canvas fields patch everywhere; a `duration_us` shrink could strand
-layers past the end in older snapshots, so it records; an `fps` change
-re-snaps layer geometry, so it records. `replace_state` is a wholesale
+because deleting layers is a real edit. `replace_state` is a wholesale
 project swap — the old history is incoherent against the new `project_id`,
 so the stack and checkpoints reset instead of carrying forward.
+
+**Why the composition envelope stopped recording.** `duration_us` and `fps`
+used to record, for two reasons that both turn out to be arguments about the
+*shape of the fan-out*, not about whether it belongs in history:
+
+- a shrinking `duration_us` could strand layers past the end in an older
+  snapshot that held longer content;
+- an `fps` change re-snaps layer geometry and markers.
+
+Both dissolve once the patch is applied as a **transform run per snapshot**
+rather than a value copied across them (`History.replaceCompositionEverywhere`).
+Ctrl-Z is therefore not the safety net for these fields, and the UI carries the
+guard instead: Settings → Canvas mounts with its "Lock canvas settings" switch
+engaged, so the resolution and rate are inert until the user turns it off, and
+re-engaging it abandons any in-progress size edit. Widen the undo scope again and
+that guard becomes redundant — it exists to price in the missing undo, not for
+its own sake.
+`applyDurationAutofit` already floors a pinned duration at the *live* content
+high-water mark, so running it inside each snapshot makes the overflow guard
+per-snapshot for free: the snapshot with the 10 s layer keeps a 10 s duration
+while the head sits at 3 s, and nothing is ever stranded. The fps re-snap
+likewise runs against each snapshot's own markers.
+
+**The rate lock is history-scoped, and has to be.** An unrecorded `fps` change
+lands in *every* stored snapshot, so judging `FpsLockedByContent` on the
+current state alone would leave `undo` (and `restore_checkpoint`) as a
+backdoor: empty the timeline, change the rate, undo the deletion, and layers
+authored on the old grid reappear at the new rate — a state neither revert
+path re-validates. So the rule is **judgement scope == write scope**: the rate
+is refused if the live timeline holds a layer *or* any snapshot or checkpoint
+does (`History.storedSnapshotsHoldLayer`). `locked_by` on the error names
+which. Practically the rate is settable only on a project whose timeline has
+never held anything, and the escape hatch is the one Premiere and Resolve both
+prescribe — empty the timeline, then reopen the project, since `replace_state`
+resets the stack and checkpoints. The settings panel reads this off
+`composition.fps_locked` to disable the control rather than offer a click that
+always errors.
 
 **User vs agent.** Both surfaces write the same `History`; entries carry an
 `Actor::User` / `Actor::Agent { client }` tag so the history panel can

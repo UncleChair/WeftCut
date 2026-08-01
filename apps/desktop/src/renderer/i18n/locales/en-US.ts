@@ -684,8 +684,26 @@ const enUS = {
     reopen_on_launch: "Auto-open last project",
     reopen_on_launch_hint:
       "When enabled, WeftCut skips the start screen and auto-opens the last used project.",
-    composition_heading: "Composition",
-    composition_blurb:
+    canvas_heading: "Canvas",
+    canvas_blurb:
+      "This project's editing and preview size, and its timeline frame rate.",
+    canvas_lock: "Lock canvas settings",
+    canvas_lock_hint:
+      "Canvas settings are project setup, not edits — they cannot be undone.",
+    canvas_resolution: "Resolution",
+    canvas_resolution_custom: "Custom",
+    canvas_custom_size: "Custom size",
+    canvas_width: "Width",
+    canvas_height: "Height",
+    canvas_apply: "Apply",
+    canvas_size_range: "Width and height must be between {{min}} and {{max}}.",
+    canvas_size_odd: "Width and height must be whole even numbers.",
+    canvas_size_too_many_pixels: "Total canvas area cannot exceed 8K (7680 × 4320).",
+    canvas_fps: "Frame rate",
+    canvas_fps_hint:
+      "The frame rate can only be changed in a project whose timeline has never had content.",
+    duration_heading: "Duration",
+    duration_blurb:
       "Composition duration follows the last visible frame by default. Extend it to hold a fixed runtime longer than the content.",
     pin_composition_duration: "Extend composition duration",
     pin_composition_duration_hint:

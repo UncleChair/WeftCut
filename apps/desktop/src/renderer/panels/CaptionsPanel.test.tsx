@@ -77,7 +77,7 @@ function apply(tracks: ReturnType<typeof captionTrack>[]) {
   useProjectStore.getState().apply({
     project_id: "p1",
     name: "Test",
-    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false },
+    composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
     track_count: tracks.length,
     layer_count: tracks.reduce((n, t) => n + t.layers.length, 0),
     duration_us: 3_000_000,

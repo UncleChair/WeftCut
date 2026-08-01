@@ -125,6 +125,36 @@
   width: 64px;
 }
 
+/* Label on the left, control pushed to the right edge — the same shape as
+ * `.settings-pin-row`, for control rows that carry no checkbox. */
+.settings-control-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+
+.settings-control-row > .settings-toggle-label {
+  flex: 1 1 auto;
+}
+
+.settings-select {
+  min-width: 168px;
+}
+
+/* width × height + Apply. Wraps as a unit so a narrow panel breaks the group
+ * onto its own line rather than squeezing the number fields. */
+.settings-size-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-size-fields .app-number-field {
+  width: 88px;
+}
+
 .settings-slider-row {
   display: flex;
   align-items: center;
@@ -428,6 +458,7 @@
 
 .settings-section > .settings-toggle-row,
 .settings-section > .settings-slider-row,
+.settings-section > .settings-control-row,
 .settings-section > .settings-pin-row {
   padding-top: 0;
   padding-bottom: 0;

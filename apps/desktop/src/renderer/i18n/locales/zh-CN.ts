@@ -659,8 +659,24 @@ const zhCN: Resources = {
     reopen_on_launch: "自动打开上一个项目",
     reopen_on_launch_hint:
       "开启后将跳过起始页，自动打开最近使用的项目。",
-    composition_heading: "合成",
-    composition_blurb:
+    canvas_heading: "画布",
+    canvas_blurb: "本项目的编辑预览尺寸与时间线帧率。",
+    canvas_lock: "锁定画布参数",
+    canvas_lock_hint:
+      "画布参数属于项目设置而非编辑操作，修改后无法撤销。",
+    canvas_resolution: "分辨率",
+    canvas_resolution_custom: "自定义",
+    canvas_custom_size: "自定义尺寸",
+    canvas_width: "宽度",
+    canvas_height: "高度",
+    canvas_apply: "应用",
+    canvas_size_range: "宽度与高度须介于 {{min}} 与 {{max}} 之间。",
+    canvas_size_odd: "宽度与高度须为偶数整数。",
+    canvas_size_too_many_pixels: "画布总面积不得超过 8K（7680 × 4320）。",
+    canvas_fps: "帧率",
+    canvas_fps_hint: "帧率仅在时间线未添加过内容的项目中可修改。",
+    duration_heading: "时长",
+    duration_blurb:
       "合成时长默认跟随最末一帧。需要固定时长且大于内容时可手动延长。",
     pin_composition_duration: "延长合成时长",
     pin_composition_duration_hint:

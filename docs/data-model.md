@@ -699,7 +699,8 @@ struct NamedCheckpoint {
 - **Undo/redo**: move `cursor`, broadcast snapshot at cursor.
 - **Checkpoint**: explicit named snapshot stored separately; survives undo-truncation; persists in save file.
 - v1 is linear undo; tree-of-edits is v2 (the snapshot model already supports it — just add parent pointers).
-- **Several mutation classes sit outside the undo stack** — see `docs/features.md#undo-stack-scope` for the full per-op table. The pattern: patch every snapshot (and checkpoint) in place via `replace_media_pool_everywhere` or `replace_composition_canvas_everywhere`, broadcast a non-recorded `ChangeEvent`, cursor unchanged. Covers media imports/removals of unreferenced media, derivative and workspace-path updates, canvas setup fields, and project open/new (`replace_state` resets history instead). Timeline edits, duration changes, and cascade media removals still record normally.
+- **Several mutation classes sit outside the undo stack** — see `docs/features.md#undo-stack-scope` for the full per-op table. The pattern: patch every snapshot (and checkpoint) in place via `replace_media_pool_everywhere` or `replaceCompositionEverywhere`, broadcast a non-recorded `ChangeEvent`, cursor unchanged. Covers media imports/removals of unreferenced media, derivative and workspace-path updates, the **entire composition envelope** (`set_composition` / `fit_composition_to_layers`, duration included), and project open/new (`replace_state` resets history instead). Timeline edits and cascade media removals still record normally.
+- The composition fan-out is a **transform applied per snapshot**, not a value copied across them: a pinned `duration_us` is floored at each snapshot's own content high-water mark (so an older snapshot never ends up shorter than its own layers), and an `fps` re-snap runs against each snapshot's own markers. Because the write spans every stored snapshot, the `fps` rate lock is judged over them too — see the rate-lock note in features.md.
 
 ## Concurrency: single-writer actor
 
@@ -759,7 +760,7 @@ struct ChangeEvent {
 | `t_start_us >= 0` | clamped in the mutator (a group move stops as a set), then reject as a backstop (`NegativeLayerStart`); a project loaded from disk is repaired in `parseProject` instead of rejected |
 | Visual `t_start_us`, `t_end_us`, `composition.duration_us`, marker `t_us`/`end_t_us` on the composition-frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected. Both errors carry `snap_to`, the value the caller should have sent |
 | Audio `t_start_us`, `t_end_us` on the fixed 48 kHz sample lattice | same three-site enforcement, against the audio grid; the error carries `grid: "sample"` and `fps: 48000/1` |
-| `fps` immutable once any track holds a layer | reject (`FpsLockedByContent`) — set the rate on an empty timeline |
+| `fps` immutable once the timeline — or any stored snapshot / checkpoint — holds a layer | reject (`FpsLockedByContent`, carrying `locked_by: current \| history`). History scope, because the unrecorded rate change writes to every snapshot: judging on the live state alone would let `undo` resurrect old-grid layers at the new rate. Set the rate on a project whose timeline has never held anything |
 | `transition.duration_us` == the geometric overlap of its participants | reject — this *is* the transition's grid rule; a duration is a distance, not a boundary time |
 | `0 ≤ src_in_us < src_out_us ≤ media.duration_us` | reject |
 | No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |
@@ -806,7 +807,7 @@ the UI uses the same actor via backend commands.
 | `groups_dissolve(group_id)` / `groups_add_members(group_id, layer_ids, reassign?)` / `groups_remove_members(group_id, layer_ids)` / `groups_rename(group_id, label?)` | |
 | `add_marker(t_us, label, color, end_t_us?)` → `MarkerId` | |
 | `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | |
-| `set_composition(patch)` | |
+| `set_composition(patch)` | never recorded (setup, not editing); `fps` refused with `FpsLockedByContent` once the timeline — or any stored snapshot/checkpoint — holds a layer |
 | `checkpoint(label)` → `CheckpointId` | |
 | `list_checkpoints()` / `restore_checkpoint(checkpoint_id)` | restore clears redo |
 | `undo()` / `redo()` | |

@@ -32,6 +32,7 @@ function summary(name: string): ProjectSummary {
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
+      fps_locked: false,
     },
     track_count: 0,
     layer_count: 0,

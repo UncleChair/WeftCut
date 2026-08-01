@@ -908,6 +908,9 @@ export function App({ onCloseProject }: AppProps) {
                     .reduce((a, b) => Math.max(a, b), 0),
                   fpsNum: summary.composition.fps_num,
                   fpsDen: summary.composition.fps_den,
+                  width: summary.composition.width,
+                  height: summary.composition.height,
+                  fpsLocked: summary.composition.fps_locked,
                 }
               : null
           }

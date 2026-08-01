@@ -62,6 +62,7 @@ function summary(layers: LayerSummary[]): ProjectSummary {
       fps_num: 30,
       fps_den: 1,
       duration_pinned: false,
+      fps_locked: false,
     },
     track_count: 1,
     layer_count: layers.length,
