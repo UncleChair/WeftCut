@@ -1087,8 +1087,8 @@ const enUS = {
     image: "Image",
     subtitle: "Subtitle",
     // LayerParams discriminants
-    videoclip: "Video clip",
-    imageoverlay: "Image overlay",
+    videoclip: "Video",
+    imageoverlay: "Image",
     text: "Text",
     motif: "Motif",
     color: "Color",

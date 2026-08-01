@@ -1211,3 +1211,84 @@ describe("Timeline seek/selection coupling", () => {
     expect(ipcMocks.addMediaLayer).not.toHaveBeenCalled();
   });
 });
+
+describe("Timeline clip label fallback", () => {
+  beforeEach(() => {
+    clearLayerSelection();
+    setPlayheadTimeUs(0);
+    useAppSettingsStore.setState((s) => ({
+      settings: {
+        ...s.settings,
+        display_mode: "ShowAll",
+        tail_snap_enabled: true,
+        tail_snap_strength_px: 12,
+      },
+    }));
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  // 2s at the default 80px/s → 160px wide, past LAYER_FULL_LABEL_MIN_PX so
+  // the full (untruncated) label renders.
+  const unnamedVideo: LayerSummary = {
+    ...tinyVideoLayer,
+    id: "video-unnamed",
+    label: null,
+    t_end_us: 2_000_000,
+  };
+
+  const unnamedImage: LayerSummary = {
+    ...tinyVideoLayer,
+    id: "image-unnamed",
+    label: null,
+    kind: "ImageOverlay",
+    t_end_us: 2_000_000,
+    params: {
+      kind: "ImageOverlay",
+      media_id: "media-img",
+      media_label: "photo.jpg",
+      x: staticNum(0),
+      y: staticNum(0),
+      scale_x: staticNum(1),
+      scale_y: staticNum(1),
+      rotation_deg: staticNum(0),
+      opacity: staticNum(1),
+      fade_in_us: 0,
+      fade_out_us: 0,
+    },
+  };
+
+  const trackWith = (l: LayerSummary): TrackSummary => ({ ...track, layers: [l] });
+
+  it("an unnamed video clip falls back to its media file name", () => {
+    const { getByText } = renderTimeline({ tracks: [trackWith(unnamedVideo)] });
+    expect(getByText("media.mov")).toBeTruthy();
+  });
+
+  it("an unnamed image overlay falls back to its media file name", () => {
+    const { getByText } = renderTimeline({ tracks: [trackWith(unnamedImage)] });
+    expect(getByText("photo.jpg")).toBeTruthy();
+  });
+
+  it("a user-set label still wins over the media file name", () => {
+    const named: LayerSummary = { ...unnamedVideo, id: "video-named", label: "Hero shot" };
+    const { getByText, queryByText } = renderTimeline({ tracks: [trackWith(named)] });
+    expect(getByText("Hero shot")).toBeTruthy();
+    expect(queryByText("media.mov")).toBeNull();
+  });
+
+  it("an empty media file name falls back to the kind label", () => {
+    const videoParams = unnamedVideo.params as Extract<
+      LayerSummary["params"],
+      { kind: "VideoClip" }
+    >;
+    const noName: LayerSummary = {
+      ...unnamedVideo,
+      id: "video-empty-media-label",
+      params: { ...videoParams, media_label: "" },
+    };
+    const { getByText } = renderTimeline({ tracks: [trackWith(noName)] });
+    expect(getByText("Video")).toBeTruthy();
+  });
+});

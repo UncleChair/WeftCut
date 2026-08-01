@@ -356,8 +356,16 @@ export function LayerBlock({
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, {
     defaultValue: layer.kind,
   });
+  // Unnamed media-backed clips fall back to the source file name before the
+  // generic kind label, matching the search index / Nearby panel priority.
+  const mediaLabel =
+    "media_label" in layer.params && layer.params.media_label.trim() !== ""
+      ? layer.params.media_label
+      : null;
   const label =
-    layer.label && layer.label.trim() !== "" ? layer.label : kindLabel;
+    layer.label && layer.label.trim() !== ""
+      ? layer.label
+      : (mediaLabel ?? kindLabel);
 
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
