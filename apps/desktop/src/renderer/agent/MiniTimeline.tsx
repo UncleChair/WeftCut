@@ -147,7 +147,14 @@ export function MiniTimeline({
     <div className="mini-timeline">
       <div className="mini-timeline-ticks">
         {ticks.map(({ tUs, left }) => (
-          <div key={tUs} className="mini-tick" style={{ left }}>
+          // Labels hang off the tick's right side by default; within
+          // 48 px of the right edge that pushes the label past the
+          // strip (worst case "1:30:00" ≈ 40 px), so flip the anchor.
+          <div
+            key={tUs}
+            className={width - left < 48 ? "mini-tick mini-tick-flip" : "mini-tick"}
+            style={{ left }}
+          >
             <span className="mini-tick-label">{formatTickLabel(tUs)}</span>
           </div>
         ))}

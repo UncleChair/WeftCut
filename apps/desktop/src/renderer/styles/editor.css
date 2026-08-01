@@ -73,6 +73,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Near the strip's right edge the default right-hanging label would
+   overflow the pane; hang it off the tick's left side instead. */
+.mini-tick-flip .mini-tick-label {
+  left: auto;
+  right: 2px;
+}
+
 .mini-timeline-strip-real {
   position: relative;
   height: 36px;
@@ -121,6 +128,11 @@
   color: var(--muted-foreground);
   letter-spacing: 0.04em;
   text-align: right;
+  /* The pane is a fixed 80 px tall: never let the readout wrap onto a
+     second line — ellipsize instead (the full value is on `title`). */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .row-time {
