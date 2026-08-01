@@ -919,7 +919,7 @@ const enUS = {
     t_start: "Start",
     t_start_hint: "Inclusive — frame at this timecode is the layer's first.",
     kind: "Kind",
-    group_none: "None",
+    group_none: "No group",
     locked: "Locked",
     duration: "Duration",
     multi_primary: "Editing primary layer “{{label}}” — {{count}} layers selected; changes apply only to this layer.",

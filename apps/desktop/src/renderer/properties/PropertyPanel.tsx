@@ -187,10 +187,12 @@ function LayerPanel({
 
   return (
     <>
-      <p className="meta">
-        {kindLabel} · {trackLabel} · {group ? (group.label ?? group.id) : t("property_panel.group_none")}
-      </p>
-      {mediaLabel ? <p className="meta">{mediaLabel}</p> : null}
+      <div className="prop-identity">
+        {mediaLabel ? <p className="prop-identity-title">{mediaLabel}</p> : null}
+        <p className="prop-identity-meta">
+          {kindLabel} · {trackLabel} · {group ? (group.label ?? group.id) : t("property_panel.group_none")}
+        </p>
+      </div>
       {selectionCount > 1 ? (
         <p className="prop-primary-note">
           {t("property_panel.multi_primary", { label: layer.label ?? layer.id, count: selectionCount })}

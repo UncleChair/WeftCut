@@ -539,7 +539,7 @@
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .property-panel h3 {
@@ -562,8 +562,38 @@
   gap: 6px;
 }
 
-/* Collapsible section header — same look as `.property-panel h3`, plus the
-   chevron affordance. */
+/* Identity block at the top of the layer panel: one tight unit, not two
+   floating lines. The media name (when the layer has one) is the title;
+   kind·track·group is the quiet breadcrumb under it. */
+.prop-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prop-identity-title {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-identity-meta {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Collapsible section header — the panel's section label (same convention
+   as `.captions-style-section h4`: caption-size, uppercase, muted), kept
+   tight to its fields so the title reads as owning what follows. */
 .prop-section-header {
   display: flex;
   align-items: center;
@@ -572,10 +602,11 @@
   border: none;
   background: none;
   cursor: pointer;
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-caption);
   font-weight: 600;
-  color: var(--color-gray-300);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
 }
 
 .prop-section-header:hover {

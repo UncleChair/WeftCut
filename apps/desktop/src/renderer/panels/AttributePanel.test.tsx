@@ -212,13 +212,13 @@ describe("AttributePanel Layer envelope", () => {
   it("falls back to a localized none when the Layer belongs to no group", () => {
     summaryWithGroups([]);
     renderPanel(colorTrack());
-    expect(screen.getByText("Color · Visual · None")).toBeTruthy();
+    expect(screen.getByText("Color · Visual · No group")).toBeTruthy();
   });
 
-  it("shows the media label as a second meta line for media kinds only", () => {
+  it("shows the media label as the identity title for media kinds only", () => {
     summaryWithGroups([]);
     renderPanel(audioTrack(), "layer-a1");
-    expect(screen.getByText("Audio · A1 · None")).toBeTruthy();
+    expect(screen.getByText("Audio · A1 · No group")).toBeTruthy();
     expect(screen.getByText("voice.wav")).toBeTruthy();
     cleanup();
     clearPropSectionMemory();
