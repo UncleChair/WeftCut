@@ -426,6 +426,7 @@ const enUS = {
     running_pill_hint: "Agent operations are still finishing in the background.",
     restored_to: "Restored to \"{{label}}\"",
     manual_reason: "Manual session",
+    resize_record_panel: "Resize record panel",
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",

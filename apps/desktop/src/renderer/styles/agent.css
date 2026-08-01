@@ -6,15 +6,25 @@
      (~80 px tall), record panel right (~360 px wide).
    Replaces the entire editor body while an MCP-initiated agent
    session is active.
+
+   Visual language mirrors the editor's dock workspace
+   (styles/workspace.css): a recessed pure-black well, one
+   uniform --card island per pane, and 6 px gaps (the
+   WEFT_DOCK_THEME gap) doing the region separation — no drawn
+   borders. The panes are fixed in place (no dragging, no
+   docking); the only adjustable seam is the record panel's
+   width, via the sash in the column gap.
    ============================================================ */
 
 .agent-mode-shell {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-columns: 1fr 360px;
+  /* Record-panel width comes from the sash (AgentMode.tsx sets
+     --agent-record-width inline); the fallback is the default width. */
+  grid-template-columns: 1fr var(--agent-record-width, 360px);
   /* The titlebar row must contain the macOS traffic lights the OS draws over it
-     — at 30px they hung 6px past the strip onto the black preview. env() is
+     — at 30px they hung 6px past the strip onto the black well. env() is
      unset without an overlay (Win/Linux, macOS fullscreen), so 30px stays the
      Win/Linux height. See .app-header in app.css. */
   grid-template-rows: max(30px, env(titlebar-area-height, 30px)) 1fr 80px;
@@ -22,17 +32,32 @@
     "titlebar titlebar"
     "preview  record"
     "mini     record";
-  background: var(--background);
+  /* Same inter-pane gap as WEFT_DOCK_THEME: the black well shows through
+     and separates the panes as depth, like dock groups. */
+  gap: 6px;
+  /* The recessed well behind the panes — pure black, one step below
+     --surface-sunken, same as .dock-workspace. */
+  background: #000;
   color: var(--foreground);
 }
 
-/* Frameless window: agent mode's slim drag strip + caption buttons. */
+/* Frameless window: agent mode's slim drag strip + caption buttons. Kept on
+   --background so it reads as the app-chrome band above the dock well, like
+   .app-header over .dock-workspace in the editor. */
 .agent-titlebar {
   grid-area: titlebar;
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
+  background: var(--background);
   user-select: none;
+}
+
+/* Exit-to-editor button at the titlebar's top-right: vertically centered
+   against the stretch-aligned caption buttons it precedes. */
+.agent-titlebar .agent-exit-button {
+  align-self: center;
+  margin-right: 8px;
 }
 
 .agent-titlebar .window-controls {
@@ -42,10 +67,10 @@
 .agent-preview {
   grid-area: preview;
   position: relative;
-  background: #000;
+  /* Same --card island as the dock workspace's Preview Panel (preview.css):
+     the canvas paints only the composition, the pane owns the surround. */
+  background: var(--card);
   overflow: hidden;
-  border-right: 1px solid var(--border-soft);
-  border-bottom: 1px solid var(--border-soft);
 }
 
 .agent-preview .video-surface,
@@ -56,8 +81,8 @@
 
 .agent-mini-timeline {
   grid-area: mini;
-  background: var(--surface-sunken);
-  border-right: 1px solid var(--border-soft);
+  /* Uniform --card island, like every dock Panel surface. */
+  background: var(--card);
   padding: 8px 12px;
   display: flex;
   flex-direction: column;
@@ -79,8 +104,36 @@
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
+  /* In-pane separator only (like .preview-transport's border-top in the
+     editor); the header shares the pane's --card so the record island
+     reads as one uniform surface. */
   border-bottom: 1px solid var(--border-soft);
-  background: var(--popover);
+  background: var(--card);
+}
+
+/* Record-panel width sash: overlays the 6px inter-column gap with a few px
+   of extra hit area each side. The black gap stays the visual separator —
+   the sash only carries the col-resize affordance and a hover/focus tint.
+   Keyboard support (role=separator + arrow keys) lives in AgentMode.tsx. */
+.agent-width-sash {
+  position: absolute;
+  /* Below the titlebar row + its gap, so the sash never covers the window
+     drag strip. */
+  top: calc(max(30px, env(titlebar-area-height, 30px)) + 6px);
+  bottom: 0;
+  /* Centered on the column gap: the gap runs 6px left of the record
+     panel's edge, so its midpoint sits 3px left of that edge. */
+  right: calc(var(--agent-record-width, 360px) - 2px);
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.agent-width-sash:hover,
+.agent-width-sash:focus-visible {
+  background: color-mix(in srgb, var(--ring) 25%, transparent);
+  outline: none;
 }
 
 .agent-record-title {

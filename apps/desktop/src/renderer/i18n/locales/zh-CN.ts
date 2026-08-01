@@ -419,6 +419,7 @@ const zhCN: Resources = {
     running_pill_hint: "代理的后台操作仍在继续。",
     restored_to: "已恢复到「{{label}}」",
     manual_reason: "手动会话",
+    resize_record_panel: "调整记录面板宽度",
   },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",
