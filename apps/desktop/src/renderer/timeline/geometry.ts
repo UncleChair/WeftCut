@@ -184,6 +184,45 @@ export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
+/// One track lane's MEASURED vertical extent, in client coordinates
+/// (`getBoundingClientRect`). Feeds `trackIdAtClientY`.
+export interface MeasuredTrackRow {
+  trackId: string;
+  top: number;
+  bottom: number;
+}
+
+/// Which track a pointer at `clientY` is over, from measured lane rects.
+///
+/// LANDMINE: never answer this from an arithmetic y-offset table built out of
+/// track heights. A row carries chrome the table cannot see — an expanded
+/// track's keyframe sub-lanes sit BETWEEN its lane and the next one — so the
+/// table drifts a full row or more per expanded track above the pointer, and
+/// the drag hit-test then reports a foreign track. That is not a cosmetic
+/// error: `useLayerDrag` treats a track change as edit intent, so a stale
+/// table turns a plain click into a committed cross-track move. The DOM
+/// already computed this layout; measure it.
+///
+/// Band rule: a row owns `[its own top, the next row's top)`. That hands the
+/// sub-lane strip under an expanded track to the track that owns it, instead
+/// of leaving a hole that would snap a mid-drag ghost back to its origin. The
+/// last row owns only its own height. Above the first row or below the last
+/// returns null — the caller keeps the layer on its origin track.
+export function trackIdAtClientY(
+  rows: readonly MeasuredTrackRow[],
+  clientY: number,
+): string | null {
+  // Sorted so the band rule never depends on registration order.
+  const sorted = rows.slice().sort((a, b) => a.top - b.top);
+  for (const [i, row] of sorted.entries()) {
+    if (clientY < row.top) return null;
+    const next = sorted[i + 1];
+    const bandEndY = next ? next.top : row.bottom;
+    if (clientY < bandEndY) return row.trackId;
+  }
+  return null;
+}
+
 // Below this on-screen frame width the shadow reads as line jitter, not an
 // area — hide it and let the playhead line stand alone.
 const PLAYHEAD_FRAME_SHADOW_MIN_PX = 5;

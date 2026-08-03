@@ -536,19 +536,14 @@ export function Timeline({
     },
   ]);
 
-  // Cumulative (y, height) per visible track row. Heights vary now, so
-  // hit-testing for "which track is the pointer over" needs a real
-  // offset table instead of `Math.floor(y / TRACK_HEIGHT)`.
-  const trackRows = useMemo(() => {
-    const rows: { track: TrackSummary; y: number; height: number }[] = [];
-    let y = 0;
-    for (const { track } of orderedTracks) {
-      const h = trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT;
-      rows.push({ track, y, height: h });
-      y += h;
-    }
-    return rows;
-  }, [orderedTracks, trackHeights]);
+  // Live lane-element registry. The drag hit-test measures these nodes rather
+  // than recomputing row offsets from track heights — a row's on-screen extent
+  // includes chrome that arithmetic misses (see `trackIdAtClientY`).
+  const laneElsRef = useRef(new Map<string, HTMLElement>());
+  const registerLaneEl = useCallback((trackId: string, el: HTMLElement | null) => {
+    if (el) laneElsRef.current.set(trackId, el);
+    else laneElsRef.current.delete(trackId);
+  }, []);
 
   const { heightDrag, beginHeightDrag } = useHeightDrag({
     trackHeightsRef,
@@ -561,8 +556,7 @@ export function Timeline({
       groups,
       groupByLayerId,
       orderedTracks,
-      trackRows,
-      canvasRef,
+      laneEls: laneElsRef,
       pxPerSec,
       fpsNum,
       fpsDen,
@@ -988,6 +982,7 @@ export function Timeline({
               <Fragment key={track.id}>
               <TrackLane
                 track={track}
+                registerLaneEl={registerLaneEl}
                 pxPerSec={pxPerSec}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
                 isExpanded={expandedTracks.has(track.id)}

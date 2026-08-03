@@ -12,6 +12,7 @@ import {
   layerOverlapClass,
   playheadFrameShadowPx,
   trackHeaderControls,
+  trackIdAtClientY,
   trackKeyframeProperties,
   visualOrderedTracks,
 } from "./geometry";
@@ -317,5 +318,60 @@ describe("playheadFrameShadowPx", () => {
   it("returns null on degenerate inputs", () => {
     expect(playheadFrameShadowPx(0, 0, 1, 400)).toBeNull();
     expect(playheadFrameShadowPx(0, 30, 1, 0)).toBeNull();
+  });
+});
+
+describe("trackIdAtClientY", () => {
+  // Six 56px lanes where t2 is expanded: its keyframe sub-lanes occupy the
+  // 72px band at [112, 184). This is the shape that broke the old arithmetic
+  // offset table — it placed t3 at y=112 and so answered "t4" for a pointer
+  // sitting squarely on t3.
+  const rows = [
+    { trackId: "t1", top: 0, bottom: 56 },
+    { trackId: "t2", top: 56, bottom: 112 },
+    { trackId: "t3", top: 184, bottom: 240 },
+    { trackId: "t4", top: 240, bottom: 296 },
+    { trackId: "t5", top: 296, bottom: 352 },
+    { trackId: "t6", top: 352, bottom: 408 },
+  ];
+
+  it("resolves a lane below an expanded track to that lane, not the next one", () => {
+    expect(trackIdAtClientY(rows, 212)).toBe("t3");
+    expect(trackIdAtClientY(rows, 268)).toBe("t4");
+    expect(trackIdAtClientY(rows, 380)).toBe("t6");
+  });
+
+  it("gives the keyframe sub-lane band to the track that owns it", () => {
+    // Mid-drag over t2's sub-lanes stays on t2 rather than punching a hole
+    // that would snap the ghost back to its origin track.
+    expect(trackIdAtClientY(rows, 112)).toBe("t2");
+    expect(trackIdAtClientY(rows, 150)).toBe("t2");
+    expect(trackIdAtClientY(rows, 183)).toBe("t2");
+  });
+
+  it("puts a lane's top edge on the lane itself", () => {
+    expect(trackIdAtClientY(rows, 184)).toBe("t3");
+    expect(trackIdAtClientY(rows, 0)).toBe("t1");
+  });
+
+  it("returns null outside the stack so the caller keeps the origin track", () => {
+    expect(trackIdAtClientY(rows, -1)).toBeNull();
+    expect(trackIdAtClientY(rows, 408)).toBeNull();
+    expect(trackIdAtClientY(rows, 900)).toBeNull();
+  });
+
+  it("does not depend on registration order", () => {
+    const shuffled = [...rows.slice(3), ...rows.slice(0, 3)].reverse();
+    expect(trackIdAtClientY(shuffled, 212)).toBe("t3");
+    expect(trackIdAtClientY(shuffled, 150)).toBe("t2");
+  });
+
+  it("never invents a hit when layout is unmeasured", () => {
+    // jsdom has no layout engine: every rect reads as zero. Answer null
+    // rather than handing back an arbitrary lane.
+    const unmeasured = rows.map((r) => ({ ...r, top: 0, bottom: 0 }));
+    expect(trackIdAtClientY(unmeasured, 0)).toBeNull();
+    expect(trackIdAtClientY(unmeasured, 30)).toBeNull();
+    expect(trackIdAtClientY([], 30)).toBeNull();
   });
 });

@@ -16,6 +16,8 @@ import { transportPause, transportSeek } from "../../state/playbackStore";
 import { setPlayheadTimeUs } from "../../state/playheadStore";
 import {
   layerOverlapClass,
+  trackIdAtClientY,
+  type MeasuredTrackRow,
   type VisualTrack,
 } from "../geometry";
 import {
@@ -73,8 +75,9 @@ export function useLayerDrag(opts: {
   groups: GroupSummary[];
   groupByLayerId: Map<string, string>;
   orderedTracks: VisualTrack[];
-  trackRows: { track: TrackSummary; y: number; height: number }[];
-  canvasRef: React.RefObject<HTMLDivElement | null>;
+  /// Live track-id → lane-element registry, owned by the Timeline. Measured
+  /// per pointer event; see `trackUnderPointer`.
+  laneEls: React.RefObject<Map<string, HTMLElement>>;
   pxPerSec: number;
   fpsNum: number;
   fpsDen: number;
@@ -93,8 +96,7 @@ export function useLayerDrag(opts: {
     groups,
     groupByLayerId,
     orderedTracks,
-    trackRows,
-    canvasRef,
+    laneEls,
     pxPerSec,
     fpsNum,
     fpsDen,
@@ -238,17 +240,26 @@ export function useLayerDrag(opts: {
 
   // -------- Layer drag (move / trim) --------
 
+  /// Measure the rendered lanes, then band-select. Cost is one forced reflow
+  /// per pointer event — the same one the previous canvas-rect read paid —
+  /// after which the remaining rect reads hit clean layout.
   const trackUnderPointer = useCallback(
     (clientY: number): TrackSummary | null => {
-      if (!canvasRef.current) return null;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const y = clientY - rect.top;
-      for (const row of trackRows) {
-        if (y >= row.y && y < row.y + row.height) return row.track;
+      const rows: MeasuredTrackRow[] = [];
+      const trackById = new Map<string, TrackSummary>();
+      // Walk `orderedTracks`, not the registry: only rendered lanes are
+      // droppable, and the AB display filter hides some tracks entirely.
+      for (const { track } of orderedTracks) {
+        const el = laneEls.current.get(track.id);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        rows.push({ trackId: track.id, top: rect.top, bottom: rect.bottom });
+        trackById.set(track.id, track);
       }
-      return null;
+      const hitId = trackIdAtClientY(rows, clientY);
+      return hitId === null ? null : (trackById.get(hitId) ?? null);
     },
-    [canvasRef, trackRows],
+    [laneEls, orderedTracks],
   );
 
   /// Snap a raw drag delta so the dragged edge / clip-start lands on
@@ -462,8 +473,16 @@ export function useLayerDrag(opts: {
         state.originalTEnd,
         rawDeltaUs,
       );
+      // Vertical causality gate, mirroring the frame gate above: a track
+      // change must be CAUSED by vertical travel. Without it any hit-test
+      // disagreement at rest reads as edit intent, and a motionless click on
+      // a selected clip (arm delay 0) commits a cross-track move. Skipping
+      // the measurement on horizontal-only drags is a free side benefit.
+      const movedVertically = Math.abs(clientY - state.startY) >= 1;
       const overTrack =
-        state.kind === "move" ? trackUnderPointer(clientY) : null;
+        state.kind === "move" && movedVertically
+          ? trackUnderPointer(clientY)
+          : null;
       const destinationTrackId =
         overTrack && trackAcceptsForLayer(overTrack, state)
           ? overTrack.id
