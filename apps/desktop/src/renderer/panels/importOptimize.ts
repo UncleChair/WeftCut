@@ -1,6 +1,7 @@
 // Per-clip "will this need optimizing before export?" classification + the
-// codec-named reason shown in the import notification dialog. Pure; the dialog
-// (ImportProxyDialog) is presentational and App does the classification.
+// codec-named reason shown on the media-pool badge tooltip. Pure;
+// `useImportReadiness` runs it over the whole pool and MediaPool renders the
+// result.
 //
 // See docs/data-model.md#mediaitem.
 
@@ -30,8 +31,11 @@ export function importOptimizeStatus(m: MediaSummary, deps: OptimizeDeps): Optim
   const { route, exportPath } = resolveDecode(m);
   // Bypass: the H.264 original decodes everywhere — nothing to optimize.
   if (route === "bypass") return "direct";
-  // Proxied with its full export master on disk: optimization is complete.
-  if (route === "proxied" && exportPath) return "ready";
+  // Full export master on disk: optimization is complete. `native-sw` resolves
+  // identically to `proxied` (see resolveDecode) and must settle the same way —
+  // omitting it strands ProRes/10-bit sources on the terminal `checking` fall-
+  // through below, where no later branch can ever release them.
+  if ((route === "proxied" || route === "native-sw") && exportPath) return "ready";
   // DirectExport whose preview (quick) proxy has landed: optimization is
   // complete (export reads the original, preview reads the quick proxy), so
   // settle to silent — otherwise a decodable DirectExport source would be
@@ -93,43 +97,23 @@ export function optimizeReason(m: MediaSummary, deps: OptimizeDeps): OptimizeRea
   return { key: "reason_transcode", codec };
 }
 
-/// A classified clip for the dialog. App builds these; the dialog renders them.
-export interface ImportItem {
-  id: string;
-  label: string;
+/// One pool entry's optimization verdict. `useImportReadiness` builds a
+/// `Map<mediaId, OptimizeInfo>` over the whole pool; MediaPool looks each card
+/// up to decide whether to show the background-optimizing dot and what reason
+/// to put in the badge tooltip.
+export interface OptimizeInfo {
   status: OptimizeStatus;
   reason: OptimizeReason;
 }
 
-export interface Partitioned {
-  listed: ImportItem[]; // bridged + transcoding + failed (shown in the list)
-  checkingCount: number; // shown as "checking N…"
-  hasAttention: boolean; // gates dialog visibility + auto-close in App
-}
-
-export function partitionImportItems(items: ImportItem[]): Partitioned {
-  const listed = items.filter(
-    (i) => i.status === "bridged" || i.status === "transcoding" || i.status === "failed",
-  );
-  const checkingCount = items.filter((i) => i.status === "checking").length;
-  return { listed, checkingCount, hasAttention: listed.length > 0 || checkingCount > 0 };
-}
-
-export type ImportDialogNoteKey =
-  | "editable_note"
-  | "waiting_note"
-  | "mixed_note"
-  | "failed_note";
-
-export function importDialogNoteKey(items: ImportItem[]): ImportDialogNoteKey {
-  const { listed, checkingCount } = partitionImportItems(items);
-  const hasBridged = listed.some((i) => i.status === "bridged");
-  const hasWaiting =
-    checkingCount > 0 || listed.some((i) => i.status === "transcoding");
-  const hasFailed = listed.some((i) => i.status === "failed");
-
-  if (hasBridged && (hasWaiting || hasFailed)) return "mixed_note";
-  if (hasBridged) return "editable_note";
-  if (hasWaiting) return "waiting_note";
-  return "failed_note";
+/// Is background optimization work still running for this clip? True for every
+/// unsettled state, so the pool's corner dot covers the probe window too.
+/// `failed` is settled — it gets the failure badge instead.
+///
+/// LANDMINE: the dot this gates is only rendered for cards `mediaReadiness`
+/// calls ready. That is what keeps it from ever stacking on top of the centred
+/// blocking badges — an unusable clip shows "Preparing…", a usable-but-busy one
+/// shows the dot, never both.
+export function isOptimizing(status: OptimizeStatus): boolean {
+  return status === "bridged" || status === "transcoding" || status === "checking";
 }

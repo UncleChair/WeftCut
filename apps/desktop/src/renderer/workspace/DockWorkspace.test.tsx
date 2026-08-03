@@ -305,6 +305,7 @@ const contracts: DockPanelContracts = {
   importingMediaIds: new Set(),
   proxyState: new Map(),
   previewDecodableMediaIds: new Set(),
+  optimizeById: new Map(),
   onExitBlade: vi.fn(),
   onMutated: async () => {},
   onImportMedia: async () => {},

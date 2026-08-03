@@ -8,10 +8,10 @@ import {
   IMPORT_EVENTS,
   importMedia,
   importQueueList,
+  logEmit,
   MEDIA_JOB_EVENTS,
   type MediaJobEvent,
   type ImportEntry,
-  type MediaSummary,
   type ProjectSummary,
 } from "../ipc";
 import { type ProxyState } from "../panels/mediaReadiness";
@@ -27,9 +27,8 @@ import {
 import {
   importOptimizeStatus,
   optimizeReason,
-  partitionImportItems,
   type OptimizeDeps,
-  type ImportItem,
+  type OptimizeInfo,
 } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { useProjectStore } from "../state/projectStore";
@@ -37,9 +36,10 @@ import { resolveDecode } from "../render/decodeRoute";
 
 /// Owns the import pipeline + per-media preview readiness: the import queue,
 /// the copying/proxy lifecycle maps, the session decodability probe memo, the
-/// import-time decodability sweep, and the import-proxy dialog batch. The
-/// `proxyStateRef` + `decodeProbeMemo` refs it returns are also consumed by
-/// useExportFlow; `summary`/`run`/`previewRef` arrive from App via `deps`.
+/// import-time decodability sweep, and the pool-wide optimization classification
+/// the Media Pool badges read. The `proxyStateRef` + `decodeProbeMemo` refs it
+/// returns are also consumed by useExportFlow; `summary`/`run`/`previewRef`
+/// arrive from App via `deps`.
 export function useImportReadiness(deps: {
   summary: ProjectSummary | null;
   run: (action: () => Promise<unknown>) => Promise<void>;
@@ -50,9 +50,7 @@ export function useImportReadiness(deps: {
   proxyStateRef: React.MutableRefObject<Map<string, ProxyState>>;
   decodeProbeMemo: React.MutableRefObject<Map<string, ProbeState>>;
   previewDecodableMediaIds: Set<string>;
-  dialogItems: ImportItem[];
-  dialogHasAttention: boolean;
-  clearDialogBatch: () => void;
+  optimizeById: ReadonlyMap<string, OptimizeInfo>;
   importMediaFiles: () => Promise<void>;
   importPaths: (paths: string[]) => Promise<void>;
 } {
@@ -196,10 +194,10 @@ export function useImportReadiness(deps: {
     return ids;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sweepTick]);
-  // Completed import media_ids already routed into a dialog batch (session).
-  const notifiedImportIds = useRef<Set<string>>(new Set());
-  // The current import-proxy dialog batch (media_ids); empty = closed.
-  const [dialogBatch, setDialogBatch] = useState<string[]>([]);
+  // Media_ids whose proxy failure already reached the status log. A failure is
+  // reported once per media per session; the pool badge carries the durable
+  // truth, so re-emitting on every re-render would only flood the log.
+  const notifiedFailureIds = useRef<Set<string>>(new Set());
 
   // Import-time decodability sweep. For every DirectExport video source not yet
   // probed this session, decode one key frame in the background; on failure
@@ -286,63 +284,59 @@ export function useImportReadiness(deps: {
     };
   }, [summary, previewRef]);
 
-  // Open/extend the import-proxy dialog batch when an import batch completes.
-  // Add ALL completed ids (audio/direct included); the classifier filters them
-  // out, so non-attention imports never render the dialog.
-  useEffect(() => {
-    const fresh = importQueue.flatMap((entry) => {
-      const id = entry.media_id;
-      return entry.status.kind === "Completed" &&
-        !notifiedImportIds.current.has(id)
-        ? [id]
-        : [];
-    });
-    if (fresh.length === 0) return;
-    for (const id of fresh) notifiedImportIds.current.add(id);
-    setDialogBatch((prev) => [...new Set([...prev, ...fresh])]);
-  }, [importQueue]);
-
   // Deps recreated each render; they read `.current` refs so they're always
   // live. `sweepTick` is what forces re-eval when only a ref changed.
-  const dialogDeps: OptimizeDeps = {
+  const optimizeDeps: OptimizeDeps = {
     memo: decodeProbeMemo.current,
     proxyStateOf: (id) => proxyStateRef.current.get(id),
     routeCorrected: routeCorrected.current,
   };
 
-  // Live classification of the dialog batch.
-  const dialogItems: ImportItem[] = useMemo(() => {
+  // Live optimization verdict for EVERY pool entry — the Media Pool badges are
+  // per-media and describe the clip's current state, so they must not be scoped
+  // to "imported this session". Classification is a handful of map lookups per
+  // clip, so a whole-pool pass every summary/proxy change is free.
+  //
+  // Computed here rather than in MediaPool because two of the three inputs
+  // (`decodeProbeMemo`, `routeCorrected`) are refs: handing them across the
+  // panel contract would leave MediaPool with no signal for when to recompute,
+  // and its badges would silently go stale the moment a probe resolved.
+  const optimizeById = useMemo<ReadonlyMap<string, OptimizeInfo>>(() => {
     const store = useProjectStore.getState();
-    return dialogBatch
-      .map((id) => store.mediaById.get(id))
-      .filter((m): m is MediaSummary => !!m)
-      .map((m) => ({
-        id: m.id,
-        label: m.label,
-        status: importOptimizeStatus(m, dialogDeps),
-        reason: optimizeReason(m, dialogDeps),
-      }));
+    const out = new Map<string, OptimizeInfo>();
+    for (const m of store.mediaById.values()) {
+      out.set(m.id, {
+        status: importOptimizeStatus(m, optimizeDeps),
+        reason: optimizeReason(m, optimizeDeps),
+      });
+    }
+    return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dialogBatch, summary, proxyState, sweepTick]);
+  }, [summary, proxyState, sweepTick]);
 
-  const dialogHasAttention = partitionImportItems(dialogItems).hasAttention;
-
-  // Auto-close ONLY once every batch member is loaded in the store AND resolved
-  // to direct/ready. Never clears while a member is still absent (the import
-  // Completed event can beat the store update) or still needs attention — that
-  // would close the dialog before the clips even appear.
+  // Proxy failure is the one optimization outcome that needs the user to act
+  // (re-import), so it cannot rely on the pool being on screen — the Media
+  // Pool can sit behind another dock tab. Everything else stays silent and
+  // lives only on the card.
   useEffect(() => {
-    if (dialogBatch.length === 0) return;
-    const store = useProjectStore.getState();
-    const allSettledDirect = dialogBatch.every((id) => {
-      const m = store.mediaById.get(id);
-      if (!m) return false;
-      const s = importOptimizeStatus(m, dialogDeps);
-      return s === "direct" || s === "ready";
-    });
-    if (allSettledDirect) setDialogBatch([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dialogBatch, summary, proxyState, sweepTick]);
+    for (const [id, info] of optimizeById) {
+      if (info.status !== "failed") continue;
+      if (notifiedFailureIds.current.has(id)) continue;
+      notifiedFailureIds.current.add(id);
+      const label = useProjectStore.getState().mediaById.get(id)?.label ?? id;
+      void logEmit({
+        level: "error",
+        category: { kind: "Import" },
+        source: { kind: "System" },
+        message: t("import_proxy.failed_log", { label }),
+        details: { media_id: id },
+      }).catch(() => {
+        // The LogBus does not exist before a workspace opens. Un-mark so the
+        // next classification pass retries rather than losing the report.
+        notifiedFailureIds.current.delete(id);
+      });
+    }
+  }, [optimizeById, t]);
 
   // Shared tail of every import entry point (file picker, media-pool
   // file drop): feed absolute paths into the import pipeline.
@@ -403,9 +397,7 @@ export function useImportReadiness(deps: {
     proxyStateRef,
     decodeProbeMemo,
     previewDecodableMediaIds,
-    dialogItems,
-    dialogHasAttention,
-    clearDialogBatch: () => setDialogBatch([]),
+    optimizeById,
     importMediaFiles,
     importPaths,
   };

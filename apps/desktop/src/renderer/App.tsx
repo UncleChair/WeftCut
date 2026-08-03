@@ -38,7 +38,6 @@ import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
 import { AppDialog } from "./components/AppDialog";
 import { Button } from "@/components/ui/button";
-import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { useAppNotices } from "./components/useAppNotices";
 import { SystemStatusPanel } from "./components/SystemStatusPanel";
@@ -384,18 +383,17 @@ export function App({ onCloseProject }: AppProps) {
     [busy, refresh],
   );
 
-  // Import queue, per-media proxy/decodability readiness, and the import-proxy
-  // dialog live in useImportReadiness; it takes `run` (defined above) so its
-  // import callbacks route through the busy guard + refresh.
+  // Import queue, per-media proxy/decodability readiness, and the pool-wide
+  // optimization classification live in useImportReadiness; it takes `run`
+  // (defined above) so its import callbacks route through the busy guard +
+  // refresh.
   const {
     importingMediaIds,
     proxyState,
     proxyStateRef,
     decodeProbeMemo,
     previewDecodableMediaIds,
-    dialogItems,
-    dialogHasAttention,
-    clearDialogBatch,
+    optimizeById,
     importMediaFiles,
   } = useImportReadiness({ summary, run, previewRef });
   // Export lifecycle (state, close guard, taskbar/notification mirrors, the
@@ -710,6 +708,7 @@ export function App({ onCloseProject }: AppProps) {
       importingMediaIds,
       proxyState,
       previewDecodableMediaIds,
+      optimizeById,
       onExitBlade: () => setBladeMode(false),
       onMutated: refresh,
       onImportMedia: importMediaFiles,
@@ -729,6 +728,7 @@ export function App({ onCloseProject }: AppProps) {
       importingMediaIds,
       proxyState,
       previewDecodableMediaIds,
+      optimizeById,
       refresh,
       importMediaFiles,
       primaryLayerId,
@@ -874,12 +874,6 @@ export function App({ onCloseProject }: AppProps) {
             </div>
           </div>
         </AppDialog>
-      )}
-      {dialogHasAttention && (
-        <ImportProxyDialog
-          items={dialogItems}
-          onDismiss={clearDialogBatch}
-        />
       )}
       {staleMotifs.length > 0 && (
         <MotifStaleDialog

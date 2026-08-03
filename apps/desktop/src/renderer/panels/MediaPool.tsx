@@ -14,6 +14,7 @@ import {
 } from "./MediaContextMenu";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./mediaReadiness";
+import { isOptimizing, type OptimizeInfo } from "./importOptimize";
 import {
   MEDIA_DRAG_TYPE,
   mediaDragPayload,
@@ -299,6 +300,7 @@ export function MediaPool({
   importing,
   proxyState,
   previewDecodable,
+  optimizeById,
   fpsNum,
   fpsDen,
   onCancelImport,
@@ -310,6 +312,9 @@ export function MediaPool({
   importing: ReadonlySet<string>;
   proxyState: ReadonlyMap<string, ProxyState>;
   previewDecodable: ReadonlySet<string>;
+  /// Pool-wide optimization verdicts from useImportReadiness. Drives the
+  /// background-optimizing dot and the codec-named reason in badge tooltips.
+  optimizeById?: ReadonlyMap<string, OptimizeInfo>;
   fpsNum: number;
   fpsDen: number;
   onCancelImport: (mediaId: string) => Promise<void>;
@@ -539,6 +544,22 @@ export function MediaPool({
               });
               const interactive = readiness.ready;
               const reason = readiness.ready ? null : readiness.reason;
+              // Optimization is the second, orthogonal axis: `readiness`
+              // answers "may the user drag this?", `optimize` answers "is a
+              // background job still working on it?". The dot renders only on
+              // the ready branch, so it can never stack on a blocking badge.
+              const optimize = optimizeById?.get(m.id);
+              const optimizeReasonText = optimize
+                ? optimize.status === "checking"
+                  ? t("import_proxy.checking_one")
+                  : t(`import_proxy.${optimize.reason.key}`, {
+                      codec: optimize.reason.codec,
+                    })
+                : null;
+              const withReason = (hint: string) =>
+                optimizeReasonText ? `${hint}\n${optimizeReasonText}` : hint;
+              const showOptimizingDot =
+                interactive && optimize != null && isOptimizing(optimize.status);
               return (
                 <li
                   key={m.id}
@@ -599,18 +620,24 @@ export function MediaPool({
                   onDragEnd={endMediaDrag}
                   title={
                     interactive
-                      ? t("media_pool.card_ready_hint")
+                      ? showOptimizingDot
+                        ? withReason(t("media_pool.optimizing_hint"))
+                        : t("media_pool.card_ready_hint")
                       : reason === "missing"
                         ? t("media_pool.missing_hint", { path: m.path })
                         : reason === "proxy_pending"
-                          ? t("media_pool.proxy_pending_hint", {
-                              defaultValue: "Preview is being prepared…",
-                            })
+                          ? withReason(
+                              t("media_pool.proxy_pending_hint", {
+                                defaultValue: "Preview is being prepared…",
+                              }),
+                            )
                           : reason === "proxy_failed"
-                            ? t("media_pool.proxy_failed_hint", {
-                                defaultValue:
-                                  "Preview could not be prepared. Re-import to retry.",
-                              })
+                            ? withReason(
+                                t("media_pool.proxy_failed_hint", {
+                                  defaultValue:
+                                    "Preview could not be prepared. Re-import to retry.",
+                                }),
+                              )
                             : t("media_pool.importing")
                   }
                 >
@@ -659,9 +686,11 @@ export function MediaPool({
                     {reason === "proxy_pending" && (
                       <span
                         className="media-proxy-pending-badge"
-                        title={t("media_pool.proxy_pending_hint", {
-                          defaultValue: "Preview is being prepared…",
-                        })}
+                        title={withReason(
+                          t("media_pool.proxy_pending_hint", {
+                            defaultValue: "Preview is being prepared…",
+                          }),
+                        )}
                       >
                         {t("media_pool.proxy_pending", {
                           defaultValue: "Preparing…",
@@ -671,15 +700,29 @@ export function MediaPool({
                     {reason === "proxy_failed" && (
                       <span
                         className="media-proxy-failed-badge"
-                        title={t("media_pool.proxy_failed_hint", {
-                          defaultValue:
-                            "Preview could not be prepared. Re-import to retry.",
-                        })}
+                        title={withReason(
+                          t("media_pool.proxy_failed_hint", {
+                            defaultValue:
+                              "Preview could not be prepared. Re-import to retry.",
+                          }),
+                        )}
                       >
                         {t("media_pool.proxy_failed", {
                           defaultValue: "Preview failed",
                         })}
                       </span>
+                    )}
+                    {/* Usable clip with a proxy/probe still running. Deliberately
+                        a bare corner dot, not one of the centred badges above —
+                        those mean "you can't use this yet", and this clip is
+                        fully editable. */}
+                    {showOptimizingDot && (
+                      <span
+                        className="media-optimizing-dot"
+                        role="status"
+                        aria-label={t("media_pool.optimizing")}
+                        title={withReason(t("media_pool.optimizing_hint"))}
+                      />
                     )}
                   </div>
                   <span className="media-item-name" title={m.label}>

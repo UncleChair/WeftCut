@@ -279,6 +279,9 @@ const enUS = {
     proxy_pending_hint: "Preview is being prepared…",
     proxy_failed: "Preview failed",
     proxy_failed_hint: "Preview could not be prepared. Re-import to retry.",
+    optimizing: "Optimizing in background",
+    optimizing_hint:
+      "Editable now · optimized media is building in the background; export waits for it automatically.",
     click_drag_hint: "Click to preview · drag onto a track to add",
     card_ready_hint: "Drag onto a track to add · right-click for media actions",
     drop_to_import: "Drop files to import",
@@ -596,21 +599,15 @@ const enUS = {
       action: "Open decode settings",
     },
   },
+  // Codec-named optimization reasons, shown in Media Pool badge tooltips.
   import_proxy: {
-    title: "Some clips need optimizing",
-    optimizing_heading: "Optimizing for export",
-    checking: "Checking {{n}} clip(s)…",
+    checking_one: "Checking this clip…",
     reason_undecodable: "{{codec}} · can't be decoded on this machine",
     reason_transcode: "{{codec}} · needs transcoding",
     reason_10bit: "{{codec}} 10-bit/HDR · needs optimizing",
     reason_bridged: "{{codec}} · usable now, optimizing scroll in background",
     failed: "Preparation failed — re-import to retry",
-    editable_note: "Usable clips can be edited now; export will wait automatically.",
-    waiting_note: "Preparing clips become draggable once a preview source is ready.",
-    mixed_note:
-      "Usable clips can be edited now; preparing clips become draggable once a preview source is ready.",
-    failed_note: "Failed clips need to be re-imported before they can be used.",
-    dismiss: "Got it",
+    failed_log: "Optimizing “{{label}}” failed — re-import it to retry.",
   },
   motif_stale: {
     title: "Motifs changed since you placed them",

@@ -39,6 +39,7 @@ import {
   type ProjectSummary,
 } from "../ipc";
 import { type ProxyState } from "../panels/mediaReadiness";
+import { type OptimizeInfo } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { jumpToTimeUs } from "../state/navigation";
@@ -70,6 +71,7 @@ export interface DockPanelContracts {
   importingMediaIds: ReadonlySet<string>;
   proxyState: ReadonlyMap<string, ProxyState>;
   previewDecodableMediaIds: ReadonlySet<string>;
+  optimizeById: ReadonlyMap<string, OptimizeInfo>;
   onExitBlade: () => void;
   onMutated: () => Promise<void>;
   onImportMedia: () => Promise<void>;
@@ -151,6 +153,7 @@ function MediaDockPanel() {
         importing={contracts.importingMediaIds}
         proxyState={contracts.proxyState}
         previewDecodable={contracts.previewDecodableMediaIds}
+        optimizeById={contracts.optimizeById}
         fpsNum={summary?.composition.fps_num ?? 30}
         fpsDen={summary?.composition.fps_den ?? 1}
         onCancelImport={async (id) => {
