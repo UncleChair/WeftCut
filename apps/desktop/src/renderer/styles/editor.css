@@ -708,6 +708,14 @@
 .anim-stopwatch.is-lit { color: var(--keyframe); }
 .anim-stopwatch:disabled { opacity: 0.35; cursor: default; }
 
+/* Uniform-scale chain: sits at the end of the (collapsed Scale | Scale X) row.
+ * Same footprint family as .anim-stopwatch; lit = linked. */
+.scale-link-row { display: flex; align-items: center; gap: 6px; }
+.scale-link-row > .anim-field { flex: 1 1 auto; min-width: 0; }
+.scale-link-toggle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 18px; height: 18px; border-radius: var(--radius-control); color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
+.scale-link-toggle:hover { color: var(--muted-foreground); background: var(--secondary); }
+.scale-link-toggle.is-linked { color: var(--accent-foreground); }
+
 /* Range inputs are gone — .app-slider's own flex: 1 1 0 / min-width: 0
  * base already lets the track shrink to the panel's available room. */
 

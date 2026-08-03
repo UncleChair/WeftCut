@@ -26,6 +26,7 @@ export function AnimatableField({
   tInLayerUs,
   playheadInSpan,
   onMutated,
+  commitTrack,
   children,
 }: {
   layerId: string;
@@ -38,6 +39,11 @@ export function AnimatableField({
   /// True when the playhead is within the layer's span — gates keyframe creation.
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
+  /// Commit sink for the stopwatch's own track writes. When set, the toggle
+  /// routes through it INSTEAD of writing updateLayerParamTrack directly (and
+  /// the sink owns the refresh) — this is what lets a composite field (linked
+  /// scale) fan the lift/collapse out to both axes. Absent = direct write here.
+  commitTrack?: (paramKey: string, next: AnimTrack<number>) => void | Promise<void>;
   /// The existing control (slider / number field), already bound to the
   /// parent's display value + commit. Rendered to the right of the stopwatch.
   children: ReactNode;
@@ -53,13 +59,15 @@ export function AnimatableField({
 
   const toggle = async () => {
     try {
-      if (lit) {
-        await updateLayerParamTrack(layerId, paramKey, collapseToStatic(track, tInLayerUs, fallback));
+      const next = lit
+        ? collapseToStatic(track, tInLayerUs, fallback)
+        : liftToKeyframed(track.mode === "Static" ? track.value : fallback, tInLayerUs);
+      if (commitTrack) {
+        await commitTrack(paramKey, next); // sink owns the write AND the refresh
       } else {
-        const value = track.mode === "Static" ? track.value : fallback;
-        await updateLayerParamTrack(layerId, paramKey, liftToKeyframed(value, tInLayerUs));
+        await updateLayerParamTrack(layerId, paramKey, next);
+        await onMutated();
       }
-      await onMutated();
     } catch (e) {
       console.warn("stopwatch toggle failed:", e);
     }

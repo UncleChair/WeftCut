@@ -25,6 +25,10 @@ export interface Transform {
   scale_x: Animated<number>; scale_y: Animated<number>
   rotation_deg: Animated<number>
   anchor: [number, number]
+  /** Uniform-scale intent: true ⇒ scale_x/scale_y are structural twins and edit
+   *  as one. Invariant enforced on results (mutations/scaleLink.ts); absent on
+   *  older saves — parseProject backfills it from a twin check, never blindly. */
+  scale_linked: boolean
 }
 export interface Rect { x: number; y: number; w: number; h: number }
 

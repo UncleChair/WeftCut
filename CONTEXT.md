@@ -107,3 +107,14 @@ pulling its tail source handle — to open the authorized overlap. The cut
 instant is the window's start, not its midpoint (ADR 0035); center-at-cut and
 end-at-cut are future additive parameters.
 _Avoid_: centered transition, symmetric overlap, cut-straddling window
+
+## Transform
+
+**Linked scale**:
+A layer state (`Transform.scale_linked`, default on) in which the two scale
+tracks are structural twins and every editing surface shows and writes them as
+one "Scale". Not a keyframe mode — `Animated` stays Static/Keyframed; linking
+is editor behavior plus a self-healing flag: any write that diverges the pair
+clears it in the same commit, and re-linking snaps `scale_y` to a copy of
+`scale_x`.
+_Avoid_: uniform-scale mode, scale lock, third keyframe mode

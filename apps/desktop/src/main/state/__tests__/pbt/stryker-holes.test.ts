@@ -33,7 +33,7 @@ function videoClipLayer(id: string, t0: number, t1: number, srcIn = 0, srcOut = 
   const s = (v: number) => ({ mode: 'Static' as const, value: v })
   const params: LayerParams = {
     kind: 'VideoClip', media: 'media-1', src_in_us: srcIn, src_out_us: srcOut,
-    transform: { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5] },
+    transform: { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5], scale_linked: true },
     opacity: s(1), crop: null, flip_h: false, flip_v: false, blend_mode: 'Normal', speed: 1,
     fade_in_us: 0, fade_out_us: 0,
   }
@@ -590,7 +590,7 @@ describe('validate: ImageOverlay missing media', () => {
     const s = (v: number) => ({ mode: 'Static' as const, value: v })
     const params: LayerParams = {
       kind: 'ImageOverlay', media: 'missing-media-id',
-      transform: { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5] },
+      transform: { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5], scale_linked: true },
       opacity: s(1), blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0,
     }
     const layer: Layer = { id: 'img1', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params, effects: [] }

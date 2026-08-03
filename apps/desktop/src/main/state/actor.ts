@@ -7,7 +7,7 @@ import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFla
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileTransitions, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
-import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
+import { applyAddLayer, applyAddMarker, applyAddTrack, colorParams, defaultTransform, textParamsDefault } from './mutations/add'
 import { applyMoveLayer } from './mutations/move'
 import { applyTrimLayer, type LayerEdge } from './mutations/trim'
 import { applyDeleteLayer } from './mutations/delete'
@@ -26,6 +26,7 @@ import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, m
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
+import { applySetScaleLinked, enforceScaleLinkInvariant } from './mutations/scaleLink'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import { applyAddCaptionTrack, applyRestyleCaptions, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
@@ -557,7 +558,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               ? { ...audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')), role: a.role as AudioRole }
               : audioParams(a.media as Uuid, parseNum(a.src_in_us, 'src_in_us'), parseNum(a.src_out_us, 'src_out_us')); break
             case 'image': params = imageOverlayParams(a.media as Uuid); break
-            case 'Motif': params = { kind: 'Motif', motif_id: a.motif_id as string, motif_version: a.motif_version as number, props: (a.props ?? {}) as Record<string, unknown>, src_in_us: 0, transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] }, opacity: { mode: 'Static', value: 1 } }; break
+            case 'Motif': params = { kind: 'Motif', motif_id: a.motif_id as string, motif_version: a.motif_version as number, props: (a.props ?? {}) as Record<string, unknown>, src_in_us: 0, transform: defaultTransform(), opacity: { mode: 'Static', value: 1 } }; break
             default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }
           }
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, parseNum(a.t_start_us, 't_start_us'), parseNum(a.t_end_us, 't_end_us')))
@@ -640,9 +641,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'groups_remove_members': commit('Removed group members', [], { kind: 'Coarse' }, (d) => applyGroupsRemoveMembers(d, a.group as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
         case 'groups_rename': commit('Renamed group', [], { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.group as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_layer': commit('Updated layer', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
-        case 'update_layer_params': commit('Updated layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog)); return { ok: true, value: null }
-        case 'update_layer_param_track': commit('Keyframed layer param', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>)); return { ok: true, value: null }
-        case 'update_layer_param_tracks': commit('Keyframed layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t) }); return { ok: true, value: null }
+        // The three commands below end with the scale-link invariant check
+        // (mutations/scaleLink.ts): result-based, so it runs once per COMMIT —
+        // the plural batch is legitimately mid-divergence between its scale_x
+        // and scale_y entries, and a per-entry check would unlink every linked
+        // fan-out write.
+        case 'update_layer_params': commit('Updated layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'update_layer_param_track': commit('Keyframed layer param', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'update_layer_param_tracks': commit('Keyframed layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        case 'set_scale_linked': commit((a.linked as boolean) ? 'Linked scale' : 'Unlinked scale', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applySetScaleLinked(d, idGen, a.layer as Uuid, a.linked as boolean)); return { ok: true, value: null }
         // Clearing the pin is the inverse of set_composition{duration_us} and rides
         // the same unrecorded fan-out. Per snapshot it means "unpin, then refit to
         // MY OWN layer high-water mark" — the snapshot with the long layer keeps its
@@ -867,7 +874,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               kind: 'Text', content: 'TEXT',
               font: { family: 'Arial', size_px: 96, weight: 700, italic: false },
               color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
-              align: 'Center', transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] },
+              align: 'Center', transform: defaultTransform(),
               opacity: { mode: 'Static', value: 1 },
               shadow: null, outline: null, intro: null, outro: null,
               backend_hint: 'DrawText',
@@ -883,7 +890,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               kind: 'Text', content: 'TEXT',
               font: { family: 'Arial', size_px: 96, weight: 700, italic: false },
               color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
-              align: 'Center', transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] },
+              align: 'Center', transform: defaultTransform(),
               opacity: { mode: 'Static', value: 1 },
               shadow: null, outline: null, intro: null, outro: null,
               backend_hint: 'DrawText',

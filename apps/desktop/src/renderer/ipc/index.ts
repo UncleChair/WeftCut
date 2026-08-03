@@ -142,6 +142,10 @@ export interface MotifView {
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
   scale_y: AnimTrack<number>;
+  /// Uniform-scale intent: true ⇒ scale_x/scale_y are structural twins and the
+  /// UI edits them as one collapsed "Scale" (twin invariant lives main-side in
+  /// mutations/scaleLink.ts; any divergent write clears this in the same commit).
+  scale_linked: boolean;
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   /// Window offset (µs) into the Motif's intrinsic content. Width = layer
@@ -162,6 +166,7 @@ export interface VideoClipView {
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
   scale_y: AnimTrack<number>;
+  scale_linked: boolean;
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   speed: number;
@@ -178,6 +183,7 @@ export interface ImageOverlayView {
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
   scale_y: AnimTrack<number>;
+  scale_linked: boolean;
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   fade_in_us: number;
@@ -198,6 +204,7 @@ export interface TextView {
   y: AnimTrack<number>;
   scale_x: AnimTrack<number>;
   scale_y: AnimTrack<number>;
+  scale_linked: boolean;
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   outline: { color: Rgba; width: number } | null;
@@ -992,12 +999,20 @@ export async function updateLayerParamTrack(
 }
 
 /// Batch form — write several param tracks on one layer as a single undo step
-/// (used by multi-keyframe gestures like dragging a cross-property selection).
+/// (used by multi-keyframe gestures like dragging a cross-property selection,
+/// and by the linked-scale fan-out: scale_x + a twin scale_y in one commit).
 export async function updateLayerParamTracks(
   layerId: string,
   entries: [string, AnimTrack<number>][],
 ): Promise<void> {
   return invoke<void>("update_layer_param_tracks", { layerId, entries });
+}
+
+/// Toggle a layer's uniform-scale link. `true` is the destructive direction:
+/// the actor snaps scale_y to a whole-track copy of scale_x (keyframes
+/// included) in the same commit — undo restores both the track and the flag.
+export async function setScaleLinked(layerId: string, linked: boolean): Promise<void> {
+  return invoke<void>("set_scale_linked", { layerId, linked });
 }
 
 export async function moveLayer(

@@ -638,8 +638,25 @@ struct Transform {
     scale_y: Animated<f64>,
     rotation_deg: Animated<f64>,
     anchor: (f64, f64),               // 0..1 normalized
+    scale_linked: bool,               // uniform-scale intent; default true
 }
 ```
+
+`scale_linked` records **uniform-scale intent**: while `true`, the two scale
+tracks are structural twins — same mode, and when keyframed the same
+`(t_us, value, interp)` sequence (keyframe `id`s are per-track identities and
+legitimately differ) — and every editing surface shows and writes them as one
+"Scale". The invariant is enforced on **results**, not write paths
+(`main/state/mutations/scaleLink.ts`): after any mutation that touches a scale
+track of a linked layer, a twin check runs in the same commit and clears the
+flag on divergence, so the flag can never lie regardless of which write path
+(UI, MCP, or anything else) produced the state. Re-linking (`set_scale_linked
+{ linked: true }`) is the one destructive edit: `scale_y` becomes a fresh-id
+whole-track copy of `scale_x`, atomically with the flag. The field is additive
+on the wire — absent on older saves — and the load pass backfills it from the
+twin check (never a blind `true`), which also repairs a hand-edited
+`true`-over-diverged-tracks file. Rust carries the field for wire fidelity
+only; no compute reads it.
 
 ## Animated values
 

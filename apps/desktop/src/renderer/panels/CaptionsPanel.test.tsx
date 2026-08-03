@@ -49,6 +49,7 @@ function textLayer(id: string, startUs: number, content: string, size = 54) {
       y: { mode: "Static" as const, value: 990 },
       scale_x: { mode: "Static" as const, value: 1 },
       scale_y: { mode: "Static" as const, value: 1 },
+      scale_linked: true,
       rotation_deg: { mode: "Static" as const, value: 0 },
       opacity: { mode: "Static" as const, value: 1 },
       outline: null,

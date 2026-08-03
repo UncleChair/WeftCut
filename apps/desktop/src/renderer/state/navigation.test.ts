@@ -57,6 +57,7 @@ function fixtureSummary(): ProjectSummary {
               src_in_us: 0, src_out_us: 2_000_000,
               x: { mode: "Static", value: 0 }, y: { mode: "Static", value: 0 },
               scale_x: { mode: "Static", value: 1 }, scale_y: { mode: "Static", value: 1 },
+              scale_linked: true,
               rotation_deg: { mode: "Static", value: 0 },
               opacity: { mode: "Static", value: 1 },
               speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,

@@ -147,6 +147,10 @@ export function KeyframeField({
         tInLayerUs={tInLayerUs}
         playheadInSpan={playheadInSpan}
         onMutated={onMutated ?? (async () => {})}
+        // The stopwatch's lift/collapse writes flow through the SAME sink as
+        // the value widgets, so a composite (fan-out) field keeps its twin
+        // invariant on every write path, stopwatch included.
+        commitTrack={onCommitTrack}
       >
         {controls}
       </AnimatableField>

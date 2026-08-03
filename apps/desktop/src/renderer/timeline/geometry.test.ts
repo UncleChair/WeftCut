@@ -288,6 +288,28 @@ describe("trackKeyframeProperties", () => {
     const track = { kind: "Video", layers: [{ id: "a", kind: "VideoClip", params: { kind: "VideoClip", opacity: staticTrack } }] } as unknown as import("../ipc").TrackSummary;
     expect(trackKeyframeProperties(track)).toEqual([]);
   });
+  it("a LINKED layer's keyed scale twins collapse to ONE composite lane, no scale_y", () => {
+    const track = {
+      kind: "Video", layers: [
+        { id: "a", kind: "VideoClip", params: { kind: "VideoClip", scale_linked: true, scale_x: kfTrack, scale_y: kfTrack } },
+      ],
+    } as unknown as import("../ipc").TrackSummary;
+    const props = trackKeyframeProperties(track);
+    expect(props.map((d) => d.paramKey)).toEqual(["scale_x"]);
+    expect(props[0]!.labelKey).toBe("property_panel.scale");
+    expect(props[0]!.fanOutKeys).toEqual(["scale_x", "scale_y"]);
+  });
+  it("mixed track: the lane label follows the layer that actually keyed the param", () => {
+    const track = {
+      kind: "Video", layers: [
+        // Linked but nothing keyed — must not steal the label from the keyed neighbour.
+        { id: "a", kind: "VideoClip", params: { kind: "VideoClip", scale_linked: true, scale_x: staticTrack, scale_y: staticTrack } },
+        { id: "b", kind: "VideoClip", params: { kind: "VideoClip", scale_linked: false, scale_x: kfTrack, scale_y: kfTrack } },
+      ],
+    } as unknown as import("../ipc").TrackSummary;
+    const props = trackKeyframeProperties(track);
+    expect(props.map((d) => d.labelKey)).toEqual(["property_panel.scale_x", "property_panel.scale_y"]);
+  });
 });
 
 describe("playheadFrameShadowPx", () => {

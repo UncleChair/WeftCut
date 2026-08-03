@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import {
   updateLayer,
   updateLayerParams,
-  updateLayerParamTrack,
   moveLayer,
   trimLayer,
   installMotif,
@@ -35,8 +34,9 @@ import {
   type TrackSummary,
   trackStatic,
 } from "../ipc";
-import { KeyframeField } from "../components/KeyframeField";
-import { readParamTrack, type ParamDescriptor, X, Y, SCALE_X, SCALE_Y, ROTATION, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { X, Y, ROTATION, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { InspectorAnimField } from "./InspectorAnimField";
+import { ScaleFields } from "./ScaleFields";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
 // render via `InspectorAnimField`, the inspector adapter over the shared
@@ -511,8 +511,7 @@ function TextFields({
       </Field>
       <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <ScaleFields layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
     </section>
@@ -558,8 +557,7 @@ function VideoClipFields({
         {t("property_panel.media")}: {v.media_label}
       </h3>
       <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <ScaleFields layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
@@ -659,8 +657,7 @@ function ImageOverlayFields({
       <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <ScaleFields layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <Field label={t("property_panel.fade_in")}>
         <AppInput
@@ -761,8 +758,7 @@ function MotifFields({
       <h4>{t("property_panel.transform")}</h4>
       <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      <InspectorAnimField layer={layer} desc={SCALE_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <ScaleFields layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       {motif === null ? (
@@ -1463,46 +1459,6 @@ function Field({
       </span>
       <div className="prop-field-control">{children}</div>
     </label>
-  );
-}
-
-/// Inspector adapter: maps a (layer, ParamDescriptor) pair onto the shared
-/// KeyframeField with the stopwatch + the inspector commit path. Replaces the
-/// hand-rolled value-field IIFEs; widgets/step/min/max come from the descriptor
-/// (keyframe/descriptors.ts).
-function InspectorAnimField({
-  layer,
-  desc,
-  tInLayerUs,
-  playheadInSpan,
-  onMutated,
-}: {
-  layer: LayerSummary;
-  desc: ParamDescriptor;
-  tInLayerUs: number;
-  playheadInSpan: boolean;
-  onMutated: () => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const track = readParamTrack(layer.params, desc.paramKey) ?? { mode: "Static" as const, value: desc.fallback };
-  return (
-    <KeyframeField
-      layerId={layer.id}
-      paramKey={desc.paramKey}
-      label={t(desc.labelKey)}
-      track={track}
-      fallback={desc.fallback}
-      tInLayerUs={tInLayerUs}
-      playheadInSpan={playheadInSpan}
-      onCommitTrack={(k, next) =>
-        updateLayerParamTrack(layer.id, k, next).then(onMutated).catch((e) => console.warn(e))
-      }
-      onMutated={onMutated}
-      widgets={desc.widgets ?? ["number"]}
-      {...(desc.step !== undefined ? { step: desc.step } : {})}
-      {...(desc.min !== undefined ? { min: desc.min } : {})}
-      {...(desc.max !== undefined ? { max: desc.max } : {})}
-    />
   );
 }
 

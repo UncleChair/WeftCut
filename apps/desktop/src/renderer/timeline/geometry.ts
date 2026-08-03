@@ -3,6 +3,7 @@ import { displayedFrameStartUs, inclusiveOutBoundaryUs } from "../frames";
 import {
   animatableParams,
   readParamTrack,
+  readScaleLinked,
   type ParamDescriptor,
 } from "../keyframe/descriptors";
 
@@ -303,10 +304,13 @@ export function keyframeAbsoluteX(
 export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] {
   const out: ParamDescriptor[] = [];
   // Stable, de-duped, descriptor-ordered: walk each layer's animatable params;
-  // include a param the first time any layer has it Keyframed.
+  // include a param the first time any layer has it Keyframed. Per-layer
+  // link-aware: a LINKED layer's param list carries the composite Scale and no
+  // scale_y at all, so its keyed twin tracks surface as ONE lane — while an
+  // unlinked neighbour on the same track still contributes scale_x/scale_y.
   const seen = new Set<string>();
   for (const layer of track.layers) {
-    for (const desc of animatableParams(layer.kind)) {
+    for (const desc of animatableParams(layer.kind, readScaleLinked(layer.params))) {
       if (seen.has(desc.paramKey)) continue;
       const t = readParamTrack(layer.params, desc.paramKey);
       if (t && t.mode === "Keyframed") {
@@ -314,16 +318,22 @@ export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] 
       }
     }
   }
-  // Emit in the stable order defined by ORDER below (not first-seen order):
-  // collect from the canonical descriptor lists.
+  // Emit in the stable order defined by ORDER below (not first-seen order).
+  // The descriptor (label "Scale" vs "Scale X", fan-out or not) comes from the
+  // first layer actually KEYED on the param, so a mixed track labels the lane
+  // after the layer whose diamonds it shows; first-defining is the fallback.
   const ORDER = ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity", "gain_db", "pan"];
   for (const key of ORDER) {
     if (!seen.has(key)) continue;
-    // find the descriptor (label/fallback) from whichever kind defines it
+    let picked: ParamDescriptor | null = null;
     for (const layer of track.layers) {
-      const d = animatableParams(layer.kind).find((x) => x.paramKey === key);
-      if (d) { out.push(d); break; }
+      const d = animatableParams(layer.kind, readScaleLinked(layer.params)).find((x) => x.paramKey === key);
+      if (!d) continue;
+      picked ??= d;
+      const t = readParamTrack(layer.params, key);
+      if (t && t.mode === "Keyframed") { picked = d; break; }
     }
+    if (picked) out.push(picked);
   }
   return out;
 }

@@ -33,6 +33,7 @@ function video(id: string, startUs: number, endUs: number): LayerSummary {
       y: { mode: "Static", value: 0 },
       scale_x: { mode: "Static", value: 1 },
       scale_y: { mode: "Static", value: 1 },
+      scale_linked: true,
       rotation_deg: { mode: "Static", value: 0 },
       flip_h: false,
       flip_v: false,

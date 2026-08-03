@@ -21,6 +21,7 @@ import {
   splitLayerGrouped,
   updateLayer,
   updateLayerParamTrack,
+  updateLayerParamTracks,
   type AnimTrack,
   type GroupSummary,
   type KeybindingsMap,
@@ -31,6 +32,9 @@ import {
   type TransitionSummary,
 } from "../ipc";
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
+import { findPanelLayer } from "../panels/panelLayer";
+import { scaleFanOutFor } from "../keyframe/descriptors";
+import { fanOutEntries } from "../keyframe/fanOut";
 import { formatTimecode, snapFrameRound } from "../frames";
 import {
   useDisplayMode,
@@ -732,13 +736,24 @@ export function Timeline({
   const onCommitParamTrack = useCallback(
     async (layerId: string, paramKey: string, track: AnimTrack<number>) => {
       try {
-        await updateLayerParamTrack(layerId, paramKey, track);
+        // Every timeline keyframe edit (value field, diamond drag, interp
+        // menu, curve editor, navigator) funnels through here. A scale write
+        // on a LINKED layer fans out to both axes in one batch — otherwise
+        // the result-based invariant would read the single-axis write as
+        // divergence and silently unlink the layer.
+        const layer = findPanelLayer(tracks, layerId);
+        const fanOut = scaleFanOutFor(paramKey, layer?.params ?? null);
+        if (fanOut) {
+          await updateLayerParamTracks(layerId, fanOutEntries(fanOut, track));
+        } else {
+          await updateLayerParamTrack(layerId, paramKey, track);
+        }
         await onMutated();
       } catch (e) {
         console.warn("commit param track failed:", e);
       }
     },
-    [onMutated],
+    [onMutated, tracks],
   );
 
   const onRename = useCallback((layerId: string) => {

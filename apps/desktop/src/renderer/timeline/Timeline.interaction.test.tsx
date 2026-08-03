@@ -118,6 +118,7 @@ const tinyVideoLayer: LayerSummary = {
     y: staticNum(0),
     scale_x: staticNum(1),
     scale_y: staticNum(1),
+    scale_linked: true,
     rotation_deg: staticNum(0),
     opacity: staticNum(1),
     speed: 1,
