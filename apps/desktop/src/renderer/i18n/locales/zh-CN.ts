@@ -149,16 +149,23 @@ const zhCN: Resources = {
     rename_workspace: "重命名工作区…",
     delete_workspace: "删除工作区",
   },
+  quick_actions: {
+    tools: "工具",
+    toggles: "开关",
+  },
   dock_workspace: {
     editing_label: "编辑工作区",
     empty_label: "空工作区",
     all_closed: "所有面板均已关闭。",
     open_panel: "打开面板",
     reset: "重置工作区",
+    close_panel: "关闭面板",
+    move_panel: "拖动以移动{{title}}",
     panels: {
       media: "素材库",
       preview: "预览",
       timeline: "时间线",
+      "quick-actions": "快捷操作",
       attribute: "属性",
       caption: "字幕",
       "role-mixer": "角色混音",
@@ -197,6 +204,7 @@ const zhCN: Resources = {
     add_track: "+ 轨道",
     add_color_layer: "颜色层",
     add_text_layer: "文本",
+    select_tool: "选择工具",
     toggle_blade_mode: "剪刀工具",
     import_media: "导入素材…",
     export: "导出…",
@@ -332,9 +340,7 @@ const zhCN: Resources = {
   timeline: {
     empty_placeholder: "时间线（导入片段或选择 Motif 开始）",
     empty_ab_mode:
-      "此处没有 A/B 内容。将片段拖到 A roll 或 B roll，或点击上方的 A/B 标签切换到全部显示。",
-    mode_ab: "A/B",
-    mode_all: "全部",
+      "此处没有 A/B 内容。将片段拖到 A roll 或 B roll，或按 {{key}} 显示全部轨道。",
     mode_ab_hint: "当前仅显示 A/B 轨。点击切换为显示全部。",
     mode_all_hint: "当前显示全部轨道。点击切换为仅显示 A/B 轨。",
     separate_audio: "将音频分离到新轨道",

@@ -68,6 +68,7 @@ import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
 import { toggleDisplayMode } from "./settings/appSettingsStore";
+import { setTool, useActiveTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import {
   DockWorkspace,
@@ -104,11 +105,12 @@ export function App({ onCloseProject }: AppProps) {
   // setError call sites), not rendered here, so we keep only the setter.
   const [, setError] = useState<string | null>(null);
   const primaryLayerId = usePrimaryLayerId();
-  // Blade-tool mode: pressing `C` toggles it; clicks on layers in the
-  // timeline split the layer at the click point instead of selecting it.
-  // Exits on a second `C` press or `Esc`. Living at App level so the
-  // shortcut handler and the Timeline both see the same flag.
-  const [bladeMode, setBladeMode] = useState<boolean>(false);
+  // Modal timeline tool. Lives in `toolStore` (not App state) so the Quick
+  // Actions Panel can read it without threading through
+  // `dockPanelContracts` — which would rebuild that memo, and re-render every
+  // open Panel, on each tool switch. Subscribed here only for the Edit menu's
+  // checkmark; the shortcut handlers write through `setTool` imperatively.
+  const activeTool = useActiveTool();
   // R.7 inline-reveal: track id the user surfaced from the right-panel peek
   // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
   // selecting a layer on a different track, or by clicking another peek
@@ -563,7 +565,10 @@ export function App({ onCloseProject }: AppProps) {
     pasteAtPlayhead,
     importMedia: importMediaFiles,
     export: () => setExportDialogOpen(true),
-    toggleBladeMode: () => setBladeMode((v) => !v),
+    // One key per tool, both idempotent (`toolStore.ts`). `Esc` → Selection
+    // is bound inside Timeline, where blade-mode's preview state lives.
+    selectTool: () => setTool("select"),
+    toggleBladeMode: () => setTool("blade"),
     toggleLog: toggleLogConsole,
     focusLogSearch,
     // R.8: T flips the AB / Show-All display_mode at the app level.
@@ -704,12 +709,10 @@ export function App({ onCloseProject }: AppProps) {
       previewDecodableOf,
       revealedTrackId,
       keybindings,
-      bladeMode,
       importingMediaIds,
       proxyState,
       previewDecodableMediaIds,
       optimizeById,
-      onExitBlade: () => setBladeMode(false),
       onMutated: refresh,
       onImportMedia: importMediaFiles,
       selectedLayerId: primaryLayerId,
@@ -724,7 +727,6 @@ export function App({ onCloseProject }: AppProps) {
       previewDecodableOf,
       revealedTrackId,
       keybindings,
-      bladeMode,
       importingMediaIds,
       proxyState,
       previewDecodableMediaIds,
@@ -780,7 +782,9 @@ export function App({ onCloseProject }: AppProps) {
           onSaveAndClose={saveAndClose}
           onUndo={() => run(projectUndo)}
           onRedo={() => run(projectRedo)}
-          onToggleBladeMode={() => setBladeMode((v) => !v)}
+          activeTool={activeTool}
+          onSelectTool={() => setTool("select")}
+          onToggleBladeMode={() => setTool("blade")}
           onAddColorLayer={handleAddColorLayer}
           onAddTextLayer={handleAddTextLayer}
           onOpenMotifPicker={() => setMotifPickerOpen(true)}

@@ -338,14 +338,15 @@ function fakeDockview(
 }
 
 describe("Dock Panel registry", () => {
-  it("registers exactly the eight semantic singleton kinds", () => {
-    expect(PANEL_KINDS).toHaveLength(8);
-    expect(new Set(PANEL_KINDS).size).toBe(8);
+  it("registers exactly the nine semantic singleton kinds", () => {
+    expect(PANEL_KINDS).toHaveLength(9);
+    expect(new Set(PANEL_KINDS).size).toBe(9);
     expect(Object.keys(PANEL_REGISTRY)).toEqual([...PANEL_KINDS]);
     expect(EDITING_OPEN_PANEL_KINDS).toEqual([
       "media",
       "preview",
       "timeline",
+      "quick-actions",
       "attribute",
       "effect",
       "nearby",
@@ -360,6 +361,8 @@ describe("DockWorkspaceAdapter", () => {
 
     expect(adapter.initializeEditingLayout()).toBe(true);
     expect(adapter.initializeEditingLayout()).toBe(false);
+    // Quick Actions is inserted LAST and root-relative, so its full-height
+    // edge strip ends up beside the editor row and the Timeline row both.
     expect(dock.added.map((panel) => panel.id)).toEqual([
       "media",
       "preview",
@@ -367,23 +370,31 @@ describe("DockWorkspaceAdapter", () => {
       "effect",
       "nearby",
       "timeline",
+      "quick-actions",
     ]);
 
+    // The three editor columns divide the 956px left after the 44px strip.
     const byId = new Map(dock.added.map((panel) => [panel.id, panel]));
     expect(byId.get("media")).toMatchObject({
-      initialWidth: 220,
+      initialWidth: 210,
       minimumWidth: 240,
       minimumHeight: 160,
     });
     expect(byId.get("preview")).toMatchObject({
-      initialWidth: 530,
+      initialWidth: 507,
       minimumWidth: 320,
       minimumHeight: 180,
       position: { referencePanel: "media", direction: "right" },
     });
     expect(byId.get("attribute")).toMatchObject({
-      initialWidth: 250,
+      initialWidth: 239,
       position: { referencePanel: "preview", direction: "right" },
+    });
+    expect(byId.get("quick-actions")).toMatchObject({
+      initialWidth: 44,
+      minimumWidth: 44,
+      minimumHeight: 44,
+      position: { direction: "left" },
     });
     expect(byId.get("effect")).toMatchObject({
       inactive: true,
@@ -399,11 +410,14 @@ describe("DockWorkspaceAdapter", () => {
       minimumHeight: 180,
       position: { direction: "below" },
     });
+    expect(dock.panels.get("quick-actions")?.api.setSize).toHaveBeenCalledWith({
+      width: 44,
+    });
     expect(dock.panels.get("media")?.api.setSize).toHaveBeenCalledWith({
-      width: 220,
+      width: 210,
     });
     expect(dock.panels.get("attribute")?.api.setSize).toHaveBeenCalledWith({
-      width: 250,
+      width: 239,
     });
     expect(dock.panels.get("timeline")?.api.setSize).toHaveBeenCalledWith({
       height: 224,

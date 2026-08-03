@@ -45,9 +45,22 @@ vi.mock("dockview-react", async () => {
             }>
           >
         | undefined;
-      const Tab = tabComponents?.["weftcut-tab"];
+      const Tab = tabComponents?.["weftcut-tab"] as
+        | ComponentType<{
+            api: unknown;
+            containerApi: unknown;
+            tabLocation: "header" | "headerOverflow";
+          }>
+        | undefined;
       const components = props.components as
-        | Record<string, ComponentType<{ api: unknown; params: { kind: string } }>>
+        | Record<
+            string,
+            ComponentType<{
+              api: unknown;
+              containerApi: unknown;
+              params: { kind: string };
+            }>
+          >
         | undefined;
       const Content = components?.["weftcut-panel"];
       return (
@@ -56,12 +69,14 @@ vi.mock("dockview-react", async () => {
           {dockHarness.headerApi && Tab ? (
             <Tab
               api={dockHarness.headerApi}
+              containerApi={dockHarness.api}
               tabLocation={dockHarness.headerTabLocation}
             />
           ) : null}
           {dockHarness.contentApi && dockHarness.contentKind && Content ? (
             <Content
               api={dockHarness.contentApi}
+              containerApi={dockHarness.api}
               params={{ kind: dockHarness.contentKind }}
             />
           ) : null}
@@ -301,12 +316,10 @@ const contracts: DockPanelContracts = {
   previewDecodableOf: () => false,
   revealedTrackId: null,
   keybindings: {},
-  bladeMode: false,
   importingMediaIds: new Set(),
   proxyState: new Map(),
   previewDecodableMediaIds: new Set(),
   optimizeById: new Map(),
-  onExitBlade: vi.fn(),
   onMutated: async () => {},
   onImportMedia: async () => {},
   selectedLayerId: null,
@@ -366,8 +379,8 @@ describe("DockWorkspace React integration", () => {
     // StrictMode intentionally repeats effect setup, while the WeftCut
     // adapter recognizes the same API and leaves registration idempotent.
     expect(dockHarness.readyCalls).toBe(2);
-    expect(dock.addPanel).toHaveBeenCalledTimes(6);
-    expect(dock.panels.size).toBe(6);
+    expect(dock.addPanel).toHaveBeenCalledTimes(7);
+    expect(dock.panels.size).toBe(7);
     // StrictMode tears the first ready effect down and recreates it. Each API
     // lifetime has exactly one subscription; the first is disposed before the
     // second becomes live.
@@ -508,6 +521,161 @@ describe("DockWorkspace React integration", () => {
     expect(effect?.api.maximize).toHaveBeenCalledOnce();
   });
 
+  // The strip's grip IS this tab, repositioned by CSS onto the button row. The
+  // `--grip` class is what `workspace.css` keys its `:has()` scope off, so its
+  // presence/absence is the whole contract between renderer and stylesheet.
+  it("renders Quick Actions as a drag grip while it is alone in its group", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "quick-actions",
+      title: "Quick Actions",
+      group: { panels: [{ id: "quick-actions" }] },
+      width: 44,
+      height: 400,
+      onDidDimensionsChange: () => ({ dispose: () => {} }),
+    };
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    const grip = document.querySelector<HTMLElement>(".weft-dock-tab--grip");
+    expect(grip).toBeTruthy();
+    expect(grip?.dataset.panelKind).toBe("quick-actions");
+    // A full-height column puts the grip on top, so the glyph lies flat.
+    expect(grip?.dataset.orientation).toBe("vertical");
+    expect(document.querySelector(".weft-dock-tab-label")).toBeNull();
+  });
+
+  // Tabbed in with other Panels there must be a real tab — otherwise there is
+  // no way to switch to the strip at all.
+  it("falls back to a normal tab once Quick Actions shares a group", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "quick-actions",
+      title: "Quick Actions",
+      group: { panels: [{ id: "attribute" }, { id: "quick-actions" }] },
+      width: 240,
+      height: 400,
+      onDidDimensionsChange: () => ({ dispose: () => {} }),
+    };
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    expect(document.querySelector(".weft-dock-tab--grip")).toBeNull();
+    expect(
+      document.querySelector('.weft-dock-tab[data-panel-kind="quick-actions"]'),
+    ).toBeTruthy();
+  });
+
+  // A 44px strip blown up to the whole window is never what the user meant.
+  it("does not maximize the strip on a double-clicked grip", () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "quick-actions",
+      title: "Quick Actions",
+      group: { panels: [{ id: "quick-actions" }] },
+      width: 44,
+      height: 400,
+      onDidDimensionsChange: () => ({ dispose: () => {} }),
+    };
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    fireEvent.doubleClick(document.querySelector(".weft-dock-tab--grip")!);
+    expect(dock.panels.get("quick-actions")?.api.maximize).not.toHaveBeenCalled();
+  });
+
+  it("closes the strip from the grip's context menu", async () => {
+    const dock = strictModeApi();
+    dockHarness.api = dock.api;
+    dockHarness.headerApi = {
+      id: "quick-actions",
+      title: "Quick Actions",
+      group: { panels: [{ id: "quick-actions" }] },
+      width: 44,
+      height: 400,
+      onDidDimensionsChange: () => ({ dispose: () => {} }),
+    };
+
+    render(<DockWorkspace contracts={contracts} />);
+
+    // Captured up front: closing removes the panel from the harness's map.
+    const strip = dock.panels.get("quick-actions");
+    fireEvent.contextMenu(document.querySelector(".weft-dock-tab--grip")!);
+    fireEvent.click(await screen.findByText("Close Panel"));
+    expect(strip?.api.close).toHaveBeenCalledOnce();
+  });
+
+  // The grip sits inline with the buttons because the whole group header moves
+  // to the strip's leading edge. It must move back for any other arrangement,
+  // or a group the strip was dragged into would have ITS tabs tipped sideways.
+  describe("Quick Actions header position", () => {
+    function renderStrip(options: {
+      width: number;
+      height: number;
+      groupPanels: { id: string }[];
+    }) {
+      const dock = strictModeApi();
+      dockHarness.api = dock.api;
+      const group = {
+        panels: options.groupPanels,
+        model: { header: { hidden: false }, headerPosition: "top" },
+      };
+      dockHarness.contentApi = {
+        id: "quick-actions",
+        width: options.width,
+        height: options.height,
+        group,
+        isVisible: true,
+        onDidVisibilityChange: () => ({ dispose: () => {} }),
+        onDidDimensionsChange: () => ({ dispose: () => {} }),
+      };
+      dockHarness.contentKind = "quick-actions";
+      render(<DockWorkspace contracts={contracts} />);
+      return group;
+    }
+
+    it("moves the header beside a row of buttons", () => {
+      const group = renderStrip({
+        width: 400,
+        height: 44,
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(group.model.headerPosition).toBe("left");
+    });
+
+    it("keeps the header above a column of buttons", () => {
+      const group = renderStrip({
+        width: 44,
+        height: 400,
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(group.model.headerPosition).toBe("top");
+    });
+
+    it("leaves a shared group's header alone", () => {
+      const group = renderStrip({
+        width: 400,
+        height: 44,
+        groupPanels: [{ id: "attribute" }, { id: "quick-actions" }],
+      });
+      expect(group.model.headerPosition).toBe("top");
+    });
+
+    it("restores the header when the strip unmounts", () => {
+      const group = renderStrip({
+        width: 400,
+        height: 44,
+        groupPanels: [{ id: "quick-actions" }],
+      });
+      expect(group.model.headerPosition).toBe("left");
+      cleanup();
+      expect(group.model.headerPosition).toBe("top");
+    });
+  });
+
   it("passes no tab context menu to Dockview", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;
@@ -561,7 +729,7 @@ describe("DockWorkspace React integration", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reset Workspace" }));
     expect(dock.fromJSON).toHaveBeenCalledOnce();
-    expect(dock.panels.size).toBe(6);
+    expect(dock.panels.size).toBe(7);
     expect(dock.panels.has("role-mixer")).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type ReactElement,
   type RefObject,
@@ -20,7 +21,12 @@ import {
   type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
 } from "dockview-react";
-import { TextAlignStartIcon } from "lucide-react";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+import {
+  GripHorizontalIcon,
+  GripVerticalIcon,
+  TextAlignStartIcon,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "dockview-react/dist/styles/dockview.css";
 
@@ -31,6 +37,10 @@ import { AttributePanel } from "../panels/AttributePanel";
 import { CaptionPanel } from "../panels/CaptionPanel";
 import { EffectPanel } from "../panels/EffectPanel";
 import { NearbyPanel } from "../panels/NearbyPanel";
+import {
+  QuickActionsPanel,
+  useStripOrientation,
+} from "../panels/QuickActionsPanel";
 import { RoleMixerPanel } from "../panels/RoleMixerPanel";
 import {
   importCancel,
@@ -43,6 +53,7 @@ import { type OptimizeInfo } from "../panels/importOptimize";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { jumpToTimeUs } from "../state/navigation";
+import { setTool, useActiveTool } from "../state/toolStore";
 import { Menu, MenuItem } from "../menu/Menu";
 import {
   DockWorkspaceAdapter,
@@ -67,12 +78,10 @@ export interface DockPanelContracts {
   previewDecodableOf: (mediaId: string) => boolean;
   revealedTrackId: string | null;
   keybindings: KeybindingsMap;
-  bladeMode: boolean;
   importingMediaIds: ReadonlySet<string>;
   proxyState: ReadonlyMap<string, ProxyState>;
   previewDecodableMediaIds: ReadonlySet<string>;
   optimizeById: ReadonlyMap<string, OptimizeInfo>;
-  onExitBlade: () => void;
   onMutated: () => Promise<void>;
   onImportMedia: () => Promise<void>;
   selectedLayerId: string | null;
@@ -89,6 +98,16 @@ const ContractsContext = createContext<DockPanelContracts | null>(null);
 export interface DockPanelRuntimeContract {
   kind: PanelKind;
   isVisible: boolean;
+  /** This Panel's own Dockview api. Exposed so a Panel that must react to its
+   *  OWN geometry (the Quick Actions strip flipping axis) can subscribe for
+   *  itself. Live dimensions must never be hoisted into this contract: it is
+   *  shared by every Panel, so that would re-render all of them on every
+   *  splitter drag. */
+  api: IDockviewPanelProps<DockPanelParams>["api"];
+  /** The workspace-wide api, for Panels that must react to layout changes
+   *  (whether they still sit alone in their Group). Stable for the Dock's
+   *  lifetime. */
+  containerApi: IDockviewPanelProps<DockPanelParams>["containerApi"];
 }
 
 const DockPanelRuntimeContext = createContext<DockPanelRuntimeContract | null>(
@@ -187,6 +206,12 @@ function TimelineDockPanel() {
   const contracts = useContracts();
   const runtime = useDockPanelRuntime();
   const summary = contracts.summary;
+  // The armed tool is read here, not threaded through `contracts`: keeping it
+  // out of that memo means switching tools no longer rebuilds the contracts
+  // object and re-renders every other Panel. Timeline itself keeps its
+  // `bladeMode` boolean prop — it fans out to a dozen call sites in
+  // LayerBlock/TrackLane and none of them need to know about tools.
+  const bladeMode = useActiveTool() === "blade";
   return (
     <section className="timeline">
       <Timeline
@@ -198,18 +223,50 @@ function TimelineDockPanel() {
         keybindings={contracts.keybindings}
         fpsNum={summary?.composition.fps_num ?? 30}
         fpsDen={summary?.composition.fps_den ?? 1}
-        bladeMode={contracts.bladeMode}
+        bladeMode={bladeMode}
         media={summary?.media ?? []}
         importing={contracts.importingMediaIds}
         proxyState={contracts.proxyState}
         previewDecodable={contracts.previewDecodableMediaIds}
         visible={runtime.isVisible}
-        onExitBlade={contracts.onExitBlade}
+        onExitBlade={() => setTool("select")}
         onSeek={contracts.onSeek}
         onMutated={contracts.onMutated}
       />
     </section>
   );
+}
+
+function QuickActionsDockPanel() {
+  const runtime = useDockPanelRuntime();
+  const orientation = useStripOrientation(runtime.api);
+  const sole = useIsSoleGroupPanel(runtime.api, runtime.containerApi);
+
+  /* Put the drag grip inline with the buttons by moving the whole group header
+   * to the strip's leading edge: a row of buttons wants the grip beside it
+   * (`left`), a column wants it above (`top`, Dockview's default).
+   *
+   * This is why the grip is in normal flow rather than overlaid on the content:
+   * `renderer: "always"` paints Panel content into `.dv-overlay-render-container`,
+   * a layer above the entire grid, so an overlaid header would be buried by its
+   * own Panel and the grip would silently stop dragging.
+   *
+   * Only while the strip is ALONE in its Group. Tabbed in with other Panels it
+   * shows a normal tab, and a sideways header would tip their tabs over too —
+   * hence the restore in the cleanup as well as the `sole` guard. */
+  useEffect(() => {
+    const group = runtime.api.group;
+    group.model.headerPosition =
+      sole && orientation === "horizontal" ? "left" : "top";
+    return () => {
+      group.model.headerPosition = "top";
+    };
+  }, [orientation, runtime.api, sole]);
+
+  // No `weft-dock-panel-scroll` wrapper: the strip owns its own single-axis
+  // scroller (with end fades and wheel forwarding), which a generic
+  // both-axes scroll container would fight.
+  return <QuickActionsPanel geometry={runtime.api} />;
 }
 
 function AttributeDockPanel() {
@@ -313,6 +370,7 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   media: MediaDockPanel,
   preview: PreviewDockPanel,
   timeline: TimelineDockPanel,
+  "quick-actions": QuickActionsDockPanel,
   attribute: AttributeDockPanel,
   caption: CaptionDockPanel,
   "role-mixer": RoleMixerDockPanel,
@@ -322,6 +380,7 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
 
 export function WeftCutPanelRenderer({
   api,
+  containerApi,
   params,
 }: IDockviewPanelProps<DockPanelParams>) {
   if (!isPanelKind(params.kind)) return null;
@@ -329,8 +388,8 @@ export function WeftCutPanelRenderer({
   const chrome = useWorkspaceChrome();
   const isVisible = useDockviewPanelVisibility(api);
   const runtime = useMemo<DockPanelRuntimeContract>(
-    () => ({ kind: params.kind, isVisible }),
-    [isVisible, params.kind],
+    () => ({ kind: params.kind, isVisible, api, containerApi }),
+    [api, containerApi, isVisible, params.kind],
   );
   return (
     <DockPanelRuntimeContext.Provider value={runtime}>
@@ -490,14 +549,232 @@ function useTabsOverflowA11y(
   }, [containerRef]);
 }
 
+/** True while this Panel is the only one in its Dock Group. Recomputed on any
+ *  layout change — the same coarse signal the adapter listens to, since tab
+ *  renderers are not re-run for group membership changes on their own. */
+function useIsSoleGroupPanel(
+  api: IDockviewPanelHeaderProps<DockPanelParams>["api"],
+  containerApi: IDockviewPanelHeaderProps<DockPanelParams>["containerApi"],
+): boolean {
+  return useSyncExternalStore(
+    useCallback(
+      (onStoreChange) => {
+        const disposable = containerApi.onDidLayoutChange(onStoreChange);
+        return () => disposable.dispose();
+      },
+      [containerApi],
+    ),
+    () => api.group.panels.length === 1,
+    () => true,
+  );
+}
+
+/**
+ * The Quick Actions strip's tab, rendered as the in-row six-dot drag grip.
+ *
+ * This IS Dockview's native drag source — `workspace.css` collapses the group
+ * header out of flow and repositions this tab onto the grip slot the strip's
+ * content reserves, so the handle the user sees is the handle Dockview already
+ * knows how to drag. The alternative (hiding the header and starting the drag
+ * ourselves) needs dockview-core's unexported `LocalSelectionTransfer`
+ * singleton — the drop side reads that in-memory instance, not the
+ * `dataTransfer` payload, so a hand-rolled drag fails silently on upgrade.
+ *
+ * Deliberately NOT inheriting the normal tab's double-click-to-maximize: a
+ * 44px strip blown up to the whole window is never what the user meant.
+ */
+function DockGripTab({
+  kind,
+  api,
+}: {
+  kind: PanelKind;
+  api: IDockviewPanelHeaderProps<DockPanelParams>["api"];
+}) {
+  const { t } = useTranslation();
+  const chrome = useWorkspaceChrome();
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  // Same `api` the strip body reads, so grip and body observe one event stream
+  // and can never disagree about the axis.
+  const orientation = useStripOrientation(api);
+  const label = t("dock_workspace.move_panel", {
+    title: t(PANEL_REGISTRY[kind].titleKey),
+  });
+  // A horizontal strip puts the grip on its left edge (a tall, narrow slot);
+  // a vertical strip puts it on top (short and wide). The glyph follows.
+  const Grip = orientation === "vertical" ? GripHorizontalIcon : GripVerticalIcon;
+  return (
+    <>
+      {/* No role/aria-label of its own: Dockview's `.dv-tab` wrapper around
+          this node is the focusable, labelled element ("Move <Panel>"), and
+          an aria-label on a presentational node would just be ignored. */}
+      <div
+        className="weft-dock-tab weft-dock-tab--grip"
+        data-panel-kind={kind}
+        data-orientation={orientation}
+        title={label}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          // Dockview's own tab `contextmenu` listener is a no-op here — the
+          // workspace deliberately passes no `getTabContextMenuItems` — so
+          // there is nothing to collide with.
+          setMenuAt({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        <Grip size={12} aria-hidden="true" />
+      </div>
+      {menuAt ? (
+        <GripContextMenu
+          x={menuAt.x}
+          y={menuAt.y}
+          onClose={() => setMenuAt(null)}
+          onClosePanel={() => {
+            setMenuAt(null);
+            chrome.closePanel(kind);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** The grip's right-click menu. Same virtual-anchor Base UI menu as the media
+ *  pool's, so outside-click / Escape / arrow navigation come for free. Without
+ *  a tab there is no other in-place way to dismiss the strip. */
+function GripContextMenu({
+  x,
+  y,
+  onClose,
+  onClosePanel,
+}: {
+  x: number;
+  y: number;
+  onClose: () => void;
+  onClosePanel: () => void;
+}) {
+  const { t } = useTranslation();
+  const anchor = useMemo(
+    () => ({
+      getBoundingClientRect: () => ({
+        x,
+        y,
+        top: y,
+        left: x,
+        right: x,
+        bottom: y,
+        width: 0,
+        height: 0,
+      }),
+    }),
+    [x, y],
+  );
+  return (
+    <MenuPrimitive.Root
+      open
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner
+          anchor={anchor}
+          side="bottom"
+          align="start"
+          sideOffset={0}
+          className="app-popup-positioner"
+        >
+          <MenuPrimitive.Popup className="app-menu-list">
+            <MenuPrimitive.Item
+              className="app-menu-item"
+              onClick={onClosePanel}
+            >
+              <span className="app-menu-item-check" aria-hidden="true" />
+              <span className="app-menu-item-label">
+                {t("dock_workspace.close_panel")}
+              </span>
+            </MenuPrimitive.Item>
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
+  );
+}
+
+/** The standard Panel tab: label, selection marker, hover tracking, and
+ *  double-click-to-maximize. */
+function DockPanelTab({ kind, title }: { kind: PanelKind | null; title: string }) {
+  const chrome = useWorkspaceChrome();
+  return (
+    <div
+      className="weft-dock-tab"
+      data-panel-kind={kind ?? undefined}
+      onPointerEnter={() => chrome.setHoveredPanel(kind)}
+      onPointerLeave={() => chrome.setHoveredPanel(null)}
+      onDoubleClick={(event) => {
+        if (!kind) return;
+        event.preventDefault();
+        event.stopPropagation();
+        chrome.toggleMaximize(kind);
+      }}
+    >
+      {/* Selection marker: CSS shows it (and the bottom accent) only on
+          `.dv-active-tab` — this renderer isn't re-run on activation
+          changes, so the marker lives in the DOM of every tab. */}
+      <span className="weft-dock-tab-label">{title}</span>
+      <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
+ * Quick Actions' header tab, which has two forms.
+ *
+ * Alone in its Group it is the six-dot drag grip and nothing else. Tabbed in
+ * with other Panels it falls back to a standard tab — without one there would
+ * be no way to switch to it.
+ *
+ * Split into its own component so the sole-panel subscription is paid for by
+ * this one tab instead of by every tab in the workspace.
+ */
+function QuickActionsDockTab({
+  kind,
+  title,
+  api,
+  containerApi,
+}: {
+  kind: PanelKind;
+  title: string;
+  api: IDockviewPanelHeaderProps<DockPanelParams>["api"];
+  containerApi: IDockviewPanelHeaderProps<DockPanelParams>["containerApi"];
+}) {
+  const sole = useIsSoleGroupPanel(api, containerApi);
+  return sole ? (
+    <DockGripTab kind={kind} api={api} />
+  ) : (
+    <DockPanelTab kind={kind} title={title} />
+  );
+}
+
 export function WeftCutDockTab({
   api,
+  containerApi,
   tabLocation,
 }: IDockviewPanelHeaderProps<DockPanelParams>) {
   const { t } = useTranslation();
   const kind = isPanelKind(api.id) ? api.id : null;
   const title = kind ? t(PANEL_REGISTRY[kind].titleKey) : (api.title ?? api.id);
   const chrome = useWorkspaceChrome();
+
+  if (kind === "quick-actions" && tabLocation === "header") {
+    return (
+      <QuickActionsDockTab
+        kind={kind}
+        title={title}
+        api={api}
+        containerApi={containerApi}
+      />
+    );
+  }
 
   /* Overflow-dropdown rows are menu items, not drag sources: no grab cursor,
    * no maximize-on-double-click. Click activation stays with Dockview's row
@@ -521,26 +798,7 @@ export function WeftCutDockTab({
     );
   }
 
-  return (
-    <div
-      className="weft-dock-tab"
-      data-panel-kind={kind ?? undefined}
-      onPointerEnter={() => chrome.setHoveredPanel(kind)}
-      onPointerLeave={() => chrome.setHoveredPanel(null)}
-      onDoubleClick={(event) => {
-        if (!kind) return;
-        event.preventDefault();
-        event.stopPropagation();
-        chrome.toggleMaximize(kind);
-      }}
-    >
-      {/* Selection marker: CSS shows it (and the bottom accent) only on
-          `.dv-active-tab` — this renderer isn't re-run on activation
-          changes, so the marker lives in the DOM of every tab. */}
-      <span className="weft-dock-tab-label">{title}</span>
-      <TextAlignStartIcon size={12} className="weft-dock-tab-active-icon" aria-hidden="true" />
-    </div>
-  );
+  return <DockPanelTab kind={kind} title={title} />;
 }
 
 export function EmptyWorkspaceRecovery() {

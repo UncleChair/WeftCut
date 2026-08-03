@@ -33,7 +33,6 @@ import {
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
 import { formatTimecode, snapFrameRound } from "../frames";
 import {
-  toggleDisplayMode,
   useDisplayMode,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
@@ -83,7 +82,8 @@ import {
   useSelectedLayerIds,
   useSelectedTransitionId,
 } from "../state/selectionStore";
-import { isEditableTarget } from "../shortcuts/match";
+import { isEditableTarget, resolveAccelerator } from "../shortcuts/match";
+import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import {
   CUT_CLICK_TOLERANCE_PX,
   defaultTransitionDurationUs,
@@ -910,9 +910,6 @@ export function Timeline({
 
   return (
     <>
-    <div className="flex flex-none items-center gap-2 border-b border-border-soft bg-black/20 px-2 py-1 text-[11px]">
-      <DisplayModePill mode={displayMode} />
-    </div>
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-card ${
@@ -1166,50 +1163,24 @@ function BladeCutPreview({
   );
 }
 
-/// `docs/data-model.md`. The pill IS the setting: a click
-/// flips the app-level `display_mode` (`appSettingsSet` round-trips
-/// through Rust which emits `app_settings:changed` so every
-/// subscriber syncs). Same surface the View menu and `T` shortcut
-/// drive.
-function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
-  const { t } = useTranslation();
-  const label = mode === "AbRoll" ? "A/B" : t("timeline.mode_all", { defaultValue: "All" });
-  const ariaLabel =
-    mode === "AbRoll"
-      ? t("timeline.mode_ab_hint", { defaultValue: "Showing A/B-roll tracks only. Click to show all." })
-      : t("timeline.mode_all_hint", { defaultValue: "Showing all tracks. Click to filter to A/B-roll only." });
-  return (
-    <button
-      type="button"
-      className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-[3px] text-[11px] font-semibold tracking-wide transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
-        mode === "AbRoll"
-          ? "border-blue-400/50 bg-blue-950 text-blue-100"
-          : "border-border bg-secondary text-foreground hover:bg-accent"
-      }`}
-      onClick={() => {
-        void toggleDisplayMode();
-      }}
-      title={ariaLabel}
-      aria-label={ariaLabel}
-      aria-pressed={mode === "AbRoll"}
-    >
-      {mode === "AbRoll"
-        ? t("timeline.mode_ab", { defaultValue: "A/B" })
-        : label}
-    </button>
-  );
-}
 
 
 function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
   const { t } = useTranslation();
   // Rendered when the user is in AB mode but no track carries a role
-  // stamp; the user toggles to Show-All manually.
+  // stamp; the user switches to Show-All manually.
+  //
+  // The hint names the KEY, not the Quick Actions button: the strip is a Panel
+  // the user can close or drag away, whereas the binding is always live. Read
+  // through the bindings context so a remap can't make this text lie.
+  const binding = useEffectiveBindings("toggleDisplayMode");
+  const accelerator = binding ? resolveAccelerator(binding) : "";
   const message =
     mode === "AbRoll"
       ? t("timeline.empty_ab_mode", {
+          key: accelerator,
           defaultValue:
-            "No A/B-roll content here. Drop a clip on Video A or Video B, or click the A/B pill above to switch to Show All.",
+            "No A/B-roll content here. Drop a clip on Video A or Video B, or press {{key}} to show all tracks.",
         })
       : t("timeline.empty_placeholder");
   return <div className="p-6 text-center text-xs text-muted-foreground">{message}</div>;

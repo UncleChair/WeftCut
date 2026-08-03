@@ -175,17 +175,22 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
 
     const width = positiveSize(viewport?.width ?? this.api.width, 1_000);
     const height = positiveSize(viewport?.height ?? this.api.height, 720);
+    // The Quick Actions strip claims a fixed slice of width; everything else
+    // divides the remainder. Mirrors `createEditingLayout`'s `bodyWidth`, so
+    // the imperative first-boot tree and the declarative reset baseline agree.
+    const stripWidth = PANEL_REGISTRY["quick-actions"].minimumWidth;
+    const bodyWidth = Math.max(1, width - stripWidth);
 
     const media = this.addPanel("media", {
-      initialWidth: Math.round(width * 0.22),
+      initialWidth: Math.round(bodyWidth * 0.22),
     });
     this.addPanel("preview", {
       position: { referencePanel: "media", direction: "right" },
-      initialWidth: Math.round(width * 0.53),
+      initialWidth: Math.round(bodyWidth * 0.53),
     });
     const attribute = this.addPanel("attribute", {
       position: { referencePanel: "preview", direction: "right" },
-      initialWidth: Math.round(width * 0.25),
+      initialWidth: Math.round(bodyWidth * 0.25),
     });
     this.addPanel("effect", {
       position: { referencePanel: "attribute", direction: "within" },
@@ -199,12 +204,21 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       position: { direction: "below" },
       initialHeight: Math.round(height * 0.28),
     });
+    // Inserted LAST and root-relative so it ends up beside the whole grid —
+    // the editor row and the Timeline row both — giving one full-height edge
+    // bar. Inserting it first instead would leave the root-relative Timeline
+    // spanning underneath it.
+    const strip = this.addPanel("quick-actions", {
+      position: { direction: "left" },
+      initialWidth: stripWidth,
+    });
 
     // `initialWidth` sizes the newly inserted split, so later insertions can
-    // redistribute an earlier sibling. Clamp the two anchored columns after
-    // the complete tree exists; Preview naturally receives the 53% remainder.
-    media?.api.setSize({ width: Math.round(width * 0.22) });
-    attribute?.api.setSize({ width: Math.round(width * 0.25) });
+    // redistribute an earlier sibling. Clamp the anchored columns after the
+    // complete tree exists; Preview naturally receives the 53% remainder.
+    strip?.api.setSize({ width: stripWidth });
+    media?.api.setSize({ width: Math.round(bodyWidth * 0.22) });
+    attribute?.api.setSize({ width: Math.round(bodyWidth * 0.25) });
     timeline?.api.setSize({ height: Math.round(height * 0.28) });
     this.captureOpenPlacements();
     this.emitChange();
@@ -573,6 +587,23 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
         : {});
       return;
     }
+    if (kind === "quick-actions") {
+      // The tool strip is an edge bar, never a tabbed tool Panel — it must
+      // NOT reach the contextual-group fallback below, which would merge it
+      // into Attribute/Effect/Nearby as a 240-wide tab. `left` of the
+      // leftmost open Panel reproduces its baseline slot; the narrow
+      // initialWidth keeps a fresh split from claiming half the editor.
+      const reference = firstOpen(
+        "media", "preview", "timeline", "attribute", "effect", "nearby", "caption", "role-mixer",
+      );
+      this.addPanel(kind, reference
+        ? {
+            position: { referencePanel: reference, direction: "left" },
+            initialWidth: PANEL_REGISTRY[kind].minimumWidth,
+          }
+        : {});
+      return;
+    }
 
     const contextual = firstOpen(
       "attribute", "effect", "nearby", "caption", "role-mixer",
@@ -593,7 +624,10 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
     kind: PanelKind,
     placement: {
       position?:
-        | { direction: "below" }
+        // Root-relative: splits the whole grid rather than one Panel's cell.
+        // `below` gives the full-width Timeline row; `left` gives the
+        // full-height Quick Actions edge strip.
+        | { direction: "below" | "left" }
         | {
             referencePanel: string;
             direction: "left" | "right" | "above" | "below" | "within";

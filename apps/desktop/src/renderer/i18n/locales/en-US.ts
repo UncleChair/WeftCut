@@ -146,16 +146,23 @@ const enUS = {
     rename_workspace: "Rename Workspace…",
     delete_workspace: "Delete Workspace",
   },
+  quick_actions: {
+    tools: "Tools",
+    toggles: "Toggles",
+  },
   dock_workspace: {
     editing_label: "Editing workspace",
     empty_label: "Empty workspace",
     all_closed: "All panels are closed.",
     open_panel: "Open Panel",
     reset: "Reset Workspace",
+    close_panel: "Close Panel",
+    move_panel: "Drag to move {{title}}",
     panels: {
       media: "Media Pool",
       preview: "Preview",
       timeline: "Timeline",
+      "quick-actions": "Quick Actions",
       attribute: "Attribute",
       caption: "Caption",
       "role-mixer": "Role Mixer",
@@ -195,6 +202,7 @@ const enUS = {
     add_track: "+ Track",
     add_color_layer: "Color layer",
     add_text_layer: "Text",
+    select_tool: "Selection tool",
     toggle_blade_mode: "Blade tool",
     import_media: "Import media…",
     export: "Export…",
@@ -338,7 +346,7 @@ const enUS = {
   timeline: {
     empty_placeholder: "timeline (import a clip or pick a motif to populate)",
     empty_ab_mode:
-      "No A/B-roll content here. Drop a clip on A roll or B roll, or click the A/B pill above to switch to Show All.",
+      "No A/B-roll content here. Drop a clip on A roll or B roll, or press {{key}} to show all tracks.",
     track_label: "track {{n}}",
     resize_track_hint: "Drag to resize this track",
     track_eye_hint: "Hide this track's output (affects export)",
@@ -348,8 +356,6 @@ const enUS = {
     drop_collision: "Overlaps existing media",
     drop_locked: "Track is locked",
     toggle_keyframe_lanes: "Expand keyframe lanes",
-    mode_ab: "A/B",
-    mode_all: "All",
     mode_ab_hint: "Showing A/B-roll tracks only. Click to show all.",
     mode_all_hint: "Showing all tracks. Click to filter to A/B-roll only.",
     // V.7 context-menu entries for the right-click menu on layers.

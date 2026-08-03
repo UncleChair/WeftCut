@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  dragDockTab,
   invokeCmd,
   launchApp,
   newProject,
@@ -35,19 +36,28 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
       name: "dock-workspace",
       canvas: CANVAS,
     });
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
+    // `.weft-dock-panel` prefix required throughout: `[data-panel-kind]` alone
+    // also matches each Panel's tab, so a bare selector double-counts.
+    await expect(page.locator(".weft-dock-panel[data-panel-kind]")).toHaveCount(7);
     for (const kind of [
       "media",
       "preview",
       "timeline",
+      "quick-actions",
       "attribute",
       "effect",
       "nearby",
     ]) {
-      await expect(page.locator(`[data-panel-kind="${kind}"]`)).toHaveCount(1);
+      await expect(
+        page.locator(`.weft-dock-panel[data-panel-kind="${kind}"]`),
+      ).toHaveCount(1);
     }
-    await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(0);
-    await expect(page.locator('[data-panel-kind="role-mixer"]')).toHaveCount(0);
+    await expect(
+      page.locator('.weft-dock-panel[data-panel-kind="caption"]'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.weft-dock-panel[data-panel-kind="role-mixer"]'),
+    ).toHaveCount(0);
 
     const geometryOf = () =>
       page.evaluate(() => {
@@ -59,10 +69,14 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
         };
         return {
           workspace: rect(".dock-workspace"),
-          media: rect('[data-panel-kind="media"]'),
-          preview: rect('[data-panel-kind="preview"]'),
-          attribute: rect('[data-panel-kind="attribute"]'),
-          timeline: rect('[data-panel-kind="timeline"]'),
+          // `.weft-dock-panel` prefix required: a bare `[data-panel-kind]`
+          // matches the Panel's TAB first in document order, so these ratios
+          // would silently measure tab strips instead of Panels.
+          strip: rect('.weft-dock-panel[data-panel-kind="quick-actions"]'),
+          media: rect('.weft-dock-panel[data-panel-kind="media"]'),
+          preview: rect('.weft-dock-panel[data-panel-kind="preview"]'),
+          attribute: rect('.weft-dock-panel[data-panel-kind="attribute"]'),
+          timeline: rect('.weft-dock-panel[data-panel-kind="timeline"]'),
         };
       });
 
@@ -84,10 +98,20 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
     expect(ratio(geometry.media.width, geometry.workspace.width)).toBeCloseTo(0.22, 1);
     expect(ratio(geometry.preview.width, geometry.workspace.width)).toBeCloseTo(0.53, 1);
     expect(ratio(geometry.attribute.width, geometry.workspace.width)).toBeCloseTo(0.25, 1);
+    // The Quick Actions strip is a fixed-width full-height edge bar: it sits
+    // beside the body branch, so it spans the Timeline row as well as the
+    // editor row.
+    expect(geometry.strip.width).toBeLessThan(80);
+    expect(ratio(geometry.strip.height, geometry.workspace.height)).toBeCloseTo(1, 1);
+    expect(geometry.strip.x).toBeLessThan(geometry.media.x);
 
-    // Every group keeps its 28px tab strip with a visible title — except a
-    // solo Preview, whose strip (and drag handle) is hidden until another
-    // Panel joins its group.
+    // Every group keeps its 28px tab strip with a visible title — except a solo
+    // Preview, whose strip (and drag handle) is hidden until another Panel joins
+    // its group, and the Quick Actions strip, whose tab is the grip instead.
+    await expect(page.locator(".weft-dock-tab--grip")).toBeVisible();
+    await expect(
+      page.locator('.weft-dock-tab-label:text-is("Quick Actions")'),
+    ).toHaveCount(0);
     for (const label of [
       "Media Pool",
       "Timeline",
@@ -107,6 +131,78 @@ test("built-in Editing workspace docks every default Panel at NLE proportions", 
       BrowserWindow.getAllWindows()[0]?.getMinimumSize(),
     );
     expect(minimumSize).toEqual([960, 640]);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * The Quick Actions strip has no tab: its single tab renders as the six-dot
+ * grip, shrunk to grip size and left in normal flow, with the whole group header
+ * moved to the strip's leading edge (`headerPosition`) so the grip sits inline
+ * with the buttons. The grip the user sees therefore IS Dockview's own drag
+ * source.
+ *
+ * This is the ONE part of the strip that unit tests cannot reach — jsdom has no
+ * layout and no real drag — and it is also the part that fails SILENTLY when the
+ * arrangement drifts: the grip still paints, it just stops being draggable
+ * (exactly what happened when the header was overlaid on the Panel content,
+ * which `renderer: "always"` paints in a layer above the entire grid). Hence a
+ * real pointer gesture here.
+ */
+test("the Quick Actions grip drags the strip, which flips axis to match its new shape", async () => {
+  const { app, page } = await launchApp();
+  try {
+    const parent = tmpDir("weftcut-quick-actions-");
+    await newProject(page, {
+      parentFolder: parent,
+      name: "quick-actions-drag",
+      canvas: CANVAS,
+    });
+    // REQUIRED before any pointer gesture: the splash overlay outlives the
+    // first dock render, so the grip is already visible while the splash is
+    // still swallowing mousedown — the drag would simply never start.
+    await expect(page.locator(".splash-screen")).toHaveCount(0, { timeout: 15_000 });
+
+    const grip = page.locator(".weft-dock-tab--grip");
+    // The drag must be started from the grip's `.dv-tab` box — that is the
+    // element Dockview marks `draggable`, and Playwright's synthetic pointer
+    // sequence does not reliably promote a mousedown on a descendant into a
+    // native HTML5 drag. The two boxes are identical on screen: the tab is the
+    // grip slot.
+    const gripTab = page.locator(".dv-tab").filter({ has: grip });
+    const strip = page.locator('.weft-dock-panel[data-panel-kind="quick-actions"]');
+    // Scoped by class, not by role: the preview transport is a toolbar too.
+    const toolbar = page.locator(".weft-quick-actions");
+
+    // Baseline: a full-height left edge bar, so the strip runs as a column.
+    await expect(grip).toBeVisible();
+    await expect(toolbar).toHaveAttribute("aria-orientation", "vertical");
+    const before = await strip.boundingBox();
+    if (!before) throw new Error("strip has no layout box");
+    expect(before.height).toBeGreaterThan(before.width);
+
+    // Drop below the Timeline: the strip becomes a wide, short row.
+    // `.weft-dock-panel` prefix required: `[data-panel-kind]` alone also
+    // matches the Panel's tab.
+    await dragDockTab(
+      page,
+      gripTab,
+      page.locator('.weft-dock-panel[data-panel-kind="timeline"]'),
+      "bottom",
+    );
+
+    await expect
+      .poll(async () => {
+        const box = await strip.boundingBox();
+        return box ? box.width > box.height : false;
+      })
+      .toBe(true);
+    // Axis follows shape with no user input — and the grip survives the move,
+    // which is what proves the repositioned tab really was the drag source.
+    await expect(toolbar).toHaveAttribute("aria-orientation", "horizontal");
+    await expect(grip).toBeVisible();
+    await expect(grip).toHaveAttribute("data-orientation", "horizontal");
   } finally {
     await app.close();
   }
@@ -134,7 +230,7 @@ test("every tab closes directly, and its right-click menu carries batch close ac
     await expect(soloItems.nth(0)).toHaveText("Close");
     await expect(soloItems.nth(1)).toHaveText("Close All");
     await soloItems.nth(0).click();
-    await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(0);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="media"]')).toHaveCount(0);
 
     // In a multi-Panel group the menu gains Close Others, which closes the
     // group's other tabs and keeps the right-clicked one.
@@ -143,9 +239,9 @@ test("every tab closes directly, and its right-click menu carries batch close ac
     await expect(groupItems).toHaveCount(3);
     await expect(groupItems.nth(1)).toHaveText("Close Others");
     await groupItems.nth(1).click();
-    await expect(page.locator('[data-panel-kind="attribute"]')).toHaveCount(1);
-    await expect(page.locator('[data-panel-kind="effect"]')).toHaveCount(0);
-    await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(0);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="attribute"]')).toHaveCount(1);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="effect"]')).toHaveCount(0);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="nearby"]')).toHaveCount(0);
   } finally {
     await app.close();
   }
@@ -187,7 +283,7 @@ test("closing Preview destroys its resources and reopening creates a new instanc
       .filter({ hasText: /Close Active Panel|关闭活动面板/ })
       .click();
 
-    await expect(page.locator('[data-panel-kind="preview"]')).toHaveCount(0);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="preview"]')).toHaveCount(0);
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -198,7 +294,7 @@ test("closing Preview destroys its resources and reopening creates a new instanc
 
     await viewMenu.click();
     await page.locator(".app-menu-item").filter({ hasText: /^Preview$/ }).click();
-    await expect(page.locator('[data-panel-kind="preview"]')).toHaveCount(1);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="preview"]')).toHaveCount(1);
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -251,7 +347,7 @@ test("hidden Preview keeps clock resources alive while presentation sleeps", asy
     // Windows (edge drops are fine — see dragDockTab).
     await page
       .getByTitle("Move Effect")
-      .dragTo(page.locator('[data-panel-kind="preview"]'));
+      .dragTo(page.locator('.weft-dock-panel[data-panel-kind="preview"]'));
 
     await expect
       .poll(() =>
@@ -352,7 +448,7 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     };
     const panelKinds = async () =>
       (await page
-        .locator("[data-panel-kind]")
+        .locator(".weft-dock-panel[data-panel-kind]")
         .evaluateAll((panels) => panels.map((p) => p.getAttribute("data-panel-kind")))).sort();
     const visibleTabLabels = async () =>
       page
@@ -389,7 +485,7 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
 
     // The card gesture never touched the Dock Tree. Preview sits solo, so its
     // tab strip (and label) is hidden; every other group's tab shows.
-    const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "timeline"];
+    const defaultPanelSet = ["attribute", "effect", "media", "nearby", "preview", "quick-actions", "timeline"];
     expect(await panelKinds()).toEqual(defaultPanelSet);
     expect(await visibleTabLabels()).toEqual([
       "Media Pool",
@@ -406,7 +502,7 @@ test("Effect card pointer reordering never disturbs the Dock Tree, and Panel tab
     // center drops on Windows.)
     await page
       .getByTitle("Move Effect")
-      .dragTo(page.locator('[data-panel-kind="preview"]'));
+      .dragTo(page.locator('.weft-dock-panel[data-panel-kind="preview"]'));
     await expect.poll(async () => (await visibleTabLabels()).sort()).toEqual([
       "Attribute",
       "Effect",
@@ -434,7 +530,7 @@ test("View menu creates a custom Workspace from the current arrangement and swit
       name: "workspace-ui",
       canvas: CANVAS,
     });
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
+    await expect(page.locator(".weft-dock-panel[data-panel-kind]")).toHaveCount(7);
 
     const viewMenu = page.locator(".menu-trigger").nth(2);
     // Menu labels are localized (the e2e runtime may be en-US or zh-CN); match
@@ -459,7 +555,7 @@ test("View menu creates a custom Workspace from the current arrangement and swit
       .locator(".app-menu-item")
       .filter({ hasText: /Close Active Panel|关闭活动面板/ })
       .click();
-    await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(0);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="nearby"]')).toHaveCount(0);
 
     // The View menu now lists both Workspaces.
     await viewMenu.click();
@@ -468,12 +564,12 @@ test("View menu creates a custom Workspace from the current arrangement and swit
 
     // Switch to Editing — no save prompt — and the full default set returns.
     await page.locator(".app-menu-item").filter({ hasText: editingItem }).click();
-    await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(1);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="nearby"]')).toHaveCount(1);
 
     // Switch back to Cutting: its diverged arrangement (Nearby closed) is restored.
     await viewMenu.click();
     await page.locator(".app-menu-item").filter({ hasText: cuttingItem }).click();
-    await expect(page.locator('[data-panel-kind="nearby"]')).toHaveCount(0);
+    await expect(page.locator('.weft-dock-panel[data-panel-kind="nearby"]')).toHaveCount(0);
   } finally {
     await app.close();
   }
