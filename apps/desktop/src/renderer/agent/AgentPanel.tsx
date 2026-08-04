@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { type AgentSession } from "../ipc";
 import { RecordPanel } from "./RecordPanel";
 
-/// Agent panel — the reusable agent-activity surface: title info on top,
+/// Agent panel — the reusable agent-activity surface: session info on top,
 /// the record stream below. One component, two arrangements:
 ///
 ///   - Agent mode (AgentMode): the fixed layout — panes cannot be dragged
@@ -12,12 +12,12 @@ import { RecordPanel } from "./RecordPanel";
 ///     name and reason, and the stream is windowed to the session start.
 ///   - Editor dock workspace (AgentDockPanel): a regular dock Panel,
 ///     draggable and resizable by Dockview. The dock only mounts outside
-///     agent mode, so there is no session to headline — the header falls
-///     back to the plain panel title — and the caller passes the epoch
-///     window start to show full agent history.
+///     agent mode, so there is no session to headline — the header is
+///     omitted entirely — and the caller passes the epoch window start to
+///     show full agent history.
 interface AgentPanelProps {
   /// Session to headline the panel with (client + reason). Null outside an
-  /// active session: the header shows the localized panel title instead.
+  /// active session: the header does not render at all.
   session: AgentSession | null;
   /// ISO 8601 log-stream window start (see RecordPanel).
   sessionStartedAt: string;
@@ -32,24 +32,21 @@ export function AgentPanel({
   const { t } = useTranslation();
   return (
     <div className="agent-panel">
-      <header className="agent-record-header">
-        <div className="agent-record-title">
-          {session && (
+      {/* Session-only: without one the header would carry nothing but the
+          Panel's own tab title, so the whole bar (border + padding) goes
+          rather than leaving an empty strip above the stream. */}
+      {session && (
+        <header className="agent-record-header">
+          <div className="agent-record-title">
             <span className="agent-record-client">
               {t("agent_mode.client_label", { client: session.client })}
             </span>
-          )}
-          {session ? (
             <span className="agent-record-reason" title={session.reason}>
               {session.reason}
             </span>
-          ) : (
-            <span className="agent-record-reason">
-              {t("dock_workspace.panels.agent")}
-            </span>
-          )}
-        </div>
-      </header>
+          </div>
+        </header>
+      )}
       <RecordPanel sessionStartedAt={sessionStartedAt} lockReason={lockReason} />
     </div>
   );

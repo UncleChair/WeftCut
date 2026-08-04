@@ -370,8 +370,8 @@ function NearbyDockPanel() {
 /// The agent panel outside agent mode: the dock workspace only mounts in
 /// editor mode (App swaps the whole body for AgentMode while a session is
 /// active), so there is no live session to headline — the shared AgentPanel
-/// falls back to the plain panel title, and the epoch window start shows
-/// every agent-attributed entry in the log stream.
+/// omits its header here, and the epoch window start shows every
+/// agent-attributed entry in the log stream.
 const AGENT_PANEL_WINDOW_START = new Date(0).toISOString();
 
 function AgentDockPanel() {

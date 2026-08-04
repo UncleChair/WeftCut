@@ -219,7 +219,9 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
       ref={sectionRef}
       className={drag ? "prop-section prop-effects prop-effects--reordering" : "prop-section prop-effects"}
     >
-      <h3>{t("effects.heading")}</h3>
+      {/* No visible heading: the section is the Effect Panel's whole body, so
+          a title here only repeats the Panel's own tab. The region still
+          carries the name for assistive tech — EffectPanel's aria-label. */}
       {count === 0 ? (
         <p className="prop-effect-blank">{t("effects.empty_chain")}</p>
       ) : (
