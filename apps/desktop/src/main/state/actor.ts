@@ -999,19 +999,58 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return { ok: true, result: toolText(imageId) }
           }
           const vParams = videoClipParams(media, srcIn, srcOut)
-          const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
           const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.kind === 'Video') && (item.metadata.audio != null)
-          if (shouldPair) {
-            // ensure_audio_track: topmost track, or a new "Voiceover" if none.
-            const tracks = current().tracks
-            const audioTrack = tracks.length ? tracks[tracks.length - 1].id
-              : commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Voiceover'))
-            const aParams = { ...audioParams(media, srcIn, srcOut), role: 'dialogue' as const }
-            const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, audioTrack, aParams, t0, t1))
-            const groupId = commit('Created group', [], { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, [videoId, audioId], null, false))
-            return { ok: true, result: toolJson({ video_layer_id: videoId, audio_layer_id: audioId, group_id: groupId }) }
+          if (!shouldPair) {
+            const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
+            return { ok: true, result: toolText(videoId) }
           }
-          return { ok: true, result: toolText(videoId) }
+          // Paired A/V: ONE commit — video + dialogue audio on the SAME track
+          // (a track holds one visual and one audio lane, so the pair shares a
+          // combined row exactly like production add_media_layer) + the pair
+          // group. Any failure discards the whole draft: the call commits or
+          // rejects as a unit — the old three-commit version left the video on
+          // the timeline when the audio placement failed, and its "topmost
+          // track" audio routing piled every clip's audio onto one lane
+          // (.scratch/mcp-agent-hardening 03/04).
+          const aParams = { ...audioParams(media, srcIn, srcOut), role: 'dialogue' as const }
+          try {
+            const ids = commit('Added A/V pair', [], { kind: 'Coarse' }, (d) => {
+              const videoId = applyAddLayer(d, idGen, track, vParams, t0, t1)
+              const audioId = applyAddLayer(d, idGen, track, aParams, t0, t1)
+              const groupId = applyGroupsCreate(d, idGen, [videoId, audioId], null, false)
+              return { video_layer_id: videoId, audio_layer_id: audioId, group_id: groupId }
+            })
+            return { ok: true, result: toolJson(ids) }
+          } catch (err) {
+            if (err instanceof CommandFailure && err.err.error === 'ValidationFailed' && err.err.detail.rule === 'LayerOverlap') {
+              const d = err.err.detail
+              // One of the colliding pair is PRE-EXISTING (the other is a layer
+              // this discarded draft minted); its lane says which half of the
+              // pair collided. Audio lane blocked while the video lane was free
+              // is exactly the case agents misdiagnosed for three sessions
+              // running — name the cause and the ways out IN THE MESSAGE
+              // (clients drop error.data).
+              const existing = snap.tracks.flatMap((t) => t.layers).find((l) => l.id === d.a || l.id === d.b)
+              if (existing && existing.params.kind === 'Audio') {
+                return { ok: false, error: {
+                  code: 'invalid_params',
+                  message: `paired-audio overlap: the video fits, but auto_pair_audio_on_import also places a dialogue Audio layer at [${t0}, ${t1}) µs on the target track's audio lane, where Audio layer ${existing.id}${existing.label ? ` '${existing.label}'` : ''} already occupies [${existing.t_start_us}, ${existing.t_end_us}) µs. Nothing was committed (the pair is atomic). Options: create_new_track and retry add_video_layer with the new track_id (the pair lands together on one track); trim_existing / split_at_t / move_layer the blocking audio layer; or set settings.auto_pair_audio_on_import=false.`,
+                  data: {
+                    error: 'LayerOverlap', collided: 'paired_audio', track: d.track,
+                    blocking_layer: existing.id, blocking_label: existing.label,
+                    blocking_range_us: [existing.t_start_us, existing.t_end_us],
+                    requested_range_us: [t0, t1],
+                    options: [
+                      { action: 'create_new_track', note: 'then retry add_video_layer with the new track_id' },
+                      { action: 'trim_existing', layer_id: existing.id, new_t_end_us: t0 },
+                      { action: 'split_at_t', layer_id: existing.id, at_t_us: t0 },
+                    ],
+                  },
+                } }
+              }
+            }
+            throw err // visual-lane overlap etc. → outer catch → mapCommandError
+          }
         }
         case 'add_marker': {
           const p = mcpDef('add_marker').parseDedicated!(a)

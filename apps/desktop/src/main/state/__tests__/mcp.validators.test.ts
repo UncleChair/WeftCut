@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, parseRgba, parseNum, McpArgError, toolJson } from '../mcp-commands'
+import { parseInterp, parseInterpOpt, parseAnimatedF64, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, McpArgError, toolJson } from '../mcp-commands'
 
 describe('parseInterp', () => {
   it('accepts the simple kinds', () => {
@@ -71,6 +71,55 @@ describe('parseNum', () => {
   it('rejects undefined / null', () => {
     expect(() => parseNum(undefined, 't_us')).toThrow(McpArgError)
     expect(() => parseNum(null, 't_us')).toThrow(McpArgError)
+  })
+})
+
+describe('parseObj', () => {
+  it('passes a plain object through', () => { expect(parseObj({ a: 1 }, 'patch')).toEqual({ a: 1 }) })
+  it('rejects a JSON-encoded string (the string-coerced-client shape)', () => {
+    expect(() => parseObj('{"a":1}', 'patch')).toThrow(McpArgError)
+  })
+  it('rejects null, arrays, and undefined', () => {
+    expect(() => parseObj(null, 'patch')).toThrow(McpArgError)
+    expect(() => parseObj([1], 'patch')).toThrow(McpArgError)
+    expect(() => parseObj(undefined, 'patch')).toThrow(McpArgError)
+  })
+})
+
+describe('parseEffectPatch', () => {
+  it('accepts { enabled, params } with AnimTrack values', () => {
+    expect(parseEffectPatch({ enabled: true, params: { strength: { mode: 'Static', value: 8 } } }))
+      .toEqual({ enabled: true, params: { strength: { mode: 'Static', value: 8 } } })
+  })
+  it('accepts an empty patch (no-op, but honestly so)', () => { expect(parseEffectPatch({})).toEqual({}) })
+  it('null enabled/params mean "don\'t touch" and are dropped', () => {
+    expect(parseEffectPatch({ enabled: null, params: null })).toEqual({})
+  })
+  it('rejects a string patch with the expected-shape hint', () => {
+    expect(() => parseEffectPatch('{"enabled":true}')).toThrow(/JSON object/)
+  })
+  it('rejects unknown keys naming the key', () => {
+    expect(() => parseEffectPatch({ paramz: {} })).toThrow(/unknown key 'paramz'/)
+  })
+  it('rejects a non-boolean enabled', () => {
+    expect(() => parseEffectPatch({ enabled: 'yes' })).toThrow(McpArgError)
+  })
+  it('rejects a malformed param value naming the param', () => {
+    expect(() => parseEffectPatch({ params: { strength: 8 } })).toThrow(/params\['strength'\]/)
+  })
+})
+
+describe('parseMarkerPatch', () => {
+  it('accepts a full valid patch', () => {
+    const p = { t_us: 1, end_t_us: 2, label: 'x', color: { r: 0, g: 0, b: 0, a: 255 } }
+    expect(parseMarkerPatch(p)).toEqual(p)
+  })
+  it('rejects a string patch', () => { expect(() => parseMarkerPatch('t_us=1')).toThrow(McpArgError) })
+  it('rejects unknown keys', () => { expect(() => parseMarkerPatch({ time_us: 1 })).toThrow(/unknown key 'time_us'/) })
+  it('rejects wrong-typed fields that applyUpdateMarker would silently skip', () => {
+    expect(() => parseMarkerPatch({ t_us: 'now' })).toThrow(McpArgError)
+    expect(() => parseMarkerPatch({ label: 5 })).toThrow(McpArgError)
+    expect(() => parseMarkerPatch({ color: '#fff' })).toThrow(McpArgError)
   })
 })
 

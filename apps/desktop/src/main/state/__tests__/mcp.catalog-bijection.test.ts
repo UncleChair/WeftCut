@@ -35,41 +35,16 @@ const merged = mergeMcpCatalog(rust.tools, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS
 const mergedNames = merged.map((t) => t.name)
 
 // ── Assertion 6: structural-field exclusions ─────────────────────────────────
-// These (tool, field) pairs are excluded from the "omit a required field → throw"
-// probe because the field is either:
-//   (a) a structural object/array passed through to the actor mutation for
-//       downstream validation — the pre-commit parser legitimately does NOT throw
-//       on their absence; or
-//   (b) an object field whose absence is an intentional wire-contract semantic
-//       (parser defaults silently), documented in the tool description.
-//
-// ONLY structural object/array fields may be excluded — never a plain scalar
-// (uuid/number/enum/bool/string).
-//
-// Justification for each entry:
-//   update_layer.patch       — LayerPatch struct; parser does `a.patch` raw, mutation validates shape
-//   update_layer_params.patch — LayerParamsPatch discriminated union; same pass-through pattern
-//   update_effect.patch      — { enabled?, params? } object; passed through as-is to the actor
-//   update_marker.patch      — MarkerPatch struct; parser does `a.patch` raw, mutation validates
-//   set_composition.patch    — CompositionPatch struct; cast as Record<string,unknown>, mutation validates
-//   set_keyframe.interp      — Interpolation object; schema lists it required but wire contract allows
-//                              omission to mean "inherit previous segment easing" (description: "omit to
-//                              inherit"), parseDedicated uses parseInterpOpt which passes undefined through;
-//                              the corpus fixture set-keyframe.json:4 omits it — fixing the parser would
-//                              break the differential gate without a corpus regen.
-const STRUCTURAL_REQUIRED: Record<string, ReadonlySet<string>> = {
-  update_layer:        new Set(['patch']),
-  update_layer_params: new Set(['patch']),
-  update_effect:       new Set(['patch']),
-  update_marker:       new Set(['patch']),
-  set_composition:     new Set(['patch']),
-  set_keyframe:        new Set(['interp']),
-  // add_motif.props is a structural JSON object passed through to canonicalizeProps
-  // (absent = use all schema defaults; null/undefined → treat as {}). The parser does
-  // `a.props ?? null` and does NOT throw on its absence — matching Rust's wire contract
-  // where props is Option<serde_json::Value>, defaulting to {} when None.
-  add_motif:           new Set(['props']),
-}
+// (tool, field) pairs excluded from the "omit a required field → throw" probe.
+// EMPTY since the mcp-agent-hardening pass: every required `patch` now goes
+// through a parse gate (parseObj at minimum — a missing/non-object patch throws
+// instead of committing nothing and reporting success), and the two fields
+// whose omission IS the wire contract (set_keyframe.interp = inherit previous
+// easing, add_motif.props = all defaults) left the schema `required` lists so
+// the advertised contract matches the parser. New entries need the same bar:
+// ONLY a structural object/array field whose omission is a documented semantic
+// may go here — never a plain scalar.
+const STRUCTURAL_REQUIRED: Record<string, ReadonlySet<string>> = {}
 
 describe('MCP catalog↔handler bijection (permanent gate)', () => {
   it('1. the three ownership buckets are pairwise disjoint (no double source of truth)', () => {
@@ -148,6 +123,36 @@ describe('MCP catalog↔handler bijection (permanent gate)', () => {
       }
     }
   })
+
+  it('7. every advertised property carries a type (untyped fields get string-coerced by MCP clients)', () => {
+    // Root finding of .scratch/mcp-agent-hardening: a property advertised as
+    // `{}` (or description-only) is rewritten to `type: string` by the Claude
+    // Code MCP client layer, CONSTRAINING the model to emit the payload as a
+    // JSON-encoded string no matter the prompt. The server then rejects — or
+    // silently ignores — it. Typing every field at the source is the only fix.
+    const untyped: string[] = []
+    const typed = (s: Record<string, unknown>): boolean =>
+      'type' in s || 'enum' in s || 'const' in s || '$ref' in s || 'oneOf' in s || 'anyOf' in s || 'allOf' in s
+    const walk = (schema: unknown, path: string): void => {
+      if (schema === null || typeof schema !== 'object') return
+      const s = schema as Record<string, unknown>
+      const props = s.properties as Record<string, unknown> | undefined
+      if (props) {
+        for (const [k, v] of Object.entries(props)) {
+          if (v === null || typeof v !== 'object' || !typed(v as Record<string, unknown>)) untyped.push(`${path}.${k}`)
+          walk(v, `${path}.${k}`)
+        }
+      }
+      if (s.items) walk(s.items, `${path}[]`)
+      if (s.additionalProperties && typeof s.additionalProperties === 'object') walk(s.additionalProperties, `${path}.*`)
+      for (const alt of ['oneOf', 'anyOf', 'allOf'] as const) {
+        const list = s[alt]
+        if (Array.isArray(list)) list.forEach((v, i) => walk(v, `${path}<${alt}[${i}]>`))
+      }
+    }
+    for (const t of merged) walk(t.inputSchema, t.name)
+    expect(untyped).toEqual([])
+  })
 })
 
 // sampleFor: minimal valid value per (tool, field) so the "omit one required"
@@ -162,6 +167,10 @@ function sampleFor(tool: string, field: string): unknown {
   if (tool === 'set_keyframe' && field === 'interp') return { kind: 'Linear' }
   if (tool === 'set_keyframe_easing' && field === 'interp') return { kind: 'Linear' }
   if (tool === 'set_param_track' && field === 'track') return { mode: 'Static', value: 0 }
+  // patch parsers are strict since the mcp-agent-hardening pass: the string
+  // fallback below would make them throw regardless of which field is omitted,
+  // so the probe would pass for the wrong reason. {} is valid for every one.
+  if (field === 'patch') return {}
 
   // field-name convention defaults
   if (field.endsWith('_id') || field === 'group' || field === 'layer') {

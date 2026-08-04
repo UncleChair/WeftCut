@@ -86,10 +86,15 @@ Rules:
 ## Tool surface
 
 The MCP tool surface is the same set of actor commands the UI calls.
-A single declarative `tool_table!` macro in the Rust core single-sources
-both the advertised schemas and the name→handler dispatch, so a tool can
-never appear in one without the other. Don't expose 100 tools; agents
-get confused. The current set is around 40, organised below.
+Two declarative tables single-source the advertised schemas and the
+name→handler dispatch, so a tool can never appear in one without the
+other: `MCP_TOOL_DEFS` in the TS actor host for every mutation tool, and
+the `tool_table!` macro in the Rust core for the native compute tools.
+Every advertised schema property carries an explicit `type` — MCP
+clients coerce untyped fields to `type: string`, which forces agents to
+send nested payloads as JSON-encoded strings (a catalog-wide test gates
+this). Don't expose 100 tools; agents get confused. The current set is
+around 40, organised below.
 
 ### Read (resources, not tools)
 
@@ -135,7 +140,7 @@ Media + tracks:
 
 Layers:
 - `add_color_layer { track_id, t_start_us, t_end_us, color, width?, height? }` → `LayerId`
-- `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us }` → `LayerId`
+- `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us }` → `LayerId`, or `{ video_layer_id, audio_layer_id, group_id }` when the source carries audio and `auto_pair_audio_on_import` is on: the paired dialogue Audio layer lands on the SAME track's audio lane (a track holds one visual + one audio lane) and the two are grouped. The triple commits atomically — if the audio lane is occupied, the call rejects naming the blocking layer and nothing lands on the timeline.
 - `add_motif { motif_id, t_start_us, t_end_us?, track_id?, props? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" Video track when absent; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
 - `apply_subtitles { body, format?, track_id?, t_start_us?, t_end_us? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Builds a new caption-role track of editable `Text` layers (one per cue). `track_id`, `t_start_us`, and `t_end_us` are accepted for wire stability but ignored — cue timings come from the body. Returns the new caption track id.
 - `update_layer { layer_id, patch }` — envelope-only (label, time range, enabled, locked).
@@ -265,6 +270,12 @@ Tool errors carry structured detail:
 ```
 
 Give the agent something to act on, not a brick wall.
+
+The prose `message` must itself name the cause and the options — several
+MCP clients (Claude Code among them) surface only `code: message` to the
+model and drop the structured `data`, so detail that lives only in
+`data` is detail the agent never sees. `data` mirrors the same facts
+machine-readably for clients that do forward it.
 
 ## Change feed
 

@@ -5,6 +5,8 @@
 // Mirrors native/src/mcp/{tools.rs,wire.rs}.
 import type { CommandError } from './errors'
 import type { Animated, Interpolation, Keyframe, Rgba, TransitionDirection, TransitionKind } from './model'
+import type { EffectPatch } from './mutations/effects'
+import type { MarkerPatch } from './mutations/markers'
 import { sortKeys } from './canonical'
 
 export type McpErrorCode = 'invalid_params' | 'invalid_request' | 'not_found' | 'internal'
@@ -71,6 +73,59 @@ export function parseAnimatedF64(v: unknown): Animated<number> {
     return { mode: 'Keyframed', value: kfs }
   }
   throw new McpArgError(`invalid track: unknown mode '${String(o.mode)}'`)
+}
+
+/** Gate a structural patch/props argument: a plain JSON object, never a
+ *  string/array/null. Every apply* mutation reads patch fields through `typeof`
+ *  guards, so an unparsed patch (e.g. the JSON-encoded string an MCP client
+ *  sends for an untyped schema field) would commit nothing and still report
+ *  success — the one failure mode worse than rejection. */
+export function parseObj(v: unknown, field: string): Record<string, unknown> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v))
+    throw new McpArgError(`${field} must be a JSON object, got ${Array.isArray(v) ? 'an array' : typeof v}`, field)
+  return v as Record<string, unknown>
+}
+
+/** Strict update_effect patch — mirrors EffectPatch (mutations/effects.ts).
+ *  Unknown keys and malformed values reject; applyUpdateEffect would otherwise
+ *  silently skip them (issue 02, .scratch/mcp-agent-hardening). */
+export function parseEffectPatch(v: unknown): EffectPatch {
+  const o = parseObj(v, 'patch')
+  for (const k of Object.keys(o)) {
+    if (k !== 'enabled' && k !== 'params')
+      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { enabled?: boolean, params?: { "<param>": { "mode": "Static", "value": <number> } } }`)
+  }
+  const out: EffectPatch = {}
+  if (o.enabled !== undefined && o.enabled !== null) {
+    if (typeof o.enabled !== 'boolean') throw new McpArgError(`invalid patch: enabled must be a boolean`)
+    out.enabled = o.enabled
+  }
+  if (o.params !== undefined && o.params !== null) {
+    const p = parseObj(o.params, 'patch.params')
+    const params: Record<string, Animated<number>> = {}
+    for (const [k, pv] of Object.entries(p)) {
+      try { params[k] = parseAnimatedF64(pv) }
+      catch (e) { throw new McpArgError(`invalid patch: params['${k}']: ${e instanceof McpArgError ? e.mcpMessage : String(e)}`) }
+    }
+    out.params = params
+  }
+  return out
+}
+
+/** Strict update_marker patch — same lie-prevention as parseEffectPatch.
+ *  null = "don't touch" (end_t_us can be set, never cleared: remove+add). */
+export function parseMarkerPatch(v: unknown): MarkerPatch {
+  const o = parseObj(v, 'patch')
+  for (const k of Object.keys(o)) {
+    if (k !== 't_us' && k !== 'end_t_us' && k !== 'label' && k !== 'color')
+      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { t_us?, end_t_us?, label?, color? }`)
+  }
+  parseNumOpt(o.t_us, 'patch.t_us')
+  parseNumOpt(o.end_t_us, 'patch.end_t_us')
+  if (o.label !== undefined && o.label !== null && typeof o.label !== 'string')
+    throw new McpArgError(`patch.label must be a string`, 'patch')
+  if (o.color !== undefined && o.color !== null) parseRgba(o.color, 'patch.color')
+  return o as MarkerPatch
 }
 
 const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
@@ -240,7 +295,13 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   if (e.error === 'Backend') return { code: 'internal', message: e.detail }
   if (e.error === 'ValidationFailed' && e.detail.rule === 'LayerOverlap') {
     const d = e.detail
-    return { code: 'invalid_params', message: 'layer overlap', data: {
+    // The full cause + options go into the MESSAGE, not only `data`: MCP
+    // clients (Claude Code verified against the hero-capture traces) surface
+    // only `code: message` to the model and drop `error.data`, so a bare
+    // 'layer overlap' left agents blind-retrying (.scratch/mcp-agent-hardening 04).
+    return { code: 'invalid_params', message:
+      `layer overlap on track ${d.track}: the requested range [${d.b_start}, ${d.b_end}) µs collides with layer ${d.a} at [${d.a_start}, ${d.a_end}) µs. Layers of the same class collide per track (each track has ONE visual lane and ONE audio lane — a track that looks empty can still hold audio, e.g. another clip's auto-paired dialogue). Options: create_new_track and retry there; trim_existing (trim ${d.a} to t_end_us ${d.b_start}); split_at_t (split ${d.a} at ${d.b_start}).`,
+    data: {
       error: 'LayerOverlap', track: d.track, blocking_layer: d.a,
       blocking_range_us: [d.a_start, d.a_end], requested_range_us: [d.b_start, d.b_end],
       options: [
@@ -324,12 +385,49 @@ export interface McpToolDef {
   parseDedicated?: (a: Record<string, unknown>) => Record<string, unknown>                    // dedicated-exec only
 }
 
+// ── Shared schema fragments ──────────────────────────────────────────────────
+// Every advertised property MUST carry a "type": MCP clients (Claude Code
+// verified) coerce untyped fields to `type: string`, which FORCES the model to
+// send nested payloads as JSON-encoded strings no matter how it is prompted —
+// the server then rejects or, worse, silently ignores them
+// (.scratch/mcp-agent-hardening). mcp.catalog-bijection.test.ts gates this
+// catalog-wide.
+const RGBA_SCHEMA = { type: 'object', properties: { r: { type: 'integer' }, g: { type: 'integer' }, b: { type: 'integer' }, a: { type: 'integer' } }, required: ['r', 'g', 'b', 'a'] }
+const INTERP_SCHEMA = {
+  type: 'object',
+  description: 'Easing: {"kind":"Hold"|"Linear"|"EaseIn"|"EaseOut"} or {"kind":"Bezier","p1":[x,y],"p2":[x,y]}.',
+  properties: {
+    kind: { type: 'string', enum: ['Hold', 'Linear', 'EaseIn', 'EaseOut', 'Bezier'] },
+    p1: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: first control point [x, y].' },
+    p2: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: second control point [x, y].' },
+  },
+  required: ['kind'],
+}
+const ANIM_TRACK_SCHEMA = {
+  type: 'object',
+  description: 'AnimTrack<f64>: {"mode":"Static","value":<number>} or {"mode":"Keyframed","value":[{id, t_us, value, interp}, ...]}.',
+  properties: {
+    mode: { type: 'string', enum: ['Static', 'Keyframed'] },
+    value: {
+      type: ['number', 'array'],
+      description: 'Static: the held number. Keyframed: the keyframe array.',
+      items: {
+        type: 'object',
+        properties: { id: { type: 'string' }, t_us: { type: 'integer' }, value: { type: 'number' }, interp: INTERP_SCHEMA },
+        required: ['id', 't_us', 'value', 'interp'],
+      },
+    },
+  },
+  required: ['mode', 'value'],
+}
+
 // ── Single-source MCP tool table ─────────────────────────────────────────────
 // Each table-exec entry folds §2.5 hardening into parseArgs: every former
-// `a.x as T` cast → parseX(a.x,'x'); optional booleans → parseBoolOpt; patch/
-// flags objects stay structural (validated by the downstream mutation), but all
-// uuid/number/enum scalars are parser-gated. The 19 dedicated stubs exist only
-// so MCP_TOOLS projection stays complete; their behavior lives in actor.ts arms.
+// `a.x as T` cast → parseX(a.x,'x'); optional booleans → parseBoolOpt; patch
+// objects are parser-gated too (parseObj at minimum — a non-object patch must
+// reject, never commit-nothing-and-succeed); all uuid/number/enum scalars are
+// parser-gated. The 19 dedicated stubs exist only so MCP_TOOLS projection
+// stays complete; their behavior lives in actor.ts arms.
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table',
@@ -363,7 +461,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         locked: { type: 'boolean' },
       },
     } }, required: ['layer_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }) },
+    parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseObj(a.patch, 'patch') } }) },
   { name: 'update_layer_params', exec: 'table',
     description: "Update a layer's kind-specific params. The patch is tagged with `kind` ('Text' | 'VideoClip' | 'ImageOverlay' | 'Color' | 'Audio') and must match the layer's kind. Audio fields take real effect in both preview and export: `gain_db` (dB; this patch sets a STATIC value, replacing any existing keyframes on the track), `pan` (-1..1 equal-power, same static-replace semantics), `fade_in_us`/`fade_out_us` (linear edge fades), `mute`, and `role` (one of dialogue/music/sfx/voiceover) to reassign the clip's mixing role. On a scale-linked layer (`scale_linked` in the layer view), a patch leaving scale_x ≠ scale_y auto-clears the link in the same commit; patch both axes to the same value to keep it.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, patch: {
@@ -391,7 +489,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         flip_h: { type: 'boolean' },
         flip_v: { type: 'boolean' },
         // Color patch
-        color: { type: 'object', properties: { r: { type: 'integer' }, g: { type: 'integer' }, b: { type: 'integer' }, a: { type: 'integer' } }, required: ['r', 'g', 'b', 'a'] },
+        color: RGBA_SCHEMA,
         width: { type: 'integer' },
         height: { type: 'integer' },
         // Text patch
@@ -404,7 +502,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         props: { type: 'object' },
       },
     } }, required: ['layer_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }) },
+    parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseObj(a.patch, 'patch') } }) },
   { name: 'set_scale_linked', exec: 'table',
     description: "Toggle a layer's uniform-scale link (visual kinds only; Color/Audio reject). `linked=true` snaps scale_y to a whole-track COPY of scale_x — keyframes included, fresh key ids — in the same commit (one undo restores both track and flag). `linked=false` clears only the flag; the tracks stay equal until the next divergent edit. Invariant: while linked, any write that leaves the two scale tracks unequal (a single-axis update_layer_params / set_keyframe / remove_keyframe) auto-clears the flag in that same commit — write both axes identically to keep the link.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, linked: { type: 'boolean' } }, required: ['layer_id', 'linked'] },
@@ -424,7 +522,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: groups ───────────────────────────────────────────────────
   { name: 'groups_create', exec: 'table',
     description: 'Create a new group from >=2 distinct layer ids. Optional `label`. If any layer is already in another group, the op fails unless `reassign=true`, which removes them from their prior group(s) first (auto-dissolving any group that falls below 2 members). Returns the new group id.',
-    inputSchema: { type: 'object', properties: { layer_ids: { type: 'array' }, label: { type: ['string', 'null'] }, reassign: { type: ['boolean', 'null'] } }, required: ['layer_ids'] },
+    inputSchema: { type: 'object', properties: { layer_ids: { type: 'array', items: { type: 'string' } }, label: { type: ['string', 'null'] }, reassign: { type: ['boolean', 'null'] } }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label'), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
     shapeResult: (v) => toolText(v as string) },
   { name: 'groups_dissolve', exec: 'table',
@@ -433,11 +531,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'groups_dissolve', args: { group: parseUuid(a.group_id, 'group_id') } }) },
   { name: 'groups_add_members', exec: 'table',
     description: 'Add member layers to an existing group. Same reassign semantics as groups_create.',
-    inputSchema: { type: 'object', properties: { group_id: { type: 'string' }, layer_ids: { type: 'array' }, reassign: { type: ['boolean', 'null'] } }, required: ['group_id', 'layer_ids'] },
+    inputSchema: { type: 'object', properties: { group_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } }, reassign: { type: ['boolean', 'null'] } }, required: ['group_id', 'layer_ids'] },
     parseArgs: (a) => ({ op: 'groups_add_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
   { name: 'groups_remove_members', exec: 'table',
     description: 'Remove member layers from a group. If the remaining membership falls below 2, the group auto-dissolves.',
-    inputSchema: { type: 'object', properties: { group_id: { type: 'string' }, layer_ids: { type: 'array' } }, required: ['group_id', 'layer_ids'] },
+    inputSchema: { type: 'object', properties: { group_id: { type: 'string' }, layer_ids: { type: 'array', items: { type: 'string' } } }, required: ['group_id', 'layer_ids'] },
     parseArgs: (a) => ({ op: 'groups_remove_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
   { name: 'groups_rename', exec: 'table',
     description: "Update a group's label. Pass `label: null` to clear it.",
@@ -450,9 +548,16 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseStr(a.kind, 'kind') } }),
     shapeResult: (v) => toolText(v as string) },
   { name: 'update_effect', exec: 'table',
-    description: 'Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { "mode": "Static", "value": <number> } }` (v1 params are scalar). For keyframed params use set_keyframe with param_key "effects[<effect_id>].params[<key>]".',
-    inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' }, patch: {} }, required: ['effect_id', 'layer_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: a.patch } }) },
+    description: 'Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { "mode": "Static", "value": <number> } }` (v1 params are scalar). For keyframed params use set_keyframe with param_key "effects[<effect_id>].params[<key>]". An unparseable patch (non-object, unknown key, malformed param value) rejects with invalid_params — it never partially applies.',
+    inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' }, patch: {
+      type: 'object',
+      description: 'Effect patch. Only fields you set are applied; `params` merges key-by-key.',
+      properties: {
+        enabled: { type: ['boolean', 'null'] },
+        params: { type: 'object', description: 'Param key → AnimTrack. v1 effect params are scalar, e.g. {"strength": {"mode":"Static","value":8}}.', additionalProperties: ANIM_TRACK_SCHEMA },
+      },
+    } }, required: ['effect_id', 'layer_id', 'patch'] },
+    parseArgs: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: parseEffectPatch(a.patch) } }) },
   { name: 'move_effect', exec: 'table',
     description: 'Reorder an effect within its layer\'s chain. new_index is 0-based; 0 = first applied. Must be < effect count.',
     inputSchema: { type: 'object', properties: { effect_id: { type: 'string' }, layer_id: { type: 'string' }, new_index: { type: 'integer' } }, required: ['effect_id', 'layer_id', 'new_index'] },
@@ -496,8 +601,21 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: composition ──────────────────────────────────────────────
   { name: 'set_composition', exec: 'table',
     description: 'Update composition envelope (canvas size, fps, sample rate, channels, color space, background, duration). Only fields you set are applied. Width/height must be positive; fps denominator must be non-zero. NOTHING here records onto the undo stack — the whole envelope is setup, so the change is patched into every history snapshot and survives undo/redo. `fps` is LOCKED once the timeline holds a layer OR any history snapshot or checkpoint does: the patch is rejected with FpsLockedByContent (carrying the current rate, the requested rate, the live layer count, and `locked_by`: "current" or "history") because changing the rate moves every edit point by up to half a frame and can collapse a short layer. With locked_by "history" the live layer count is 0 and the timeline looks empty — undo could still bring old-grid layers back, which is why it is still refused. Set the rate on a project that has never held a layer; to clear a history-scoped lock, empty the timeline and reopen the project (opening resets history). Markers, a pinned duration, and imported-but-unplaced media never lock the rate. `sample_rate` is an export target, not an editing grid, and is never locked. Setting `duration_us` pins the composition duration — subsequent layer edits will no longer auto-fit it (except an overflow guard if a layer extends past the pinned value). Use `fit_composition_to_layers` to clear the pin and snap duration back to the layer high-water mark.',
-    inputSchema: { type: 'object', properties: { patch: {} }, required: ['patch'] },
-    parseArgs: (a) => ({ op: 'set_composition', args: a.patch as Record<string, unknown> }) },
+    inputSchema: { type: 'object', properties: { patch: {
+      type: 'object',
+      description: 'Composition envelope patch. Only fields you set are applied.',
+      properties: {
+        width: { type: 'integer' },
+        height: { type: 'integer' },
+        fps: { type: 'object', properties: { num: { type: 'integer' }, den: { type: 'integer' } }, required: ['num', 'den'] },
+        duration_us: { type: 'integer', description: 'Setting this pins the composition duration (see description).' },
+        sample_rate: { type: 'integer' },
+        channels: { type: 'integer' },
+        color_space: { type: 'string', enum: ['Bt709', 'Bt601', 'Bt2020', 'SRgb'] },
+        background: RGBA_SCHEMA,
+      },
+    } }, required: ['patch'] },
+    parseArgs: (a) => ({ op: 'set_composition', args: parseObj(a.patch, 'patch') }) },
   { name: 'fit_composition_to_layers', exec: 'table',
     description: "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. The inverse of `set_composition { duration_us }`: that pins, this unpins. After this call, subsequent layer edits track duration in both directions (grow on adds, shrink on deletes/inward trims).",
     inputSchema: { type: 'object', properties: {}, required: [] },
@@ -505,8 +623,17 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: markers ──────────────────────────────────────────────────
   { name: 'update_marker', exec: 'table',
     description: 'Update a marker. Setting `t_us` re-sorts the marker list.',
-    inputSchema: { type: 'object', properties: { marker_id: { type: 'string' }, patch: {} }, required: ['marker_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), patch: a.patch } }) },
+    inputSchema: { type: 'object', properties: { marker_id: { type: 'string' }, patch: {
+      type: 'object',
+      description: 'Marker patch; only fields you set are applied. `end_t_us` can be set, never cleared (clear = remove + re-add).',
+      properties: {
+        t_us: { type: ['integer', 'null'] },
+        end_t_us: { type: ['integer', 'null'] },
+        label: { type: ['string', 'null'] },
+        color: RGBA_SCHEMA,
+      },
+    } }, required: ['marker_id', 'patch'] },
+    parseArgs: (a) => ({ op: 'update_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), patch: parseMarkerPatch(a.patch) } }) },
   { name: 'remove_marker', exec: 'table',
     description: 'Remove a marker.',
     inputSchema: { type: 'object', properties: { marker_id: { type: 'string' } }, required: ['marker_id'] },
@@ -538,12 +665,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── dedicated-exec (19) — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
   { name: 'add_color_layer', exec: 'dedicated',
     description: 'Add a solid-color layer to a track. Returns the new layer id. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.',
-    inputSchema: { type: 'object', properties: { color: { type: 'object', properties: { r: { type: 'integer' }, g: { type: 'integer' }, b: { type: 'integer' }, a: { type: 'integer' } }, required: ['r', 'g', 'b', 'a'] }, height: { type: ['integer', 'null'] }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, width: { type: ['integer', 'null'] } }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },
+    inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, height: { type: ['integer', 'null'] }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' }, width: { type: ['integer', 'null'] } }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), color: parseRgba(a.color, 'color'),
       width: parseNumOpt(a.width, 'width'), height: parseNumOpt(a.height, 'height'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us') }) },
   { name: 'add_video_layer', exec: 'dedicated',
-    description: "Add a visual media layer from an imported media item onto a track. For Video media, `src_in_us`/`src_out_us` are the in/out points within the source media; `t_start_us`/`t_end_us` are where the clip lives on the timeline. For Image media, this creates an ImageOverlay over the timeline range, and `src_in_us`/`src_out_us` are accepted for schema compatibility but ignored. Video source and timeline ranges should be the same length unless `speed` is later changed. When a Video source has an audio stream and the project's `auto_pair_audio_on_import` setting is on (default), this also creates a paired Audio layer on an audio track at the same time bounds and groups the two so they move/trim/split together. Returns either the visual layer id (legacy mode) or `{ video_layer_id, audio_layer_id, group_id }` when a pair was created.",
+    description: "Add a visual media layer from an imported media item onto a track. For Video media, `src_in_us`/`src_out_us` are the in/out points within the source media; `t_start_us`/`t_end_us` are where the clip lives on the timeline. For Image media, this creates an ImageOverlay over the timeline range, and `src_in_us`/`src_out_us` are accepted for schema compatibility but ignored. Video source and timeline ranges should be the same length unless `speed` is later changed. When a Video source has an audio stream and the project's `auto_pair_audio_on_import` setting is on (default), this also creates a paired dialogue Audio layer on the SAME track's audio lane (every track holds one visual lane plus one audio lane) at the same time bounds and groups the two so they move/trim/split together. The whole call is atomic: video, paired audio, and group commit together or not at all — if the audio lane is occupied the call rejects naming the blocking layer, and nothing lands on the timeline. Returns either the visual layer id (no pairing) or `{ video_layer_id, audio_layer_id, group_id }` when a pair was created.",
     inputSchema: { type: 'object', properties: { media_id: { type: 'string' }, src_in_us: { type: 'integer' }, src_out_us: { type: 'integer' }, t_end_us: { type: 'integer' }, t_start_us: { type: 'integer' }, track_id: { type: 'string' } }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
     parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
       src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
@@ -555,7 +682,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       at_t_us: parseNum(a.at_t_us, 'at_t_us'), escape_group: a.escape_group }) },
   { name: 'add_marker', exec: 'dedicated',
     description: 'Add a marker (point or region) to the timeline. Returns the new marker id. Set `end_t_us` to make it a region marker.',
-    inputSchema: { type: 'object', properties: { color: { type: 'object', properties: { r: { type: 'integer' }, g: { type: 'integer' }, b: { type: 'integer' }, a: { type: 'integer' } }, required: ['r', 'g', 'b', 'a'] }, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' } }, required: ['color', 'label', 't_us'] },
+    inputSchema: { type: 'object', properties: { color: RGBA_SCHEMA, end_t_us: { type: ['integer', 'null'] }, label: { type: 'string' }, t_us: { type: 'integer' } }, required: ['color', 'label', 't_us'] },
     parseDedicated: (a) => ({ color: parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
       end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label') }) },
   { name: 'lock_history', exec: 'dedicated',
@@ -568,7 +695,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (_a) => ({}) },
   { name: 'set_keyframe', exec: 'dedicated',
     description: 'Insert or update a keyframe on a layer param. `t_us` is timeline-absolute. A Static track is lifted to Keyframed. An existing key at the same frame is updated in place. `interp` (optional) sets the easing for the segment leaving this key (e.g. {"kind":"Linear"}, {"kind":"EaseIn"}, {"kind":"Bezier","p1":[x,y],"p2":[x,y]}); omit to inherit the preceding key\'s easing (or Linear). Keying only scale_x or scale_y on a scale-linked layer diverges the pair and auto-clears the link in the same commit (see set_scale_linked).',
-    inputSchema: { type: 'object', properties: { interp: {}, layer_id: { type: 'string' }, param_key: { type: 'string' }, t_us: { type: 'integer' }, value: { type: 'number' } }, required: ['interp', 'layer_id', 'param_key', 't_us', 'value'] },
+    inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: { type: 'string' }, param_key: { type: 'string' }, t_us: { type: 'integer' }, value: { type: 'number' } }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       t_us: parseNum(a.t_us, 't_us'), value: parseNum(a.value, 'value'), interp: parseInterpOpt(a.interp) }) },
   { name: 'get_param_track', exec: 'dedicated',
@@ -587,7 +714,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       param_key: parseStr(a.param_key, 'param_key'), t_us: parseNum(a.t_us, 't_us') }) },
   { name: 'set_keyframe_easing', exec: 'dedicated',
     description: 'Set the easing of the segment leaving a keyframe. `interp`: {"kind":"Hold"} | {"kind":"Linear"} | {"kind":"EaseIn"} | {"kind":"EaseOut"} | {"kind":"Bezier","p1":[x,y],"p2":[x,y]}.',
-    inputSchema: { type: 'object', properties: { interp: {}, keyframe_id: { type: 'string' }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['interp', 'keyframe_id', 'layer_id', 'param_key'] },
+    inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, keyframe_id: { type: 'string' }, layer_id: { type: 'string' }, param_key: { type: 'string' } }, required: ['interp', 'keyframe_id', 'layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
       param_key: parseStr(a.param_key, 'param_key'), interp: parseInterp(a.interp) }) },
   { name: 'smooth_keyframes', exec: 'dedicated',
@@ -602,12 +729,15 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       value: parseNumOpt(a.value, 'value') }) },
   { name: 'set_param_track', exec: 'dedicated',
     description: 'Low-level: replace a layer param\'s whole animation track. `track` is an AnimTrack<f64>: {"mode":"Static","value":n} or {"mode":"Keyframed","value":[{id, t_us, value, interp}]} with keyframe `t_us` timeline-absolute. Use the granular tools (set_keyframe etc.) unless you need bulk authoring. Replacing only one scale axis on a scale-linked layer diverges the pair and auto-clears the link in the same commit (see set_scale_linked).',
-    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, param_key: { type: 'string' }, track: {} }, required: ['layer_id', 'param_key', 'track'] },
+    inputSchema: { type: 'object', properties: { layer_id: { type: 'string' }, param_key: { type: 'string' }, track: ANIM_TRACK_SCHEMA }, required: ['layer_id', 'param_key', 'track'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
       track: parseAnimatedF64(a.track) }) },
   { name: 'dry_run', exec: 'dedicated',
     description: 'Try-run a sequence of edit operations against a clone of the current project WITHOUT committing. Useful for previewing complex multi-step edits — agents can detect overlap / invariant violations before mutating real state. Validates after each op (matching real `commit()` behaviour) and HALTS at the first error so subsequent ops don\'t dry-run against a state real execution wouldn\'t reach. Returns `{ results: [{ index, status, output? | error? }, ...] }`. Supports add_color_layer, add_video_layer, update_layer, update_layer_params, move_layer, split_layer, delete_layer. Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.',
-    inputSchema: { type: 'object', properties: { operations: { type: 'array' } }, required: ['operations'] },
+    inputSchema: { type: 'object', properties: { operations: {
+      type: 'array',
+      items: { type: 'object', description: "OperationSpec: {\"kind\": \"add_color_layer\" | \"add_video_layer\" | \"update_layer\" | \"update_layer_params\" | \"move_layer\" | \"split_layer\" | \"delete_layer\", ...that tool's snake_case args}." },
+    } }, required: ['operations'] },
     parseDedicated: (a) => ({ operations: asArray(a.operations, 'operations') }) },
   { name: 'add_motif', exec: 'dedicated',
     description: "Add a motif layer to a track. The motif is rasterized to a PNG sequence on first render and cached content-addressably; subsequent renders are folder lookups. Args: `motif_id` (from `list_motifs`), `t_start_us` (timeline microseconds), optional `t_end_us` (defaults to `t_start_us + default_duration_s * 1e6`), optional `track_id` (when omitted, always spawns a fresh track labeled 'Overlay' — never reuses an existing track, so consecutive auto-inserts can't collide), optional `props` (JSON object matched against the motif's `props_schema`; unknown keys reject, missing keys fall back to defaults). Returns the new layer id.",
@@ -617,15 +747,15 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         t_start_us: { type: 'integer', format: 'int64', description: 'Layer start in timeline microseconds.' },
         t_end_us: { type: ['integer', 'null'], format: 'int64', description: 'Layer end in timeline microseconds. Defaults to `t_start_us + default_duration_s * 1_000_000` when omitted.' },
         track_id: { type: ['string', 'null'], description: 'Target track id. If omitted, a fresh track labeled "Overlay" is created.' },
-        props: { description: 'Motif props as a JSON object. Keys must match the motif\'s `props_schema`; unknown keys reject; missing keys fill from defaults.' },
+        props: { type: 'object', description: 'Motif props as a JSON object. Keys must match the motif\'s `props_schema`; unknown keys reject; missing keys fill from defaults. Omit entirely to use all defaults.' },
       },
-      required: ['motif_id', 'props', 't_start_us'] },
+      required: ['motif_id', 't_start_us'] },
     parseDedicated: (a) => ({
       motif_id: parseStr(a.motif_id, 'motif_id'),
       t_start_us: parseNum(a.t_start_us, 't_start_us'),
       t_end_us: parseNumOpt(a.t_end_us, 't_end_us') ?? null,
       track_id: a.track_id != null ? parseUuid(a.track_id, 'track_id') : null,
-      props: a.props ?? null,
+      props: a.props != null ? parseObj(a.props, 'props') : null,
     }) },
   { name: 'checkpoint', exec: 'dedicated',
     description: 'Create an explicit named checkpoint of the current state. Checkpoints survive new commits (they don\'t get truncated like the redo tail) and persist in the .vproj save file. Returns the new checkpoint id. The human\'s agent-mode record panel renders each created checkpoint as a pin-style row with a Restore button — use this at logical batch boundaries.',
