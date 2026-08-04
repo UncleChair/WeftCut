@@ -183,6 +183,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   update_layer_params: (a) => ({ op: 'update_layer_params', args: { layer: a.layerId, patch: a.patch } }),
   update_layer_param_track: (a) => ({ op: 'update_layer_param_track', args: { layer: a.layerId, param_key: a.paramKey, track: a.track } }),
   update_layer_param_tracks: (a) => ({ op: 'update_layer_param_tracks', args: { layer: a.layerId, entries: a.entries } }),
+  set_scale_linked: (a) => ({ op: 'set_scale_linked', args: { layer: a.layerId, linked: a.linked } }),
   add_effect: (a) => ({ op: 'add_effect', args: { layer: a.layerId, kind: a.kind } }),
   update_effect: (a) => ({ op: 'update_effect', args: { layer: a.layerId, effect: a.effectId, patch: a.patch } }),
   move_effect: (a) => ({ op: 'move_effect', args: { layer: a.layerId, effect: a.effectId, new_index: a.newIndex } }),
@@ -218,7 +219,7 @@ export const PRODUCTION_OPS = new Set<string>([
   // Remaining mechanical + meta channels
   'move_layer', 'trim_layer', 'delete_layer', 'remove_media', 'duplicate_layer', 'split_layer_grouped',
   'groups_create', 'groups_dissolve',
-  'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks',
+  'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks', 'set_scale_linked',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'set_composition', 'fit_composition_to_layers',
   'update_track_flags', 'set_role_gain', 'update_role_flags',

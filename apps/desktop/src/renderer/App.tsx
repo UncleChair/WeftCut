@@ -14,7 +14,16 @@ import {
   projectUndo,
   type ProjectSummary,
 } from "./ipc";
-import { adjacentFrameBoundaryUs } from "./frames";
+import {
+  adjacentFrameBoundaryUs,
+  displayedFrameStartUs,
+  inclusiveOutBoundaryUs,
+} from "./frames";
+import {
+  clearRange as clearMarkedRange,
+  setRangeIn,
+  setRangeOut,
+} from "./state/rangeStore";
 import {
   playheadTimeUs,
   setPlayheadTimeUs,
@@ -38,7 +47,6 @@ import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
 import { AppDialog } from "./components/AppDialog";
 import { Button } from "@/components/ui/button";
-import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { useAppNotices } from "./components/useAppNotices";
 import { SystemStatusPanel } from "./components/SystemStatusPanel";
@@ -69,6 +77,7 @@ import { useLogStore } from "./logs/store";
 import { useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
 import { toggleDisplayMode } from "./settings/appSettingsStore";
+import { setTool, useActiveTool } from "./state/toolStore";
 import { logEmit } from "./ipc";
 import {
   DockWorkspace,
@@ -105,11 +114,12 @@ export function App({ onCloseProject }: AppProps) {
   // setError call sites), not rendered here, so we keep only the setter.
   const [, setError] = useState<string | null>(null);
   const primaryLayerId = usePrimaryLayerId();
-  // Blade-tool mode: pressing `C` toggles it; clicks on layers in the
-  // timeline split the layer at the click point instead of selecting it.
-  // Exits on a second `C` press or `Esc`. Living at App level so the
-  // shortcut handler and the Timeline both see the same flag.
-  const [bladeMode, setBladeMode] = useState<boolean>(false);
+  // Modal timeline tool. Lives in `toolStore` (not App state) so the Quick
+  // Actions Panel can read it without threading through
+  // `dockPanelContracts` — which would rebuild that memo, and re-render every
+  // open Panel, on each tool switch. Subscribed here only for the Edit menu's
+  // checkmark; the shortcut handlers write through `setTool` imperatively.
+  const activeTool = useActiveTool();
   // R.7 inline-reveal: track id the user surfaced from the right-panel peek
   // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
   // selecting a layer on a different track, or by clicking another peek
@@ -385,18 +395,17 @@ export function App({ onCloseProject }: AppProps) {
     [busy, refresh],
   );
 
-  // Import queue, per-media proxy/decodability readiness, and the import-proxy
-  // dialog live in useImportReadiness; it takes `run` (defined above) so its
-  // import callbacks route through the busy guard + refresh.
+  // Import queue, per-media proxy/decodability readiness, and the pool-wide
+  // optimization classification live in useImportReadiness; it takes `run`
+  // (defined above) so its import callbacks route through the busy guard +
+  // refresh.
   const {
     importingMediaIds,
     proxyState,
     proxyStateRef,
     decodeProbeMemo,
     previewDecodableMediaIds,
-    dialogItems,
-    dialogHasAttention,
-    clearDialogBatch,
+    optimizeById,
     importMediaFiles,
   } = useImportReadiness({ summary, run, previewRef });
   // Export lifecycle (state, close guard, taskbar/notification mirrors, the
@@ -566,7 +575,10 @@ export function App({ onCloseProject }: AppProps) {
     pasteAtPlayhead,
     importMedia: importMediaFiles,
     export: () => setExportDialogOpen(true),
-    toggleBladeMode: () => setBladeMode((v) => !v),
+    // One key per tool, both idempotent (`toolStore.ts`). `Esc` → Selection
+    // is bound inside Timeline, where blade-mode's preview state lives.
+    selectTool: () => setTool("select"),
+    toggleBladeMode: () => setTool("blade"),
     toggleLog: toggleLogConsole,
     focusLogSearch,
     // R.8: T flips the AB / Show-All display_mode at the app level.
@@ -636,6 +648,27 @@ export function App({ onCloseProject }: AppProps) {
     seekEnd: () => {
       void seekTo(summary?.duration_us ?? 0);
     },
+    // In/out marking bridges the playhead's frame-ANCHOR convention to the
+    // range's start-inclusive / end-EXCLUSIVE one. Both translations go
+    // through `frames.ts` rather than a bare ±1 here: storing the raw anchor
+    // as an out point would drop the frame the user is looking at, and — since
+    // the playhead can't pass the last frame's start — make the final frame
+    // unreachable. See `docs/data-model.md` (boundary semantics).
+    markIn: () => {
+      const comp = summary?.composition;
+      if (!comp) return;
+      setRangeIn(
+        displayedFrameStartUs(playheadTimeUs(), comp.fps_num, comp.fps_den),
+      );
+    },
+    markOut: () => {
+      const comp = summary?.composition;
+      if (!comp) return;
+      setRangeOut(
+        inclusiveOutBoundaryUs(playheadTimeUs(), comp.fps_num, comp.fps_den),
+      );
+    },
+    clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {
       // Agent mode doesn't mount the palette — setting the flag would sit
       // latent and pop the palette open when the session ends.
@@ -716,11 +749,10 @@ export function App({ onCloseProject }: AppProps) {
       previewDecodableOf,
       revealedTrackId,
       keybindings,
-      bladeMode,
       importingMediaIds,
       proxyState,
       previewDecodableMediaIds,
-      onExitBlade: () => setBladeMode(false),
+      optimizeById,
       onMutated: refresh,
       onImportMedia: importMediaFiles,
       selectedLayerId: primaryLayerId,
@@ -735,10 +767,10 @@ export function App({ onCloseProject }: AppProps) {
       previewDecodableOf,
       revealedTrackId,
       keybindings,
-      bladeMode,
       importingMediaIds,
       proxyState,
       previewDecodableMediaIds,
+      optimizeById,
       refresh,
       importMediaFiles,
       primaryLayerId,
@@ -790,7 +822,9 @@ export function App({ onCloseProject }: AppProps) {
           onSaveAndClose={saveAndClose}
           onUndo={() => run(projectUndo)}
           onRedo={() => run(projectRedo)}
-          onToggleBladeMode={() => setBladeMode((v) => !v)}
+          activeTool={activeTool}
+          onSelectTool={() => setTool("select")}
+          onToggleBladeMode={() => setTool("blade")}
           onAddColorLayer={handleAddColorLayer}
           onAddTextLayer={handleAddTextLayer}
           onOpenMotifPicker={() => setMotifPickerOpen(true)}
@@ -836,9 +870,6 @@ export function App({ onCloseProject }: AppProps) {
       {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
           comp={summary.composition}
-          // Render-time snapshot: the dialog opens via a state flip, so this
-          // reads the playhead at open — a live-updating default is pointless.
-          currentTimeUs={playheadTimeUs()}
           durationUs={summary.duration_us}
           hasTenBitSource={summary.media.some(
             (m) => m.kind === "Video" && tenBitExportCapable(m),
@@ -885,12 +916,6 @@ export function App({ onCloseProject }: AppProps) {
             </div>
           </div>
         </AppDialog>
-      )}
-      {dialogHasAttention && (
-        <ImportProxyDialog
-          items={dialogItems}
-          onDismiss={clearDialogBatch}
-        />
       )}
       {staleMotifs.length > 0 && (
         <MotifStaleDialog

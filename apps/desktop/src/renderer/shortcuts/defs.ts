@@ -18,6 +18,7 @@ export type ActionId =
   | "pasteAtPlayhead"
   | "importMedia"
   | "export"
+  | "selectTool"
   | "toggleBladeMode"
   | "toggleLog"
   | "focusLogSearch"
@@ -42,6 +43,9 @@ export type ActionId =
   | "seekNextEdit"
   | "seekStart"
   | "seekEnd"
+  | "markIn"
+  | "markOut"
+  | "clearRange"
   | "openSearchPalette"
   | "openSettings";
 
@@ -93,11 +97,16 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   pasteAtPlayhead: { defaultKeys: ["Mod+V"],               labelKey: "actions.paste_at_playhead", fireWhenEditing: false },
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },
-  // Bare-letter `C` toggles blade-tool mode in the timeline. While
-  // active, clicking a layer splits it at the click point (snapped to
-  // the composition-frame grid) instead of selecting/dragging it.
-  // Press `C` again or `Esc` to exit. Bare-letter chords don't fire
-  // in text inputs by default.
+  // Modal timeline tools, one key per tool (`toolStore.ts`): `V` arms
+  // Selection, `C` arms the Blade. Both are IDEMPOTENT — pressing a tool's
+  // key twice keeps that tool. `Esc` also returns to Selection (handled in
+  // Timeline). While the Blade is armed, clicking a layer splits it at the
+  // click point (snapped to the composition-frame grid) instead of
+  // selecting/dragging it. Bare-letter chords don't fire in text inputs.
+  //
+  // `toggleBladeMode` keeps its historical id so users' persisted keybinding
+  // overrides survive; it no longer toggles — it selects the Blade.
+  selectTool:      { defaultKeys: ["V"],                   labelKey: "actions.select_tool" },
   toggleBladeMode: { defaultKeys: ["C"],                   labelKey: "actions.toggle_blade_mode" },
   toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
   focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
@@ -172,6 +181,16 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   seekNextEdit:      { defaultKeys: ["ArrowDown"],         labelKey: "actions.seek_next_edit",      repeatable: true },
   seekStart:         { defaultKeys: ["Home"],              labelKey: "actions.seek_start" },
   seekEnd:           { defaultKeys: ["End"],               labelKey: "actions.seek_end" },
+  // Timeline in/out points (`rangeStore.ts`) at the Premiere/Resolve key
+  // positions. Bare letters, so they stay dead inside text fields. NOT
+  // captureGlobal: unlike Space, `I`/`O` mean nothing to a focused button, so
+  // there is no chrome control to win the key back from.
+  //
+  // Each is IDEMPOTENT — pressing `I` twice at one playhead leaves the same in
+  // point — so neither is `repeatable`; holding the key marks nothing new.
+  markIn:            { defaultKeys: ["I"],                 labelKey: "actions.mark_in" },
+  markOut:           { defaultKeys: ["O"],                 labelKey: "actions.mark_out" },
+  clearRange:        { defaultKeys: ["Alt+X"],             labelKey: "actions.clear_range" },
   // Global search palette. A chord, so it fires while a text input is
   // focused (default chord behavior) — expected for a Spotlight-style UI.
   openSearchPalette: { defaultKeys: ["Mod+K"], labelKey: "actions.open_search" },

@@ -167,8 +167,11 @@ describe("normalizeLayout", () => {
 });
 
 describe("createEditingLayout", () => {
-  it("builds the complete 22/53/25 by 62/38 Editing baseline", () => {
+  it("builds the complete strip + 22/53/25 by 72/28 Editing baseline", () => {
     const result = createEditingLayout({ width: 1_000, height: 800 });
+    // A node's `size` is measured along its PARENT's axis, and branches
+    // alternate: horizontal root (widths) → vertical body (heights) → the
+    // horizontal editor row (widths).
     const dockview = result.dockview as unknown as {
       grid: {
         orientation: string;
@@ -177,12 +180,19 @@ describe("createEditingLayout", () => {
         root: {
           type: string;
           data: [
+            { type: string; size: number; data: { views: string[] } },
             {
               type: string;
               size: number;
-              data: Array<{ size: number; data: { views: string[] } }>;
+              data: [
+                {
+                  type: string;
+                  size: number;
+                  data: Array<{ size: number; data: { views: string[] } }>;
+                },
+                { type: string; size: number; data: { views: string[] } },
+              ];
             },
-            { type: string; size: number; data: { views: string[] } },
           ];
         };
       };
@@ -191,13 +201,22 @@ describe("createEditingLayout", () => {
 
     expect(result).toMatchObject({ version: 1, empty: false });
     expect(dockview.grid).toMatchObject({
-      orientation: "VERTICAL",
+      orientation: "HORIZONTAL",
       width: 1_000,
       height: 800,
     });
-    const [editor, timeline] = dockview.grid.root.data;
+    const [strip, body] = dockview.grid.root.data;
+    expect(strip).toMatchObject({
+      type: "leaf",
+      size: 44,
+      data: { views: ["quick-actions"] },
+    });
+    // The strip spans the full height because it sits BESIDE the body branch,
+    // which is what holds both the editor row and the Timeline row.
+    expect(body).toMatchObject({ type: "branch", size: 956 });
+    const [editor, timeline] = body.data;
     expect(editor).toMatchObject({ type: "branch", size: 576 });
-    expect(editor.data.map((node) => node.size)).toEqual([220, 530, 250]);
+    expect(editor.data.map((node) => node.size)).toEqual([210, 507, 239]);
     expect(editor.data.map((node) => node.data.views)).toEqual([
       ["media"],
       ["preview"],
@@ -214,11 +233,16 @@ describe("createEditingLayout", () => {
       "media",
       "nearby",
       "preview",
+      "quick-actions",
       "timeline",
     ]);
     expect(result.placements.effect).toEqual({
       siblings: ["attribute", "effect", "nearby"],
       index: 1,
+    });
+    expect(result.placements["quick-actions"]).toEqual({
+      siblings: ["quick-actions"],
+      index: 0,
     });
   });
 

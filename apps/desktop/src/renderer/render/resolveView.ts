@@ -17,8 +17,12 @@ import type {
 } from "../ipc";
 import { resolveAnimated, resolveAnimatedColor } from "./animated";
 
+// `scale_linked` is also omitted from every transform-bearing Resolved view:
+// it is EDITING intent (which the inspector/timeline read off the raw view),
+// not a render input — by the time tracks are resolved to scalars the twin
+// pair is already two equal numbers.
 export interface ResolvedVideoClipView
-  extends Omit<VideoClipView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
+  extends Omit<VideoClipView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity" | "scale_linked"> {
   x: number;
   y: number;
   scale_x: number;
@@ -27,7 +31,7 @@ export interface ResolvedVideoClipView
   opacity: number;
 }
 export interface ResolvedImageOverlayView
-  extends Omit<ImageOverlayView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
+  extends Omit<ImageOverlayView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity" | "scale_linked"> {
   x: number;
   y: number;
   scale_x: number;
@@ -36,7 +40,7 @@ export interface ResolvedImageOverlayView
   opacity: number;
 }
 export interface ResolvedTextView
-  extends Omit<TextView, "color" | "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
+  extends Omit<TextView, "color" | "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity" | "scale_linked"> {
   color: Rgba;
   x: number;
   y: number;
@@ -49,7 +53,7 @@ export interface ResolvedColorView extends Omit<ColorView, "color"> {
   color: Rgba;
 }
 export interface ResolvedMotifView
-  extends Omit<MotifView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity"> {
+  extends Omit<MotifView, "x" | "y" | "scale_x" | "scale_y" | "rotation_deg" | "opacity" | "scale_linked"> {
   x: number;
   y: number;
   scale_x: number;

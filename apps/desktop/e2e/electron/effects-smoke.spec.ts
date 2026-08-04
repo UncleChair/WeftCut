@@ -331,8 +331,10 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   // Wait for the panel to render before clicking Add (guards the selection→render race).
   await page.getByTestId('effect-add').waitFor({ state: 'visible' })
 
-  // Add a blur via the panel button.
+  // Add a blur via the panel picker: the trigger opens a searchable, grouped
+  // popup; the row carries the kind in its testid.
   await page.getByTestId('effect-add').click()
+  await page.getByTestId('effect-pick-blur').click()
   await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as Array<{ kind: string }>).length).toBe(1)
   let fx = effectsOf((await summary(page)) as any, layerId) as Array<{ kind: string; id: string; enabled: boolean; params: any }>
   expect(fx[0]!.kind).toBe('blur')
@@ -342,16 +344,21 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   // summary order swapped, then drop the extra so the rest of the test operates
   // on the original effect.
   await page.getByTestId('effect-add').click()
+  await page.getByTestId('effect-pick-blur').click()
   await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as unknown[]).length).toBe(2)
   const order = effectsOf((await summary(page)) as any, layerId) as Array<{ id: string }>
   expect(order[0]!.id).toBe(effectId) // original blur is first
   const secondId = order[1]!.id
+  // Move/reset/remove live behind the card's ⋯ overflow menu, so each needs
+  // its trigger opened first.
+  await page.getByTestId('effect-menu-0').click()
   await page.getByTestId('effect-down-0').click()
   await expect.poll(async () => {
     const f = effectsOf((await summary(page)) as any, layerId) as Array<{ id: string }>
     return f[0]?.id
   }).toBe(secondId) // moving row 0 down puts the second effect first
   // Drop the extra (now at row 0); the original effectId returns to row 0.
+  await page.getByTestId('effect-menu-0').click()
   await page.getByTestId('effect-remove-0').click()
   await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as unknown[]).length).toBe(1)
   await expect.poll(async () => {
@@ -394,6 +401,7 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   }).toBe(false)
 
   // Remove via the panel → chain empties.
+  await page.getByTestId('effect-menu-0').click()
   await page.getByTestId('effect-remove-0').click()
   await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as unknown[]).length).toBe(0)
 

@@ -21,6 +21,7 @@ import {
   splitLayerGrouped,
   updateLayer,
   updateLayerParamTrack,
+  updateLayerParamTracks,
   type AnimTrack,
   type GroupSummary,
   type KeybindingsMap,
@@ -31,9 +32,11 @@ import {
   type TransitionSummary,
 } from "../ipc";
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
+import { findPanelLayer } from "../panels/panelLayer";
+import { scaleFanOutFor } from "../keyframe/descriptors";
+import { fanOutEntries } from "../keyframe/fanOut";
 import { formatTimecode, snapFrameRound } from "../frames";
 import {
-  toggleDisplayMode,
   useDisplayMode,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
@@ -72,6 +75,11 @@ import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
+import {
+  useRangeInUs,
+  useRangeOutUs,
+  useRangeReveal,
+} from "../state/rangeStore";
 import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import { registerScrollToTime } from "../state/navigation";
 import {
@@ -83,7 +91,8 @@ import {
   useSelectedLayerIds,
   useSelectedTransitionId,
 } from "../state/selectionStore";
-import { isEditableTarget } from "../shortcuts/match";
+import { isEditableTarget, resolveAccelerator } from "../shortcuts/match";
+import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import {
   CUT_CLICK_TOLERANCE_PX,
   defaultTransitionDurationUs,
@@ -536,19 +545,14 @@ export function Timeline({
     },
   ]);
 
-  // Cumulative (y, height) per visible track row. Heights vary now, so
-  // hit-testing for "which track is the pointer over" needs a real
-  // offset table instead of `Math.floor(y / TRACK_HEIGHT)`.
-  const trackRows = useMemo(() => {
-    const rows: { track: TrackSummary; y: number; height: number }[] = [];
-    let y = 0;
-    for (const { track } of orderedTracks) {
-      const h = trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT;
-      rows.push({ track, y, height: h });
-      y += h;
-    }
-    return rows;
-  }, [orderedTracks, trackHeights]);
+  // Live lane-element registry. The drag hit-test measures these nodes rather
+  // than recomputing row offsets from track heights — a row's on-screen extent
+  // includes chrome that arithmetic misses (see `trackIdAtClientY`).
+  const laneElsRef = useRef(new Map<string, HTMLElement>());
+  const registerLaneEl = useCallback((trackId: string, el: HTMLElement | null) => {
+    if (el) laneElsRef.current.set(trackId, el);
+    else laneElsRef.current.delete(trackId);
+  }, []);
 
   const { heightDrag, beginHeightDrag } = useHeightDrag({
     trackHeightsRef,
@@ -561,8 +565,7 @@ export function Timeline({
       groups,
       groupByLayerId,
       orderedTracks,
-      trackRows,
-      canvasRef,
+      laneEls: laneElsRef,
       pxPerSec,
       fpsNum,
       fpsDen,
@@ -738,13 +741,24 @@ export function Timeline({
   const onCommitParamTrack = useCallback(
     async (layerId: string, paramKey: string, track: AnimTrack<number>) => {
       try {
-        await updateLayerParamTrack(layerId, paramKey, track);
+        // Every timeline keyframe edit (value field, diamond drag, interp
+        // menu, curve editor, navigator) funnels through here. A scale write
+        // on a LINKED layer fans out to both axes in one batch — otherwise
+        // the result-based invariant would read the single-axis write as
+        // divergence and silently unlink the layer.
+        const layer = findPanelLayer(tracks, layerId);
+        const fanOut = scaleFanOutFor(paramKey, layer?.params ?? null);
+        if (fanOut) {
+          await updateLayerParamTracks(layerId, fanOutEntries(fanOut, track));
+        } else {
+          await updateLayerParamTrack(layerId, paramKey, track);
+        }
         await onMutated();
       } catch (e) {
         console.warn("commit param track failed:", e);
       }
     },
-    [onMutated],
+    [onMutated, tracks],
   );
 
   const onRename = useCallback((layerId: string) => {
@@ -916,9 +930,6 @@ export function Timeline({
 
   return (
     <>
-    <div className="flex flex-none items-center gap-2 border-b border-border-soft bg-black/20 px-2 py-1 text-[11px]">
-      <DisplayModePill mode={displayMode} />
-    </div>
     <div
       ref={rootRef}
       className={`scrollbar-hidden relative min-h-0 w-full flex-1 overflow-auto bg-card ${
@@ -988,6 +999,7 @@ export function Timeline({
               <Fragment key={track.id}>
               <TrackLane
                 track={track}
+                registerLaneEl={registerLaneEl}
                 pxPerSec={pxPerSec}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
                 isExpanded={expandedTracks.has(track.id)}
@@ -1033,6 +1045,7 @@ export function Timeline({
                 width={widthPx}
               />
             )}
+            <OutOfRangeDim pxPerSec={pxPerSec} />
           </div>
           <TimelinePlayhead
             pxPerSec={pxPerSec}
@@ -1062,6 +1075,61 @@ export function Timeline({
       />
     )}
     </>
+  );
+}
+
+/**
+ * Washes out everything outside the marked in/out span — but only for a beat
+ * after the range changes, then fades away.
+ *
+ * This is the deliberate half of the in/out visual design. A permanent wash is
+ * a full-width tint over the user's clips paying for a feature used twice a
+ * session; as a flash it answers the one question marking actually raises
+ * ("which span did I just define?") and then gets out of the way. The standing
+ * record lives in the ruler's end caps, which cost no lane pixels, and in the
+ * Quick Actions strip, where Clear being enabled means a range exists.
+ *
+ * `z-[4]` clears every LayerBlock (max `z-[3]`) while staying under the blade
+ * preview (`z-[5]`) and the playhead, which must never read as out-of-range.
+ * The node stays mounted at zero opacity so the fade is a CSS transition
+ * rather than a pop; `pointer-events-none` keeps it inert either way.
+ */
+function OutOfRangeDim({ pxPerSec }: { pxPerSec: number }) {
+  const inUs = useRangeInUs();
+  const outUs = useRangeOutUs();
+  const revealed = useRangeReveal();
+  if (inUs === null && outUs === null) return null;
+  // An unmarked side means "to the edge", matching `resolveMarkedRange`: one
+  // point alone is a complete instruction, not half a range — so that side
+  // simply renders no wash.
+  const inPx = inUs !== null ? (inUs / 1_000_000) * pxPerSec : 0;
+  const outPx = outUs !== null ? (outUs / 1_000_000) * pxPerSec : 0;
+  return (
+    <div
+      data-testid="timeline-out-of-range"
+      data-revealed={revealed ? "true" : "false"}
+      className={`pointer-events-none absolute inset-0 z-[4] transition-opacity duration-300 ${
+        revealed ? "opacity-100" : "opacity-0"
+      }`}
+      aria-hidden="true"
+    >
+      {inUs !== null && inPx > 0 && (
+        <div
+          className="absolute inset-y-0 left-0 bg-background/65"
+          style={{ width: inPx }}
+        />
+      )}
+      {/* Anchored `right-0` rather than sized `widthPx - outPx`: the canvas
+          carries `min-w-full`, so on a project shorter than the viewport it is
+          WIDER than `widthPx` and a computed width would stop short of its real
+          right edge, leaving an undimmed strip past the end of the project. */}
+      {outUs !== null && (
+        <div
+          className="absolute inset-y-0 right-0 bg-background/65"
+          style={{ left: outPx }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1171,50 +1239,24 @@ function BladeCutPreview({
   );
 }
 
-/// `docs/data-model.md`. The pill IS the setting: a click
-/// flips the app-level `display_mode` (`appSettingsSet` round-trips
-/// through Rust which emits `app_settings:changed` so every
-/// subscriber syncs). Same surface the View menu and `T` shortcut
-/// drive.
-function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
-  const { t } = useTranslation();
-  const label = mode === "AbRoll" ? "A/B" : t("timeline.mode_all", { defaultValue: "All" });
-  const ariaLabel =
-    mode === "AbRoll"
-      ? t("timeline.mode_ab_hint", { defaultValue: "Showing A/B-roll tracks only. Click to show all." })
-      : t("timeline.mode_all_hint", { defaultValue: "Showing all tracks. Click to filter to A/B-roll only." });
-  return (
-    <button
-      type="button"
-      className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-[3px] text-[11px] font-semibold tracking-wide transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
-        mode === "AbRoll"
-          ? "border-blue-400/50 bg-blue-950 text-blue-100"
-          : "border-border bg-secondary text-foreground hover:bg-accent"
-      }`}
-      onClick={() => {
-        void toggleDisplayMode();
-      }}
-      title={ariaLabel}
-      aria-label={ariaLabel}
-      aria-pressed={mode === "AbRoll"}
-    >
-      {mode === "AbRoll"
-        ? t("timeline.mode_ab", { defaultValue: "A/B" })
-        : label}
-    </button>
-  );
-}
 
 
 function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
   const { t } = useTranslation();
   // Rendered when the user is in AB mode but no track carries a role
-  // stamp; the user toggles to Show-All manually.
+  // stamp; the user switches to Show-All manually.
+  //
+  // The hint names the KEY, not the Quick Actions button: the strip is a Panel
+  // the user can close or drag away, whereas the binding is always live. Read
+  // through the bindings context so a remap can't make this text lie.
+  const binding = useEffectiveBindings("toggleDisplayMode");
+  const accelerator = binding ? resolveAccelerator(binding) : "";
   const message =
     mode === "AbRoll"
       ? t("timeline.empty_ab_mode", {
+          key: accelerator,
           defaultValue:
-            "No A/B-roll content here. Drop a clip on Video A or Video B, or click the A/B pill above to switch to Show All.",
+            "No A/B-roll content here. Drop a clip on Video A or Video B, or press {{key}} to show all tracks.",
         })
       : t("timeline.empty_placeholder");
   return <div className="p-6 text-center text-xs text-muted-foreground">{message}</div>;

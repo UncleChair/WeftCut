@@ -82,6 +82,10 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
           type: 'string',
         },
         manifest: {
+          // `type` is load-bearing: an untyped field gets string-coerced by MCP
+          // clients, forcing agents to send the manifest as a JSON-encoded
+          // string (.scratch/mcp-agent-hardening; bijection assertion 7).
+          type: 'object',
           description:
             'The manifest as a JSON object (its `id`/`version` are ignored — app-assigned). Shape: `{ name, size:[w,h], default_duration_s, props_schema, ... }` — inspect a built-in via `get_motif_source` for an exact example. Rejected if malformed.',
         },
@@ -113,7 +117,8 @@ export const MOTIF_TOOL_DEFS: ReadonlyArray<MotifToolDef> = [
           type: 'string',
         },
         props: {
-          description: 'Optional props (JSON object); defaults to the manifest defaults.',
+          type: 'object',
+          description: 'Props (JSON object); `{}` uses the manifest defaults.',
         },
         t_sec: {
           description: 'Content time in seconds to render (e.g. 0 = first frame).',

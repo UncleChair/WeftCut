@@ -1,5 +1,6 @@
-import { SCHEMA_VERSION, defaultSettings, type Group, type Project } from './model'
+import { SCHEMA_VERSION, defaultSettings, type Animated, type Group, type Project } from './model'
 import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from './snap'
+import { scaleTracksTwins } from './mutations/scaleLink'
 
 function serializeGroup(g: Group): unknown {
   const out: Record<string, unknown> = { id: g.id, members: [...g.members].sort() }
@@ -218,6 +219,23 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
   return repairs
 }
 
+/** Wire-shaped and defensive like repairGrid (runs BEFORE the cast to Project):
+ *  a transform missing its scale tracks is left for validate to reject; the
+ *  twin predicate itself treats malformed entries as diverged. */
+function backfillScaleLinked(o: Record<string, unknown>): void {
+  for (const track of (o.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
+    for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
+      if (layer === null || typeof layer !== 'object') continue
+      const t = (layer.params as { transform?: unknown } | undefined)?.transform
+      if (t === null || typeof t !== 'object') continue
+      const tr = t as Record<string, unknown>
+      if (tr.scale_linked !== undefined && tr.scale_linked !== true) continue
+      const twins = scaleTracksTwins(tr.scale_x as Animated<number>, tr.scale_y as Animated<number>)
+      if (tr.scale_linked === undefined || !twins) tr.scale_linked = twins
+    }
+  }
+}
+
 /** Validate + type a wire object as a Project. The load guard is the schema
  *  version (project.rs:17-22 rejects others); beyond that, a shallow structural
  *  check rejects a truncated/corrupt project.json (right version, missing/wrong
@@ -258,6 +276,15 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // get_project_settings → the renderer proxy store) hands `undefined` downstream
   // and a `settings.proxy_overrides[id]` read throws mid-render. Existing keys win.
   o.settings = { ...defaultSettings(), ...(o.settings as Record<string, unknown>) }
+  // `Transform.scale_linked` is additive the same way (absent on older saves).
+  // Backfilled from a TWIN CHECK, never blindly: linked means "the two scale
+  // tracks edit as one", and a blind `true` would assert that on a layer whose
+  // tracks a user deliberately diverged. Present-but-lying flags (true over
+  // diverged tracks — only a hand-edited file can hold one, mutations enforce
+  // the invariant) are repaired the same way, so the collapsed Scale UI can
+  // never hide a divergent scale_y. Idempotent: a twin check on already-linked
+  // twins is the identity.
+  backfillScaleLinked(o)
   // Grid repair belongs in THIS pass, beside the additive-field backfill above:
   // one normalize site, so the validator that `replaceState` shares with
   // `project_open` only ever sees already-canonical input. A second repair site is

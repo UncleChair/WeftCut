@@ -227,6 +227,7 @@ export function createEditingLayout(
   const height = sizeOf(viewport.height) ?? 720;
   const contextual: PanelKind[] = ["attribute", "effect", "nearby"];
   const placements: PanelPlacements = {
+    "quick-actions": { siblings: ["quick-actions"], index: 0 },
     media: { siblings: ["media"], index: 0 },
     preview: { siblings: ["preview"], index: 0 },
     timeline: { siblings: ["timeline"], index: 0 },
@@ -234,62 +235,84 @@ export function createEditingLayout(
     effect: { siblings: contextual, index: 1 },
     nearby: { siblings: contextual, index: 2 },
   };
+  // The Quick Actions strip is a full-height edge bar, so it claims a fixed
+  // slice of the remaining editor width rather than a proportion.
+  const stripWidth = 44;
+  const bodyWidth = Math.max(1, width - stripWidth);
   const layout = normalizeLayout({
     version: WEFTCUT_LAYOUT_VERSION,
     empty: false,
     dockview: {
       grid: {
-        // Grid branches alternate axes. A vertical root gives the 62/38
-        // editor/timeline rows; its first child then lays out the three editor
-        // columns horizontally.
-        orientation: "VERTICAL",
+        // Grid branches ALTERNATE axes, and a node's `size` is measured along
+        // its PARENT's axis. A horizontal root gives the full-height Quick
+        // Actions strip beside everything else (sizes = widths); the body
+        // branch then alternates to vertical for the 72/28 editor/timeline
+        // rows (sizes = heights), and the editor row alternates back to
+        // horizontal for its three columns (sizes = widths).
+        orientation: "HORIZONTAL",
         width,
         height,
         root: {
           type: "branch",
-          size: height,
+          size: width,
           data: [
             {
+              type: "leaf",
+              size: stripWidth,
+              data: {
+                id: "editing-quick-actions",
+                views: ["quick-actions"],
+                activeView: "quick-actions",
+              },
+            },
+            {
               type: "branch",
-              size: Math.round(height * 0.72),
+              size: bodyWidth,
               data: [
                 {
-                  type: "leaf",
-                  size: Math.round(width * 0.22),
-                  data: {
-                    id: "editing-media",
-                    views: ["media"],
-                    activeView: "media",
-                  },
+                  type: "branch",
+                  size: Math.round(height * 0.72),
+                  data: [
+                    {
+                      type: "leaf",
+                      size: Math.round(bodyWidth * 0.22),
+                      data: {
+                        id: "editing-media",
+                        views: ["media"],
+                        activeView: "media",
+                      },
+                    },
+                    {
+                      type: "leaf",
+                      size: Math.round(bodyWidth * 0.53),
+                      data: {
+                        id: "editing-preview",
+                        views: ["preview"],
+                        activeView: "preview",
+                      },
+                    },
+                    {
+                      type: "leaf",
+                      size: Math.round(bodyWidth * 0.25),
+                      data: {
+                        id: "editing-context",
+                        views: contextual,
+                        activeView: "attribute",
+                      },
+                    },
+                  ],
                 },
                 {
                   type: "leaf",
-                  size: Math.round(width * 0.53),
+                  size: Math.round(height * 0.28),
                   data: {
-                    id: "editing-preview",
-                    views: ["preview"],
-                    activeView: "preview",
-                  },
-                },
-                {
-                  type: "leaf",
-                  size: Math.round(width * 0.25),
-                  data: {
-                    id: "editing-context",
-                    views: contextual,
-                    activeView: "attribute",
+                    id: "editing-timeline",
+                    views: ["timeline"],
+                    activeView: "timeline",
                   },
                 },
               ],
-            },
-            {
-              type: "leaf",
-              size: Math.round(height * 0.28),
-              data: {
-                id: "editing-timeline",
-                views: ["timeline"],
-                activeView: "timeline",
-              },
             },
           ],
         },

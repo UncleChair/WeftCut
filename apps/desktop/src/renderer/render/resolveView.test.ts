@@ -17,6 +17,7 @@ describe("resolveView", () => {
     const raw: VideoClipView = {
       media_id: "m", media_label: "m", src_in_us: 0, src_out_us: 1,
       x: stat(10), y: stat(20), scale_x: stat(1), scale_y: stat(2),
+      scale_linked: true,
       rotation_deg: stat(15), opacity: stat(0.5),
       speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
     };
@@ -30,6 +31,7 @@ describe("resolveView", () => {
     const raw: VideoClipView = {
       media_id: "m", media_label: "m", src_in_us: 0, src_out_us: 1,
       x: ramp, y: stat(0), scale_x: stat(1), scale_y: stat(1),
+      scale_linked: true,
       rotation_deg: stat(0), opacity: ramp,
       speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
     };
@@ -43,6 +45,7 @@ describe("resolveView", () => {
       anchor_x: 0, anchor_y: 0,
       color: { mode: "Static", value: white },
       x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1),
+      scale_linked: true,
       rotation_deg: stat(0), opacity: stat(1),
       outline: null, shadow: null,
     };
@@ -87,6 +90,7 @@ describe("resolveView", () => {
         y: { mode: "Static", value: 200 },
         scale_x: { mode: "Static", value: 1 },
         scale_y: { mode: "Static", value: 1 },
+        scale_linked: true,
         rotation_deg: { mode: "Static", value: 0 },
         opacity: { mode: "Static", value: 1 },
         outline: { color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 },

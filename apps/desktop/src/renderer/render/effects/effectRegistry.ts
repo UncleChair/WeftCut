@@ -19,9 +19,23 @@ export interface EffectParamSpec {
   apply(filter: Filter, value: number): void;
 }
 
+/// Picker grouping only — purely presentational. The render path never reads
+/// it, so a mis-categorised effect is a cosmetic bug, never a rendering one.
+export type EffectCategory = "blur" | "keying" | "color" | "stylize";
+
+/// Group order in the add picker. May name categories the catalog doesn't
+/// populate yet — empty groups are dropped at render.
+export const EFFECT_CATEGORY_ORDER: EffectCategory[] = [
+  "blur",
+  "keying",
+  "color",
+  "stylize",
+];
+
 export interface EffectDescriptor {
   kind: string;
   nameI18nKey: string;
+  category: EffectCategory;
   create(): Filter;
   params: Record<string, EffectParamSpec>;
   fidelity: "f16-verified" | "precision-reduced";
@@ -36,6 +50,7 @@ const REGISTRY: Record<string, EffectDescriptor> = {
   blur: {
     kind: "blur",
     nameI18nKey: "effects.blur.name",
+    category: "blur",
     create: () => new BlurFilter({ strength: 8 }),
     params: {
       strength: {
@@ -53,6 +68,7 @@ const REGISTRY: Record<string, EffectDescriptor> = {
   chromakey: {
     kind: "chromakey",
     nameI18nKey: "effects.chromakey.name",
+    category: "keying",
     create: () => new ChromaKeyFilter(),
     params: (() => {
       const p = (name: ChromaParamName, def: number, range: [number, number], step: number) => ({

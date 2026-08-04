@@ -1,10 +1,15 @@
 import { open as openDialog } from "@/bridge/dialog";
 import { documentDir, join } from "@/bridge/path";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir, type MediaSummary } from "../ipc";
-import { formatTimecode, inclusiveOutBoundaryUs, wallClockAside } from "../frames";
+import { formatTimecode } from "../frames";
+import {
+  resolveMarkedRange,
+  useRangeInUs,
+  useRangeOutUs,
+} from "../state/rangeStore";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -77,9 +82,15 @@ interface Comp {
   fps_den: number;
 }
 
+/// Where the exported span comes from. `marked` reads the timeline's in/out
+/// points (`rangeStore.ts`) and is the default whenever they exist — picking a
+/// range belongs on the timeline, where the playhead and the clips are visible;
+/// this dialog only confirms the choice. `custom` remains for typing an exact
+/// timecode without leaving the dialog.
+type RangeMode = "full" | "marked" | "custom";
+
 interface Props {
   comp: Comp;
-  currentTimeUs: number;
   durationUs: number;
   /// True when the project has at least one 10-bit-capable video source
   /// (H.264 Hi10P or AV1 10-bit — `tenBitExportCapable`). Used to show the
@@ -94,8 +105,14 @@ interface Props {
   ) => void;
 }
 
-export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBitSource, onCancel, onConfirm }: Props) {
+export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCancel, onConfirm }: Props) {
   const { t } = useTranslation();
+  // Read from the store rather than taken as a prop: the dialog is modal, so
+  // nothing can move the marks while it is open, and a prop would have to be
+  // threaded through App purely to be snapshotted at the same instant.
+  const markedInUs = useRangeInUs();
+  const markedOutUs = useRangeOutUs();
+  const markedRange = resolveMarkedRange(markedInUs, markedOutUs, durationUs);
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [location, setLocation] = useState<string>("");
   const [filename, setFilename] = useState<string>("weftcut-export");
@@ -105,9 +122,21 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   /// resolveEncodeTarget, not by this probe) — it gates the Export button
   /// against a mid-check state and drives the blurb text below.
   const [webcodecsOk, setWebcodecsOk] = useState<boolean | null>(null);
-  const [rangeMode, setRangeMode] = useState<"full" | "custom">("full");
-  const [rangeStartUs, setRangeStartUs] = useState<number>(0);
-  const [rangeEndUs, setRangeEndUs] = useState<number>(durationUs);
+  // Marked in/out wins the default when it exists: the user already made that
+  // choice on the timeline, and silently ignoring it here would be the same
+  // class of surprise as exporting a range nobody picked.
+  const [rangeMode, setRangeMode] = useState<RangeMode>(() =>
+    markedRange ? "marked" : "full",
+  );
+  // Custom seeds from the marked range so switching to it is a starting point
+  // to nudge, not a blank form. Initialiser-only — later marks can't reach in
+  // and overwrite what the user is typing.
+  const [rangeStartUs, setRangeStartUs] = useState<number>(
+    () => markedRange?.startUs ?? 0,
+  );
+  const [rangeEndUs, setRangeEndUs] = useState<number>(
+    () => markedRange?.endUs ?? durationUs,
+  );
   /// True while the experimental-10-bit confirmation gate is showing. Set when
   /// the user clicks Export with bitDepth === 10; cleared on cancel. The actual
   /// export only fires from the gate's "export anyway" button.
@@ -240,32 +269,30 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   const decodeComponentReason = useDecodeComponentReason();
   const projSummary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
-  /// The one range the export runs over — shared by doExport and the decode
-  /// summary so the honesty line can't drift from the run.
-  const chosenRange = useCallback(
-    () =>
+  /// The one range the export runs over — shared by doExport, the Export
+  /// button's own enablement, and every readout below, so none of them can
+  /// disagree with the run. Null when the current inputs resolve to no usable
+  /// span; nothing substitutes a fallback range on the way to the encoder.
+  const chosenRange = useMemo(
+    (): { startUs: number; endUs: number } | null =>
       rangeMode === "full"
-        ? { startUs: 0, endUs: durationUs }
-        : clampExportRange(rangeStartUs, rangeEndUs, durationUs),
-    [rangeMode, rangeStartUs, rangeEndUs, durationUs],
+        ? durationUs > 0
+          ? { startUs: 0, endUs: durationUs }
+          : null
+        : rangeMode === "marked"
+          ? markedRange
+          : clampExportRange(rangeStartUs, rangeEndUs, durationUs),
+    [rangeMode, markedRange, rangeStartUs, rangeEndUs, durationUs],
   );
-  /// How long the written file will be, from the SAME resolver as the run so the
-  /// readout cannot drift from it. Read as a DURATION, which is the one place NDF
-  /// timecode misleads — at 23.976/29.97/59.94 the digits under-report real time
-  /// by ~0.1%, so `wallClockAside` supplies the honest figure (spec R2-D3). Null
-  /// at integer rates, where the two would be the same number twice.
-  const rangeDurationUs = useMemo(() => {
-    const { startUs, endUs } = chosenRange();
-    return Math.max(0, endUs - startUs);
-  }, [chosenRange]);
-  const rangeWallClock = wallClockAside(rangeDurationUs, comp.fps_num, comp.fps_den);
   /// Spec decision 10's honesty line: same resolver, same inputs as the run
   /// (see routingSourceCounts). Recomputed on range/engine/depth edits, not
   /// just at dialog open, so it stays truthful while the user works.
   const decodeCounts = useMemo(() => {
     if (!settings || !projSummary || !exportIncludesVideo(settings)) return null;
-    const { startUs, endUs } = chosenRange();
-    const media = [...referencedVideoMediaIds(projSummary, startUs, endUs)]
+    if (!chosenRange) return null;
+    const media = [
+      ...referencedVideoMediaIds(projSummary, chosenRange.startUs, chosenRange.endUs),
+    ]
       .map((id) => mediaById.get(id))
       .filter((m): m is MediaSummary => !!m);
     const routing = resolveExportDecodeRouting({
@@ -289,13 +316,17 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
 
   async function doExport() {
     if (!settings || !location || !filename.trim()) return;
+    // Unreachable through the UI (`canExport` gates on the same value), but
+    // this is the one place a bad range would reach the encoder, so it refuses
+    // rather than substituting one.
+    if (!chosenRange) return;
     if (submittingRef.current) return; // guard against double-fire
     submittingRef.current = true;
     try {
       const ext = exportOutputExtension(settings);
       const out = await join(location, `${filename.trim()}.${ext}`);
       await exportSettingsSet(settings).catch(() => {});
-      onConfirm(settings, out, chosenRange());
+      onConfirm(settings, out, chosenRange);
     } catch {
       // Launch never reached onConfirm (e.g. path join failed) — unlatch so
       // the user can retry rather than being stuck on a dead dialog.
@@ -332,7 +363,10 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     (!settings?.includeVideo ||
       settings?.encoderEngine !== "webcodecs" ||
       webcodecsOk === true) &&
-    (rangeMode === "full" || rangeStartUs < rangeEndUs);
+    // The SAME value the run uses, not a re-derived `start < end`: the two
+    // disagreed on a range typed past the end of the project, which is how a
+    // rejected range used to slip through as a whole-project export.
+    chosenRange !== null;
 
   return (
     <>
@@ -464,13 +498,38 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                   <AppSelect
                     className="export-select"
                     value={rangeMode}
-                    onValueChange={(v) => setRangeMode(v as "full" | "custom")}
+                    onValueChange={(v) => setRangeMode(v as RangeMode)}
                     options={[
                       { value: "full", label: t("export_dialog.range_full") },
+                      {
+                        value: "marked",
+                        label: t("export_dialog.range_marked"),
+                        // Nothing to export from an unmarked timeline, and a
+                        // selectable option that resolves to nothing would just
+                        // dead-end on a disabled Export button.
+                        disabled: markedRange === null,
+                      },
                       { value: "custom", label: t("export_dialog.range_custom") },
                     ]}
                   />
                 </div>
+                {rangeMode === "marked" && markedRange && (
+                  // Read-only on purpose: the marks are edited on the timeline,
+                  // where the playhead and the clips are visible. Restating
+                  // them here as fields would rebuild, inside a modal that
+                  // hides the timeline, exactly the blind entry this feature
+                  // replaced.
+                  <div className="export-row">
+                    <span className="settings-toggle-label">
+                      {t("export_dialog.range_marked")}
+                    </span>
+                    <span className="settings-toggle-hint">
+                      {formatTimecode(markedRange.startUs, comp.fps_num, comp.fps_den)}
+                      {" → "}
+                      {formatTimecode(markedRange.endUs, comp.fps_num, comp.fps_den)}
+                    </span>
+                  </div>
+                )}
                 {rangeMode === "custom" && (
                   <>
                     <div className="export-row">
@@ -485,14 +544,6 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                           ariaLabel={t("export_dialog.range_in")}
                           onCommit={setRangeStartUs}
                         />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRangeStartUs(Math.min(currentTimeUs, rangeEndUs))
-                          }
-                        >
-                          {t("export_dialog.set_to_playhead")}
-                        </button>
                       </span>
                     </div>
                     <div className="export-row">
@@ -507,45 +558,25 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                           ariaLabel={t("export_dialog.range_out")}
                           onCommit={setRangeEndUs}
                         />
-                        <button
-                          type="button"
-                          // The playhead is a frame ANCHOR while the range end
-                          // is EXCLUSIVE: storing the raw playhead µs would
-                          // drop the frame the user is looking at, and — since
-                          // the playhead can't pass the last frame's start —
-                          // make the final frame unreachable. Store the
-                          // displayed frame's exclusive end instead.
-                          onClick={() =>
-                            setRangeEndUs(
-                              Math.max(
-                                inclusiveOutBoundaryUs(
-                                  currentTimeUs,
-                                  comp.fps_num,
-                                  comp.fps_den,
-                                ),
-                                rangeStartUs,
-                              ),
-                            )
-                          }
-                        >
-                          {t("export_dialog.set_to_playhead")}
-                        </button>
                       </span>
                     </div>
                   </>
                 )}
 
-                <div className="export-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.range_duration")}
-                  </span>
-                  <span className="settings-toggle-hint">
-                    {formatTimecode(rangeDurationUs, comp.fps_num, comp.fps_den)}
-                    {rangeWallClock !== null
-                      ? ` · ${t("export_dialog.range_duration_wall_clock", { wall: rangeWallClock })}`
-                      : ""}
-                  </span>
-                </div>
+                {/* A resolved range says nothing further. Each mode above
+                    already shows its own span (or, for the whole project,
+                    needs no span at all), and a duration plus a last-frame
+                    footnote are both derivable from it — three rows restating
+                    one fact is what made this pane read as cluttered. An
+                    UNRESOLVABLE range still has to speak, because it is the
+                    sole explanation for a disabled Export button. */}
+                {chosenRange === null && (
+                  <p className="settings-warn">
+                    {rangeMode === "marked"
+                      ? t("export_dialog.range_marked_none")
+                      : t("export_dialog.range_invalid")}
+                  </p>
+                )}
 
                 <div className="export-row">
                   <span className="settings-toggle-label">

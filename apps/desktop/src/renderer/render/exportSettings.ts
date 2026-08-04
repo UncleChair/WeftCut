@@ -452,24 +452,34 @@ export function audioCodecsForContainer(container: Container): AudioCodecId[] {
   return AUDIO_CODECS.filter((c) => isAudioCodecContainerValid(c, container));
 }
 
-/// Clamp an export range to be ordered and within [0, durationUs]. Inputs are
-/// already frame-aligned (parseTimecode and the snapped playhead both produce
-/// frame-grid values), so this only enforces ordering + bounds; a degenerate
-/// range falls back to the whole span.
+/**
+ * Clamp an export range to be ordered and within [0, durationUs], or null when
+ * no usable range survives. Inputs are already frame-aligned (parseTimecode and
+ * the snapped playhead both produce frame-grid values), so this only enforces
+ * bounds and ordering.
+ *
+ * Null rather than a whole-span fallback, deliberately. Widening on degeneracy
+ * looks defensive and is the opposite: a range typed entirely past the end of
+ * the project (in 00:01:00, out 00:02:00 on a 30 s comp) clamps both ends onto
+ * the duration, and the old fallback then exported the ENTIRE project — the one
+ * outcome the user demonstrably did not ask for, with nothing on screen saying
+ * so. A caller that cannot produce a range must say so instead of guessing.
+ */
 export function clampExportRange(
   startUs: number,
   endUs: number,
   durationUs: number,
-): { startUs: number; endUs: number } {
+): { startUs: number; endUs: number } | null {
   if (
     !Number.isFinite(startUs) ||
     !Number.isFinite(endUs) ||
-    !Number.isFinite(durationUs)
+    !Number.isFinite(durationUs) ||
+    durationUs <= 0
   ) {
-    return { startUs: 0, endUs: Math.max(0, durationUs) };
+    return null;
   }
   const lo = Math.max(0, Math.min(startUs, durationUs));
   const hi = Math.max(0, Math.min(endUs, durationUs));
-  if (hi <= lo) return { startUs: 0, endUs: durationUs };
+  if (hi <= lo) return null;
   return { startUs: lo, endUs: hi };
 }

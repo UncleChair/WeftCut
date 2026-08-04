@@ -380,9 +380,17 @@ Import also runs a session-scoped preview decodability sweep for sources that
 would otherwise be blank until a proxy lands. A successful probe lets preview
 temporarily read the original via `previewPlaybackPathFor(...,
 { previewDecodable: true })`; this bridge is not persisted and is replaced by
-the quick proxy once it exists. The import optimization dialog classifies the
-same states as `checking`, `bridged`, `transcoding`, `failed`, `ready`, or
-`direct`; it is an informational, non-blocking surface.
+the quick proxy once it exists. `importOptimizeStatus` classifies the same
+states as `checking`, `bridged`, `transcoding`, `failed`, `ready`, or `direct`
+for every pool entry, and the Media Pool card carries the verdict: a corner dot
+while work is outstanding, the codec-named reason in the badge tooltip. It is
+informational — the one state that needs the user to act, `failed`, also reaches
+the status log, because the pool can be hidden behind another dock tab.
+
+This is a second, orthogonal axis to `mediaReadiness`, which answers "may the
+user drag this?" rather than "is a job still running?". The two stay separate
+functions: a bridged clip is simultaneously fully usable and still optimizing,
+so folding them into one enum would have no state to express it.
 
 On import the clip appears immediately from a stat-only probe (the item carries
 a provisional `file_hash_blake3`); a lightweight standalone BLAKE3 pass then sets
@@ -630,8 +638,25 @@ struct Transform {
     scale_y: Animated<f64>,
     rotation_deg: Animated<f64>,
     anchor: (f64, f64),               // 0..1 normalized
+    scale_linked: bool,               // uniform-scale intent; default true
 }
 ```
+
+`scale_linked` records **uniform-scale intent**: while `true`, the two scale
+tracks are structural twins — same mode, and when keyframed the same
+`(t_us, value, interp)` sequence (keyframe `id`s are per-track identities and
+legitimately differ) — and every editing surface shows and writes them as one
+"Scale". The invariant is enforced on **results**, not write paths
+(`main/state/mutations/scaleLink.ts`): after any mutation that touches a scale
+track of a linked layer, a twin check runs in the same commit and clears the
+flag on divergence, so the flag can never lie regardless of which write path
+(UI, MCP, or anything else) produced the state. Re-linking (`set_scale_linked
+{ linked: true }`) is the one destructive edit: `scale_y` becomes a fresh-id
+whole-track copy of `scale_x`, atomically with the flag. The field is additive
+on the wire — absent on older saves — and the load pass backfills it from the
+twin check (never a blind `true`), which also repairs a hand-edited
+`true`-over-diverged-tracks file. Rust carries the field for wire fidelity
+only; no compute reads it.
 
 ## Animated values
 

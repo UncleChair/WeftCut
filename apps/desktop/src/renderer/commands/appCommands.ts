@@ -1,5 +1,6 @@
 import type { HandlerMap } from "../shortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
+import { hasMarkedRange } from "../state/rangeStore";
 import type { CommandDef } from "./registry";
 
 /// App-level command catalog for the palette: derived from the shortcut
@@ -40,6 +41,13 @@ export function buildAppCommands(
     importMedia: () => !flags.busy,
     export: () => !flags.exportLocked,
     toggleBladeMode: () => !flags.busy && flags.canBlade,
+    // Read from the store rather than routed through `flags`, unlike every
+    // entry above. A flag is a snapshot taken at App render time, and App
+    // deliberately does NOT subscribe to `rangeStore` (marking in/out would
+    // re-render the whole tree — see `toolStore.ts` for the same reasoning),
+    // so the flag would go stale the moment the user pressed `I`. This
+    // predicate is evaluated inside `listCommands()`, so it always reads live.
+    clearRange: () => hasMarkedRange(),
   };
 
   const defs: CommandDef[] = [];

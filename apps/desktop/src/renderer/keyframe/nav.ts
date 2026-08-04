@@ -3,7 +3,7 @@
 // are layer-local microseconds; the caller pre-snaps to the frame grid. Static
 // tracks have no keys, so every query returns null for them.
 import type { AnimTrack, Keyframe, LayerSummary, TrackSummary } from "../ipc";
-import { readParamTrack } from "./descriptors";
+import { isHiddenTwinAxis, readParamTrack } from "./descriptors";
 
 /// The key whose t_us exactly equals tUs (caller pre-snaps), or null.
 export function keyAt(track: AnimTrack<number>, tUs: number): Keyframe<number> | null {
@@ -42,6 +42,7 @@ export function resolveNavLayer(
   focusedLayerId: string | null,
 ): LayerSummary | null {
   const candidates = track.layers.filter((l) => {
+    if (isHiddenTwinAxis(paramKey, l.params)) return false;
     const t = readParamTrack(l.params, paramKey);
     return t?.mode === "Keyframed";
   });

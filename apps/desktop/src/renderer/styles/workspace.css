@@ -152,6 +152,223 @@
   overflow: auto;
 }
 
+/* ── Quick Actions strip ──────────────────────────────────────────────────────
+ * Alone in its Group the strip shows no tab, just a six-dot drag grip sitting
+ * inline with its buttons. That grip IS Dockview's tab, left in normal flow and
+ * merely shrunk to grip size, so native drag / ghost image / drop targets /
+ * keyboard panel-moves all keep working untouched.
+ *
+ * The grip lands inline because the Panel flips Dockview's own `headerPosition`
+ * to follow the strip's axis: a row of buttons gets a `left` header (narrow
+ * grip column beside them), a column gets the default `top` header (short grip
+ * row above them).
+ *
+ * LANDMINE — do NOT try to overlay the header on top of the Panel content
+ * instead. `renderer: "always"` paints Panel content into
+ * `.dv-overlay-render-container`, a layer ABOVE the whole grid, so no z-index on
+ * a group header can rise above it: the content swallows the mousedown and the
+ * grip silently stops dragging. In-flow is the only arrangement that works.
+ *
+ * And do NOT "simplify" this to `header.hidden = true` plus a self-rolled drag:
+ * that needs dockview-core's UNEXPORTED `LocalSelectionTransfer` singleton,
+ * because the drop side reads that in-memory instance (`tab.js` →
+ * `getPanelData()`) rather than the `dataTransfer` payload.
+ *
+ * Scoped through `:has()` on the grip class our own tab renderer emits, so every
+ * other Group keeps its normal 28px tab strip. */
+.weft-dockview .dv-groupview:has(.weft-dock-tab--grip) {
+  --weft-qa-grip: 18px;
+}
+
+/* Default (`top`) header: a short grip row above a column of buttons. */
+.weft-dockview
+  .dv-groupview:has(.weft-dock-tab--grip)
+  > .dv-tabs-and-actions-container {
+  height: var(--weft-qa-grip);
+  min-height: 0;
+  background-color: transparent;
+  border: none;
+  overflow: hidden;
+}
+
+/* `left` header: a narrow grip column beside a row of buttons. */
+.weft-dockview
+  .dv-groupview.dv-groupview-header-left:has(.weft-dock-tab--grip)
+  > .dv-tabs-and-actions-container {
+  width: var(--weft-qa-grip);
+  height: auto;
+}
+
+/* Stretch Dockview's scroller + tabs container so the tab can claim the whole
+   slot: a 12px grip (the icon's intrinsic size) is a miserable drag target. */
+.weft-dockview
+  .dv-groupview:has(.weft-dock-tab--grip)
+  > .dv-tabs-and-actions-container
+  .dv-scrollable,
+.weft-dockview
+  .dv-groupview:has(.weft-dock-tab--grip)
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* The grip fills its slot and drops every tab affordance: no selection accent
+   (one Panel has nothing to select), no hover fill, no min-width. `flex` — not
+   just `width` — because the tab is a flex item that would otherwise shrink
+   back to its icon's intrinsic size. */
+.weft-dockview
+  .dv-groupview:has(.weft-dock-tab--grip)
+  .dv-tabs-container
+  > .dv-tab {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.weft-dock-tab--grip {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+  cursor: grab;
+  gap: 0;
+  /* Dockview rotates a `left`/`right` header's tabs container with
+     `writing-mode: vertical-rl`, which would tip the grip glyph on its side.
+     The icon already has an orientation-specific variant. */
+  writing-mode: horizontal-tb;
+}
+
+.weft-dock-tab--grip:hover {
+  color: var(--foreground);
+}
+
+.weft-dock-tab--grip:active {
+  cursor: grabbing;
+}
+
+/* The strip body — one single-axis scroller that NEVER wraps: overflow scrolls,
+   and the trailing end fades to advertise that there is more. It occupies only
+   the Dockview content region, so the in-flow grip sits beside it rather than
+   under it. */
+.weft-quick-actions {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.weft-quick-actions[data-orientation="horizontal"] {
+  flex-direction: row;
+  overflow-x: auto;
+  overflow-y: hidden;
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - 10px),
+    transparent 100%
+  );
+}
+
+.weft-quick-actions[data-orientation="vertical"] {
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - 10px),
+    transparent 100%
+  );
+}
+
+.weft-quick-actions-section {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* Sections must not shrink — the strip scrolls instead of squeezing buttons
+     below their hit-target size. */
+  flex: 0 0 auto;
+}
+
+.weft-quick-actions[data-orientation="horizontal"] .weft-quick-actions-section {
+  flex-direction: row;
+}
+
+.weft-quick-actions[data-orientation="vertical"] .weft-quick-actions-section {
+  flex-direction: column;
+}
+
+/* Section divider — the single-row/column form has no room for headings, so
+   the split reads as one hairline between groups. */
+.weft-quick-actions-section + .weft-quick-actions-section {
+  border-color: var(--weft-dock-border);
+}
+
+.weft-quick-actions[data-orientation="horizontal"]
+  .weft-quick-actions-section
+  + .weft-quick-actions-section {
+  border-left-width: 1px;
+  border-left-style: solid;
+  margin-left: 4px;
+  padding-left: 4px;
+}
+
+.weft-quick-actions[data-orientation="vertical"]
+  .weft-quick-actions-section
+  + .weft-quick-actions-section {
+  border-top-width: 1px;
+  border-top-style: solid;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.weft-quick-action {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  background-color: transparent;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-base),
+    color var(--transition-base);
+}
+
+.weft-quick-action:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.weft-quick-action[data-active="true"] {
+  background-color: color-mix(in srgb, var(--ring) 22%, transparent);
+  color: var(--foreground);
+}
+
+.weft-quick-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.weft-quick-action:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
 /* Nearby owns the full Dockview content region. */
 .weft-dock-panel-scroll > .right-panel-peek {
   width: 100%;

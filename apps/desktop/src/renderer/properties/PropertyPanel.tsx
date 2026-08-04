@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import {
   updateLayer,
   updateLayerParams,
-  updateLayerParamTrack,
   moveLayer,
   trimLayer,
   installMotif,
@@ -35,8 +34,9 @@ import {
   type TrackSummary,
   trackStatic,
 } from "../ipc";
-import { KeyframeField } from "../components/KeyframeField";
-import { readParamTrack, type ParamDescriptor, X, Y, SCALE_X, SCALE_Y, ROTATION, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { X, Y, ROTATION, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { InspectorAnimField } from "./InspectorAnimField";
+import { ScaleFields } from "./ScaleFields";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
 // render via `InspectorAnimField`, the inspector adapter over the shared
@@ -430,19 +430,19 @@ function KindFields({
       return (
         <>
           <TextFields layer={layer} v={layer.params} commit={commit} />
-          <TransformSection layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+          <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         </>
       );
     case "VideoClip":
       return (
         <>
           <VideoClipFields layer={layer} v={layer.params} commit={commit} />
-          <TransformSection layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+          <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         </>
       );
     case "ImageOverlay":
       // Core is just the transform section; fades wait in the advanced bucket.
-      return <TransformSection layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+      return <TransformSection layer={layer} scaleLinked={layer.params.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
     case "Color":
       return <ColorFields layer={layer} v={layer.params} commit={commit} />;
     case "Audio":
@@ -507,11 +507,13 @@ function commitLayerParams(layerId: string, onMutated: () => Promise<void>): Com
 /// and rotation stay full-width.
 function TransformSection({
   layer,
+  scaleLinked,
   tInLayerUs,
   playheadInSpan,
   onMutated,
 }: {
   layer: LayerSummary;
+  scaleLinked: boolean;
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
@@ -524,9 +526,13 @@ function TransformSection({
         <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
         <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       </div>
+      {/* Scale keeps the axis-pair row, but `ScaleFields` owns what fills it:
+          one collapsed "Scale" + closed chain while linked, Scale X / Scale Y
+          + open chain while not. `.prop-field-pair > .scale-link-row` gives the
+          chain-bearing row the same flex basis as a bare `.anim-field`, so the
+          linked form spans the row and the unlinked form pairs off. */}
       <div className="prop-field-pair">
-        <InspectorAnimField layer={layer} desc={SCALE_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-        <InspectorAnimField layer={layer} desc={SCALE_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+        <ScaleFields layer={layer} scaleLinked={scaleLinked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       </div>
       <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
     </PropSection>
@@ -834,7 +840,7 @@ function MotifFields({
   return (
     <>
       <BakeStatusLine layerId={layer.id} />
-      <TransformSection layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <TransformSection layer={layer} scaleLinked={v.scale_linked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       {motif === null ? (
         <p className="meta">{t("property_panel.unknown_motif")}</p>
       ) : propEntries.length > 0 ? (
@@ -1558,46 +1564,6 @@ function Field({
       </span>
       <div className="prop-field-control">{children}</div>
     </label>
-  );
-}
-
-/// Inspector adapter: maps a (layer, ParamDescriptor) pair onto the shared
-/// KeyframeField with the stopwatch + the inspector commit path. Replaces the
-/// hand-rolled value-field IIFEs; widgets/step/min/max come from the descriptor
-/// (keyframe/descriptors.ts).
-function InspectorAnimField({
-  layer,
-  desc,
-  tInLayerUs,
-  playheadInSpan,
-  onMutated,
-}: {
-  layer: LayerSummary;
-  desc: ParamDescriptor;
-  tInLayerUs: number;
-  playheadInSpan: boolean;
-  onMutated: () => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const track = readParamTrack(layer.params, desc.paramKey) ?? { mode: "Static" as const, value: desc.fallback };
-  return (
-    <KeyframeField
-      layerId={layer.id}
-      paramKey={desc.paramKey}
-      label={t(desc.labelKey)}
-      track={track}
-      fallback={desc.fallback}
-      tInLayerUs={tInLayerUs}
-      playheadInSpan={playheadInSpan}
-      onCommitTrack={(k, next) =>
-        updateLayerParamTrack(layer.id, k, next).then(onMutated).catch((e) => console.warn(e))
-      }
-      onMutated={onMutated}
-      widgets={desc.widgets ?? ["number"]}
-      {...(desc.step !== undefined ? { step: desc.step } : {})}
-      {...(desc.min !== undefined ? { min: desc.min } : {})}
-      {...(desc.max !== undefined ? { max: desc.max } : {})}
-    />
   );
 }
 

@@ -11,6 +11,7 @@ export const PANEL_KINDS = [
   "media",
   "preview",
   "timeline",
+  "quick-actions",
   "attribute",
   "caption",
   "role-mixer",
@@ -30,6 +31,13 @@ export interface PanelDefinition {
 }
 
 const TOOL_MINIMUM = { minimumWidth: 240, minimumHeight: 160 } as const;
+
+/** Quick Actions is a single-row/single-column button strip, so it must be
+ *  draggable down to a bare edge bar — `TOOL_MINIMUM` would pin it 6× too
+ *  wide. One button plus the drag grip is the real floor; anything narrower
+ *  and the strip can't render its own content. Overflow scrolls, so a small
+ *  minimum never hides a command permanently. */
+const STRIP_MINIMUM = { minimumWidth: 44, minimumHeight: 44 } as const;
 
 /**
  * The complete Panel catalogue. Panel identity is the semantic kind: no
@@ -55,6 +63,12 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     titleKey: "dock_workspace.panels.timeline",
     minimumWidth: 420,
     minimumHeight: 180,
+    initiallyOpen: true,
+  },
+  "quick-actions": {
+    kind: "quick-actions",
+    titleKey: "dock_workspace.panels.quick-actions",
+    ...STRIP_MINIMUM,
     initiallyOpen: true,
   },
   attribute: {

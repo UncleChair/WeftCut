@@ -70,4 +70,16 @@ describe("resolveNavLayer", () => {
     const tr = trackOf(layer("L1", "Static"));
     expect(resolveNavLayer(tr, "opacity", "L1")).toBeNull();
   });
+  it("a LINKED layer is never a scale_y candidate (its twin belongs to the composite lane)", () => {
+    const kf = { mode: "Keyframed", value: [{ id: "k", t_us: 0, value: 1, interp: { kind: "Linear" } }] };
+    const linked = { id: "LK", params: { scale_linked: true, scale_y: kf } } as unknown as LayerSummary;
+    const unlinked = { id: "UN", params: { scale_linked: false, scale_y: kf } } as unknown as LayerSummary;
+    // Sole-candidate resolution skips the linked layer entirely…
+    expect(resolveNavLayer(trackOf(linked), "scale_y", null)).toBeNull();
+    // …so an unlinked neighbour resolves as the SOLE candidate despite the twin.
+    expect(resolveNavLayer(trackOf(linked, unlinked), "scale_y", null)?.id).toBe("UN");
+    // scale_x stays navigable on the linked layer (it's the composite's read side).
+    const linkedX = { id: "LK", params: { scale_linked: true, scale_x: kf } } as unknown as LayerSummary;
+    expect(resolveNavLayer(trackOf(linkedX), "scale_x", null)?.id).toBe("LK");
+  });
 });

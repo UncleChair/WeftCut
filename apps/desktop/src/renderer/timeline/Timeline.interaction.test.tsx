@@ -118,6 +118,7 @@ const tinyVideoLayer: LayerSummary = {
     y: staticNum(0),
     scale_x: staticNum(1),
     scale_y: staticNum(1),
+    scale_linked: true,
     rotation_deg: staticNum(0),
     opacity: staticNum(1),
     speed: 1,
@@ -360,6 +361,163 @@ describe("Timeline seek/selection coupling", () => {
       33_333,
       false,
     );
+  });
+
+  // -------- Cross-track hit-testing --------
+  //
+  // Visual order is the reverse of the data array, so [bottom, mid, top]
+  // renders top → bottom as rowTop, rowMid, rowBottom.
+
+  const rowTop: TrackSummary = { ...track, id: "row-top", label: "Top", layers: [] };
+  const rowMid: TrackSummary = { ...track, id: "row-mid", label: "Mid", layers: [] };
+  const draggedLayer: LayerSummary = { ...layer, id: "dragged", label: "Dragged" };
+  const rowBottom: TrackSummary = {
+    ...track,
+    id: "row-bottom",
+    label: "Bottom",
+    layers: [draggedLayer],
+  };
+  const threeRows = [rowBottom, rowMid, rowTop];
+
+  // Give the lanes a vertical layout jsdom cannot produce on its own. The gap
+  // between rowMid and rowBottom is what an expanded track's keyframe
+  // sub-lanes occupy — the geometry an arithmetic row-offset table cannot see.
+  function stubLaneLayout(container: HTMLElement) {
+    const bands: [number, number][] = [
+      [0, 56], // rowTop
+      [56, 112], // rowMid — its sub-lanes then fill 112 → 184
+      [184, 240], // rowBottom
+    ];
+    container
+      .querySelectorAll('[data-testid="track-lane"]')
+      .forEach((el, i) => {
+        const band = bands[i];
+        if (!band) return;
+        const [top, bottom] = band;
+        vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+          top,
+          bottom,
+          height: bottom - top,
+          y: top,
+          left: 0,
+          right: 0,
+          width: 0,
+          x: 0,
+          toJSON: () => ({}),
+        } as DOMRect);
+      });
+  }
+
+  it("keeps a drag on the lane the DOM reports it is over", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { container, getByText } = renderTimeline({
+      tracks: threeRows,
+      selectedLayerId: draggedLayer.id,
+    });
+    stubLaneLayout(container);
+    const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
+
+    // Both ends stay inside rowBottom's measured band [184, 240).
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 212 });
+    fireEvent.pointerMove(window, { clientX: 83, clientY: 214 });
+    fireEvent.pointerUp(window, { clientX: 83, clientY: 214 });
+
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      draggedLayer.id,
+      rowBottom.id,
+      33_333,
+      false,
+    );
+  });
+
+  it("lands a cross-track drag on the measured destination lane", () => {
+    vi.useFakeTimers();
+    const { container, getByText } = renderTimeline({
+      tracks: threeRows,
+      selectedLayerId: draggedLayer.id,
+    });
+    stubLaneLayout(container);
+    const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 212 });
+    // 80 is inside rowMid's own lane [56, 112).
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 80 });
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 80 });
+
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      draggedLayer.id,
+      rowMid.id,
+      0,
+      false,
+    );
+  });
+
+  it("hands an expanded track's sub-lane band to the track that owns it", () => {
+    vi.useFakeTimers();
+    const { container, getByText } = renderTimeline({
+      tracks: threeRows,
+      selectedLayerId: draggedLayer.id,
+    });
+    stubLaneLayout(container);
+    const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 212 });
+    // 150 is in the 112 → 184 sub-lane strip, which belongs to rowMid.
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 150 });
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 150 });
+
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      draggedLayer.id,
+      rowMid.id,
+      0,
+      false,
+    );
+  });
+
+  it("never changes track without vertical travel, even if the measurement disagrees", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { container, getByText } = renderTimeline({
+      tracks: threeRows,
+      selectedLayerId: draggedLayer.id,
+    });
+    stubLaneLayout(container);
+    const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
+
+    // y=30 measures as rowTop while the clip lives on rowBottom. A horizontal
+    // drag must still be a pure time move on its own track.
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 83, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 83, clientY: 30 });
+
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      draggedLayer.id,
+      rowBottom.id,
+      33_333,
+      false,
+    );
+  });
+
+  it("keeps a motionless click on a clip a selection, never a track change", () => {
+    vi.useFakeTimers();
+    const { container, getByText } = renderTimeline({
+      tracks: threeRows,
+      selectedLayerId: draggedLayer.id,
+    });
+    stubLaneLayout(container);
+    const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
+
+    // The reported symptom: a bare click used to commit a cross-track move
+    // because a disagreeing hit-test alone counted as edit intent.
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30 });
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 30 });
+
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
   });
 
   it("starts an explicit trim handle drag without the temporal delay", () => {
@@ -1252,6 +1410,7 @@ describe("Timeline clip label fallback", () => {
       y: staticNum(0),
       scale_x: staticNum(1),
       scale_y: staticNum(1),
+      scale_linked: true,
       rotation_deg: staticNum(0),
       opacity: staticNum(1),
       fade_in_us: 0,

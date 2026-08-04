@@ -4,10 +4,8 @@ import {
   codecDisplayName,
   is10bit,
   optimizeReason,
-  importDialogNoteKey,
-  partitionImportItems,
+  isOptimizing,
   type OptimizeDeps,
-  type ImportItem,
 } from "./importOptimize";
 
 const vid = (over: Record<string, unknown>) => ({
@@ -39,6 +37,13 @@ const V = (decode_route: any, extra: any = {}) =>
 describe("importOptimizeStatus (frozen behavior, route-driven)", () => {
   it("proxied + full ready ⇒ ready", () =>
     expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: "q", full_proxy: "f", format_version: 1 }), depsT())).toBe("ready"));
+  // native-sw resolves identically to proxied. Before this settled, a ProRes
+  // source fell through to the terminal `checking` and never left it — the old
+  // dialog stayed open forever, the pool dot would never clear.
+  it("native-sw + full ready ⇒ ready (not a terminal checking)", () =>
+    expect(importOptimizeStatus(V({ route: "native-sw", quick_proxy: "q", full_proxy: "f", format_version: 7 }), depsT())).toBe("ready"));
+  it("native-sw without its master keeps reporting work in flight", () =>
+    expect(importOptimizeStatus(V({ route: "native-sw", quick_proxy: "q", full_proxy: null, format_version: 7 }), depsT({ ps: "pending" }))).toBe("transcoding"));
   it("bypass ⇒ direct", () =>
     expect(importOptimizeStatus(V({ route: "bypass" }), depsT())).toBe("direct"));
   it("direct-export + quick ready ⇒ direct", () =>
@@ -114,59 +119,16 @@ describe("optimizeReason", () => {
   });
 });
 
-describe("partitionImportItems", () => {
-  const item = (over: Partial<ImportItem>): ImportItem => ({
-    id: "m", label: "clip", status: "transcoding",
-    reason: { key: "reason_transcode", codec: "ProRes" }, ...over,
-  });
-  it("lists bridged + transcoding + failed, counts checking, drops direct/ready", () => {
-    const r = partitionImportItems([
-      item({ id: "a", status: "bridged" }),
-      item({ id: "b", status: "transcoding" }),
-      item({ id: "g", status: "failed" }),
-      item({ id: "c", status: "checking" }),
-      item({ id: "d", status: "checking" }),
-      item({ id: "e", status: "direct" }),
-      item({ id: "f", status: "ready" }),
-    ]);
-    expect(r.listed.map((i) => i.id)).toEqual(["a", "b", "g"]);
-    expect(r.checkingCount).toBe(2);
-    expect(r.hasAttention).toBe(true);
-  });
-  it("hasAttention false when nothing listed/checking", () => {
-    const r = partitionImportItems([item({ id: "e", status: "direct" })]);
-    expect(r.listed).toEqual([]);
-    expect(r.checkingCount).toBe(0);
-    expect(r.hasAttention).toBe(false);
-  });
-});
-
-describe("importDialogNoteKey", () => {
-  const item = (over: Partial<ImportItem>): ImportItem => ({
-    id: "m",
-    label: "clip",
-    status: "transcoding",
-    reason: { key: "reason_transcode", codec: "ProRes" },
-    ...over,
+describe("isOptimizing", () => {
+  it("covers every unsettled state so the pool dot spans probe + transcode", () => {
+    expect(isOptimizing("bridged")).toBe(true);
+    expect(isOptimizing("transcoding")).toBe(true);
+    expect(isOptimizing("checking")).toBe(true);
   });
 
-  it("says editable only when every attention item is bridged", () => {
-    expect(importDialogNoteKey([item({ status: "bridged" })])).toBe("editable_note");
-  });
-
-  it("uses a waiting note for checking/transcoding items", () => {
-    expect(importDialogNoteKey([item({ status: "checking" })])).toBe("waiting_note");
-    expect(importDialogNoteKey([item({ status: "transcoding" })])).toBe("waiting_note");
-  });
-
-  it("uses a mixed note when editable and waiting items coexist", () => {
-    expect(importDialogNoteKey([
-      item({ id: "a", status: "bridged" }),
-      item({ id: "b", status: "transcoding" }),
-    ])).toBe("mixed_note");
-  });
-
-  it("uses a failed note when failed items are the only attention items", () => {
-    expect(importDialogNoteKey([item({ status: "failed" })])).toBe("failed_note");
+  it("is false for settled states — failed wears its own badge, not the dot", () => {
+    expect(isOptimizing("failed")).toBe(false);
+    expect(isOptimizing("ready")).toBe(false);
+    expect(isOptimizing("direct")).toBe(false);
   });
 });

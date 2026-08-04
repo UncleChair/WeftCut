@@ -3,6 +3,7 @@ import { displayedFrameStartUs, inclusiveOutBoundaryUs } from "../frames";
 import {
   animatableParams,
   readParamTrack,
+  readScaleLinked,
   type ParamDescriptor,
 } from "../keyframe/descriptors";
 
@@ -184,6 +185,45 @@ export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
+/// One track lane's MEASURED vertical extent, in client coordinates
+/// (`getBoundingClientRect`). Feeds `trackIdAtClientY`.
+export interface MeasuredTrackRow {
+  trackId: string;
+  top: number;
+  bottom: number;
+}
+
+/// Which track a pointer at `clientY` is over, from measured lane rects.
+///
+/// LANDMINE: never answer this from an arithmetic y-offset table built out of
+/// track heights. A row carries chrome the table cannot see — an expanded
+/// track's keyframe sub-lanes sit BETWEEN its lane and the next one — so the
+/// table drifts a full row or more per expanded track above the pointer, and
+/// the drag hit-test then reports a foreign track. That is not a cosmetic
+/// error: `useLayerDrag` treats a track change as edit intent, so a stale
+/// table turns a plain click into a committed cross-track move. The DOM
+/// already computed this layout; measure it.
+///
+/// Band rule: a row owns `[its own top, the next row's top)`. That hands the
+/// sub-lane strip under an expanded track to the track that owns it, instead
+/// of leaving a hole that would snap a mid-drag ghost back to its origin. The
+/// last row owns only its own height. Above the first row or below the last
+/// returns null — the caller keeps the layer on its origin track.
+export function trackIdAtClientY(
+  rows: readonly MeasuredTrackRow[],
+  clientY: number,
+): string | null {
+  // Sorted so the band rule never depends on registration order.
+  const sorted = rows.slice().sort((a, b) => a.top - b.top);
+  for (const [i, row] of sorted.entries()) {
+    if (clientY < row.top) return null;
+    const next = sorted[i + 1];
+    const bandEndY = next ? next.top : row.bottom;
+    if (clientY < bandEndY) return row.trackId;
+  }
+  return null;
+}
+
 // Below this on-screen frame width the shadow reads as line jitter, not an
 // area — hide it and let the playhead line stand alone.
 const PLAYHEAD_FRAME_SHADOW_MIN_PX = 5;
@@ -264,10 +304,13 @@ export function keyframeAbsoluteX(
 export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] {
   const out: ParamDescriptor[] = [];
   // Stable, de-duped, descriptor-ordered: walk each layer's animatable params;
-  // include a param the first time any layer has it Keyframed.
+  // include a param the first time any layer has it Keyframed. Per-layer
+  // link-aware: a LINKED layer's param list carries the composite Scale and no
+  // scale_y at all, so its keyed twin tracks surface as ONE lane — while an
+  // unlinked neighbour on the same track still contributes scale_x/scale_y.
   const seen = new Set<string>();
   for (const layer of track.layers) {
-    for (const desc of animatableParams(layer.kind)) {
+    for (const desc of animatableParams(layer.kind, readScaleLinked(layer.params))) {
       if (seen.has(desc.paramKey)) continue;
       const t = readParamTrack(layer.params, desc.paramKey);
       if (t && t.mode === "Keyframed") {
@@ -275,16 +318,22 @@ export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] 
       }
     }
   }
-  // Emit in the stable order defined by ORDER below (not first-seen order):
-  // collect from the canonical descriptor lists.
+  // Emit in the stable order defined by ORDER below (not first-seen order).
+  // The descriptor (label "Scale" vs "Scale X", fan-out or not) comes from the
+  // first layer actually KEYED on the param, so a mixed track labels the lane
+  // after the layer whose diamonds it shows; first-defining is the fallback.
   const ORDER = ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity", "gain_db", "pan"];
   for (const key of ORDER) {
     if (!seen.has(key)) continue;
-    // find the descriptor (label/fallback) from whichever kind defines it
+    let picked: ParamDescriptor | null = null;
     for (const layer of track.layers) {
-      const d = animatableParams(layer.kind).find((x) => x.paramKey === key);
-      if (d) { out.push(d); break; }
+      const d = animatableParams(layer.kind, readScaleLinked(layer.params)).find((x) => x.paramKey === key);
+      if (!d) continue;
+      picked ??= d;
+      const t = readParamTrack(layer.params, key);
+      if (t && t.mode === "Keyframed") { picked = d; break; }
     }
+    if (picked) out.push(picked);
   }
   return out;
 }

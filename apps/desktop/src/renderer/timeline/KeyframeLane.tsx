@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AnimTrack, TrackSummary } from "../ipc";
 import { trackKeyframeProperties } from "./geometry";
-import { readParamTrack, animatableParams } from "../keyframe/descriptors";
+import { readParamTrack, isHiddenTwinAxis, animatableParams } from "../keyframe/descriptors";
 import {
   selectKeyframe,
   clearKeyframeSelection,
@@ -171,6 +171,7 @@ export function KeyframeLane({
             style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
           >
             {track.layers.map((layer) => {
+              if (isHiddenTwinAxis(d.paramKey, layer.params)) return null;
               const trk = readParamTrack(layer.params, d.paramKey);
               if (!trk || trk.mode !== "Keyframed") return null;
               const durUs = layer.t_end_us - layer.t_start_us;

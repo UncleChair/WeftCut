@@ -526,6 +526,8 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     expect(await effectOrder()).toEqual(effectIds);
 
     const undoBefore = (await history(page)).len;
+    // Move-down lives in the card's ⋯ overflow menu.
+    await page.getByTestId("effect-menu-0").click();
     await page.getByTestId("effect-down-0").click();
     const reordered = [effectIds[1]!, effectIds[0]!];
     await expect.poll(effectOrder).toEqual(reordered);

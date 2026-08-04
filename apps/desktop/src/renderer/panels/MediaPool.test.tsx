@@ -40,6 +40,7 @@ import {
 } from "../ipc";
 import { useProxyPrefStore, setProxyOverride } from "../state/proxyPreferenceStore";
 import { formatMediaDuration, MediaDropZone, MediaPool } from "./MediaPool";
+import { type OptimizeInfo } from "./importOptimize";
 import { MEDIA_DRAG_TYPE, useMediaDragStore } from "../timeline/mediaDrag";
 
 afterEach(() => {
@@ -68,7 +69,11 @@ function makeMedia(id: string, route: MediaSummary["decode_route"]): MediaSummar
   };
 }
 
-function renderPool(media: MediaSummary[], tracks: TrackSummary[] = []) {
+function renderPool(
+  media: MediaSummary[],
+  tracks: TrackSummary[] = [],
+  extra: Partial<React.ComponentProps<typeof MediaPool>> = {},
+) {
   const onMutated = vi.fn().mockResolvedValue(undefined);
   const onImportMedia = vi.fn().mockResolvedValue(undefined);
   return {
@@ -84,6 +89,7 @@ function renderPool(media: MediaSummary[], tracks: TrackSummary[] = []) {
         onCancelImport={vi.fn().mockResolvedValue(undefined)}
         onMutated={onMutated}
         onImportMedia={onImportMedia}
+        {...extra}
       />,
     ),
     onMutated,
@@ -271,6 +277,62 @@ describe("MediaPool card metadata", () => {
 
   it("does not wrap total minutes at 60", () => {
     expect(formatMediaDuration((125 * 60 + 9) * 1_000_000)).toBe("125:09");
+  });
+});
+
+// The right-corner notice these badges replaced could describe a clip as
+// "usable now, optimizing in background". The pool has to carry that state
+// itself, and crucially without implying the clip is unusable.
+describe("MediaPool optimize badges", () => {
+  const optimize = (
+    id: string,
+    status: OptimizeInfo["status"],
+  ): ReadonlyMap<string, OptimizeInfo> =>
+    new Map([[id, { status, reason: { key: "reason_10bit", codec: "HEVC" } }]]);
+
+  it("marks a bridged clip with the corner dot and keeps it draggable", () => {
+    const media = makeMedia("bridged-clip", { route: "bypass" });
+    const { container } = renderPool([media], [], {
+      optimizeById: optimize("bridged-clip", "bridged"),
+    });
+
+    expect(container.querySelector(".media-optimizing-dot")).not.toBeNull();
+    // The whole point of the dot: it reports background work WITHOUT
+    // withdrawing the clip. A regression that ties it to readiness would
+    // silently make optimizing clips undraggable.
+    expect(
+      container.querySelector<HTMLElement>("[data-media-id='bridged-clip']")
+        ?.draggable,
+    ).toBe(true);
+    expect(container.querySelector(".media-proxy-pending-badge")).toBeNull();
+  });
+
+  it("shows only the blocking badge for a clip with no preview source yet", () => {
+    const media = makeMedia("waiting-clip", {
+      route: "proxied",
+      quick_proxy: null,
+      full_proxy: null,
+      format_version: 0,
+    });
+    media.kind = "Video";
+    const { container } = renderPool([media], [], {
+      optimizeById: optimize("waiting-clip", "transcoding"),
+    });
+
+    expect(container.querySelector(".media-proxy-pending-badge")).not.toBeNull();
+    // Not both: the centred badge already says "you can't use this yet".
+    expect(container.querySelector(".media-optimizing-dot")).toBeNull();
+  });
+
+  it("stays clean for a settled clip", () => {
+    const media = makeMedia("settled-clip", { route: "bypass" });
+    const { container } = renderPool([media], [], {
+      optimizeById: optimize("settled-clip", "direct"),
+    });
+
+    expect(container.querySelector(".media-optimizing-dot")).toBeNull();
+    expect(container.querySelector(".media-proxy-pending-badge")).toBeNull();
+    expect(container.querySelector(".media-proxy-failed-badge")).toBeNull();
   });
 });
 

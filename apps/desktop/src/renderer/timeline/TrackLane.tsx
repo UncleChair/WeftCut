@@ -31,6 +31,7 @@ import {
 
 export function TrackLane({
   track,
+  registerLaneEl,
   pxPerSec,
   height,
   isExpanded,
@@ -61,6 +62,10 @@ export function TrackLane({
   mediaDropSnap,
 }: {
   track: TrackSummary;
+  /// Publishes this lane's DOM node to the Timeline's lane registry, which is
+  /// what the drag hit-test measures (`trackIdAtClientY`). Called with null on
+  /// unmount.
+  registerLaneEl: (trackId: string, el: HTMLElement | null) => void;
   pxPerSec: number;
   height: number;
   /// True when this track's keyframe sub-lanes are expanded — collapsed
@@ -362,8 +367,16 @@ export function TrackLane({
     ? mediaDropGhostSlot(height, visibleDropPreview.plan)
     : { top: 4, height: Math.max(8, height - 8) };
 
+  // Stable identity so a re-render doesn't churn the registry through
+  // null; React only re-invokes it when the lane actually remounts.
+  const laneRef = useCallback(
+    (el: HTMLDivElement | null) => registerLaneEl(track.id, el),
+    [registerLaneEl, track.id],
+  );
+
   return (
     <div
+      ref={laneRef}
       data-testid="track-lane"
       className={[
         "relative border-b border-border-soft bg-track-lane",

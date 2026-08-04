@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { animatableParams, readParamTrack } from "./descriptors";
+import { animatableParams, readParamTrack, readScaleLinked } from "./descriptors";
 import type { AnimTrack, LayerSummary } from "../ipc";
 
 describe("animatableParams", () => {
@@ -19,6 +19,25 @@ describe("animatableParams", () => {
   });
   it("Color has no animatable params", () => {
     expect(animatableParams("Color")).toEqual([]);
+  });
+  it("scaleLinked collapses the pair into ONE composite Scale for every visual kind", () => {
+    for (const kind of ["VideoClip", "ImageOverlay", "Text", "Motif"]) {
+      const linked = animatableParams(kind, true);
+      expect(linked.map((d) => d.paramKey)).toEqual(["x", "y", "scale_x", "rotation_deg", "opacity"]);
+      const scale = linked[2]!;
+      expect(scale.labelKey).toBe("property_panel.scale");
+      expect(scale.fanOutKeys).toEqual(["scale_x", "scale_y"]);
+    }
+    // Non-transform kinds ignore the flag.
+    expect(animatableParams("Audio", true).map((d) => d.paramKey)).toEqual(["gain_db", "pan"]);
+  });
+});
+
+describe("readScaleLinked", () => {
+  it("true only for an explicit true on the params view", () => {
+    expect(readScaleLinked({ kind: "VideoClip", scale_linked: true } as unknown as LayerSummary["params"])).toBe(true);
+    expect(readScaleLinked({ kind: "VideoClip", scale_linked: false } as unknown as LayerSummary["params"])).toBe(false);
+    expect(readScaleLinked({ kind: "Color" } as unknown as LayerSummary["params"])).toBe(false);
   });
 });
 

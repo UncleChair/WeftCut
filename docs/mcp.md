@@ -86,10 +86,15 @@ Rules:
 ## Tool surface
 
 The MCP tool surface is the same set of actor commands the UI calls.
-A single declarative `tool_table!` macro in the Rust core single-sources
-both the advertised schemas and the name→handler dispatch, so a tool can
-never appear in one without the other. Don't expose 100 tools; agents
-get confused. The current set is around 40, organised below.
+Two declarative tables single-source the advertised schemas and the
+name→handler dispatch, so a tool can never appear in one without the
+other: `MCP_TOOL_DEFS` in the TS actor host for every mutation tool, and
+the `tool_table!` macro in the Rust core for the native compute tools.
+Every advertised schema property carries an explicit `type` — MCP
+clients coerce untyped fields to `type: string`, which forces agents to
+send nested payloads as JSON-encoded strings (a catalog-wide test gates
+this). Don't expose 100 tools; agents get confused. The current set is
+around 40, organised below.
 
 ### Read (resources, not tools)
 
@@ -135,11 +140,12 @@ Media + tracks:
 
 Layers:
 - `add_color_layer { track_id, t_start_us, t_end_us, color, width?, height? }` → `LayerId`
-- `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us }` → `LayerId`
+- `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us }` → `LayerId`, or `{ video_layer_id, audio_layer_id, group_id }` when the source carries audio and `auto_pair_audio_on_import` is on: the paired dialogue Audio layer lands on the SAME track's audio lane (a track holds one visual + one audio lane) and the two are grouped. The triple commits atomically — if the audio lane is occupied, the call rejects naming the blocking layer and nothing lands on the timeline.
 - `add_motif { motif_id, t_start_us, t_end_us?, track_id?, props? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" Video track when absent; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
 - `apply_subtitles { body, format?, track_id?, t_start_us?, t_end_us? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Builds a new caption-role track of editable `Text` layers (one per cue). `track_id`, `t_start_us`, and `t_end_us` are accepted for wire stability but ignored — cue timings come from the body. Returns the new caption track id.
 - `update_layer { layer_id, patch }` — envelope-only (label, time range, enabled, locked).
-- `update_layer_params { layer_id, patch }` — kind-specific params.
+- `update_layer_params { layer_id, patch }` — kind-specific params. On a scale-linked layer, a patch that leaves `scale_x ≠ scale_y` auto-clears the link in the same commit; patch both axes to the same value to keep it.
+- `set_scale_linked { layer_id, linked }` — toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` (keyframes included, fresh key ids) in the same commit — one undo restores both. `linked=false` clears only the flag. While linked, the two scale tracks are structural twins and the human UI edits them as one collapsed "Scale"; any write that diverges them (single-axis `update_layer_params` / `set_keyframe` / `set_param_track`) auto-clears the flag in that write's commit.
 - `move_layer { layer_id, new_track_id, new_t_start_us, escape_group? }`
 - `split_layer { layer_id, at_t_us, escape_group? }` → `{ left, right }`
 - `auto_split_by_shot { layer_id, min_shot_us?, drop_short? }` → `{ layer_ids }` — detect the VideoClip's shot cuts and split it at every in-window cut in ONE undoable step; returns the new segment layer ids in timeline order (or the single unchanged id when there is no interior cut). `min_shot_us` (default `500000`) is the detection minimum-shot length (closer cuts merge); `drop_short=true` also deletes any resulting segment shorter than `min_shot_us`. Pure convenience — reproducible with `analyze_clip` + `split_layer`, and it reuses the SAME cached shot report as `analyze_clip` (a prior `analyze_clip` at matching params is a cache hit). Group-aware: an auto-paired audio partner splits in lockstep. Caveat: with `drop_short=true`, only the short VIDEO segment is deleted — its group-paired audio sliver is left in place (v1 limitation).
@@ -165,7 +171,7 @@ Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
 - `clear_keyframes { layer_id, param_key, value? }` — collapse to Static (defaults to the first keyframe's value).
 - `set_param_track { layer_id, param_key, track }` — low-level: replace the whole `AnimTrack<f64>` (keyframe `t_us` timeline-absolute).
 
-Valid `param_key`: VideoClip/Motif → `x, y, scale_x, scale_y, rotation_deg, opacity`; ImageOverlay/Text → `x, y, rotation_deg, opacity`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them.
+Valid `param_key`: VideoClip/ImageOverlay/Text/Motif → `x, y, scale_x, scale_y, rotation_deg, opacity`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them. Keying only one scale axis of a scale-linked layer diverges the twin pair and auto-clears the link in the same commit (see `set_scale_linked`); write both axes identically to animate a linked layer's scale.
 
 Groups (see [features.md §Groups](features.md#groups)):
 - `groups_create { layer_ids, label?, reassign? }` → `GroupId`
@@ -264,6 +270,12 @@ Tool errors carry structured detail:
 ```
 
 Give the agent something to act on, not a brick wall.
+
+The prose `message` must itself name the cause and the options — several
+MCP clients (Claude Code among them) surface only `code: message` to the
+model and drop the structured `data`, so detail that lives only in
+`data` is detail the agent never sees. `data` mirrors the same facts
+machine-readably for clients that do forward it.
 
 ## Change feed
 

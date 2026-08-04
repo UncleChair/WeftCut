@@ -20,6 +20,7 @@ import { setLocale } from "../settings/appSettingsStore";
 import { ViewMenu, type ViewMenuWorkspaces } from "./ViewMenu";
 import { HelpMenu } from "./HelpMenu";
 import { openPerformanceMonitor } from "../render/performanceMonitorWindow";
+import type { Tool } from "../state/toolStore";
 import type {
   DockWorkspaceController,
   DockWorkspaceSnapshot,
@@ -32,12 +33,15 @@ interface AppMenuBarProps {
   canRedo: boolean;            // !!summary?.history.can_redo
   canBlade: boolean;           // !!summary && summary.layer_count > 0
   exportLocked: boolean;       // busy || exportState.kind is starting|progress
+  /** Armed modal timeline tool — drives the tool items' checkmarks. */
+  activeTool: Tool;
   onImportMedia: () => void;
   onSave: () => void;
   onSaveAs: () => void;
   onSaveAndClose: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onSelectTool: () => void;
   onToggleBladeMode: () => void;
   onAddColorLayer: () => void;
   onAddTextLayer: () => void;
@@ -92,12 +96,14 @@ export function AppMenuBar({
   canRedo,
   canBlade,
   exportLocked,
+  activeTool,
   onImportMedia,
   onSave,
   onSaveAs,
   onSaveAndClose,
   onUndo,
   onRedo,
+  onSelectTool,
   onToggleBladeMode,
   onAddColorLayer,
   onAddTextLayer,
@@ -212,9 +218,19 @@ export function AppMenuBar({
               disabled={busy || !canRedo}
             />
             <MenuSeparator />
+            {/* Modal tools: checkmarks make the armed tool visible here too,
+                so blade mode isn't discoverable only by the timeline cursor.
+                Selection is always available; the Blade needs a layer to cut. */}
+            <MenuItem
+              actionId="selectTool"
+              label={t("actions.select_tool")}
+              checked={activeTool === "select"}
+              onSelect={onSelectTool}
+            />
             <MenuItem
               actionId="toggleBladeMode"
               label={t("actions.toggle_blade_mode")}
+              checked={activeTool === "blade"}
               onSelect={onToggleBladeMode}
               disabled={busy || !canBlade}
             />

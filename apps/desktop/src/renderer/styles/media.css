@@ -1,22 +1,15 @@
 
 
 
-/* Import proxy notification — reuses .export-panel chrome but sits in the
-   opposite corner (top-right) so it never overlaps the export panel
-   (bottom-left) when both are open. */
+/* Corner-notice skin (CornerNotice + MotifStaleDialog) — reuses .export-panel
+   chrome but sits in the opposite corner (top-right) so it never overlaps the
+   export panel (bottom-left) when both are open. */
 .import-proxy-dialog {
   left: auto;
   right: 16px;
   bottom: auto;
   top: 16px;
   padding-bottom: 8px;
-}
-
-.import-proxy-heading {
-  margin: 0;
-  padding: 4px 12px 0;
-  font-size: var(--font-size-caption);
-  color: var(--muted-foreground);
 }
 
 .import-proxy-list {
@@ -36,16 +29,11 @@
   color: var(--foreground);
 }
 
-.import-proxy-list li.is-failed .import-proxy-reason {
-  color: var(--destructive);
-}
-
 .import-proxy-reason {
   color: var(--muted-foreground);
   white-space: nowrap;
 }
 
-.import-proxy-checking,
 .import-proxy-note {
   margin: 0;
   padding: 2px 12px;
@@ -555,6 +543,46 @@
   white-space: nowrap;
   cursor: help;
   z-index: 2;
+}
+
+/* Background optimization on a clip that is ALREADY usable. Deliberately not
+   shaped like the centred badges above: those cover the thumbnail because the
+   clip can't be used yet, and wearing that costume here would read as "blocked"
+   on a clip the user can drag right now. A small corner dot says "something is
+   running" without making any claim about availability.
+
+   Top-LEFT, because the top-right corner already belongs to the `.media-kind`
+   pill. In list layout `.media-item-thumb` is `position: static`, so this
+   anchors to the whole row instead of the 72px thumbnail — still the leading
+   corner, clear of the filename. No per-layout override needed. */
+.media-optimizing-dot {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--keyframe);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #0a0c10 60%, transparent);
+  cursor: help;
+  z-index: 2;
+  animation: media-optimizing-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes media-optimizing-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-optimizing-dot {
+    animation: none;
+  }
 }
 
 .media-context-menu {

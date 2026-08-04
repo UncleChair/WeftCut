@@ -14,6 +14,13 @@ pub struct Transform {
     pub rotation_deg: Animated<f64>,
     /// Anchor point in normalized layer coordinates; (0.5, 0.5) = center.
     pub anchor: (f64, f64),
+    /// Uniform-scale intent: the two scale tracks edit as one. Owned and
+    /// enforced by the TS state layer (mutations/scaleLink.ts); Rust only
+    /// carries it on the wire — compute never reads it. The serde default
+    /// covers saves that predate the field; the TS load path replaces that
+    /// placeholder with a real twin-check backfill before anything edits.
+    #[serde(default)]
+    pub scale_linked: bool,
 }
 
 impl Default for Transform {
@@ -25,6 +32,8 @@ impl Default for Transform {
             scale_y: Animated::Static(1.0),
             rotation_deg: Animated::Static(0.0),
             anchor: (0.5, 0.5),
+            // Matches the TS defaultTransform() twin (mutations/add.ts).
+            scale_linked: true,
         }
     }
 }
