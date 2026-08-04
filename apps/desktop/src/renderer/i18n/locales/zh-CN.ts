@@ -143,7 +143,7 @@ const zhCN: Resources = {
     save_workspace_as: "另存为新工作区…",
     rename_workspace: "重命名工作区…",
     delete_workspace: "删除工作区",
-    enter_agent_mode: "进入 Agent 模式",
+    enter_agent_mode: "进入代理模式",
   },
   quick_actions: {
     tools: "工具",
@@ -219,7 +219,7 @@ const zhCN: Resources = {
     motifs: "Motifs…",
     motifs_hint: "选择 Motif 叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
     open_agent_panel: "打开代理面板",
-    enter_agent_mode: "进入 Agent 模式",
+    enter_agent_mode: "进入代理模式",
     toggle_play: "播放 / 暂停",
     delete_selected: "删除选中的图层",
     copy_selected: "复制选中的片段",
