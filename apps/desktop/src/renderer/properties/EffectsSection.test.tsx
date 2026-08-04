@@ -18,12 +18,28 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string, o?: { defaultValue?: string }) => o?.defaultValue ?? k }),
 }));
 vi.mock("../render/effects/effectRegistry", () => ({
-  listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name" }],
+  listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name", category: "blur" }],
   getDescriptor,
 }));
 vi.mock("./EffectParamField", () => ({
   EffectParamFields: ({ effect }: { effect: EffectView }) => (
     <div data-testid={`effect-params-${effect.id}`} />
+  ),
+}));
+// The picker's own ranking/keyboard behaviour is covered in EffectPicker.test;
+// here it stands in as the "user chose a kind" edge so these tests never
+// depend on Base UI's portal + focus machinery.
+vi.mock("./EffectPicker", () => ({
+  EffectPicker: ({
+    catalog,
+    onPick,
+  }: {
+    catalog: Array<{ kind: string }>;
+    onPick: (kind: string) => void;
+  }) => (
+    <button data-testid="effect-add" onClick={() => onPick(catalog[0]!.kind)}>
+      add
+    </button>
   ),
 }));
 const { pickColor } = vi.hoisted(() => ({
@@ -76,6 +92,13 @@ const blur = (id: string, enabled = true): EffectView => ({
 });
 const onMutated = vi.fn(async () => {});
 
+/// The secondary actions live behind the card's ⋯ overflow menu (Base UI Menu,
+/// portalled), so every one of them needs its trigger opened first.
+async function openCardMenu(index: number) {
+  await userEvent.click(screen.getByTestId(`effect-menu-${index}`));
+  return screen.findByTestId(`effect-up-${index}`);
+}
+
 describe("EffectsSection", () => {
   it("renders one row per effect, named from the catalog", () => {
     render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
@@ -84,10 +107,25 @@ describe("EffectsSection", () => {
     expect(within(screen.getByTestId("effect-row-0")).getByText("blur")).toBeTruthy();
   });
 
-  it("clicking Add calls addEffect with the selected (default) kind", async () => {
+  it("picking a kind in the add picker calls addEffect with it", async () => {
     render(<EffectsSection layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     await userEvent.click(screen.getByTestId("effect-add"));
     expect(addEffect).toHaveBeenCalledWith("L1", "blur");
+  });
+
+  it("an empty chain states so, and shows no order hint", () => {
+    render(<EffectsSection layer={layerWith([])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    expect(screen.getByText("effects.empty_chain")).toBeTruthy();
+    expect(screen.queryByText("effects.order_hint")).toBeNull();
+  });
+
+  it("numbers the cards by chain position and states the apply direction", () => {
+    render(
+      <EffectsSection layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
+    );
+    expect(within(screen.getByTestId("effect-row-0")).getByText("1")).toBeTruthy();
+    expect(within(screen.getByTestId("effect-row-1")).getByText("2")).toBeTruthy();
+    expect(screen.getByText("effects.order_hint")).toBeTruthy();
   });
 
   it("toggling enable calls updateEffect with the negated flag", async () => {
@@ -98,6 +136,7 @@ describe("EffectsSection", () => {
 
   it("remove calls removeEffect", async () => {
     render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    await openCardMenu(0);
     await userEvent.click(screen.getByTestId("effect-remove-0"));
     expect(removeEffect).toHaveBeenCalledWith("L1", "E1");
   });
@@ -106,9 +145,25 @@ describe("EffectsSection", () => {
     render(
       <EffectsSection layer={layerWith([blur("E1"), blur("E2")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />,
     );
-    expect((screen.getByTestId("effect-up-0") as HTMLButtonElement).disabled).toBe(true);
+    const up = await openCardMenu(0);
+    expect(up.getAttribute("aria-disabled")).toBe("true");
     await userEvent.click(screen.getByTestId("effect-down-0"));
     expect(moveEffect).toHaveBeenCalledWith("L1", "E1", 1);
+  });
+
+  it("reset writes every catalog param back to its default as ONE batch", async () => {
+    getDescriptor.mockReturnValue({
+      kind: "blur",
+      params: { strength: { default: 8 }, extra: { default: 2 } },
+    });
+    render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
+    await openCardMenu(0);
+    await userEvent.click(screen.getByTestId("effect-reset-0"));
+    expect(updateLayerParamTracks).toHaveBeenCalledTimes(1);
+    expect(updateLayerParamTracks).toHaveBeenCalledWith("L1", [
+      ["effects[E1].params[strength]", { mode: "Static", value: 8 }],
+      ["effects[E1].params[extra]", { mode: "Static", value: 2 }],
+    ]);
   });
 
   it("cards start expanded; the collapse toggle hides and restores the param rows", async () => {

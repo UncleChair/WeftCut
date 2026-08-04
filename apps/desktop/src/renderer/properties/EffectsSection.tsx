@@ -1,9 +1,20 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, GripVertical, Pipette } from "lucide-react";
-import { AppSelect } from "../components/AppSelect";
+import { Menu } from "@base-ui/react/menu";
+import {
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
+  MoreHorizontal,
+  Pipette,
+} from "lucide-react";
 import { AppSwitch } from "../components/AppSwitch";
-import { Button } from "@/components/ui/button";
 import {
   addEffect,
   updateEffect,
@@ -23,6 +34,7 @@ import {
   setTransientOverrides,
 } from "../render/effects/effectOverrides";
 import { EffectParamFields } from "./EffectParamField";
+import { EffectPicker } from "./EffectPicker";
 
 interface Props {
   layer: LayerSummary;
@@ -49,6 +61,26 @@ function isNoopGap(gap: number, fromIndex: number): boolean {
   return gap === fromIndex || gap === fromIndex + 1;
 }
 
+// Auto-scroll band and speed for a drag that reaches the panel's edge. The
+// Effect panel lives in a scrolling dock host, so a long chain would otherwise
+// be unreorderable past the visible rows.
+const EDGE_BAND_PX = 28;
+const EDGE_SPEED_PX = 12;
+
+/// Nearest scrollable ancestor, or null when the chain fits without scrolling.
+function scrollHostOf(el: HTMLElement | null): HTMLElement | null {
+  for (let n = el?.parentElement ?? null; n; n = n.parentElement) {
+    const overflowY = getComputedStyle(n).overflowY;
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      n.scrollHeight > n.clientHeight
+    ) {
+      return n;
+    }
+  }
+  return null;
+}
+
 /// Per-layer effect chain editor. Data-driven off the effect catalog
 /// (`listEffects`): the add picker, the row names, and the param rows all come
 /// from the registry, so a new filter is zero UI change. Rendered by
@@ -56,7 +88,6 @@ function isNoopGap(gap: number, fromIndex: number): boolean {
 export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }: Props) {
   const { t } = useTranslation();
   const catalog = listEffects();
-  const [pendingKind, setPendingKind] = useState(catalog[0]?.kind ?? "");
   const [err, setErr] = useState<string | null>(null);
 
   // A pick session (EffectRow.pickColorGroup) is modal and long-lived. If its
@@ -80,20 +111,56 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
     setDrag(next);
   };
   const rowsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const sectionRef = useRef<HTMLElement | null>(null);
   const count = layer.effects.length;
 
   useEffect(() => {
     if (!drag) return;
-    const onMove = (e: PointerEvent) => {
-      const current = dragRef.current;
-      if (!current) return;
+    // The gap is derived from live rects, so it stays correct while the host
+    // auto-scrolls under a stationary pointer.
+    const gapAt = (clientY: number) => {
       let gap = 0;
       rowsRef.current.forEach((row, i) => {
         if (!row) return;
         const rect = row.getBoundingClientRect();
-        if (e.clientY > rect.top + rect.height / 2) gap = i + 1;
+        if (clientY > rect.top + rect.height / 2) gap = i + 1;
       });
+      return gap;
+    };
+    const applyGap = (clientY: number) => {
+      const current = dragRef.current;
+      if (!current) return;
+      const gap = gapAt(clientY);
       if (gap !== current.gap) setChainDrag({ ...current, gap });
+    };
+
+    // Edge auto-scroll: a rAF pump so holding the pointer at the panel edge
+    // keeps scrolling, instead of advancing one step per pointermove event.
+    const host = scrollHostOf(sectionRef.current);
+    let speed = 0;
+    let lastY = 0;
+    let raf = 0;
+    const pump = () => {
+      raf = 0;
+      if (!host || speed === 0 || !dragRef.current) return;
+      const before = host.scrollTop;
+      host.scrollTop += speed;
+      if (host.scrollTop !== before) applyGap(lastY);
+      raf = requestAnimationFrame(pump);
+    };
+    const updateAutoScroll = (clientY: number) => {
+      lastY = clientY;
+      if (!host) return;
+      const rect = host.getBoundingClientRect();
+      if (clientY < rect.top + EDGE_BAND_PX) speed = -EDGE_SPEED_PX;
+      else if (clientY > rect.bottom - EDGE_BAND_PX) speed = EDGE_SPEED_PX;
+      else speed = 0;
+      if (speed !== 0 && raf === 0) raf = requestAnimationFrame(pump);
+    };
+
+    const onMove = (e: PointerEvent) => {
+      applyGap(e.clientY);
+      updateAutoScroll(e.clientY);
     };
     const onUp = () => {
       const current = dragRef.current;
@@ -116,6 +183,8 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
     window.addEventListener("pointercancel", onCancel);
     window.addEventListener("keydown", onKey);
     return () => {
+      speed = 0;
+      if (raf !== 0) cancelAnimationFrame(raf);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
@@ -140,49 +209,53 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
 
   const indicatorGap = drag && !isNoopGap(drag.gap, drag.fromIndex) ? drag.gap : null;
 
-  const add = () => {
+  const add = (kind: string) => {
     setErr(null);
-    addEffect(layer.id, pendingKind).then(onMutated).catch((e) => setErr(String(e)));
+    addEffect(layer.id, kind).then(onMutated).catch((e) => setErr(String(e)));
   };
 
   return (
-    <section className={drag ? "prop-section prop-effects--reordering" : "prop-section"}>
+    <section
+      ref={sectionRef}
+      className={drag ? "prop-section prop-effects prop-effects--reordering" : "prop-section prop-effects"}
+    >
       <h3>{t("effects.heading")}</h3>
-      {layer.effects.map((eff, i) => (
-        <EffectRow
-          key={eff.id}
-          layer={layer}
-          effect={eff}
-          index={i}
-          count={count}
-          tInLayerUs={tInLayerUs}
-          playheadInSpan={playheadInSpan}
-          onMutated={onMutated}
-          liveRef={liveRef}
-          rowClassName={[
-            "prop-effect-row",
-            drag?.effectId === eff.id ? "prop-effect-row--dragging" : "",
-            indicatorGap === i ? "prop-effect-row--drop-before" : "",
-            indicatorGap === count && i === count - 1 ? "prop-effect-row--drop-after" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          rowRef={(el) => {
-            rowsRef.current[i] = el;
-          }}
-          onGripPointerDown={startChainDrag}
-        />
-      ))}
+      {count === 0 ? (
+        <p className="prop-effect-blank">{t("effects.empty_chain")}</p>
+      ) : (
+        <>
+          {layer.effects.map((eff, i) => (
+            <EffectRow
+              key={eff.id}
+              layer={layer}
+              effect={eff}
+              index={i}
+              count={count}
+              tInLayerUs={tInLayerUs}
+              playheadInSpan={playheadInSpan}
+              onMutated={onMutated}
+              liveRef={liveRef}
+              rowClassName={[
+                "prop-effect-row",
+                drag?.effectId === eff.id ? "prop-effect-row--dragging" : "",
+                indicatorGap === i ? "prop-effect-row--drop-before" : "",
+                indicatorGap === count && i === count - 1 ? "prop-effect-row--drop-after" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              rowRef={(el) => {
+                rowsRef.current[i] = el;
+              }}
+              onGripPointerDown={startChainDrag}
+            />
+          ))}
+          {/* The chain's direction is not inferable from a vertical list —
+              state it, because blur→key and key→blur are different images. */}
+          <p className="prop-effect-order-hint">{t("effects.order_hint")}</p>
+        </>
+      )}
       <div className="prop-effect-add">
-        <AppSelect
-          value={pendingKind}
-          ariaLabel={t("effects.add")}
-          onValueChange={setPendingKind}
-          options={catalog.map((d) => ({ value: d.kind, label: t(d.nameI18nKey, { defaultValue: d.kind }) }))}
-        />
-        <Button size="sm" data-testid="effect-add" disabled={!pendingKind} onClick={add}>
-          {t("effects.add")}
-        </Button>
+        <EffectPicker catalog={catalog} onPick={add} disabled={catalog.length === 0} />
       </div>
       {err && <p className="settings-error">{err}</p>}
     </section>
@@ -225,9 +298,23 @@ function EffectRow({
   // persisted Workspace document.
   const [collapsed, setCollapsed] = useState(false);
   const name = t(`effects.${effect.kind}.name`, { defaultValue: effect.kind });
+  const descriptor = getDescriptor(effect.kind);
   const run = (fn: () => Promise<unknown>) => () => {
     setErr(null);
     fn().then(onMutated).catch((e) => setErr(String(e)));
+  };
+
+  /// Reset every catalog param to its registry default as ONE undoable batch.
+  /// Deliberately writes Static tracks: "reset" means back to the default
+  /// value, so any keyframes on those params are discarded (one Ctrl+Z away).
+  const resetParams = () => {
+    const spec = descriptor?.params ?? {};
+    const entries: [string, AnimTrack<number>][] = Object.entries(spec).map(([key, s]) => [
+      `effects[${effect.id}].params[${key}]`,
+      { mode: "Static", value: s.default },
+    ]);
+    if (entries.length === 0) return Promise.resolve();
+    return updateLayerParamTracks(layer.id, entries);
   };
 
   // Chromakey (and any future color-triplet effect): one eyedropper writes the
@@ -272,84 +359,126 @@ function EffectRow({
     }
   };
 
+  const colorGroups = descriptor?.colorGroups ?? [];
+
   return (
     <div className={rowClassName} ref={rowRef} data-testid={`effect-row-${index}`}>
       <div className="prop-effect-head">
         {/* Pointer-only reorder affordance. Hidden from the accessibility tree:
-            the keyboard path is the adjacent move-up/move-down buttons, and a
-            card gesture must never read as a Dockview Panel drag. */}
+            the keyboard path is the move-up/move-down items in the ⋯ menu, and
+            a card gesture must never read as a Dockview Panel drag. */}
         <span
           className="prop-effect-grip"
           data-testid={`effect-drag-${index}`}
           aria-hidden="true"
+          title={t("effects.drag_hint")}
           onPointerDown={(e) => onGripPointerDown(index, effect.id, e)}
         >
-          <GripVertical size={12} />
+          <GripVertical size={13} />
+        </span>
+        {/* Chain position. Without it a one-effect chain looks orderless and a
+            multi-effect chain gives no handle for "move the 3rd one up". */}
+        <span className="prop-effect-index" aria-hidden="true">
+          {index + 1}
         </span>
         <button
           type="button"
-          className="app-color-pick prop-effect-collapse"
+          className="prop-effect-title"
           data-testid={`effect-collapse-${index}`}
           aria-expanded={!collapsed}
           aria-label={collapsed ? t("effects.expand", { name }) : t("effects.collapse", { name })}
           onClick={() => setCollapsed((next) => !next)}
         >
-          {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+          <span className="prop-effect-chevron" aria-hidden="true">
+            {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+          </span>
+          <span className="prop-effect-name">{name}</span>
         </button>
-        <span className="prop-effect-name">{name}</span>
-        {getDescriptor(effect.kind)?.colorGroups?.map((group, gi) => (
-          <button
-            key={`cg-${gi}`}
-            type="button"
-            className="app-color-pick"
-            data-testid={`effect-colorpick-${index}`}
-            aria-label={t("colorpick.pick")}
-            onClick={() => void pickColorGroup(group.params)}
-          >
-            <Pipette size={12} />
-          </button>
-        ))}
         <AppSwitch
           data-testid={`effect-enable-${index}`}
           checked={effect.enabled}
           ariaLabel={t("effects.enable", { name })}
           onCheckedChange={(next) => run(() => updateEffect(layer.id, effect.id, { enabled: next }))()}
         />
-        <Button
-          size="sm"
-          data-testid={`effect-up-${index}`}
-          aria-label={t("effects.move_up")}
-          disabled={index === 0}
-          onClick={run(() => moveEffect(layer.id, effect.id, index - 1))}
-        >
-          ↑
-        </Button>
-        <Button
-          size="sm"
-          data-testid={`effect-down-${index}`}
-          aria-label={t("effects.move_down")}
-          disabled={index === count - 1}
-          onClick={run(() => moveEffect(layer.id, effect.id, index + 1))}
-        >
-          ↓
-        </Button>
-        <Button
-          size="sm"
-          data-testid={`effect-remove-${index}`}
-          aria-label={t("effects.remove", { name })}
-          onClick={run(() => removeEffect(layer.id, effect.id))}
-        >
-          ✕
-        </Button>
+        {/* Secondary actions collapse into one overflow menu: the header was
+            eight controls wide, which ellipsised the effect name to nothing in
+            a docked (narrow) panel. */}
+        <Menu.Root>
+          <Menu.Trigger
+            className="prop-effect-more"
+            data-testid={`effect-menu-${index}`}
+            aria-label={t("effects.more", { name })}
+          >
+            <MoreHorizontal size={14} />
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Positioner side="bottom" align="end" sideOffset={4} className="app-popup-positioner">
+              <Menu.Popup className="app-menu-list">
+                <Menu.Item
+                  className="app-menu-item"
+                  data-testid={`effect-up-${index}`}
+                  disabled={index === 0}
+                  onClick={run(() => moveEffect(layer.id, effect.id, index - 1))}
+                >
+                  <span className="app-menu-item-label">{t("effects.move_up")}</span>
+                </Menu.Item>
+                <Menu.Item
+                  className="app-menu-item"
+                  data-testid={`effect-down-${index}`}
+                  disabled={index === count - 1}
+                  onClick={run(() => moveEffect(layer.id, effect.id, index + 1))}
+                >
+                  <span className="app-menu-item-label">{t("effects.move_down")}</span>
+                </Menu.Item>
+                <Menu.Separator className="menu-separator" />
+                <Menu.Item
+                  className="app-menu-item"
+                  data-testid={`effect-reset-${index}`}
+                  onClick={run(resetParams)}
+                >
+                  <span className="app-menu-item-label">{t("effects.reset_params")}</span>
+                </Menu.Item>
+                <Menu.Separator className="menu-separator" />
+                <Menu.Item
+                  className="app-menu-item"
+                  data-testid={`effect-remove-${index}`}
+                  onClick={run(() => removeEffect(layer.id, effect.id))}
+                >
+                  <span className="app-menu-item-label">{t("effects.remove", { name })}</span>
+                </Menu.Item>
+              </Menu.Popup>
+            </Menu.Positioner>
+          </Menu.Portal>
+        </Menu.Root>
       </div>
       {!collapsed && (
-        <EffectParamFields
-          layer={layer}
-          effect={effect}
-          tInLayerUs={tInLayerUs}
-          playheadInSpan={playheadInSpan}
-          onMutated={onMutated}
-        />
+        <div className="prop-effect-body">
+          {/* The eyedropper sits with the params it writes, not in the header:
+              it edits three color scalars, so it belongs to the body. */}
+          {colorGroups.map((group, gi) => (
+            <div className="prop-field prop-effect-colorgroup" key={`cg-${gi}`}>
+              <span className="prop-field-label">{t("effects.key_color")}</span>
+              <div className="prop-field-control">
+                <button
+                  type="button"
+                  className="app-color-pick"
+                  data-testid={`effect-colorpick-${index}`}
+                  aria-label={t("colorpick.pick")}
+                  onClick={() => void pickColorGroup(group.params)}
+                >
+                  <Pipette size={12} />
+                </button>
+              </div>
+            </div>
+          ))}
+          <EffectParamFields
+            layer={layer}
+            effect={effect}
+            tInLayerUs={tInLayerUs}
+            playheadInSpan={playheadInSpan}
+            onMutated={onMutated}
+          />
+        </div>
       )}
       {err && <p className="settings-error">{err}</p>}
     </div>
