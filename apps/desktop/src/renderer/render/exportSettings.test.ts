@@ -15,6 +15,10 @@ import {
   isIntermediateCodec,
   isAudioCodecContainerValid,
   audioCodecsForContainer,
+  bitrateConstraintIssue,
+  bufferSizeApplies,
+  isBitrateRateMode,
+  maxBitrateApplies,
   downscaleFpsOptions,
   downscaleHeightOptions,
   encoderHwHint,
@@ -99,6 +103,85 @@ describe("computeBitrate", () => {
       customBitrate: 12_000_000,
     };
     expect(computeBitrate(s, 1920, 1080, 30)).toBe(12_000_000);
+  });
+});
+
+describe("rate-control constraints", () => {
+  const vbr = (over: Partial<ExportSettings> = {}): ExportSettings => ({
+    ...DEFAULT_EXPORT_SETTINGS,
+    rateMode: "vbr",
+    ...over,
+  });
+
+  it("treats vbr and cbr as bitrate-driven, quality as not", () => {
+    expect(isBitrateRateMode("vbr")).toBe(true);
+    expect(isBitrateRateMode("cbr")).toBe(true);
+    expect(isBitrateRateMode("quality")).toBe(false);
+  });
+
+  it("defaults to uncapped peak and derived buffer (today's shipped output)", () => {
+    // Both null is load-bearing: a derived default would silently re-rate
+    // every project that was exported before these fields existed.
+    expect(DEFAULT_EXPORT_SETTINGS.maxBitrate).toBeNull();
+    expect(DEFAULT_EXPORT_SETTINGS.bufferSize).toBeNull();
+  });
+
+  it("applies a peak only under vbr on the native engine", () => {
+    expect(maxBitrateApplies(vbr())).toBe(true);
+    // CBR's peak IS its target — a separate control would be a lie.
+    expect(maxBitrateApplies(vbr({ rateMode: "cbr" }))).toBe(false);
+    expect(maxBitrateApplies(vbr({ rateMode: "quality" }))).toBe(false);
+    // WebCodecs has bitrate + bitrateMode and nothing else.
+    expect(maxBitrateApplies(vbr({ encoderEngine: "webcodecs" }))).toBe(false);
+    expect(maxBitrateApplies(vbr({ codec: "prores" }))).toBe(false);
+  });
+
+  it("applies a buffer under cbr always, under vbr only once a peak exists", () => {
+    expect(bufferSizeApplies(vbr({ rateMode: "cbr" }))).toBe(true);
+    // No ceiling ⇒ nothing for the buffer to average over.
+    expect(bufferSizeApplies(vbr())).toBe(false);
+    expect(bufferSizeApplies(vbr({ maxBitrate: 12_000_000 }))).toBe(true);
+    expect(bufferSizeApplies(vbr({ rateMode: "quality" }))).toBe(false);
+    expect(
+      bufferSizeApplies(vbr({ maxBitrate: 12_000_000, encoderEngine: "webcodecs" })),
+    ).toBe(false);
+  });
+
+  it("flags a peak below the target and accepts one at or above it", () => {
+    expect(bitrateConstraintIssue(vbr({ maxBitrate: 6_000_000 }), 8_000_000)).toBe(
+      "max_below_target",
+    );
+    expect(bitrateConstraintIssue(vbr({ maxBitrate: 8_000_000 }), 8_000_000)).toBeNull();
+    expect(bitrateConstraintIssue(vbr({ maxBitrate: 12_000_000 }), 8_000_000)).toBeNull();
+    expect(bitrateConstraintIssue(vbr(), 8_000_000)).toBeNull();
+  });
+
+  it("never flags a peak the encoder won't see", () => {
+    // Inert values are persisted (switching modes back must not lose them),
+    // so the check has to agree with maxBitrateApplies or the Export button
+    // would be disabled by a field that isn't even on screen.
+    const stale = { maxBitrate: 1_000_000 };
+    expect(bitrateConstraintIssue(vbr({ ...stale, rateMode: "cbr" }), 8_000_000)).toBeNull();
+    expect(
+      bitrateConstraintIssue(vbr({ ...stale, encoderEngine: "webcodecs" }), 8_000_000),
+    ).toBeNull();
+  });
+
+  it("snaps non-positive or non-finite saved peak/buffer to unset", () => {
+    // Hand-edited export.json is a supported surface, and `-maxrate 0` is an
+    // ffmpeg launch failure rather than a weaker constraint.
+    const merged = mergeSettings({
+      maxBitrate: 0,
+      bufferSize: -1,
+    } as Partial<ExportSettings>);
+    expect(merged.maxBitrate).toBeNull();
+    expect(merged.bufferSize).toBeNull();
+    expect(mergeSettings({ maxBitrate: Number.NaN } as Partial<ExportSettings>).maxBitrate)
+      .toBeNull();
+    // A valid value survives untouched.
+    expect(
+      mergeSettings({ maxBitrate: 12_000_000 } as Partial<ExportSettings>).maxBitrate,
+    ).toBe(12_000_000);
   });
 });
 

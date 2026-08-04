@@ -77,9 +77,23 @@ export interface ExportSettings {
   fps: number | null;
   codec: CodecId;
   quality: QualityPreset;
-  /// Bits per second, used only when quality === "custom".
+  /// Bits per second, used only when quality === "custom". This is the TARGET
+  /// (average) bitrate — ffmpeg's `-b:v`, WebCodecs' `bitrate`.
   customBitrate: number | null;
   rateMode: RateMode;
+  /// Peak bitrate ceiling in bits per second for rateMode "vbr" — ffmpeg's
+  /// `-maxrate`. null ⇒ uncapped: no `-maxrate` is emitted at all, which is
+  /// plain ABR and the shipped behavior every existing project was encoded
+  /// with. Deliberately NOT defaulted to a multiple of the target: that would
+  /// silently re-rate every old project's output. Inert under "cbr" (peak is
+  /// the target by definition) and "quality" (no bitrate target exists), and
+  /// native-only — a WebCodecs VideoEncoderConfig has no peak field.
+  maxBitrate: number | null;
+  /// VBV buffer size in BITS — ffmpeg's `-bufsize`, the window the peak is
+  /// averaged over. Small = tighter tracking of the ceiling and more quality
+  /// swing; large = looser. null ⇒ the encoder seam derives it (2× the
+  /// constrained rate), which is what shipped. Native-only.
+  bufferSize: number | null;
   /// ProRes flavor (prores_ks profile). Only meaningful when codec === "prores".
   proresProfile: ProresProfile;
   /// DNxHR flavor. Only meaningful when codec === "dnxhr".
@@ -124,6 +138,8 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   quality: "medium",
   customBitrate: null,
   rateMode: "vbr",
+  maxBitrate: null,
+  bufferSize: null,
   proresProfile: "422",
   dnxhrProfile: "sq",
   crf: null,
@@ -239,6 +255,50 @@ export function computeBitrate(
   return Math.round(width * height * fps * bpp);
 }
 
+/// True when the rate mode is driven by a bitrate target (so the quality
+/// preset, target bitrate, and the peak/buffer constraints all apply).
+/// "quality" is CRF — a bitrate target has no meaning there and the encoder
+/// seam replaces `-b:v` outright.
+export function isBitrateRateMode(mode: RateMode): boolean {
+  return mode !== "quality";
+}
+
+/// True when a user-set peak ceiling actually reaches the encoder. Only VBR
+/// has a peak distinct from its target (CBR pins peak = target), and only the
+/// native engine can carry one — WebCodecs exposes `bitrate` + `bitrateMode`
+/// and nothing else, so a peak under a WebCodecs pin would be a control that
+/// silently does nothing.
+export function maxBitrateApplies(s: ExportSettings): boolean {
+  return (
+    s.rateMode === "vbr" &&
+    s.encoderEngine !== "webcodecs" &&
+    !isIntermediateCodec(s.codec)
+  );
+}
+
+/// True when a user-set VBV buffer reaches the encoder: any constrained
+/// bitrate mode on the native engine. Under VBR the buffer only bites once a
+/// peak exists (no `-maxrate` ⇒ nothing to average over), so an isolated
+/// buffer with no ceiling is inert; CBR always constrains.
+export function bufferSizeApplies(s: ExportSettings): boolean {
+  if (s.encoderEngine === "webcodecs" || isIntermediateCodec(s.codec)) return false;
+  if (s.rateMode === "cbr") return true;
+  return s.rateMode === "vbr" && s.maxBitrate != null;
+}
+
+/// Why the current rate-control numbers can't be encoded as written, or null
+/// when they can. `target` is the effective target bitrate
+/// (`computeBitrate`), which depends on output dims + fps — hence a parameter
+/// rather than a lookup. Mirrors the Rust-side `validate_intent` rejection so
+/// the dialog explains the problem instead of letting ffmpeg fail at launch.
+export function bitrateConstraintIssue(
+  s: ExportSettings,
+  target: number,
+): "max_below_target" | null {
+  if (!maxBitrateApplies(s) || s.maxBitrate == null) return null;
+  return s.maxBitrate < target ? "max_below_target" : null;
+}
+
 export function defaultCrf(codec: CodecId): number {
   switch (codec) {
     case "h264": return 18;
@@ -290,6 +350,13 @@ export function formatBytes(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
   return `${(n / 1e3).toFixed(0)} KB`;
+}
+
+/// null-tolerant "is this a usable positive number", for snapping saved
+/// rate-control values. A missing field is already null after the spread; this
+/// also catches 0, negatives, and NaN from a hand-edited blob.
+function isPositiveFinite(v: number | null): v is number {
+  return v != null && Number.isFinite(v) && v > 0;
 }
 
 /// Overlay a (possibly partial / null) saved blob onto the defaults so old or
@@ -351,6 +418,14 @@ export function mergeSettings(
   if (!EXPORT_DECODE_ENGINES.includes(merged.decodeEngine)) {
     merged.decodeEngine = "auto";
   }
+  // Rate-control numbers: a non-positive or non-finite peak/buffer is not a
+  // weaker constraint, it is an ffmpeg launch failure (`-maxrate 0`), so an
+  // old or hand-edited blob snaps back to "unset" rather than reaching the
+  // encoder. `maxBitrate < target` is NOT checked here: the target depends on
+  // output dims + fps, which this pure merge doesn't have — the dialog warns
+  // (bitrateConstraintIssue) and the Rust seam rejects.
+  if (!isPositiveFinite(merged.maxBitrate)) merged.maxBitrate = null;
+  if (!isPositiveFinite(merged.bufferSize)) merged.bufferSize = null;
   return merged;
 }
 

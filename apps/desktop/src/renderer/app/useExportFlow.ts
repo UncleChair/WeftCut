@@ -27,12 +27,14 @@ import {
   type ExportSettings,
   type WebCodecsCodecId,
   codecString,
+  bufferSizeApplies,
   compositeBitDepth,
   computeBitrate,
   defaultCrf,
   encoderHwHint,
   gopFrames,
   isIntermediateCodec,
+  maxBitrateApplies,
   resolveOutputDims,
 } from "../render/exportSettings";
 import { approxFrameDurUs } from "../frames";
@@ -586,6 +588,16 @@ export function useExportFlow(deps: {
           pixFmt: sinkTarget.pixFmt,
           bitrate: computeBitrate(settings, dims.width, dims.height, outFps),
           cbr: settings.rateMode === "cbr",
+          // Peak/buffer ride the same *Applies predicates the dialog shows the
+          // fields under, so what the encoder receives is exactly what the user
+          // could see and edit — an inert-but-persisted value (a VBR peak left
+          // behind after switching to CBR) never leaks into the argv.
+          ...(maxBitrateApplies(settings) && settings.maxBitrate != null
+            ? { maxBitrate: settings.maxBitrate }
+            : {}),
+          ...(bufferSizeApplies(settings) && settings.bufferSize != null
+            ? { bufferSize: settings.bufferSize }
+            : {}),
           gop: gopFrames(settings.keyframeIntervalSec, outFps),
           software:
             settings.hwAccel === "software" || settings.rateMode === "quality",

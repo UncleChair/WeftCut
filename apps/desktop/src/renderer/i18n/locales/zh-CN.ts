@@ -526,9 +526,23 @@ const zhCN: Resources = {
     quality_medium: "中",
     quality_high: "高",
     quality_custom: "自定义",
-    custom_bitrate: "码率",
+    target_bitrate: "目标码率",
+    max_bitrate: "峰值码率",
+    max_bitrate_unlimited:
+      "峰值不限——遇到复杂画面时码率可能远超目标值。设置峰值可以给它一个上限。",
+    max_bitrate_below_target:
+      "峰值码率不能低于目标码率。低于目标时，编码器会放弃目标值，成片按峰值输出。",
+    buffer_size: "缓冲区大小",
+    buffer_size_auto:
+      "缓冲区跟随上限（2×）。缓冲区越小，越贴合上限，质量波动越大；越大则越宽松。",
+    cbr_hint: "CBR 全程锁定这个码率：峰值与最低值都等于它，画面质量随场景复杂度变化。",
+    rate_constraints_native_only:
+      "峰值码率与缓冲区需要原生 FFmpeg 编码器——WebCodecs 只暴露一个目标码率。",
     mbps: "Mbps",
+    mbit: "Mbit",
     rate_mode: "码率控制",
+    rate_vbr: "VBR(可变)",
+    rate_cbr: "CBR(恒定)",
     rate_quality: "质量优先 (CRF)",
     crf: "CRF",
     keyframe_interval: "关键帧间隔",

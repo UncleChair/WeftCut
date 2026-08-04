@@ -70,8 +70,18 @@ pub struct VideoSinkStartArgs {
     pub fps_den: u32,
     /// "h264" | "hevc" | "av1" | "prores" | "dnxhr".
     pub codec: String,
+    /// Target (average) bitrate in bits per second — ffmpeg's `-b:v`.
     pub bitrate: u64,
     pub cbr: bool,
+    /// Peak ceiling in bits per second (`-maxrate`), VBR only. Omitted ⇒
+    /// uncapped ABR, the pre-existing behavior. Ignored under `cbr`, where the
+    /// ceiling is the target by definition.
+    #[serde(default)]
+    pub max_bitrate: Option<u64>,
+    /// VBV buffer in BITS (`-bufsize`). Omitted ⇒ derived from the ceiling by
+    /// the encoder registry.
+    #[serde(default)]
+    pub buffer_size: Option<u64>,
     pub gop: u64,
     pub software: bool,
     /// Empty ⇒ no ffmpeg (byte-count only; used by tests). Non-empty ⇒ encode.
@@ -153,6 +163,8 @@ fn encoder_intent(args: &VideoSinkStartArgs) -> Result<EncoderIntent, EncodeUnav
                 } else {
                     BitrateMode::Variable
                 },
+                max_bps: args.max_bitrate,
+                buffer_bits: args.buffer_size,
             },
         },
     };
@@ -460,6 +472,8 @@ mod tests {
             codec: "hevc".into(),
             bitrate: 8_000_000,
             cbr: false,
+            max_bitrate: None,
+            buffer_size: None,
             gop: 30,
             software: true,
             output_path: "C:/tmp/out.mp4".into(),
@@ -479,6 +493,8 @@ mod tests {
             codec: codec.into(),
             bitrate: 8_000_000,
             cbr: false,
+            max_bitrate: None,
+            buffer_size: None,
             gop: 30,
             software: true,
             output_path: "C:/tmp/out.mp4".into(),
@@ -506,6 +522,32 @@ mod tests {
         assert_eq!(intent.container, OutputContainer::Mp4);
     }
 
+    // The peak/buffer wire fields land on the Bitrate variant rather than
+    // anywhere else on the intent, so CRF mode structurally cannot carry them.
+    #[test]
+    fn wire_peak_and_buffer_reach_the_bitrate_rate_control() {
+        let mut args = args_8bit("h264");
+        args.max_bitrate = Some(12_000_000);
+        args.buffer_size = Some(6_000_000);
+        assert_eq!(
+            encoder_intent(&args).unwrap().rate_control,
+            RateControl::Bitrate {
+                target_bps: 8_000_000,
+                mode: BitrateMode::Variable,
+                max_bps: Some(12_000_000),
+                buffer_bits: Some(6_000_000),
+            }
+        );
+
+        // CRF wins outright: the whole Bitrate variant (peak and buffer with
+        // it) is replaced, so a stale peak can't ride along into a CRF encode.
+        args.crf = Some(20);
+        assert_eq!(
+            encoder_intent(&args).unwrap().rate_control,
+            RateControl::ConstantQuality { quality: 20 }
+        );
+    }
+
     #[test]
     fn tenbit_pix_fmt_still_defaults_and_gates() {
         // serde default keeps old TS callers valid.
@@ -516,6 +558,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(v.pix_fmt, "yuv420p10le");
+        // Same contract for the rate constraints: a caller that omits them gets
+        // the pre-existing uncapped/derived behavior, not a deserialize error.
+        assert_eq!(v.max_bitrate, None);
+        assert_eq!(v.buffer_size, None);
     }
 
     // The resolved encoder must be user-reachable, not tracing-stderr-only:
@@ -652,6 +698,8 @@ mod tests {
                 codec: "hevc".into(),
                 bitrate: 0,
                 cbr: false,
+                max_bitrate: None,
+                buffer_size: None,
                 gop: 30,
                 software: false,
                 output_path: String::new(),

@@ -41,9 +41,14 @@ import {
   type QualityPreset,
   type RateMode,
   type SpeedPreset,
+  bitrateConstraintIssue,
+  bufferSizeApplies,
   compositeBitDepth,
+  computeBitrate,
   containersForCodec,
   defaultCrf,
+  isBitrateRateMode,
+  maxBitrateApplies,
   exportIncludesVideo,
   exportIncludesAudio,
   exportOutputExtension,
@@ -304,6 +309,24 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
     return routingSourceCounts(media, routing);
   }, [settings, projSummary, mediaById, chosenRange, decodeComponentAvailable]);
 
+  /// The target bitrate this export would actually run at — the quality
+  /// preset's bpp heuristic, or the user's custom override. Recomputed from the
+  /// SAME resolver the run uses (computeBitrate over the resolved output dims +
+  /// fps), so the number on screen under a preset is the number ffmpeg gets,
+  /// not an independent restatement. Zero before settings load.
+  const outFps = settings?.fps != null ? settings.fps : compFps;
+  const effectiveBitrate = useMemo(() => {
+    if (!settings) return 0;
+    const d = resolveOutputDims(comp, settings);
+    return computeBitrate(settings, d.width, d.height, outFps);
+  }, [settings, comp, outFps]);
+  /// Non-null when the peak/target pair can't be encoded as typed. Mirrors the
+  /// Rust seam's rejection so the dialog explains it here instead of failing at
+  /// ffmpeg launch, and gates the Export button below.
+  const bitrateIssue = settings
+    ? bitrateConstraintIssue(settings, effectiveBitrate)
+    : null;
+
   async function onBrowse() {
     const chosen = await openDialog({
       title: t("export_dialog.choose_location"),
@@ -366,7 +389,10 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
     // The SAME value the run uses, not a re-derived `start < end`: the two
     // disagreed on a range typed past the end of the project, which is how a
     // rejected range used to slip through as a whole-project export.
-    chosenRange !== null;
+    chosenRange !== null &&
+    // A peak under the target is rejected at the encoder seam, so stop here
+    // rather than after the motif bake and a spawned ffmpeg.
+    bitrateIssue === null;
 
   return (
     <>
@@ -884,16 +910,53 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
 
                 {!isIntermediateCodec(settings.codec) && (
                   <>
+                {/* Rate control leads the group: it decides whether the rows
+                    below are bitrate targets or a CRF, so a mode chosen after
+                    them would keep re-labelling what was just set. */}
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.rate_mode")}
+                  </span>
+                  <AppSelect
+                    className="export-select"
+                    ariaLabel={t("export_dialog.rate_mode")}
+                    value={settings.rateMode}
+                    onValueChange={(v) => patch({ rateMode: v as RateMode })}
+                    options={[
+                      { value: "vbr", label: t("export_dialog.rate_vbr") },
+                      { value: "cbr", label: t("export_dialog.rate_cbr") },
+                      {
+                        value: "quality", label: t("export_dialog.rate_quality"),
+                        disabled: settings.encoderEngine === "webcodecs" || isIntermediateCodec(settings.codec),
+                      },
+                    ]}
+                  />
+                </div>
+
+                {isBitrateRateMode(settings.rateMode) ? (
+                  <>
+                {/* The preset is a shortcut that SEEDS the target bitrate below,
+                    not a parallel control — under CRF it decides nothing, which
+                    is why it lives inside this branch. */}
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.quality")}
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.quality")}
                     value={settings.quality}
-                    onValueChange={(v) =>
-                      patch({ quality: v as QualityPreset })
-                    }
+                    onValueChange={(v) => {
+                      const quality = v as QualityPreset;
+                      // Preset → drop the stale override so the bpp heuristic
+                      // drives the number again. Custom → seed from what is
+                      // already on screen, so the field is a value to nudge
+                      // rather than a blank the export can't run without.
+                      patch({
+                        quality,
+                        customBitrate: quality === "custom" ? effectiveBitrate : null,
+                      });
+                    }}
                     options={[
                       { value: "low", label: t("export_dialog.quality_low") },
                       { value: "medium", label: t("export_dialog.quality_medium") },
@@ -902,21 +965,63 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                     ]}
                   />
                 </div>
-                {settings.quality === "custom" && (
+                {/* Always visible, never preset-gated: this IS the bitrate the
+                    export runs at, and under CBR it is the whole setting. Under
+                    a preset it shows the heuristic's value (rounded to 10 kbps
+                    for display — the run uses the exact figure); typing takes
+                    the number over by flipping the preset to Custom. */}
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.target_bitrate")}
+                  </span>
+                  <span className="export-bitrate">
+                    <AppNumberField
+                      value={Number((effectiveBitrate / 1_000_000).toFixed(2))}
+                      min={0.1}
+                      step={1}
+                      align="center"
+                      className="settings-input-narrow"
+                      ariaLabel={t("export_dialog.target_bitrate")}
+                      onValueChange={(v) =>
+                        patch({
+                          quality: "custom",
+                          customBitrate: Math.max(1, Math.round(v * 1_000_000)),
+                        })
+                      }
+                    />
+                    <span className="settings-slider-unit">
+                      {t("export_dialog.mbps")}
+                    </span>
+                  </span>
+                </div>
+                {settings.rateMode === "cbr" && (
+                  <p className="settings-blurb">{t("export_dialog.cbr_hint")}</p>
+                )}
+
+                {maxBitrateApplies(settings) && (
                   <div className="export-row">
                     <span className="settings-toggle-label">
-                      {t("export_dialog.custom_bitrate")}
+                      {t("export_dialog.max_bitrate")}
                     </span>
                     <span className="export-bitrate">
                       <AppNumberField
-                        value={settings.customBitrate ? settings.customBitrate / 1_000_000 : null}
-                        min={1}
+                        value={
+                          settings.maxBitrate != null
+                            ? Number((settings.maxBitrate / 1_000_000).toFixed(2))
+                            : null
+                        }
+                        min={0.1}
                         step={1}
                         align="center"
                         className="settings-input-narrow"
-                        ariaLabel={t("export_dialog.custom_bitrate")}
-                        onValueChange={(v) => patch({ customBitrate: Math.round(v * 1_000_000) })}
-                        onClear={() => patch({ customBitrate: null })}
+                        ariaLabel={t("export_dialog.max_bitrate")}
+                        onValueChange={(v) =>
+                          patch({ maxBitrate: Math.max(1, Math.round(v * 1_000_000)) })
+                        }
+                        // Clearing the field is the only way back to uncapped
+                        // ABR — the shipped default — so it must reach null,
+                        // not fall back to the last typed number.
+                        onClear={() => patch({ maxBitrate: null })}
                       />
                       <span className="settings-slider-unit">
                         {t("export_dialog.mbps")}
@@ -924,26 +1029,61 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                     </span>
                   </div>
                 )}
+                {maxBitrateApplies(settings) && settings.maxBitrate == null && (
+                  <p className="settings-blurb">
+                    {t("export_dialog.max_bitrate_unlimited")}
+                  </p>
+                )}
+                {bitrateIssue === "max_below_target" && (
+                  <p className="settings-warn">
+                    {t("export_dialog.max_bitrate_below_target")}
+                  </p>
+                )}
+                {/* A peak/buffer has no field on a WebCodecs VideoEncoderConfig
+                    (bitrate + bitrateMode is the whole surface), so the rows are
+                    absent rather than dead under that pin — say why. */}
+                {settings.rateMode === "vbr" &&
+                  settings.encoderEngine === "webcodecs" && (
+                    <p className="settings-blurb">
+                      {t("export_dialog.rate_constraints_native_only")}
+                    </p>
+                  )}
 
-                <div className="export-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.rate_mode")}
-                  </span>
-                  <AppSelect
-                    className="export-select"
-                    value={settings.rateMode}
-                    onValueChange={(v) => patch({ rateMode: v as RateMode })}
-                    options={[
-                      { value: "vbr", label: "VBR" },
-                      { value: "cbr", label: "CBR" },
-                      {
-                        value: "quality", label: t("export_dialog.rate_quality"),
-                        disabled: settings.encoderEngine === "webcodecs" || isIntermediateCodec(settings.codec),
-                      },
-                    ]}
-                  />
-                </div>
-                {settings.rateMode === "quality" && !isIntermediateCodec(settings.codec) && (
+                {bufferSizeApplies(settings) && (
+                  <div className="export-row">
+                    <span className="settings-toggle-label">
+                      {t("export_dialog.buffer_size")}
+                    </span>
+                    <span className="export-bitrate">
+                      <AppNumberField
+                        value={
+                          settings.bufferSize != null
+                            ? Number((settings.bufferSize / 1_000_000).toFixed(2))
+                            : null
+                        }
+                        min={0.1}
+                        step={1}
+                        align="center"
+                        className="settings-input-narrow"
+                        ariaLabel={t("export_dialog.buffer_size")}
+                        onValueChange={(v) =>
+                          patch({ bufferSize: Math.max(1, Math.round(v * 1_000_000)) })
+                        }
+                        onClear={() => patch({ bufferSize: null })}
+                      />
+                      <span className="settings-slider-unit">
+                        {t("export_dialog.mbit")}
+                      </span>
+                    </span>
+                  </div>
+                )}
+                {bufferSizeApplies(settings) && settings.bufferSize == null && (
+                  <p className="settings-blurb">
+                    {t("export_dialog.buffer_size_auto")}
+                  </p>
+                )}
+                  </>
+                ) : (
                   <div className="export-row">
                     <span className="settings-toggle-label">{t("export_dialog.crf")}</span>
                     <AppNumberField

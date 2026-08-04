@@ -547,9 +547,24 @@ const enUS = {
     quality_medium: "Medium",
     quality_high: "High",
     quality_custom: "Custom",
-    custom_bitrate: "Bitrate",
+    target_bitrate: "Target bitrate",
+    max_bitrate: "Maximum bitrate",
+    max_bitrate_unlimited:
+      "Peak uncapped — the encoder may spike well above the target on hard scenes. Set a maximum to bound it.",
+    max_bitrate_below_target:
+      "The maximum must be at least the target bitrate. Below it, the encoder abandons the target and the file comes out at the maximum.",
+    buffer_size: "Buffer size",
+    buffer_size_auto:
+      "Buffer follows the ceiling (2×). A smaller buffer tracks the ceiling more tightly and swings quality more; a larger one is looser.",
+    cbr_hint:
+      "CBR holds this bitrate throughout: the maximum and minimum are pinned to it, so quality varies with scene difficulty.",
+    rate_constraints_native_only:
+      "Maximum bitrate and buffer size need the native FFmpeg encoder — WebCodecs exposes only a target bitrate.",
     mbps: "Mbps",
+    mbit: "Mbit",
     rate_mode: "Rate control",
+    rate_vbr: "VBR (variable)",
+    rate_cbr: "CBR (constant)",
     rate_quality: "Quality (CRF)",
     crf: "CRF",
     keyframe_interval: "Keyframe interval",

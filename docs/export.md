@@ -40,6 +40,48 @@ Opus-in-MP4/MOV playback is unreliable in Chromium/Electron. `mergeSettings` bac
 missing audio fields from `DEFAULT_AUDIO_SETTINGS` and snaps stale saved blobs
 back to AAC if the selected container cannot hold the saved audio codec.
 
+### Rate control
+
+`rateMode` picks which of two mutually exclusive shapes reaches the encoder, and
+the Rust seam models that exclusivity as an enum (`RateControl` in
+`export/encoder_registry.rs`) rather than a bag of optional fields — so "a CRF
+with a peak bitrate" does not exist as a representable state.
+
+| `rateMode` | user-facing controls | ffmpeg args |
+| --- | --- | --- |
+| `vbr` | quality preset / target bitrate, optional maximum, optional buffer | `-b:v target`, plus `-maxrate peak -bufsize buf` when a maximum is set |
+| `cbr` | quality preset / target bitrate, optional buffer | `-b:v target -maxrate target -minrate target -bufsize buf` |
+| `quality` | CRF | `-crf n` (plus `-b:v 0` on libaom, whose default bitrate would otherwise constrain the CRF) |
+
+The quality preset (`low`/`medium`/`high`/`custom`) is a **shortcut that seeds
+the target bitrate**, not a parallel control: `computeBitrate` turns a preset
+into `width × height × fps × bpp` scaled per codec, and `customBitrate`
+overrides it outright. The dialog therefore shows the target bitrate at all
+times in a bitrate mode — under a preset it displays the derived figure, and
+typing into it flips the preset to `custom`. There is no state in which the
+bitrate the export runs at is not on screen.
+
+Both constraints are `null` by default, and `null` means *unchanged from what
+shipped*: no `-maxrate` at all under VBR (plain ABR), and a `-bufsize` derived
+as 2× the ceiling. A defaulted-to-derived peak would silently re-rate every
+project exported before these fields existed. The derivation lives in the
+encoder registry, not the renderer, so there is one place to keep honest.
+
+Three invariants the two sides agree on, each enforced where it can be:
+
+- **A peak below the target is rejected**, not reconciled — the encoder would
+  abandon the target and emit at the ceiling. `bitrateConstraintIssue` disables
+  the Export button and explains it; `validate_intent` rejects the intent before
+  any encoder process is spawned.
+- **CBR ignores a peak.** Its ceiling is its target by definition, so a value
+  left behind by a VBR session is persisted but inert rather than honored.
+- **Peak and buffer are native-only.** A WebCodecs `VideoEncoderConfig` carries
+  `bitrate` + `bitrateMode` and nothing else, so under a WebCodecs pin the rows
+  are absent (with a blurb saying why) instead of present and dead. The
+  `maxBitrateApplies` / `bufferSizeApplies` predicates gate the UI rows *and*
+  the IPC payload from the same source, so what ffmpeg receives is exactly what
+  the user could see and edit.
+
 ### Export fps need not equal composition fps
 
 The dialog offers its own frame rate, so an export can be resampled off the

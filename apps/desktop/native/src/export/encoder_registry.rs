@@ -182,8 +182,21 @@ impl DnxhrProfile {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RateControl {
-    Bitrate { target_bps: u64, mode: BitrateMode },
-    ConstantQuality { quality: u32 },
+    /// A bitrate target, optionally constrained. `max_bps` is the VBV ceiling
+    /// (`-maxrate`) and `buffer_bits` its averaging window (`-bufsize`); both
+    /// `None` mean "unconstrained", which for `Variable` is plain ABR — no
+    /// ceiling arg is emitted at all. `Constant` pins the ceiling to the
+    /// target itself and ignores `max_bps`, because CBR has no peak distinct
+    /// from its average; a stale peak carried over from VBR must not leak in.
+    Bitrate {
+        target_bps: u64,
+        mode: BitrateMode,
+        max_bps: Option<u64>,
+        buffer_bits: Option<u64>,
+    },
+    ConstantQuality {
+        quality: u32,
+    },
     ProresProfile(ProresProfile),
     DnxhrProfile(DnxhrProfile),
 }
@@ -794,6 +807,40 @@ fn validate_intent(intent: EncoderIntent) -> Result<(), EncodeUnavailable> {
             "bitrate must be greater than zero",
         ));
     }
+    if let RateControl::Bitrate {
+        target_bps,
+        max_bps,
+        buffer_bits,
+        ..
+    } = intent.rate_control
+    {
+        // A ceiling under the average is not a weaker constraint — the encoder
+        // cannot satisfy both, so it silently abandons the average and the file
+        // comes out at the ceiling. Reject rather than pick a winner.
+        if let Some(max) = max_bps {
+            if max == 0 {
+                return Err(EncodeUnavailable::invalid(
+                    "maxBitrate",
+                    "0",
+                    "peak bitrate must be greater than zero",
+                ));
+            }
+            if max < target_bps {
+                return Err(EncodeUnavailable::invalid(
+                    "maxBitrate",
+                    max.to_string(),
+                    format!("peak bitrate must be at least the target bitrate ({target_bps})"),
+                ));
+            }
+        }
+        if buffer_bits == Some(0) {
+            return Err(EncodeUnavailable::invalid(
+                "bufferSize",
+                "0",
+                "buffer size must be greater than zero",
+            ));
+        }
+    }
     if let RateControl::ConstantQuality { quality } = intent.rate_control {
         if quality > 51 {
             return Err(EncodeUnavailable::invalid(
@@ -864,17 +911,34 @@ fn build_plan(intent: EncoderIntent, adapter: AdapterId) -> Result<EncoderPlan, 
                 "yuv422p".into(),
             ]);
         }
-        RateControl::Bitrate { target_bps, mode } => {
+        RateControl::Bitrate {
+            target_bps,
+            mode,
+            max_bps,
+            buffer_bits,
+        } => {
             args.extend::<Vec<OsString>>(vec!["-b:v".into(), target_bps.to_string().into()]);
-            if mode == BitrateMode::Constant {
-                args.extend::<Vec<OsString>>(vec![
-                    "-maxrate".into(),
-                    target_bps.to_string().into(),
-                    "-minrate".into(),
-                    target_bps.to_string().into(),
-                    "-bufsize".into(),
-                    target_bps.saturating_mul(2).to_string().into(),
-                ]);
+            // The rate the VBV ceiling is set to, if any. CBR pins it to the
+            // target and additionally floors the stream with `-minrate`; VBR
+            // caps only when the user asked for a peak, so an unset peak keeps
+            // emitting bare `-b:v` (plain ABR) exactly as it always has.
+            let ceiling = match mode {
+                BitrateMode::Constant => Some(target_bps),
+                BitrateMode::Variable => max_bps,
+            };
+            if let Some(ceiling) = ceiling {
+                args.extend::<Vec<OsString>>(vec!["-maxrate".into(), ceiling.to_string().into()]);
+                if mode == BitrateMode::Constant {
+                    args.extend::<Vec<OsString>>(vec![
+                        "-minrate".into(),
+                        target_bps.to_string().into(),
+                    ]);
+                }
+                // Derivation lives here, not in the renderer: `bufsize` is an
+                // encoder-side concept and one default is easier to keep honest
+                // than two. 2× the ceiling is the shipped value.
+                let buffer = buffer_bits.unwrap_or_else(|| ceiling.saturating_mul(2));
+                args.extend::<Vec<OsString>>(vec!["-bufsize".into(), buffer.to_string().into()]);
             }
             append_delivery_args(&mut args, intent, adapter);
         }
@@ -1006,6 +1070,11 @@ fn probe_intent(adapter: AdapterId, capability: CapabilityKey) -> EncoderIntent 
         RateControlKind::Bitrate => RateControl::Bitrate {
             target_bps: 1_000_000,
             mode: BitrateMode::Variable,
+            // A capability probe asks "can this encoder run at all", so it uses
+            // the least-constrained shape — a peak/buffer would narrow what the
+            // probe proves without narrowing what the cache key covers.
+            max_bps: None,
+            buffer_bits: None,
         },
     };
     EncoderIntent {
@@ -1080,6 +1149,8 @@ mod tests {
             rate_control: RateControl::Bitrate {
                 target_bps: 8_000_000,
                 mode: BitrateMode::Variable,
+                max_bps: None,
+                buffer_bits: None,
             },
             speed: Speed::Medium,
             gop_frames: 30,
@@ -1173,6 +1244,134 @@ mod tests {
         assert!(!args.iter().any(|value| value == "-b:v"));
     }
 
+    // VBR with no user peak stays plain ABR: a bare `-b:v`, no ceiling and no
+    // buffer. This is the shipped default for every existing project, so an
+    // accidental derived ceiling here would silently re-rate all of them.
+    #[tokio::test]
+    async fn uncapped_vbr_emits_no_ceiling_or_buffer() {
+        let probe = Arc::new(FakeProbe::new(&["libx264"]));
+        let registry = EncoderRegistry::with_probe(Platform::Linux, probe.clone());
+        let plan = registry
+            .resolve(delivery_intent(
+                VideoCodec::H264,
+                BitDepth::Eight,
+                Acceleration::Software,
+            ))
+            .await
+            .unwrap();
+        let args = strings(&plan.ffmpeg_args);
+        assert!(has_pair(&args, "-b:v", "8000000"));
+        assert!(!args.iter().any(|value| value == "-maxrate"));
+        assert!(!args.iter().any(|value| value == "-minrate"));
+        assert!(!args.iter().any(|value| value == "-bufsize"));
+    }
+
+    // A VBR peak caps the stream without flooring it: `-maxrate` + a derived
+    // `-bufsize`, and NO `-minrate` (that would make it CBR).
+    #[tokio::test]
+    async fn vbr_peak_caps_without_flooring_and_derives_the_buffer() {
+        let probe = Arc::new(FakeProbe::new(&["libx264"]));
+        let registry = EncoderRegistry::with_probe(Platform::Linux, probe.clone());
+        let mut intent = delivery_intent(VideoCodec::H264, BitDepth::Eight, Acceleration::Software);
+        intent.rate_control = RateControl::Bitrate {
+            target_bps: 8_000_000,
+            mode: BitrateMode::Variable,
+            max_bps: Some(12_000_000),
+            buffer_bits: None,
+        };
+
+        let args = strings(&registry.resolve(intent).await.unwrap().ffmpeg_args);
+        assert!(has_pair(&args, "-b:v", "8000000"));
+        assert!(has_pair(&args, "-maxrate", "12000000"));
+        assert!(has_pair(&args, "-bufsize", "24000000"));
+        assert!(!args.iter().any(|value| value == "-minrate"));
+    }
+
+    // An explicit buffer wins over the 2×-ceiling derivation, under both modes.
+    #[tokio::test]
+    async fn explicit_buffer_overrides_the_derived_one() {
+        let probe = Arc::new(FakeProbe::new(&["libx264"]));
+        let registry = EncoderRegistry::with_probe(Platform::Linux, probe.clone());
+        let mut vbr = delivery_intent(VideoCodec::H264, BitDepth::Eight, Acceleration::Software);
+        vbr.rate_control = RateControl::Bitrate {
+            target_bps: 8_000_000,
+            mode: BitrateMode::Variable,
+            max_bps: Some(12_000_000),
+            buffer_bits: Some(6_000_000),
+        };
+        let mut cbr = vbr;
+        cbr.rate_control = RateControl::Bitrate {
+            target_bps: 8_000_000,
+            mode: BitrateMode::Constant,
+            max_bps: None,
+            buffer_bits: Some(4_000_000),
+        };
+
+        let vbr_args = strings(&registry.resolve(vbr).await.unwrap().ffmpeg_args);
+        let cbr_args = strings(&registry.resolve(cbr).await.unwrap().ffmpeg_args);
+        assert!(has_pair(&vbr_args, "-bufsize", "6000000"));
+        assert!(has_pair(&cbr_args, "-bufsize", "4000000"));
+        // CBR still pins the ceiling to the target and floors the stream.
+        assert!(has_pair(&cbr_args, "-maxrate", "8000000"));
+        assert!(has_pair(&cbr_args, "-minrate", "8000000"));
+    }
+
+    // A stale VBR peak carried into CBR must not widen the ceiling: CBR's peak
+    // IS its target, so `max_bps` is ignored rather than honored.
+    #[tokio::test]
+    async fn cbr_ignores_a_carried_over_peak() {
+        let probe = Arc::new(FakeProbe::new(&["libx264"]));
+        let registry = EncoderRegistry::with_probe(Platform::Linux, probe.clone());
+        let mut intent = delivery_intent(VideoCodec::H264, BitDepth::Eight, Acceleration::Software);
+        intent.rate_control = RateControl::Bitrate {
+            target_bps: 8_000_000,
+            mode: BitrateMode::Constant,
+            max_bps: Some(20_000_000),
+            buffer_bits: None,
+        };
+
+        let args = strings(&registry.resolve(intent).await.unwrap().ffmpeg_args);
+        assert!(has_pair(&args, "-maxrate", "8000000"));
+        assert!(has_pair(&args, "-minrate", "8000000"));
+        assert!(has_pair(&args, "-bufsize", "16000000"));
+    }
+
+    // A ceiling below the average is unsatisfiable — the encoder would abandon
+    // the average silently. Rejected before any probe runs.
+    #[tokio::test]
+    async fn a_peak_below_the_target_is_rejected() {
+        let probe = Arc::new(FakeProbe::new(&["libx264"]));
+        let registry = EncoderRegistry::with_probe(Platform::Linux, probe.clone());
+        let mut intent = delivery_intent(VideoCodec::H264, BitDepth::Eight, Acceleration::Software);
+        intent.rate_control = RateControl::Bitrate {
+            target_bps: 8_000_000,
+            mode: BitrateMode::Variable,
+            max_bps: Some(4_000_000),
+            buffer_bits: None,
+        };
+
+        let err = registry.resolve(intent).await.unwrap_err();
+        let EncodeUnavailable::InvalidIntent { field, .. } = err else {
+            panic!("expected an invalid-intent rejection")
+        };
+        assert_eq!(field, "maxBitrate");
+    }
+
+    // The peak/buffer belong to the Bitrate variant, so CRF mode cannot carry
+    // one at all — and constant quality keeps emitting no rate args.
+    #[tokio::test]
+    async fn constant_quality_emits_no_rate_constraint_args() {
+        let probe = Arc::new(FakeProbe::new(&["libx264"]));
+        let registry = EncoderRegistry::with_probe(Platform::Linux, probe.clone());
+        let mut intent = delivery_intent(VideoCodec::H264, BitDepth::Eight, Acceleration::Software);
+        intent.rate_control = RateControl::ConstantQuality { quality: 20 };
+
+        let args = strings(&registry.resolve(intent).await.unwrap().ffmpeg_args);
+        assert!(has_pair(&args, "-crf", "20"));
+        assert!(!args.iter().any(|value| value == "-maxrate"));
+        assert!(!args.iter().any(|value| value == "-bufsize"));
+    }
+
     #[tokio::test]
     async fn cached_selection_rebuilds_the_plan_for_each_intent() {
         let probe = Arc::new(FakeProbe::new(&["libx264"]));
@@ -1184,6 +1383,8 @@ mod tests {
         second.rate_control = RateControl::Bitrate {
             target_bps: 4_000_000,
             mode: BitrateMode::Constant,
+            max_bps: None,
+            buffer_bits: None,
         };
 
         let first_plan = registry.resolve(first).await.unwrap();
