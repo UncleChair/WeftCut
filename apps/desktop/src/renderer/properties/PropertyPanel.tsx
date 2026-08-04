@@ -35,6 +35,7 @@ import {
   trackStatic,
 } from "../ipc";
 import { X, Y, ROTATION, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { layerDisplayName } from "../lib/layerName";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { ScaleFields } from "./ScaleFields";
 
@@ -181,6 +182,14 @@ function LayerPanel({
     layer.params.kind === "Audio"
       ? layer.params.media_label
       : null;
+  // Groups created from the UI carry no label (Timeline passes `label: null`),
+  // so a `group.id` fallback rendered a raw uuid on every grouped layer. Member
+  // count is the part a user can act on; a real name only arrives via MCP
+  // `groups_rename`.
+  const groupLabel = group
+    ? group.label?.trim() ||
+      t("property_panel.group_of", { count: group.layer_ids.length })
+    : t("property_panel.group_none");
 
   const tInLayerUs = currentTimeUs - layer.t_start_us;
   const playheadInSpan = currentTimeUs >= layer.t_start_us && currentTimeUs < layer.t_end_us;
@@ -190,12 +199,12 @@ function LayerPanel({
       <div className="prop-identity">
         {mediaLabel ? <p className="prop-identity-title">{mediaLabel}</p> : null}
         <p className="prop-identity-meta">
-          {kindLabel} · {trackLabel} · {group ? (group.label ?? group.id) : t("property_panel.group_none")}
+          {kindLabel} · {trackLabel} · {groupLabel}
         </p>
       </div>
       {selectionCount > 1 ? (
         <p className="prop-primary-note">
-          {t("property_panel.multi_primary", { label: layer.label ?? layer.id, count: selectionCount })}
+          {t("property_panel.multi_primary", { label: layerDisplayName(layer, t), count: selectionCount })}
         </p>
       ) : null}
       <PropSection layerKind={layer.kind} sectionId="envelope" title={t("property_panel.envelope")}>

@@ -226,6 +226,34 @@ describe("AttributePanel Layer envelope", () => {
     renderPanel(colorTrack());
     expect(screen.queryByText("voice.wav")).toBeNull();
   });
+
+  // A uuid is never a display name. Groups made from the UI are always
+  // `label: null`, so the old `group.label ?? group.id` fallback put a raw uuid
+  // on the identity line of every grouped Layer.
+  it("describes an unnamed group by its member count, not its uuid", () => {
+    summaryWithGroups([
+      {
+        id: "019fcc4d-20d4-7f65-b368-47ecbe3ef63d",
+        label: null,
+        layer_ids: ["layer-1", "layer-2"],
+      },
+    ]);
+    renderPanel(colorTrack());
+
+    expect(screen.getByText("Color · Visual · Group of 2 layers")).toBeTruthy();
+    expect(screen.queryByText(/019fcc4d/)).toBeNull();
+  });
+
+  it("names the multi-select primary after its media file when unnamed, not its uuid", () => {
+    summaryWithGroups([]);
+    const track = audioTrack();
+    (track.layers[0] as { label: string | null }).label = null;
+    setLayerSelection("layer-a1", ["layer-a1", "layer-x"]);
+    renderPanel(track, "layer-a1");
+
+    expect(screen.getByText(/“voice\.wav” — 2 layers selected/)).toBeTruthy();
+    expect(screen.queryByText(/layer-a1/)).toBeNull();
+  });
 });
 
 describe("AttributePanel envelope command routing", () => {

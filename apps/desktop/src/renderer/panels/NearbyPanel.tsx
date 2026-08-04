@@ -11,7 +11,8 @@ import { useTranslation } from "react-i18next";
 import { CrosshairIcon, FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
 
 import { formatTimecode } from "../frames";
-import { type LayerSummary, type TrackSummary } from "../ipc";
+import { type TrackSummary } from "../ipc";
+import { layerDisplayName } from "../lib/layerName";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
 import { usePlayheadTimeUsThrottled } from "../state/playheadStore";
 import { MediaThumbnail } from "./MediaThumbnail";
@@ -206,8 +207,10 @@ function PeekRow({
     item.layer.params.kind === "ImageOverlay"
       ? item.layer.params.media_id
       : null;
-  const primaryLabel =
-    item.layer.label ?? mediaLabelFor(item.layer) ?? item.trackLabel;
+  // Shared with the timeline block and the inspector — the row must call a Layer
+  // what its clip is called. The old local chain ended at `trackLabel`, which
+  // echoed the sublabel below ("Visual / Visual") instead of naming the Layer.
+  const primaryLabel = layerDisplayName(item.layer, t);
 
   // Inline rename. Enter commits, Escape cancels, click-away commits — all
   // funnelled through `commit`/`cancel`, which a single latch (`settled`)
@@ -319,17 +322,6 @@ function formatOffset(
   const timecode = formatTimecode(Math.abs(offsetUs), fpsNum, fpsDen);
   const value = `${offsetUs >= 0 ? "+" : "−"}${timecode}`;
   return t("peek.offset", { defaultValue: value, value });
-}
-
-function mediaLabelFor(layer: LayerSummary): string | null {
-  switch (layer.params.kind) {
-    case "VideoClip":
-    case "ImageOverlay":
-    case "Audio":
-      return layer.params.media_label;
-    default:
-      return null;
-  }
 }
 
 function iconForCategory(category: PeekCategory): ReactNode {

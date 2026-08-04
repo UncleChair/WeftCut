@@ -905,6 +905,8 @@ const enUS = {
     t_start_hint: "Inclusive — frame at this timecode is the layer's first.",
     kind: "Kind",
     group_none: "No group",
+    group_of_one: "Group of {{count}} layer",
+    group_of_other: "Group of {{count}} layers",
     locked: "Locked",
     duration: "Duration",
     multi_primary: "Editing primary layer “{{label}}” — {{count}} layers selected; changes apply only to this layer.",

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { listCommands, subscribeCommandRegistry } from "../commands/registry";
 import i18n from "../i18n";
 import { useProjectStore } from "../state/projectStore";
-import { buildEntries, type CommandInput } from "./buildEntries";
+import { buildEntries, type CommandInput, type LocaleInput } from "./buildEntries";
 import type { SearchEntry } from "./types";
 
 /// IDE-style background index (spec §Index): dirty signals (summary
@@ -44,9 +44,19 @@ function commandInputs(): CommandInput[] {
   }));
 }
 
+/// Read fresh per rebuild, never cached: `languageChanged` marks the index dirty
+/// (see wireSearchIndex), so the next build must see the NEW active locale.
+function localeInput(): LocaleInput {
+  const tEn = i18n.getFixedT("en-US");
+  return {
+    t: (key, values) => i18n.t(key, values),
+    tEn: (key, values) => tEn(key, values),
+  };
+}
+
 function rebuildNow(): void {
   const summary = useProjectStore.getState().summary;
-  const entries = buildEntries(summary, commandInputs());
+  const entries = buildEntries(summary, commandInputs(), localeInput());
   useSearchIndexStore.setState((s) => ({ entries, version: s.version + 1 }));
 }
 

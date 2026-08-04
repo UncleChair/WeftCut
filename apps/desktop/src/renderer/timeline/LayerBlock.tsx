@@ -9,6 +9,7 @@ import {
   Type,
 } from "lucide-react";
 import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
+import { layerDisplayName } from "../lib/layerName";
 import { AppInput } from "../components/AppInput";
 import {
   HEADER_COL_PX,
@@ -353,19 +354,7 @@ export function LayerBlock({
 
   const left = (Math.max(0, liveStart) / 1_000_000) * pxPerSec;
   const width = ((liveEnd - liveStart) / 1_000_000) * pxPerSec;
-  const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, {
-    defaultValue: layer.kind,
-  });
-  // Unnamed media-backed clips fall back to the source file name before the
-  // generic kind label, matching the search index / Nearby panel priority.
-  const mediaLabel =
-    "media_label" in layer.params && layer.params.media_label.trim() !== ""
-      ? layer.params.media_label
-      : null;
-  const label =
-    layer.label && layer.label.trim() !== ""
-      ? layer.label
-      : (mediaLabel ?? kindLabel);
+  const label = layerDisplayName(layer, t);
 
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it

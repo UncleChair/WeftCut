@@ -9,7 +9,7 @@ vi.mock("../state/navigation", () => ({
   revealInMediaPool: vi.fn(() => true),
 }));
 
-import "../i18n"; // side-effect: init global i18next (en-US fallback)
+import i18n from "../i18n"; // also a side-effect: init global i18next (en-US fallback)
 import { jumpToLayer, jumpToTimeUs, revealInMediaPool } from "../state/navigation";
 import { registerCommandProvider } from "../commands/registry";
 import { useSearchIndexStore } from "./searchIndexStore";
@@ -114,6 +114,14 @@ function fixtureSummary(): ProjectSummary {
 const runSpy = vi.fn();
 let unregister: (() => void) | undefined;
 
+// buildEntries takes its translators from the caller (it stays pure). These
+// tests run on the en-US fallback, so both passes agree.
+const LOCALE = {
+  t: (key: string, values: Record<string, unknown>) => i18n.t(key, values),
+  tEn: (key: string, values: Record<string, unknown>) =>
+    i18n.getFixedT("en-US")(key, values),
+};
+
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -122,9 +130,11 @@ beforeEach(() => {
     { id: "save", labelKey: "actions.save", actionId: "save", run: runSpy },
   ]);
   useSearchIndexStore.setState({
-    entries: buildEntries(fixtureSummary(), [
-      { id: "save", label: "Save", enLabel: "Save", actionId: "save" },
-    ]),
+    entries: buildEntries(
+      fixtureSummary(),
+      [{ id: "save", label: "Save", enLabel: "Save", actionId: "save" }],
+      LOCALE,
+    ),
     version: 1,
   });
 });
@@ -205,7 +215,7 @@ describe("SearchPalette", () => {
     summary.markers = [
       { id: "mk1", t_us: 5_000_000, end_t_us: null, label: "save point", color_hint: "" },
     ];
-    useSearchIndexStore.setState({ entries: buildEntries(summary, cmds), version: 1 });
+    useSearchIndexStore.setState({ entries: buildEntries(summary, cmds, LOCALE), version: 1 });
 
     const onClose = vi.fn();
     render(<SearchPalette onClose={onClose} />);

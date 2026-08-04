@@ -13,7 +13,7 @@ function fixtureSummary(): ProjectSummary {
     name: "fixture",
     composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false, fps_locked: false },
     track_count: 3,
-    layer_count: 4,
+    layer_count: 5,
     duration_us: 10_000_000,
     history: { cursor: 0, len: 0, can_undo: false, can_redo: false },
     media: [
@@ -105,6 +105,19 @@ function fixtureSummary(): ProjectSummary {
               speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
             },
           },
+          // Unnamed AND media-less: the only layer here that reaches the
+          // translated-kind fallback. Starts after l2 so it can't disturb the
+          // earliest-layer assertions.
+          {
+            id: "l3", label: null, t_start_us: 6_000_000, t_end_us: 7_000_000,
+            kind: "Color", color_hint: "", enabled: true, locked: false,
+            effects: [],
+            params: {
+              kind: "Color",
+              color: { mode: "Static", value: { r: 0, g: 0, b: 0, a: 255 } },
+              width: 1920, height: 1080,
+            },
+          },
         ],
       },
     ],
@@ -125,6 +138,17 @@ const CMDS = [
   { id: "save", label: "保存", enLabel: "Save", actionId: "save" as const },
 ];
 
+/// Stand-in for a zh-CN UI: `t` translates, `tEn` returns the en-US name via
+/// `defaultValue` (which is the raw kind). Stubs rather than real i18n keeps
+/// this a pure-function test, and the deliberate zh/en split is what proves the
+/// en-US name still lands in the haystacks.
+const LOCALE = {
+  t: (key: string, values: Record<string, unknown>) =>
+    key === "kinds.color" ? "颜色" : String(values.defaultValue),
+  tEn: (_key: string, values: Record<string, unknown>) =>
+    String(values.defaultValue),
+};
+
 function byKey(entries: SearchEntry[], key: string): SearchEntry {
   const e = entries.find((x) => x.key === key);
   if (!e) throw new Error(`missing entry ${key}`);
@@ -133,7 +157,7 @@ function byKey(entries: SearchEntry[], key: string): SearchEntry {
 
 describe("buildEntries", () => {
   it("null summary → command entries only", () => {
-    const out = buildEntries(null, CMDS);
+    const out = buildEntries(null, CMDS, LOCALE);
     expect(out).toHaveLength(1);
     expect(out[0]!.type).toBe("command");
     // zh label + en label + pinyin of the zh label
@@ -144,7 +168,7 @@ describe("buildEntries", () => {
   });
 
   it("emits media entries with timeline usages sorted by start", () => {
-    const m = byKey(buildEntries(fixtureSummary(), []), "media:m1");
+    const m = byKey(buildEntries(fixtureSummary(), [], LOCALE), "media:m1");
     expect(m.label).toBe("beach.mp4");
     // l2 is pushed AFTER l1 (t3 iterates after t1) but starts earlier —
     // sorted-first proves the tStartUs sort, not insertion order.
@@ -159,12 +183,12 @@ describe("buildEntries", () => {
   });
 
   it("emits track entries with the earliest layer as jump target", () => {
-    const t = byKey(buildEntries(fixtureSummary(), []), "track:t1");
+    const t = byKey(buildEntries(fixtureSummary(), [], LOCALE), "track:t1");
     expect(t.payload).toMatchObject({ type: "track", firstLayerId: "l1" });
   });
 
   it("Text layers become caption entries (content = haystack), not clips", () => {
-    const out = buildEntries(fixtureSummary(), []);
+    const out = buildEntries(fixtureSummary(), [], LOCALE);
     const cap = out.find((e) => e.type === "caption");
     expect(cap).toBeDefined();
     expect(cap!.label).toBe("字幕第一行");
@@ -173,19 +197,28 @@ describe("buildEntries", () => {
   });
 
   it("whitespace-only Text layers produce no entry at all", () => {
-    const out = buildEntries(fixtureSummary(), []);
+    const out = buildEntries(fixtureSummary(), [], LOCALE);
     expect(out.some((e) => e.key === "caption:lc2")).toBe(false);
     expect(out.some((e) => e.key === "clip:lc2")).toBe(false);
   });
 
   it("clip entries fall back label → media_label and carry track · timecode context", () => {
-    const clip = byKey(buildEntries(fixtureSummary(), []), "clip:l1");
+    const clip = byKey(buildEntries(fixtureSummary(), [], LOCALE), "clip:l1");
     expect(clip.label).toBe("beach.mp4");
     expect(clip.context).toBe("A-Roll · 00:00:02:00");
   });
 
+  it("a media-less unnamed clip shows the localized kind and indexes the en-US one too", () => {
+    const clip = byKey(buildEntries(fixtureSummary(), [], LOCALE), "clip:l3");
+    // Displayed name follows the UI locale — same string the timeline block shows.
+    expect(clip.label).toBe("颜色");
+    // …but "color" still finds it on a zh-CN UI, and so does the pinyin.
+    expect(clip.haystacks).toContain("Color");
+    expect(clip.haystacks).toContain("yanse");
+  });
+
   it("markers with labels become entries; unlabeled ones are skipped", () => {
-    const out = buildEntries(fixtureSummary(), []);
+    const out = buildEntries(fixtureSummary(), [], LOCALE);
     expect(byKey(out, "marker:mk1").payload).toMatchObject({ type: "marker", tUs: 5_000_000 });
     // mk2's label is whitespace-only — trimmed empty, so no entry.
     expect(out.some((e) => e.key === "marker:mk2")).toBe(false);

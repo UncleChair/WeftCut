@@ -1,5 +1,6 @@
 import { formatTimecode } from "../frames";
 import type { ProjectSummary, TrackSummary } from "../ipc";
+import { layerDisplayName } from "../lib/layerName";
 import type { ActionId } from "../shortcuts/defs";
 import { pinyinHaystacks } from "./pinyin";
 import type { MediaUsage, SearchEntry } from "./types";
@@ -14,6 +15,16 @@ export interface CommandInput {
   /// en-US label — extra haystack so English queries hit on zh-CN UI.
   enLabel: string;
   actionId?: ActionId;
+}
+
+/// The two translators an entry may need, resolved by the caller for the same
+/// reason `CommandInput` pre-resolves its labels: this file must stay a pure
+/// function of its arguments (the Worker seam), so it can't reach for `i18n`.
+/// `tEn` exists so a kind name indexed on a zh-CN UI is still findable by its
+/// English name — the `enLabel` rule applied to Layers.
+export interface LocaleInput {
+  t: (key: string, values: Record<string, unknown>) => string;
+  tEn: (key: string, values: Record<string, unknown>) => string;
 }
 
 const CAPTION_SNIPPET_MAX = 80;
@@ -34,6 +45,7 @@ function trackDisplayLabel(track: TrackSummary, index: number): string {
 export function buildEntries(
   summary: ProjectSummary | null,
   commands: CommandInput[],
+  locale: LocaleInput,
 ): SearchEntry[] {
   const entries: SearchEntry[] = [];
 
@@ -121,14 +133,19 @@ export function buildEntries(
           payload: { type: "caption", layerId: layer.id, tStartUs: layer.t_start_us },
         });
       } else {
-        const p = layer.params as { media_label?: string };
-        const clipLabel = layer.label ?? p.media_label ?? layer.kind;
+        // Same name the timeline block and the inspector show, so a hit reads as
+        // the clip the user can see. Only the kind fallback is locale-dependent,
+        // which is why the en-US pass can differ and earn a second haystack.
+        const clipLabel = layerDisplayName(layer, locale.t);
+        const enClipLabel = layerDisplayName(layer, locale.tEn);
         entries.push({
           key: `clip:${layer.id}`,
           type: "clip",
           label: clipLabel,
           context,
-          haystacks: withPinyin([clipLabel]),
+          haystacks: withPinyin(
+            clipLabel === enClipLabel ? [clipLabel] : [clipLabel, enClipLabel],
+          ),
           payload: { type: "clip", layerId: layer.id, tStartUs: layer.t_start_us },
         });
       }
