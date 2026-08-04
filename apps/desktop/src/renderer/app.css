@@ -121,6 +121,31 @@
     --line-height-tight: 1.2;
     --line-height-body: 1.4;
 
+    /* Window-chrome band — ONE height for every caption bar the app shows: the
+       editor header (.app-header), the startup strip (.startup-titlebar) and
+       agent mode's drag row (.agent-titlebar). Shared so the bar never changes
+       height as the app moves between those surfaces; sized to a bar's own
+       fallback, each one drifts independently.
+       42.5px is .app-header's content-driven height (8px + the 25.5px search
+       box + 8px + the 1px rule) — it stays that header's floor, and the other
+       two bars, with no content tall enough to size to, take it outright. The
+       max() keeps every bar tall enough to CONTAIN the macOS traffic lights,
+       which the OS draws over it; env() is unset on Win/Linux and in macOS
+       fullscreen, so the literal rules there.
+       LANDMINE: src/main/index.ts derives trafficLightPosition.y from this same
+       number ((H - 14) / 2). Change one, recompute the other — the e2e
+       window-chrome spec fails if they drift apart. */
+    --app-chrome-height: max(42.5px, env(titlebar-area-height, 0px));
+
+    /* Spacing between the items a caption bar carries (search box, locale
+       toggle, agent-mode's exit pill). The caption buttons add 4px of their own
+       breathing room on top — .window-controls in startup.css keeps a 4px left
+       margin on every bar — so the last pill always clears the buttons by 16px,
+       whichever surface it is on. Horizontal counterpart to
+       --app-chrome-height: the three bars share the rhythm, not just the
+       height. */
+    --app-chrome-gap: 12px;
+
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);

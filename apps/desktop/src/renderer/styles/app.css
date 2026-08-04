@@ -39,9 +39,12 @@
      fullscreen selector is needed. max() so a narrow overlay can never shrink
      the header's own padding. */
   padding-left: max(16px, env(titlebar-area-x, 16px));
-  /* Never shorter than the band the buttons occupy, or they'd hang below the
-     bar onto the content. 0 without an overlay — the height stays intrinsic. */
-  min-height: env(titlebar-area-height, 0px);
+  /* The shared chrome band (app.css --app-chrome-height) as a FLOOR: the token
+     is this header's own content height, so the sizing here is unchanged — it
+     just publishes the number the startup and agent bars match. The token also
+     carries the macOS button band, which the bar must contain or the buttons
+     hang below it onto the content. */
+  min-height: var(--app-chrome-height);
   border-bottom: 1px solid var(--border-soft);
   user-select: none;
 }

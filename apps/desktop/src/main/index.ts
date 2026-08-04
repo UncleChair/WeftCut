@@ -193,14 +193,14 @@ async function createWindow(): Promise<BrowserWindow> {
     // trafficLightPosition centres the buttons in our slim caption bars instead
     // of the taller macOS default. The buttons occupy a 14px-tall band whose TOP
     // is `y` (measured on Electron 42; fractional values round to whole points),
-    // so centring in a bar of height H means y = (H - 14) / 2. H here is
-    // .app-header's intrinsic height — 42.5px, content-driven — giving y = 14.
-    // Chromium then reports env(titlebar-area-height) as 2y + 14 = 42px, and the
-    // band's centre is always exactly half of that, so the invariant is simply
-    // "bar height == env(titlebar-area-height)". The other caption bars (startup
-    // strip, agent-mode row) SIZE themselves to that env value and are therefore
-    // centred by construction; only .app-header has a height of its own, so this
-    // one number has to match it. The e2e window-chrome spec fails if it drifts.
+    // so centring in a bar of height H means y = (H - 14) / 2. H here is the
+    // renderer's shared chrome band, --app-chrome-height in app.css — 42.5px,
+    // .app-header's content-driven height, which the startup strip and the
+    // agent-mode row take too — giving y = 14. Chromium then reports
+    // env(titlebar-area-height) as 2y + 14 = 42px, and the band's centre is
+    // always exactly half of that, so the invariant is simply "bar height ==
+    // env(titlebar-area-height)". One number for all three bars, so this y has
+    // to match it. The e2e window-chrome spec fails if they drift apart.
     // titleBarOverlay exposes the button geometry to CSS as
     // env(titlebar-area-*), which is how the renderer insets its titlebars —
     // Chromium updates those in lockstep with the native frame, including at the

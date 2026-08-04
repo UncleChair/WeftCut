@@ -3,7 +3,9 @@
 /* Caption buttons for the frameless window (WindowControls). Windows
  * convention: square, flush to the top-right corner, full bar height,
  * red close hover. The negative margins cancel .app-header's padding so
- * the buttons truly reach the window edge. */
+ * the buttons truly reach the window edge; the 4px on the left is the
+ * buttons' own breathing room, which every bar keeps (the padding-less
+ * strips override only the three negative values). */
 .window-controls {
   display: flex;
   align-self: stretch;
@@ -325,15 +327,14 @@
   top: 0;
   left: 0;
   right: 0;
-  /* Tall enough to contain the macOS traffic lights, which the OS draws over
-     this strip — a shorter bar leaves them hanging onto the content below.
-     env() is 0/unset without an overlay (Win/Linux, macOS fullscreen), so the
-     34px fallback is the Win/Linux height. See .app-header for the full note. */
-  height: max(34px, env(titlebar-area-height, 34px));
+  /* The shared chrome band, so the caption bar is the same height here as in
+     the editor and in agent mode — see --app-chrome-height in app.css, which
+     also keeps the strip tall enough to contain the macOS traffic lights. */
+  height: var(--app-chrome-height);
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--app-chrome-gap);
   /* Keep the settings button clear of the traffic lights. Mirrors .app-header:
      Chromium's own safe-content edge, which also restores itself as the
      leave-fullscreen animation starts rather than after it finishes. */
@@ -342,8 +343,11 @@
   z-index: 10;
 }
 
+/* This strip has no padding for the negative margins to cancel — but keep the
+   4px the shared rule puts before the buttons, so the locale toggle clears
+   them by the same 16px as in the editor header. */
 .startup-titlebar .window-controls {
-  margin: 0;
+  margin: 0 0 0 4px;
 }
 
 /* Top-left settings entry. The titlebar is justify-content: flex-end (the

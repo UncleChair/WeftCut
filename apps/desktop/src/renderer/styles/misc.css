@@ -28,7 +28,7 @@
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--app-chrome-gap);
   /* Let the caption buttons stretch to the header's full height. */
   align-self: stretch;
 }
@@ -40,8 +40,8 @@
    the menus. */
 .header-search {
   margin-left: auto;
-  /* Matches .header-right's internal gap. */
-  margin-right: 12px;
+  /* The same bar rhythm .header-right spaces its own items by. */
+  margin-right: var(--app-chrome-gap);
   min-width: 0;
   display: flex;
   align-items: center;
