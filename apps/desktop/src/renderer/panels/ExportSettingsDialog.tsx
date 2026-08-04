@@ -498,6 +498,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                     </span>
                     <AppSelect
                       className="export-select"
+                      ariaLabel={t("export_dialog.container")}
                       value={settings.container}
                       onValueChange={(v) => {
                         const container = v as Container;
@@ -523,6 +524,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.range")}
                     value={rangeMode}
                     onValueChange={(v) => setRangeMode(v as RangeMode)}
                     options={[
@@ -664,6 +666,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.resolution")}
                     value={String(settings.resolutionHeight ?? "")}
                     onValueChange={(v) =>
                       patch({ resolutionHeight: v ? Number(v) : null })
@@ -687,6 +690,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.fps")}
                     value={String(settings.fps ?? "")}
                     onValueChange={(v) => patch({ fps: v ? Number(v) : null })}
                     options={[
@@ -708,6 +712,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.encoder_engine")}
                     value={settings.encoderEngine}
                     onValueChange={(v) => {
                       const engine = v as EncoderEngine;
@@ -739,6 +744,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.decode_engine")}
                     value={settings.decodeEngine}
                     onValueChange={(v) => {
                       // Mirrors the disabled option defensively — a Standard
@@ -772,6 +778,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.codec")}
                     value={settings.codec}
                     onValueChange={(v) => {
                       const codec = v as CodecId;
@@ -834,7 +841,9 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                 {settings.codec === "prores" && (
                   <div className="export-row">
                     <span className="settings-toggle-label">{t("export_dialog.prores_profile")}</span>
-                    <AppSelect className="export-select" value={settings.proresProfile}
+                    <AppSelect className="export-select"
+                      ariaLabel={t("export_dialog.prores_profile")}
+                      value={settings.proresProfile}
                       onValueChange={(v) => patch({ proresProfile: v as ProresProfile })}
                       options={[
                         { value: "proxy", label: "Proxy" }, { value: "lt", label: "LT" },
@@ -845,7 +854,9 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                 {settings.codec === "dnxhr" && (
                   <div className="export-row">
                     <span className="settings-toggle-label">{t("export_dialog.dnxhr_profile")}</span>
-                    <AppSelect className="export-select" value={settings.dnxhrProfile}
+                    <AppSelect className="export-select"
+                      ariaLabel={t("export_dialog.dnxhr_profile")}
+                      value={settings.dnxhrProfile}
                       onValueChange={(v) => patch({ dnxhrProfile: v as DnxhrProfile })}
                       options={[
                         { value: "lb", label: "LB" }, { value: "sq", label: "SQ" }, { value: "hq", label: "HQ" },
@@ -875,6 +886,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.bit_depth")}
                     value={String(settings.bitDepth)}
                     onValueChange={(v) => {
                       userTouchedBitDepth.current = true;
@@ -1103,6 +1115,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.keyframe_interval")}
                     value={String(settings.keyframeIntervalSec)}
                     onValueChange={(v) =>
                       patch({ keyframeIntervalSec: Number(v) })
@@ -1120,6 +1133,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                   </span>
                   <AppSelect
                     className="export-select"
+                    ariaLabel={t("export_dialog.encoder_accel")}
                     value={settings.hwAccel}
                     onValueChange={(v) =>
                       patch({ hwAccel: v as "auto" | "software" })
@@ -1138,7 +1152,9 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                 {!isIntermediateCodec(settings.codec) && (
                   <div className="export-row">
                     <span className="settings-toggle-label">{t("export_dialog.speed_preset")}</span>
-                    <AppSelect className="export-select" value={settings.preset}
+                    <AppSelect className="export-select"
+                      ariaLabel={t("export_dialog.speed_preset")}
+                      value={settings.preset}
                       onValueChange={(v) => patch({ preset: v as SpeedPreset })}
                       options={[
                         { value: "fast", label: t("export_dialog.preset_fast") },
@@ -1174,6 +1190,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                       </span>
                       <AppSelect
                         className="export-select"
+                        ariaLabel={t("export_dialog.audio_codec")}
                         value={settings.audio.codec}
                         onValueChange={(v) =>
                           patch({
@@ -1191,6 +1208,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                       </span>
                       <AppSelect
                         className="export-select"
+                        ariaLabel={t("export_dialog.audio_bitrate")}
                         value={String(settings.audio.bitrate)}
                         onValueChange={(v) =>
                           patch({
@@ -1209,6 +1227,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                       </span>
                       <AppSelect
                         className="export-select"
+                        ariaLabel={t("export_dialog.audio_channels")}
                         value={String(settings.audio.channels ?? "")}
                         onValueChange={(v) =>
                           patch({
@@ -1236,6 +1255,7 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
                       </span>
                       <AppSelect
                         className="export-select"
+                        ariaLabel={t("export_dialog.audio_sample_rate")}
                         value={String(settings.audio.sampleRate ?? "")}
                         onValueChange={(v) =>
                           patch({

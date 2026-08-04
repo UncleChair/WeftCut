@@ -151,6 +151,34 @@ beforeEach(async () => {
   ipc.workspaceDir.mockReset().mockResolvedValue("C:/ws");
 });
 
+describe("export dialog accessibility", () => {
+  // The dialog labels each row with a plain sibling <span>, which names nothing
+  // as far as assistive tech is concerned — a screen reader reading the Video
+  // pane got a column of unnamed dropdowns. Every AppSelect therefore passes
+  // `ariaLabel`, and this asserts it for the whole dialog at once so a NEW row
+  // added later fails here instead of shipping unnamed.
+  it("gives every dropdown an accessible name", async () => {
+    const user = userEvent.setup();
+    await renderDialog(user);
+
+    // Query the DOM, not `getAllByRole`: every pane stays mounted and only the
+    // inactive ones are `hidden`, which role queries skip by default — so a
+    // role query would silently check just the pane in view.
+    const triggers = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="combobox"]'),
+    );
+    // Guard the guard: if AppSelect ever stops rendering role=combobox, an
+    // empty list would make this test vacuously pass.
+    expect(triggers.length).toBeGreaterThanOrEqual(15);
+    const unnamed = triggers.filter(
+      (el) =>
+        !(el.getAttribute("aria-label") ?? "").trim() &&
+        !(el.getAttribute("aria-labelledby") ?? "").trim(),
+    );
+    expect(unnamed.map((el) => el.textContent)).toEqual([]);
+  });
+});
+
 describe("export dialog rate control", () => {
   // The complaint this group exists to answer: under a quality preset the
   // bitrate used to be derived and invisible, so CBR had no settable rate.
