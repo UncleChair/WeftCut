@@ -27,14 +27,22 @@
      — at 30px they hung 6px past the strip onto the black well. env() is
      unset without an overlay (Win/Linux, macOS fullscreen), so 30px stays the
      Win/Linux height. See .app-header in app.css. */
-  grid-template-rows: max(30px, env(titlebar-area-height, 30px)) 1fr 80px;
+  /* The third row is the preview/mini gutter, spelled as a track instead of a
+     row-gap: the gap has to separate the PANES without also cutting a black
+     strip between the caption bar and the panes it sits on. The titlebar is
+     window chrome, not a pane — it belongs against them, the way .app-header
+     meets .dock-workspace in the editor. */
+  grid-template-rows: max(30px, env(titlebar-area-height, 30px)) 1fr 6px 80px;
   grid-template-areas:
     "titlebar titlebar"
     "preview  record"
+    ".        record"
     "mini     record";
   /* Same inter-pane gap as WEFT_DOCK_THEME: the black well shows through
-     and separates the panes as depth, like dock groups. */
-  gap: 6px;
+     and separates the panes as depth, like dock groups. Columns only —
+     the row gutter is the explicit track above. */
+  column-gap: 6px;
+  row-gap: 0;
   /* The recessed well behind the panes — pure black, one step below
      --surface-sunken, same as .dock-workspace. */
   background: #000;
@@ -54,9 +62,19 @@
 }
 
 /* Exit-to-editor button at the titlebar's top-right: vertically centered
-   against the stretch-aligned caption buttons it precedes. */
+   against the stretch-aligned caption buttons it precedes. The height is
+   pinned rather than left to the button's intrinsic box (16px line + 2×4px
+   padding + borders ≈ 25.8px), which left only 2.1px above and below inside
+   the 30px bar — too tight for a strip this short to read as a band with
+   something sitting in it. The padding goes with the height, or the 16px
+   line box would overflow the shortened content box.
+   NOT a pixel-exact centring: the window edge (base.css) paints over the
+   bar's first row, so the visible band is a row shorter than the box and
+   the pill lands up to half a device pixel high. Deliberately left there. */
 .agent-titlebar .agent-exit-button {
   align-self: center;
+  height: 22px;
+  padding-block: 0;
   margin-right: 8px;
 }
 
@@ -128,9 +146,9 @@
    Keyboard support (role=separator + arrow keys) lives in AgentMode.tsx. */
 .agent-width-sash {
   position: absolute;
-  /* Below the titlebar row + its gap, so the sash never covers the window
-     drag strip. */
-  top: calc(max(30px, env(titlebar-area-height, 30px)) + 6px);
+  /* Starts where the panes do — directly below the titlebar row, so the sash
+     covers the full seam without ever reaching into the window drag strip. */
+  top: max(30px, env(titlebar-area-height, 30px));
   bottom: 0;
   /* Centered on the column gap: the gap runs 6px left of the record
      panel's edge, so its midpoint sits 3px left of that edge. */
