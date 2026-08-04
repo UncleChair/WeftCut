@@ -1010,11 +1010,24 @@ wireFileDrop()
 // injecting a stylesheet
 // (interactive descendants get `no-drag` so window controls / buttons stay
 // clickable).
+//
+// LANDMINE for the third rule: a drag region is a list of rects the browser
+// process hands to the OS, which claims mousedown BEFORE the renderer sees it.
+// Only `no-drag` subtracts from that list — painting on top does NOT, however
+// high the z-index. Portaled popups are not descendants of any titlebar, so the
+// rule above never reaches them, and a popup tall enough to overlap a caption
+// bar (a clamped `.settings-panel` starts 10px into it) would go dead along its
+// top edge: the ✕ unclickable, the drag stealing the click. Hence the explicit
+// opt-out, covering every popup Base UI portals — Dialog and Popover render
+// role="dialog", Menu role="menu", Select role="listbox". The backdrop is
+// deliberately NOT listed: it spans the viewport, so exempting it would kill
+// window dragging outright whenever a modal is open.
 function injectDragRegionStyles(): void {
   const style = document.createElement('style')
   style.textContent = `
     [data-drag-region] { -webkit-app-region: drag; }
     [data-drag-region] :where(button, a, input, select, textarea, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
+    :where([role="dialog"], [role="menu"], [role="listbox"]) { -webkit-app-region: no-drag; }
   `
   document.head.appendChild(style)
 }
