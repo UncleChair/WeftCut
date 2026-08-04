@@ -6,9 +6,11 @@ import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import { resolveAccelerator } from "../shortcuts/match";
 import { useDisplayMode } from "../settings/appSettingsStore";
 import { useActiveTool } from "../state/toolStore";
+import { useHasMarkedRange } from "../state/rangeStore";
 import {
   QUICK_ACTION_SECTIONS,
   type QuickActionItem,
+  type QuickActionSection,
   type QuickActionState,
 } from "./quickActions";
 
@@ -139,11 +141,13 @@ interface QuickActionButtonProps {
   item: QuickActionItem;
   command: CommandDef;
   state: QuickActionState;
+  /// The owning section's mode, which decides how this button reports state:
   /// `radio` members report `aria-checked` inside a `radiogroup`; independent
-  /// toggles report `aria-pressed`. Screen readers narrate the two
+  /// toggles report `aria-pressed`; `command` items report neither, because a
+  /// momentary action has no state to report. Screen readers narrate the three
   /// differently, and that difference is exactly what the section split
   /// encodes.
-  radio: boolean;
+  mode: QuickActionSection["mode"];
   tabbable: boolean;
   onFocus: () => void;
 }
@@ -152,14 +156,15 @@ function QuickActionButton({
   item,
   command,
   state,
-  radio,
+  mode,
   tabbable,
   onFocus,
 }: QuickActionButtonProps) {
   const { t } = useTranslation();
   const binding = useEffectiveBindings(command.actionId);
   const accelerator = binding ? resolveAccelerator(binding) : "";
-  const active = item.active(state);
+  // `command` items carry no `active` predicate; they never render pressed.
+  const active = item.active?.(state) ?? false;
   const disabled = command.enabled?.() === false;
   // A state-bearing hint where the item has one (the display-mode button needs
   // "showing X, click for Y"); otherwise the command's own label.
@@ -174,9 +179,11 @@ function QuickActionButton({
       disabled={disabled}
       tabIndex={tabbable ? 0 : -1}
       onFocus={onFocus}
-      {...(radio
+      {...(mode === "radio"
         ? { role: "radio", "aria-checked": active }
-        : { "aria-pressed": active })}
+        : mode === "independent"
+          ? { "aria-pressed": active }
+          : {})}
       aria-label={label}
       title={accelerator ? `${label} (${accelerator})` : label}
       onClick={() => void command.run()}
@@ -198,6 +205,12 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
   const { t } = useTranslation();
   const tool = useActiveTool();
   const displayMode = useDisplayMode();
+  // Subscribed, not read imperatively: `clearRange`'s `enabled` predicate is
+  // evaluated during THIS render, so without a subscription the button would
+  // stay greyed out until some unrelated state happened to re-render the strip.
+  // The boolean selector means marking or dragging in/out re-renders the strip
+  // only when the range appears or disappears, not on every position change.
+  const hasRange = useHasMarkedRange();
   const orientation = useStripOrientation(geometry);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useHorizontalWheel(scrollRef, orientation === "horizontal");
@@ -208,7 +221,7 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
 
   // One snapshot per render feeds every item's pure `active`/`hint`
   // predicate — hooks can't be called per row.
-  const state: QuickActionState = { tool, displayMode };
+  const state: QuickActionState = { tool, displayMode, hasRange };
 
   // Buttons resolve against the command registry, so a command whose provider
   // hasn't mounted yet is simply absent rather than a dead button.
@@ -237,12 +250,11 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
         <div
           key={section.id}
           className="weft-quick-actions-section"
-          {...(section.mode === "radio"
-            ? {
-                role: "radiogroup",
-                "aria-label": t(`quick_actions.${section.id}`),
-              }
-            : {})}
+          // Every section is a labelled landmark so a screen reader walking the
+          // toolbar hears which family it has entered; only the modal one is a
+          // `radiogroup`, because only there does "exactly one is chosen" hold.
+          role={section.mode === "radio" ? "radiogroup" : "group"}
+          aria-label={t(`quick_actions.${section.id}`)}
         >
           {section.resolved.map(({ item, command }) => {
             index += 1;
@@ -253,7 +265,7 @@ export function QuickActionsPanel({ geometry }: { geometry: StripGeometry }) {
                 item={item}
                 command={command}
                 state={state}
-                radio={section.mode === "radio"}
+                mode={section.mode}
                 tabbable={own === focusIndex}
                 onFocus={() => setFocusIndex(own)}
               />

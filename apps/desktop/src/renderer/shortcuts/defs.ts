@@ -43,6 +43,9 @@ export type ActionId =
   | "seekNextEdit"
   | "seekStart"
   | "seekEnd"
+  | "markIn"
+  | "markOut"
+  | "clearRange"
   | "openSearchPalette"
   | "openSettings";
 
@@ -178,6 +181,16 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   seekNextEdit:      { defaultKeys: ["ArrowDown"],         labelKey: "actions.seek_next_edit",      repeatable: true },
   seekStart:         { defaultKeys: ["Home"],              labelKey: "actions.seek_start" },
   seekEnd:           { defaultKeys: ["End"],               labelKey: "actions.seek_end" },
+  // Timeline in/out points (`rangeStore.ts`) at the Premiere/Resolve key
+  // positions. Bare letters, so they stay dead inside text fields. NOT
+  // captureGlobal: unlike Space, `I`/`O` mean nothing to a focused button, so
+  // there is no chrome control to win the key back from.
+  //
+  // Each is IDEMPOTENT — pressing `I` twice at one playhead leaves the same in
+  // point — so neither is `repeatable`; holding the key marks nothing new.
+  markIn:            { defaultKeys: ["I"],                 labelKey: "actions.mark_in" },
+  markOut:           { defaultKeys: ["O"],                 labelKey: "actions.mark_out" },
+  clearRange:        { defaultKeys: ["Alt+X"],             labelKey: "actions.clear_range" },
   // Global search palette. A chord, so it fires while a text input is
   // focused (default chord behavior) — expected for a Spotlight-style UI.
   openSearchPalette: { defaultKeys: ["Mod+K"], labelKey: "actions.open_search" },

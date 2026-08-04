@@ -75,6 +75,11 @@ import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { snapTimeToTimelineBoundary } from "./snapping";
 import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
+import {
+  useRangeInUs,
+  useRangeOutUs,
+  useRangeReveal,
+} from "../state/rangeStore";
 import { setTimelineScrollLeftPx } from "../state/timelineScrollStore";
 import { registerScrollToTime } from "../state/navigation";
 import {
@@ -1040,6 +1045,7 @@ export function Timeline({
                 width={widthPx}
               />
             )}
+            <OutOfRangeDim pxPerSec={pxPerSec} />
           </div>
           <TimelinePlayhead
             pxPerSec={pxPerSec}
@@ -1069,6 +1075,61 @@ export function Timeline({
       />
     )}
     </>
+  );
+}
+
+/**
+ * Washes out everything outside the marked in/out span — but only for a beat
+ * after the range changes, then fades away.
+ *
+ * This is the deliberate half of the in/out visual design. A permanent wash is
+ * a full-width tint over the user's clips paying for a feature used twice a
+ * session; as a flash it answers the one question marking actually raises
+ * ("which span did I just define?") and then gets out of the way. The standing
+ * record lives in the ruler's end caps, which cost no lane pixels, and in the
+ * Quick Actions strip, where Clear being enabled means a range exists.
+ *
+ * `z-[4]` clears every LayerBlock (max `z-[3]`) while staying under the blade
+ * preview (`z-[5]`) and the playhead, which must never read as out-of-range.
+ * The node stays mounted at zero opacity so the fade is a CSS transition
+ * rather than a pop; `pointer-events-none` keeps it inert either way.
+ */
+function OutOfRangeDim({ pxPerSec }: { pxPerSec: number }) {
+  const inUs = useRangeInUs();
+  const outUs = useRangeOutUs();
+  const revealed = useRangeReveal();
+  if (inUs === null && outUs === null) return null;
+  // An unmarked side means "to the edge", matching `resolveMarkedRange`: one
+  // point alone is a complete instruction, not half a range — so that side
+  // simply renders no wash.
+  const inPx = inUs !== null ? (inUs / 1_000_000) * pxPerSec : 0;
+  const outPx = outUs !== null ? (outUs / 1_000_000) * pxPerSec : 0;
+  return (
+    <div
+      data-testid="timeline-out-of-range"
+      data-revealed={revealed ? "true" : "false"}
+      className={`pointer-events-none absolute inset-0 z-[4] transition-opacity duration-300 ${
+        revealed ? "opacity-100" : "opacity-0"
+      }`}
+      aria-hidden="true"
+    >
+      {inUs !== null && inPx > 0 && (
+        <div
+          className="absolute inset-y-0 left-0 bg-background/65"
+          style={{ width: inPx }}
+        />
+      )}
+      {/* Anchored `right-0` rather than sized `widthPx - outPx`: the canvas
+          carries `min-w-full`, so on a project shorter than the viewport it is
+          WIDER than `widthPx` and a computed width would stop short of its real
+          right edge, leaving an undimmed strip past the end of the project. */}
+      {outUs !== null && (
+        <div
+          className="absolute inset-y-0 right-0 bg-background/65"
+          style={{ left: outPx }}
+        />
+      )}
+    </div>
   );
 }
 

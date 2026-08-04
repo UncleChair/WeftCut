@@ -289,17 +289,20 @@ describe("clampExportRange", () => {
       endUs: 10_000_000,
     });
   });
-  it("falls back to the whole span when start >= end", () => {
-    expect(clampExportRange(8_000_000, 2_000_000, 10_000_000)).toEqual({
-      startUs: 0,
-      endUs: 10_000_000,
-    });
+  it("rejects a reversed range instead of widening it", () => {
+    expect(clampExportRange(8_000_000, 2_000_000, 10_000_000)).toBeNull();
   });
-  it("returns the whole span when an input is NaN", () => {
-    expect(clampExportRange(NaN, 5_000_000, 10_000_000)).toEqual({
-      startUs: 0,
-      endUs: 10_000_000,
-    });
+  // The regression this signature exists for: both ends clamp onto the
+  // duration, so the old whole-span fallback silently exported the ENTIRE
+  // project for someone who asked for its second minute.
+  it("rejects a range that lies entirely past the end of the project", () => {
+    expect(clampExportRange(60_000_000, 120_000_000, 30_000_000)).toBeNull();
+  });
+  it("rejects a NaN input", () => {
+    expect(clampExportRange(NaN, 5_000_000, 10_000_000)).toBeNull();
+  });
+  it("rejects an empty project", () => {
+    expect(clampExportRange(0, 1_000_000, 0)).toBeNull();
   });
 });
 

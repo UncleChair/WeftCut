@@ -14,7 +14,16 @@ import {
   projectUndo,
   type ProjectSummary,
 } from "./ipc";
-import { adjacentFrameBoundaryUs } from "./frames";
+import {
+  adjacentFrameBoundaryUs,
+  displayedFrameStartUs,
+  inclusiveOutBoundaryUs,
+} from "./frames";
+import {
+  clearRange as clearMarkedRange,
+  setRangeIn,
+  setRangeOut,
+} from "./state/rangeStore";
 import {
   playheadTimeUs,
   setPlayheadTimeUs,
@@ -638,6 +647,27 @@ export function App({ onCloseProject }: AppProps) {
     seekEnd: () => {
       void seekTo(summary?.duration_us ?? 0);
     },
+    // In/out marking bridges the playhead's frame-ANCHOR convention to the
+    // range's start-inclusive / end-EXCLUSIVE one. Both translations go
+    // through `frames.ts` rather than a bare ±1 here: storing the raw anchor
+    // as an out point would drop the frame the user is looking at, and — since
+    // the playhead can't pass the last frame's start — make the final frame
+    // unreachable. See `docs/data-model.md` (boundary semantics).
+    markIn: () => {
+      const comp = summary?.composition;
+      if (!comp) return;
+      setRangeIn(
+        displayedFrameStartUs(playheadTimeUs(), comp.fps_num, comp.fps_den),
+      );
+    },
+    markOut: () => {
+      const comp = summary?.composition;
+      if (!comp) return;
+      setRangeOut(
+        inclusiveOutBoundaryUs(playheadTimeUs(), comp.fps_num, comp.fps_den),
+      );
+    },
+    clearRange: () => clearMarkedRange(),
     openSearchPalette: () => {
       // Agent mode doesn't mount the palette — setting the flag would sit
       // latent and pop the palette open when the session ends.
@@ -829,9 +859,6 @@ export function App({ onCloseProject }: AppProps) {
       {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
           comp={summary.composition}
-          // Render-time snapshot: the dialog opens via a state flip, so this
-          // reads the playhead at open — a live-updating default is pointless.
-          currentTimeUs={playheadTimeUs()}
           durationUs={summary.duration_us}
           hasTenBitSource={summary.media.some(
             (m) => m.kind === "Video" && tenBitExportCapable(m),

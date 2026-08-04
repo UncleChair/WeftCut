@@ -149,6 +149,10 @@ const enUS = {
   quick_actions: {
     tools: "Tools",
     toggles: "Toggles",
+    range: "In/Out",
+    // Shown on the disabled Clear button — says why it's disabled rather than
+    // repeating the label the user can't act on.
+    clear_range_empty: "No in/out points marked",
   },
   dock_workspace: {
     editing_label: "Editing workspace",
@@ -248,6 +252,9 @@ const enUS = {
     seek_next_edit: "Go to next edit point",
     seek_start: "Go to start",
     seek_end: "Go to end",
+    mark_in: "Mark in point",
+    mark_out: "Mark out point",
+    clear_range: "Clear in/out points",
     open_search: "Search everything…",
     search: "Search",
   },
@@ -558,12 +565,14 @@ const enUS = {
     export: "Export",
     range: "Range",
     range_full: "Whole project",
+    range_marked: "In/out range",
+    range_marked_none:
+      "No in/out points marked on the timeline. Mark a span with the Quick Actions strip or the I / O keys.",
     range_custom: "Custom",
     range_in: "In",
     range_out: "Out",
-    range_duration: "Duration",
-    range_duration_wall_clock: "{{wall}} real time (non-drop-frame)",
-    set_to_playhead: "Set to playhead",
+    range_invalid:
+      "This range is empty, or lies entirely outside the project. Check the in and out points.",
     audio_include: "Include audio",
     audio_codec: "Audio codec",
     audio_bitrate: "Audio bitrate",

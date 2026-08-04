@@ -11,6 +11,12 @@ vi.mock("../settings/appSettingsStore", () => ({
 
 import { registerCommandProvider, type CommandDef } from "../commands/registry";
 import { setTool, useToolStore } from "../state/toolStore";
+import {
+  clearRange,
+  hasMarkedRange,
+  setRangeIn,
+  useRangeStore,
+} from "../state/rangeStore";
 import { QuickActionsPanel } from "./QuickActionsPanel";
 
 /** A `StripGeometry` whose dimensions the test drives directly. */
@@ -239,6 +245,94 @@ describe("QuickActionsPanel", () => {
       buttons()[0]?.focus();
       fireEvent.keyDown(toolbar, { key: "ArrowDown" });
       expect(document.activeElement).toBe(button("toggleBladeMode"));
+    });
+  });
+
+  // The in/out section is the strip's first `command` section: momentary
+  // actions, no pressed state. Registered separately so the authored-order and
+  // button-count cases above keep describing the stateful sections alone.
+  describe("in/out section", () => {
+    let unregisterRange: (() => void) | null = null;
+
+    beforeEach(() => {
+      useRangeStore.setState({ inUs: null, outUs: null });
+      const defs: CommandDef[] = [
+        { id: "markIn", actionId: "markIn", labelKey: "actions.mark_in", run: () => {
+          runs.push("markIn");
+          setRangeIn(1_000_000);
+        } },
+        { id: "markOut", actionId: "markOut", labelKey: "actions.mark_out", run: () => {
+          runs.push("markOut");
+        } },
+        {
+          id: "clearRange",
+          actionId: "clearRange",
+          labelKey: "actions.clear_range",
+          // Mirrors `appCommands.ts` — the point of the case below is that the
+          // live store read reaches the rendered button.
+          enabled: () => hasMarkedRange(),
+          run: () => {
+            runs.push("clearRange");
+            clearRange();
+          },
+        },
+      ];
+      unregisterRange = registerCommandProvider(() => defs);
+    });
+
+    afterEach(() => {
+      unregisterRange?.();
+      unregisterRange = null;
+      useRangeStore.setState({ inUs: null, outUs: null });
+    });
+
+    // A one-shot action carrying `aria-pressed` would be narrated as an off
+    // switch — a state it does not have. That is what `mode: "command"` buys.
+    it("reports no pressed or checked state", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      for (const id of ["markIn", "markOut", "clearRange"]) {
+        expect(button(id).getAttribute("role")).not.toBe("radio");
+        expect(button(id).hasAttribute("aria-pressed")).toBe(false);
+        expect(button(id).hasAttribute("aria-checked")).toBe(false);
+      }
+    });
+
+    it("marks the in point from the strip", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      fireEvent.click(button("markIn"));
+      expect(runs).toEqual(["markIn"]);
+      expect(hasMarkedRange()).toBe(true);
+    });
+
+    // The subscription is load-bearing: `enabled` is evaluated during render,
+    // so without it the button would stay greyed out until something unrelated
+    // re-rendered the strip.
+    it("enables Clear as soon as a range exists", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("clearRange").disabled).toBe(true);
+      fireEvent.click(button("markIn"));
+      expect(button("clearRange").disabled).toBe(false);
+      fireEvent.click(button("clearRange"));
+      expect(button("clearRange").disabled).toBe(true);
+    });
+
+    it("explains why Clear is unavailable, then names the action", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("clearRange").getAttribute("aria-label")).toBe(
+        "No in/out points marked",
+      );
+      fireEvent.click(button("markIn"));
+      expect(button("clearRange").getAttribute("aria-label")).toBe(
+        "Clear in/out points",
+      );
+    });
+
+    // The whole discoverability argument for putting in/out on the strip: the
+    // button teaches the key.
+    it("teaches the I / O bindings through the tooltip", () => {
+      render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+      expect(button("markIn").title).toContain("I");
+      expect(button("markOut").title).toContain("O");
     });
   });
 

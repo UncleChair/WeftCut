@@ -13,7 +13,15 @@
 // iterating `listCommands()` — that walks a `Set` of providers registered at
 // component mount, so its order is a by-product of mount sequence.
 
-import { MousePointer2, Rows3, Scissors, type LucideIcon } from "lucide-react";
+import {
+  ArrowRightFromLine,
+  ArrowRightToLine,
+  MousePointer2,
+  Rows3,
+  Scissors,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 
 import type { DisplayMode } from "../ipc";
 import type { Tool } from "../state/toolStore";
@@ -24,6 +32,10 @@ import type { Tool } from "../state/toolStore";
 export interface QuickActionState {
   tool: Tool;
   displayMode: DisplayMode;
+  /// Whether any in/out point is marked (`rangeStore.ts`). Not a position —
+  /// the strip can't render one, and subscribing to the positions would
+  /// re-render the whole strip on every handle drag.
+  hasRange: boolean;
 }
 
 export interface QuickActionItem {
@@ -33,7 +45,8 @@ export interface QuickActionItem {
   icon: LucideIcon;
   /// Whether the button renders pressed. For a radio section exactly one item
   /// should be true; for an independent section each item answers for itself.
-  active: (state: QuickActionState) => boolean;
+  /// Omitted by `command` items, which have no pressed state at all.
+  active?: (state: QuickActionState) => boolean;
   /// State-bearing tooltip / aria-label key, for buttons whose meaning depends
   /// on the current value ("showing X, click for Y"). Omit to use the
   /// command's own `labelKey`.
@@ -42,10 +55,17 @@ export interface QuickActionItem {
 
 export interface QuickActionSection {
   id: string;
-  /// `radio` = modal, mutually exclusive (the exclusivity comes from the
-  /// underlying state, not from this panel). `independent` = each button
-  /// answers only for itself.
-  mode: "radio" | "independent";
+  /// How the section's buttons report state to assistive tech, which is the
+  /// whole reason the split exists:
+  /// - `radio` = modal, mutually exclusive (the exclusivity comes from the
+  ///   underlying state, not from this panel) → `aria-checked` in a radiogroup.
+  /// - `independent` = each button answers only for itself → `aria-pressed`.
+  /// - `command` = momentary; fires and forgets → NEITHER attribute.
+  ///
+  /// `command` is not cosmetic. A one-shot action carrying `aria-pressed=false`
+  /// is narrated as an off switch, which promises a state it does not have —
+  /// so these items also omit `active` rather than hard-coding it false.
+  mode: "radio" | "independent" | "command";
   items: QuickActionItem[];
 }
 
@@ -82,6 +102,30 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
           s.displayMode === "AbRoll"
             ? "timeline.mode_ab_hint"
             : "timeline.mode_all_hint",
+      },
+    ],
+  },
+  {
+    // In/out marking. The strip is where this feature becomes discoverable at
+    // all: the buttons carry their `I` / `O` accelerator in the tooltip, so the
+    // one-click path teaches the keyboard path. It cannot show WHERE the points
+    // are — that is the ruler's job — but the clear button's enabled state is a
+    // standing, zero-cost signal that a range exists at all.
+    id: "range",
+    mode: "command",
+    items: [
+      // Direction carries the meaning: content STARTS at this line (arrow
+      // leaving it) vs. content ENDS at it (arrow arriving).
+      { id: "markIn", icon: ArrowRightFromLine },
+      { id: "markOut", icon: ArrowRightToLine },
+      {
+        id: "clearRange",
+        icon: X,
+        // The command is disabled with no range marked, and a disabled button
+        // with an unchanged tooltip reads as broken — so the hint explains the
+        // reason instead of restating the label.
+        hint: (s) =>
+          s.hasRange ? "actions.clear_range" : "quick_actions.clear_range_empty",
       },
     ],
   },

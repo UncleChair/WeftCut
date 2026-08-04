@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRangeInUs, useRangeOutUs } from "../state/rangeStore";
 import {
   timelineScrollLeftPx,
   useTimelineScrollStore,
@@ -50,6 +51,41 @@ function useRulerScrollBlockPx(): number {
   return blockPx;
 }
 
+/// Cyan, because every other timeline accent is already spoken for: red is the
+/// playhead and collisions, amber the blade preview and locked drops, blue the
+/// drop preview. An in/out point is a standing user mark, not a status, so it
+/// must not borrow a status colour.
+const CAP_COLOR = "bg-cyan-300";
+/// Matches `w-0.5` below. The out cap's RIGHT edge sits on the boundary (the
+/// end is exclusive — the boundary is the right edge of the last kept frame),
+/// so it is drawn one bar-width left of it.
+const CAP_WIDTH_PX = 2;
+
+/**
+ * One in/out mark: a full-height bar at the boundary with a short foot pointing
+ * INTO the kept range, giving the `⌐` / `¬` brackets every NLE draws.
+ *
+ * Lives in the ruler strip and nowhere else. That is the whole point — the mark
+ * is permanent, so it must cost zero lane pixels; the heavier out-of-range
+ * treatment is transient and lives over the lanes instead.
+ */
+function RangeCap({ xPx, side }: { xPx: number; side: "in" | "out" }) {
+  return (
+    <div
+      data-testid={`timeline-range-cap-${side}`}
+      className={`pointer-events-none absolute top-0 h-full w-0.5 ${CAP_COLOR} shadow-[0_0_0_0.5px_rgba(0,0,0,0.6)]`}
+      style={{ left: side === "in" ? xPx : xPx - CAP_WIDTH_PX }}
+      aria-hidden="true"
+    >
+      <div
+        className={`absolute bottom-0 h-0.5 w-1.5 ${CAP_COLOR} ${
+          side === "in" ? "left-0" : "right-0"
+        }`}
+      />
+    </div>
+  );
+}
+
 export function TimelineRuler({
   pxPerSec,
   totalSec,
@@ -73,6 +109,12 @@ export function TimelineRuler({
   onScrub: (clientX: number) => void;
 }) {
   const scrollLeftPx = useRulerScrollBlockPx();
+  // Plain subscriptions, not the playhead's transient-DOM-mutation pattern:
+  // in/out change when the user marks them, not once per composition frame, so
+  // a React commit per change costs nothing worth optimising away. Atomic
+  // selectors per `feedback_zustand_composite_selector`.
+  const rangeInUs = useRangeInUs();
+  const rangeOutUs = useRangeOutUs();
   const { ticks } = useMemo(
     () =>
       computeRulerModel({
@@ -126,6 +168,16 @@ export function TimelineRuler({
           )}
         </div>
       ))}
+      {/* After the ticks so the caps paint over them — same stacking context,
+          so DOM order is the whole z-story. Two nodes at most, positioned in
+          the same row coordinates the ticks use, and clipped by this strip's
+          `overflow-hidden` when the range is scrolled out of view. */}
+      {rangeInUs !== null && (
+        <RangeCap xPx={(rangeInUs / 1_000_000) * pxPerSec} side="in" />
+      )}
+      {rangeOutUs !== null && (
+        <RangeCap xPx={(rangeOutUs / 1_000_000) * pxPerSec} side="out" />
+      )}
     </div>
   );
 }
