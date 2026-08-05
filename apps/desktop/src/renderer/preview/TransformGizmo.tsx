@@ -33,6 +33,7 @@ import {
   clearTransformOverride,
   setTransformOverride,
   transformOverrideFor,
+  type TransformDelta,
 } from "../render/transformOverrides";
 import { useProjectStore } from "../state/projectStore";
 import { playheadTimeUs } from "../state/playheadStore";
@@ -167,6 +168,12 @@ function transformFields(layer: LayerSummary): TransformFields {
 /// folded in. One rule for two readers — the draw loop (which then adds the
 /// override on top) and the snap-target collector — so a layer's own box and the
 /// box other layers snap it against cannot be derived differently.
+///
+/// Deliberately reads the MIRROR only, never the commit ledger: what this
+/// returns plus the override has to equal what the Compositor draws, and the
+/// Compositor's own base is the mirror (`resolveView` + `withTransformOverride`).
+/// The unreflected commits reach here as the override's carry instead — see
+/// `mergedDelta`. Layering the ledger in on top of that would double-count it.
 function frameAt(
   layer: LayerSummary,
   tUs: number,
@@ -355,10 +362,42 @@ function moved(delta: number): boolean {
   return Math.abs(delta) > NOISE;
 }
 
-/// The layer's track for `key`, or a Static fallback when the summary doesn't
-/// carry it (a kind without that param, or a version skew).
-function paramTrack(layer: LayerSummary, key: string, fallback: number): AnimTrack<number> {
-  return readParamTrack(layer.params, key) ?? { mode: "Static", value: fallback };
+/// Tracks this gizmo has COMMITTED but the project mirror may not carry yet:
+/// `param key → the track that was written`. Maintained by `commitEntries`.
+type TrackLedger = ReadonlyMap<string, AnimTrack<number>>;
+
+/// Where a commit reads its base values: the project mirror, with the ledger
+/// layered over it. The two always travel together, so they are one argument.
+interface CommitBase {
+  layer: LayerSummary;
+  ledger: TrackLedger;
+}
+
+/// The layer's track for `key` — LEDGER FIRST, then the mirror, then a Static
+/// fallback for a kind that doesn't carry that param (or a version skew).
+///
+/// LANDMINE: reading `layer.params` alone here loses whole gestures. `layer` is
+/// the project mirror, and it only refreshes on
+/// commit → `project:changed` → refetch → re-render, i.e. TWO IPC round trips.
+/// A second gesture released inside that window would read the pre-commit base,
+/// and its commit — an absolute track built from base + delta — would overwrite
+/// the first one entirely rather than stack on it.
+function paramTrack(base: CommitBase, key: string, fallback: number): AnimTrack<number> {
+  return (
+    base.ledger.get(key) ??
+    readParamTrack(base.layer.params, key) ?? { mode: "Static", value: fallback }
+  );
+}
+
+/// What `key` resolves to at `tInLayerUs` for COMMIT purposes — the value a
+/// gesture's delta is added to, and the value a snap grid is measured from.
+function resolveBase(
+  base: CommitBase,
+  key: string,
+  fallback: number,
+  tInLayerUs: number,
+): number {
+  return resolveAnimated(paramTrack(base, key, fallback), tInLayerUs, fallback);
 }
 
 /// One commit's worth of "add `delta` to what this track resolves to at the
@@ -366,24 +405,27 @@ function paramTrack(layer: LayerSummary, key: string, fallback: number): AnimTra
 /// takes a plain value, a Keyframed one gets a key at the playhead — so every
 /// handle writes tracks exactly the way the inspector does.
 function bumpTrack(
-  layer: LayerSummary,
+  base: CommitBase,
   key: string,
   fallback: number,
   tInLayerUs: number,
   delta: number,
 ): AnimTrack<number> {
-  const track = paramTrack(layer, key, fallback);
-  return autoKeyTrack(track, tInLayerUs, resolveAnimated(track, tInLayerUs, fallback) + delta);
+  return autoKeyTrack(
+    paramTrack(base, key, fallback),
+    tInLayerUs,
+    resolveBase(base, key, fallback, tInLayerUs) + delta,
+  );
 }
 
 function bumpEntry(
-  layer: LayerSummary,
+  base: CommitBase,
   key: string,
   fallback: number,
   tInLayerUs: number,
   delta: number,
 ): [string, AnimTrack<number>] {
-  return [key, bumpTrack(layer, key, fallback, tInLayerUs, delta)];
+  return [key, bumpTrack(base, key, fallback, tInLayerUs, delta)];
 }
 
 /// The `x`/`y` half of a gesture that has to hold the picture (or the pivot)
@@ -393,15 +435,90 @@ function bumpEntry(
 /// axis), and writing the zero anyway would stamp a redundant keyframe on a
 /// track the gesture never moved.
 function positionFix(
-  layer: LayerSummary,
+  base: CommitBase,
   tInLayerUs: number,
   dx: number,
   dy: number,
 ): Array<[string, AnimTrack<number>]> {
   const entries: Array<[string, AnimTrack<number>]> = [];
-  if (moved(dx)) entries.push(bumpEntry(layer, "x", 0, tInLayerUs, dx));
-  if (moved(dy)) entries.push(bumpEntry(layer, "y", 0, tInLayerUs, dy));
+  if (moved(dx)) entries.push(bumpEntry(base, "x", 0, tInLayerUs, dx));
+  if (moved(dy)) entries.push(bumpEntry(base, "y", 0, tInLayerUs, dy));
   return entries;
+}
+
+/// What the live gesture is worth, in override channels. Each `moveXxx` handler
+/// writes its result into the drag record and then routes through here, so the
+/// override writer and the post-summary rebase cannot disagree about what the
+/// gesture contributes — and a channel a gesture does not own stays absent.
+function deltaOf(drag: Drag): TransformDelta {
+  switch (drag.kind) {
+    case "move":
+      return { dx: drag.dxComp, dy: drag.dyComp };
+    case "rotate":
+      return { dx: 0, dy: 0, drotDeg: drag.deltaDeg };
+    case "anchor":
+      return {
+        dx: drag.compDx,
+        dy: drag.compDy,
+        danchorX: drag.dAnchorX,
+        danchorY: drag.dAnchorY,
+      };
+    case "scale":
+      return {
+        dx: drag.compDx,
+        dy: drag.compDy,
+        dscaleX: drag.dScaleX,
+        dscaleY: drag.dScaleY,
+      };
+  }
+}
+
+const NO_DELTA: TransformDelta = { dx: 0, dy: 0 };
+
+/// The gesture delta with the CARRY folded in, per channel: what this gizmo has
+/// committed that the mirror does not reflect yet, plus what the live gesture is
+/// worth right now. Without the carry term, the first pointermove of a second
+/// gesture replaces the held override (`setTransformOverride` is replace, not
+/// merge) and the layer visibly snaps back by the previous gesture's whole
+/// displacement.
+///
+/// The carry is SELF-CANCELLING: once the post-commit summary lands, the ledger
+/// track and the mirror track resolve to the same value and every channel goes
+/// to zero. That is what lifts the override, so nothing has to decide when the
+/// round trip "finished" — and a summary arriving mid-gesture just moves the
+/// carry into the base, with no jump.
+function mergedDelta(base: CommitBase, d: TransformDelta, tLocalUs: number): TransformDelta {
+  const carry = (key: string, fallback: number): number => {
+    const written = base.ledger.get(key);
+    if (!written) return 0;
+    const live = readParamTrack(base.layer.params, key) ?? { mode: "Static", value: fallback };
+    return resolveAnimated(written, tLocalUs, fallback) - resolveAnimated(live, tLocalUs, fallback);
+  };
+  return {
+    dx: d.dx + carry("x", 0),
+    dy: d.dy + carry("y", 0),
+    drotDeg: (d.drotDeg ?? 0) + carry("rotation_deg", 0),
+    danchorX: (d.danchorX ?? 0) + carry("anchor_x", DEFAULT_ANCHOR),
+    danchorY: (d.danchorY ?? 0) + carry("anchor_y", DEFAULT_ANCHOR),
+    dscaleX: (d.dscaleX ?? 0) + carry("scale_x", 1),
+    dscaleY: (d.dscaleY ?? 0) + carry("scale_y", 1),
+  };
+}
+
+/// Nothing left to apply. `NOISE` rather than exact zero, because a carry can
+/// land a hair off zero if the actor canonicalized what we wrote (a keyframe
+/// time snapped to the grid, say) — and an override that never quite lifts would
+/// leave the layer permanently offset by a float ulp.
+function isNoDelta(d: TransformDelta): boolean {
+  return (
+    !moved(d.dx) &&
+    !moved(d.dy) &&
+    !moved(d.drotDeg ?? 0) &&
+    !moved(d.danchorX ?? 0) &&
+    !moved(d.danchorY ?? 0) &&
+    !moved(d.dscaleX ?? 0) &&
+    !moved(d.dscaleY ?? 0)
+  );
 }
 
 const NO_GUIDES: SnapGuides = { x: null, y: null };
@@ -463,15 +580,95 @@ function TransformGizmo({
   // Read only at pointerdown, to build the frozen snap target set.
   const summaryRef = useRef(summary);
   summaryRef.current = summary;
+  /// Tracks committed by this gizmo whose `project:changed` → refetch has not
+  /// come back yet. Two readers: the NEXT gesture's commit base (`paramTrack`),
+  /// and the carry the override has to hold so the picture does not fall back to
+  /// the stale mirror value mid-burst (`mergedDelta`).
+  const pendingRef = useRef(new Map<string, AnimTrack<number>>());
+  /// Commits dispatched and not yet settled. The ledger is dropped on the first
+  /// summary that arrives with none outstanding, which is how an external writer
+  /// — undo, the inspector, an MCP agent — takes the authority back.
+  ///
+  /// LANDMINE: this counts the MUTATION, which resolves a beat before its own
+  /// summary arrives. An unrelated refetch issued before our write landed can
+  /// publish in that sub-millisecond gap and drop the ledger early, costing one
+  /// nudge. The alternative — comparing the arriving track against what we wrote
+  /// — cannot tell "the mirror is behind" from "someone undid me", and
+  /// resurrecting an undone drag is the worse failure.
+  const inFlightRef = useRef(0);
 
-  /// The override outlives the commit on purpose: clearing it the moment the
-  /// mutation resolves would snap the layer back to its old position for the
-  /// frame or two until `project:changed` → refetch → new summary lands. A new
-  /// summary IS a new `layer` object, so this effect is that arrival.
-  useEffect(() => {
-    if (!dragRef.current && transformOverrideFor(layer.id)) {
-      clearTransformOverride(layer.id);
+  /// The base every commit reads from, in one place so no handler reaches into
+  /// `layer.params` on its own and re-opens the race.
+  const commitBase = (): CommitBase => ({
+    layer: layerRef.current,
+    ledger: pendingRef.current,
+  });
+
+  /// Publish the override for the world as it stands: the live gesture's delta
+  /// (none when `drag` is null) plus the carry. THE single writer — every
+  /// pointermove, Escape, a settling commit and the summary-arrival effect all
+  /// route here, so the box, the picture and the ledger cannot drift apart.
+  const applyOverride = (drag: Drag | null): void => {
+    const l = layerRef.current;
+    const d = drag ? deltaOf(drag) : NO_DELTA;
+    // Nothing committed-but-unseen ⇒ the override IS the gesture. A separate
+    // path so the common case writes only the channels its own gesture owns
+    // rather than seven mostly-zero ones.
+    if (pendingRef.current.size === 0) {
+      if (drag) setTransformOverride(l.id, d);
+      else clearTransformOverride(l.id);
+      return;
     }
+    // The playhead's own local time, un-snapped: that is the instant the
+    // Compositor resolves the tracks at, so it is the instant the carry must be
+    // measured at. On a KEYFRAMED track during playback the carry then ages
+    // between pointermoves — the same freeze-at-grab limit the gesture's own
+    // arithmetic already accepts (D12).
+    const merged = mergedDelta(commitBase(), d, playheadTimeUs() - l.t_start_us);
+    if (isNoDelta(merged)) clearTransformOverride(l.id);
+    else setTransformOverride(l.id, merged);
+  };
+
+  /// Send one gesture's batch — one call, one undo step. The written tracks
+  /// enter the ledger BEFORE the round trip, which is the whole fix: a gesture
+  /// released inside that window reads them as its base instead of the mirror's
+  /// pre-commit value.
+  const commitEntries = (
+    layerId: string,
+    entries: Array<[string, AnimTrack<number>]>,
+    what: string,
+  ): void => {
+    for (const [key, track] of entries) pendingRef.current.set(key, track);
+    inFlightRef.current += 1;
+    updateLayerParamTracks(layerId, entries)
+      .catch((err) => {
+        // Nothing landed, so those ledger entries are fiction and no summary is
+        // coming to lift their carry.
+        for (const [key] of entries) pendingRef.current.delete(key);
+        console.warn(`transform gizmo ${what} commit failed:`, err);
+      })
+      .finally(() => {
+        inFlightRef.current -= 1;
+        // Re-derive rather than clear: on failure this rolls the carry back, and
+        // on success it is a no-op until the summary lands.
+        applyOverride(dragRef.current);
+      });
+  };
+
+  /// A fresh summary has landed (a new summary IS a new `layer` object).
+  ///
+  /// First the ledger is dropped if this gizmo has nothing outstanding — the
+  /// mirror is then as current as anything we know.
+  ///
+  /// Then the override is re-derived. The carry goes to zero exactly when this
+  /// summary is the one carrying our write, so this IS the lift the old
+  /// unconditional clear performed: clearing on the mutation's resolve instead
+  /// would snap the layer back for the frame or two until the refetch lands.
+  /// Unlike that clear it also handles a summary arriving MID-gesture, where the
+  /// gesture's delta has to be re-based onto the new value rather than dropped.
+  useEffect(() => {
+    if (inFlightRef.current === 0 && !dragRef.current) pendingRef.current.clear();
+    applyOverride(dragRef.current);
   }, [layer]);
 
   useEffect(() => {
@@ -639,7 +836,9 @@ function TransformGizmo({
       e.stopPropagation();
       dragRef.current = null;
       guidesRef.current = NO_GUIDES;
-      clearTransformOverride(layerRef.current.id);
+      // Re-derive, not clear: Escape cancels the LIVE gesture, not the ones
+      // already committed, so a carry has to survive it.
+      applyOverride(null);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -729,7 +928,7 @@ function TransformGizmo({
     guidesRef.current = hit?.guides ?? NO_GUIDES;
     // Transient only — one IPC write per pointermove would be a full
     // renderer→main→refetch round trip and would pile up undo steps.
-    setTransformOverride(layerRef.current.id, { dx: drag.dxComp, dy: drag.dyComp });
+    applyOverride(drag);
   };
 
   const endDrag = (e: React.PointerEvent<SVGPolygonElement>): void => {
@@ -738,21 +937,22 @@ function TransformGizmo({
     guidesRef.current = NO_GUIDES;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "move") return;
-    const l = layerRef.current;
+    const base = commitBase();
     if (drag.dxComp === 0 && drag.dyComp === 0) {
-      clearTransformOverride(l.id);
+      // Not a clear: a carry from an earlier gesture in this burst has to
+      // survive a click that moved nothing.
+      applyOverride(null);
       return;
     }
     // One batch = one undo step.
-    updateLayerParamTracks(l.id, [
-      bumpEntry(l, "x", 0, drag.tInLayerUs, drag.dxComp),
-      bumpEntry(l, "y", 0, drag.tInLayerUs, drag.dyComp),
-    ]).catch((err) => {
-      // The override is only safe to hold while a commit is in flight; a
-      // failed write means no new summary is coming to lift it.
-      clearTransformOverride(l.id);
-      console.warn("transform gizmo commit failed:", err);
-    });
+    commitEntries(
+      base.layer.id,
+      [
+        bumpEntry(base, "x", 0, drag.tInLayerUs, drag.dxComp),
+        bumpEntry(base, "y", 0, drag.tInLayerUs, drag.dyComp),
+      ],
+      "move",
+    );
   };
 
   const beginRotate = (e: React.PointerEvent<SVGGElement>): void => {
@@ -766,7 +966,10 @@ function TransformGizmo({
       kind: "rotate",
       tInLayerUs,
       pivotClient,
-      baseDeg: resolveAnimated(transformFields(layerRef.current).rotation_deg, tInLayerUs, 0),
+      // Ledger-aware: the Shift grid is measured from here (see `moveRotate`),
+      // so reading the stale mirror would snap a second rotation onto a
+      // multiple of 15° relative to an angle that is no longer on screen.
+      baseDeg: resolveBase(commitBase(), "rotation_deg", 0, tInLayerUs),
       lastAngleDeg: angleAboutDeg(pivotClient, { x: e.clientX, y: e.clientY }),
       rawDeltaDeg: 0,
       deltaDeg: 0,
@@ -786,7 +989,7 @@ function TransformGizmo({
     const target = drag.baseDeg + drag.rawDeltaDeg;
     drag.deltaDeg =
       (e.shiftKey ? snapAngleDeg(target, ROTATE_SNAP_DEG) : target) - drag.baseDeg;
-    setTransformOverride(layerRef.current.id, { dx: 0, dy: 0, drotDeg: drag.deltaDeg });
+    applyOverride(drag);
   };
 
   const endRotate = (e: React.PointerEvent<SVGGElement>): void => {
@@ -794,19 +997,18 @@ function TransformGizmo({
     dragRef.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "rotate") return;
-    const l = layerRef.current;
+    const base = commitBase();
     if (drag.deltaDeg === 0) {
-      clearTransformOverride(l.id);
+      applyOverride(null);
       return;
     }
     // No fan-out: unlike scale, rotation is a single track on every kind — the
     // linked-scale twin invariant doesn't apply here (spec D6).
-    updateLayerParamTracks(l.id, [
-      bumpEntry(l, "rotation_deg", 0, drag.tInLayerUs, drag.deltaDeg),
-    ]).catch((err) => {
-      clearTransformOverride(l.id);
-      console.warn("transform gizmo rotate commit failed:", err);
-    });
+    commitEntries(
+      base.layer.id,
+      [bumpEntry(base, "rotation_deg", 0, drag.tInLayerUs, drag.deltaDeg)],
+      "rotate",
+    );
   };
 
   const beginAnchor = (e: React.PointerEvent<SVGCircleElement>): void => {
@@ -854,12 +1056,7 @@ function TransformGizmo({
     const comp = anchorCompensation(frame, drag.dAnchorX, drag.dAnchorY);
     drag.compDx = comp.x;
     drag.compDy = comp.y;
-    setTransformOverride(layerRef.current.id, {
-      dx: comp.x,
-      dy: comp.y,
-      danchorX: drag.dAnchorX,
-      danchorY: drag.dAnchorY,
-    });
+    applyOverride(drag);
   };
 
   const endAnchor = (e: React.PointerEvent<SVGCircleElement>): void => {
@@ -867,24 +1064,21 @@ function TransformGizmo({
     dragRef.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "anchor") return;
-    const l = layerRef.current;
+    const base = commitBase();
     if (drag.dAnchorX === 0 && drag.dAnchorY === 0) {
-      clearTransformOverride(l.id);
+      applyOverride(null);
       return;
     }
     const entries: Array<[string, AnimTrack<number>]> = [
-      bumpEntry(l, "anchor_x", DEFAULT_ANCHOR, drag.tInLayerUs, drag.dAnchorX),
-      bumpEntry(l, "anchor_y", DEFAULT_ANCHOR, drag.tInLayerUs, drag.dAnchorY),
+      bumpEntry(base, "anchor_x", DEFAULT_ANCHOR, drag.tInLayerUs, drag.dAnchorX),
+      bumpEntry(base, "anchor_y", DEFAULT_ANCHOR, drag.tInLayerUs, drag.dAnchorY),
     ];
     // The pan-behind compensation rides the SAME batch — one undo step for the
     // whole gesture. Skipped when it is exactly zero, which is the common case
     // (an unrotated, unflipped media layer): writing it anyway would stamp a
     // redundant key on `x`/`y` for a gesture that never moved the picture.
-    entries.push(...positionFix(l, drag.tInLayerUs, drag.compDx, drag.compDy));
-    updateLayerParamTracks(l.id, entries).catch((err) => {
-      clearTransformOverride(l.id);
-      console.warn("transform gizmo anchor commit failed:", err);
-    });
+    entries.push(...positionFix(base, drag.tInLayerUs, drag.compDx, drag.compDy));
+    commitEntries(base.layer.id, entries, "anchor");
   };
 
   const beginScale = (e: React.PointerEvent<SVGGElement>, id: ScaleHandleId): void => {
@@ -985,12 +1179,7 @@ function TransformGizmo({
     const fix = scaleCompensation(drag.frame, next.scaleX, next.scaleY);
     drag.compDx = fix.x;
     drag.compDy = fix.y;
-    setTransformOverride(layerRef.current.id, {
-      dx: fix.x,
-      dy: fix.y,
-      dscaleX: drag.dScaleX,
-      dscaleY: drag.dScaleY,
-    });
+    applyOverride(drag);
   };
 
   const endScale = (e: React.PointerEvent<SVGGElement>): void => {
@@ -999,37 +1188,39 @@ function TransformGizmo({
     guidesRef.current = NO_GUIDES;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "scale") return;
-    const l = layerRef.current;
+    const base = commitBase();
+    const l = base.layer;
     if (!moved(drag.dScaleX) && !moved(drag.dScaleY)) {
-      clearTransformOverride(l.id);
+      applyOverride(null);
       return;
     }
     // LANDMINE (spec D6): a linked layer must be written as ONE authored track
     // fanned out to both axes. Two independently built tracks would differ by a
     // float ulp or a keyframe id and the main-side twin invariant would read
     // that as divergence and silently clear `scale_linked`.
+    // `scale_linked` is a flag the gizmo never writes, so it is read from the
+    // mirror and needs no ledger — only the TRACKS can be one round trip stale.
     const fan = scaleFanOutFor("scale_x", l.params);
     const entries: Array<[string, AnimTrack<number>]> = [];
     if (fan) {
-      entries.push(...fanOutEntries(fan, bumpTrack(l, "scale_x", 1, drag.tInLayerUs, drag.dScaleX)));
+      entries.push(
+        ...fanOutEntries(fan, bumpTrack(base, "scale_x", 1, drag.tInLayerUs, drag.dScaleX)),
+      );
     } else {
       // Per axis, so an edge handle (or a corner on a rotated layer that only
       // grew one way) leaves the untouched axis alone rather than re-keying it.
       if (moved(drag.dScaleX)) {
-        entries.push(bumpEntry(l, "scale_x", 1, drag.tInLayerUs, drag.dScaleX));
+        entries.push(bumpEntry(base, "scale_x", 1, drag.tInLayerUs, drag.dScaleX));
       }
       if (moved(drag.dScaleY)) {
-        entries.push(bumpEntry(l, "scale_y", 1, drag.tInLayerUs, drag.dScaleY));
+        entries.push(bumpEntry(base, "scale_y", 1, drag.tInLayerUs, drag.dScaleY));
       }
     }
     // Scaling about the anchor moves `x`/`y`, because the composed position
     // carries a `pivot·|scale|` term — the exact mirror of the anchor gesture,
     // where the media kinds needed no fix and Text always did.
-    entries.push(...positionFix(l, drag.tInLayerUs, drag.compDx, drag.compDy));
-    updateLayerParamTracks(l.id, entries).catch((err) => {
-      clearTransformOverride(l.id);
-      console.warn("transform gizmo scale commit failed:", err);
-    });
+    entries.push(...positionFix(base, drag.tInLayerUs, drag.compDx, drag.compDy));
+    commitEntries(l.id, entries, "scale");
   };
 
   return (

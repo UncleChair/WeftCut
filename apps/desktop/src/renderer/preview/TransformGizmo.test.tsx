@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { AnimTrack, LayerParamsView, ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
@@ -583,8 +583,17 @@ describe("TransformGizmo rotation handle", () => {
 
 /// Entries of the single commit batch, as `[key, value]` for Static tracks.
 function committedStatics(): Array<[string, number]> {
-  const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+  return batchStatics(0);
+}
+
+/// The nth commit batch, as a `key → value` map of its Static tracks.
+function batchStatics(n: number): Array<[string, number]> {
+  const [, entries] = commit.mock.calls[n] as unknown as [string, [string, AnimTrack<number>][]];
   return entries.map(([k, t]) => [k, (t as { mode: "Static"; value: number }).value]);
+}
+
+function committedValue(n: number, key: string): number {
+  return new Map(batchStatics(n)).get(key)!;
 }
 
 async function reticle(): Promise<HTMLElement> {
@@ -990,5 +999,168 @@ describe("TransformGizmo scale handles", () => {
     fireEvent.pointerUp(br, { ...at });
     expect(commit).not.toHaveBeenCalled();
     expect(transformOverrideFor("l1")).toBeUndefined();
+  });
+});
+
+/// Drain a commit's promise tail. That is where the in-flight count drops, and
+/// the in-flight count is what decides whether an arriving summary retires the
+/// gizmo's ledger of committed-but-unreflected tracks or leaves it standing.
+async function settleCommit(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+// A gesture commits an ABSOLUTE track built from `base + delta`, and the base
+// comes from the project mirror — which does not refresh until
+// commit → `project:changed` → refetch → re-render, TWO IPC round trips later.
+// These tests are that window: `commit` is mocked, so NO new summary is ever
+// applied between the gestures, and every base read has to come from the
+// gizmo's own ledger instead. Before the ledger existed, the second gesture in
+// each pair read the pre-commit base and its commit REPLACED the first one.
+describe("a second gesture inside the commit round trip", () => {
+  it("stacks the move instead of overwriting the first commit", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(el, { clientX: 120, clientY: 110 });
+    fireEvent.pointerUp(el, { clientX: 120, clientY: 110 });
+    expect(committedStatics()).toEqual([
+      ["x", 40],
+      ["y", 20],
+    ]);
+    // The override holds the carry, so the box stays where the gesture left it
+    // rather than falling back to the mirror's pre-commit x/y.
+    await waitFor(() => expect(el.getAttribute("points")).toBe("20,10 340,10 340,190 20,190"));
+
+    fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(el, { clientX: 110, clientY: 100 });
+    // 20 comp px of NEW gesture on top of the 40 already committed. Without the
+    // carry this reads {dx: 20} — a visible 40 px snap back on the first move,
+    // because `setTransformOverride` replaces rather than merges.
+    expect(transformOverrideFor("l1")).toMatchObject({ dx: 60, dy: 20 });
+    fireEvent.pointerUp(el, { clientX: 110, clientY: 100 });
+    expect(commit).toHaveBeenCalledTimes(2);
+    expect(batchStatics(1)).toEqual([
+      ["x", 60],
+      ["y", 20],
+    ]);
+  });
+
+  it("measures the Shift rotation grid from the angle actually on screen", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const rot = await knob();
+    fireEvent.pointerDown(rot, { button: 0, ...KNOB });
+    fireEvent.pointerMove(rot, at(0));
+    fireEvent.pointerUp(rot, at(0));
+    expect(committedStatics()).toEqual([["rotation_deg", 90]]);
+    // The knob rides the rotated box: 116 px above the pivot turns into 116 px
+    // to its right. Waiting for it is also waiting for the carry to be drawn.
+    await waitFor(() => expect(rot.getAttribute("transform")).not.toBe("translate(160 -26)"));
+
+    const grab = placedAt(rot);
+    const a0 = (Math.atan2(grab.clientY - PIVOT.y, grab.clientX - PIVOT.x) * 180) / Math.PI;
+    fireEvent.pointerDown(rot, { button: 0, ...grab });
+    // +12° of cursor travel from 90° is 102°, which the grid rounds to 105.
+    // Read against the stale mirror the same gesture would be 0° + 12° → 15°,
+    // i.e. Shift would drag the layer BACKWARDS off its own committed angle.
+    fireEvent.pointerMove(rot, { ...at(a0 + 12, 140), shiftKey: true });
+    expect(transformOverrideFor("l1")!.drotDeg).toBeCloseTo(105, 6);
+    fireEvent.pointerUp(rot, at(a0 + 12, 140));
+    expect(committedValue(1, "rotation_deg")).toBeCloseTo(105, 6);
+  });
+
+  it("stacks a linked resize, compensation included", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const br = screen.getByTestId("transform-gizmo-scale-br");
+    // +160/+90 comp takes the br corner's offset from the centred pivot to 1.5×.
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 80, clientY: 45 });
+    fireEvent.pointerUp(br, { clientX: 80, clientY: 45 });
+    // Top-left of a centre-pivoted 640×360 layer at scale s is 320 − 320s.
+    expect(committedStatics()).toEqual([
+      ["scale_x", 1.5],
+      ["scale_y", 1.5],
+      ["x", -160],
+      ["y", -90],
+    ]);
+    // The box must be DRAWN at 1.5× before the next grab: `beginScale` reads the
+    // handle's start position out of the last drawn frame.
+    await waitFor(() => expect(el.getAttribute("points")).toBe("-80,-45 400,-45 400,225 -80,225"));
+
+    // Another +240/+135 comp along the same diagonal ⇒ 2.25× overall.
+    fireEvent.pointerDown(br, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(br, { clientX: 120, clientY: 67.5 });
+    fireEvent.pointerUp(br, { clientX: 120, clientY: 67.5 });
+    expect(commit).toHaveBeenCalledTimes(2);
+    // 2.25, not 1.75: the gesture is worth +0.75 over the 1.5 already committed.
+    // The x/y compensation stacks with it — read off the mirror it would land at
+    // −240 and the layer would jump on the next repaint.
+    expect(committedValue(1, "scale_x")).toBeCloseTo(2.25, 6);
+    expect(committedValue(1, "scale_y")).toBeCloseTo(2.25, 6);
+    expect(committedValue(1, "x")).toBeCloseTo(-400, 6);
+    expect(committedValue(1, "y")).toBeCloseTo(-225, 6);
+  });
+
+  it("lifts the override when the summary carrying the commit lands", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(el, { clientX: 120, clientY: 110 });
+    fireEvent.pointerUp(el, { clientX: 120, clientY: 110 });
+    await settleCommit();
+    expect(transformOverrideFor("l1")).toMatchObject({ dx: 40, dy: 20 });
+    // The refetch arrives. The ledger track and the mirror track now resolve to
+    // the same value, so the carry is zero and the override lifts itself — no
+    // one has to decide when the round trip "finished".
+    act(() => {
+      useProjectStore.getState().apply(fixture({ x: stat(40), y: stat(20) }));
+    });
+    await waitFor(() => expect(transformOverrideFor("l1")).toBeUndefined());
+    // And the box is unmoved across the hand-off — the whole point of holding
+    // the override past the commit.
+    expect(el.getAttribute("points")).toBe("20,10 340,10 340,190 20,190");
+  });
+
+  it("hands authority back to an external writer once nothing is outstanding", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(el, { clientX: 120, clientY: 110 });
+    fireEvent.pointerUp(el, { clientX: 120, clientY: 110 });
+    await settleCommit();
+    // An undo (or an inspector edit, or an MCP agent) publishes something that
+    // is NEITHER our write nor the value we wrote over. With no commit still in
+    // flight the ledger is retired, so it wins — a ledger that outlived its
+    // burst would resurrect the drag the user just undid.
+    act(() => {
+      useProjectStore.getState().apply(fixture({ x: stat(500), y: stat(0) }));
+    });
+    await waitFor(() => expect(transformOverrideFor("l1")).toBeUndefined());
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(el, { clientX: 10, clientY: 0 });
+    expect(batchStatics(1)).toEqual([
+      ["x", 520],
+      ["y", 0],
+    ]);
+  });
+
+  it("keeps the carry through an Escape that cancels only the live gesture", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(el, { clientX: 120, clientY: 110 });
+    fireEvent.pointerUp(el, { clientX: 120, clientY: 110 });
+    fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(el, { clientX: 200, clientY: 100 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    // Back to the committed position, NOT to the mirror's pre-commit one.
+    expect(transformOverrideFor("l1")).toMatchObject({ dx: 40, dy: 20 });
+    fireEvent.pointerUp(el, { clientX: 200, clientY: 100 });
+    expect(commit).toHaveBeenCalledTimes(1);
   });
 });
