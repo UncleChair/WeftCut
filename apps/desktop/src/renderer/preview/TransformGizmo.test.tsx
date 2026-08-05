@@ -225,3 +225,162 @@ describe("TransformGizmoHost", () => {
     expect(transformOverrideFor("l1")).toBeUndefined();
   });
 });
+
+/// The fixture's pivot: a 640×360 layer at (0,0) with a centered anchor is
+/// centered on comp (320,180), which the half-scale canvas puts at (160,90).
+const PIVOT = { x: 160, y: 90 };
+/// The knob, ROTATE_GAP_PX above the box's top edge midpoint (160, 0).
+const KNOB = { clientX: 160, clientY: -26 };
+
+/// A client point at `deg` around the pivot — angles are measured clockwise
+/// because screen y grows downward.
+function at(deg: number, r = 100): { clientX: number; clientY: number } {
+  const rad = (deg * Math.PI) / 180;
+  return { clientX: PIVOT.x + Math.cos(rad) * r, clientY: PIVOT.y + Math.sin(rad) * r };
+}
+
+async function knob(): Promise<HTMLElement> {
+  const el = await screen.findByTestId("transform-gizmo-rotate");
+  await waitFor(() => expect(el.getAttribute("cx")).not.toBeNull());
+  return el;
+}
+
+function corners(el: HTMLElement): Array<{ x: number; y: number }> {
+  return el
+    .getAttribute("points")!
+    .split(" ")
+    .map((p) => {
+      const [x, y] = p.split(",").map(Number);
+      return { x: x!, y: y! };
+    });
+}
+
+describe("TransformGizmo rotation handle", () => {
+  it("hangs the knob off the top edge on a stalk, in screen pixels", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await knob();
+    expect([el.getAttribute("cx"), el.getAttribute("cy")]).toEqual(["160", "-26"]);
+    const stalk = screen.getByTestId("transform-gizmo-stalk");
+    // Root on the box's top edge, knob end coincident with the circle.
+    expect(["x1", "y1", "x2", "y2"].map((a) => stalk.getAttribute(a))).toEqual([
+      "160",
+      "0",
+      "160",
+      "-26",
+    ]);
+  });
+
+  it("hides the stalk and knob with the box when the playhead leaves the layer", async () => {
+    setPlayheadTimeUs(9_000_000);
+    render(<TransformGizmoHost />);
+    // Not via `knob()`: off-span the loop hides before it ever places the knob,
+    // so there is no `cx` to wait for.
+    const el = await screen.findByTestId("transform-gizmo-rotate");
+    await waitFor(() => expect(el.style.display).toBe("none"));
+    expect(screen.getByTestId("transform-gizmo-stalk").style.display).toBe("none");
+  });
+
+  it("rotates about the anchor through the transient override, without committing", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const rot = await knob();
+    // Knob starts at −90° (straight up); dragging to 0° is a quarter turn
+    // clockwise.
+    fireEvent.pointerDown(rot, { button: 0, ...KNOB });
+    fireEvent.pointerMove(rot, at(0));
+    expect(transformOverrideFor("l1")).toEqual({ dx: 0, dy: 0, drotDeg: 90 });
+    expect(commit).not.toHaveBeenCalled();
+    // The box follows the gesture: the 320×180 footprint becomes 180×320 and
+    // stays centered on the pivot — i.e. it turned IN PLACE. This is the
+    // assertion that would fail if the box ignored the rotation override.
+    await waitFor(() => {
+      const pts = corners(el);
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(180, 6);
+      expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(320, 6);
+      expect(pts.reduce((s, p) => s + p.x, 0) / 4).toBeCloseTo(PIVOT.x, 6);
+      expect(pts.reduce((s, p) => s + p.y, 0) / 4).toBeCloseTo(PIVOT.y, 6);
+    });
+  });
+
+  it("commits rotation_deg ALONE in one batch on release", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const rot = await knob();
+    fireEvent.pointerDown(rot, { button: 0, ...KNOB });
+    fireEvent.pointerMove(rot, at(0));
+    fireEvent.pointerUp(rot, at(0));
+    // No x/y in the batch: the engine already rotates about the anchor, so
+    // nothing has to compensate.
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledWith("l1", [
+      ["rotation_deg", { mode: "Static", value: 90 }],
+    ]);
+  });
+
+  it("keys a keyframed rotation at the frame-snapped playhead", async () => {
+    useProjectStore.getState().apply(
+      fixture({
+        rotation_deg: {
+          mode: "Keyframed",
+          value: [{ id: "k1", t_us: 0, value: 30, interp: { kind: "Linear" } }],
+        } as AnimTrack<number>,
+      }),
+    );
+    render(<TransformGizmoHost />);
+    await box();
+    const rot = await knob();
+    // The box is already rotated 30°, so its knob is not where it is at 0° —
+    // grab the drawn position instead of assuming it.
+    const grab = {
+      clientX: Number(rot.getAttribute("cx")),
+      clientY: Number(rot.getAttribute("cy")),
+    };
+    fireEvent.pointerDown(rot, { button: 0, ...grab });
+    fireEvent.pointerMove(rot, at(0));
+    fireEvent.pointerUp(rot, at(0));
+    const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+    const track = entries[0]![1];
+    expect(entries).toHaveLength(1);
+    expect(track.mode).toBe("Keyframed");
+    // Grabbing at 30° and dragging to 0° (screen) is +60°, on top of the 30°
+    // the track already resolves to. Key lands at frame 15 of 30 fps. Tolerance
+    // is a fraction of a degree because a pointer's client coords are integers
+    // while the knob's drawn centre is not.
+    const keys = track.value as Array<{ t_us: number; value: number }>;
+    expect(keys.find((k) => k.t_us === 500_000)?.value).toBeCloseTo(90, 0);
+  });
+
+  it("quantizes only the APPLIED angle while Shift is held", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const rot = await knob();
+    fireEvent.pointerDown(rot, { button: 0, ...KNOB });
+    // −90° → −14.5° is +75.5° of cursor travel; Shift snaps the result to 75.
+    fireEvent.pointerMove(rot, { clientX: 276, clientY: 60, shiftKey: true });
+    expect(transformOverrideFor("l1")!.drotDeg).toBe(75);
+    // Same cursor position with Shift released: the true angle comes back, so
+    // the layer is not stuck on the grid for the rest of the gesture.
+    fireEvent.pointerMove(rot, { clientX: 276, clientY: 60 });
+    expect(transformOverrideFor("l1")!.drotDeg).toBeCloseTo(75.5, 1);
+  });
+
+  it("cancels on Escape and ignores a knob click that never moved", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const rot = await knob();
+    fireEvent.pointerDown(rot, { button: 0, ...KNOB });
+    fireEvent.pointerMove(rot, at(0));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(transformOverrideFor("l1")).toBeUndefined();
+    fireEvent.pointerUp(rot, at(0));
+    expect(commit).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(rot, { button: 0, ...KNOB });
+    fireEvent.pointerUp(rot, KNOB);
+    expect(commit).not.toHaveBeenCalled();
+    expect(transformOverrideFor("l1")).toBeUndefined();
+  });
+});

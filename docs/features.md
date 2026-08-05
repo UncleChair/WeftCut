@@ -265,9 +265,10 @@ changes mid-session are not reflected.
 ## On-canvas transform (gizmo)
 
 The primary selected layer shows its footprint as a box over the preview;
-dragging inside the box moves it. Only the four transform-bearing visual kinds
-get one (Color fills the composition, Audio is not visual), and only while the
-playhead is inside the layer's span. Resize/rotate handles are not built yet.
+dragging inside the box moves it, and a knob on a stalk above its top edge
+rotates it. Only the four transform-bearing visual kinds get one (Color fills the
+composition, Audio is not visual), and only while the playhead is inside the
+layer's span. Resize handles are not built yet.
 
 **Why the box is an SVG overlay and not Pixi children:** `app.stage` is a
 read-back surface — the eyedropper's `extract.pixels`, the e2e
@@ -286,19 +287,37 @@ in React state), and commits once on release through `updateLayerParamTracks` �
 one batch, one undo. The override is held until the new summary arrives, so the
 layer never snaps back for a frame between commit and refetch.
 
+**Why rotation writes one track and nothing else:** the engine rotates about the
+anchor and `x`/`y` mean the *unrotated* top-left, so turning a layer about its
+anchor moves neither — the commit is `rotation_deg` alone. A handle that rotated
+about the box's visual centre instead would need compensating `x`/`y` in the same
+batch, time-dependent on a keyframed layer. Since `anchor` defaults to the centre
+and no surface changes it, "about the anchor" already *is* "about the centre".
+The gesture accumulates per-move angle increments folded into (−180, 180°]
+rather than diffing against its start angle: `atan2`'s ±180° branch cut would
+otherwise read a +20° drag across the seam as −340°, and accumulating is also
+what makes a multi-turn drag mean multiple turns. Shift snaps the resulting angle
+to an absolute 15° grid while the true angle is kept alongside, so releasing
+Shift resumes from the cursor rather than from the grid.
+
 **Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect` +
 `naturalSizeOf`; the gizmo never imports Pixi. `gizmoGeometry.ts` — pure
-composition-space quad + the `object-fit: contain` mapping, so the geometry is
-unit-tested without a renderer (and shares `anchorPivot.ts` with the renderer,
-which is what keeps box and picture aligned). `autoKeyTrack` — the shared
-commit rule: a Static track takes a value, a Keyframed one gets a key at the
-frame-snapped playhead, exactly like the inspector.
+composition-space quad, pivot, handle placement and the `object-fit: contain`
+mapping, so the geometry is unit-tested without a renderer (and shares
+`anchorPivot.ts` with the renderer, which is what keeps box and picture aligned).
+`autoKeyTrack` — the shared commit rule: a Static track takes a value, a
+Keyframed one gets a key at the frame-snapped playhead, exactly like the
+inspector.
 
-**Limits:** move only — a future scale handle MUST write through
+**Limits:** move and rotate only — a future scale handle MUST write through
 `scaleFanOutFor` + `fanOutEntries`, or a single-axis write silently unlinks a
 uniform-scale layer (see `docs/data-model.md` § Transform). Single selection
-only. The box follows animated x/y during playback via rAF; it is hidden while
-the preview dock tab is not visible.
+only. The box follows animated values during playback via rAF; it is hidden while
+the preview dock tab is not visible. The rotation knob sits a fixed 26 CSS px
+outside the box (screen space, so the affordance is resolution-independent), so
+the overlay runs `overflow: visible` and the panel is the real clip bound — a
+layer flush against the top of a panel-filling composition has no room for its
+knob.
 
 ## Window geometry memory
 

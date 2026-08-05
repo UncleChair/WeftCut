@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  angleAboutDeg,
   clientDeltaToComp,
   compToClient,
   containFit,
+  layerPivot,
   layerQuad,
+  rotateHandle,
+  shortestDeltaDeg,
+  snapAngleDeg,
   type LayerQuadInput,
 } from "./gizmoGeometry";
 
@@ -71,6 +76,111 @@ describe("layerQuad", () => {
     // Content top-left → top-right is one 200 px edge, whatever the rotation.
     const edge = Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y);
     expect(edge).toBeCloseTo(200, 9);
+  });
+});
+
+describe("layerPivot", () => {
+  it("is the quad's centroid for a centered anchor, at any rotation or scale", () => {
+    // This equality is what makes a rotation gesture turn the layer IN PLACE:
+    // rotate about this point and the footprint's centre never moves.
+    for (const rotationDeg of [0, 30, 90, -145]) {
+      const i = { ...mediaLayer, rotationDeg, scaleX: 2, scaleY: 0.5 };
+      const q = layerQuad(i);
+      const p = layerPivot(i);
+      expect(p.x).toBeCloseTo(q.reduce((s, c) => s + c.x, 0) / 4, 9);
+      expect(p.y).toBeCloseTo(q.reduce((s, c) => s + c.y, 0) / 4, 9);
+    }
+  });
+
+  it("is (x, y) itself for an anchor-origin layer (Text)", () => {
+    // Text's x/y IS the anchor point, so the pivot is the stored position
+    // whatever the anchor pair says.
+    expect(layerPivot({ ...mediaLayer, origin: "anchor", anchorX: 0, anchorY: 1 })).toEqual({
+      x: 100,
+      y: 50,
+    });
+  });
+
+  it("offsets by the anchor for a top-left-origin layer", () => {
+    // Top-left anchor ⇒ the pivot IS (x, y); position compensation is zero.
+    expect(layerPivot({ ...mediaLayer, anchorX: 0, anchorY: 0 })).toEqual({ x: 100, y: 50 });
+  });
+});
+
+describe("rotateHandle", () => {
+  /// 320×180 box at the client origin — the fixture the component test draws.
+  const box = [
+    { x: 0, y: 0 },
+    { x: 320, y: 0 },
+    { x: 320, y: 180 },
+    { x: 0, y: 180 },
+  ];
+
+  it("hangs the knob off the top edge's midpoint by a screen-space gap", () => {
+    expect(rotateHandle(box, 26)).toEqual({ root: { x: 160, y: 0 }, knob: { x: 160, y: -26 } });
+  });
+
+  it("follows the box's own up direction when it is rotated", () => {
+    // The same content rotated 90° clockwise: "up" is now screen-right.
+    const h = rotateHandle(
+      [
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+        { x: 0, y: 0 },
+      ],
+      26,
+    )!;
+    expect(h.root).toEqual({ x: 100, y: 50 });
+    expect(h.knob.x).toBeCloseTo(126, 9);
+    expect(h.knob.y).toBeCloseTo(50, 9);
+  });
+
+  it("falls back to the top edge's perpendicular for a flattened box", () => {
+    // scale_y 0 leaves no body to point away from; the handle must still exist.
+    const flat = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 0 },
+      { x: 0, y: 0 },
+    ];
+    expect(rotateHandle(flat, 26)!.knob).toEqual({ x: 50, y: -26 });
+  });
+
+  it("falls back to straight up for a fully collapsed box, and is null under 4 corners", () => {
+    const point = Array.from({ length: 4 }, () => ({ x: 7, y: 9 }));
+    expect(rotateHandle(point, 26)!.knob).toEqual({ x: 7, y: 9 - 26 });
+    expect(rotateHandle(box.slice(0, 3), 26)).toBeNull();
+  });
+});
+
+describe("rotation angles", () => {
+  const origin = { x: 0, y: 0 };
+
+  it("measures clockwise-positive, matching rotation_deg's direction", () => {
+    expect(angleAboutDeg(origin, { x: 1, y: 0 })).toBe(0);
+    // Screen y grows downward, so straight down is +90 — the same way a
+    // positive rotation_deg turns the picture.
+    expect(angleAboutDeg(origin, { x: 0, y: 1 })).toBe(90);
+    expect(angleAboutDeg(origin, { x: 0, y: -1 })).toBe(-90);
+  });
+
+  it("reads a drag across the ±180° cut as the short way round", () => {
+    // 170° → −170° is +20° of cursor movement, not −340°.
+    expect(shortestDeltaDeg(-170 - 170)).toBeCloseTo(20, 9);
+    expect(shortestDeltaDeg(370)).toBeCloseTo(10, 9);
+    // Accumulating increments is what permits multi-turn rotation: dragging
+    // through three 170° steps is 510°, not 150°.
+    let acc = 0;
+    for (let step = 0; step < 3; step++) acc += shortestDeltaDeg(170);
+    expect(acc).toBeCloseTo(510, 9);
+  });
+
+  it("snaps the absolute angle to the nearest step, and is identity without one", () => {
+    expect(snapAngleDeg(20, 15)).toBe(15);
+    expect(snapAngleDeg(7, 15)).toBe(0);
+    expect(snapAngleDeg(-8, 15)).toBe(-15);
+    expect(snapAngleDeg(20.4, 0)).toBe(20.4);
   });
 });
 

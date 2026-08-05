@@ -1,4 +1,4 @@
-// Transient, NON-recorded position deltas for an in-flight on-canvas drag.
+// Transient, NON-recorded transform deltas for an in-flight on-canvas drag.
 // Same idiom as `effects/effectOverrides.ts`: the Compositor consults this
 // AFTER resolveView (which rewrites x/y from the tracks every composite, so
 // writing sprite positions directly would be clobbered on the next frame).
@@ -16,6 +16,11 @@
 export interface TransformDelta {
   dx: number;
   dy: number;
+  /// Degrees added to the resolved `rotation_deg`. Additive like the position
+  /// pair and for the same reason — and nothing else moves, because the engine
+  /// already rotates about the anchor (`anchorPivot.ts`), so a rotation gesture
+  /// needs no compensating x/y.
+  drotDeg?: number;
 }
 
 const deltas = new Map<string, TransformDelta>();
@@ -27,7 +32,14 @@ function emit(): void {
 
 export function setTransformOverride(layerId: string, delta: TransformDelta): void {
   const prev = deltas.get(layerId);
-  if (prev && prev.dx === delta.dx && prev.dy === delta.dy) return;
+  if (
+    prev &&
+    prev.dx === delta.dx &&
+    prev.dy === delta.dy &&
+    (prev.drotDeg ?? 0) === (delta.drotDeg ?? 0)
+  ) {
+    return;
+  }
   deltas.set(layerId, delta);
   emit();
 }
@@ -42,13 +54,17 @@ export function transformOverrideFor(layerId: string): TransformDelta | undefine
 
 /// Fold the live drag delta into a resolved view. Returns the input untouched
 /// when nothing is being dragged, so the common path allocates nothing.
-export function withTransformOverride<T extends { x: number; y: number }>(
-  layerId: string,
-  view: T,
-): T {
+export function withTransformOverride<
+  T extends { x: number; y: number; rotation_deg: number },
+>(layerId: string, view: T): T {
   const d = deltas.get(layerId);
   if (!d) return view;
-  return { ...view, x: view.x + d.dx, y: view.y + d.dy };
+  return {
+    ...view,
+    x: view.x + d.dx,
+    y: view.y + d.dy,
+    rotation_deg: view.rotation_deg + (d.drotDeg ?? 0),
+  };
 }
 
 /// The preview subscribes to re-composite on change: while paused, the stage
