@@ -11,6 +11,8 @@ import { Application, Container, Texture } from "pixi.js";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
+import { anchorPivot } from "./anchorPivot";
+import { withTransformOverride } from "./transformOverrides";
 import { AudioGraph } from "./audio/AudioGraph";
 import { AudioMixer } from "./audio/AudioMixer";
 import { anyRoleSolo, auditionedRoleGainLinear, roleAudible } from "./audio/roleGate";
@@ -167,6 +169,15 @@ export interface UpcomingClipPrewarmSnapshot {
     ringSize: number;
     ringLastPtsUs: number | null;
   }>;
+}
+
+/// A bound texture's natural extent, or null while the sprite still holds the
+/// EMPTY placeholder (nothing decoded yet — the gizmo shows no box rather than
+/// a 1×1 one).
+function textureSize(texture: Texture): { w: number; h: number } | null {
+  if (texture === Texture.EMPTY) return null;
+  const { width: w, height: h } = texture.orig;
+  return w > 0 && h > 0 ? { w, h } : null;
 }
 
 /// THE one place decode-path identity is derived, shared by `activeClipProbe`
@@ -1473,6 +1484,36 @@ export class Compositor {
     this.compositeMsMax = 0;
   }
 
+  /// The untransformed content size of a live layer, in composition pixels —
+  /// what the on-canvas gizmo builds its box from. Null when the layer has no
+  /// staged sprite yet (off-playhead, or still decoding its first frame).
+  /// Read-only.
+  ///
+  /// Per-kind source, and why it is not one uniform `getBounds()` call: a
+  /// VideoClip's scale is source-corrected (`media/texture`, so proxies preview
+  /// at original size), which makes the MEDIA dimensions its natural size;
+  /// Image/Motif scale their decoded raster directly; Text has no intrinsic
+  /// size at all, only measured bounds. `getBounds()` would also fold in
+  /// filter padding and draw an oversized box on a blurred layer.
+  naturalSizeOf(layerId: string): { w: number; h: number } | null {
+    const clip = this.clips.get(layerId);
+    if (clip) {
+      const media = this.mediaById(clip.mediaId);
+      if (media?.width && media.height) return { w: media.width, h: media.height };
+      return textureSize(clip.sprite.sprite.texture);
+    }
+    const image = this.images.get(layerId);
+    if (image) return textureSize(image.sprite.sprite.texture);
+    const motif = this.activeMotifs.get(layerId);
+    if (motif) return textureSize(motif.sprite.sprite.texture);
+    const text = this.texts.get(layerId);
+    if (text) {
+      const b = text.sprite.text.getLocalBounds();
+      return b.width > 0 && b.height > 0 ? { w: b.width, h: b.height } : null;
+    }
+    return null;
+  }
+
   /// E2E-only (preview-sw conformance): snapshot the decode source + bound
   /// sprite of the active VideoClip named by `layerId` (or the first live
   /// clip when omitted). Returns null when no matching clip is active.
@@ -2179,7 +2220,10 @@ export class Compositor {
     const layerLocalUs = tUs - layer.t_start_us;
     // Per-frame keyframe resolution: AnimTrack views -> scalars at the
     // layer-local time. Identical in preview and the export Worker.
-    const params = resolveVideoClipView(layer.params, layerLocalUs);
+    const params = withTransformOverride(
+      layer.id,
+      resolveVideoClipView(layer.params, layerLocalUs),
+    );
     const srcTUs = params.src_in_us + layerLocalUs;
 
     const media = this.mediaById(params.media_id);
@@ -2265,11 +2309,28 @@ export class Compositor {
       media?.width && textureW && textureW > 0 ? media.width / textureW : 1;
     const sourceScaleY =
       media?.height && textureH && textureH > 0 ? media.height / textureH : 1;
+    const effScaleX = params.scale_x * sourceScaleX;
+    const effScaleY = params.scale_y * sourceScaleY;
     clip.sprite.sprite.scale.set(
-      params.scale_x * sourceScaleX * (params.flip_h ? -1 : 1),
-      params.scale_y * sourceScaleY * (params.flip_v ? -1 : 1),
+      effScaleX * (params.flip_h ? -1 : 1),
+      effScaleY * (params.flip_v ? -1 : 1),
     );
-    clip.sprite.sprite.position.set(params.x, params.y);
+    // Anchor is the pivot: rotation and flip turn around it while `x`/`y` keep
+    // meaning the unrotated top-left (anchorPivot.ts). The pivot is in TEXTURE
+    // space, so it must use the decoded dimensions while the position
+    // compensation uses the effective (source-corrected) scale.
+    const pivot = anchorPivot({
+      x: params.x,
+      y: params.y,
+      anchorX: params.anchor_x,
+      anchorY: params.anchor_y,
+      texW: textureW,
+      texH: textureH,
+      effScaleX,
+      effScaleY,
+    });
+    clip.sprite.sprite.pivot.set(pivot.pivotX, pivot.pivotY);
+    clip.sprite.sprite.position.set(pivot.posX, pivot.posY);
     clip.sprite.sprite.angle = params.rotation_deg;
     clip.sprite.sprite.alpha = params.opacity;
     clip.sprite.sprite.zIndex = z;
@@ -2357,7 +2418,10 @@ export class Compositor {
     if (layer.params.kind !== "ImageOverlay") return;
     const tInLayerUs = tUs - layer.t_start_us;
     const durationUs = layer.t_end_us - layer.t_start_us;
-    const params = resolveImageOverlayView(layer.params, tInLayerUs);
+    const params = withTransformOverride(
+      layer.id,
+      resolveImageOverlayView(layer.params, tInLayerUs),
+    );
     image.sprite.update(params, tInLayerUs, durationUs);
     image.sprite.sprite.zIndex = z;
   }
@@ -2403,7 +2467,9 @@ export class Compositor {
   private updateText(text: ActiveText, layer: LayerSummary, z: number, tUs: number): void {
     if (layer.params.kind !== "Text") return;
     const tInLayerUs = tUs - layer.t_start_us;
-    text.sprite.update(resolveTextView(layer.params, tInLayerUs));
+    text.sprite.update(
+      withTransformOverride(layer.id, resolveTextView(layer.params, tInLayerUs)),
+    );
     text.sprite.text.zIndex = z;
   }
 
@@ -2457,7 +2523,12 @@ export class Compositor {
     // index synchronously (the Worker has no DOM harness). Undefined in preview
     // (or if this layer wasn't baked) → the sprite's harness/cache path runs.
     const injected = this.motifFrames.get(layer.id);
-    tmpl.sprite.update(resolveMotifView(layer.params, tInLayerUs), tInLayerUs, durationUs, injected);
+    tmpl.sprite.update(
+      withTransformOverride(layer.id, resolveMotifView(layer.params, tInLayerUs)),
+      tInLayerUs,
+      durationUs,
+      injected,
+    );
     tmpl.sprite.sprite.zIndex = z;
   }
 

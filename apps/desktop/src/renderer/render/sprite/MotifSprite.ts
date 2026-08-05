@@ -18,6 +18,7 @@
 import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
+import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedMotifView } from "../resolveView";
 import { getMotif, type Motif } from "../motifs/catalog";
 import { resolveMotifFrame, sharedMotifFrameCache } from "../motifs/motifRasterCache";
@@ -132,8 +133,21 @@ export class MotifSprite implements StageableSprite {
 
     // Transforms first, every tick, BEFORE the frame no-op below: a
     // transform-only change with an unchanged frame must still take.
-    this.sprite.position.set(view.x, view.y);
     this.sprite.scale.set(view.scale_x, view.scale_y);
+    // Anchor is the pivot; `x`/`y` stay the unrotated top-left (anchorPivot.ts).
+    // The raster's own dimensions are the local space here, so a Motif captured
+    // at a different size still pivots at the same relative point.
+    const pivot = anchorPivot({
+      x: view.x,
+      y: view.y,
+      anchorX: view.anchor_x,
+      anchorY: view.anchor_y,
+      ...textureExtent(this.sprite.texture),
+      effScaleX: view.scale_x,
+      effScaleY: view.scale_y,
+    });
+    this.sprite.pivot.set(pivot.pivotX, pivot.pivotY);
+    this.sprite.position.set(pivot.posX, pivot.posY);
     this.sprite.angle = view.rotation_deg;
     this.sprite.alpha = view.opacity;
 

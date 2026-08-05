@@ -36,6 +36,11 @@ import {
   registerPreviewSampler,
   type PreviewSampler,
 } from "../colorpick/previewSamplerRegistry";
+import {
+  clearGizmoProbe,
+  registerGizmoProbe,
+  type GizmoProbe,
+} from "../preview/gizmoProbeRegistry";
 import { quickProxyPath } from "./decodeRoute";
 import {
   setSlotFenceBackend,
@@ -60,6 +65,7 @@ import {
   subscribeEffectOverrides,
 } from "./effects/effectOverrides";
 import { subscribeRoleGainOverrides } from "./audio/roleGainOverrides";
+import { subscribeTransformOverrides } from "./transformOverrides";
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
@@ -128,8 +134,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   /// effect is async and can't return a cleanup itself).
   const meterTimerRef = useRef<number | null>(null);
   const samplerRef = useRef<PreviewSampler | null>(null);
+  const gizmoProbeRef = useRef<GizmoProbe | null>(null);
   const unsubOverridesRef = useRef<(() => void) | null>(null);
   const unsubRoleOverridesRef = useRef<(() => void) | null>(null);
+  const unsubTransformOverridesRef = useRef<(() => void) | null>(null);
   const [initializing, setInitializing] = useState(true);
   // On-screen media the Compositor can't decode with any engine — fed ONLY
   // by `Compositor.onUnsupported` (membership-change snapshots, never
@@ -413,6 +421,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       };
       registerPreviewSampler(previewSampler);
       samplerRef.current = previewSampler;
+
+      // On-canvas gizmo: geometry only (no pixels), same register-on-init /
+      // identity-guarded-clear lifecycle as the sampler above.
+      const gizmoProbe: GizmoProbe = {
+        canvasRect: () => (app.canvas as HTMLCanvasElement).getBoundingClientRect(),
+        naturalSizeOf: (layerId) => compositor.naturalSizeOf(layerId),
+      };
+      registerGizmoProbe(gizmoProbe);
+      gizmoProbeRef.current = gizmoProbe;
       // Hover live-apply while paused: sync() only runs inside compositeFrame,
       // so poke one on every transient-override change.
       unsubOverridesRef.current = subscribeEffectOverrides(() => {
@@ -425,6 +442,14 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // audition responsive at the very start/end of a gesture.
       unsubRoleOverridesRef.current?.();
       unsubRoleOverridesRef.current = subscribeRoleGainOverrides(() => {
+        compositor.compositeFrame(engine.positionUs());
+      });
+
+      // On-canvas gizmo drag: same reason as the two above — the transient
+      // delta is only read inside compositeFrame, and while paused nothing
+      // else calls it, so the dragged layer would not move until the commit.
+      unsubTransformOverridesRef.current?.();
+      unsubTransformOverridesRef.current = subscribeTransformOverrides(() => {
         compositor.compositeFrame(engine.positionUs());
       });
 
@@ -714,10 +739,14 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       resetUnderrunState();
       if (samplerRef.current) clearPreviewSampler(samplerRef.current);
       samplerRef.current = null;
+      if (gizmoProbeRef.current) clearGizmoProbe(gizmoProbeRef.current);
+      gizmoProbeRef.current = null;
       unsubOverridesRef.current?.();
       unsubOverridesRef.current = null;
       unsubRoleOverridesRef.current?.();
       unsubRoleOverridesRef.current = null;
+      unsubTransformOverridesRef.current?.();
+      unsubTransformOverridesRef.current = null;
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
       compositorRef.current = null;

@@ -19,6 +19,7 @@ describe("resolveView", () => {
       x: stat(10), y: stat(20), scale_x: stat(1), scale_y: stat(2),
       scale_linked: true,
       rotation_deg: stat(15), opacity: stat(0.5),
+      anchor_x: 0.5, anchor_y: 0.5,
       speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
     };
     const r = resolveVideoClipView(raw, 123_456);
@@ -33,6 +34,7 @@ describe("resolveView", () => {
       x: ramp, y: stat(0), scale_x: stat(1), scale_y: stat(1),
       scale_linked: true,
       rotation_deg: stat(0), opacity: ramp,
+      anchor_x: 0.5, anchor_y: 0.5,
       speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0,
     };
     expect(resolveVideoClipView(raw, 500_000).x).toBeCloseTo(0.5, 9);

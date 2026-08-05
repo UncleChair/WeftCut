@@ -148,6 +148,9 @@ export interface MotifView {
   scale_linked: boolean;
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
+  /// Transform pivot — see `VideoClipView.anchor_x`.
+  anchor_x: number;
+  anchor_y: number;
   /// Window offset (µs) into the Motif's intrinsic content. Width = layer
   /// width; src_out is derived. 0 = content frame 0.
   src_in_us: number;
@@ -169,6 +172,13 @@ export interface VideoClipView {
   scale_linked: boolean;
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
+  /// Transform pivot in normalized layer coordinates — what rotation and flip
+  /// turn around. LANDMINE: for media kinds `x`/`y` stay the UNROTATED
+  /// top-left, NOT the anchor point (a Text layer's `x`/`y` IS its anchor
+  /// point, because measured text bounds move with the content). The
+  /// compensation that keeps both true lives in `render/anchorPivot.ts`.
+  anchor_x: number;
+  anchor_y: number;
   speed: number;
   flip_h: boolean;
   flip_v: boolean;
@@ -186,6 +196,9 @@ export interface ImageOverlayView {
   scale_linked: boolean;
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
+  /// Transform pivot — see `VideoClipView.anchor_x`.
+  anchor_x: number;
+  anchor_y: number;
   fade_in_us: number;
   fade_out_us: number;
 }

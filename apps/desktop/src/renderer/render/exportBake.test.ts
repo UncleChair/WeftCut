@@ -62,6 +62,8 @@ function motifLayer(
     scale_y: stat(1),
     scale_linked: true,
     rotation_deg: stat(0),
+    anchor_x: 0.5,
+    anchor_y: 0.5,
     opacity: stat(1),
     src_in_us: 0,
     props: {},

@@ -8,6 +8,7 @@
 
 import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
+import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedImageOverlayView } from "../resolveView";
 import { gifFrameIndexAt } from "./gifTiming";
 import type { StageableSprite } from "./StageableSprite";
@@ -108,8 +109,19 @@ export class ImageOverlaySprite implements StageableSprite {
   /// start; `durationUs` is the layer's (free) span.
   update(view: ResolvedImageOverlayView, tInLayerUs: number, durationUs: number): void {
     if (this.disposed) return;
-    this.sprite.position.set(view.x, view.y);
     this.sprite.scale.set(view.scale_x, view.scale_y);
+    // Anchor is the pivot; `x`/`y` stay the unrotated top-left (anchorPivot.ts).
+    const pivot = anchorPivot({
+      x: view.x,
+      y: view.y,
+      anchorX: view.anchor_x,
+      anchorY: view.anchor_y,
+      ...textureExtent(this.sprite.texture),
+      effScaleX: view.scale_x,
+      effScaleY: view.scale_y,
+    });
+    this.sprite.pivot.set(pivot.pivotX, pivot.pivotY);
+    this.sprite.position.set(pivot.posX, pivot.posY);
     this.sprite.angle = view.rotation_deg;
     let alpha = view.opacity;
     if (view.fade_in_us > 0 && tInLayerUs < view.fade_in_us) {

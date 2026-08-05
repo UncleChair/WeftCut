@@ -66,6 +66,7 @@ const videoLayer: LayerSummary = {
     scale_y: staticNum(1),
     scale_linked: true,
     rotation_deg: staticNum(0),
+    anchor_x: 0.5, anchor_y: 0.5,
     opacity: staticNum(1),
     speed: 1,
     flip_h: false,

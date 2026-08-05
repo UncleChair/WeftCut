@@ -89,6 +89,25 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
   })
 })
 
+describe('layerParamsView carries the transform anchor on every visual kind', () => {
+  // The renderer pivots rotation and flip on `anchor_x`/`anchor_y`
+  // (render/anchorPivot.ts). Absent on the wire, it falls back to the 0.5
+  // default — correct-looking, but it would silently ignore a real per-layer
+  // anchor. This gates the projection, so a discrepancy in a running app can
+  // only be a stale main process, never missing code.
+  const cases: Array<[string, LayerParams]> = [
+    ['VideoClip', { kind: 'VideoClip', media: 'm', src_in_us: 0, src_out_us: 1, transform: { ...xf(), anchor: [0.25, 0.75] }, opacity: stat(1), speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0, crop: null } as unknown as LayerParams],
+    ['ImageOverlay', { kind: 'ImageOverlay', media: 'm', transform: { ...xf(), anchor: [0.25, 0.75] }, opacity: stat(1), fade_in_us: 0, fade_out_us: 0 } as unknown as LayerParams],
+    ['Motif', { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: { ...xf(), anchor: [0.25, 0.75] }, opacity: stat(1) } as unknown as LayerParams],
+  ]
+  for (const [kind, params] of cases) {
+    it(`${kind} view exposes anchor_x/anchor_y`, () => {
+      const v = layerParamsView(params, {}) as unknown as { anchor_x: number; anchor_y: number }
+      expect([v.anchor_x, v.anchor_y]).toEqual([0.25, 0.75])
+    })
+  }
+})
+
 const NEVER = () => false // gate/test fileExists predicate
 
 describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)', () => {

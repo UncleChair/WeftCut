@@ -262,6 +262,44 @@ composition buffer is an 8-bit extract — HDR/10-bit picks read the
 tone-mapped value. The window snapshot is frozen at session start; UI
 changes mid-session are not reflected.
 
+## On-canvas transform (gizmo)
+
+The primary selected layer shows its footprint as a box over the preview;
+dragging inside the box moves it. Only the four transform-bearing visual kinds
+get one (Color fills the composition, Audio is not visual), and only while the
+playhead is inside the layer's span. Resize/rotate handles are not built yet.
+
+**Why the box is an SVG overlay and not Pixi children:** `app.stage` is a
+read-back surface — the eyedropper's `extract.pixels`, the e2e
+`sampleComposite` hook and the conformance `captureFrame` PNG all read it, so
+anything staged would land in those buffers. And the canvas is contain-fitted:
+a box drawn in composition space would be sub-pixel on a 4K composition shown
+in a small panel, while a screen-space overlay has handles in CSS pixels by
+construction. (The ecosystem's Pixi gizmo, `@pixi-essentials/transformer`, is
+also v7-only — it peer-depends on the `@pixi/*` sub-packages v8 removed.)
+
+**Why the drag doesn't write per pointermove:** one write per move event is a
+full renderer→main→`project:changed`→refetch round trip and would pile up undo
+steps. The gesture instead sets a transient delta in `transformOverrides` (same
+idiom as `effectOverrides`: consulted after `resolveView`, never recorded, never
+in React state), and commits once on release through `updateLayerParamTracks` —
+one batch, one undo. The override is held until the new summary arrives, so the
+layer never snaps back for a frame between commit and refetch.
+
+**Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect` +
+`naturalSizeOf`; the gizmo never imports Pixi. `gizmoGeometry.ts` — pure
+composition-space quad + the `object-fit: contain` mapping, so the geometry is
+unit-tested without a renderer (and shares `anchorPivot.ts` with the renderer,
+which is what keeps box and picture aligned). `autoKeyTrack` — the shared
+commit rule: a Static track takes a value, a Keyframed one gets a key at the
+frame-snapped playhead, exactly like the inspector.
+
+**Limits:** move only — a future scale handle MUST write through
+`scaleFanOutFor` + `fanOutEntries`, or a single-axis write silently unlinks a
+uniform-scale layer (see `docs/data-model.md` § Transform). Single selection
+only. The box follows animated x/y during playback via rAF; it is hidden while
+the preview dock tab is not visible.
+
 ## Window geometry memory
 
 The main window reopens at last session's position, size, and maximize

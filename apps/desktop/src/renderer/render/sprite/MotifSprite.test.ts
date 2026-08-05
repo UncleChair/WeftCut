@@ -17,8 +17,12 @@ import { describe, expect, test, it, vi } from "vitest";
 // refresh-path tests (which never bind a real bitmap in Node).
 vi.mock("pixi.js", () => {
   class FakeTexture {
-    static EMPTY = {};
+    // `orig` is what `anchorPivot`'s textureExtent reads for the pivot; real
+    // Pixi always carries it, so the double has to as well. 0×0 ⇒ pivot 0,
+    // which is the correct answer for a texture with no bound raster.
+    static EMPTY = { orig: { width: 0, height: 0 } };
     source: unknown;
+    orig = { width: 0, height: 0 };
     constructor(opts?: { source?: unknown }) {
       this.source = opts?.source ?? null;
     }
@@ -27,6 +31,7 @@ vi.mock("pixi.js", () => {
   class FakeSprite {
     texture: unknown = FakeTexture.EMPTY;
     position = { set: vi.fn() };
+    pivot = { set: vi.fn() };
     scale = { set: vi.fn() };
     alpha = 1;
     zIndex = 0;
@@ -194,6 +199,7 @@ describe("MotifSprite.refreshMotif", () => {
     scale_x: 1,
     scale_y: 1,
     rotation_deg: 0,
+    anchor_x: 0.5, anchor_y: 0.5,
     opacity: 1,
     src_in_us: 0,
     props: {},

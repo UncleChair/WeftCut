@@ -637,10 +637,26 @@ struct Transform {
     scale_x: Animated<f64>,
     scale_y: Animated<f64>,
     rotation_deg: Animated<f64>,
-    anchor: (f64, f64),               // 0..1 normalized
+    anchor: (f64, f64),               // 0..1 normalized; the transform PIVOT
     scale_linked: bool,               // uniform-scale intent; default true
 }
 ```
+
+`anchor` is the **pivot**: what `rotation_deg` turns around and what a flip
+mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
+default). What `x`/`y` mean depends on the kind, and the difference is
+deliberate:
+
+| Kind | `x`/`y` is | why |
+|---|---|---|
+| VideoClip, ImageOverlay, Motif | the **unrotated top-left** | natural size is fixed, so a corner is a stable origin — and it is what stored projects already mean |
+| Text | the **anchor point itself** | measured text bounds move with the content, so only an anchor-relative origin is stable (ASS `\an` import writes anchor + position together — `subtitles/layout.rs`) |
+
+The media kinds get there by compensating the position for the pivot
+(`render/anchorPivot.ts`): the pivot goes at the anchor in texture space and the
+position adds `pivot × |effective scale|` back. The absolute value is what makes
+a flip mirror **in place** instead of jumping to the other side of `x`. At
+`rotation_deg = 0` with no flip, the top-left lands on `(x, y)` at any scale.
 
 `scale_linked` records **uniform-scale intent**: while `true`, the two scale
 tracks are structural twins — same mode, and when keyframed the same

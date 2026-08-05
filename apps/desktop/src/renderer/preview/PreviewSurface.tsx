@@ -14,6 +14,7 @@ import type {
   PixiPreviewHandle,
 } from "../render/pixiPreviewFlag";
 import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
+import { TransformGizmoHost } from "./TransformGizmo";
 
 interface Props {
   /// True when the project has at least one layer. When false we
@@ -136,6 +137,11 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             visible={visible}
           />
         </PixiErrorBoundary>
+        {/* After the canvas so it stacks above it; screen-space by design (it
+            must never enter the stage the eyedropper and the conformance
+            capture hooks read back). Skipped while the dock tab is hidden —
+            the box would otherwise track a canvas nobody can see. */}
+        {visible && <TransformGizmoHost />}
       </div>
     );
   },

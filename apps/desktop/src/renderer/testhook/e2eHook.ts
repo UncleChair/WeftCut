@@ -702,6 +702,7 @@ export function installMotifTestHooks(): void {
         scale_x: 1,
         scale_y: 1,
         rotation_deg: 0,
+        anchor_x: 0.5, anchor_y: 0.5,
         opacity: 1,
         src_in_us: 0,
         props: props ?? {},
