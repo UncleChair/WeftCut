@@ -328,6 +328,17 @@ function unitFrac(h: -1 | 0 | 1): number {
   return (h + 1) / 2;
 }
 
+/// Which axes the handle drives, straight off `HANDLE_DIR`. Exported because
+/// snapping needs the same mask the solve uses: `solveScale` returns the frame's
+/// own scale unchanged on an undriven axis, so a snap offered there would be
+/// computed, drawn as a guide, and then silently discarded. Deriving it a second
+/// time at the call site is exactly the duplication the LANDMINE above warns
+/// about — an off-centre anchor makes a zero offset a lie.
+export function handleDrives(id: ScaleHandleId): { x: boolean; y: boolean } {
+  const d = HANDLE_DIR[id];
+  return { x: d.hx !== 0, y: d.hy !== 0 };
+}
+
 /// Every handle's position for an already-mapped box, by bilinear interpolation
 /// of the quad — so corners and edge midpoints come out of one expression and a
 /// rotated, flipped or non-uniformly scaled box needs no special case. SCREEN
@@ -388,13 +399,18 @@ function clampScale(s: number): number {
 ///
 /// Null when the handle has collapsed onto the pivot along every axis it drives:
 /// there is no lever left to scale by, and dividing would hand back Infinity.
+///
+/// `uniformT` is the fitted factor, present only on the uniform path. Returned
+/// rather than left implicit because snapping needs it (previewSnap.ts D23) and
+/// recovering it from the result would mean dividing by `frame.scaleX`, which a
+/// user is free to have set to 0.
 export function solveScale(
   frame: LayerQuadInput,
   id: ScaleHandleId,
   targetComp: Pt,
   pivotComp: Pt,
   uniform: boolean,
-): { scaleX: number; scaleY: number } | null {
+): { scaleX: number; scaleY: number; uniformT?: number } | null {
   const u = scaleHandleOffset(frame, id);
   const d = HANDLE_DIR[id];
   // R⁻¹·(cursor − pivot): the cursor in the layer's own unrotated frame.
@@ -413,7 +429,7 @@ export function solveScale(
     const denom = bx * bx + by * by;
     if (denom < EPS) return null;
     const t = (bx * v.x + by * v.y) / denom;
-    return { scaleX: clampScale(t * frame.scaleX), scaleY: clampScale(t * frame.scaleY) };
+    return { ...scaleFromUniformT(frame, t), uniformT: t };
   }
   const drivesX = d.hx !== 0 && Math.abs(u.x) > EPS;
   const drivesY = d.hy !== 0 && Math.abs(u.y) > EPS;
@@ -422,6 +438,30 @@ export function solveScale(
     scaleX: drivesX ? clampScale(v.x / u.x) : frame.scaleX,
     scaleY: drivesY ? clampScale(v.y / u.y) : frame.scaleY,
   };
+}
+
+/// The scale pair a uniform factor means, floored the same way a solve's is.
+/// The one place `S = t·S₀` is written, so a snapped `t` (previewSnap.ts) and a
+/// fitted one cannot land on different scales for the same factor.
+export function scaleFromUniformT(
+  frame: LayerQuadInput,
+  t: number,
+): { scaleX: number; scaleY: number } {
+  return { scaleX: clampScale(t * frame.scaleX), scaleY: clampScale(t * frame.scaleY) };
+}
+
+/// The direction the handle travels per unit uniform `t`: `R·S₀·u`, in
+/// composition pixels. NOT masked by the handle's driven axes — the mask decides
+/// which axes the least-squares fit listens to, while the handle's motion is the
+/// full transform of its offset, and snapping needs the motion (D23).
+export function uniformScaleRay(frame: LayerQuadInput, id: ScaleHandleId): Pt {
+  const u = scaleHandleOffset(frame, id);
+  const sx = u.x * frame.scaleX;
+  const sy = u.y * frame.scaleY;
+  const rad = (frame.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return { x: sx * cos - sy * sin, y: sx * sin + sy * cos };
 }
 
 function unit(p: Pt): Pt | null {

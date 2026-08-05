@@ -738,6 +738,12 @@ const zhCN: Resources = {
     prebake_motifs_hint:
       "后台渲染 Motif 帧到磁盘，播放更流畅、重开更快；占用项目 Cache 的磁盘空间。",
     preview_heading: "预览",
+    preview_snap_enabled: "启用预览吸附",
+    preview_snap_enabled_hint:
+      "在预览中移动或缩放图层时，自动对齐到画面边缘、中线以及其它图层。按住 Ctrl 可临时关闭。",
+    preview_snap_strength: "吸附强度",
+    preview_snap_strength_hint:
+      "以屏幕像素为单位。",
     decode_engine: "解码引擎",
     decode_engine_auto: "自动",
     decode_engine_auto_desc: "按素材选择最合适的引擎",

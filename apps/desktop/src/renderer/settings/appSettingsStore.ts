@@ -47,6 +47,8 @@ const FALLBACK: AppSettings = {
   delta_window_us: 10_000_000,
   tail_snap_enabled: true,
   tail_snap_strength_px: 12,
+  preview_snap_enabled: true,
+  preview_snap_strength_px: 12,
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",
@@ -72,6 +74,14 @@ export const useTailSnapEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.tail_snap_enabled);
 export const useTailSnapStrengthPx = (): number =>
   useAppSettingsStore((s) => s.settings.tail_snap_strength_px);
+/// Preview-gizmo snapping. The gizmo itself does NOT use these hooks — its
+/// gestures are pointer-rate and imperative, so `TransformGizmo` reads the
+/// values off `useAppSettingsStore.getState()` at pointerdown (see D26: the
+/// whole target set is frozen there). These are for the settings UI.
+export const usePreviewSnapEnabled = (): boolean =>
+  useAppSettingsStore((s) => s.settings.preview_snap_enabled);
+export const usePreviewSnapStrengthPx = (): number =>
+  useAppSettingsStore((s) => s.settings.preview_snap_strength_px);
 export const usePrebakeMotifsEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.prebake_motifs);
 export const useDecodeEngine = (): AppSettings["decode_engine"] =>

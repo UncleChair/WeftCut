@@ -12,6 +12,7 @@ import {
   APP_SETTINGS_DEFAULTS,
   DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US,
   TAIL_SNAP_STRENGTH_MIN_PX, TAIL_SNAP_STRENGTH_MAX_PX,
+  PREVIEW_SNAP_STRENGTH_MIN_PX, PREVIEW_SNAP_STRENGTH_MAX_PX,
   type AppSettings, type AppSettingsPatch,
 } from '../shared/app-settings'
 
@@ -50,6 +51,12 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       delta_window_us: typeof parsed.delta_window_us === 'number' ? parsed.delta_window_us : d.delta_window_us,
       tail_snap_enabled: typeof parsed.tail_snap_enabled === 'boolean' ? parsed.tail_snap_enabled : d.tail_snap_enabled,
       tail_snap_strength_px: typeof parsed.tail_snap_strength_px === 'number' ? parsed.tail_snap_strength_px : d.tail_snap_strength_px,
+      // Additive pair: every app_settings.json written before Phase 6 has no key
+      // here, so both MUST land on their defaults rather than undefined — the
+      // settings UI reads the number straight into a slider, and the gizmo reads
+      // the boolean as a gate.
+      preview_snap_enabled: typeof parsed.preview_snap_enabled === 'boolean' ? parsed.preview_snap_enabled : d.preview_snap_enabled,
+      preview_snap_strength_px: typeof parsed.preview_snap_strength_px === 'number' ? parsed.preview_snap_strength_px : d.preview_snap_strength_px,
       prebake_motifs: typeof parsed.prebake_motifs === 'boolean' ? parsed.prebake_motifs : d.prebake_motifs,
       preview_effects_enabled: typeof parsed.preview_effects_enabled === 'boolean' ? parsed.preview_effects_enabled : d.preview_effects_enabled,
       // 'native' was the persisted value's old name (pre-rename); migrate it
@@ -110,6 +117,8 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       if (patch.delta_window_us !== undefined) current.delta_window_us = clamp(patch.delta_window_us, DELTA_WINDOW_MIN_US, DELTA_WINDOW_MAX_US)
       if (patch.tail_snap_enabled !== undefined) current.tail_snap_enabled = patch.tail_snap_enabled
       if (patch.tail_snap_strength_px !== undefined) current.tail_snap_strength_px = clamp(patch.tail_snap_strength_px, TAIL_SNAP_STRENGTH_MIN_PX, TAIL_SNAP_STRENGTH_MAX_PX)
+      if (patch.preview_snap_enabled !== undefined) current.preview_snap_enabled = patch.preview_snap_enabled
+      if (patch.preview_snap_strength_px !== undefined) current.preview_snap_strength_px = clamp(patch.preview_snap_strength_px, PREVIEW_SNAP_STRENGTH_MIN_PX, PREVIEW_SNAP_STRENGTH_MAX_PX)
       if (patch.prebake_motifs !== undefined) current.prebake_motifs = patch.prebake_motifs
       if (patch.preview_effects_enabled !== undefined) current.preview_effects_enabled = patch.preview_effects_enabled
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine

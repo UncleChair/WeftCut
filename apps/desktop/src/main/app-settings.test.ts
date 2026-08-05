@@ -42,6 +42,11 @@ describe('app-settings store', () => {
     expect(got.delta_window_us).toBe(10_000_000)
     expect(got.tail_snap_enabled).toBe(true)
     expect(got.tail_snap_strength_px).toBe(12)
+    // Additive in Phase 6: a file written before the preview gizmo could snap
+    // has no key here, and both MUST land on their defaults — the settings UI
+    // reads the number into a slider and the gizmo reads the boolean as a gate.
+    expect(got.preview_snap_enabled).toBe(true)
+    expect(got.preview_snap_strength_px).toBe(12)
   })
 
   it('ignores the retired media drawer key without migrating or persisting it', () => {
@@ -70,6 +75,15 @@ describe('app-settings store', () => {
   it('tail_snap_strength clamps to [2, 80]', () => {
     expect(store().apply({ tail_snap_strength_px: 0 }).tail_snap_strength_px).toBe(2)
     expect(store().apply({ tail_snap_strength_px: 200 }).tail_snap_strength_px).toBe(80)
+  })
+
+  it('preview_snap_strength clamps to [2, 80], independently of the timeline pair', () => {
+    expect(store().apply({ preview_snap_strength_px: 0 }).preview_snap_strength_px).toBe(2)
+    expect(store().apply({ preview_snap_strength_px: 200 }).preview_snap_strength_px).toBe(80)
+    // The two domains have their own dials: turning one off leaves the other be.
+    const after = store().apply({ preview_snap_enabled: false })
+    expect(after.preview_snap_enabled).toBe(false)
+    expect(after.tail_snap_enabled).toBe(true)
   })
 
   it('prebake_motifs / preview_effects_enabled round-trip', () => {

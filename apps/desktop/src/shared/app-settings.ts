@@ -26,6 +26,19 @@ export interface AppSettings {
   tail_snap_enabled: boolean;
   /// Pixel threshold for boundary snapping. Clamped on write.
   tail_snap_strength_px: number;
+  /// Snap the preview gizmo's move and resize gestures to the composition's
+  /// edges and centre lines and to other staged layers' bounding boxes.
+  /// Deliberately separate from `tail_snap_enabled`: the two domains differ by
+  /// an order of magnitude in target density (every clip boundary on every
+  /// visible track vs six composition lines plus a handful of layers), so one
+  /// threshold cannot be tuned for both.
+  preview_snap_enabled: boolean;
+  /// SCREEN-pixel snap radius for the preview gizmo — the same unit as
+  /// `tail_snap_strength_px`, and the reason the solver divides it by the
+  /// contain fit's scale before comparing in composition space. Composition
+  /// pixels would feel different on a 1080p and a 4K composition and would
+  /// drift as the panel is resized. Clamped on write.
+  preview_snap_strength_px: number;
   /// When true, every motif layer's full frame sequence is pre-baked
   /// to disk in the background (L2). Default false. See docs/motifs.md.
   prebake_motifs: boolean;
@@ -72,6 +85,8 @@ export interface AppSettingsPatch {
   delta_window_us?: number;
   tail_snap_enabled?: boolean;
   tail_snap_strength_px?: number;
+  preview_snap_enabled?: boolean;
+  preview_snap_strength_px?: number;
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
@@ -89,6 +104,11 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   delta_window_us: 10_000_000,
   tail_snap_enabled: true,
   tail_snap_strength_px: 12,
+  // Same numbers as the timeline's pair on purpose — "snap strength" already
+  // means a screen-pixel radius in this app, so there is no second dial to
+  // learn. On by default, like the timeline's.
+  preview_snap_enabled: true,
+  preview_snap_strength_px: 12,
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",
@@ -106,3 +126,5 @@ export const DELTA_WINDOW_MIN_US = 1_000_000;
 export const DELTA_WINDOW_MAX_US = 300_000_000;
 export const TAIL_SNAP_STRENGTH_MIN_PX = 2;
 export const TAIL_SNAP_STRENGTH_MAX_PX = 80;
+export const PREVIEW_SNAP_STRENGTH_MIN_PX = 2;
+export const PREVIEW_SNAP_STRENGTH_MAX_PX = 80;

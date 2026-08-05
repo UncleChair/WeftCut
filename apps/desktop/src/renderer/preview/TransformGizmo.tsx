@@ -22,6 +22,7 @@ import {
   type AnimTrack,
   type CompositionSummary,
   type LayerSummary,
+  type ProjectSummary,
 } from "../ipc";
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { readParamTrack, readScaleLinked, scaleFanOutFor } from "../keyframe/descriptors";
@@ -36,6 +37,7 @@ import {
 import { useProjectStore } from "../state/projectStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { usePrimaryLayerId } from "../state/selectionStore";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
 import {
   anchorCompensation,
   angleAboutDeg,
@@ -43,6 +45,7 @@ import {
   compDeltaToLocal,
   compToClient,
   containFit,
+  handleDrives,
   handleOutwardDeg,
   isCornerHandle,
   layerPivot,
@@ -50,17 +53,32 @@ import {
   resizeCursorForDeg,
   rotateHandle,
   scaleCompensation,
+  scaleFromUniformT,
   scaleHandlePoints,
   SCALE_HANDLE_IDS,
   shortestDeltaDeg,
   snapAngleDeg,
   solveScale,
+  uniformScaleRay,
+  type ContainFit,
   type LayerQuadInput,
   type Pt,
   type ScaleHandleId,
   type TransformOrigin,
 } from "./gizmoGeometry";
-import { getGizmoProbe } from "./gizmoProbeRegistry";
+import { getGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
+import {
+  quadAabb,
+  snapMove,
+  snapScaleTarget,
+  snapTargets,
+  snapThresholdComp,
+  snapUniformScale,
+  type Aabb,
+  type DrivenAxes,
+  type SnapGuides,
+  type SnapTargets,
+} from "./previewSnap";
 
 /// Client-pixel gap between the box's top edge and the rotation knob, and the
 /// disc the knob draws. Screen space, so the affordance is identical on a 4K
@@ -106,6 +124,23 @@ const HANDLE_HIT_R_PX = 8;
 /// corners can still scale that axis.
 const EDGE_HANDLE_MIN_PX = 24;
 
+/// The snap guides. Hard-coded rather than a theme token because the app's
+/// palette is deliberately achromatic (`oklch(x 0 0)`) and a guide has to be
+/// findable against arbitrary footage in one glance — the same reason the anchor
+/// reticle hard-codes its under-stroke.
+///
+/// MAGENTA specifically: it needs red and blue high with green low, which is
+/// close to absent in natural imagery, so it stays legible over skin, sky, foliage
+/// and water alike. And it is not `var(--ring)`, so a guide never reads as part of
+/// the selection's own chrome.
+const GUIDE_COLOR = "#ff2ec4";
+const GUIDE_WIDTH_PX = 1;
+/// The dark backing under the bright line, for the reason D15 gives for the
+/// reticle: the preview has no background of its own, and a single-colour hairline
+/// disappears against a white or a black frame.
+const GUIDE_UNDER_COLOR = "rgba(0, 0, 0, 0.55)";
+const GUIDE_UNDER_WIDTH_PX = 3;
+
 /// Color has no transform at all (it fills the composition) and Audio is not
 /// visual — neither gets a box.
 const TRANSFORM_KINDS = new Set(["VideoClip", "ImageOverlay", "Text", "Motif"]);
@@ -128,6 +163,72 @@ function transformFields(layer: LayerSummary): TransformFields {
   return layer.params as unknown as TransformFields;
 }
 
+/// A layer's transform frame at an absolute time, with NO in-flight override
+/// folded in. One rule for two readers — the draw loop (which then adds the
+/// override on top) and the snap-target collector — so a layer's own box and the
+/// box other layers snap it against cannot be derived differently.
+function frameAt(
+  layer: LayerSummary,
+  tUs: number,
+  size: { w: number; h: number },
+): LayerQuadInput {
+  const p = transformFields(layer);
+  const tLocalUs = tUs - layer.t_start_us;
+  return {
+    x: resolveAnimated(p.x, tLocalUs, 0),
+    y: resolveAnimated(p.y, tLocalUs, 0),
+    // DEFAULT_ANCHOR and nothing else — the same constant the renderer resolves
+    // through (resolveView.ts). A local fallback here is exactly how the box and
+    // the picture once pivoted around different points.
+    anchorX: resolveAnimated(p.anchor_x, tLocalUs, DEFAULT_ANCHOR),
+    anchorY: resolveAnimated(p.anchor_y, tLocalUs, DEFAULT_ANCHOR),
+    naturalW: size.w,
+    naturalH: size.h,
+    scaleX: resolveAnimated(p.scale_x, tLocalUs, 1),
+    scaleY: resolveAnimated(p.scale_y, tLocalUs, 1),
+    rotationDeg: resolveAnimated(p.rotation_deg, tLocalUs, 0),
+    origin: originFor(p.kind),
+  };
+}
+
+/// What a gesture snaps against, frozen at pointerdown (D26). Null on a gesture
+/// that will never snap — the preference is off, or there is no geometry to snap
+/// within — so the move handlers can skip the whole path with one check.
+interface SnapContext {
+  targets: SnapTargets;
+  /// The setting's SCREEN-pixel radius. Converted per move, because the contain
+  /// fit it divides by is re-read per move.
+  strengthPx: number;
+}
+
+/// Every OTHER staged layer's bounding box, composition pixels.
+///
+/// `TRANSFORM_KINDS` does the filtering that matters here for free: `Color`
+/// fills the composition, so its edges ARE the composition's and would only add
+/// duplicate lines for the tie-break to sort out, and `Audio` has no footprint
+/// at all (D21). A layer the compositor has not staged has no `naturalSizeOf`
+/// and is skipped — its size is unknowable, not zero.
+function otherLayerBoxes(
+  summary: { tracks: readonly { layers: readonly LayerSummary[] }[] },
+  selfId: string,
+  tUs: number,
+  probe: GizmoProbe,
+): Aabb[] {
+  const boxes: Aabb[] = [];
+  for (const track of summary.tracks) {
+    for (const other of track.layers) {
+      if (other.id === selfId) continue;
+      if (!TRANSFORM_KINDS.has(other.params.kind)) continue;
+      if (tUs < other.t_start_us || tUs >= other.t_end_us) continue;
+      const size = probe.naturalSizeOf(other.id);
+      if (!size || size.w <= 0 || size.h <= 0) continue;
+      const box = quadAabb(layerQuad(frameAt(other, tUs, size)));
+      if (box) boxes.push(box);
+    }
+  }
+  return boxes;
+}
+
 export function TransformGizmoHost() {
   const primaryLayerId = usePrimaryLayerId();
   const summary = useProjectStore((s) => s.summary);
@@ -141,7 +242,7 @@ export function TransformGizmoHost() {
   if (!found || !TRANSFORM_KINDS.has(found.params.kind)) return null;
   // Keyed on the layer id so switching selection remounts with fresh drag
   // state instead of carrying a half-finished gesture across layers.
-  return <TransformGizmo key={found.id} layer={found} composition={summary.composition} />;
+  return <TransformGizmo key={found.id} layer={found} summary={summary} />;
 }
 
 interface DragBase {
@@ -155,6 +256,14 @@ interface MoveDrag extends DragBase {
   kind: "move";
   startClientX: number;
   startClientY: number;
+  /// The layer's own frame, frozen — the snap needs its AABB at the raw
+  /// candidate position, which means re-mapping this quad per move. Nullable
+  /// unlike the resize gesture's: a move begun before the first draw must still
+  /// move, it just cannot snap.
+  frame: LayerQuadInput | null;
+  snap: SnapContext | null;
+  /// Already SNAPPED (D20): the override, the drawn box and the commit all read
+  /// this, so there is no un-snapped value anywhere downstream.
   dxComp: number;
   dyComp: number;
 }
@@ -215,6 +324,11 @@ interface ScaleDrag extends DragBase {
   /// Frozen `scale_linked`: a linked layer scales uniformly for the whole
   /// gesture, no modifier involved (and only its corner handles are drawn).
   linked: boolean;
+  snap: SnapContext | null;
+  /// The direction the handle travels per unit uniform `t` (`R·S₀·u`), frozen
+  /// with the frame it comes from. Only the uniform branch uses it, but it is
+  /// computed once here rather than per move.
+  ray: Pt;
   dScaleX: number;
   dScaleY: number;
   /// The `x`/`y` that keeps the pivot still (`scaleCompensation`). Committed in
@@ -290,18 +404,44 @@ function positionFix(
   return entries;
 }
 
+const NO_GUIDES: SnapGuides = { x: null, y: null };
+
+/// The snap radius in composition pixels for this move, or 0 — which is how both
+/// "the preference is off" and "Ctrl is held" reach the solvers, since they all
+/// short-circuit on a non-positive threshold. Ctrl is read per move, so tapping
+/// it releases the layer from a guide and letting go re-arms it, with no gesture
+/// state to carry (D26).
+function thresholdFor(
+  snap: SnapContext | null,
+  fit: ContainFit,
+  suppressed: boolean,
+): number {
+  if (!snap || suppressed) return 0;
+  return snapThresholdComp(snap.strengthPx, fit.scale);
+}
+
 function TransformGizmo({
   layer,
-  composition,
+  summary,
 }: {
   layer: LayerSummary;
-  composition: CompositionSummary;
+  summary: ProjectSummary;
 }) {
+  const composition: CompositionSummary = summary.composition;
   const svgRef = useRef<SVGSVGElement | null>(null);
   const boxRef = useRef<SVGPolygonElement | null>(null);
   const stalkRef = useRef<SVGLineElement | null>(null);
   const knobRef = useRef<SVGGElement | null>(null);
   const anchorRef = useRef<SVGGElement | null>(null);
+  /// One group per axis, each holding the dark under-stroke and the bright line
+  /// over it. At most one guide per axis exists by construction (D25), so these
+  /// are two fixed elements rather than a list that has to be reconciled.
+  const guideXRef = useRef<SVGGElement | null>(null);
+  const guideYRef = useRef<SVGGElement | null>(null);
+  /// The live snap hits, composition space — written by the pointer handlers,
+  /// read by the rAF loop. A ref and not state: this changes at pointer rate,
+  /// which is precisely what the playhead gate forbids re-rendering for.
+  const guidesRef = useRef<SnapGuides>({ x: null, y: null });
   const handleEls = useRef(new Map<ScaleHandleId, SVGGElement>());
   /// Last cursor written per handle, so a rotating box costs one style write
   /// per handle per octant crossed instead of one per frame.
@@ -320,6 +460,9 @@ function TransformGizmo({
   layerRef.current = layer;
   const compRef = useRef(composition);
   compRef.current = composition;
+  // Read only at pointerdown, to build the frozen snap target set.
+  const summaryRef = useRef(summary);
+  summaryRef.current = summary;
 
   /// The override outlives the commit on purpose: clearing it the moment the
   /// mutation resolves would snap the layer back to its old position for the
@@ -388,8 +531,13 @@ function TransformGizmo({
       // The resize handles are NOT part of `show`: which of them exist depends
       // on the layer (linked ⇒ corners only) and on the box's drawn size, so
       // the visible path decides each one individually below.
+      const hideGuides = (): void => {
+        if (guideXRef.current) guideXRef.current.style.display = "none";
+        if (guideYRef.current) guideYRef.current.style.display = "none";
+      };
       const hide = (): void => {
         show(false);
+        hideGuides();
         for (const el of handleEls.current.values()) el.style.display = "none";
       };
       if (!probe) return hide();
@@ -402,8 +550,6 @@ function TransformGizmo({
       if (!rect || !size) return hide();
       const fit = containFit(rect, comp.width, comp.height);
       if (!fit) return hide();
-      const p = transformFields(l);
-      const tLocalUs = tUs - l.t_start_us;
       // The in-flight gesture is read from the OVERRIDE map rather than from
       // `dragRef`, because that map is also what the Compositor folds into the
       // picture (`withTransformOverride`). Same source ⇒ the box and the
@@ -413,20 +559,16 @@ function TransformGizmo({
       // The box is the layer's footprint, so it reads the UNSIGNED scale: a
       // flip mirrors the content within the same box (anchorPivot.ts), so
       // folding `flip_h` in here would only reverse the vertex order.
+      const base = frameAt(l, tUs, size);
       const geom: LayerQuadInput = {
-        x: resolveAnimated(p.x, tLocalUs, 0) + (d?.dx ?? 0),
-        y: resolveAnimated(p.y, tLocalUs, 0) + (d?.dy ?? 0),
-        // DEFAULT_ANCHOR and nothing else — the same constant the renderer
-        // resolves through (resolveView.ts). A local fallback here is exactly
-        // how the box and the picture once pivoted around different points.
-        anchorX: resolveAnimated(p.anchor_x, tLocalUs, DEFAULT_ANCHOR) + (d?.danchorX ?? 0),
-        anchorY: resolveAnimated(p.anchor_y, tLocalUs, DEFAULT_ANCHOR) + (d?.danchorY ?? 0),
-        naturalW: size.w,
-        naturalH: size.h,
-        scaleX: resolveAnimated(p.scale_x, tLocalUs, 1) + (d?.dscaleX ?? 0),
-        scaleY: resolveAnimated(p.scale_y, tLocalUs, 1) + (d?.dscaleY ?? 0),
-        rotationDeg: resolveAnimated(p.rotation_deg, tLocalUs, 0) + (d?.drotDeg ?? 0),
-        origin: originFor(p.kind),
+        ...base,
+        x: base.x + (d?.dx ?? 0),
+        y: base.y + (d?.dy ?? 0),
+        anchorX: (base.anchorX ?? DEFAULT_ANCHOR) + (d?.danchorX ?? 0),
+        anchorY: (base.anchorY ?? DEFAULT_ANCHOR) + (d?.danchorY ?? 0),
+        scaleX: base.scaleX + (d?.dscaleX ?? 0),
+        scaleY: base.scaleY + (d?.dscaleY ?? 0),
+        rotationDeg: base.rotationDeg + (d?.drotDeg ?? 0),
       };
       geomRef.current = geom;
       // The SVG is inset:0 inside the preview panel, so subtract its own client
@@ -455,6 +597,35 @@ function TransformGizmo({
       // icon must not do.
       knob.setAttribute("transform", `translate(${handle.knob.x} ${handle.knob.y})`);
       placeScaleHandles(corners, readScaleLinked(l.params));
+      // Guides last: they are a statement about the gesture, drawn from the
+      // frozen target the solver picked (composition space) rather than from the
+      // box — so they stay put while the layer slides onto them.
+      const live = guidesRef.current;
+      const paintGuide = (el: SVGGElement | null, a: Pt, b: Pt): void => {
+        if (!el) return;
+        const p1 = local(compToClient(a, fit));
+        const p2 = local(compToClient(b, fit));
+        el.style.display = "";
+        // Both children — the dark under-stroke and the bright line over it —
+        // share one geometry; only their strokes differ.
+        for (let i = 0; i < el.children.length; i += 1) {
+          const line = el.children[i]!;
+          line.setAttribute("x1", String(p1.x));
+          line.setAttribute("y1", String(p1.y));
+          line.setAttribute("x2", String(p2.x));
+          line.setAttribute("y2", String(p2.y));
+        }
+      };
+      if (live.x === null) {
+        if (guideXRef.current) guideXRef.current.style.display = "none";
+      } else {
+        paintGuide(guideXRef.current, { x: live.x, y: 0 }, { x: live.x, y: comp.height });
+      }
+      if (live.y === null) {
+        if (guideYRef.current) guideYRef.current.style.display = "none";
+      } else {
+        paintGuide(guideYRef.current, { x: 0, y: live.y }, { x: comp.width, y: live.y });
+      }
       show(true);
     };
     frame = requestAnimationFrame(draw);
@@ -467,6 +638,7 @@ function TransformGizmo({
       e.preventDefault();
       e.stopPropagation();
       dragRef.current = null;
+      guidesRef.current = NO_GUIDES;
       clearTransformOverride(layerRef.current.id);
     };
     window.addEventListener("keydown", onKey, true);
@@ -480,17 +652,48 @@ function TransformGizmo({
     return snapFrameRound(playheadTimeUs() - l.t_start_us, comp.fps_num, comp.fps_den);
   };
 
+  /// The snap target set for a gesture starting now, frozen here and nowhere
+  /// else (D26). Null when the gesture will never snap — the preference is off,
+  /// or the probe is gone — so the move handlers skip the whole path on one check.
+  ///
+  /// Recomputing this per move would run seven `resolveAnimated` calls plus a
+  /// quad build for every staged layer at pointer rate. The cost of freezing is
+  /// the limit D12 already records: if the playhead advances mid-drag, the guides
+  /// do not follow the animated layers.
+  const grabSnap = (): SnapContext | null => {
+    const settings = useAppSettingsStore.getState().settings;
+    if (!settings.preview_snap_enabled) return null;
+    const probe = getGizmoProbe();
+    if (!probe) return null;
+    const comp = compRef.current;
+    const others = otherLayerBoxes(
+      summaryRef.current,
+      layerRef.current.id,
+      playheadTimeUs(),
+      probe,
+    );
+    return {
+      targets: snapTargets(comp.width, comp.height, others),
+      strengthPx: settings.preview_snap_strength_px,
+    };
+  };
+
   const beginDrag = (e: React.PointerEvent<SVGPolygonElement>): void => {
     if (e.button !== 0) return;
     // The preview is not a selection surface, so nothing downstream needs this
     // press — and letting it through would start a canvas-level gesture.
     e.preventDefault();
     e.stopPropagation();
+    // Nullable, unlike the resize gesture's: a move without a drawn frame yet
+    // must still move, it just cannot snap.
+    const frame = geomRef.current;
     dragRef.current = {
       kind: "move",
       startClientX: e.clientX,
       startClientY: e.clientY,
       tInLayerUs: grabTimeUs(),
+      frame,
+      snap: frame ? grabSnap() : null,
       dxComp: 0,
       dyComp: 0,
     };
@@ -505,21 +708,34 @@ function TransformGizmo({
     const rect = getGizmoProbe()?.canvasRect();
     const fit = rect ? containFit(rect, compRef.current.width, compRef.current.height) : null;
     if (!fit) return;
-    const d = clientDeltaToComp(
+    const raw = clientDeltaToComp(
       e.clientX - drag.startClientX,
       e.clientY - drag.startClientY,
       fit,
     );
-    drag.dxComp = d.x;
-    drag.dyComp = d.y;
+    // The box at the RAW position. LANDMINE: it must be the un-snapped one — the
+    // box depends on the override, the override on this result, and this result
+    // on the box, so reading the box after the write is the one ordering of the
+    // three that fails to terminate (D20).
+    const rawBox = drag.frame
+      ? quadAabb(layerQuad({ ...drag.frame, x: drag.frame.x + raw.x, y: drag.frame.y + raw.y }))
+      : null;
+    const hit =
+      drag.snap && rawBox
+        ? snapMove(rawBox, drag.snap.targets, thresholdFor(drag.snap, fit, e.ctrlKey))
+        : null;
+    drag.dxComp = raw.x + (hit?.dx ?? 0);
+    drag.dyComp = raw.y + (hit?.dy ?? 0);
+    guidesRef.current = hit?.guides ?? NO_GUIDES;
     // Transient only — one IPC write per pointermove would be a full
     // renderer→main→refetch round trip and would pile up undo steps.
-    setTransformOverride(layerRef.current.id, { dx: d.x, dy: d.y });
+    setTransformOverride(layerRef.current.id, { dx: drag.dxComp, dy: drag.dyComp });
   };
 
   const endDrag = (e: React.PointerEvent<SVGPolygonElement>): void => {
     const drag = dragRef.current;
     dragRef.current = null;
+    guidesRef.current = NO_GUIDES;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "move") return;
     const l = layerRef.current;
@@ -693,6 +909,8 @@ function TransformGizmo({
       pivotComp: layerPivot(frame),
       handleComp,
       linked: readScaleLinked(layerRef.current.params),
+      snap: grabSnap(),
+      ray: uniformScaleRay(frame, id),
       dScaleX: 0,
       dScaleY: 0,
       compDx: 0,
@@ -711,16 +929,57 @@ function TransformGizmo({
     // raw cursor: grabbing a handle a few pixels off centre must not snap the
     // box by those pixels on the first move.
     const d = clientDeltaToComp(e.clientX - drag.startClientX, e.clientY - drag.startClientY, fit);
-    const next = solveScale(
-      drag.frame,
-      drag.id,
-      { x: drag.handleComp.x + d.x, y: drag.handleComp.y + d.y },
-      drag.pivotComp,
-      // A linked layer is uniform for the whole gesture; Shift is the usual
-      // constrain-proportions modifier for an unlinked one.
-      drag.linked || e.shiftKey,
-    );
-    if (!next) return; // the handle has collapsed onto the pivot — no lever left
+    const rawTarget = { x: drag.handleComp.x + d.x, y: drag.handleComp.y + d.y };
+    // A linked layer is uniform for the whole gesture; Shift is the usual
+    // constrain-proportions modifier for an unlinked one.
+    const uniform = drag.linked || e.shiftKey;
+    const threshold = thresholdFor(drag.snap, fit, e.ctrlKey);
+    // Straight off HANDLE_DIR, never re-derived: an axis this handle does not
+    // drive is one `solveScale` would leave alone, so snapping there would draw
+    // a guide for a change that then gets discarded (D22).
+    const drives: DrivenAxes = handleDrives(drag.id);
+    let next: { scaleX: number; scaleY: number } | null;
+    let guides: SnapGuides = NO_GUIDES;
+    if (uniform) {
+      // One degree of freedom, so the snapped POINT is generally unreachable:
+      // fit `t` first, then slide `t` along the handle's ray onto the line. At
+      // most one axis is hit, which is what one parameter permits (D23).
+      const raw = solveScale(drag.frame, drag.id, rawTarget, drag.pivotComp, true);
+      if (!raw) return; // the handle has collapsed onto the pivot — no lever left
+      const rawT = raw.uniformT;
+      const snapped =
+        drag.snap && rawT !== undefined
+          ? snapUniformScale(
+              drag.pivotComp,
+              drag.ray,
+              rawT,
+              drives,
+              drag.snap.targets,
+              threshold,
+            )
+          : null;
+      // `scaleFromUniformT` is also what the solve used, so an un-snapped `t`
+      // round-trips to exactly `raw` rather than to a float-drifted copy.
+      next = snapped ? scaleFromUniformT(drag.frame, snapped.t) : raw;
+      guides = snapped?.guides ?? NO_GUIDES;
+    } else {
+      // Free scaling reaches any point, and `solveScale` lands the handle ON the
+      // point identically (D22) — so snapping the point IS snapping the handle,
+      // at any rotation.
+      const snapped = drag.snap
+        ? snapScaleTarget(rawTarget, drives, drag.snap.targets, threshold)
+        : null;
+      next = solveScale(
+        drag.frame,
+        drag.id,
+        snapped?.target ?? rawTarget,
+        drag.pivotComp,
+        false,
+      );
+      if (!next) return; // the handle has collapsed onto the pivot — no lever left
+      guides = snapped?.guides ?? NO_GUIDES;
+    }
+    guidesRef.current = guides;
     drag.dScaleX = next.scaleX - drag.frame.scaleX;
     drag.dScaleY = next.scaleY - drag.frame.scaleY;
     const fix = scaleCompensation(drag.frame, next.scaleX, next.scaleY);
@@ -737,6 +996,7 @@ function TransformGizmo({
   const endScale = (e: React.PointerEvent<SVGGElement>): void => {
     const drag = dragRef.current;
     dragRef.current = null;
+    guidesRef.current = NO_GUIDES;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "scale") return;
     const l = layerRef.current;
@@ -789,6 +1049,29 @@ function TransformGizmo({
         overflow: "visible",
       }}
     >
+      {/* Snap guides, FIRST in document order so they paint UNDER the box and
+          the handles: a guide is information about the gesture, never a target,
+          and it must not occlude something grabbable. One group per axis, since
+          at most one guide can be live on each (D25) — so these are two fixed
+          elements and not a list to reconcile. Each holds the dark under-stroke
+          and the bright line over it; the draw loop writes one geometry into
+          both children. */}
+      <g
+        ref={guideXRef}
+        data-testid="transform-gizmo-guide-x"
+        style={{ pointerEvents: "none", display: "none" }}
+      >
+        <line style={{ stroke: GUIDE_UNDER_COLOR, strokeWidth: GUIDE_UNDER_WIDTH_PX }} />
+        <line style={{ stroke: GUIDE_COLOR, strokeWidth: GUIDE_WIDTH_PX }} />
+      </g>
+      <g
+        ref={guideYRef}
+        data-testid="transform-gizmo-guide-y"
+        style={{ pointerEvents: "none", display: "none" }}
+      >
+        <line style={{ stroke: GUIDE_UNDER_COLOR, strokeWidth: GUIDE_UNDER_WIDTH_PX }} />
+        <line style={{ stroke: GUIDE_COLOR, strokeWidth: GUIDE_WIDTH_PX }} />
+      </g>
       <polygon
         ref={boxRef}
         data-testid="transform-gizmo-box"

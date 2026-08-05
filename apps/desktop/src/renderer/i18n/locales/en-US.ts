@@ -772,6 +772,12 @@ const enUS = {
     prebake_motifs_hint:
       "Background-render motif frames to disk. Smoother playback, instant reopen; uses disk space in the project Cache.",
     preview_heading: "Preview",
+    preview_snap_enabled: "Preview snapping",
+    preview_snap_enabled_hint:
+      "Align layers to the frame's edges and centre lines, and to other layers, while moving or resizing them on the preview. Hold Ctrl to override.",
+    preview_snap_strength: "Snap strength",
+    preview_snap_strength_hint:
+      "Measured in screen pixels.",
     decode_engine: "Decode engine",
     decode_engine_auto: "Automatic",
     decode_engine_auto_desc: "Picks the best engine for each clip",

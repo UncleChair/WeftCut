@@ -11,6 +11,7 @@ import {
   transformOverrideFor,
 } from "../render/transformOverrides";
 import { clearGizmoProbe, registerGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { TransformGizmoHost } from "./TransformGizmo";
 
 // jsdom does not implement PointerEvent; alias it to MouseEvent so
@@ -103,12 +104,25 @@ function fixture(params?: Partial<Record<string, unknown>>, kind = "VideoClip"):
 }
 
 /// Canvas box is HALF the composition, so every client delta doubles in
-/// composition pixels — the conversion the commit assertions turn on.
+/// composition pixels — the conversion the commit assertions turn on. It also
+/// DOUBLES the snap radius: 12 screen px is 24 composition px here, which is why
+/// snapping has to be off for the gesture-semantics tests below (see setSnap).
 const probe: GizmoProbe = {
   canvasRect: () =>
     ({ left: 0, top: 0, width: 640, height: 360, right: 640, bottom: 360 }) as DOMRect,
   naturalSizeOf: () => ({ w: 640, h: 360 }),
 };
+
+/// This fixture's layer fills half the composition, so almost any tidy drag
+/// distance lands one of its edges inside the default snap radius — the move
+/// tests below assert exact deltas and would be measuring the snap instead of
+/// the gesture. Same reason `Timeline.interaction.test.tsx` turns
+/// `tail_snap_enabled` off for its drag assertions.
+function setSnap(enabled: boolean, strengthPx = 12): void {
+  useAppSettingsStore.setState((s) => ({
+    settings: { ...s.settings, preview_snap_enabled: enabled, preview_snap_strength_px: strengthPx },
+  }));
+}
 
 beforeEach(() => {
   commit.mockClear();
@@ -116,6 +130,7 @@ beforeEach(() => {
   useProjectStore.getState().apply(fixture());
   setLayerSelection("l1", ["l1"]);
   setPlayheadTimeUs(2_500_000);
+  setSnap(false);
 });
 
 afterEach(() => {
@@ -223,6 +238,162 @@ describe("TransformGizmoHost", () => {
     fireEvent.pointerUp(el, { clientX: 100, clientY: 100 });
     expect(commit).not.toHaveBeenCalled();
     expect(transformOverrideFor("l1")).toBeUndefined();
+  });
+});
+
+/// The fixture plus a second staged VideoClip at x = 700, so the solver has a
+/// LAYER target to find alongside the composition's own lines.
+function twoLayerFixture(): ProjectSummary {
+  const s = fixture() as unknown as {
+    tracks: { layers: Array<Record<string, unknown>> }[];
+  };
+  const first = s.tracks[0]!.layers[0]!;
+  s.tracks[0]!.layers.push({
+    ...first,
+    id: "l2",
+    params: { ...(first.params as Record<string, unknown>), x: stat(700) },
+  });
+  return s as unknown as ProjectSummary;
+}
+
+function guide(axis: "x" | "y"): HTMLElement {
+  return screen.getByTestId(`transform-gizmo-guide-${axis}`);
+}
+
+/// The bright line, not the dark backing — index 1 of the group.
+function guideLine(axis: "x" | "y"): Element {
+  return guide(axis).children[1]!;
+}
+
+// The fixture makes the arithmetic here checkable by hand: the canvas is half
+// the composition, so a client delta DOUBLES into composition pixels and the
+// 12 screen-px radius is 24 composition px. The layer is 640×360 at (0, 0) in a
+// 1280×720 composition, so its box already sits on x=0, x=640, y=0 and y=360 —
+// four of the six composition lines — before anything moves.
+describe("snapping", () => {
+  it("pulls the box's centre onto the composition's centre line", async () => {
+    setSnap(true);
+    render(<TransformGizmoHost />);
+    const el = await box();
+    // +310 comp px puts centreX at 630, ten short of 640. Both edges stay clear
+    // of every other line, so exactly one candidate is in range.
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
+    fireEvent.pointerUp(el, { clientX: 155, clientY: 0 });
+    expect(commit).toHaveBeenCalledWith("l1", [
+      ["x", { mode: "Static", value: 320 }],
+      ["y", { mode: "Static", value: 0 }],
+    ]);
+  });
+
+  it("draws one guide per axis, on the line it snapped to", async () => {
+    setSnap(true);
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
+    // x=640 and y=0 in composition space, halved into client space by the fit.
+    await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
+    expect(guideLine("x").getAttribute("x1")).toBe("320");
+    expect(guideLine("x").getAttribute("y1")).toBe("0");
+    expect(guideLine("x").getAttribute("x2")).toBe("320");
+    expect(guideLine("x").getAttribute("y2")).toBe("360");
+    // The top edge never left y=0, so that axis is snapped too — a horizontal
+    // guide spanning the composition's width.
+    expect(guide("y").style.display).not.toBe("none");
+    expect(guideLine("y").getAttribute("y1")).toBe("0");
+    expect(guideLine("y").getAttribute("x2")).toBe("640");
+  });
+
+  it("drops the guides when the gesture ends", async () => {
+    setSnap(true);
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
+    await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
+    fireEvent.pointerUp(el, { clientX: 155, clientY: 0 });
+    await waitFor(() => expect(guide("x").style.display).toBe("none"));
+    expect(guide("y").style.display).toBe("none");
+  });
+
+  it("suppresses the snap while Ctrl is held, and re-arms when it is let go", async () => {
+    setSnap(true);
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 155, clientY: 0, ctrlKey: true });
+    // The raw 310, not the snapped 320.
+    expect(transformOverrideFor("l1")).toEqual({ dx: 310, dy: 0 });
+    await waitFor(() => expect(guide("x").style.display).toBe("none"));
+    // Ctrl is read per move, so there is no gesture state to reset.
+    fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
+  });
+
+  it("does not snap at all when the preference is off", async () => {
+    setSnap(false);
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 310, dy: 0 });
+    expect(guide("x").style.display).toBe("none");
+  });
+
+  it("snaps to another layer's edge, and the guide names that line", async () => {
+    setSnap(true);
+    useProjectStore.getState().apply(twoLayerFixture());
+    render(<TransformGizmoHost />);
+    const el = await box();
+    // +50 puts the right edge at 690, ten short of l2's left edge at 700 —
+    // nearer than any composition line, so the layer target wins outright.
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 25, clientY: 0 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 60, dy: 0 });
+    await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
+    // x=700 composition ⇒ 350 client.
+    expect(guideLine("x").getAttribute("x1")).toBe("350");
+  });
+
+  it("lands a linked corner resize exactly on the frame, pivot still pinned", async () => {
+    setSnap(true);
+    render(<TransformGizmoHost />);
+    await box();
+    const handle = screen.getByTestId("transform-gizmo-scale-br");
+    // The `br` handle starts at (640, 360). A drag to (1260, 710) fits t ≈ 2.939,
+    // which is 22.3 composition px of handle travel short of t = 3 — inside the
+    // 24 px radius, so the ray solve takes it to exactly 3.
+    fireEvent.pointerDown(handle, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(handle, { clientX: 310, clientY: 175 });
+    fireEvent.pointerUp(handle, { clientX: 310, clientY: 175 });
+    const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+    const byKey = new Map(entries);
+    // Linked, so ONE authored track fanned out to both axes (spec D6).
+    expect(byKey.get("scale_x")).toEqual({ mode: "Static", value: 3 });
+    expect(byKey.get("scale_y")).toEqual({ mode: "Static", value: 3 });
+    // Scaling 1 → 3 about a centred anchor walks the position by −anchor·size·2.
+    expect(byKey.get("x")).toEqual({ mode: "Static", value: -640 });
+    expect(byKey.get("y")).toEqual({ mode: "Static", value: -360 });
+    // Which is to say: the layer now fills the composition exactly. Its bottom
+    // -right corner is at (-640 + 3·640, -360 + 3·360) = (1280, 720), and the
+    // pivot has not moved — that is what makes the guide truthful (D23).
+  });
+
+  it("leaves a linked resize alone under Ctrl", async () => {
+    setSnap(true);
+    render(<TransformGizmoHost />);
+    await box();
+    const handle = screen.getByTestId("transform-gizmo-scale-br");
+    fireEvent.pointerDown(handle, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(handle, { clientX: 310, clientY: 175, ctrlKey: true });
+    fireEvent.pointerUp(handle, { clientX: 310, clientY: 175, ctrlKey: true });
+    const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+    const scaleX = new Map(entries).get("scale_x") as { value: number };
+    // The un-snapped least-squares fit, not the round 3.
+    expect(scaleX.value).toBeGreaterThan(2.9);
+    expect(scaleX.value).toBeLessThan(3);
   });
 });
 
