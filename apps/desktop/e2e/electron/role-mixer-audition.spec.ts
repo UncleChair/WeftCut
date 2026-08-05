@@ -1,5 +1,12 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
+import {
+  dockPanel,
+  invokeCmd,
+  launchApp,
+  newProject,
+  tmpDir,
+  waitForHook,
+} from './helpers/driver'
 
 // Role Gain audition — renders the REAL preview Role-gain fold
 // (`auditionedRoleGainLinear` → GainNode) in an OfflineAudioContext and checks
@@ -80,13 +87,13 @@ test.describe('Role Mixer panel flow (Electron UI)', () => {
     // the View menu (index 2, matching dock-workspace.spec.ts).
     await page.locator('.menu-trigger').nth(2).click()
     await page.locator('.app-menu-item').filter({ hasText: /^Role Mixer$/ }).click()
-    await expect(page.locator('[data-panel-kind="role-mixer"]')).toHaveCount(1)
+    await expect(dockPanel(page, 'role-mixer')).toHaveCount(1)
   })
   test.afterAll(async () => {
     await app?.close()
   })
 
-  const panel = () => page.locator('[data-panel-kind="role-mixer"]')
+  const panel = () => dockPanel(page, 'role-mixer')
   const dialogueGain = async (): Promise<number> => {
     const s = await invokeCmd<{ audio_roles?: Array<{ role: string; gain_db: number }> }>(
       page,

@@ -2,7 +2,14 @@ import { test, expect } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, invokeCmd, tmpDir, waitForHook } from './helpers/driver'
+import {
+  dockPanel,
+  launchApp,
+  newProject,
+  invokeCmd,
+  tmpDir,
+  waitForHook,
+} from './helpers/driver'
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
@@ -69,9 +76,9 @@ test('media search reopens and reveals the singleton Media Pool Panel', async ()
       .locator('.app-menu-item')
       .filter({ hasText: /Close Active Panel|关闭活动面板/ })
       .click()
-    await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(0)
+    await expect(dockPanel(page, 'media')).toHaveCount(0)
     await page.keyboard.press('M')
-    await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(0)
+    await expect(dockPanel(page, 'media')).toHaveCount(0)
 
     // The unused media result reveals directly (no usage sub-list). Navigation
     // reopens/focuses the dock Panel before delivering the deferred flash.
@@ -80,7 +87,7 @@ test('media search reopens and reveals the singleton Media Pool Panel', async ()
     await expect(page.locator('.search-row.is-active')).toBeVisible({ timeout: 5_000 })
     await page.keyboard.press('Enter')
 
-    await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(1)
+    await expect(dockPanel(page, 'media')).toHaveCount(1)
     await expect(page.locator(`[data-media-id="${mediaId}"].is-search-flash`)).toBeVisible()
   } finally {
     await app.close()

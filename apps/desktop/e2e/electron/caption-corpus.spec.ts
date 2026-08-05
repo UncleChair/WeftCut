@@ -3,7 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from "./helpers/driver";
+import {
+  dockPanel,
+  invokeCmd,
+  launchApp,
+  newProject,
+  tmpDir,
+  waitForHook,
+} from "./helpers/driver";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
@@ -67,10 +74,10 @@ test("Caption Panel manages the whole corpus: aggregate, seek, restyle-all, one 
     const viewMenu = page.locator(".menu-trigger").nth(2);
     await viewMenu.click();
     await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
-    await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(1);
+    await expect(dockPanel(page, "caption")).toHaveCount(1);
 
     // Aggregation: cues from BOTH caption Tracks appear as one flattened list.
-    const captionPanel = page.locator('[data-panel-kind="caption"]');
+    const captionPanel = dockPanel(page, "caption");
     await expect(captionPanel.locator(".caption-row")).toHaveCount(3);
 
     // Cue activation seeks the playhead. Pick the latest cue (start > 0) so the

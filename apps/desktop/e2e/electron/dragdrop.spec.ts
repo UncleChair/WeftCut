@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, tmpDir } from './helpers/driver'
+import { dockPanel, launchApp, newProject, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -107,10 +107,18 @@ test('a real DOM file-drop on the media pool imports via wireFileDrop', async ()
 
     // A Files payload belongs exclusively to Media import; Dockview must not
     // create, close, or duplicate any Panel while its overlay is suppressed.
-    const panelKinds = await page.locator('[data-panel-kind]').evaluateAll((panels) =>
+    const panelKinds = await dockPanel(page).evaluateAll((panels) =>
       panels.map((panel) => panel.getAttribute('data-panel-kind')).sort(),
     )
-    expect(panelKinds).toEqual(['attribute', 'effect', 'media', 'nearby', 'preview', 'timeline'])
+    expect(panelKinds).toEqual([
+      'attribute',
+      'effect',
+      'media',
+      'nearby',
+      'preview',
+      'quick-actions',
+      'timeline',
+    ])
   } finally {
     await app.close()
   }

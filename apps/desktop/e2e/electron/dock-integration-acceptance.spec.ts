@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  dockPanel,
+  dockTab,
   dragDockTab,
   invokeCmd,
   launchApp,
@@ -28,19 +30,27 @@ const SRT_PATH = path.resolve(__dirname, "../fixtures/subtitles/overlapping.srt"
 // otherwise persists layout across launches and would leak between specs.
 //
 // Observability is WeftCut-owned: `dockWorkspaceProbe()` reports open Panels,
-// the focused/active Panel, the maximized Panel, and emptiness; `data-panel-*`
-// attributes and `project_summary` carry the rest. No test asserts on Dockview's
-// private DOM, group classes, or serialized JSON.
+// the focused/active Panel, the maximized Panel, and emptiness; the `dockPanel`
+// / `dockTab` driver helpers and `project_summary` carry the rest. No test
+// asserts on Dockview's group classes or serialized JSON.
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
+/// The built-in Editing baseline, sorted. Quick Actions is a Panel like any
+/// other — it just renders its tab as a drag grip instead of a label.
 const DEFAULT_PANELS = [
   "attribute",
   "effect",
   "media",
   "nearby",
   "preview",
+  "quick-actions",
   "timeline",
 ];
+const PANEL_COUNT = DEFAULT_PANELS.length;
+/// Panel-body selector for the `rect()` / `settledWidth()` readers below, which
+/// go through `document.querySelector` and so have no strict-mode guard against
+/// the tab that also carries `data-panel-kind`. See `dockPanel` in driver.ts.
+const panelSel = (kind: string) => `.weft-dock-panel[data-panel-kind="${kind}"]`;
 
 interface DockProbe {
   openPanels: string[];
@@ -63,16 +73,17 @@ const maximizedPanel = async (page: Page): Promise<string | null> =>
 
 const panelKinds = async (page: Page): Promise<string[]> =>
   (
-    await page
-      .locator("[data-panel-kind]")
-      .evaluateAll((els) => els.map((el) => el.getAttribute("data-panel-kind")))
+    await dockPanel(page).evaluateAll((els) =>
+      els.map((el) => el.getAttribute("data-panel-kind")),
+    )
   )
     .filter((k): k is string => k !== null)
     .sort();
 
-/// The tab labels currently visible across the workspace. Every group keeps
-/// its tab header — except a solo Preview, whose strip is hidden — so this
-/// lists every open Panel's tab but that one's, in DOM order.
+/// The tab labels currently visible across the workspace, in DOM order. Two
+/// Panels are missing from it by design: a solo Preview (its strip is hidden
+/// until another Panel joins its group) and Quick Actions while solo (its tab
+/// renders as the six-dot grip, which has no label).
 const visibleTabLabels = async (page: Page): Promise<string[]> =>
   page
     .locator(".weft-dock-tab-label")
@@ -81,9 +92,9 @@ const visibleTabLabels = async (page: Page): Promise<string[]> =>
     );
 
 const panelVisible = (page: Page, kind: string): Promise<boolean> =>
-  page
-    .locator(`[data-panel-kind="${kind}"]`)
-    .evaluate((el) => el.getAttribute("data-panel-visible") === "true");
+  dockPanel(page, kind).evaluate(
+    (el) => el.getAttribute("data-panel-visible") === "true",
+  );
 
 interface HistoryView {
   len: number;
@@ -120,12 +131,26 @@ const settledWidth = (page: Page, selector: string) =>
 
 const viewMenuTrigger = (page: Page) => page.locator(".menu-trigger").nth(2);
 const CLOSE_ACTIVE = /Close Active Panel|关闭活动面板/;
+const menuItem = (page: Page, text: RegExp) =>
+  page.locator(".app-menu-item").filter({ hasText: text });
+
+/// Open View, then descend into the Workspaces submenu — profile switching and
+/// the Save/Rename/Delete/Reset ops all live one level down (low-frequency ops
+/// stay out of the flat Panels list). The submenu trigger reuses
+/// `.app-menu-item`, so items must always be matched by text, never by index.
+async function openWorkspacesMenu(page: Page): Promise<void> {
+  await viewMenuTrigger(page).click();
+  await page
+    .locator(".app-submenu-trigger")
+    .filter({ hasText: /Workspaces|工作区/ })
+    .click();
+}
 
 async function setupEditor(page: Page, name: string): Promise<void> {
   const parent = tmpDir(`weftcut-${name}-proj-`);
   await newProject(page, { parentFolder: parent, name, canvas: CANVAS });
   await expect(page.locator(".splash-screen")).toHaveCount(0, { timeout: 15_000 });
-  await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
+  await expect(dockPanel(page)).toHaveCount(PANEL_COUNT);
 }
 
 test("focus cycles Panels in both directions and maximize/restore leaves the Dock Tree unchanged", async () => {
@@ -135,7 +160,7 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
 
     // Click a Panel so the window holds keyboard focus on a non-editable surface
     // (the global focus-cycle shortcuts suppress inside text fields).
-    await page.locator('[data-panel-kind="preview"]').click();
+    await dockPanel(page, "preview").click();
     const before = await activePanel(page);
     expect(before).not.toBeNull();
 
@@ -151,11 +176,11 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
     // untouched (still six Panels), the snapshot reports the runtime maximize
     // overlay, and Preview fills the workspace while the others go non-visible.
     const workspaceWidth = (await rect(page, ".dock-workspace")).width;
-    await page.locator('[data-panel-kind="preview"]').hover();
+    await dockPanel(page, "preview").hover();
     await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBe("preview");
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
-    const maximized = await settledWidth(page, '[data-panel-kind="preview"]');
+    const maximized = await settledWidth(page, panelSel("preview"));
     expect(maximized / workspaceWidth).toBeGreaterThan(0.9);
 
     // A second Backquote press reverses the overlay: no Panel is maximized,
@@ -166,16 +191,16 @@ test("focus cycles Panels in both directions and maximize/restore leaves the Doc
     await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBeNull();
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
-    const restored = await settledWidth(page, '[data-panel-kind="preview"]');
+    const restored = await settledWidth(page, panelSel("preview"));
     expect(restored / workspaceWidth).toBeLessThan(0.8);
     for (const kind of ["media", "timeline"]) {
       expect(await panelVisible(page, kind)).toBe(true);
-      expect((await rect(page, `[data-panel-kind="${kind}"]`)).width).toBeGreaterThan(0);
+      expect((await rect(page, panelSel(kind))).width).toBeGreaterThan(0);
     }
 
     // The backquote command maximizes the Panel under the pointer, not just the
     // focused one, and toggles back off.
-    await page.locator('[data-panel-kind="timeline"]').hover();
+    await dockPanel(page, "timeline").hover();
     await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBe("timeline");
     await page.keyboard.press("Backquote");
@@ -191,12 +216,13 @@ test("closing every Panel shows the recovery view, and Open Panel + Reset restor
     await setupEditor(page, "dock-empty");
 
     // Close every Panel through View > Close Active Panel. Closing the active
-    // Panel promotes a new one; six passes empties the whole workspace.
-    for (let i = 0; i < 6; i++) {
+    // Panel promotes a new one, so one pass per open Panel empties the whole
+    // workspace.
+    for (let i = 0; i < PANEL_COUNT; i++) {
       await viewMenuTrigger(page).click();
-      await page.locator(".app-menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
+      await menuItem(page, CLOSE_ACTIVE).click();
     }
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(0);
+    await expect(dockPanel(page)).toHaveCount(0);
     await expect.poll(() => probe(page).then((p) => p?.empty ?? false)).toBe(true);
 
     // The empty workspace is a valid state, not a corrupt one: it renders the
@@ -207,20 +233,20 @@ test("closing every Panel shows the recovery view, and Open Panel + Reset restor
 
     // Open Panel → Timeline reopens exactly that one Panel.
     await recovery.locator(".menu-trigger").click();
-    await page.locator(".app-menu-item").filter({ hasText: /^Timeline$/ }).click();
-    await expect(page.locator('[data-panel-kind="timeline"]')).toHaveCount(1);
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(1);
+    await menuItem(page, /^Timeline$/).click();
+    await expect(dockPanel(page, "timeline")).toHaveCount(1);
+    await expect(dockPanel(page)).toHaveCount(1);
 
     // Close it again and Reset Workspace from the recovery view rebuilds the
     // full built-in Editing set.
     await viewMenuTrigger(page).click();
-    await page.locator(".app-menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(0);
+    await menuItem(page, CLOSE_ACTIVE).click();
+    await expect(dockPanel(page)).toHaveCount(0);
     await page
       .getByRole("region", { name: /Empty workspace/i })
       .getByRole("button", { name: /Reset Workspace/i })
       .click();
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
+    await expect(dockPanel(page)).toHaveCount(PANEL_COUNT);
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
   } finally {
     await app.close();
@@ -235,23 +261,20 @@ test("Reset Workspace atomically replaces a populated arrangement", async () => 
     // Make the live arrangement differ from Editing, then reset it while the
     // reference Panels that used to drive incremental reconstruction are open.
     await viewMenuTrigger(page).click();
-    await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(7);
+    await menuItem(page, /^Caption$/).click();
+    await expect(dockPanel(page)).toHaveCount(PANEL_COUNT + 1);
 
-    await viewMenuTrigger(page).click();
-    await page
-      .locator(".app-menu-item")
-      .filter({ hasText: /Reset Workspace|重置工作区/ })
-      .click();
+    await openWorkspacesMenu(page);
+    await menuItem(page, /Reset Workspace|重置工作区/).click();
 
-    await expect(page.locator("[data-panel-kind]")).toHaveCount(6);
+    await expect(dockPanel(page)).toHaveCount(PANEL_COUNT);
     expect(await panelKinds(page)).toEqual(DEFAULT_PANELS);
-    await expect(page.locator('[data-panel-kind="preview"]')).toHaveCount(1);
-    await expect(page.locator('[data-panel-kind="timeline"]')).toHaveCount(1);
-    await expect(page.locator('[data-panel-kind="media"]')).toHaveCount(1);
+    await expect(dockPanel(page, "preview")).toHaveCount(1);
+    await expect(dockPanel(page, "timeline")).toHaveCount(1);
+    await expect(dockPanel(page, "media")).toHaveCount(1);
     for (const kind of ["preview", "timeline", "media"]) {
       expect(await panelVisible(page, kind)).toBe(true);
-      const bounds = await rect(page, `[data-panel-kind="${kind}"]`);
+      const bounds = await rect(page, panelSel(kind));
       expect(bounds.width).toBeGreaterThan(0);
       expect(bounds.height).toBeGreaterThan(0);
     }
@@ -278,11 +301,7 @@ test("dragging a tab past another reorders it within the multi-Panel group", asy
     // content region) reorders within the group rather than restacking: Attribute
     // is no longer first, the group still holds the same three tabs, and nothing
     // opened or closed.
-    await dragDockTab(
-      page,
-      page.getByTitle("Move Attribute"),
-      page.getByTitle("Move Nearby"),
-    );
+    await dragDockTab(page, dockTab(page, "attribute"), dockTab(page, "nearby"));
     await expect
       .poll(async () => contextual(await visibleTabLabels(page))[0])
       .not.toBe("Attribute");
@@ -316,8 +335,8 @@ test("an edge drop splits a Panel into its own group beside the target", async (
     // only one of a shared group visible at a time).
     await dragDockTab(
       page,
-      page.getByTitle("Move Nearby"),
-      page.locator('[data-panel-kind="timeline"]'),
+      dockTab(page, "nearby"),
+      dockPanel(page, "timeline"),
       "left",
     );
 
@@ -338,8 +357,8 @@ test("an edge drop splits a Panel into its own group beside the target", async (
         "Timeline",
       ]);
     // Nearby now sits to the left of Timeline.
-    const nearby = await rect(page, '[data-panel-kind="nearby"]');
-    const timelineAfter = await rect(page, '[data-panel-kind="timeline"]');
+    const nearby = await rect(page, panelSel("nearby"));
+    const timelineAfter = await rect(page, panelSel("timeline"));
     expect(nearby.x).toBeLessThan(timelineAfter.x);
   } finally {
     await app.close();
@@ -376,7 +395,7 @@ test("Preview keeps its resource identity through maximize, restore, and a dock 
     // Maximize Preview and restore it (hover + Backquote — a solo Preview has
     // no tab strip). The Playback Engine + Compositor must
     // survive: same generation, position still advancing.
-    await page.locator('[data-panel-kind="preview"]').hover();
+    await dockPanel(page, "preview").hover();
     await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBe("preview");
     await page.keyboard.press("Backquote");
@@ -388,10 +407,8 @@ test("Preview keeps its resource identity through maximize, restore, and a dock 
     // reactivate Preview. Docking must never recreate the resource.
     // (Native dragTo: the manual gesture helper is unreliable for HTML5
     // center drops on Windows.)
-    await page
-      .getByTitle("Move Effect")
-      .dragTo(page.locator('[data-panel-kind="preview"]'));
-    await page.getByTitle("Move Preview").click();
+    await dockTab(page, "effect").dragTo(dockPanel(page, "preview"));
+    await dockTab(page, "preview").click();
     const afterMove = (await readProbe())!;
     expect(afterMove.generation).toBe(start.generation);
 
@@ -433,14 +450,14 @@ test("Workspace mutations never change Project undo depth, and a business edit a
     // the app-level Workspace document only. None may dirty the Project or move
     // its undo cursor/depth.
     await viewMenuTrigger(page).click();
-    await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
-    await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(1);
+    await menuItem(page, /^Caption$/).click();
+    await expect(dockPanel(page, "caption")).toHaveCount(1);
 
     await viewMenuTrigger(page).click();
-    await page.locator(".app-menu-item").filter({ hasText: CLOSE_ACTIVE }).click();
-    await expect(page.locator('[data-panel-kind="caption"]')).toHaveCount(0);
+    await menuItem(page, CLOSE_ACTIVE).click();
+    await expect(dockPanel(page, "caption")).toHaveCount(0);
 
-    await page.locator('[data-panel-kind="preview"]').hover();
+    await dockPanel(page, "preview").hover();
     await page.keyboard.press("Backquote");
     await expect.poll(() => maximizedPanel(page)).toBe("preview");
     await page.keyboard.press("Backquote");
@@ -505,23 +522,21 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     await expect(page.getByTestId("effect-drag-0")).toBeVisible();
     await expect(page.getByTestId("effect-drag-1")).toBeVisible();
     await page.locator(".weft-dock-tab-label", { hasText: "Attribute" }).click();
-    await expect(page.locator('[data-panel-kind="attribute"] .placeholder')).toHaveCount(0);
-    // Attribute is bound to the primary Layer: the Start timing field (whose edits
-    // route through the same move/trim commands Timeline gestures use) is present
-    // for the selection.
+    await expect(dockPanel(page, "attribute").locator(".placeholder")).toHaveCount(0);
+    // Attribute is bound to the primary Layer: the Duration timing field (whose
+    // edits route through the same `trim_layer` command Timeline gestures use) is
+    // present for the selection. Duration, not Start — both are timing fields on
+    // the same envelope, but Start sits in the always-collapsed Advanced section,
+    // and expanding a Section is not what this dock test is about.
     await expect(
-      page
-        .locator('[data-panel-kind="attribute"]')
-        .getByRole("textbox", { name: /^(Start|开始)$/ }),
+      dockPanel(page, "attribute").getByRole("textbox", { name: /^(Duration|时长)$/ }),
     ).toBeVisible();
 
     // Move the Effect Panel into Preview's group. Selection and the chain survive
     // the dock move, and the keyboard move-down command still reorders (one undo).
     // (Native dragTo for the center merge — see the earlier note.)
-    await page
-      .getByTitle("Move Effect")
-      .dragTo(page.locator('[data-panel-kind="preview"]'));
-    await page.getByTitle("Move Effect").click();
+    await dockTab(page, "effect").dragTo(dockPanel(page, "preview"));
+    await dockTab(page, "effect").click();
     await expect(page.getByTestId("effect-drag-0")).toBeVisible();
     expect(await effectOrder()).toEqual(effectIds);
 
@@ -533,36 +548,34 @@ test("selection and business Panels keep working after a Panel move and a Worksp
     await expect.poll(effectOrder).toEqual(reordered);
     expect((await history(page)).len).toBe(undoBefore + 1);
 
-    // Save the moved arrangement as a custom Workspace, bounce to Editing and
-    // back. The layout round-trips through persistence with reuse-existing-panels,
-    // so the selected Layer and its reordered chain are still there afterwards.
-    await viewMenuTrigger(page).click();
-    await page
-      .locator(".app-menu-item")
-      .filter({ hasText: /Save Workspace As|工作区另存为/ })
-      .click();
+    // Save the moved arrangement as a custom Workspace, bounce to the built-in
+    // Default Layout and back. The layout round-trips through persistence with
+    // reuse-existing-panels, so the selected Layer and its reordered chain are
+    // still there afterwards.
+    await openWorkspacesMenu(page);
+    await menuItem(page, /Save as New Workspace|另存为新工作区/).click();
     await page.getByLabel(/Workspace name|工作区名称/).fill("Grading");
     await page.getByRole("button", { name: /^(Save|保存)$/ }).click();
 
-    await viewMenuTrigger(page).click();
-    await page.locator(".app-menu-item").filter({ hasText: /^(Editing|编辑)$/ }).click();
-    await viewMenuTrigger(page).click();
-    await page.locator(".app-menu-item").filter({ hasText: /^Grading$/ }).click();
+    await openWorkspacesMenu(page);
+    await menuItem(page, /^(Default Layout|默认布局)$/).click();
+    await openWorkspacesMenu(page);
+    await menuItem(page, /^Grading$/).click();
 
     // Effect still owns the reordered chain and the primary Layer is still edited
     // in Attribute after the Workspace switch.
-    await page.getByTitle("Move Effect").click();
+    await dockTab(page, "effect").click();
     await expect(page.getByTestId("effect-drag-0")).toBeVisible();
     expect(await effectOrder()).toEqual(reordered);
     await page.locator(".weft-dock-tab-label", { hasText: "Attribute" }).click();
-    await expect(page.locator('[data-panel-kind="attribute"] .placeholder')).toHaveCount(0);
-    // Attribute is bound to the primary Layer: the Start timing field (whose edits
-    // route through the same move/trim commands Timeline gestures use) is present
-    // for the selection.
+    await expect(dockPanel(page, "attribute").locator(".placeholder")).toHaveCount(0);
+    // Attribute is bound to the primary Layer: the Duration timing field (whose
+    // edits route through the same `trim_layer` command Timeline gestures use) is
+    // present for the selection. Duration, not Start — both are timing fields on
+    // the same envelope, but Start sits in the always-collapsed Advanced section,
+    // and expanding a Section is not what this dock test is about.
     await expect(
-      page
-        .locator('[data-panel-kind="attribute"]')
-        .getByRole("textbox", { name: /^(Start|开始)$/ }),
+      dockPanel(page, "attribute").getByRole("textbox", { name: /^(Duration|时长)$/ }),
     ).toBeVisible();
   } finally {
     await app.close();
@@ -580,18 +593,16 @@ test("Caption cue navigation still selects and seeks after the Caption Panel mov
 
     // Open the initially-closed Caption Panel.
     await viewMenuTrigger(page).click();
-    await page.locator(".app-menu-item").filter({ hasText: /^Caption$/ }).click();
-    const caption = page.locator('[data-panel-kind="caption"]');
+    await menuItem(page, /^Caption$/).click();
+    const caption = dockPanel(page, "caption");
     await expect(caption).toHaveCount(1);
     await expect(caption.locator(".caption-row")).toHaveCount(3);
 
     // Move the Caption Panel into Preview's group (it becomes a tab there), then
     // reactivate it — the Panel instance is reused, so its cue list persists.
     // (Native dragTo for the center merge — see the earlier note.)
-    await page
-      .getByTitle("Move Caption")
-      .dragTo(page.locator('[data-panel-kind="preview"]'));
-    await page.getByTitle("Move Caption").click();
+    await dockTab(page, "caption").dragTo(dockPanel(page, "preview"));
+    await dockTab(page, "caption").click();
     await expect(caption.locator(".caption-row")).toHaveCount(3);
 
     // After the move, activating a cue still drives the shared selection model:

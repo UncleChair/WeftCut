@@ -103,6 +103,9 @@ test('an older summary cannot restore a VideoClip after split-right-delete', asy
       () => (globalThis as any).__weftcutSummaryRaceGate?.captured === 2,
     )
 
+    // `C` ARMS the Blade and `V` re-arms Selection; both are idempotent (one key
+    // per tool, `toolStore.ts`). `C` twice does NOT disarm — pressing it again
+    // just keeps the Blade, and the next click would split instead of selecting.
     await page.keyboard.press('c')
     await expect(page.locator('.timeline-root-blade')).toHaveCount(1)
     await blocks.first().click({
@@ -112,7 +115,7 @@ test('an older summary cannot restore a VideoClip after split-right-delete', asy
       },
     })
     await expect(blocks).toHaveCount(2)
-    await page.keyboard.press('c')
+    await page.keyboard.press('v')
     await expect(page.locator('.timeline-root-blade')).toHaveCount(0)
 
     const rightIndex = await blocks.evaluateAll((nodes) => {

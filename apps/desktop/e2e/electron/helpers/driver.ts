@@ -55,6 +55,43 @@ export function tmpDir(prefix: string): string {
 
 export type DockDropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center'
 
+/**
+ * A dock Panel's BODY — the `.weft-dock-panel` region that hosts its content,
+ * carries `data-panel-visible`, and is the focus region (ADR 0041). Omit `kind`
+ * for every open Panel.
+ *
+ * The `.weft-dock-panel` prefix is not optional: `data-panel-kind` is also on
+ * each Panel's TAB renderer, so a bare `[data-panel-kind]` matches twice per
+ * Panel. Counting is the loud failure; the quiet one is worse — the tab comes
+ * FIRST in document order, so `querySelector`/`.evaluate` silently measures a
+ * 28px tab strip and geometry assertions pass or fail for the wrong reason.
+ */
+export const dockPanel = (page: Page, kind?: string): Locator =>
+  page.locator(
+    kind ? `.weft-dock-panel[data-panel-kind="${kind}"]` : '.weft-dock-panel[data-panel-kind]',
+  )
+
+/**
+ * A dock Panel's header TAB, as Dockview's own `.dv-tab` box.
+ *
+ * That wrapper — not the `.weft-dock-tab` we render inside it — is the element
+ * Dockview marks `draggable` and gives `role="tab"`, and Playwright's synthetic
+ * pointer sequence does not reliably promote a mousedown on a descendant into a
+ * native HTML5 drag. So both drags and clicks must target this box.
+ *
+ * NOT `getByTitle('Move <Panel>')`: a standard tab carries no `title` at all.
+ * Only the Quick Actions grip has one, and it sits on the inner div, where it
+ * does NOT become the `role="tab"` wrapper's accessible name (measured: that
+ * name is ""). Its string is `dock_workspace.move_panel` — today "Drag to move
+ * <Panel>" — so even a substring match on the old "Move <Panel>" reaches the
+ * grip and nothing else. Overflow-dropdown rows are excluded for free: they get
+ * no `data-panel-kind`.
+ */
+export const dockTab = (page: Page, kind: string): Locator =>
+  page
+    .locator('.dv-tab')
+    .filter({ has: page.locator(`.weft-dock-tab[data-panel-kind="${kind}"]`) })
+
 /** Drive Dockview with a real pointer gesture. Its drop-zone overlay
  * intentionally covers the underlying target mid-drag, so locator.dragTo's
  * target-actionability retry can wait forever even though a user drop works. */
