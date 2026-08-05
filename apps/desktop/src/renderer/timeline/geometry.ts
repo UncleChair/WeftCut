@@ -322,7 +322,7 @@ export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] 
   // The descriptor (label "Scale" vs "Scale X", fan-out or not) comes from the
   // first layer actually KEYED on the param, so a mixed track labels the lane
   // after the layer whose diamonds it shows; first-defining is the fallback.
-  const ORDER = ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity", "gain_db", "pan"];
+  const ORDER = ["x", "y", "scale_x", "scale_y", "rotation_deg", "anchor_x", "anchor_y", "opacity", "gain_db", "pan"];
   for (const key of ORDER) {
     if (!seen.has(key)) continue;
     let picked: ParamDescriptor | null = null;

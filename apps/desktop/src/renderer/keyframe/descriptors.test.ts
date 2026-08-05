@@ -4,15 +4,16 @@ import type { AnimTrack, LayerSummary } from "../ipc";
 
 describe("animatableParams", () => {
   it("visual layers expose the complete transform plus opacity", () => {
-    expect(animatableParams("VideoClip").map((d) => d.paramKey)).toEqual([
-      "x", "y", "scale_x", "scale_y", "rotation_deg", "opacity",
-    ]);
-    expect(animatableParams("ImageOverlay").map((d) => d.paramKey)).toEqual([
-      "x", "y", "scale_x", "scale_y", "rotation_deg", "opacity",
-    ]);
-    expect(animatableParams("Text").map((d) => d.paramKey)).toEqual([
-      "x", "y", "scale_x", "scale_y", "rotation_deg", "opacity",
-    ]);
+    // The anchor pair is part of "the complete transform": it is a keyframeable
+    // Animated track on the wire like the rest (main/state/model.ts), so leaving
+    // it out here would silently deny it a stopwatch, a timeline lane and a
+    // curve — the whole point of storing it as a track.
+    const complete = [
+      "x", "y", "scale_x", "scale_y", "rotation_deg", "anchor_x", "anchor_y", "opacity",
+    ];
+    for (const kind of ["VideoClip", "ImageOverlay", "Text", "Motif"]) {
+      expect(animatableParams(kind).map((d) => d.paramKey)).toEqual(complete);
+    }
   });
   it("Audio exposes gain_db + pan", () => {
     expect(animatableParams("Audio").map((d) => d.paramKey)).toEqual(["gain_db", "pan"]);
@@ -23,7 +24,9 @@ describe("animatableParams", () => {
   it("scaleLinked collapses the pair into ONE composite Scale for every visual kind", () => {
     for (const kind of ["VideoClip", "ImageOverlay", "Text", "Motif"]) {
       const linked = animatableParams(kind, true);
-      expect(linked.map((d) => d.paramKey)).toEqual(["x", "y", "scale_x", "rotation_deg", "opacity"]);
+      expect(linked.map((d) => d.paramKey)).toEqual([
+        "x", "y", "scale_x", "rotation_deg", "anchor_x", "anchor_y", "opacity",
+      ]);
       const scale = linked[2]!;
       expect(scale.labelKey).toBe("property_panel.scale");
       expect(scale.fanOutKeys).toEqual(["scale_x", "scale_y"]);

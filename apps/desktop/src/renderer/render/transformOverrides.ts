@@ -21,6 +21,13 @@ export interface TransformDelta {
   /// already rotates about the anchor (`anchorPivot.ts`), so a rotation gesture
   /// needs no compensating x/y.
   drotDeg?: number;
+  /// Normalized units added to the resolved anchor pair. An anchor gesture DOES
+  /// move the picture (it moves the pivot), so the gizmo pairs these with a
+  /// compensating `dx`/`dy` in the same delta — that is why they live in one
+  /// struct rather than a second override map: the preview must apply both
+  /// halves on the same frame or the layer visibly jumps mid-drag.
+  danchorX?: number;
+  danchorY?: number;
 }
 
 const deltas = new Map<string, TransformDelta>();
@@ -32,16 +39,23 @@ function emit(): void {
 
 export function setTransformOverride(layerId: string, delta: TransformDelta): void {
   const prev = deltas.get(layerId);
-  if (
-    prev &&
-    prev.dx === delta.dx &&
-    prev.dy === delta.dy &&
-    (prev.drotDeg ?? 0) === (delta.drotDeg ?? 0)
-  ) {
-    return;
-  }
+  if (prev && sameDelta(prev, delta)) return;
   deltas.set(layerId, delta);
   emit();
+}
+
+/// Field-wise equality, so a pointermove that moved nothing costs no
+/// re-composite. Every optional channel is compared through `?? 0` — a channel
+/// left out of this check would make its own drag emit exactly once and then go
+/// silent for the rest of the gesture.
+function sameDelta(a: TransformDelta, b: TransformDelta): boolean {
+  return (
+    a.dx === b.dx &&
+    a.dy === b.dy &&
+    (a.drotDeg ?? 0) === (b.drotDeg ?? 0) &&
+    (a.danchorX ?? 0) === (b.danchorX ?? 0) &&
+    (a.danchorY ?? 0) === (b.danchorY ?? 0)
+  );
 }
 
 export function clearTransformOverride(layerId: string): void {
@@ -55,7 +69,13 @@ export function transformOverrideFor(layerId: string): TransformDelta | undefine
 /// Fold the live drag delta into a resolved view. Returns the input untouched
 /// when nothing is being dragged, so the common path allocates nothing.
 export function withTransformOverride<
-  T extends { x: number; y: number; rotation_deg: number },
+  T extends {
+    x: number;
+    y: number;
+    rotation_deg: number;
+    anchor_x: number;
+    anchor_y: number;
+  },
 >(layerId: string, view: T): T {
   const d = deltas.get(layerId);
   if (!d) return view;
@@ -64,6 +84,8 @@ export function withTransformOverride<
     x: view.x + d.dx,
     y: view.y + d.dy,
     rotation_deg: view.rotation_deg + (d.drotDeg ?? 0),
+    anchor_x: view.anchor_x + (d.danchorX ?? 0),
+    anchor_y: view.anchor_y + (d.danchorY ?? 0),
   };
 }
 

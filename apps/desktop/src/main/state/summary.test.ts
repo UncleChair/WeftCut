@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { Layer, LayerParams, MediaItem, Rgba, Track } from './model'
+import type { Animated, Layer, LayerParams, MediaItem, Rgba, Track } from './model'
 import {
   layerKind, deriveTrackKindLabel, layerColorHint, hslToHex, markerColorHint, mediaLabel, layerParamsView,
   buildProjectSummary,
@@ -9,7 +9,7 @@ import { blankProject } from './model'
 import { createActor } from './actor'
 
 const stat = <T>(value: T) => ({ mode: 'Static' as const, value })
-const xf = () => ({ x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1), rotation_deg: stat(0), anchor: [0.5, 0.5] as [number, number], scale_linked: true })
+const xf = () => ({ x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1), rotation_deg: stat(0), anchor_x: stat(0.5), anchor_y: stat(0.5), scale_linked: true })
 function layer(id: string, params: LayerParams): Layer {
   return { id, label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {}, params, effects: [] }
 }
@@ -72,7 +72,7 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
       kind: 'Text', content: 'hi',
       font: { family: 'Liberation Sans', size_px: 54, weight: 700, italic: true },
       color: stat({ r: 255, g: 255, b: 255, a: 255 }), align: 'Center',
-      transform: { ...xf(), anchor: [0.5, 1.0] }, opacity: stat(1),
+      transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 1.0 } }, opacity: stat(1),
       shadow: { color: { r: 0, g: 0, b: 0, a: 255 }, offset_x: 2, offset_y: 2, blur: 2 },
       outline: { color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 },
       intro: null, outro: null, backend_hint: 'DrawText',
@@ -81,7 +81,7 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
     expect(v.kind).toBe('Text')
     if (v.kind !== 'Text') throw new Error('unreachable')
     expect([v.font_family, v.font_size_px, v.weight, v.italic]).toEqual(['Liberation Sans', 54, 700, true])
-    expect([v.anchor_x, v.anchor_y]).toEqual([0.5, 1.0])
+    expect([v.anchor_x, v.anchor_y]).toEqual([stat(0.5), stat(1.0)])
     expect(v.align).toBe('Center')
     expect([v.scale_x, v.scale_y, v.rotation_deg]).toEqual([stat(1), stat(1), stat(0)])
     expect(v.outline).not.toBeNull()
@@ -95,15 +95,19 @@ describe('layerParamsView carries the transform anchor on every visual kind', ()
   // default — correct-looking, but it would silently ignore a real per-layer
   // anchor. This gates the projection, so a discrepancy in a running app can
   // only be a stale main process, never missing code.
+  //
+  // The pair projects as WHOLE TRACKS, not resolved scalars: the anchor is
+  // keyframeable, and resolving it here would strand the inspector's stopwatch
+  // and the timeline's anchor lanes with nothing to read.
   const cases: Array<[string, LayerParams]> = [
-    ['VideoClip', { kind: 'VideoClip', media: 'm', src_in_us: 0, src_out_us: 1, transform: { ...xf(), anchor: [0.25, 0.75] }, opacity: stat(1), speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0, crop: null } as unknown as LayerParams],
-    ['ImageOverlay', { kind: 'ImageOverlay', media: 'm', transform: { ...xf(), anchor: [0.25, 0.75] }, opacity: stat(1), fade_in_us: 0, fade_out_us: 0 } as unknown as LayerParams],
-    ['Motif', { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: { ...xf(), anchor: [0.25, 0.75] }, opacity: stat(1) } as unknown as LayerParams],
+    ['VideoClip', { kind: 'VideoClip', media: 'm', src_in_us: 0, src_out_us: 1, transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.25 }, anchor_y: { mode: 'Static', value: 0.75 } }, opacity: stat(1), speed: 1, flip_h: false, flip_v: false, fade_in_us: 0, fade_out_us: 0, crop: null } as unknown as LayerParams],
+    ['ImageOverlay', { kind: 'ImageOverlay', media: 'm', transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.25 }, anchor_y: { mode: 'Static', value: 0.75 } }, opacity: stat(1), fade_in_us: 0, fade_out_us: 0 } as unknown as LayerParams],
+    ['Motif', { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: { ...xf(), anchor_x: { mode: 'Static', value: 0.25 }, anchor_y: { mode: 'Static', value: 0.75 } }, opacity: stat(1) } as unknown as LayerParams],
   ]
   for (const [kind, params] of cases) {
     it(`${kind} view exposes anchor_x/anchor_y`, () => {
-      const v = layerParamsView(params, {}) as unknown as { anchor_x: number; anchor_y: number }
-      expect([v.anchor_x, v.anchor_y]).toEqual([0.25, 0.75])
+      const v = layerParamsView(params, {}) as unknown as { anchor_x: Animated<number>; anchor_y: Animated<number> }
+      expect([v.anchor_x, v.anchor_y]).toEqual([stat(0.25), stat(0.75)])
     })
   }
 })

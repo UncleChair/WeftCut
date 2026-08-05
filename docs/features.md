@@ -264,11 +264,12 @@ changes mid-session are not reflected.
 
 ## On-canvas transform (gizmo)
 
-The primary selected layer shows its footprint as a box over the preview;
-dragging inside the box moves it, and a knob on a stalk above its top edge
-rotates it. Only the four transform-bearing visual kinds get one (Color fills the
-composition, Audio is not visual), and only while the playhead is inside the
-layer's span. Resize handles are not built yet.
+The primary selected layer shows its footprint as a box over the preview:
+dragging inside the box moves it, a knob on a stalk above its top edge rotates
+it, and a target reticle at the pivot moves its anchor. Only the four
+transform-bearing visual kinds get one (Color fills the composition, Audio is not
+visual), and only while the playhead is inside the layer's span. Resize handles
+are not built yet.
 
 **Why the box is an SVG overlay and not Pixi children:** `app.stage` is a
 read-back surface — the eyedropper's `extract.pixels`, the e2e
@@ -285,20 +286,38 @@ steps. The gesture instead sets a transient delta in `transformOverrides` (same
 idiom as `effectOverrides`: consulted after `resolveView`, never recorded, never
 in React state), and commits once on release through `updateLayerParamTracks` —
 one batch, one undo. The override is held until the new summary arrives, so the
-layer never snaps back for a frame between commit and refetch.
+layer never snaps back for a frame between commit and refetch. The box itself
+reads that same override map rather than the in-flight gesture's own state, so
+the outline and the footprint it outlines cannot drift apart mid-drag whichever
+handle is moving — and an anchor gesture, which moves four fields at once, lands
+all of them on one frame.
 
 **Why rotation writes one track and nothing else:** the engine rotates about the
 anchor and `x`/`y` mean the *unrotated* top-left, so turning a layer about its
 anchor moves neither — the commit is `rotation_deg` alone. A handle that rotated
 about the box's visual centre instead would need compensating `x`/`y` in the same
-batch, time-dependent on a keyframed layer. Since `anchor` defaults to the centre
-and no surface changes it, "about the anchor" already *is* "about the centre".
+batch, time-dependent on a keyframed layer.
 The gesture accumulates per-move angle increments folded into (−180, 180°]
 rather than diffing against its start angle: `atan2`'s ±180° branch cut would
 otherwise read a +20° drag across the seam as −340°, and accumulating is also
 what makes a multi-turn drag mean multiple turns. Shift snaps the resulting angle
 to an absolute 15° grid while the true angle is kept alongside, so releasing
 Shift resumes from the cursor rather than from the grid.
+
+**Why the anchor target writes four tracks and the inspector field writes one:**
+moving the anchor moves the pivot, and the pivot enters the composed position, so
+an anchor change generally moves the picture. The canvas gesture is *pan-behind*
+— it commits the anchor pair plus compensating `x`/`y` together, so the picture
+stays exactly where it was and only the reticle moves. The inspector's `Anchor
+X`/`Anchor Y` fields write the anchor alone, which does move a rotated or Text
+layer; the split is deliberate and matches After Effects, and nothing else is
+available to the panel, which has no natural size to compute a compensation with.
+The compensation is zero for an unrotated, unflipped media layer, so the common
+gesture writes two tracks and never stamps a redundant key on position. A drag is
+converted client → composition → the layer's own *local* frame before it becomes
+an anchor delta (the anchor is stored unrotated and unscaled), which is what keeps
+the reticle under the cursor on a rotated layer. Both surfaces keyframe: the
+anchor pair is `Animated` like the rest of the transform.
 
 **Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect` +
 `naturalSizeOf`; the gizmo never imports Pixi. `gizmoGeometry.ts` — pure
@@ -309,7 +328,7 @@ mapping, so the geometry is unit-tested without a renderer (and shares
 Keyframed one gets a key at the frame-snapped playhead, exactly like the
 inspector.
 
-**Limits:** move and rotate only — a future scale handle MUST write through
+**Limits:** move, rotate and anchor only — a future scale handle MUST write through
 `scaleFanOutFor` + `fanOutEntries`, or a single-axis write silently unlinks a
 uniform-scale layer (see `docs/data-model.md` § Transform). Single selection
 only. The box follows animated values during playback via rAF; it is hidden while

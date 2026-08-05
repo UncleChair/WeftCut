@@ -258,6 +258,11 @@ fn visit_transform_f64(t: &mut Transform, f: &mut impl FnMut(&mut Animated<f64>)
     f(&mut t.scale_x);
     f(&mut t.scale_y);
     f(&mut t.rotation_deg);
+    // The anchor pair belongs in this walk, not just in the resolvers: trim and
+    // split rebase keyframe TIMES through here, so omitting it would strand an
+    // animated pivot at the pre-trim times while every other track moved.
+    f(&mut t.anchor_x);
+    f(&mut t.anchor_y);
 }
 
 /// Apply `f` to every `Animated<Rgba>` track on these params (Text color,
@@ -312,6 +317,8 @@ fn transform_or_opacity_ref<'a>(
         "scale_x" => Some(&t.scale_x),
         "scale_y" => Some(&t.scale_y),
         "rotation_deg" => Some(&t.rotation_deg),
+        "anchor_x" => Some(&t.anchor_x),
+        "anchor_y" => Some(&t.anchor_y),
         "opacity" => Some(opacity),
         _ => None,
     }
@@ -348,6 +355,8 @@ fn transform_or_opacity<'a>(
         "scale_x" => Some(&mut t.scale_x),
         "scale_y" => Some(&mut t.scale_y),
         "rotation_deg" => Some(&mut t.rotation_deg),
+        "anchor_x" => Some(&mut t.anchor_x),
+        "anchor_y" => Some(&mut t.anchor_y),
         "opacity" => Some(opacity),
         _ => None,
     }
@@ -422,7 +431,16 @@ mod kf_fields_tests {
     #[test]
     fn resolve_known_f64_keys_for_videoclip() {
         let mut p = videoclip();
-        for key in ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity"] {
+        for key in [
+            "x",
+            "y",
+            "scale_x",
+            "scale_y",
+            "rotation_deg",
+            "anchor_x",
+            "anchor_y",
+            "opacity",
+        ] {
             assert!(
                 resolve_animated_f64_mut(&mut p, key).is_some(),
                 "videoclip should resolve {key}"
@@ -433,12 +451,13 @@ mod kf_fields_tests {
     }
 
     #[test]
-    fn for_each_animated_f64_visits_six_videoclip_fields() {
+    fn for_each_animated_f64_visits_every_videoclip_field() {
         let mut p = videoclip();
         let mut n = 0;
         for_each_animated_f64(&mut p, |_| n += 1);
-        // transform x/y/scale_x/scale_y/rotation_deg (5) + opacity (1) = 6.
-        assert_eq!(n, 6);
+        // transform x/y/scale_x/scale_y/rotation_deg/anchor_x/anchor_y (7)
+        // + opacity (1) = 8.
+        assert_eq!(n, 8);
     }
 
     #[test]
@@ -470,7 +489,16 @@ mod kf_fields_tests {
     #[test]
     fn immutable_resolver_matches_mut_keys() {
         let p = videoclip();
-        for key in ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity"] {
+        for key in [
+            "x",
+            "y",
+            "scale_x",
+            "scale_y",
+            "rotation_deg",
+            "anchor_x",
+            "anchor_y",
+            "opacity",
+        ] {
             assert!(
                 resolve_animated_f64(&p, key).is_some(),
                 "videoclip ref should resolve {key}"

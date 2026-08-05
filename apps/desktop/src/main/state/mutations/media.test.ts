@@ -15,7 +15,7 @@ describe('media param builders', () => {
     const p = videoClipParams(MID, 0, 4_000_000)
     expect(p).toEqual({ kind: 'VideoClip', media: MID, src_in_us: 0, src_out_us: 4_000_000,
       transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 },
-        scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5], scale_linked: true },
+        scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 }, scale_linked: true },
       opacity: { mode: 'Static', value: 1 }, crop: null, flip_h: false, flip_v: false, blend_mode: 'Normal',
       speed: 1, fade_in_us: 0, fade_out_us: 0 })
   })

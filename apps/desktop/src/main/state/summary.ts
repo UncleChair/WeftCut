@@ -8,18 +8,18 @@ import type { DecodeRoute } from '../../shared/decode-route'
 export interface VideoClipView {
   kind: 'VideoClip'; media_id: string; media_label: string; src_in_us: number; src_out_us: number
   x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
-  anchor_x: number; anchor_y: number
+  anchor_x: Animated<number>; anchor_y: Animated<number>
   speed: number; flip_h: boolean; flip_v: boolean; fade_in_us: number; fade_out_us: number
 }
 export interface ImageOverlayView {
   kind: 'ImageOverlay'; media_id: string; media_label: string
   x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
-  anchor_x: number; anchor_y: number
+  anchor_x: Animated<number>; anchor_y: Animated<number>
   fade_in_us: number; fade_out_us: number
 }
 export interface TextView {
   kind: 'Text'; content: string; font_family: string; font_size_px: number; weight: number; italic: boolean
-  color: Animated<Rgba>; align: TextAlign; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; anchor_x: number; anchor_y: number
+  color: Animated<Rgba>; align: TextAlign; x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; anchor_x: Animated<number>; anchor_y: Animated<number>
   opacity: Animated<number>; shadow: Shadow | null; outline: Outline | null
 }
 export interface ColorView { kind: 'Color'; color: Animated<Rgba>; width: number; height: number }
@@ -30,7 +30,7 @@ export interface AudioView {
 export interface MotifView {
   kind: 'Motif'; motif_id: string
   x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; scale_linked: boolean; rotation_deg: Animated<number>; opacity: Animated<number>
-  anchor_x: number; anchor_y: number
+  anchor_x: Animated<number>; anchor_y: Animated<number>
   src_in_us: number; props: Record<string, unknown>
 }
 export type LayerParamsView = VideoClipView | ImageOverlayView | TextView | ColorView | AudioView | MotifView
@@ -116,7 +116,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       const t = params.transform
       return { kind: 'VideoClip', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
         src_in_us: params.src_in_us, src_out_us: params.src_out_us, x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
-        anchor_x: t.anchor[0], anchor_y: t.anchor[1],
+        anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         opacity: params.opacity, speed: params.speed, flip_h: params.flip_h, flip_v: params.flip_v,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
     }
@@ -124,7 +124,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       const t = params.transform
       return { kind: 'ImageOverlay', media_id: params.media, media_label: mediaLabelFor(params.media, pool),
         x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg, opacity: params.opacity,
-        anchor_x: t.anchor[0], anchor_y: t.anchor[1],
+        anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         fade_in_us: params.fade_in_us, fade_out_us: params.fade_out_us }
     }
     case 'Text': {
@@ -132,7 +132,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
       return { kind: 'Text', content: params.content, font_family: params.font.family, font_size_px: params.font.size_px,
         weight: params.font.weight, italic: params.font.italic, color: params.color, align: params.align,
         x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
-        anchor_x: t.anchor[0], anchor_y: t.anchor[1], opacity: params.opacity,
+        anchor_x: t.anchor_x, anchor_y: t.anchor_y, opacity: params.opacity,
         shadow: params.shadow, outline: params.outline }
     }
     case 'Color':
@@ -144,7 +144,7 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
     case 'Motif': {
       const t = params.transform
       return { kind: 'Motif', motif_id: params.motif_id, x: t.x, y: t.y, scale_x: t.scale_x, scale_y: t.scale_y, scale_linked: t.scale_linked, rotation_deg: t.rotation_deg,
-        anchor_x: t.anchor[0], anchor_y: t.anchor[1],
+        anchor_x: t.anchor_x, anchor_y: t.anchor_y,
         opacity: params.opacity, src_in_us: params.src_in_us, props: params.props }
     }
   }

@@ -38,14 +38,14 @@ export function cueToTextParams(cue: Cue, compW: number, compH: number): TextPar
   const outlineW = Math.max(s.outline_px ?? size * 0.06, 1.0)
   const shadowOff = Math.max(s.shadow_px ?? 2.0, 1.0)
   const an = s.align ?? 2
-  const [anchor, baseX, baseY] = anchorFor(an, compW, compH)
+  const [[anchorX, anchorY], baseX, baseY] = anchorFor(an, compW, compH)
   const [x, y] = s.pos ?? [baseX, baseY]
   return {
     kind: 'Text', content: cue.text,
     font: { family: s.font_family ?? DEFAULT_CAPTION_FONT, size_px: size, weight: s.bold ? 700 : 400, italic: s.italic ?? false },
     color: { mode: 'Static', value: primary },
     align: alignFor(an),
-    transform: { ...defaultTransform(), x: { mode: 'Static', value: x }, y: { mode: 'Static', value: y }, anchor },
+    transform: { ...defaultTransform(), x: { mode: 'Static', value: x }, y: { mode: 'Static', value: y }, anchor_x: { mode: 'Static', value: anchorX }, anchor_y: { mode: 'Static', value: anchorY } },
     opacity: { mode: 'Static', value: 1 },
     shadow: { color: BLACK, offset_x: shadowOff, offset_y: shadowOff, blur: shadowOff },
     outline: { color: s.outline_color ?? BLACK, width: outlineW },

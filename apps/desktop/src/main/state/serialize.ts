@@ -223,15 +223,56 @@ function repairGrid(o: Record<string, unknown>): GridRepair[] {
  *  a transform missing its scale tracks is left for validate to reject; the
  *  twin predicate itself treats malformed entries as diverged. */
 function backfillScaleLinked(o: Record<string, unknown>): void {
+  forEachWireTransform(o, (tr) => {
+    if (tr.scale_linked !== undefined && tr.scale_linked !== true) return
+    const twins = scaleTracksTwins(tr.scale_x as Animated<number>, tr.scale_y as Animated<number>)
+    if (tr.scale_linked === undefined || !twins) tr.scale_linked = twins
+  })
+}
+
+/** `anchor: [x, y]` (a plain pair) → `anchor_x`/`anchor_y` as Static tracks, so
+ *  the pivot animates like every other transform field. Additive-with-conversion
+ *  rather than a schema bump, because `schemaGate` rejects any version but the
+ *  current one — bumping would refuse to OPEN every project that already exists.
+ *
+ *  LANDMINE: the legacy tuple carries real data, not just the default. ASS `\an`
+ *  import writes an off-centre anchor on every caption layer
+ *  (`mutations/captions.ts`), so dropping the tuple and letting the 0.5 default
+ *  apply would re-position every imported subtitle. That is why this reads the
+ *  tuple instead of relying on Rust's `#[serde(default)]`, which cannot see it.
+ *
+ *  Idempotent, and already-converted projects are untouched: a transform that
+ *  has `anchor_x` keeps it (a re-saved project has no `anchor` left to read). */
+function backfillAnchorTracks(o: Record<string, unknown>): void {
+  forEachWireTransform(o, (tr) => {
+    const legacy = tr.anchor
+    const pair = Array.isArray(legacy) ? legacy : []
+    // Per axis: an existing track wins, then the legacy tuple slot, then centre.
+    // Split per axis (not all-or-nothing) so a half-written hand-edited file
+    // still lands on a renderable transform rather than one bad axis poisoning
+    // the other.
+    if (tr.anchor_x === undefined) tr.anchor_x = staticAnchor(pair[0])
+    if (tr.anchor_y === undefined) tr.anchor_y = staticAnchor(pair[1])
+    delete tr.anchor
+  })
+}
+
+const DEFAULT_ANCHOR = 0.5
+
+function staticAnchor(v: unknown): Animated<number> {
+  return { mode: 'Static', value: typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_ANCHOR }
+}
+
+/** Every transform object on the WIRE shape, for the backfills above. Shares one
+ *  defensive walk so a new transform-field backfill can't disagree with the
+ *  existing ones about what counts as a layer. */
+function forEachWireTransform(o: Record<string, unknown>, fn: (transform: Record<string, unknown>) => void): void {
   for (const track of (o.tracks as Array<{ layers?: unknown }> | undefined) ?? []) {
     for (const layer of (track?.layers as Array<Record<string, unknown>> | undefined) ?? []) {
       if (layer === null || typeof layer !== 'object') continue
       const t = (layer.params as { transform?: unknown } | undefined)?.transform
       if (t === null || typeof t !== 'object') continue
-      const tr = t as Record<string, unknown>
-      if (tr.scale_linked !== undefined && tr.scale_linked !== true) continue
-      const twins = scaleTracksTwins(tr.scale_x as Animated<number>, tr.scale_y as Animated<number>)
-      if (tr.scale_linked === undefined || !twins) tr.scale_linked = twins
+      fn(t as Record<string, unknown>)
     }
   }
 }
@@ -285,6 +326,10 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   // never hide a divergent scale_y. Idempotent: a twin check on already-linked
   // twins is the identity.
   backfillScaleLinked(o)
+  // The anchor pair became two Animated tracks the same additive way; unlike
+  // scale_linked it CONVERTS a legacy value rather than deriving one, because the
+  // old tuple holds authored data (see the function's landmine note).
+  backfillAnchorTracks(o)
   // Grid repair belongs in THIS pass, beside the additive-field backfill above:
   // one normalize site, so the validator that `replaceState` shares with
   // `project_open` only ever sees already-canonical input. A second repair site is

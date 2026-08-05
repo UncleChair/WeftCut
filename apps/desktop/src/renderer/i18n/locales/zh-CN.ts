@@ -888,6 +888,8 @@ const zhCN: Resources = {
     scale_link: "锁定等比缩放——缩放 Y 将复制缩放 X",
     scale_unlink: "解除等比缩放",
     rotation: "旋转（°）",
+    anchor_x: "锚点 X",
+    anchor_y: "锚点 Y",
     speed: "速度",
     fade_in: "淡入",
     fade_out: "淡出",

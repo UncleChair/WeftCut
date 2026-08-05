@@ -19,7 +19,7 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
     let shadow_off = s.shadow_px.unwrap_or(2.0).max(1.0);
 
     let an = s.align.unwrap_or(2);
-    let (anchor, base_x, base_y) = anchor_for(an, comp_w as f64, comp_h as f64);
+    let ((anchor_x, anchor_y), base_x, base_y) = anchor_for(an, comp_w as f64, comp_h as f64);
     let (x, y) = s.pos.unwrap_or((base_x, base_y));
 
     TextParams {
@@ -38,7 +38,8 @@ pub fn cue_to_text_params(cue: &Cue, comp_w: u32, comp_h: u32) -> TextParams {
         transform: Transform {
             x: Animated::Static(x),
             y: Animated::Static(y),
-            anchor,
+            anchor_x: Animated::Static(anchor_x),
+            anchor_y: Animated::Static(anchor_y),
             ..Default::default()
         },
         opacity: Animated::Static(1.0),
@@ -106,7 +107,7 @@ mod tests {
         assert!(p.outline.is_some());
         assert!(p.shadow.is_some());
         // an2: bottom-center → anchor (0.5, 1.0), x = w/2, y = h - 8%
-        assert_eq!(p.transform.anchor, (0.5, 1.0));
+        assert_eq!(static_anchor(&p.transform), (0.5, 1.0));
         match (&p.transform.x, &p.transform.y) {
             (Animated::Static(x), Animated::Static(y)) => {
                 assert_eq!(*x, 960.0);
@@ -121,6 +122,16 @@ mod tests {
         let mut s = CueStyle::default();
         s.align = Some(8);
         let p = cue_to_text_params(&cue(s), 1920, 1080);
-        assert_eq!(p.transform.anchor, (0.5, 0.0));
+        assert_eq!(static_anchor(&p.transform), (0.5, 0.0));
+    }
+
+    /// The anchor pair as plain numbers. `\an` import always writes Static, so a
+    /// Keyframed track here means the layout path grew an animation it shouldn't
+    /// have — panic rather than silently reading the first key.
+    fn static_anchor(t: &Transform) -> (f64, f64) {
+        match (&t.anchor_x, &t.anchor_y) {
+            (Animated::Static(x), Animated::Static(y)) => (*x, *y),
+            _ => panic!("static anchor expected"),
+        }
     }
 }

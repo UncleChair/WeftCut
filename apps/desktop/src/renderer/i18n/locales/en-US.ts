@@ -926,6 +926,8 @@ const enUS = {
     scale_link: "Link X/Y scale (uniform) — Scale Y becomes a copy of Scale X",
     scale_unlink: "Unlink X/Y scale",
     rotation: "Rotation (°)",
+    anchor_x: "Anchor X",
+    anchor_y: "Anchor Y",
     speed: "Speed",
     fade_in: "Fade in",
     fade_out: "Fade out",

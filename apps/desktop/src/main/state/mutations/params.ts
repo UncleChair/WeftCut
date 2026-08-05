@@ -163,7 +163,7 @@ export function parseEffectParamKey(key: string): [Uuid, string] | null {
   return m ? [m[1], m[2]] : null
 }
 
-export const TRANSFORM_F64_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg']
+export const TRANSFORM_F64_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg', 'anchor_x', 'anchor_y']
 
 /** layer.rs:322/377 — resolve a param-key to a setter for its Animated<f64> slot,
  *  or null if the key is unknown / invalid on this kind. Effect-param paths look

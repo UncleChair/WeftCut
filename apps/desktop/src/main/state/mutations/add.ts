@@ -21,7 +21,7 @@ export function textParamsDefault(content: string): LayerParams {
 }
 export function defaultTransform() {
   const s = (v: number) => ({ mode: 'Static' as const, value: v })
-  return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5] as [number, number], scale_linked: true }
+  return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
 }
 
 /** Snaps both edges onto the new layer's OWN grid — the 48 kHz sample lattice for an

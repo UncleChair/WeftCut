@@ -14,8 +14,11 @@ export function forEachAnimatedF64(p: LayerParams, fn: (a: Animated<number>) => 
     case 'Audio': fn(p.gain_db); fn(p.pan); break
   }
 }
-function forEachTransformF64(t: { x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; rotation_deg: Animated<number> }, fn: (a: Animated<number>) => void): void {
-  fn(t.x); fn(t.y); fn(t.scale_x); fn(t.scale_y); fn(t.rotation_deg)
+/** The anchor pair is in this walk, not just in the param-key resolvers: trim and
+ *  split rebase keyframe TIMES through here, so leaving it out would strand an
+ *  animated pivot at the pre-trim times while every other track moved. */
+function forEachTransformF64(t: { x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; rotation_deg: Animated<number>; anchor_x: Animated<number>; anchor_y: Animated<number> }, fn: (a: Animated<number>) => void): void {
+  fn(t.x); fn(t.y); fn(t.scale_x); fn(t.scale_y); fn(t.rotation_deg); fn(t.anchor_x); fn(t.anchor_y)
 }
 
 /** Mirror native/src/state/layer.rs:for_each_animated_rgba — the color track on

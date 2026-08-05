@@ -100,6 +100,59 @@ export function layerPivot(i: LayerQuadInput): Pt {
   return f.map(f.pivotX, f.pivotY);
 }
 
+/// A composition-space movement expressed in the layer's own LOCAL pixels — the
+/// inverse of `quadFrame`'s `map` for deltas (`d = R·S·localDelta`, so
+/// `localDelta = S⁻¹·R⁻¹·d`). Null when a scale axis is 0: a layer flattened on
+/// one axis has no local extent there to move an anchor along, and dividing
+/// would hand back Infinity.
+///
+/// This is what makes an anchor drag track the cursor: the anchor is stored in
+/// UNROTATED, UNSCALED normalized units, so a screen-space gesture has to be
+/// un-rotated and un-scaled before it means anything as an anchor delta.
+export function compDeltaToLocal(d: Pt, i: LayerQuadInput): Pt | null {
+  if (i.scaleX === 0 || i.scaleY === 0 || !Number.isFinite(i.scaleX) || !Number.isFinite(i.scaleY)) {
+    return null;
+  }
+  // Negative angle = the inverse rotation.
+  const rad = (-i.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    x: (d.x * cos - d.y * sin) / i.scaleX,
+    y: (d.x * sin + d.y * cos) / i.scaleY,
+  };
+}
+
+/// The `x`/`y` change that holds the PICTURE still while the anchor moves by
+/// `(dAnchorX, dAnchorY)` — i.e. what makes an on-canvas anchor drag behave like
+/// After Effects' pan-behind tool instead of swinging the layer.
+///
+/// Moving the anchor moves the pivot, and the pivot enters the composed position
+/// twice. Writing `q = (dAnchorX·naturalW, dAnchorY·naturalH)` for the pivot
+/// change in local pixels, the content's placement shifts by:
+///
+///   anchor origin (Text)   −R·S·q          (the local rect starts at −anchor·size)
+///   top-left origin (media) |S|·q − R·S·q  (position also adds pivot·|scale| back)
+///
+/// so the compensation is the negation of each. Two consequences worth knowing:
+/// at `rotation_deg = 0` with no flip the media case is exactly ZERO — the pivot
+/// moves and nothing else does — while Text ALWAYS needs compensation, because
+/// its `x`/`y` IS the anchor point and the glyphs hang off it.
+export function anchorCompensation(i: LayerQuadInput, dAnchorX: number, dAnchorY: number): Pt {
+  const qx = dAnchorX * i.naturalW;
+  const qy = dAnchorY * i.naturalH;
+  const rad = (i.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const sx = qx * i.scaleX;
+  const sy = qy * i.scaleY;
+  // R·S·q — the term both origins share.
+  const rx = sx * cos - sy * sin;
+  const ry = sx * sin + sy * cos;
+  if (i.origin === "anchor") return { x: rx, y: ry };
+  return { x: rx - qx * Math.abs(i.scaleX), y: ry - qy * Math.abs(i.scaleY) };
+}
+
 /// The `object-fit: contain` placement of a composition inside a client box —
 /// the FORWARD direction of `colorpick/pixel.ts` `containMap`. Null when the
 /// box or the composition is degenerate (zero-sized panel, no project).

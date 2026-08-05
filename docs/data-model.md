@@ -637,14 +637,18 @@ struct Transform {
     scale_x: Animated<f64>,
     scale_y: Animated<f64>,
     rotation_deg: Animated<f64>,
-    anchor: (f64, f64),               // 0..1 normalized; the transform PIVOT
+    anchor_x: Animated<f64>,          // 0..1 normalized; the transform PIVOT
+    anchor_y: Animated<f64>,
     scale_linked: bool,               // uniform-scale intent; default true
 }
 ```
 
-`anchor` is the **pivot**: what `rotation_deg` turns around and what a flip
-mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
-default). What `x`/`y` mean depends on the kind, and the difference is
+The anchor pair is the **pivot**: what `rotation_deg` turns around and what a
+flip mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
+default). It is `Animated` like the rest of the transform, so the pivot can be
+keyframed — a rotation whose centre travels needs nothing else. The pair is
+**unbounded**: a pivot outside the layer's own box is a legitimate authoring
+choice. What `x`/`y` mean depends on the kind, and the difference is
 deliberate:
 
 | Kind | `x`/`y` is | why |
@@ -657,6 +661,21 @@ The media kinds get there by compensating the position for the pivot
 position adds `pivot × |effective scale|` back. The absolute value is what makes
 a flip mirror **in place** instead of jumping to the other side of `x`. At
 `rotation_deg = 0` with no flip, the top-left lands on `(x, y)` at any scale.
+
+That asymmetry decides what *moving* the anchor does, and the two editing
+surfaces answer differently — deliberately, matching After Effects:
+
+| Surface | Writes | Effect on the picture |
+|---|---|---|
+| Inspector `Anchor X`/`Anchor Y` (and MCP / timeline lanes) | the anchor track alone | unchanged for an unrotated, unflipped media layer; **moves** a rotated, flipped, or Text layer |
+| The preview's on-canvas target | the anchor pair **plus** compensating `x`/`y`, in one commit | never moves — the pan-behind gesture |
+
+The compensation is `anchorCompensation` in `renderer/preview/gizmoGeometry.ts`,
+which is the negation of the anchor-dependent part of the composed position:
+`−R·S·q` for the anchor origin and `(|S| − R·S)·q` for the top-left one, where
+`q` is the anchor change in local pixels. For an unrotated media layer that term
+is exactly zero, so the common gesture writes two tracks, not four, and never
+stamps a redundant key on `x`/`y`.
 
 `scale_linked` records **uniform-scale intent**: while `true`, the two scale
 tracks are structural twins — same mode, and when keyframed the same
@@ -694,7 +713,15 @@ Keyframe times are **relative to the layer's start**. Otherwise moving a layer b
 
 `Interpolation` is per-segment, stored on the segment's left keyframe (`kf[i].interp` governs `kf[i] → kf[i+1]`): `Hold` (left-stick step), `Linear`, `EaseIn`/`EaseOut` (the CSS cubics `cubic-bezier(.42,0,1,1)` / `cubic-bezier(0,0,.58,1)`), and `Bezier{p1,p2}` — an arbitrary `cubic-bezier(x1,y1,x2,y2)` timing function. There are no per-keyframe in/out handles; velocity continuity through a keyframe is produced by the authoring-side Smooth command, which bakes matching tangents into the two adjacent segments.
 
-For MVP: only `opacity`, `position`, `scale`, `rotation`, `gain_db`, `pan` are animatable.
+Animatable params, by kind: the visual kinds carry `x`, `y`, `scale_x`,
+`scale_y`, `rotation_deg`, `anchor_x`, `anchor_y` and `opacity`; Audio carries
+`gain_db` and `pan`; Color carries none. Effect params are addressed as
+`effects[<id>].params[<key>]`. The list has ONE home per side —
+`animatableParams` in `renderer/keyframe/descriptors.ts` and
+`TRANSFORM_F64_KEYS` + `f64Lens` in `main/state/mutations/params.ts`, mirrored by
+`resolve_animated_f64` in `native/src/state/layer.rs`. A param missing from the
+descriptor list has no stopwatch, no timeline lane and no curve, however
+writable its track is.
 
 ## `Marker`
 

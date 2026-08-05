@@ -149,8 +149,8 @@ export interface MotifView {
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   /// Transform pivot — see `VideoClipView.anchor_x`.
-  anchor_x: number;
-  anchor_y: number;
+  anchor_x: AnimTrack<number>;
+  anchor_y: AnimTrack<number>;
   /// Window offset (µs) into the Motif's intrinsic content. Width = layer
   /// width; src_out is derived. 0 = content frame 0.
   src_in_us: number;
@@ -177,8 +177,12 @@ export interface VideoClipView {
   /// top-left, NOT the anchor point (a Text layer's `x`/`y` IS its anchor
   /// point, because measured text bounds move with the content). The
   /// compensation that keeps both true lives in `render/anchorPivot.ts`.
-  anchor_x: number;
-  anchor_y: number;
+  ///
+  /// Animatable like the rest of the transform, so every consumer must resolve
+  /// it at the layer-local time — `resolveView.ts` is that one point, and
+  /// `DEFAULT_ANCHOR` (anchorPivot.ts) is the one fallback.
+  anchor_x: AnimTrack<number>;
+  anchor_y: AnimTrack<number>;
   speed: number;
   flip_h: boolean;
   flip_v: boolean;
@@ -197,8 +201,8 @@ export interface ImageOverlayView {
   rotation_deg: AnimTrack<number>;
   opacity: AnimTrack<number>;
   /// Transform pivot — see `VideoClipView.anchor_x`.
-  anchor_x: number;
-  anchor_y: number;
+  anchor_x: AnimTrack<number>;
+  anchor_y: AnimTrack<number>;
   fade_in_us: number;
   fade_out_us: number;
 }
@@ -210,8 +214,10 @@ export interface TextView {
   weight: number;
   italic: boolean;
   align: "Left" | "Center" | "Right";
-  anchor_x: number;
-  anchor_y: number;
+  /// Transform pivot — see `VideoClipView.anchor_x`. For Text this IS the Pixi
+  /// anchor (the content hangs off `x`/`y`), so animating it slides the glyphs.
+  anchor_x: AnimTrack<number>;
+  anchor_y: AnimTrack<number>;
   color: AnimTrack<Rgba>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;

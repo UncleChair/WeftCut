@@ -1,6 +1,7 @@
 // On-canvas transform box for the primary selected layer: shows its footprint
-// over the preview, drags it to a new position, and rotates it by the knob on a
-// stalk above its top edge. No resize handles yet.
+// over the preview, drags it to a new position, rotates it by the knob on a
+// stalk above its top edge, and moves its anchor by the target reticle at the
+// pivot. No resize handles yet.
 //
 // Screen-space by design — an SVG overlay, not Pixi children. The stage is
 // read back by the eyedropper and by the conformance capture hooks, so anything
@@ -24,6 +25,7 @@ import {
 import { autoKeyTrack } from "../keyframe/autoKey";
 import { readParamTrack } from "../keyframe/descriptors";
 import { resolveAnimated } from "../render/animated";
+import { DEFAULT_ANCHOR } from "../render/anchorPivot";
 import {
   clearTransformOverride,
   setTransformOverride,
@@ -33,8 +35,10 @@ import { useProjectStore } from "../state/projectStore";
 import { playheadTimeUs } from "../state/playheadStore";
 import { usePrimaryLayerId } from "../state/selectionStore";
 import {
+  anchorCompensation,
   angleAboutDeg,
   clientDeltaToComp,
+  compDeltaToLocal,
   compToClient,
   containFit,
   layerPivot,
@@ -55,6 +59,13 @@ const ROTATE_GAP_PX = 26;
 const ROTATE_KNOB_R = 5;
 /// Shift-constrained rotation grid — the de-facto standard step.
 const ROTATE_SNAP_DEG = 15;
+/// The anchor target: a ring with crosshair arms reaching past it, and an
+/// invisible grab disc. Client pixels for the same reason as the knob. The arms
+/// out-reach the ring on purpose — the exact centre is the thing being placed,
+/// and a bare ring over busy footage hides it.
+const ANCHOR_RING_R = 5.5;
+const ANCHOR_ARM_PX = 9;
+const ANCHOR_HIT_R = 11;
 
 /// Color has no transform at all (it fills the composition) and Audio is not
 /// visual — neither gets a box.
@@ -70,8 +81,8 @@ interface TransformFields {
   scale_x?: AnimTrack<number>;
   scale_y?: AnimTrack<number>;
   rotation_deg?: AnimTrack<number>;
-  anchor_x?: number;
-  anchor_y?: number;
+  anchor_x?: AnimTrack<number>;
+  anchor_y?: AnimTrack<number>;
 }
 
 function transformFields(layer: LayerSummary): TransformFields {
@@ -127,7 +138,25 @@ interface RotateDrag extends DragBase {
   deltaDeg: number;
 }
 
-type Drag = MoveDrag | RotateDrag;
+interface AnchorDrag extends DragBase {
+  kind: "anchor";
+  startClientX: number;
+  startClientY: number;
+  /// The geometry the reticle was grabbed from, frozen at pointerdown. Both
+  /// halves of this gesture need it — the client→normalized conversion and the
+  /// pan-behind compensation — and freezing means the arithmetic can't shift
+  /// under the cursor when the layer is mid-animation.
+  frame: LayerQuadInput;
+  /// Normalized anchor delta, and the `x`/`y` compensation that holds the
+  /// picture still for it (`anchorCompensation`). Stored together because they
+  /// commit as one batch: applying one without the other is a visible jump.
+  dAnchorX: number;
+  dAnchorY: number;
+  compDx: number;
+  compDy: number;
+}
+
+type Drag = MoveDrag | RotateDrag | AnchorDrag;
 
 function TransformGizmo({
   layer,
@@ -140,11 +169,15 @@ function TransformGizmo({
   const boxRef = useRef<SVGPolygonElement | null>(null);
   const stalkRef = useRef<SVGLineElement | null>(null);
   const knobRef = useRef<SVGCircleElement | null>(null);
+  const anchorRef = useRef<SVGGElement | null>(null);
   const dragRef = useRef<Drag | null>(null);
   /// The pivot the last drawn frame used, in client pixels. A rotate gesture
   /// starts from what the user actually grabbed rather than from a geometry
   /// re-resolved a frame later.
   const pivotRef = useRef<Pt | null>(null);
+  /// Likewise the whole transform frame of the last drawn box — what an anchor
+  /// gesture converts its cursor movement through.
+  const geomRef = useRef<LayerQuadInput | null>(null);
   // Latest props for the rAF loop + pointer handlers, so neither has to be
   // re-created (and the loop re-started) on every project refresh.
   const layerRef = useRef(layer);
@@ -174,14 +207,16 @@ function TransformGizmo({
       const box = boxRef.current;
       const stalk = stalkRef.current;
       const knob = knobRef.current;
+      const anchor = anchorRef.current;
       const svg = svgRef.current;
       const probe = getGizmoProbe();
-      if (!box || !stalk || !knob || !svg) return;
+      if (!box || !stalk || !knob || !anchor || !svg) return;
       const show = (on: boolean): void => {
         const display = on ? "" : "none";
         box.style.display = display;
         stalk.style.display = display;
         knob.style.display = display;
+        anchor.style.display = display;
       };
       const hide = (): void => show(false);
       if (!probe) return hide();
@@ -196,28 +231,31 @@ function TransformGizmo({
       if (!fit) return hide();
       const p = transformFields(l);
       const tLocalUs = tUs - l.t_start_us;
-      const drag = dragRef.current;
-      const move = drag?.kind === "move" ? drag : null;
+      // The in-flight gesture is read from the OVERRIDE map rather than from
+      // `dragRef`, because that map is also what the Compositor folds into the
+      // picture (`withTransformOverride`). Same source ⇒ the box and the
+      // footprint it outlines cannot disagree mid-drag, whichever handle is
+      // being moved. Absent (no gesture) ⇒ all zeroes.
+      const d = transformOverrideFor(l.id);
       // The box is the layer's footprint, so it reads the UNSIGNED scale: a
       // flip mirrors the content within the same box (anchorPivot.ts), so
       // folding `flip_h` in here would only reverse the vertex order.
       const geom: LayerQuadInput = {
-        x: resolveAnimated(p.x, tLocalUs, 0) + (move?.dxComp ?? 0),
-        y: resolveAnimated(p.y, tLocalUs, 0) + (move?.dyComp ?? 0),
-        // Raw, NOT `?? 0.5`: `anchorOr` inside the geometry owns the default,
-        // and it is the same one the renderer applies. A local fallback here is
-        // exactly how the box and the picture drifted apart before.
-        anchorX: p.anchor_x,
-        anchorY: p.anchor_y,
+        x: resolveAnimated(p.x, tLocalUs, 0) + (d?.dx ?? 0),
+        y: resolveAnimated(p.y, tLocalUs, 0) + (d?.dy ?? 0),
+        // DEFAULT_ANCHOR and nothing else — the same constant the renderer
+        // resolves through (resolveView.ts). A local fallback here is exactly
+        // how the box and the picture once pivoted around different points.
+        anchorX: resolveAnimated(p.anchor_x, tLocalUs, DEFAULT_ANCHOR) + (d?.danchorX ?? 0),
+        anchorY: resolveAnimated(p.anchor_y, tLocalUs, DEFAULT_ANCHOR) + (d?.danchorY ?? 0),
         naturalW: size.w,
         naturalH: size.h,
         scaleX: resolveAnimated(p.scale_x, tLocalUs, 1),
         scaleY: resolveAnimated(p.scale_y, tLocalUs, 1),
-        rotationDeg:
-          resolveAnimated(p.rotation_deg, tLocalUs, 0) +
-          (drag?.kind === "rotate" ? drag.deltaDeg : 0),
+        rotationDeg: resolveAnimated(p.rotation_deg, tLocalUs, 0) + (d?.drotDeg ?? 0),
         origin: originFor(p.kind),
       };
+      geomRef.current = geom;
       // The SVG is inset:0 inside the preview panel, so subtract its own client
       // origin to land in its coordinate system. A pure translation, so the
       // handle's screen-space gap survives it unchanged.
@@ -226,7 +264,12 @@ function TransformGizmo({
       const corners = layerQuad(geom).map((corner) => local(compToClient(corner, fit)));
       box.setAttribute("points", corners.map((c) => `${c.x},${c.y}`).join(" "));
       // Client, not SVG-local: pointer events speak client coordinates.
-      pivotRef.current = compToClient(layerPivot(geom), fit);
+      const pivotClient = compToClient(layerPivot(geom), fit);
+      pivotRef.current = pivotClient;
+      // The reticle's parts are drawn once around (0,0) and the whole group is
+      // translated — one attribute write per frame instead of six.
+      const pivotLocal = local(pivotClient);
+      anchor.setAttribute("transform", `translate(${pivotLocal.x} ${pivotLocal.y})`);
       const handle = rotateHandle(corners, ROTATE_GAP_PX);
       if (!handle) return hide();
       stalk.setAttribute("x1", String(handle.root.x));
@@ -394,6 +437,95 @@ function TransformGizmo({
     });
   };
 
+  const beginAnchor = (e: React.PointerEvent<SVGCircleElement>): void => {
+    if (e.button !== 0) return;
+    // Must beat the box underneath, which claims its whole footprint as a move
+    // handle and contains the reticle by construction.
+    e.preventDefault();
+    e.stopPropagation();
+    const frame = geomRef.current;
+    if (!frame) return;
+    dragRef.current = {
+      kind: "anchor",
+      tInLayerUs: grabTimeUs(),
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      frame,
+      dAnchorX: 0,
+      dAnchorY: 0,
+      compDx: 0,
+      compDy: 0,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const moveAnchor = (e: React.PointerEvent<SVGCircleElement>): void => {
+    const drag = dragRef.current;
+    if (drag?.kind !== "anchor") return;
+    const rect = getGizmoProbe()?.canvasRect();
+    const fit = rect ? containFit(rect, compRef.current.width, compRef.current.height) : null;
+    if (!fit) return;
+    const frame = drag.frame;
+    if (frame.naturalW <= 0 || frame.naturalH <= 0) return;
+    // client → composition → the layer's own local pixels → normalized. The
+    // middle step is what keeps the reticle under the cursor on a rotated or
+    // non-uniformly scaled layer.
+    const dComp = clientDeltaToComp(
+      e.clientX - drag.startClientX,
+      e.clientY - drag.startClientY,
+      fit,
+    );
+    const dLocal = compDeltaToLocal(dComp, frame);
+    if (!dLocal) return; // a flat axis has no local extent to move along
+    drag.dAnchorX = dLocal.x / frame.naturalW;
+    drag.dAnchorY = dLocal.y / frame.naturalH;
+    const comp = anchorCompensation(frame, drag.dAnchorX, drag.dAnchorY);
+    drag.compDx = comp.x;
+    drag.compDy = comp.y;
+    setTransformOverride(layerRef.current.id, {
+      dx: comp.x,
+      dy: comp.y,
+      danchorX: drag.dAnchorX,
+      danchorY: drag.dAnchorY,
+    });
+  };
+
+  const endAnchor = (e: React.PointerEvent<SVGCircleElement>): void => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (drag?.kind !== "anchor") return;
+    const l = layerRef.current;
+    if (drag.dAnchorX === 0 && drag.dAnchorY === 0) {
+      clearTransformOverride(l.id);
+      return;
+    }
+    const at = (key: string, fallback: number): AnimTrack<number> =>
+      readParamTrack(l.params, key) ?? { mode: "Static", value: fallback };
+    const anchorX = at("anchor_x", DEFAULT_ANCHOR);
+    const anchorY = at("anchor_y", DEFAULT_ANCHOR);
+    const entries: Array<[string, AnimTrack<number>]> = [
+      ["anchor_x", autoKeyTrack(anchorX, drag.tInLayerUs, resolveAnimated(anchorX, drag.tInLayerUs, DEFAULT_ANCHOR) + drag.dAnchorX)],
+      ["anchor_y", autoKeyTrack(anchorY, drag.tInLayerUs, resolveAnimated(anchorY, drag.tInLayerUs, DEFAULT_ANCHOR) + drag.dAnchorY)],
+    ];
+    // The pan-behind compensation rides the SAME batch — one undo step for the
+    // whole gesture. Skipped when it is exactly zero, which is the common case
+    // (an unrotated, unflipped media layer): writing it anyway would stamp a
+    // redundant key on `x`/`y` for a gesture that never moved the picture.
+    if (drag.compDx !== 0 || drag.compDy !== 0) {
+      const xTrack = at("x", 0);
+      const yTrack = at("y", 0);
+      entries.push(
+        ["x", autoKeyTrack(xTrack, drag.tInLayerUs, resolveAnimated(xTrack, drag.tInLayerUs, 0) + drag.compDx)],
+        ["y", autoKeyTrack(yTrack, drag.tInLayerUs, resolveAnimated(yTrack, drag.tInLayerUs, 0) + drag.compDy)],
+      );
+    }
+    updateLayerParamTracks(l.id, entries).catch((err) => {
+      clearTransformOverride(l.id);
+      console.warn("transform gizmo anchor commit failed:", err);
+    });
+  };
+
   return (
     <svg
       ref={svgRef}
@@ -463,6 +595,56 @@ function TransformGizmo({
           display: "none",
         }}
       />
+      {/* The anchor target, LAST in document order on purpose: it sits inside
+          the box, which claims its whole footprint for the move drag, and SVG
+          hit-tests the topmost painted element — so an earlier reticle would be
+          unreachable. Every child is drawn about (0,0) and the group carries the
+          translate (see the draw loop). */}
+      <g ref={anchorRef} data-testid="transform-gizmo-anchor" style={{ display: "none" }}>
+        {/* Dark under-stroke, then the light ring/arms on top: the target has to
+            stay legible over both a white and a black frame, and the preview has
+            no background to contrast against. */}
+        <g
+          style={{
+            fill: "none",
+            stroke: "rgba(0, 0, 0, 0.55)",
+            strokeWidth: 3.5,
+            pointerEvents: "none",
+          }}
+        >
+          <circle cx={0} cy={0} r={ANCHOR_RING_R} />
+          <line x1={-ANCHOR_ARM_PX} y1={0} x2={ANCHOR_ARM_PX} y2={0} />
+          <line x1={0} y1={-ANCHOR_ARM_PX} x2={0} y2={ANCHOR_ARM_PX} />
+        </g>
+        <g
+          style={{
+            fill: "none",
+            stroke: "var(--ring)",
+            strokeWidth: 1.5,
+            pointerEvents: "none",
+          }}
+        >
+          <circle cx={0} cy={0} r={ANCHOR_RING_R} />
+          <line x1={-ANCHOR_ARM_PX} y1={0} x2={ANCHOR_ARM_PX} y2={0} />
+          <line x1={0} y1={-ANCHOR_ARM_PX} x2={0} y2={ANCHOR_ARM_PX} />
+        </g>
+        <circle
+          data-testid="transform-gizmo-anchor-grab"
+          cx={0}
+          cy={0}
+          r={ANCHOR_HIT_R}
+          onPointerDown={beginAnchor}
+          onPointerMove={moveAnchor}
+          onPointerUp={endAnchor}
+          onPointerCancel={endAnchor}
+          style={{
+            // Invisible but hit-testable, same trick as the box's fill.
+            fill: "rgba(0, 0, 0, 0)",
+            pointerEvents: "all",
+            cursor: "move",
+          }}
+        />
+      </g>
     </svg>
   );
 }

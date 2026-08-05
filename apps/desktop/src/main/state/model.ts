@@ -24,7 +24,13 @@ export interface Transform {
   x: Animated<number>; y: Animated<number>
   scale_x: Animated<number>; scale_y: Animated<number>
   rotation_deg: Animated<number>
-  anchor: [number, number]
+  /** Normalized transform PIVOT (0.5 = centre on that axis) — what rotation
+   *  turns around and what a flip mirrors about; animatable like the rest of the
+   *  transform. Replaced a plain `anchor: [x, y]` tuple WITHOUT a schema bump,
+   *  so the tuple→tracks conversion lives in parseProject's backfill
+   *  (serialize.ts) — the one place that sees legacy shapes. */
+  anchor_x: Animated<number>
+  anchor_y: Animated<number>
   /** Uniform-scale intent: true ⇒ scale_x/scale_y are structural twins and edit
    *  as one. Invariant enforced on results (mutations/scaleLink.ts); absent on
    *  older saves — parseProject backfills it from a twin check, never blindly. */

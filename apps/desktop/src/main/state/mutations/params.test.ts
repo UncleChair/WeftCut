@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Layer, type MotifParams, type Project } from '../model'
+import { blankProject, type Layer, type LayerParams, type MotifParams, type Project } from '../model'
 import { applyAddLayer, colorParams, textParamsDefault } from './add'
 import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
-import { applyUpdateLayerParams, applyUpdateLayerParamTrack } from './params'
+import { applyUpdateLayerParams, applyUpdateLayerParamTrack, resolveAnimatedF64 } from './params'
+// Reaching across into the renderer is deliberate and is the POINT of the gate at
+// the bottom of this file: the two lists have to agree, and only a test that sees
+// both can prove it. `descriptors.ts` is pure data with type-only imports, so it
+// pulls no DOM into the main-process test realm.
+import { animatableParams } from '../../../renderer/keyframe/descriptors'
 import { MotifCatalog } from '../../../shared/motifs/catalog'
 import { validate } from '../validate'
 
@@ -108,10 +113,61 @@ describe('applyUpdateLayerParamTrack', () => {
   })
 })
 
+// ── The cross-layer gate: every param the UI OFFERS must be writable here ─────
+// This is the failure this suite exists to prevent, and it has a specific shape:
+// the renderer decides which params get a stopwatch, a timeline lane and a curve
+// (`animatableParams`), while THIS module decides which param keys a write is
+// allowed to land on (`TRANSFORM_F64_KEYS` → `f64Lens`). Add a param to one side
+// only and nothing fails to compile: the field renders, the stopwatch turns, and
+// every write dies with `UnknownKeyframeParam` at the IPC boundary — a control
+// that looks alive and silently refuses every edit.
+describe('animatable params are writable on both sides of the IPC boundary', () => {
+  const KINDS = ['VideoClip', 'ImageOverlay', 'Text', 'Motif', 'Audio', 'Color']
+
+  for (const kind of KINDS) {
+    for (const linked of [false, true]) {
+      it(`${kind}${linked ? ' (scale-linked)' : ''}: every offered key resolves to a writable slot`, () => {
+        const keys = new Set<string>()
+        for (const d of animatableParams(kind, linked)) {
+          keys.add(d.paramKey)
+          // A composite descriptor writes to its fan-out keys, not just its own.
+          for (const k of d.fanOutKeys ?? []) keys.add(k)
+        }
+        const layer = layerForKind(kind)
+        for (const key of keys) {
+          expect(resolveAnimatedF64(layer, key), `${kind}.${key} must be readable`).not.toBeNull()
+        }
+      })
+    }
+  }
+
+  it('and rejects a key no kind offers, so the gate above is not vacuous', () => {
+    expect(resolveAnimatedF64(layerForKind('VideoClip'), 'anchor_z')).toBeNull()
+    expect(resolveAnimatedF64(layerForKind('Audio'), 'anchor_x')).toBeNull()
+    expect(animatableParams('Color')).toEqual([])
+  })
+
+  /** A minimal Layer of `kind`, built through the production param factories so
+   *  the transform shape can't drift from what the app actually creates. */
+  function layerForKind(kind: string): Layer {
+    const g = seededGen()
+    const p = blankProject(g, 'gate')
+    const params: LayerParams =
+      kind === 'Text' ? textParamsDefault('hi')
+      : kind === 'Color' ? colorParams({ r: 1, g: 2, b: 3, a: 255 }, 16, 9)
+      : kind === 'Audio' ? audioParams('00000000-0000-0000-0000-0000000000a1', 0, 1_000_000)
+      : kind === 'Motif' ? { kind: 'Motif', motif_id: 'countdown', motif_version: 1, props: {}, src_in_us: 0, transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 } } as LayerParams
+      : kind === 'ImageOverlay' ? { kind: 'ImageOverlay', media: '00000000-0000-0000-0000-0000000000a2', transform: textParamsDefaultTransform(), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 } as LayerParams
+      : videoClipParams('00000000-0000-0000-0000-0000000000a3', 0, 1_000_000)
+    const id = applyAddLayer(p, g, p.tracks[0].id, params, 0, 1_000_000)
+    return layerOf(p, id)
+  }
+})
+
 // local helper for the hand-built Motif layer (mirrors add.ts defaultTransform)
 function textParamsDefaultTransform() {
   const s = (v: number) => ({ mode: 'Static' as const, value: v })
-  return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5] as [number, number], scale_linked: true }
+  return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor_x: s(0.5), anchor_y: s(0.5), scale_linked: true }
 }
 
 describe('applyUpdateLayerParams — Motif content-window clamp', () => {

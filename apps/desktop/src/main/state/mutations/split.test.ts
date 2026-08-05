@@ -42,7 +42,7 @@ describe('applySplitLayer', () => {
   it('partitions src_in/src_out for media kinds', () => {
     const p = blankProject(seededGen(), 't')
     const vid: Layer = { id: 'v', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {},
-      params: { kind: 'VideoClip', media: 'm', src_in_us: 500_000, src_out_us: 1_500_000, transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0, 0] } as any, opacity: { mode: 'Static', value: 1 }, crop: null } as any, effects: [] }
+      params: { kind: 'VideoClip', media: 'm', src_in_us: 500_000, src_out_us: 1_500_000, transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0 }, anchor_y: { mode: 'Static', value: 0 } } as any, opacity: { mode: 'Static', value: 1 }, crop: null } as any, effects: [] }
     p.tracks[0].layers = [vid]
     applySplitLayer(p, seededGen(), 'v', 400_000, false) // offset 400_000
     const [l, rr] = p.tracks[0].layers as any

@@ -78,7 +78,7 @@ describe('actor.command("add_motif") — no track_id', () => {
       scale_x: { mode: 'Static', value: 1 },
       scale_y: { mode: 'Static', value: 1 },
       rotation_deg: { mode: 'Static', value: 0 },
-      anchor: [0.5, 0.5],
+      anchor_x: { mode: 'Static', value: 0.5 }, anchor_y: { mode: 'Static', value: 0.5 },
       scale_linked: true,
     })
     expect(p.opacity).toEqual({ mode: 'Static', value: 1 })

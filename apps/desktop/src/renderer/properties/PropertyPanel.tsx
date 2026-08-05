@@ -34,7 +34,7 @@ import {
   type TrackSummary,
   trackStatic,
 } from "../ipc";
-import { X, Y, ROTATION, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { X, Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
 import { layerDisplayName } from "../lib/layerName";
 import { InspectorAnimField } from "./InspectorAnimField";
 import { ScaleFields } from "./ScaleFields";
@@ -511,9 +511,13 @@ function commitLayerParams(layerId: string, onMutated: () => Promise<void>): Com
 }
 
 /// Unified transform Section for the visual kinds (Text, VideoClip,
-/// ImageOverlay, Motif): opacity, position, scale, rotation. Position and
-/// scale pair their two axes into one row each (`.prop-field-pair`); opacity
-/// and rotation stay full-width.
+/// ImageOverlay, Motif): opacity, position, scale, rotation, anchor. Position,
+/// scale and anchor pair their two axes into one row each (`.prop-field-pair`);
+/// opacity and rotation stay full-width.
+///
+/// Anchor sits AFTER rotation because it is read as "what that rotation turns
+/// around" — and it stays in the core section rather than the advanced bucket
+/// because the on-canvas target makes it a routine gesture, not a rare setting.
 function TransformSection({
   layer,
   scaleLinked,
@@ -544,6 +548,10 @@ function TransformSection({
         <ScaleFields layer={layer} scaleLinked={scaleLinked} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       </div>
       <InspectorAnimField layer={layer} desc={ROTATION} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <div className="prop-field-pair">
+        <InspectorAnimField layer={layer} desc={ANCHOR_X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+        <InspectorAnimField layer={layer} desc={ANCHOR_Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      </div>
     </PropSection>
   );
 }

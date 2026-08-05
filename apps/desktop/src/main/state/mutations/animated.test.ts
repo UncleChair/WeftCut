@@ -43,11 +43,11 @@ describe('animated traversal', () => {
     const text: LayerParams = {
       kind: 'Text', content: 'x', font: {} as any, color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } },
       align: 'left' as any,
-      transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0, 0] } as any,
+      transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor_x: { mode: 'Static', value: 0 }, anchor_y: { mode: 'Static', value: 0 } } as any,
       opacity: { mode: 'Static', value: 1 }, shadow: null, outline: null,
       intro: null, outro: null, backend_hint: 'Auto',
     }
-    let n = 0; forEachAnimatedF64(text, () => { n++ }); expect(n).toBe(6) // opacity + x,y,sx,sy,rot
+    let n = 0; forEachAnimatedF64(text, () => { n++ }); expect(n).toBe(8) // opacity + x,y,sx,sy,rot,ax,ay
     const color: LayerParams = { kind: 'Color', color: { mode: 'Static', value: { r: 0, g: 0, b: 0, a: 255 } }, width: 1, height: 1 }
     let m = 0; forEachAnimatedF64(color, () => { m++ }); expect(m).toBe(0)
   })

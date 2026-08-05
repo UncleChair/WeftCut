@@ -171,7 +171,7 @@ Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
 - `clear_keyframes { layer_id, param_key, value? }` — collapse to Static (defaults to the first keyframe's value).
 - `set_param_track { layer_id, param_key, track }` — low-level: replace the whole `AnimTrack<f64>` (keyframe `t_us` timeline-absolute).
 
-Valid `param_key`: VideoClip/ImageOverlay/Text/Motif → `x, y, scale_x, scale_y, rotation_deg, opacity`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them. Keying only one scale axis of a scale-linked layer diverges the twin pair and auto-clears the link in the same commit (see `set_scale_linked`); write both axes identically to animate a linked layer's scale.
+Valid `param_key`: VideoClip/ImageOverlay/Text/Motif → `x, y, scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them. Keying only one scale axis of a scale-linked layer diverges the twin pair and auto-clears the link in the same commit (see `set_scale_linked`); write both axes identically to animate a linked layer's scale.
 
 Groups (see [features.md §Groups](features.md#groups)):
 - `groups_create { layer_ids, label?, reassign? }` → `GroupId`

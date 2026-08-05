@@ -38,6 +38,18 @@ const SCALE_PAIR = ["scale_x", "scale_y"];
 /// writes fan out to both axes as one batch.
 export const SCALE: ParamDescriptor = { paramKey: "scale_x", labelKey: "property_panel.scale", fallback: 1, step: 0.05, widgets: ["number"], fanOutKeys: SCALE_PAIR };
 export const ROTATION: ParamDescriptor = { paramKey: "rotation_deg", labelKey: "property_panel.rotation", fallback: 0, step: 1, widgets: ["number"] };
+/// The transform pivot, NORMALIZED (0.5 = centre, the fallback), not pixels:
+/// that is what the wire stores, and the inspector has no natural size to
+/// convert with — only the renderer's gizmo probe does. Deliberately UNBOUNDED
+/// (no min/max): a pivot outside the layer's own box is a legitimate authoring
+/// choice, e.g. swinging a layer about a point off-screen.
+///
+/// LANDMINE: writing this field moves the picture whenever the layer is rotated
+/// or is a Text layer (its `x`/`y` IS the anchor point). That asymmetry is
+/// intentional and matches AE — the on-canvas target compensates `x`/`y` so the
+/// picture stays put, the number field does not.
+export const ANCHOR_X: ParamDescriptor = { paramKey: "anchor_x", labelKey: "property_panel.anchor_x", fallback: 0.5, step: 0.01, widgets: ["number"] };
+export const ANCHOR_Y: ParamDescriptor = { paramKey: "anchor_y", labelKey: "property_panel.anchor_y", fallback: 0.5, step: 0.01, widgets: ["number"] };
 export const OPACITY: ParamDescriptor = { paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1, step: 0.01, min: 0, max: 1, widgets: ["slider", "readout"] };
 export const GAIN_DB: ParamDescriptor = { paramKey: "gain_db", labelKey: "property_panel.gain_db", fallback: 0, step: 0.5, min: -30, max: 20, widgets: ["number"] };
 export const PAN: ParamDescriptor = { paramKey: "pan", labelKey: "property_panel.pan", fallback: 0, step: 0.05, min: -1, max: 1, widgets: ["slider"] };
@@ -51,7 +63,9 @@ export function animatableParams(kind: string, scaleLinked = false): ParamDescri
     case "Motif":
     case "ImageOverlay":
     case "Text":
-      return scaleLinked ? [X, Y, SCALE, ROTATION, OPACITY] : [X, Y, SCALE_X, SCALE_Y, ROTATION, OPACITY];
+      return scaleLinked
+        ? [X, Y, SCALE, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY]
+        : [X, Y, SCALE_X, SCALE_Y, ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY];
     case "Audio":
       return [GAIN_DB, PAN];
     default:

@@ -95,7 +95,7 @@ const textLayers = () => [{
     align: 'Center',
     transform: {
       x: staticNum(0), y: staticNum(0), scale_x: staticNum(1), scale_y: staticNum(1),
-      rotation_deg: staticNum(0), anchor: [0.5, 0.5],
+      rotation_deg: staticNum(0), anchor_x: staticNum(0.5), anchor_y: staticNum(0.5),
     },
     opacity: staticNum(1),
     shadow: null, outline: null, intro: null, outro: null,

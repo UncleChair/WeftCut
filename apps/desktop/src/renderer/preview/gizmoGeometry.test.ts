@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  anchorCompensation,
   angleAboutDeg,
   clientDeltaToComp,
+  compDeltaToLocal,
   compToClient,
   containFit,
   layerPivot,
@@ -210,5 +212,69 @@ describe("containFit", () => {
   it("scales a client drag UP into composition pixels on a shrunken preview", () => {
     const fit = containFit(rect, 1280, 720)!;
     expect(clientDeltaToComp(10, -4, fit)).toEqual({ x: 20, y: -8 });
+  });
+});
+
+describe("compDeltaToLocal", () => {
+  it("is the identity on an unrotated, unit-scaled layer", () => {
+    expect(compDeltaToLocal({ x: 30, y: -12 }, mediaLayer)).toEqual({ x: 30, y: -12 });
+  });
+
+  it("un-rotates and un-scales, so a screen drag means what it does LOCALLY", () => {
+    // Rotated 90° clockwise: dragging right in composition space walks UP the
+    // layer's own y axis. This is the whole reason an anchor drag can't use the
+    // composition delta directly.
+    const r = compDeltaToLocal({ x: 80, y: 0 }, { ...mediaLayer, rotationDeg: 90 })!;
+    expect(r.x).toBeCloseTo(0, 9);
+    expect(r.y).toBeCloseTo(-80, 9);
+    // Non-uniform scale divides per axis.
+    expect(
+      compDeltaToLocal({ x: 80, y: 30 }, { ...mediaLayer, scaleX: 4, scaleY: 0.5 }),
+    ).toEqual({ x: 20, y: 60 });
+  });
+
+  it("is null on a flattened axis rather than returning Infinity", () => {
+    expect(compDeltaToLocal({ x: 1, y: 1 }, { ...mediaLayer, scaleX: 0 })).toBeNull();
+    expect(compDeltaToLocal({ x: 1, y: 1 }, { ...mediaLayer, scaleY: 0 })).toBeNull();
+  });
+});
+
+describe("anchorCompensation", () => {
+  it("is ZERO for an unrotated, unflipped media layer at any scale", () => {
+    // The pivot moves and the picture does not — so the gesture writes the
+    // anchor pair alone, and no redundant key lands on x/y.
+    for (const scale of [1, 3, 0.25]) {
+      const c = anchorCompensation(
+        { ...mediaLayer, scaleX: scale, scaleY: scale },
+        0.25,
+        -0.5,
+      );
+      expect(c.x).toBeCloseTo(0, 9);
+      expect(c.y).toBeCloseTo(0, 9);
+    }
+  });
+
+  it("holds a rotated media layer's picture still", () => {
+    // 200×100 layer rotated 90°, anchor moved −0.2222 on the local y axis
+    // (= −80 px): (|S| − R·S)·q = (−80, −80), so the fix is (+80, +80).
+    const c = anchorCompensation({ ...mediaLayer, rotationDeg: 90 }, 0, -0.8);
+    expect(c.x).toBeCloseTo(80, 9);
+    expect(c.y).toBeCloseTo(80, 9);
+  });
+
+  it("always compensates a Text layer, because its x/y IS the anchor point", () => {
+    // No rotation, unit scale: the glyphs hang off (x, y), so moving the anchor
+    // half a width to the right must move x half a width right to stay put.
+    const c = anchorCompensation({ ...mediaLayer, origin: "anchor" }, 0.5, 0.25);
+    expect(c).toEqual({ x: 100, y: 25 });
+  });
+
+  it("mirrors the compensation for a flipped layer", () => {
+    // Flip is a negative scale. The pivot term uses |scale| and the rotation
+    // term the signed one, which is what keeps a flip mirroring IN PLACE
+    // (anchorPivot.ts) — so the two no longer cancel at rotation 0.
+    const c = anchorCompensation({ ...mediaLayer, scaleX: -1 }, 0.5, 0);
+    expect(c.x).toBeCloseTo(-200, 9);
+    expect(c.y).toBeCloseTo(0, 9);
   });
 });

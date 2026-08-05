@@ -42,8 +42,8 @@ function fixture(params?: Partial<Record<string, unknown>>, kind = "VideoClip"):
     scale_y: stat(1),
     scale_linked: true,
     rotation_deg: stat(0),
-    anchor_x: 0.5,
-    anchor_y: 0.5,
+    anchor_x: { mode: "Static", value: 0.5 },
+    anchor_y: { mode: "Static", value: 0.5 },
     opacity: stat(1),
     speed: 1,
     flip_h: false,
@@ -380,6 +380,154 @@ describe("TransformGizmo rotation handle", () => {
 
     fireEvent.pointerDown(rot, { button: 0, ...KNOB });
     fireEvent.pointerUp(rot, KNOB);
+    expect(commit).not.toHaveBeenCalled();
+    expect(transformOverrideFor("l1")).toBeUndefined();
+  });
+});
+
+/// Entries of the single commit batch, as `[key, value]` for Static tracks.
+function committedStatics(): Array<[string, number]> {
+  const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+  return entries.map(([k, t]) => [k, (t as { mode: "Static"; value: number }).value]);
+}
+
+async function reticle(): Promise<HTMLElement> {
+  const el = await screen.findByTestId("transform-gizmo-anchor-grab");
+  await waitFor(() =>
+    expect(screen.getByTestId("transform-gizmo-anchor").getAttribute("transform")).not.toBeNull(),
+  );
+  return el;
+}
+
+describe("TransformGizmo anchor target", () => {
+  it("sits on the pivot, and hides with the box off-span", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    await reticle();
+    // One translate on the group; the ring and crosshair are drawn about (0,0).
+    expect(screen.getByTestId("transform-gizmo-anchor").getAttribute("transform")).toBe(
+      `translate(${PIVOT.x} ${PIVOT.y})`,
+    );
+  });
+
+  it("follows a keyed-off-centre anchor rather than the box centre", async () => {
+    useProjectStore.getState().apply(
+      fixture({ anchor_x: stat(0), anchor_y: stat(1) }),
+    );
+    render(<TransformGizmoHost />);
+    await box();
+    await reticle();
+    // anchor (0,1) on a 640×360 layer at (0,0) ⇒ comp (0,360) ⇒ client (0,180).
+    expect(screen.getByTestId("transform-gizmo-anchor").getAttribute("transform")).toBe(
+      "translate(0 180)",
+    );
+  });
+
+  it("previews the drag in normalized units, with no compensation to make", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await reticle();
+    fireEvent.pointerDown(el, { button: 0, clientX: PIVOT.x, clientY: PIVOT.y });
+    // +40/+18 client ⇒ +80/+36 comp ⇒ 80/640 and 36/360 of the layer.
+    fireEvent.pointerMove(el, { clientX: PIVOT.x + 40, clientY: PIVOT.y + 18 });
+    expect(transformOverrideFor("l1")).toEqual({
+      dx: 0,
+      dy: 0,
+      danchorX: 0.125,
+      danchorY: 0.1,
+    });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("commits the anchor pair ALONE on an unrotated layer", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await reticle();
+    fireEvent.pointerDown(el, { button: 0, clientX: PIVOT.x, clientY: PIVOT.y });
+    fireEvent.pointerMove(el, { clientX: PIVOT.x + 40, clientY: PIVOT.y + 18 });
+    fireEvent.pointerUp(el, { clientX: PIVOT.x + 40, clientY: PIVOT.y + 18 });
+    // No x/y: the picture never moved, so keying position would be noise.
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(committedStatics()).toEqual([
+      ["anchor_x", 0.625],
+      ["anchor_y", 0.6],
+    ]);
+  });
+
+  it("rides compensating x/y in the SAME batch on a rotated layer", async () => {
+    useProjectStore.getState().apply(fixture({ rotation_deg: stat(90) }));
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await reticle();
+    fireEvent.pointerDown(el, { button: 0, clientX: PIVOT.x, clientY: PIVOT.y });
+    // +40 client ⇒ +80 comp; on a 90°-rotated layer that is −80 px along its own
+    // y axis, i.e. −80/360 of the anchor.
+    fireEvent.pointerMove(el, { clientX: PIVOT.x + 40, clientY: PIVOT.y });
+    fireEvent.pointerUp(el, { clientX: PIVOT.x + 40, clientY: PIVOT.y });
+    expect(commit).toHaveBeenCalledTimes(1);
+    const entries = committedStatics();
+    expect(entries.map(([k]) => k)).toEqual(["anchor_x", "anchor_y", "x", "y"]);
+    expect(entries[0]![1]).toBeCloseTo(0.5, 9);
+    expect(entries[1]![1]).toBeCloseTo(0.5 - 80 / 360, 9);
+    // (|S| − R·S)·q = (−80, −80), so the fix is (+80, +80) — the picture stays.
+    expect(entries[2]![1]).toBeCloseTo(80, 9);
+    expect(entries[3]![1]).toBeCloseTo(80, 9);
+  });
+
+  it("compensates a Text layer even unrotated, because its x/y IS the anchor", async () => {
+    useProjectStore.getState().apply(fixture({}, "Text"));
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await reticle();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 40, clientY: 18 });
+    fireEvent.pointerUp(el, { clientX: 40, clientY: 18 });
+    expect(committedStatics()).toEqual([
+      ["anchor_x", 0.625],
+      ["anchor_y", 0.6],
+      ["x", 80],
+      ["y", 36],
+    ]);
+  });
+
+  it("keys a keyframed anchor at the frame-snapped playhead", async () => {
+    useProjectStore.getState().apply(
+      fixture({
+        anchor_x: {
+          mode: "Keyframed",
+          value: [{ id: "k1", t_us: 0, value: 0.25, interp: { kind: "Linear" } }],
+        } as AnimTrack<number>,
+      }),
+    );
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await reticle();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 40, clientY: 0 });
+    fireEvent.pointerUp(el, { clientX: 40, clientY: 0 });
+    const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+    const ax = entries[0]![1];
+    expect(ax.mode).toBe("Keyframed");
+    // Playhead 2.5 s − layer start 2 s = frame 15 at 30 fps; 0.25 + 0.125.
+    const keys = ax.value as Array<{ t_us: number; value: number }>;
+    expect(keys.find((k) => k.t_us === 500_000)?.value).toBeCloseTo(0.375, 9);
+    // anchor_y was Static and stays Static — two independent tracks.
+    expect(entries[1]![1]).toEqual({ mode: "Static", value: 0.5 });
+  });
+
+  it("cancels on Escape and ignores a reticle click that never moved", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await reticle();
+    fireEvent.pointerDown(el, { button: 0, clientX: PIVOT.x, clientY: PIVOT.y });
+    fireEvent.pointerMove(el, { clientX: PIVOT.x + 40, clientY: PIVOT.y });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(transformOverrideFor("l1")).toBeUndefined();
+    fireEvent.pointerUp(el, { clientX: PIVOT.x + 40, clientY: PIVOT.y });
+    expect(commit).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(el, { button: 0, clientX: PIVOT.x, clientY: PIVOT.y });
+    fireEvent.pointerUp(el, { clientX: PIVOT.x, clientY: PIVOT.y });
     expect(commit).not.toHaveBeenCalled();
     expect(transformOverrideFor("l1")).toBeUndefined();
   });
