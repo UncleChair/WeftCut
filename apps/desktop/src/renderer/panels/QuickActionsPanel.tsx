@@ -9,6 +9,7 @@ import { useActiveTool } from "../state/toolStore";
 import { useHasMarkedRange } from "../state/rangeStore";
 import {
   QUICK_ACTION_SECTIONS,
+  resolveIcon,
   type QuickActionItem,
   type QuickActionSection,
   type QuickActionState,
@@ -169,7 +170,9 @@ function QuickActionButton({
   // A state-bearing hint where the item has one (the display-mode button needs
   // "showing X, click for Y"); otherwise the command's own label.
   const label = t(item.hint ? item.hint(state) : command.labelKey);
-  const Icon = item.icon;
+  // Same override shape as the hint: a state-bearing glyph where the item
+  // declares one, its static icon otherwise.
+  const Icon = resolveIcon(item, state);
   return (
     <button
       type="button"

@@ -16,9 +16,10 @@
 import {
   ArrowRightFromLine,
   ArrowRightToLine,
+  FoldVertical,
   MousePointer2,
-  Rows3,
   Scissors,
+  UnfoldVertical,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -42,7 +43,12 @@ export interface QuickActionItem {
   /// Command id in `commands/registry.ts`. Resolved through `getCommand` for
   /// `run` / `enabled` / `labelKey`.
   id: string;
+  /// The button's glyph. Static for everything whose meaning doesn't move.
   icon: LucideIcon;
+  /// State-bearing glyph, for buttons where the icon itself depicts the
+  /// current state rather than a fixed concept. Overrides `icon` when present,
+  /// the same way `hint` overrides the command's `labelKey`.
+  iconFor?: (state: QuickActionState) => LucideIcon;
   /// Whether the button renders pressed. For a radio section exactly one item
   /// should be true; for an independent section each item answers for itself.
   /// Omitted by `command` items, which have no pressed state at all.
@@ -93,7 +99,13 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
     items: [
       {
         id: "toggleDisplayMode",
-        icon: Rows3,
+        // Fallback only; `iconFor` answers on every real render. Matches the
+        // `AbRoll` default in `appSettingsStore.ts`'s FALLBACK settings.
+        icon: FoldVertical,
+        // The glyph depicts the CURRENT state, not the click's effect, so it
+        // agrees with `aria-pressed` instead of contradicting it: folded rows
+        // = pressed = fold arrows. The "click to X" half is the hint's job.
+        iconFor: (s) => (s.displayMode === "AbRoll" ? FoldVertical : UnfoldVertical),
         // Pressed = filtered down to the A/B-roll rows.
         active: (s) => s.displayMode === "AbRoll",
         // Reuses the retired inline pill's wording, which already separated
@@ -130,6 +142,15 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
     ],
   },
 ];
+
+/// The glyph to draw for `item` right now. Called per render, so a
+/// state-bearing icon can never be cached into a stale component.
+export function resolveIcon(
+  item: QuickActionItem,
+  state: QuickActionState,
+): LucideIcon {
+  return item.iconFor?.(state) ?? item.icon;
+}
 
 /// Flat id list — used by the alignment test and by anything that needs to
 /// know whether a command has a strip button.

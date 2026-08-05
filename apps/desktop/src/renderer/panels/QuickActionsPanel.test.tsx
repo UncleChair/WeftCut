@@ -150,6 +150,20 @@ describe("QuickActionsPanel", () => {
     expect(button("toggleDisplayMode").getAttribute("aria-pressed")).toBe("false");
   });
 
+  // The state-bearing glyph has to survive the trip through `resolveIcon` into
+  // the DOM — a catalogue-only test would still pass if the panel had kept
+  // rendering the static `icon`.
+  it("renders the folded glyph pressed and the unfolded one unpressed", () => {
+    const glyphClasses = () =>
+      button("toggleDisplayMode").querySelector("svg")?.classList;
+    render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+    expect(glyphClasses()?.contains("lucide-fold-vertical")).toBe(true);
+    cleanup();
+    settings.displayMode = "ShowAll";
+    render(<QuickActionsPanel geometry={geometry(400, 44)} />);
+    expect(glyphClasses()?.contains("lucide-unfold-vertical")).toBe(true);
+  });
+
   // `canBlade` is false on an empty project. The button must grey out rather
   // than accept a click that does nothing.
   it("disables a button whose command reports itself unavailable", () => {

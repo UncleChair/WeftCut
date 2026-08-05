@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FoldVertical, UnfoldVertical } from "lucide-react";
 
 import { buildAppCommands } from "../commands/appCommands";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
@@ -6,6 +7,8 @@ import type { HandlerMap } from "../shortcuts/useShortcuts";
 import {
   QUICK_ACTION_IDS,
   QUICK_ACTION_SECTIONS,
+  resolveIcon,
+  type QuickActionItem,
   type QuickActionState,
 } from "./quickActions";
 
@@ -54,10 +57,18 @@ describe("quickActions catalogue", () => {
     expect(new Set(QUICK_ACTION_IDS).size).toBe(QUICK_ACTION_IDS.length);
   });
 
-  it("gives every item an icon", () => {
+  // Both halves matter: the static fallback, and what actually reaches the
+  // button once a state-bearing `iconFor` has had its say.
+  it("gives every item an icon in every state", () => {
     for (const section of QUICK_ACTION_SECTIONS) {
       for (const item of section.items) {
         expect(item.icon, `"${item.id}" has no icon`).toBeTruthy();
+        for (const displayMode of ["AbRoll", "ShowAll"] as const) {
+          expect(
+            resolveIcon(item, state({ displayMode })),
+            `"${item.id}" resolves no icon @ ${displayMode}`,
+          ).toBeTruthy();
+        }
       }
     }
   });
@@ -98,6 +109,20 @@ describe("quickActions catalogue", () => {
         }
       }
     }
+  });
+
+  // The glyph is the at-a-glance read of the display mode; the pressed border
+  // alone can't say WHICH way the rows are folded. It depicts the current
+  // state (not the click's effect) so it agrees with `aria-pressed`.
+  it("folds and unfolds the display-toggle glyph with the mode", () => {
+    const item: QuickActionItem | undefined = QUICK_ACTION_SECTIONS.flatMap(
+      (s) => s.items,
+    ).find((i) => i.id === "toggleDisplayMode");
+    if (!item) throw new Error("no strip item for toggleDisplayMode");
+    expect(resolveIcon(item, state({ displayMode: "AbRoll" }))).toBe(FoldVertical);
+    expect(resolveIcon(item, state({ displayMode: "ShowAll" }))).toBe(
+      UnfoldVertical,
+    );
   });
 
   it("tracks the display mode with the retired pill's own hint wording", () => {
