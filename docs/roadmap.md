@@ -89,10 +89,9 @@ What remains:
   plus a viewport path editor. Structural — and the longer it waits, the
   more keyframe data has to migrate, so flag the decision early even if the
   build stays deferred.
-- **Keyframe minor / cleanup.** Animatable anchor (`Transform.anchor` is a
-  static pair, so the pivot can't be keyframed — fold into the vector type
-  when convenient); the `"ease"` preset loses its named identity on reload
-  (stored as a raw `Bezier{p1,p2}` while EaseIn/EaseOut are named variants);
+- **Keyframe minor / cleanup.** The `"ease"` preset loses its named identity on
+  reload (stored as a raw `Bezier{p1,p2}` while EaseIn/EaseOut are named
+  variants);
   the curve-graph UI still hand-mirrors the Rust bezier solver in one JS
   `unitBezier` (`src/renderer/render/animated.ts`) — have it call the wasm
   `unit_bezier` instead (kills the last non-audio twin); and **schema

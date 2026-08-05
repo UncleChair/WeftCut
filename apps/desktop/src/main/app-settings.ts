@@ -51,8 +51,8 @@ export function createAppSettingsStore(deps: { fs: AppSettingsFs; path: string; 
       delta_window_us: typeof parsed.delta_window_us === 'number' ? parsed.delta_window_us : d.delta_window_us,
       tail_snap_enabled: typeof parsed.tail_snap_enabled === 'boolean' ? parsed.tail_snap_enabled : d.tail_snap_enabled,
       tail_snap_strength_px: typeof parsed.tail_snap_strength_px === 'number' ? parsed.tail_snap_strength_px : d.tail_snap_strength_px,
-      // Additive pair: every app_settings.json written before Phase 6 has no key
-      // here, so both MUST land on their defaults rather than undefined — the
+      // Additive pair: an app_settings.json predating preview snapping carries no
+      // key here, so both MUST land on their defaults rather than undefined — the
       // settings UI reads the number straight into a slider, and the gizmo reads
       // the boolean as a gate.
       preview_snap_enabled: typeof parsed.preview_snap_enabled === 'boolean' ? parsed.preview_snap_enabled : d.preview_snap_enabled,

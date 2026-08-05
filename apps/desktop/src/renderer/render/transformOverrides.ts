@@ -11,7 +11,7 @@
 // Realm note: the export Worker builds its own Compositor in its own realm, so
 // this map is always empty there — `withTransformOverride` is the identity for
 // export by construction, no mode check needed.
-// Spec: .scratch/preview-gizmo/spec.md (D5)
+// Spec: docs/features.md#on-canvas-transform-gizmo
 
 export interface TransformDelta {
   dx: number;

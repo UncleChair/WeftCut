@@ -42,9 +42,9 @@ describe('app-settings store', () => {
     expect(got.delta_window_us).toBe(10_000_000)
     expect(got.tail_snap_enabled).toBe(true)
     expect(got.tail_snap_strength_px).toBe(12)
-    // Additive in Phase 6: a file written before the preview gizmo could snap
-    // has no key here, and both MUST land on their defaults — the settings UI
-    // reads the number into a slider and the gizmo reads the boolean as a gate.
+    // Additive pair: a file predating preview snapping has no key here, and both
+    // MUST land on their defaults — the settings UI reads the number into a
+    // slider and the gizmo reads the boolean as a gate.
     expect(got.preview_snap_enabled).toBe(true)
     expect(got.preview_snap_strength_px).toBe(12)
   })

@@ -227,7 +227,7 @@ describe("snapScaleTarget", () => {
     expect(r.guides).toEqual({ x: COMP_W, y: COMP_H });
   });
 
-  it("puts the handle EXACTLY on the snapped point (D22), unrotated", () => {
+  it("puts the handle EXACTLY on the snapped point, unrotated", () => {
     const frame = { ...mediaLayer, x: 1600, y: 900 };
     const pivot = layerPivot(frame);
     const raw = { x: 1916, y: 1076 };
@@ -267,7 +267,7 @@ describe("snapUniformScale", () => {
   /// A linked layer whose `br` handle is heading for the bottom-right corner.
   const linkedFrame: LayerQuadInput = { ...mediaLayer, x: 1500, y: 800 };
 
-  it("lands the handle exactly on the line it drew a guide for (D23)", () => {
+  it("lands the handle exactly on the line it drew a guide for", () => {
     const pivot = layerPivot(linkedFrame);
     const ray = uniformScaleRay(linkedFrame, "br");
     const raw = solveScale(linkedFrame, "br", { x: 1914, y: 1070 }, pivot, true)!;

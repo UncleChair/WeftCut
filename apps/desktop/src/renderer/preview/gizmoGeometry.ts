@@ -6,7 +6,7 @@
 // Two coordinate systems, in order:
 //   layer local → COMPOSITION pixels   (transform: pivot, scale, rotation)
 //   composition → CLIENT pixels        (the canvas' object-fit: contain box)
-// Spec: .scratch/preview-gizmo/spec.md (D4)
+// Spec: docs/features.md#on-canvas-transform-gizmo
 
 import { anchorOr, anchorPivot } from "../render/anchorPivot";
 
@@ -295,9 +295,10 @@ export const SCALE_HANDLE_IDS: readonly ScaleHandleId[] = [
 ];
 
 /// The four that survive on a `scale_linked` layer. A linked layer genuinely
-/// cannot be scaled on one axis — offering an edge handle would either lie or
-/// silently unlink it (spec D6) — so the affordance itself carries the
-/// constraint.
+/// cannot be scaled on one axis — a single-axis write is what the main-side twin
+/// invariant reads as divergence, so an edge handle would either lie about what
+/// it does or silently unlink the layer (docs/data-model.md#transform). The
+/// affordance itself carries the constraint.
 export const CORNER_HANDLE_IDS: readonly ScaleHandleId[] = ["tl", "tr", "br", "bl"];
 
 const CORNERS = new Set<ScaleHandleId>(CORNER_HANDLE_IDS);
@@ -401,9 +402,9 @@ function clampScale(s: number): number {
 /// there is no lever left to scale by, and dividing would hand back Infinity.
 ///
 /// `uniformT` is the fitted factor, present only on the uniform path. Returned
-/// rather than left implicit because snapping needs it (previewSnap.ts D23) and
-/// recovering it from the result would mean dividing by `frame.scaleX`, which a
-/// user is free to have set to 0.
+/// rather than left implicit because snapping needs it
+/// (`previewSnap.snapUniformScale`) and recovering it from the result would mean
+/// dividing by `frame.scaleX`, which a user is free to have set to 0.
 export function solveScale(
   frame: LayerQuadInput,
   id: ScaleHandleId,
@@ -453,7 +454,7 @@ export function scaleFromUniformT(
 /// The direction the handle travels per unit uniform `t`: `R·S₀·u`, in
 /// composition pixels. NOT masked by the handle's driven axes — the mask decides
 /// which axes the least-squares fit listens to, while the handle's motion is the
-/// full transform of its offset, and snapping needs the motion (D23).
+/// full transform of its offset, and snapping needs the motion.
 export function uniformScaleRay(frame: LayerQuadInput, id: ScaleHandleId): Pt {
   const u = scaleHandleOffset(frame, id);
   const sx = u.x * frame.scaleX;

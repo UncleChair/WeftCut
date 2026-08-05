@@ -351,6 +351,59 @@ so anything downstream of the inverse rotation — a resize solve, an anchor dra
 leaves `~1e-16` on the axis the cursor did not move, and against exact zero that
 reads as an edit and stamps a keyframe with an invisible value change.
 
+**Why snapping decides the two axes independently:** a move or a resize pulls onto
+the composition's four edges and two centre lines and onto every other staged
+layer's screen-space bounding box, with each axis decided on its own. A single
+global best — the right rule for the timeline, where time is one-dimensional —
+would make "flush against the left edge *and* vertically centred" unreachable.
+Ties go to a composition line, so a layer line has to be strictly nearer to win;
+in the timeline an implicit tie-break is safe only because its boundary set has a
+stable track order. Strength is a **screen**-pixel radius
+(`preview_snap_strength_px`, default 12, with `preview_snap_enabled` beside it),
+converted to composition pixels per move through the contain fit so the pull feels
+the same at any composition resolution. It is deliberately its own app-level pair
+rather than a reuse of the timeline's, whose target density differs by an order of
+magnitude. Holding Ctrl suppresses the snap while it is down — not Alt, which
+opens the self-drawn menu bar on Windows. Guides are magenta (the palette is
+achromatic by design, and magenta's low green keeps it legible over skin, sky,
+foliage and water alike), at most one per axis, painted under the box and the
+handles with a dark under-stroke.
+
+The solver is pure (`preview/previewSnap.ts`) and runs *before* the override is
+written, against the gesture's raw un-snapped box: the box depends on the
+override, the override on the snap result, and the snap result on the box, so
+measuring after the write is the one ordering of those three that fails to
+terminate. A free resize snaps the handle's **target point**, which is exact at
+any rotation because the solve lands the handle on the point it was given
+identically — masked to the axes the handle drives, since a scale the solve would
+discard must not draw a guide first. A uniform resize (a linked layer, or Shift)
+has one degree of freedom — `scale = t · scale₀`, so the handle travels a fixed
+ray — which makes a snapped point generally unreachable; it solves `t` by
+ray/line intersection instead, and at most one axis can be hit. That branch ranks
+by the resulting **displacement**, not by perpendicular distance to the line: a
+near-parallel ray needs an enormous `t` to reach a line a few pixels away, so a
+nudge would become a 500× scale-up. The target set is frozen at pointerdown, so
+guides do not follow layers that animate mid-gesture.
+
+**Why a commit's base comes from a ledger:** every gesture commits an absolute
+track built from `base + delta`, and the project mirror is two IPC round trips
+behind — commit → `project:changed` → refetch → re-render. A second gesture
+released inside that window would read the pre-commit base and *replace* the first
+gesture's track instead of stacking on it. The gizmo therefore keeps a
+renderer-local ledger of `param key → the track it wrote`, entered before the round
+trip starts and read ahead of the mirror by every commit and by the rotation grid
+(which would otherwise quantize a Shift-rotate against an angle no longer on
+screen). The override carries the matching gap as a per-channel **carry**,
+`resolve(written) − resolve(mirror)`, because `setTransformOverride` replaces
+rather than merges: without it the next gesture's first pointermove drops the held
+override and the layer visibly snaps back by the previous displacement. The carry
+is self-cancelling — once the summary carrying the write lands, both tracks
+resolve to the same value and every channel goes to zero — so the override lifts
+itself, nothing has to decide when the round trip finished, and a summary arriving
+mid-gesture just moves the carry into the base. The ledger is dropped on the first
+summary that arrives with no commit still in flight, which is how undo, the
+inspector or an MCP agent takes the authority back.
+
 **Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect` +
 `naturalSizeOf`; the gizmo never imports Pixi. `gizmoGeometry.ts` — pure
 composition-space quad, pivot, handle placement and the `object-fit: contain`
@@ -360,18 +413,19 @@ mapping, so the geometry is unit-tested without a renderer (and shares
 Keyframed one gets a key at the frame-snapped playhead, exactly like the
 inspector.
 
-**Limits:** move, resize, rotate and anchor — no snapping guides, no crop, no
-corner-pin. Single selection only. The box follows animated values during
-playback via rAF; it is hidden while the preview dock tab is not visible. The
-rotation knob sits a fixed 26 CSS px outside the box (screen space, so the
-affordance is resolution-independent), so the overlay runs `overflow: visible`
-and the panel is the real clip bound — a layer flush against the top of a
-panel-filling composition has no room for its knob. An edge handle whose edge is
-under 24 screen px is hidden, since it would sit under the two corners it lives
-between; a box small enough for its corners to overlap keeps them all, and the
-interior left for the move drag shrinks with it. Every commit reads its base
-value off the current summary, so a second gesture started inside the one-IPC
-round trip before `project:changed` lands computes from the pre-commit value.
+**Limits:** move, resize, rotate and anchor — no crop, no corner-pin. Single
+selection only. The box follows animated values during playback via rAF; it is
+hidden while the preview dock tab is not visible. The rotation knob sits a fixed
+26 CSS px outside the box (screen space, so the affordance is
+resolution-independent), so the overlay runs `overflow: visible` and the panel is
+the real clip bound — a layer flush against the top of a panel-filling
+composition has no room for its knob. An edge handle whose edge is under 24
+screen px is hidden, since it would sit under the two corners it lives between; a
+box small enough for its corners to overlap keeps them all, and the interior left
+for the move drag shrinks with it. The commit ledger is renderer-local, so it
+composes a burst of gestures from this gizmo and nothing else: a *concurrent*
+writer editing the same tracks mid-burst — an MCP agent, say — would need the
+base resolved on the main side instead.
 
 ## Window geometry memory
 

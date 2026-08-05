@@ -648,7 +648,12 @@ flip mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
 default). It is `Animated` like the rest of the transform, so the pivot can be
 keyframed — a rotation whose centre travels needs nothing else. The pair is
 **unbounded**: a pivot outside the layer's own box is a legitimate authoring
-choice. What `x`/`y` mean depends on the kind, and the difference is
+choice. It is additive on the wire: a save predating the split carries a single
+`anchor: [x, y]`, which the load pass converts into two Static tracks
+(`state/serialize.ts`). That backfill must READ the legacy tuple rather than
+default the two fields — ASS `\an` import writes an off-centre anchor on every
+caption layer, so defaulting them to the centre would re-position every imported
+subtitle. What `x`/`y` mean depends on the kind, and the difference is
 deliberate:
 
 | Kind | `x`/`y` is | why |

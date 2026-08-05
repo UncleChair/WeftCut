@@ -1,18 +1,18 @@
 // `Transform.anchor` → the Pixi pivot + the position that keeps `x`/`y`
 // meaning what stored projects already mean by it. Pure: the one place the
 // rule lives, so the three media kinds can't drift apart.
-// Spec: .scratch/preview-gizmo/spec.md (D1)
+// Rule: docs/data-model.md#transform
 
 /// Pixi composes `world = position + R·S·(local − pivot)`, so putting the
 /// pivot at the anchor makes rotation and flip turn around the anchor — but it
 /// also drags the content by `pivot·scale` unless the position compensates.
 /// Compensating with the ABSOLUTE scale is what makes a flip mirror in place:
 /// with the signed scale the anchor itself would move, and the layer would jump
-/// to the other side of `x` (the pre-anchor behaviour).
+/// to the other side of `x`.
 ///
 /// Consequence worth stating: at `rotation_deg = 0` with no flip, local (0,0)
-/// lands exactly on `(x, y)` for ANY scale — i.e. identical to the old
-/// pivot-less rendering. Only rotated or flipped layers change.
+/// lands exactly on `(x, y)` for ANY scale. That is what keeps `x`/`y` meaning
+/// the unrotated top-left; only a rotated or flipped layer sees the pivot at all.
 export interface AnchorPivotInput {
   /// Layer transform, composition pixels — the unrotated top-left.
   x: number;

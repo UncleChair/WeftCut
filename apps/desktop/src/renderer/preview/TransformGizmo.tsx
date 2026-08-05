@@ -11,7 +11,7 @@
 // Every pointer- and frame-rate update here is imperative through refs: the box
 // follows animated x/y during playback, and a per-frame React state write is
 // exactly what the memory-ratchet gate exists to catch.
-// Spec: .scratch/preview-gizmo/spec.md
+// Spec: docs/features.md#on-canvas-transform-gizmo
 
 import { useEffect, useRef } from "react";
 import { RotateCcwIcon } from "lucide-react";
@@ -136,9 +136,9 @@ const EDGE_HANDLE_MIN_PX = 24;
 /// the selection's own chrome.
 const GUIDE_COLOR = "#ff2ec4";
 const GUIDE_WIDTH_PX = 1;
-/// The dark backing under the bright line, for the reason D15 gives for the
-/// reticle: the preview has no background of its own, and a single-colour hairline
-/// disappears against a white or a black frame.
+/// The dark backing under the bright line, for the same reason the anchor reticle
+/// carries one: the preview has no background of its own, and a single-colour
+/// hairline disappears against a white or a black frame.
 const GUIDE_UNDER_COLOR = "rgba(0, 0, 0, 0.55)";
 const GUIDE_UNDER_WIDTH_PX = 3;
 
@@ -185,8 +185,8 @@ function frameAt(
     x: resolveAnimated(p.x, tLocalUs, 0),
     y: resolveAnimated(p.y, tLocalUs, 0),
     // DEFAULT_ANCHOR and nothing else — the same constant the renderer resolves
-    // through (resolveView.ts). A local fallback here is exactly how the box and
-    // the picture once pivoted around different points.
+    // through (resolveView.ts). LANDMINE: a local fallback here makes the box
+    // pivot where the picture does not, and neither looks broken on its own.
     anchorX: resolveAnimated(p.anchor_x, tLocalUs, DEFAULT_ANCHOR),
     anchorY: resolveAnimated(p.anchor_y, tLocalUs, DEFAULT_ANCHOR),
     naturalW: size.w,
@@ -198,7 +198,7 @@ function frameAt(
   };
 }
 
-/// What a gesture snaps against, frozen at pointerdown (D26). Null on a gesture
+/// What a gesture snaps against, frozen at pointerdown. Null on a gesture
 /// that will never snap — the preference is off, or there is no geometry to snap
 /// within — so the move handlers can skip the whole path with one check.
 interface SnapContext {
@@ -213,7 +213,7 @@ interface SnapContext {
 /// `TRANSFORM_KINDS` does the filtering that matters here for free: `Color`
 /// fills the composition, so its edges ARE the composition's and would only add
 /// duplicate lines for the tie-break to sort out, and `Audio` has no footprint
-/// at all (D21). A layer the compositor has not staged has no `naturalSizeOf`
+/// at all. A layer the compositor has not staged has no `naturalSizeOf`
 /// and is skipped — its size is unknowable, not zero.
 function otherLayerBoxes(
   summary: { tracks: readonly { layers: readonly LayerSummary[] }[] },
@@ -269,8 +269,8 @@ interface MoveDrag extends DragBase {
   /// move, it just cannot snap.
   frame: LayerQuadInput | null;
   snap: SnapContext | null;
-  /// Already SNAPPED (D20): the override, the drawn box and the commit all read
-  /// this, so there is no un-snapped value anywhere downstream.
+  /// Already SNAPPED: the override, the drawn box and the commit all read this,
+  /// so there is no un-snapped value anywhere downstream.
   dxComp: number;
   dyComp: number;
 }
@@ -527,7 +527,7 @@ const NO_GUIDES: SnapGuides = { x: null, y: null };
 /// "the preference is off" and "Ctrl is held" reach the solvers, since they all
 /// short-circuit on a non-positive threshold. Ctrl is read per move, so tapping
 /// it releases the layer from a guide and letting go re-arms it, with no gesture
-/// state to carry (D26).
+/// state to carry.
 function thresholdFor(
   snap: SnapContext | null,
   fit: ContainFit,
@@ -551,8 +551,8 @@ function TransformGizmo({
   const knobRef = useRef<SVGGElement | null>(null);
   const anchorRef = useRef<SVGGElement | null>(null);
   /// One group per axis, each holding the dark under-stroke and the bright line
-  /// over it. At most one guide per axis exists by construction (D25), so these
-  /// are two fixed elements rather than a list that has to be reconciled.
+  /// over it. At most one guide per axis exists by construction, so these are two
+  /// fixed elements rather than a list that has to be reconciled.
   const guideXRef = useRef<SVGGElement | null>(null);
   const guideYRef = useRef<SVGGElement | null>(null);
   /// The live snap hits, composition space — written by the pointer handlers,
@@ -623,7 +623,7 @@ function TransformGizmo({
     // Compositor resolves the tracks at, so it is the instant the carry must be
     // measured at. On a KEYFRAMED track during playback the carry then ages
     // between pointermoves — the same freeze-at-grab limit the gesture's own
-    // arithmetic already accepts (D12).
+    // arithmetic already accepts.
     const merged = mergedDelta(commitBase(), d, playheadTimeUs() - l.t_start_us);
     if (isNoDelta(merged)) clearTransformOverride(l.id);
     else setTransformOverride(l.id, merged);
@@ -852,13 +852,13 @@ function TransformGizmo({
   };
 
   /// The snap target set for a gesture starting now, frozen here and nowhere
-  /// else (D26). Null when the gesture will never snap — the preference is off,
-  /// or the probe is gone — so the move handlers skip the whole path on one check.
+  /// else. Null when the gesture will never snap — the preference is off, or the
+  /// probe is gone — so the move handlers skip the whole path on one check.
   ///
   /// Recomputing this per move would run seven `resolveAnimated` calls plus a
   /// quad build for every staged layer at pointer rate. The cost of freezing is
-  /// the limit D12 already records: if the playhead advances mid-drag, the guides
-  /// do not follow the animated layers.
+  /// the same limit every part of a gesture accepts: if the playhead advances
+  /// mid-drag, the guides do not follow the animated layers.
   const grabSnap = (): SnapContext | null => {
     const settings = useAppSettingsStore.getState().settings;
     if (!settings.preview_snap_enabled) return null;
@@ -915,7 +915,7 @@ function TransformGizmo({
     // The box at the RAW position. LANDMINE: it must be the un-snapped one — the
     // box depends on the override, the override on this result, and this result
     // on the box, so reading the box after the write is the one ordering of the
-    // three that fails to terminate (D20).
+    // three that fails to terminate.
     const rawBox = drag.frame
       ? quadAabb(layerQuad({ ...drag.frame, x: drag.frame.x + raw.x, y: drag.frame.y + raw.y }))
       : null;
@@ -1002,8 +1002,8 @@ function TransformGizmo({
       applyOverride(null);
       return;
     }
-    // No fan-out: unlike scale, rotation is a single track on every kind — the
-    // linked-scale twin invariant doesn't apply here (spec D6).
+    // No fan-out: unlike scale, rotation is a single track on every kind, so the
+    // linked-scale twin invariant doesn't apply here.
     commitEntries(
       base.layer.id,
       [bumpEntry(base, "rotation_deg", 0, drag.tInLayerUs, drag.deltaDeg)],
@@ -1130,14 +1130,14 @@ function TransformGizmo({
     const threshold = thresholdFor(drag.snap, fit, e.ctrlKey);
     // Straight off HANDLE_DIR, never re-derived: an axis this handle does not
     // drive is one `solveScale` would leave alone, so snapping there would draw
-    // a guide for a change that then gets discarded (D22).
+    // a guide for a change that then gets discarded.
     const drives: DrivenAxes = handleDrives(drag.id);
     let next: { scaleX: number; scaleY: number } | null;
     let guides: SnapGuides = NO_GUIDES;
     if (uniform) {
       // One degree of freedom, so the snapped POINT is generally unreachable:
       // fit `t` first, then slide `t` along the handle's ray onto the line. At
-      // most one axis is hit, which is what one parameter permits (D23).
+      // most one axis is hit, which is what one parameter permits.
       const raw = solveScale(drag.frame, drag.id, rawTarget, drag.pivotComp, true);
       if (!raw) return; // the handle has collapsed onto the pivot — no lever left
       const rawT = raw.uniformT;
@@ -1158,8 +1158,8 @@ function TransformGizmo({
       guides = snapped?.guides ?? NO_GUIDES;
     } else {
       // Free scaling reaches any point, and `solveScale` lands the handle ON the
-      // point identically (D22) — so snapping the point IS snapping the handle,
-      // at any rotation.
+      // point identically — so snapping the point IS snapping the handle, at any
+      // rotation.
       const snapped = drag.snap
         ? snapScaleTarget(rawTarget, drives, drag.snap.targets, threshold)
         : null;
@@ -1194,10 +1194,10 @@ function TransformGizmo({
       applyOverride(null);
       return;
     }
-    // LANDMINE (spec D6): a linked layer must be written as ONE authored track
-    // fanned out to both axes. Two independently built tracks would differ by a
-    // float ulp or a keyframe id and the main-side twin invariant would read
-    // that as divergence and silently clear `scale_linked`.
+    // LANDMINE (docs/data-model.md#transform): a linked layer must be written as
+    // ONE authored track fanned out to both axes. Two independently built tracks
+    // would differ by a float ulp or a keyframe id and the main-side twin
+    // invariant would read that as divergence and silently clear `scale_linked`.
     // `scale_linked` is a flag the gizmo never writes, so it is read from the
     // mirror and needs no ledger — only the TRACKS can be one round trip stale.
     const fan = scaleFanOutFor("scale_x", l.params);
@@ -1243,7 +1243,7 @@ function TransformGizmo({
       {/* Snap guides, FIRST in document order so they paint UNDER the box and
           the handles: a guide is information about the gesture, never a target,
           and it must not occlude something grabbable. One group per axis, since
-          at most one guide can be live on each (D25) — so these are two fixed
+          at most one guide can be live on each — so these are two fixed
           elements and not a list to reconcile. Each holds the dark under-stroke
           and the bright line over it; the draw loop writes one geometry into
           both children. */}

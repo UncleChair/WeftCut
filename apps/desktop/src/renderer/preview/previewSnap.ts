@@ -10,7 +10,7 @@
 // Two callers, two shapes, one reason they differ:
 //   move / free resize → the landing point is reachable on both axes
 //   uniform resize     → one degree of freedom, so at most one axis can be hit
-// Spec: .scratch/preview-gizmo/spec.md (Phase 6, D20–D26)
+// Spec: docs/features.md#on-canvas-transform-gizmo
 
 import type { Pt } from "./gizmoGeometry";
 
@@ -18,7 +18,7 @@ import type { Pt } from "./gizmoGeometry";
 /// rather than inferred from array position because it decides ties, and a
 /// tie-break that depends on construction order is exactly what
 /// `timeline/snapping.ts` gets away with only because its boundary set has a
-/// stable track order (D21).
+/// stable track order.
 export type SnapSource = "composition" | "layer";
 
 export interface SnapTarget {
@@ -41,7 +41,7 @@ export interface SnapTargets {
 
 /// An axis-aligned box in composition pixels. What a rotated layer contributes
 /// to (and snaps by) — the range it occupies on screen, which is what a person
-/// aligning things means, rather than its true corners (D21).
+/// aligning things means, rather than its true corners.
 export interface Aabb {
   left: number;
   top: number;
@@ -74,7 +74,7 @@ function axisCandidates(low: number, high: number): [number, number, number] {
 /// The composition contributes its four edges and two centre lines. A `Color`
 /// layer must NOT appear in `others`: it fills the composition, so its edges are
 /// already here, and a duplicate line would only make the tie-break do work that
-/// changes nothing (D21).
+/// changes nothing.
 export function snapTargets(
   compW: number,
   compH: number,
@@ -117,9 +117,9 @@ interface AxisHit {
 /// The smallest move that puts one of `candidates` onto one of `targets`.
 ///
 /// Ranked by (distance, source), lexicographically: a layer line must be
-/// STRICTLY nearer than a composition line to win, which is the whole of D21's
-/// tie-break rule. `>=` on the distance alone would hand ties to whichever
-/// target the loop reached first.
+/// STRICTLY nearer than a composition line to win, which is the whole of the
+/// tie-break rule `sourceRank` exists for. `>=` on the distance alone would hand
+/// ties to whichever target the loop reached first.
 function snapAxis(
   candidates: readonly number[],
   targets: readonly SnapTarget[],
@@ -146,7 +146,7 @@ function snapAxis(
 
 /// Where a guide should be drawn on each axis, composition pixels. Null means
 /// that axis did not snap — at most one line per axis exists by construction,
-/// which is why the overlay needs two fixed elements and not a list (D25).
+/// which is why the overlay needs two fixed elements and not a list.
 export interface SnapGuides {
   x: number | null;
   y: number | null;
@@ -166,7 +166,7 @@ export interface MoveSnapResult {
 /// LANDMINE: `box` must be the layer's AABB at the RAW, un-snapped position. The
 /// box depends on the override, the override depends on this result, and this
 /// result depends on the box — reading the box after the write is the only
-/// ordering of those three that fails to terminate (D20).
+/// ordering of those three that fails to terminate.
 ///
 /// The axes are solved independently, so a drag can land flush against the left
 /// edge and vertically centred at once. A single global best — right for
@@ -188,7 +188,7 @@ export function snapMove(
 
 /// Which axes a resize handle actually drives — `HANDLE_DIR`'s `hx`/`hy` with
 /// the zero meaning preserved. Part of the handle's identity, never inferred
-/// from an offset that happens to be zero (D18).
+/// from an offset that happens to be zero (`gizmoGeometry.handleDrives`).
 export interface DrivenAxes {
   x: boolean;
   y: boolean;
@@ -206,7 +206,7 @@ export interface ScaleSnapResult {
 /// rotation makes it look like it should need a correction: `solveScale` produces
 /// `S₁·u = R⁻¹·(target − P)`, so the handle's composed landing point is
 /// `P + R·(S₁·u) = target` identically. Snap the point and the handle lands on
-/// the line — no second pass (D22).
+/// the line — no second pass.
 ///
 /// Masked by `drives`, and that mask is load-bearing for CORRECTNESS here rather
 /// than for cursors: `solveScale` returns the frame's own scale unchanged on an
@@ -243,10 +243,10 @@ export interface UniformScaleSnapResult {
 ///
 ///   vertical   x = X  ⇒  t = (X − P.x) / ray.x
 ///
-/// At most ONE axis can be hit, since one parameter cannot satisfy two equations
-/// (D23). That is not a weaker guarantee than `snapScaleTarget` — it is what one
-/// degree of freedom exactly permits, and it is why a linked layer's guide never
-/// lies.
+/// At most ONE axis can be hit, since one parameter cannot satisfy two
+/// equations. That is not a weaker guarantee than `snapScaleTarget` — it is what
+/// one degree of freedom exactly permits, and it is why a linked layer's guide
+/// never lies.
 ///
 /// LANDMINE — the distance metric is the resulting DISPLACEMENT `|Δt|·|ray|`,
 /// not the perpendicular distance to the line. Using the perpendicular distance

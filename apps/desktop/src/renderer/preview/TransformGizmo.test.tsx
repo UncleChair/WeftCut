@@ -370,7 +370,7 @@ describe("snapping", () => {
     fireEvent.pointerUp(handle, { clientX: 310, clientY: 175 });
     const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
     const byKey = new Map(entries);
-    // Linked, so ONE authored track fanned out to both axes (spec D6).
+    // Linked, so ONE authored track fanned out to both axes.
     expect(byKey.get("scale_x")).toEqual({ mode: "Static", value: 3 });
     expect(byKey.get("scale_y")).toEqual({ mode: "Static", value: 3 });
     // Scaling 1 → 3 about a centred anchor walks the position by −anchor·size·2.
@@ -378,7 +378,7 @@ describe("snapping", () => {
     expect(byKey.get("y")).toEqual({ mode: "Static", value: -360 });
     // Which is to say: the layer now fills the composition exactly. Its bottom
     // -right corner is at (-640 + 3·640, -360 + 3·360) = (1280, 720), and the
-    // pivot has not moved — that is what makes the guide truthful (D23).
+    // pivot has not moved — that is what makes the guide truthful.
   });
 
   it("leaves a linked resize alone under Ctrl", async () => {
