@@ -420,8 +420,9 @@ npm run bench:decode                    # run the full matrix
 
 To also measure the **native**, **sw**, or **native-copyback** strategies,
 build the `@weftcut/native-decode` component — it ships on all three platforms
-(Windows, Linux, macOS; see the [roadmap](roadmap.md)'s distribution-scope
-note), links `ffmpeg-next`, and needs the LGPL FFmpeg dev libs + libclang on
+(Windows, Linux, macOS — each stages its own LGPL-shared FFmpeg runtime; see
+[licensing.md](licensing.md)), links `ffmpeg-next`, and needs the LGPL FFmpeg
+dev libs + libclang on
 the build environment (`FFMPEG_DIR`, defaulted from the fetched
 `resources/ffmpeg-lgpl/<os>` dir; `LIBCLANG_PATH` is hard-set by the wrapper
 only on Windows — macOS/Linux find libclang via Xcode CLT / `libclang-dev`):

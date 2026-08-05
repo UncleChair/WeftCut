@@ -16,7 +16,7 @@ menu-bar error span, and is designed to scale forward into a future
   not push the editor up.
 - Replaced `ActivityPanel` and the menu bar's inline error span. The
   `derivatives-pill` in the project bar stays until its aggregate-row
-  replacement lands (roadmap §Polish).
+  replacement lands ([#18](https://github.com/UncleChair/WeftCut/issues/18)).
 - Coexists with: `ExportPanel` (detailed progress UI), `QueuePanel`
   (editable export queue).
 
@@ -212,4 +212,4 @@ Deferred until agent-mode lands:
 Open deferrals — the derivatives-pill aggregate row, tool-level log wraps
 for the remaining long-running MCP tools, derivative-job producers,
 console virtualization, and the console resize handle — are tracked in
-[roadmap.md §Polish](roadmap.md#polish).
+[issue #18](https://github.com/UncleChair/WeftCut/issues/18).

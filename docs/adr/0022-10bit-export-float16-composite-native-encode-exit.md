@@ -76,8 +76,8 @@ discipline is unchanged. The 8-bit export path is untouched.
 - Software 10-bit decode is slow; the export-settings UI warns that 10-bit
   export runs well below realtime. The ring high-water is entry-count
   based (a byte-based cap is the 4K follow-up).
-- **Deferred (gate on the HDR-deliverable trigger, tracked in
-  `docs/roadmap.md`):** HDR preview (WebGPU `rgba16float` canvas + Pixi
+- **Deferred (gate on the HDR-deliverable trigger, tracked post-v1):**
+  HDR preview (WebGPU `rgba16float` canvas + Pixi
   per-target formats / runtime override + HDR-glass verification) and a
   wider-gamut/linear working space. **Open in the 10-bit bucket:** HEVC
   Main10 source conform (HW-opaque frames transcoded to a Hi10P
@@ -116,8 +116,8 @@ decision itself is unchanged:
   pending (HW-opaque originals get transcoded). The lane stays selectable;
   it is flagged, not removed.
 
-Current state lives in `docs/render.md` ("Encode exits"); remaining
-follow-ups in `docs/roadmap.md`.
+Current state lives in `docs/render.md` ("Encode exits"); the remaining
+follow-ups are tracked in the post-v1 backlog issue.
 
 ## References
 

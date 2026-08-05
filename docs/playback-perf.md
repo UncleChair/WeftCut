@@ -326,8 +326,9 @@ milliseconds (see Reproducibility below).
 The two 1080p H.264 legs are what decided the decode-engine default: with the
 barrier gone the hardware lane wins the sustained axis 5 tracks to 2, and it
 already held the seek axis ([decode-bench](decode-bench.md)), so `auto`
-preferring the Standard engine is correct on both. See
-[the roadmap](roadmap.md).
+preferring the Standard engine is correct on both. The decision and the exact
+condition that would reopen it are recorded in
+[preview](preview.md#decode-engine).
 
 **The hardware route is also the quieter one where the two score the same.** It
 records zero long animation frames and zero 8 ms-timer gaps over 50 ms in every
@@ -941,6 +942,27 @@ bit-depth-lossy, and that `TenBitIngest` is unreachable from this route. It was
 also the slowest cell in the whole matrix (3.3 fps) until the lane stopped
 re-seeking per request; it now plays one track at content rate, so what is left
 here is a fidelity gap, not a speed one.
+
+### Measured non-levers — do not spend time here
+
+Each of these was bracketed by its own instrument and came back too small to
+matter. Re-optimizing any of them buys nothing, so a plausible-sounding
+proposal to do so should be answered with this list rather than a fresh
+profiling run:
+
+- **The snapshot blit** (`blitDrawImage`): mean 0.02–0.03 ms, p95 ≤ 0.2 ms —
+  a rounding error against a 16.7 ms budget. This is also the measurement that
+  keeps zero-copy GPU upload parked (see [render](render.md)).
+- **`ringLookup`, the audio sweep, `stage.removeChildren()` and the
+  effect-chain sync**: each ≤ 3 % of a `tickTotal` that is itself only 2–6 %
+  of budget.
+- **`nv12Ingest`**: negligible at 1080p (p95 1.3 ms).
+- **The GPU's VideoDecode engine** sits at ~5 % per 1080p hardware track, so
+  no decoder is saturated at that resolution.
+
+4K is the exception on the last two counts — `nv12Ingest` reaches p95 9.0 ms
+there — and that belongs to the open main-thread stall above, not to a
+per-stage cost.
 
 ## What it deliberately is not
 

@@ -102,7 +102,8 @@ cache-friendly:
   preview are both consequences of "working space = output space",
   not bugs.
 - **Revisit trigger:** if 10-bit / HDR output becomes a deliverable
-  (the native Rust export backend, roadmap post-v1), the model evolves
+  (the HDR preview sink and a wider-gamut working space, both deferred
+  post-v1), the model evolves
   from one chokepoint to two — ingest converges into a wide working
   space (linear / extended gamut) and an explicit per-target output
   transform (709 SDR, 2020 PQ) becomes the second chokepoint: the

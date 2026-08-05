@@ -158,6 +158,22 @@ default; the quick proxy is a source the user opts into, never one the app
 swaps to on its own, and `auto` never auto-proxies. This matches how
 mainstream NLEs behave (`feedback_native_nle_conventions`).
 
+**Why `auto` prefers the Standard engine — settled.** WebCodecs used to
+out-play `ffmpeg` on 8-bit ≤1080p, and the whole of that gap was the hardware
+lane's read barrier. With the barrier off the critical path the ordering
+reverses: measured in one sitting, 1080p max smooth tracks are H.264 **5** on
+ffmpeg-hardware against 2 on WebCodecs, and HEVC **5** against ≥5 — the
+hardware lane's five HEVC clips all taking hardware, at 0.00 % drops and tick
+p99 18.10 ms against a 33.3 ms budget
+([playback-perf](playback-perf.md#max-smooth-tracks)). Since
+[decode-bench](decode-bench.md) already gave `ffmpeg` the decisive **seek**
+advantage, `auto` wins both axes — and picking per-*interaction* has lost its
+motive while keeping its cost, because `key` is
+`${engine}:${source}:${target}`, so flipping engine on a play/scrub transition
+is a visible swap by construction. **Reopening this needs a second box that
+loses on sustained playback _and_ loses on seek**; one without the other is
+what reopened it before.
+
 **Export mirrors this overlay.** The same Automatic/Standard/Lite vocabulary
 routes export decode: a per-project `decodeEngine` setting feeds
 `resolveExportDecodeRouting`, which freezes a per-media routing table at
@@ -438,8 +454,9 @@ reads that decision, never writes it.
   `proxy_overrides` toggles — which only steer the preview axis — have no
   bearing on what export reads. For `Proxied`/`NativeSw` sources the export
   master is still what export reads today; routing those two routes to
-  decode the original instead is separate work gated on export-side decode
-  (see [`roadmap.md`](roadmap.md) §Decode engine).
+  decode the original instead is deliberately left to `auto`'s discretion and
+  is profiling-gated
+  ([post-v1 backlog](https://github.com/UncleChair/WeftCut/issues/21)).
   `MediaDerivativesPatch.proxy_path = Some(None)` (or a
   `proxy_format_version` bump) invalidates a stale proxy and triggers a
   re-encode on next open.

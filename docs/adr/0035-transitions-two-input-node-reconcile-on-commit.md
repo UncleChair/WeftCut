@@ -130,14 +130,15 @@ a truth table in `src/main/state/reconcile.test.ts`:
   would need `EXT_color_buffer_float`, which preview's WebGL fallback can't
   assume.
 - A blocked in-transition split surfaces as the generic `LayerOverlap` error,
-  not a transition-specific message — recorded as roadmap debt.
+  not a transition-specific message — recorded as post-v1 debt.
 - The reconcile pass runs on every commit and silently mutates state, so it
   is the fuzz target: the PBT op pool includes the three transition
   operations, with the property that every surviving transition satisfies the
   shared predicate.
-- Deferred surface (softness, easing, alignment variants, audio crossfade,
-  Policy C, chip drag-resize) is tracked in
-  [`roadmap.md`](../roadmap.md#transitions--v1-shipped-named-deferrals-remain).
+- Deferred surface (Push, wipe softness, easing, alignment variants,
+  freeze-frame handles, audio equal-power crossfade, Policy C) is tracked
+  post-v1. Authoring discoverability and chip drag-resize are v1 items —
+  adding a transition currently requires right-clicking exactly on a cut.
 
 ## References
 

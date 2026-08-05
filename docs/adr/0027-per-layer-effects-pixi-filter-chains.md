@@ -81,7 +81,8 @@ Supporting decisions:
   `preview_effects_enabled` LOD toggle in the UI (the inspector effect editor
   itself ships); a full filtered-10-bit-export e2e; a linear/HDR working
   space. `Speed` is time remapping, not a filter, and is out of
-  `layer.effects`. Tracked in [`roadmap.md`](../roadmap.md).
+  `layer.effects`. Tracked in the release-target issues — the toggle UI and
+  the basic colour-correction catalog in v1, the rest post-v1.
 
 ## References
 

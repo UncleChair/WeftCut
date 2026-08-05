@@ -4,7 +4,8 @@
 // balance → clip levels → nested shrink/feather (alpha recomputed at taps;
 // single pass, no matte texture, no TexturePool interaction) → screen
 // subtraction (output = premultiplied foreground) → despill + fixed neutral
-// luma restore. Keyer v2 backlog: docs/roadmap.md §Effect subsystem.
+// luma restore. Keyer v2 (despill bias, clip rollback, despot, IBK
+// clean-plate, linear-light) is post-v1 backlog, not missing work.
 //
 // LANDMINE: this file must remain valid plain JavaScript (no TS-only syntax,
 // no imports) — the f16 parity gate (e2e/effects-f16-parity/index.html) loads

@@ -97,7 +97,7 @@ surface and multi-agent behavior are documented in [docs/mcp.md](docs/mcp.md).
 - **[Status / Log system](docs/status-log.md)** — bottom-of-editor log bus.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
 - **[Licensing](docs/licensing.md)** — MIT app + the two FFmpeg lanes (LGPL in-process decode, GPL sidecar) and their build-time compliance gates.
-- **[Roadmap](docs/roadmap.md)** — phased delivery journal.
+- **[v1 target](https://github.com/UncleChair/WeftCut/issues/11)** — release scope and open work. Tracked as a GitHub issue, not a doc: `docs/` describes what exists today.
 - **ADRs** — [`docs/adr/`](docs/adr/): architecture decision records with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer the top-level docs above for current behavior; older ADRs may be historical.
 
 ## License

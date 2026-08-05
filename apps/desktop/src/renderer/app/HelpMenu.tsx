@@ -6,7 +6,8 @@ import { AboutDialog } from "./AboutDialog";
 import { ISSUES_URL, openExternal, RELEASES_URL } from "./links";
 
 /// The Help menu — update check + issue reporting (both external links until
-/// a real updater exists; see docs/roadmap.md) and the About box. Self-contained:
+/// a real updater exists; `electron-updater` is a consumer-ready milestone
+/// item, not a v1 one) and the About box. Self-contained:
 /// the About dialog state lives here, so AppMenuBar stays prop-driven chrome.
 export function HelpMenu() {
   const { t } = useTranslation();

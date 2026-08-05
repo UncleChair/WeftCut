@@ -357,4 +357,6 @@ Adding more locales is a strict addition — drop a resource file under
 - [Conformance](conformance.md) — media fixtures and E2E gates.
 - [Features](features.md) — small-feature contracts (undo scope, groups, search palette, color picker).
 - [MCP](mcp.md) — agent connection protocol and tool surface.
-- [Roadmap](roadmap.md) — phased delivery.
+- [v1 target](https://github.com/UncleChair/WeftCut/issues/11) — release scope
+  and open work. This lives in the issue tracker, not in `docs/`: everything
+  here describes what exists today.

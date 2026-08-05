@@ -1,6 +1,6 @@
 //! Pluggable speech backends behind a locality-neutral trait surface.
 //!
-//! Two capability surfaces (see `docs/roadmap.md`):
+//! Two capability surfaces (tool contracts in `docs/mcp.md`):
 //! - **Transcription** — [`Transcriber`] trait → `transcribe_clip` MCP tool.
 //! - **Text-to-speech** — [`Synthesizer`] trait → `synthesize_speech` MCP tool.
 //!

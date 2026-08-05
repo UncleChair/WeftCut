@@ -88,3 +88,11 @@ instead of shipping.
   URLs with SHA-256 over rolling "latest" endpoints.
 - A zero-GPL-binaries edition remains possible later via download-on-first-use
   of the sidecar (Audacity precedent); the LGPL decode lane is unaffected.
+- **ML background removal is license-blocked, not merely unbuilt.** RVM is
+  GPL-3.0 and `@imgly/background-removal` is AGPL/commercial — both
+  incompatible with this MIT distribution, and neither can hide behind the
+  sidecar's process boundary, because the model would run in-process. A
+  license-clean model is a prerequisite for the feature, not a detail of it.
+- **No shader code may be ported from OBS or Natron** (both GPL). Keyer and
+  filter math comes from public literature only. The renderer has no process
+  boundary at all, so a single ported GLSL snippet contaminates the app.

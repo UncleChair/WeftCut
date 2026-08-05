@@ -98,7 +98,7 @@ design admits exactly one same-engine session rebuild before that abort, and
 an abort message that names the source and suggests a Lite re-run; the native
 lane implements neither yet (the WebCodecs lane keeps its rebuild machinery,
 and the failure message is today's generic export error) — both recorded as
-roadmap debt rather than silently claimed.
+post-v1 debt rather than silently claimed.
 
 ## Considered options
 
@@ -126,7 +126,7 @@ roadmap debt rather than silently claimed.
   native decode threads (`closeAllExportSw` orphan reclaim).
 - 4:2:2 chroma halves before compositing (swscale to I420P10) — the faithful
   ProRes-422 ceiling needs a 4:2:2 transport format; this and the other
-  deliberate scope cuts live in the roadmap's export-decode debt list.
+  deliberate scope cuts live in the post-v1 export-decode debt list.
 
 ## References
 

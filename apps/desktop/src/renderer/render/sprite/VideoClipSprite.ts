@@ -115,8 +115,9 @@ export class VideoClipSprite implements StageableSprite {
   ///
   /// Cost: a per-frame 2D `drawImage` (a GPU blit). The zero-copy
   /// `importExternalTexture` path that would recover it AND honor the
-  /// matrix is tracked in docs/roadmap.md ("Zero-copy color-correct GPU
-  /// frame upload").
+  /// matrix is deliberately parked — docs/render.md ("the snapshot rule")
+  /// carries the measurement that keeps it parked and the one that would
+  /// reopen it.
   private bindFromSnapshot(
     frame: BrowserConvertibleFrame,
     width: number,

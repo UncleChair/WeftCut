@@ -1029,12 +1029,21 @@ data-root *change* flow above is fully migrated and reversible.
 `project.json` embeds a `schema_version: u32` field. `SCHEMA_VERSION`
 is bumped whenever the on-disk shape changes incompatibly.
 
-The load path is a cut-over gate (`io/migrate.rs`), not a migration
-chain: a project at the build's `SCHEMA_VERSION` loads; anything
-below it is rejected with guidance to re-create the project in a
-fresh workspace; anything above it is rejected with "update the
-app". There is no carry-forward of older folders — maintaining
-migration code for unshipped formats is pure overhead.
+The load path is a cut-over gate, not a migration chain: a project at
+the build's `SCHEMA_VERSION` loads; anything below it is rejected with
+guidance to re-create the project in a fresh workspace; anything above
+it is rejected with "update the app". The gate is enforced in two
+TypeScript readers — `state/persistence.ts` (the load guard) and
+`state/serialize.ts` (`parseProject`) — and `SCHEMA_VERSION` itself
+lives in `state/model.ts`. There is no carry-forward of older folders:
+maintaining migration code for unshipped formats is pure overhead.
+
+**This is a pre-release stance with a one-way expiry.** Once the format
+ships, the first bump makes every existing project unopenable, and a
+chain added afterwards cannot rescue files already written. Replacing
+this gate with a version-keyed upgrade chain is therefore a release
+blocker rather than a nice-to-have — see
+[issue #14](https://github.com/UncleChair/WeftCut/issues/14).
 
 Within a schema version, additive fields use `#[serde(default)]` so
 existing `project.json` files keep loading without a version bump;

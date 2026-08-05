@@ -85,6 +85,7 @@ and a full→limited **range** squash scores large.
   WebCodecs (a Rust ffmpeg re-encode) purely to relabel HD to a non-standard
   matrix — rejected as a bad trade.
 - The zero-copy decode path (`importExternalTexture`, which also honors the
-  matrix and would drop the per-frame `drawImage` blit) is tracked in the
-  roadmap — deliberately parked at lowest priority pending profiling — and
-  not built here.
+  matrix and would drop the per-frame `drawImage` blit) is deliberately parked
+  at lowest priority pending profiling — see
+  [`render.md`](../render.md#frame-upload-the-snapshot-rule) for the
+  measurement that keeps it parked — and not built here.

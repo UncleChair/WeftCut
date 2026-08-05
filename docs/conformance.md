@@ -225,4 +225,5 @@ fields with this priority:
 `SourceDecoderPool` and `ExportDecoderPool` both apply that merged
 `VideoColorSpaceInit` before decode. `VideoClipSprite` snapshots through a 2D
 canvas because that path honors `VideoFrame.colorSpace`; the zero-copy WebGPU
-upload path is deferred in [`roadmap.md`](roadmap.md).
+upload path is deliberately parked — see
+[`render.md`](render.md#frame-upload-the-snapshot-rule).

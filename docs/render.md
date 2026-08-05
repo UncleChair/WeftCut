@@ -363,9 +363,29 @@ whose `BrowserConvertibleFrame` parameter excludes them at compile
 time (ADR 0032).
 
 ADR 0014 records the evidence: reverting the export snapshot scores
-~22 on the perceptual conformance gate vs ≈0 with it. The zero-copy
-alternative (`importExternalTexture`, which also honors the matrix)
-is deliberately parked at lowest priority — see the roadmap.
+~22 on the perceptual conformance gate vs ≈0 with it.
+
+**The zero-copy alternative is deliberately parked at lowest
+priority, and the preview-side profiling that would justify it says
+no.** `importExternalTexture` does honor the matrix — a standalone
+POC confirmed Chromium samples 601 and 709 to distinct RGB through
+`textureSampleBaseClampToEdge` — so the idea is sound; it just isn't
+worth anything measured. Colour correctness is already handled at
+zero marginal cost, because the snapshot *is* the honoring
+conversion, and the blit it would remove is a rounding error:
+`blitDrawImage` means 0.03 ms per frame at 1080p and 0.02 ms at 4K,
+p95 ≤ 0.2 ms, against a 16.7 ms budget
+([playback-perf](playback-perf.md)). The replacement, meanwhile, is
+heavy — a bespoke Pixi pass re-importing the per-frame
+`GPUExternalTexture` (it expires every frame), a permanent WebGL
+dual-path because export has no `navigator.gpu`, bilinear-only
+sampling with no mips, and a fresh colour-conformance pass.
+
+**Export is the one case that could reopen it**, and it is still
+unmeasured: `__weftcutExportPerf` `compositeMs` is the instrument,
+and 4K export is where the blit would matter. Do not start without
+that number. The staged plan, if it ever arrives, is recorded in the
+post-v1 backlog issue.
 
 The snapshot rule is one instance of the project-wide color model —
 color converges once at an explicit, gated chokepoint and the rest of
