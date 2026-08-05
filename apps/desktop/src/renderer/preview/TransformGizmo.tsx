@@ -1,7 +1,7 @@
 // On-canvas transform box for the primary selected layer: shows its footprint
-// over the preview, drags it to a new position, rotates it by the knob on a
-// stalk above its top edge, and moves its anchor by the target reticle at the
-// pivot. No resize handles yet.
+// over the preview, drags it to a new position, resizes it by the handles on its
+// corners and edges, rotates it by the knob on a stalk above its top edge, and
+// moves its anchor by the target reticle at the pivot.
 //
 // Screen-space by design — an SVG overlay, not Pixi children. The stage is
 // read back by the eyedropper and by the conformance capture hooks, so anything
@@ -11,7 +11,7 @@
 // Every pointer- and frame-rate update here is imperative through refs: the box
 // follows animated x/y during playback, and a per-frame React state write is
 // exactly what the memory-ratchet gate exists to catch.
-// Spec: .scratch/preview-gizmo/spec.md (Phase 2)
+// Spec: .scratch/preview-gizmo/spec.md
 
 import { useEffect, useRef } from "react";
 
@@ -23,7 +23,8 @@ import {
   type LayerSummary,
 } from "../ipc";
 import { autoKeyTrack } from "../keyframe/autoKey";
-import { readParamTrack } from "../keyframe/descriptors";
+import { readParamTrack, readScaleLinked, scaleFanOutFor } from "../keyframe/descriptors";
+import { fanOutEntries } from "../keyframe/fanOut";
 import { resolveAnimated } from "../render/animated";
 import { DEFAULT_ANCHOR } from "../render/anchorPivot";
 import {
@@ -41,13 +42,21 @@ import {
   compDeltaToLocal,
   compToClient,
   containFit,
+  handleOutwardDeg,
+  isCornerHandle,
   layerPivot,
   layerQuad,
+  resizeCursorForDeg,
   rotateHandle,
+  scaleCompensation,
+  scaleHandlePoints,
+  SCALE_HANDLE_IDS,
   shortestDeltaDeg,
   snapAngleDeg,
+  solveScale,
   type LayerQuadInput,
   type Pt,
+  type ScaleHandleId,
   type TransformOrigin,
 } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
@@ -66,6 +75,24 @@ const ROTATE_SNAP_DEG = 15;
 const ANCHOR_RING_R = 5.5;
 const ANCHOR_ARM_PX = 9;
 const ANCHOR_HIT_R = 11;
+/// Resize handles: the drawn dot, and the invisible disc that widens it into a
+/// comfortable grab target. Client pixels again — the handle must not shrink
+/// with the composition. The hit disc is kept modest on purpose: every pixel it
+/// claims comes out of the box's interior, which is the MOVE handle.
+///
+/// ROUND, not square, and that is a design decision rather than a style one: a
+/// circle has no orientation, so the handle needs no rotation to stay consistent
+/// with the box. A square would have to be re-rotated every frame to match the
+/// box's edges — and on a flipped or non-uniformly scaled layer, where the quad's
+/// winding reverses and its edges stop being perpendicular, there is no single
+/// correct angle for it to take. The direction that IS meaningful is carried by
+/// the cursor instead (`handleOutwardDeg`).
+const HANDLE_R_PX = 4.5;
+const HANDLE_HIT_R_PX = 8;
+/// Below this, an edge's midpoint handle would sit under the two corners it
+/// lives between. Hide it rather than stack three targets on one spot — the
+/// corners can still scale that axis.
+const EDGE_HANDLE_MIN_PX = 24;
 
 /// Color has no transform at all (it fills the composition) and Audio is not
 /// visual — neither gets a box.
@@ -156,7 +183,100 @@ interface AnchorDrag extends DragBase {
   compDy: number;
 }
 
-type Drag = MoveDrag | RotateDrag | AnchorDrag;
+interface ScaleDrag extends DragBase {
+  kind: "scale";
+  id: ScaleHandleId;
+  startClientX: number;
+  startClientY: number;
+  /// The geometry the handle was grabbed from, frozen at pointerdown — the base
+  /// scale the committed delta is measured from, and the frame the solve
+  /// un-rotates the cursor through.
+  frame: LayerQuadInput;
+  /// The pivot in COMPOSITION pixels, frozen: the point this gesture pins. It
+  /// stays truthful for the whole drag because the compensation below is exactly
+  /// what holds it there.
+  pivotComp: Pt;
+  /// Where the grabbed handle sat at pointerdown, composition pixels. The solve
+  /// targets `handleComp + cursor delta` rather than the raw cursor, so grabbing
+  /// a handle slightly off its centre doesn't snap the box on the first move.
+  handleComp: Pt;
+  /// Frozen `scale_linked`: a linked layer scales uniformly for the whole
+  /// gesture, no modifier involved (and only its corner handles are drawn).
+  linked: boolean;
+  dScaleX: number;
+  dScaleY: number;
+  /// The `x`/`y` that keeps the pivot still (`scaleCompensation`). Committed in
+  /// the same batch for the same reason as the anchor gesture's: applying the
+  /// scale without it is a visible jump.
+  compDx: number;
+  compDy: number;
+}
+
+type Drag = MoveDrag | RotateDrag | AnchorDrag | ScaleDrag;
+
+/// Below this, a gesture's delta is float noise rather than an edit.
+///
+/// LANDMINE: `Math.cos(±π/2)` is 6e-17, not 0, so anything that passes through
+/// the inverse rotation — a resize solve, an anchor drag's `compDeltaToLocal` —
+/// leaves ~1e-16 on the axis the cursor did NOT move. Compared against exact
+/// zero that reads as an edit, and a keyframed layer collects a redundant key
+/// with an invisible value change on every axis-aligned drag. The threshold is
+/// far below perceptible for both units in play here (unitless scale, and
+/// composition pixels).
+const NOISE = 1e-9;
+
+function moved(delta: number): boolean {
+  return Math.abs(delta) > NOISE;
+}
+
+/// The layer's track for `key`, or a Static fallback when the summary doesn't
+/// carry it (a kind without that param, or a version skew).
+function paramTrack(layer: LayerSummary, key: string, fallback: number): AnimTrack<number> {
+  return readParamTrack(layer.params, key) ?? { mode: "Static", value: fallback };
+}
+
+/// One commit's worth of "add `delta` to what this track resolves to at the
+/// gesture's frozen time". `autoKeyTrack` is the shared rule — a Static track
+/// takes a plain value, a Keyframed one gets a key at the playhead — so every
+/// handle writes tracks exactly the way the inspector does.
+function bumpTrack(
+  layer: LayerSummary,
+  key: string,
+  fallback: number,
+  tInLayerUs: number,
+  delta: number,
+): AnimTrack<number> {
+  const track = paramTrack(layer, key, fallback);
+  return autoKeyTrack(track, tInLayerUs, resolveAnimated(track, tInLayerUs, fallback) + delta);
+}
+
+function bumpEntry(
+  layer: LayerSummary,
+  key: string,
+  fallback: number,
+  tInLayerUs: number,
+  delta: number,
+): [string, AnimTrack<number>] {
+  return [key, bumpTrack(layer, key, fallback, tInLayerUs, delta)];
+}
+
+/// The `x`/`y` half of a gesture that has to hold the picture (or the pivot)
+/// still, PER AXIS — an axis whose compensation is exactly zero is left out.
+/// Both compensating gestures hit that case constantly (an unrotated media
+/// layer needs none at all for an anchor drag; a single-axis resize needs one
+/// axis), and writing the zero anyway would stamp a redundant keyframe on a
+/// track the gesture never moved.
+function positionFix(
+  layer: LayerSummary,
+  tInLayerUs: number,
+  dx: number,
+  dy: number,
+): Array<[string, AnimTrack<number>]> {
+  const entries: Array<[string, AnimTrack<number>]> = [];
+  if (moved(dx)) entries.push(bumpEntry(layer, "x", 0, tInLayerUs, dx));
+  if (moved(dy)) entries.push(bumpEntry(layer, "y", 0, tInLayerUs, dy));
+  return entries;
+}
 
 function TransformGizmo({
   layer,
@@ -170,6 +290,10 @@ function TransformGizmo({
   const stalkRef = useRef<SVGLineElement | null>(null);
   const knobRef = useRef<SVGCircleElement | null>(null);
   const anchorRef = useRef<SVGGElement | null>(null);
+  const handleEls = useRef(new Map<ScaleHandleId, SVGGElement>());
+  /// Last cursor written per handle, so a rotating box costs one style write
+  /// per handle per octant crossed instead of one per frame.
+  const handleCursors = useRef(new Map<ScaleHandleId, string>());
   const dragRef = useRef<Drag | null>(null);
   /// The pivot the last drawn frame used, in client pixels. A rotate gesture
   /// starts from what the user actually grabbed rather than from a geometry
@@ -202,6 +326,37 @@ function TransformGizmo({
 
   useEffect(() => {
     let frame = 0;
+    /// Position, show and cursor the eight resize handles for an already-mapped
+    /// box. A linked layer keeps its CORNERS only: one axis of it cannot move
+    /// without the other, so an edge handle would either lie about what it does
+    /// or silently unlink the layer.
+    const placeScaleHandles = (corners: Pt[], linked: boolean): void => {
+      const points = scaleHandlePoints(corners);
+      if (!points) return;
+      const [tl, tr, , bl] = corners as [Pt, Pt, Pt, Pt];
+      const edgeLen = {
+        // Which edge each midpoint handle lives ON — a handle is hidden when
+        // that edge is too short to separate it from its two corners.
+        x: Math.hypot(tr.x - tl.x, tr.y - tl.y),
+        y: Math.hypot(bl.x - tl.x, bl.y - tl.y),
+      };
+      for (const { id, at } of points) {
+        const el = handleEls.current.get(id);
+        if (!el) continue;
+        const along = id === "t" || id === "b" ? edgeLen.x : edgeLen.y;
+        const on = isCornerHandle(id) || (!linked && along >= EDGE_HANDLE_MIN_PX);
+        el.style.display = on ? "" : "none";
+        if (!on) continue;
+        el.setAttribute("transform", `translate(${at.x} ${at.y})`);
+        const deg = handleOutwardDeg(corners, id);
+        if (deg === null) continue;
+        const cursor = resizeCursorForDeg(deg);
+        if (handleCursors.current.get(id) !== cursor) {
+          handleCursors.current.set(id, cursor);
+          el.style.cursor = cursor;
+        }
+      }
+    };
     const draw = (): void => {
       frame = requestAnimationFrame(draw);
       const box = boxRef.current;
@@ -218,7 +373,13 @@ function TransformGizmo({
         knob.style.display = display;
         anchor.style.display = display;
       };
-      const hide = (): void => show(false);
+      // The resize handles are NOT part of `show`: which of them exist depends
+      // on the layer (linked ⇒ corners only) and on the box's drawn size, so
+      // the visible path decides each one individually below.
+      const hide = (): void => {
+        show(false);
+        for (const el of handleEls.current.values()) el.style.display = "none";
+      };
       if (!probe) return hide();
       const l = layerRef.current;
       const comp = compRef.current;
@@ -250,8 +411,8 @@ function TransformGizmo({
         anchorY: resolveAnimated(p.anchor_y, tLocalUs, DEFAULT_ANCHOR) + (d?.danchorY ?? 0),
         naturalW: size.w,
         naturalH: size.h,
-        scaleX: resolveAnimated(p.scale_x, tLocalUs, 1),
-        scaleY: resolveAnimated(p.scale_y, tLocalUs, 1),
+        scaleX: resolveAnimated(p.scale_x, tLocalUs, 1) + (d?.dscaleX ?? 0),
+        scaleY: resolveAnimated(p.scale_y, tLocalUs, 1) + (d?.dscaleY ?? 0),
         rotationDeg: resolveAnimated(p.rotation_deg, tLocalUs, 0) + (d?.drotDeg ?? 0),
         origin: originFor(p.kind),
       };
@@ -278,6 +439,7 @@ function TransformGizmo({
       stalk.setAttribute("y2", String(handle.knob.y));
       knob.setAttribute("cx", String(handle.knob.x));
       knob.setAttribute("cy", String(handle.knob.y));
+      placeScaleHandles(corners, readScaleLinked(l.params));
       show(true);
     };
     frame = requestAnimationFrame(draw);
@@ -350,20 +512,10 @@ function TransformGizmo({
       clearTransformOverride(l.id);
       return;
     }
-    const xTrack: AnimTrack<number> = readParamTrack(l.params, "x") ?? {
-      mode: "Static",
-      value: 0,
-    };
-    const yTrack: AnimTrack<number> = readParamTrack(l.params, "y") ?? {
-      mode: "Static",
-      value: 0,
-    };
-    // One batch = one undo step. `autoKeyTrack` is the shared rule: a Static
-    // track takes a plain value, a Keyframed one gets a key at the playhead —
-    // the same thing the inspector does.
+    // One batch = one undo step.
     updateLayerParamTracks(l.id, [
-      ["x", autoKeyTrack(xTrack, drag.tInLayerUs, resolveAnimated(xTrack, drag.tInLayerUs, 0) + drag.dxComp)],
-      ["y", autoKeyTrack(yTrack, drag.tInLayerUs, resolveAnimated(yTrack, drag.tInLayerUs, 0) + drag.dyComp)],
+      bumpEntry(l, "x", 0, drag.tInLayerUs, drag.dxComp),
+      bumpEntry(l, "y", 0, drag.tInLayerUs, drag.dyComp),
     ]).catch((err) => {
       // The override is only safe to hold while a commit is in flight; a
       // failed write means no new summary is coming to lift it.
@@ -416,21 +568,10 @@ function TransformGizmo({
       clearTransformOverride(l.id);
       return;
     }
-    const track: AnimTrack<number> = readParamTrack(l.params, "rotation_deg") ?? {
-      mode: "Static",
-      value: 0,
-    };
     // No fan-out: unlike scale, rotation is a single track on every kind — the
     // linked-scale twin invariant doesn't apply here (spec D6).
     updateLayerParamTracks(l.id, [
-      [
-        "rotation_deg",
-        autoKeyTrack(
-          track,
-          drag.tInLayerUs,
-          resolveAnimated(track, drag.tInLayerUs, 0) + drag.deltaDeg,
-        ),
-      ],
+      bumpEntry(l, "rotation_deg", 0, drag.tInLayerUs, drag.deltaDeg),
     ]).catch((err) => {
       clearTransformOverride(l.id);
       console.warn("transform gizmo rotate commit failed:", err);
@@ -500,29 +641,119 @@ function TransformGizmo({
       clearTransformOverride(l.id);
       return;
     }
-    const at = (key: string, fallback: number): AnimTrack<number> =>
-      readParamTrack(l.params, key) ?? { mode: "Static", value: fallback };
-    const anchorX = at("anchor_x", DEFAULT_ANCHOR);
-    const anchorY = at("anchor_y", DEFAULT_ANCHOR);
     const entries: Array<[string, AnimTrack<number>]> = [
-      ["anchor_x", autoKeyTrack(anchorX, drag.tInLayerUs, resolveAnimated(anchorX, drag.tInLayerUs, DEFAULT_ANCHOR) + drag.dAnchorX)],
-      ["anchor_y", autoKeyTrack(anchorY, drag.tInLayerUs, resolveAnimated(anchorY, drag.tInLayerUs, DEFAULT_ANCHOR) + drag.dAnchorY)],
+      bumpEntry(l, "anchor_x", DEFAULT_ANCHOR, drag.tInLayerUs, drag.dAnchorX),
+      bumpEntry(l, "anchor_y", DEFAULT_ANCHOR, drag.tInLayerUs, drag.dAnchorY),
     ];
     // The pan-behind compensation rides the SAME batch — one undo step for the
     // whole gesture. Skipped when it is exactly zero, which is the common case
     // (an unrotated, unflipped media layer): writing it anyway would stamp a
     // redundant key on `x`/`y` for a gesture that never moved the picture.
-    if (drag.compDx !== 0 || drag.compDy !== 0) {
-      const xTrack = at("x", 0);
-      const yTrack = at("y", 0);
-      entries.push(
-        ["x", autoKeyTrack(xTrack, drag.tInLayerUs, resolveAnimated(xTrack, drag.tInLayerUs, 0) + drag.compDx)],
-        ["y", autoKeyTrack(yTrack, drag.tInLayerUs, resolveAnimated(yTrack, drag.tInLayerUs, 0) + drag.compDy)],
-      );
-    }
+    entries.push(...positionFix(l, drag.tInLayerUs, drag.compDx, drag.compDy));
     updateLayerParamTracks(l.id, entries).catch((err) => {
       clearTransformOverride(l.id);
       console.warn("transform gizmo anchor commit failed:", err);
+    });
+  };
+
+  const beginScale = (e: React.PointerEvent<SVGGElement>, id: ScaleHandleId): void => {
+    if (e.button !== 0) return;
+    // Must beat the box underneath, which claims its whole footprint as a move
+    // handle and contains every handle by construction.
+    e.preventDefault();
+    e.stopPropagation();
+    const frame = geomRef.current;
+    if (!frame || frame.naturalW <= 0 || frame.naturalH <= 0) return;
+    // Composition space, from the same frozen frame the solve runs in — so the
+    // gesture's arithmetic is self-consistent even if the layer is animating.
+    const handleComp = scaleHandlePoints(layerQuad(frame))?.find((h) => h.id === id)?.at;
+    if (!handleComp) return;
+    dragRef.current = {
+      kind: "scale",
+      id,
+      tInLayerUs: grabTimeUs(),
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      frame,
+      pivotComp: layerPivot(frame),
+      handleComp,
+      linked: readScaleLinked(layerRef.current.params),
+      dScaleX: 0,
+      dScaleY: 0,
+      compDx: 0,
+      compDy: 0,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const moveScale = (e: React.PointerEvent<SVGGElement>): void => {
+    const drag = dragRef.current;
+    if (drag?.kind !== "scale") return;
+    const rect = getGizmoProbe()?.canvasRect();
+    const fit = rect ? containFit(rect, compRef.current.width, compRef.current.height) : null;
+    if (!fit) return;
+    // The target is the handle's own start plus the cursor's travel, not the
+    // raw cursor: grabbing a handle a few pixels off centre must not snap the
+    // box by those pixels on the first move.
+    const d = clientDeltaToComp(e.clientX - drag.startClientX, e.clientY - drag.startClientY, fit);
+    const next = solveScale(
+      drag.frame,
+      drag.id,
+      { x: drag.handleComp.x + d.x, y: drag.handleComp.y + d.y },
+      drag.pivotComp,
+      // A linked layer is uniform for the whole gesture; Shift is the usual
+      // constrain-proportions modifier for an unlinked one.
+      drag.linked || e.shiftKey,
+    );
+    if (!next) return; // the handle has collapsed onto the pivot — no lever left
+    drag.dScaleX = next.scaleX - drag.frame.scaleX;
+    drag.dScaleY = next.scaleY - drag.frame.scaleY;
+    const fix = scaleCompensation(drag.frame, next.scaleX, next.scaleY);
+    drag.compDx = fix.x;
+    drag.compDy = fix.y;
+    setTransformOverride(layerRef.current.id, {
+      dx: fix.x,
+      dy: fix.y,
+      dscaleX: drag.dScaleX,
+      dscaleY: drag.dScaleY,
+    });
+  };
+
+  const endScale = (e: React.PointerEvent<SVGGElement>): void => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (drag?.kind !== "scale") return;
+    const l = layerRef.current;
+    if (!moved(drag.dScaleX) && !moved(drag.dScaleY)) {
+      clearTransformOverride(l.id);
+      return;
+    }
+    // LANDMINE (spec D6): a linked layer must be written as ONE authored track
+    // fanned out to both axes. Two independently built tracks would differ by a
+    // float ulp or a keyframe id and the main-side twin invariant would read
+    // that as divergence and silently clear `scale_linked`.
+    const fan = scaleFanOutFor("scale_x", l.params);
+    const entries: Array<[string, AnimTrack<number>]> = [];
+    if (fan) {
+      entries.push(...fanOutEntries(fan, bumpTrack(l, "scale_x", 1, drag.tInLayerUs, drag.dScaleX)));
+    } else {
+      // Per axis, so an edge handle (or a corner on a rotated layer that only
+      // grew one way) leaves the untouched axis alone rather than re-keying it.
+      if (moved(drag.dScaleX)) {
+        entries.push(bumpEntry(l, "scale_x", 1, drag.tInLayerUs, drag.dScaleX));
+      }
+      if (moved(drag.dScaleY)) {
+        entries.push(bumpEntry(l, "scale_y", 1, drag.tInLayerUs, drag.dScaleY));
+      }
+    }
+    // Scaling about the anchor moves `x`/`y`, because the composed position
+    // carries a `pivot·|scale|` term — the exact mirror of the anchor gesture,
+    // where the media kinds needed no fix and Text always did.
+    entries.push(...positionFix(l, drag.tInLayerUs, drag.compDx, drag.compDy));
+    updateLayerParamTracks(l.id, entries).catch((err) => {
+      clearTransformOverride(l.id);
+      console.warn("transform gizmo scale commit failed:", err);
     });
   };
 
@@ -563,6 +794,47 @@ function TransformGizmo({
           display: "none",
         }}
       />
+      {/* Resize handles, after the box so they win the hit test against the
+          footprint they sit on, and corners last within the set (see
+          SCALE_HANDLE_IDS) so a shrunken box's corners beat its edge handles.
+          Each is a group carrying the translate — ONE attribute write per frame,
+          with no rotation to keep in sync because the dot is round — and the
+          invisible second disc widens the grab area without changing what is
+          drawn. */}
+      {SCALE_HANDLE_IDS.map((id) => (
+        <g
+          key={id}
+          data-testid={`transform-gizmo-scale-${id}`}
+          ref={(el) => {
+            if (el) handleEls.current.set(id, el);
+            else handleEls.current.delete(id);
+          }}
+          onPointerDown={(e) => beginScale(e, id)}
+          onPointerMove={moveScale}
+          onPointerUp={endScale}
+          onPointerCancel={endScale}
+          style={{
+            pointerEvents: "all",
+            // Replaced per frame with the handle's true screen direction, so a
+            // rotated layer's cursors turn with it.
+            cursor: "nwse-resize",
+            display: "none",
+          }}
+        >
+          <circle
+            cx={0}
+            cy={0}
+            r={HANDLE_R_PX}
+            style={{ fill: "var(--background)", stroke: "var(--ring)", strokeWidth: 1.5 }}
+          />
+          <circle
+            cx={0}
+            cy={0}
+            r={HANDLE_HIT_R_PX}
+            style={{ fill: "rgba(0, 0, 0, 0)" }}
+          />
+        </g>
+      ))}
       <line
         ref={stalkRef}
         data-testid="transform-gizmo-stalk"

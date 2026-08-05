@@ -28,6 +28,14 @@ export interface TransformDelta {
   /// halves on the same frame or the layer visibly jumps mid-drag.
   danchorX?: number;
   danchorY?: number;
+  /// Added to the resolved scale pair. Additive rather than absolute like every
+  /// other channel here, and for the same reason: a keyframed layer must keep
+  /// animating under the cursor, so the gesture composes with whatever the
+  /// tracks resolve to right now. A resize handle pairs these with a
+  /// compensating `dx`/`dy` too — the pivot's composed position carries a
+  /// `|scale|` term (`anchorPivot.ts`), so scaling about the anchor moves `x`/`y`.
+  dscaleX?: number;
+  dscaleY?: number;
 }
 
 const deltas = new Map<string, TransformDelta>();
@@ -54,7 +62,9 @@ function sameDelta(a: TransformDelta, b: TransformDelta): boolean {
     a.dy === b.dy &&
     (a.drotDeg ?? 0) === (b.drotDeg ?? 0) &&
     (a.danchorX ?? 0) === (b.danchorX ?? 0) &&
-    (a.danchorY ?? 0) === (b.danchorY ?? 0)
+    (a.danchorY ?? 0) === (b.danchorY ?? 0) &&
+    (a.dscaleX ?? 0) === (b.dscaleX ?? 0) &&
+    (a.dscaleY ?? 0) === (b.dscaleY ?? 0)
   );
 }
 
@@ -72,6 +82,8 @@ export function withTransformOverride<
   T extends {
     x: number;
     y: number;
+    scale_x: number;
+    scale_y: number;
     rotation_deg: number;
     anchor_x: number;
     anchor_y: number;
@@ -83,6 +95,8 @@ export function withTransformOverride<
     ...view,
     x: view.x + d.dx,
     y: view.y + d.dy,
+    scale_x: view.scale_x + (d.dscaleX ?? 0),
+    scale_y: view.scale_y + (d.dscaleY ?? 0),
     rotation_deg: view.rotation_deg + (d.drotDeg ?? 0),
     anchor_x: view.anchor_x + (d.danchorX ?? 0),
     anchor_y: view.anchor_y + (d.danchorY ?? 0),

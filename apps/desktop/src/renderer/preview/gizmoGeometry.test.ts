@@ -7,11 +7,17 @@ import {
   compDeltaToLocal,
   compToClient,
   containFit,
+  handleOutwardDeg,
   layerPivot,
   layerQuad,
+  resizeCursorForDeg,
   rotateHandle,
+  scaleCompensation,
+  scaleHandleOffset,
+  scaleHandlePoints,
   shortestDeltaDeg,
   snapAngleDeg,
+  solveScale,
   type LayerQuadInput,
 } from "./gizmoGeometry";
 
@@ -276,5 +282,218 @@ describe("anchorCompensation", () => {
     const c = anchorCompensation({ ...mediaLayer, scaleX: -1 }, 0.5, 0);
     expect(c.x).toBeCloseTo(-200, 9);
     expect(c.y).toBeCloseTo(0, 9);
+  });
+});
+
+describe("scaleHandleOffset", () => {
+  it("is half the natural size at the corners of a centre-anchored layer", () => {
+    expect(scaleHandleOffset(mediaLayer, "br")).toEqual({ x: 100, y: 50 });
+    expect(scaleHandleOffset(mediaLayer, "tl")).toEqual({ x: -100, y: -50 });
+  });
+
+  it("is the SAME for both origin conventions", () => {
+    // Top-left origin puts the pivot at the anchor; anchor origin moves the rect
+    // instead. Either way the handle's offset from the pivot is (frac−anchor)·size,
+    // which is why one solve serves Text and the media kinds alike.
+    for (const id of ["tl", "t", "br", "r"] as const) {
+      expect(scaleHandleOffset({ ...mediaLayer, origin: "anchor", anchorX: 0.25 }, id)).toEqual(
+        scaleHandleOffset({ ...mediaLayer, anchorX: 0.25 }, id),
+      );
+    }
+  });
+
+  it("puts an off-centre anchor's top-edge midpoint OFF the pivot's column", () => {
+    // The reason the driven-axis mask can't be inferred from a zero offset: this
+    // handle has a non-zero x offset and must still scale y alone.
+    expect(scaleHandleOffset({ ...mediaLayer, anchorX: 0.25 }, "t")).toEqual({ x: 50, y: -50 });
+  });
+});
+
+describe("scaleHandlePoints", () => {
+  const box = [
+    { x: 0, y: 0 },
+    { x: 320, y: 0 },
+    { x: 320, y: 180 },
+    { x: 0, y: 180 },
+  ];
+
+  it("places corners on the quad and edge handles on its midpoints", () => {
+    const at = new Map(scaleHandlePoints(box)!.map((h) => [h.id, h.at]));
+    expect(at.get("tl")).toEqual({ x: 0, y: 0 });
+    expect(at.get("br")).toEqual({ x: 320, y: 180 });
+    expect(at.get("t")).toEqual({ x: 160, y: 0 });
+    expect(at.get("l")).toEqual({ x: 0, y: 90 });
+  });
+
+  it("follows a rotated box's own corners, and is null under 4", () => {
+    // The same content turned 90° clockwise: its own "tl" is now top-right.
+    const at = new Map(
+      scaleHandlePoints([
+        { x: 100, y: 0 },
+        { x: 100, y: 100 },
+        { x: 0, y: 100 },
+        { x: 0, y: 0 },
+      ])!.map((h) => [h.id, h.at]),
+    );
+    expect(at.get("tl")).toEqual({ x: 100, y: 0 });
+    expect(at.get("t")).toEqual({ x: 100, y: 50 });
+    expect(scaleHandlePoints(box.slice(0, 3))).toBeNull();
+  });
+
+  it("lists the corners LAST, so they win the hit test on a shrunken box", () => {
+    const ids = scaleHandlePoints(box)!.map((h) => h.id);
+    expect(ids.slice(4)).toEqual(["tl", "tr", "br", "bl"]);
+  });
+});
+
+describe("solveScale", () => {
+  /// The pivot of `mediaLayer`: a 200×100 layer at (100,50), centre-anchored.
+  const pivot = { x: 200, y: 100 };
+
+  it("puts the grabbed corner exactly under the cursor", () => {
+    // Twice the offset from the pivot ⇒ twice the scale, both axes.
+    const s = solveScale(mediaLayer, "br", { x: 400, y: 200 }, pivot, false)!;
+    expect(s).toEqual({ scaleX: 2, scaleY: 2 });
+  });
+
+  it("scales the axes independently unless asked for uniform", () => {
+    const free = solveScale(mediaLayer, "br", { x: 400, y: 150 }, pivot, false)!;
+    expect(free).toEqual({ scaleX: 2, scaleY: 1 });
+    // Uniform projects the cursor onto the handle's own diagonal instead:
+    // t = (b·v)/(b·b) with b = (100, 50), v = (200, 50).
+    const locked = solveScale(mediaLayer, "br", { x: 400, y: 150 }, pivot, true)!;
+    expect(locked.scaleX).toBeCloseTo(1.8, 9);
+    expect(locked.scaleY).toBeCloseTo(1.8, 9);
+  });
+
+  it("drives ONE axis from an edge handle, whatever the cursor does off it", () => {
+    const s = solveScale(mediaLayer, "r", { x: 350, y: -900 }, pivot, false)!;
+    expect(s).toEqual({ scaleX: 1.5, scaleY: 1 });
+  });
+
+  it("keeps an edge handle on its own axis even with an off-centre anchor", () => {
+    // anchor_x 0.25 puts the top handle 50 px right of the pivot; a purely
+    // horizontal cursor must still change nothing. Deriving the driven axis from
+    // "the offset is zero" instead of from the handle's identity would scale x by 2.
+    const layer = { ...mediaLayer, anchorX: 0.25 };
+    const p = layerPivot(layer);
+    const start = scaleHandlePoints(layerQuad(layer))!.find((h) => h.id === "t")!.at;
+    const s = solveScale(layer, "t", { x: start.x + 100, y: start.y }, p, false)!;
+    expect(s).toEqual({ scaleX: 1, scaleY: 1 });
+  });
+
+  it("converts the cursor through the layer's LOCAL frame when rotated", () => {
+    // 90° clockwise: the layer's own +x axis points DOWN the screen, so a purely
+    // vertical drag is a pure scale_x change.
+    const layer = { ...mediaLayer, rotationDeg: 90 };
+    const p = layerPivot(layer);
+    const start = scaleHandlePoints(layerQuad(layer))!.find((h) => h.id === "br")!.at;
+    const s = solveScale(layer, "br", { x: start.x, y: start.y + 100 }, p, false)!;
+    expect(s.scaleX).toBeCloseTo(2, 9);
+    expect(s.scaleY).toBeCloseTo(1, 9);
+  });
+
+  it("goes negative when the handle is dragged past the pivot, but never to 0", () => {
+    const flipped = solveScale(mediaLayer, "br", { x: 0, y: 0 }, pivot, false)!;
+    expect(flipped).toEqual({ scaleX: -2, scaleY: -2 });
+    // Landing exactly on the pivot would collapse the box to a point, stacking
+    // every handle on the reticle with no way to drag back out.
+    const collapsed = solveScale(mediaLayer, "br", pivot, pivot, false)!;
+    expect(collapsed.scaleX).toBeGreaterThan(0);
+    expect(collapsed.scaleX).toBeLessThan(1e-3);
+  });
+
+  it("is null when the handle sits ON the pivot along every axis it drives", () => {
+    // anchor at the bottom-right corner ⇒ that corner has no lever at all.
+    const corner = { ...mediaLayer, anchorX: 1, anchorY: 1 };
+    expect(solveScale(corner, "br", { x: 1, y: 1 }, layerPivot(corner), false)).toBeNull();
+    expect(solveScale(corner, "br", { x: 1, y: 1 }, layerPivot(corner), true)).toBeNull();
+    // Its neighbours still work — only the coincident handle is dead.
+    expect(solveScale(corner, "tl", { x: 1, y: 1 }, layerPivot(corner), false)).not.toBeNull();
+  });
+});
+
+describe("scaleCompensation", () => {
+  it("re-centres a media layer so the PIVOT stays put, not the top-left", () => {
+    // 200×100 doubled about its centre: the unrotated top-left has to move by
+    // half the growth on each axis.
+    expect(scaleCompensation(mediaLayer, 2, 2)).toEqual({ x: -100, y: -50 });
+  });
+
+  it("is ZERO for Text, whose x/y IS the pivot", () => {
+    expect(scaleCompensation({ ...mediaLayer, origin: "anchor" }, 3, 0.5)).toEqual({ x: 0, y: 0 });
+  });
+
+  it("is ZERO for a top-left-anchored media layer, which scales from x/y anyway", () => {
+    // `toBeCloseTo`, not `toEqual`: a zero pivot makes this literally `-0`,
+    // which is still zero to the `!== 0` check that decides whether x/y is
+    // written at all.
+    const c = scaleCompensation({ ...mediaLayer, anchorX: 0, anchorY: 0 }, 4, 4);
+    expect(c.x).toBeCloseTo(0, 12);
+    expect(c.y).toBeCloseTo(0, 12);
+  });
+
+  it("ignores the sign, so a flipped layer compensates like an unflipped one", () => {
+    // |S| and not S — the same rule anchorPivot.ts uses to mirror in place.
+    expect(scaleCompensation({ ...mediaLayer, scaleX: -1 }, -2, 1)).toEqual({ x: -100, y: 0 });
+  });
+
+  it("has no rotation term at all", () => {
+    for (const rotationDeg of [0, 37, 90, -145]) {
+      expect(scaleCompensation({ ...mediaLayer, rotationDeg }, 2, 2)).toEqual({ x: -100, y: -50 });
+    }
+  });
+});
+
+describe("resize cursors", () => {
+  const box = [
+    { x: 0, y: 0 },
+    { x: 320, y: 0 },
+    { x: 320, y: 180 },
+    { x: 0, y: 180 },
+  ];
+
+  it("points each handle away from the box", () => {
+    expect(handleOutwardDeg(box, "br")).toBeCloseTo(45, 9);
+    expect(handleOutwardDeg(box, "t")).toBeCloseTo(-90, 9);
+    expect(handleOutwardDeg(box, "l")).toBeCloseTo(180, 9);
+  });
+
+  it("reads a corner as diagonal however wide the box is", () => {
+    // Built from unit edge directions, not from (handle − centre) — which on
+    // this 40:1 box would read the corner as almost horizontal.
+    const wide = [
+      { x: 0, y: 0 },
+      { x: 4000, y: 0 },
+      { x: 4000, y: 100 },
+      { x: 0, y: 100 },
+    ];
+    expect(handleOutwardDeg(wide, "br")).toBeCloseTo(45, 9);
+  });
+
+  it("turns with the box, so a rotated layer swaps its diagonal cursors", () => {
+    const turned = [
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+      { x: 0, y: 0 },
+    ];
+    expect(resizeCursorForDeg(handleOutwardDeg(box, "br")!)).toBe("nwse-resize");
+    expect(resizeCursorForDeg(handleOutwardDeg(turned, "br")!)).toBe("nesw-resize");
+  });
+
+  it("is null for a collapsed box rather than an arbitrary direction", () => {
+    expect(handleOutwardDeg(Array.from({ length: 4 }, () => ({ x: 7, y: 9 })), "br")).toBeNull();
+    expect(handleOutwardDeg(box.slice(0, 2), "br")).toBeNull();
+  });
+
+  it("maps each 45° octant to a cursor, and is 180°-symmetric", () => {
+    expect(resizeCursorForDeg(0)).toBe("ew-resize");
+    expect(resizeCursorForDeg(45)).toBe("nwse-resize");
+    expect(resizeCursorForDeg(90)).toBe("ns-resize");
+    expect(resizeCursorForDeg(135)).toBe("nesw-resize");
+    for (const deg of [0, 45, 90, 135, 20, -170]) {
+      expect(resizeCursorForDeg(deg + 180)).toBe(resizeCursorForDeg(deg));
+    }
   });
 });

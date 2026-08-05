@@ -265,11 +265,11 @@ changes mid-session are not reflected.
 ## On-canvas transform (gizmo)
 
 The primary selected layer shows its footprint as a box over the preview:
-dragging inside the box moves it, a knob on a stalk above its top edge rotates
-it, and a target reticle at the pivot moves its anchor. Only the four
-transform-bearing visual kinds get one (Color fills the composition, Audio is not
-visual), and only while the playhead is inside the layer's span. Resize handles
-are not built yet.
+dragging inside the box moves it, handles on its corners and edges resize it, a
+knob on a stalk above its top edge rotates it, and a target reticle at the pivot
+moves its anchor. Only the four transform-bearing visual kinds get one (Color
+fills the composition, Audio is not visual), and only while the playhead is
+inside the layer's span.
 
 **Why the box is an SVG overlay and not Pixi children:** `app.stage` is a
 read-back surface — the eyedropper's `extract.pixels`, the e2e
@@ -319,6 +319,38 @@ an anchor delta (the anchor is stored unrotated and unscaled), which is what kee
 the reticle under the cursor on a rotated layer. Both surfaces keyframe: the
 anchor pair is `Animated` like the rest of the transform.
 
+**Why a resize handle pins the anchor:** the handles scale the layer about its
+anchor, matching After Effects and Premiere and matching what the reticle already
+shows — the engine's own rotation and scale origin. That needs compensating
+`x`/`y`, because the composed position is `(x, y) + |scale|·pivot`, so scale alone
+would walk the pivot; pinning it is `Δ = pivot·(|scale₀| − |scale₁|)` per axis,
+with no rotation term at all. It is the exact mirror of the anchor gesture: there
+a media layer usually needs no compensation and Text always does, here Text needs
+none (its position *is* the pivot) and a media layer always does. With the pivot
+pinned the solve is direct rather than iterative — `scale·offset = R⁻¹·(cursor −
+pivot)` — so the grabbed handle tracks the cursor exactly however the layer is
+rotated, flipped or non-uniformly scaled.
+
+A `scale_linked` layer shows its **corners only**. An edge handle there has no
+honest behaviour: a single-axis write is what the twin invariant reads as
+divergence, and it would silently clear the flag. Shift constrains proportions on
+an unlinked layer by fitting one factor to the handle's own axes — the diagonal
+projection on a corner, the plain axis ratio on an edge. Which axes a handle
+drives comes from its identity and never from "its offset from the pivot is
+zero": an off-centre anchor puts the top edge's midpoint off the pivot's column,
+and inferring the mask there would let a horizontal drag scale it sideways.
+
+The handles are **round** so they carry no orientation to keep in sync with the
+box: a square would have to be re-rotated every frame to match it, and on a
+flipped or non-uniformly scaled layer — where the quad's winding reverses and its
+edges stop being perpendicular — no single angle for it is correct. The direction
+that matters is carried by the cursor instead.
+
+Deltas below `1e-9` are dropped rather than committed. `Math.cos(±π/2)` is `6e-17`,
+so anything downstream of the inverse rotation — a resize solve, an anchor drag —
+leaves `~1e-16` on the axis the cursor did not move, and against exact zero that
+reads as an edit and stamps a keyframe with an invisible value change.
+
 **Seams:** `gizmoProbeRegistry` — PixiPreview registers `canvasRect` +
 `naturalSizeOf`; the gizmo never imports Pixi. `gizmoGeometry.ts` — pure
 composition-space quad, pivot, handle placement and the `object-fit: contain`
@@ -328,15 +360,18 @@ mapping, so the geometry is unit-tested without a renderer (and shares
 Keyframed one gets a key at the frame-snapped playhead, exactly like the
 inspector.
 
-**Limits:** move, rotate and anchor only — a future scale handle MUST write through
-`scaleFanOutFor` + `fanOutEntries`, or a single-axis write silently unlinks a
-uniform-scale layer (see `docs/data-model.md` § Transform). Single selection
-only. The box follows animated values during playback via rAF; it is hidden while
-the preview dock tab is not visible. The rotation knob sits a fixed 26 CSS px
-outside the box (screen space, so the affordance is resolution-independent), so
-the overlay runs `overflow: visible` and the panel is the real clip bound — a
-layer flush against the top of a panel-filling composition has no room for its
-knob.
+**Limits:** move, resize, rotate and anchor — no snapping guides, no crop, no
+corner-pin. Single selection only. The box follows animated values during
+playback via rAF; it is hidden while the preview dock tab is not visible. The
+rotation knob sits a fixed 26 CSS px outside the box (screen space, so the
+affordance is resolution-independent), so the overlay runs `overflow: visible`
+and the panel is the real clip bound — a layer flush against the top of a
+panel-filling composition has no room for its knob. An edge handle whose edge is
+under 24 screen px is hidden, since it would sit under the two corners it lives
+between; a box small enough for its corners to overlap keeps them all, and the
+interior left for the move drag shrinks with it. Every commit reads its base
+value off the current summary, so a second gesture started inside the one-IPC
+round trip before `project:changed` lands computes from the pre-commit value.
 
 ## Window geometry memory
 

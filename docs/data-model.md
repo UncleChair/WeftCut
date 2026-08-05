@@ -677,11 +677,22 @@ which is the negation of the anchor-dependent part of the composed position:
 is exactly zero, so the common gesture writes two tracks, not four, and never
 stamps a redundant key on `x`/`y`.
 
+**Scaling** splits the same way, and mirrors it. Because the media kinds' position
+adds `pivot × |scale|` back, changing scale alone holds the unrotated **top-left**
+still and walks the pivot — which is what the inspector's Scale field does. The
+preview's resize handles instead pin the **anchor**, the way After Effects and
+Premiere do, by committing `scaleCompensation` = `pivot·(|scale₀| − |scale₁|)` per
+axis in the same batch. That term has no rotation in it (the position never had
+one), and it is exactly zero for Text — whose `x`/`y` *is* the pivot, so scale
+cannot move it — the reverse of the anchor case above.
+
 `scale_linked` records **uniform-scale intent**: while `true`, the two scale
 tracks are structural twins — same mode, and when keyframed the same
 `(t_us, value, interp)` sequence (keyframe `id`s are per-track identities and
 legitimately differ) — and every editing surface shows and writes them as one
-"Scale". The invariant is enforced on **results**, not write paths
+"Scale"; the preview's resize handles do it by offering **corners only**, since a
+linked layer has no honest single-axis handle. The invariant is enforced on
+**results**, not write paths
 (`main/state/mutations/scaleLink.ts`): after any mutation that touches a scale
 track of a linked layer, a twin check runs in the same commit and clears the
 flag on divergence, so the flag can never lie regardless of which write path

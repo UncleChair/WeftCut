@@ -532,3 +532,273 @@ describe("TransformGizmo anchor target", () => {
     expect(transformOverrideFor("l1")).toBeUndefined();
   });
 });
+
+/// A resize handle, once the draw loop has placed it. Returns the element and
+/// the client point it was drawn at, so a gesture can grab it where it actually
+/// is instead of assuming an unrotated box.
+async function handle(id: string): Promise<[HTMLElement, { clientX: number; clientY: number }]> {
+  const el = await screen.findByTestId(`transform-gizmo-scale-${id}`);
+  await waitFor(() => expect(el.getAttribute("transform")).not.toBeNull());
+  const [x, y] = el
+    .getAttribute("transform")!
+    .replace(/[^\d.\-\s]/g, "")
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+  return [el, { clientX: x!, clientY: y! }];
+}
+
+/// The commit's entry keys, in order.
+function committedKeys(): string[] {
+  const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+  return entries.map(([k]) => k);
+}
+
+describe("TransformGizmo scale handles", () => {
+  it("shows only the four corners on a scale-linked layer", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const [br] = await handle("br");
+    // 640×360 media at scale 1 in a half-scale canvas ⇒ a 320×180 box at (0,0).
+    expect(br.getAttribute("transform")).toBe("translate(320 180)");
+    expect(screen.getByTestId("transform-gizmo-scale-tl").getAttribute("transform")).toBe(
+      "translate(0 0)",
+    );
+    // A linked layer cannot move one axis alone, so it is not offered a handle
+    // that claims it can.
+    for (const id of ["t", "r", "b", "l"]) {
+      expect(screen.getByTestId(`transform-gizmo-scale-${id}`).style.display).toBe("none");
+    }
+  });
+
+  it("adds the edge midpoints once the layer is unlinked", async () => {
+    useProjectStore.getState().apply(fixture({ scale_linked: false }));
+    render(<TransformGizmoHost />);
+    await box();
+    const [t, at] = await handle("t");
+    expect(t.style.display).not.toBe("none");
+    expect(at).toEqual({ clientX: 160, clientY: 0 });
+    expect(screen.getByTestId("transform-gizmo-scale-l").getAttribute("transform")).toBe(
+      "translate(0 90)",
+    );
+  });
+
+  it("hides an edge handle whose edge is too short to separate it from the corners", async () => {
+    // scale_y 0.05 ⇒ a 9 px tall box on screen; its left/right midpoints would
+    // sit under both corners.
+    useProjectStore.getState().apply(fixture({ scale_linked: false, scale_y: stat(0.05) }));
+    render(<TransformGizmoHost />);
+    await box();
+    await handle("t");
+    expect(screen.getByTestId("transform-gizmo-scale-t").style.display).not.toBe("none");
+    expect(screen.getByTestId("transform-gizmo-scale-l").style.display).toBe("none");
+    expect(screen.getByTestId("transform-gizmo-scale-tl").style.display).not.toBe("none");
+  });
+
+  it("hides the handles with the box when the playhead leaves the layer", async () => {
+    setPlayheadTimeUs(9_000_000);
+    render(<TransformGizmoHost />);
+    const el = await screen.findByTestId("transform-gizmo-scale-br");
+    await waitFor(() => expect(el.style.display).toBe("none"));
+  });
+
+  it("previews a corner drag as scale PLUS the x/y that pins the pivot", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    // +80/+45 client ⇒ +160/+90 comp: the corner goes from (640,360) to
+    // (800,450), i.e. 1.5× its offset from the centred pivot on both axes.
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    expect(transformOverrideFor("l1")).toEqual({
+      // Growing about the centre moves the unrotated top-left by half the growth.
+      dx: -160,
+      dy: -90,
+      dscaleX: 0.5,
+      dscaleY: 0.5,
+    });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the pivot fixed and the grabbed corner under the cursor", async () => {
+    render(<TransformGizmoHost />);
+    const el = await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    // The box reads the same override map the Compositor folds into the picture,
+    // so this is also the assertion that box and footprint agree mid-drag.
+    await waitFor(() => {
+      const pts = corners(el);
+      expect(pts[2]).toEqual({ x: 400, y: 225 }); // the grabbed corner = the cursor
+      expect(pts.reduce((s, p) => s + p.x, 0) / 4).toBeCloseTo(PIVOT.x, 6);
+      expect(pts.reduce((s, p) => s + p.y, 0) / 4).toBeCloseTo(PIVOT.y, 6);
+    });
+  });
+
+  it("commits a linked layer's scale as ONE track fanned out to both axes", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    fireEvent.pointerUp(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(committedStatics()).toEqual([
+      ["scale_x", 1.5],
+      ["scale_y", 1.5],
+      ["x", -160],
+      ["y", -90],
+    ]);
+  });
+
+  it("hands the hidden twin a COPY of the authored track, not its own history", async () => {
+    // A linked layer whose scale_y has drifted (a repaired-on-load flag, or a
+    // pre-link edit). Fanning out overwrites the drift; two independent writes
+    // would preserve it and the main-side twin check would clear scale_linked.
+    useProjectStore.getState().apply(
+      fixture({
+        scale_x: {
+          mode: "Keyframed",
+          value: [{ id: "k1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+        } as AnimTrack<number>,
+        scale_y: {
+          mode: "Keyframed",
+          value: [
+            { id: "k2", t_us: 0, value: 1, interp: { kind: "Linear" } },
+            { id: "k3", t_us: 900_000, value: 9, interp: { kind: "Linear" } },
+          ],
+        } as AnimTrack<number>,
+      }),
+    );
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    fireEvent.pointerUp(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+    const [x, y] = [entries[0]![1], entries[1]![1]];
+    const times = (t: AnimTrack<number>) =>
+      (t.value as Array<{ t_us: number; value: number }>).map((k) => [k.t_us, k.value]);
+    expect(times(y)).toEqual(times(x));
+    // The original key at 0 plus one at frame 15 of 30 fps (playhead 2.5 s −
+    // layer start 2 s) — and scale_y's stray 900 ms key is GONE, which is what
+    // separates a fan-out from two independent writes.
+    expect(times(x).map(([t]) => t)).toEqual([0, 500_000]);
+  });
+
+  it("scales the axes independently on an unlinked layer, keying only what moved", async () => {
+    useProjectStore.getState().apply(fixture({ scale_linked: false }));
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    // Horizontal only: scale_y and its compensation are untouched, so neither
+    // is written.
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY });
+    fireEvent.pointerUp(br, { clientX: at.clientX + 80, clientY: at.clientY });
+    expect(committedStatics()).toEqual([
+      ["scale_x", 1.5],
+      ["x", -160],
+    ]);
+  });
+
+  it("constrains an unlinked layer's proportions while Shift is held", async () => {
+    useProjectStore.getState().apply(fixture({ scale_linked: false }));
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY, shiftKey: true });
+    const d = transformOverrideFor("l1")!;
+    // The cursor projected onto the corner's own diagonal: b = (320,180),
+    // v = (480,180) ⇒ t = (320·480 + 180·180)/(320² + 180²).
+    const t = (320 * 480 + 180 * 180) / (320 * 320 + 180 * 180);
+    expect(d.dscaleX).toBeCloseTo(t - 1, 9);
+    expect(d.dscaleY).toBeCloseTo(t - 1, 9);
+  });
+
+  it("drives ONE axis from an edge handle", async () => {
+    useProjectStore.getState().apply(fixture({ scale_linked: false }));
+    render(<TransformGizmoHost />);
+    await box();
+    const [r, at] = await handle("r");
+    fireEvent.pointerDown(r, { button: 0, ...at });
+    // The vertical component is ignored — that is the whole point of an edge.
+    fireEvent.pointerMove(r, { clientX: at.clientX + 80, clientY: at.clientY - 200 });
+    fireEvent.pointerUp(r, { clientX: at.clientX + 80, clientY: at.clientY - 200 });
+    expect(committedStatics()).toEqual([
+      ["scale_x", 1.5],
+      ["x", -160],
+    ]);
+  });
+
+  it("reads the drag in the layer's own frame when it is rotated", async () => {
+    useProjectStore.getState().apply(fixture({ scale_linked: false, rotation_deg: stat(90) }));
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    // 90° clockwise: the layer's own +x runs DOWN the screen, so a purely
+    // vertical drag is a pure scale_x change. Grabbing the handle where it is
+    // drawn is what makes this a real gesture rather than an arithmetic check.
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX, clientY: at.clientY + 90 });
+    fireEvent.pointerUp(br, { clientX: at.clientX, clientY: at.clientY + 90 });
+    const entries = committedStatics();
+    expect(entries.map(([k]) => k)).toEqual(["scale_x", "x"]);
+    // +90 client ⇒ +180 comp along the layer's local x: 320 → 500 of lever.
+    expect(entries[0]![1]).toBeCloseTo(500 / 320, 9);
+    expect(entries[1]![1]).toBeCloseTo(320 * (1 - 500 / 320), 9);
+  });
+
+  it("writes no position fix for Text, whose x/y IS the pivot", async () => {
+    useProjectStore.getState().apply(fixture({ scale_linked: false }, "Text"));
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    fireEvent.pointerUp(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    expect(committedKeys()).toEqual(["scale_x", "scale_y"]);
+  });
+
+  it("keys a keyframed scale at the frame-snapped playhead", async () => {
+    useProjectStore.getState().apply(
+      fixture({
+        scale_x: {
+          mode: "Keyframed",
+          value: [{ id: "k1", t_us: 0, value: 1, interp: { kind: "Linear" } }],
+        } as AnimTrack<number>,
+      }),
+    );
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    fireEvent.pointerUp(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
+    const sx = entries[0]![1];
+    expect(sx.mode).toBe("Keyframed");
+    const keys = sx.value as Array<{ t_us: number; value: number }>;
+    expect(keys.find((k) => k.t_us === 500_000)?.value).toBeCloseTo(1.5, 9);
+  });
+
+  it("cancels on Escape and ignores a handle click that never moved", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const [br, at] = await handle("br");
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerMove(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(transformOverrideFor("l1")).toBeUndefined();
+    fireEvent.pointerUp(br, { clientX: at.clientX + 80, clientY: at.clientY + 45 });
+    expect(commit).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(br, { button: 0, ...at });
+    fireEvent.pointerUp(br, { ...at });
+    expect(commit).not.toHaveBeenCalled();
+    expect(transformOverrideFor("l1")).toBeUndefined();
+  });
+});
