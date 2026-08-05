@@ -239,9 +239,20 @@ function at(deg: number, r = 100): { clientX: number; clientY: number } {
   return { clientX: PIVOT.x + Math.cos(rad) * r, clientY: PIVOT.y + Math.sin(rad) * r };
 }
 
+/// The client point a draw-loop-placed group carries in its `translate(x y)`.
+function placedAt(el: HTMLElement): { clientX: number; clientY: number } {
+  const [x, y] = el
+    .getAttribute("transform")!
+    .replace(/[^\d.\-\s]/g, "")
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+  return { clientX: x!, clientY: y! };
+}
+
 async function knob(): Promise<HTMLElement> {
   const el = await screen.findByTestId("transform-gizmo-rotate");
-  await waitFor(() => expect(el.getAttribute("cx")).not.toBeNull());
+  await waitFor(() => expect(el.getAttribute("transform")).not.toBeNull());
   return el;
 }
 
@@ -260,7 +271,9 @@ describe("TransformGizmo rotation handle", () => {
     render(<TransformGizmoHost />);
     await box();
     const el = await knob();
-    expect([el.getAttribute("cx"), el.getAttribute("cy")]).toEqual(["160", "-26"]);
+    // One translate on the group; the disc and its rotate glyph are drawn about
+    // (0,0) and never turned with the box — the glyph is a label.
+    expect(el.getAttribute("transform")).toBe("translate(160 -26)");
     const stalk = screen.getByTestId("transform-gizmo-stalk");
     // Root on the box's top edge, knob end coincident with the circle.
     expect(["x1", "y1", "x2", "y2"].map((a) => stalk.getAttribute(a))).toEqual([
@@ -269,6 +282,22 @@ describe("TransformGizmo rotation handle", () => {
       "160",
       "-26",
     ]);
+  });
+
+  it("labels the knob with an upright rotate glyph that does not steal the grab", async () => {
+    render(<TransformGizmoHost />);
+    await box();
+    const el = await knob();
+    const glyph = el.querySelector("svg.lucide-rotate-ccw");
+    expect(glyph).not.toBeNull();
+    // Centred on the knob by its own viewport, so placing the whole affordance
+    // stays ONE translate per frame — and that translate carries no rotation,
+    // which is what keeps the label readable on an upside-down box.
+    expect([glyph!.getAttribute("x"), glyph!.getAttribute("y")]).toEqual(["-5.5", "-5.5"]);
+    expect(el.getAttribute("transform")).not.toContain("rotate");
+    // The glyph sits on top of the disc; hit-testing it would swallow the
+    // pointerdown that starts the gesture.
+    expect((glyph as SVGElement).style.pointerEvents).toBe("none");
   });
 
   it("hides the stalk and knob with the box when the playhead leaves the layer", async () => {
@@ -334,11 +363,7 @@ describe("TransformGizmo rotation handle", () => {
     const rot = await knob();
     // The box is already rotated 30°, so its knob is not where it is at 0° —
     // grab the drawn position instead of assuming it.
-    const grab = {
-      clientX: Number(rot.getAttribute("cx")),
-      clientY: Number(rot.getAttribute("cy")),
-    };
-    fireEvent.pointerDown(rot, { button: 0, ...grab });
+    fireEvent.pointerDown(rot, { button: 0, ...placedAt(rot) });
     fireEvent.pointerMove(rot, at(0));
     fireEvent.pointerUp(rot, at(0));
     const [, entries] = commit.mock.calls[0] as unknown as [string, [string, AnimTrack<number>][]];
@@ -539,13 +564,7 @@ describe("TransformGizmo anchor target", () => {
 async function handle(id: string): Promise<[HTMLElement, { clientX: number; clientY: number }]> {
   const el = await screen.findByTestId(`transform-gizmo-scale-${id}`);
   await waitFor(() => expect(el.getAttribute("transform")).not.toBeNull());
-  const [x, y] = el
-    .getAttribute("transform")!
-    .replace(/[^\d.\-\s]/g, "")
-    .trim()
-    .split(/\s+/)
-    .map(Number);
-  return [el, { clientX: x!, clientY: y! }];
+  return [el, placedAt(el)];
 }
 
 /// The commit's entry keys, in order.

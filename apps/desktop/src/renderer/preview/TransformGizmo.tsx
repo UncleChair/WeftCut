@@ -14,6 +14,7 @@
 // Spec: .scratch/preview-gizmo/spec.md
 
 import { useEffect, useRef } from "react";
+import { RotateCcwIcon } from "lucide-react";
 
 import { snapFrameRound } from "../frames";
 import {
@@ -62,10 +63,21 @@ import {
 import { getGizmoProbe } from "./gizmoProbeRegistry";
 
 /// Client-pixel gap between the box's top edge and the rotation knob, and the
-/// knob's radius. Screen space, so the affordance is identical on a 4K
+/// disc the knob draws. Screen space, so the affordance is identical on a 4K
 /// composition and a 480p one.
+///
+/// The disc is a legibility backing, not decoration: it carries a rotate glyph
+/// that says what the handle does, and the preview has no background of its own
+/// to read that glyph against (the same problem the anchor reticle solves with
+/// its dark under-stroke).
 const ROTATE_GAP_PX = 26;
-const ROTATE_KNOB_R = 5;
+const ROTATE_KNOB_R = 8;
+/// The glyph inside the disc, and the invisible grab disc around it. Lucide art
+/// is a 24-unit viewBox, so `absoluteStrokeWidth` is what keeps the stroke at
+/// the gizmo's usual ~1.3 px instead of scaling it down to a hairline.
+const ROTATE_GLYPH_PX = 11;
+const ROTATE_GLYPH_STROKE_PX = 1.3;
+const ROTATE_HIT_R = 13;
 /// Shift-constrained rotation grid — the de-facto standard step.
 const ROTATE_SNAP_DEG = 15;
 /// The anchor target: a ring with crosshair arms reaching past it, and an
@@ -288,7 +300,7 @@ function TransformGizmo({
   const svgRef = useRef<SVGSVGElement | null>(null);
   const boxRef = useRef<SVGPolygonElement | null>(null);
   const stalkRef = useRef<SVGLineElement | null>(null);
-  const knobRef = useRef<SVGCircleElement | null>(null);
+  const knobRef = useRef<SVGGElement | null>(null);
   const anchorRef = useRef<SVGGElement | null>(null);
   const handleEls = useRef(new Map<ScaleHandleId, SVGGElement>());
   /// Last cursor written per handle, so a rotating box costs one style write
@@ -437,8 +449,11 @@ function TransformGizmo({
       stalk.setAttribute("y1", String(handle.root.y));
       stalk.setAttribute("x2", String(handle.knob.x));
       stalk.setAttribute("y2", String(handle.knob.y));
-      knob.setAttribute("cx", String(handle.knob.x));
-      knob.setAttribute("cy", String(handle.knob.y));
+      // Translated, never rotated, and that is deliberate: the disc is round so
+      // it needs no angle, and the glyph inside it is a LABEL — turning it with
+      // the box would leave it upside-down at 180°, which is the one thing an
+      // icon must not do.
+      knob.setAttribute("transform", `translate(${handle.knob.x} ${handle.knob.y})`);
       placeScaleHandles(corners, readScaleLinked(l.params));
       show(true);
     };
@@ -524,7 +539,7 @@ function TransformGizmo({
     });
   };
 
-  const beginRotate = (e: React.PointerEvent<SVGCircleElement>): void => {
+  const beginRotate = (e: React.PointerEvent<SVGGElement>): void => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -543,7 +558,7 @@ function TransformGizmo({
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
-  const moveRotate = (e: React.PointerEvent<SVGCircleElement>): void => {
+  const moveRotate = (e: React.PointerEvent<SVGGElement>): void => {
     const drag = dragRef.current;
     if (drag?.kind !== "rotate") return;
     const now = angleAboutDeg(drag.pivotClient, { x: e.clientX, y: e.clientY });
@@ -558,7 +573,7 @@ function TransformGizmo({
     setTransformOverride(layerRef.current.id, { dx: 0, dy: 0, drotDeg: drag.deltaDeg });
   };
 
-  const endRotate = (e: React.PointerEvent<SVGCircleElement>): void => {
+  const endRotate = (e: React.PointerEvent<SVGGElement>): void => {
     const drag = dragRef.current;
     dragRef.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
@@ -847,26 +862,45 @@ function TransformGizmo({
           display: "none",
         }}
       />
-      <circle
+      {/* The rotation knob: a disc carrying a rotate glyph, so the handle says
+          what it does rather than reading as one more resize dot. A group for
+          the same reason the reticle and the resize handles are groups — every
+          child is drawn about (0,0) and the draw loop writes ONE translate. */}
+      <g
         ref={knobRef}
         data-testid="transform-gizmo-rotate"
-        r={ROTATE_KNOB_R}
         onPointerDown={beginRotate}
         onPointerMove={moveRotate}
         onPointerUp={endRotate}
         onPointerCancel={endRotate}
         style={{
-          fill: "var(--ring)",
-          // Same trick as the box's fill: under `pointerEvents: all` a fully
-          // transparent stroke still hit-tests, so this widens a 10 px dot to a
-          // ~20 px grab target without drawing anything.
-          stroke: "rgba(0, 0, 0, 0)",
-          strokeWidth: 10,
           pointerEvents: "all",
           cursor: "grab",
           display: "none",
         }}
-      />
+      >
+        <circle
+          cx={0}
+          cy={0}
+          r={ROTATE_KNOB_R}
+          style={{ fill: "var(--background)", stroke: "var(--ring)", strokeWidth: 1.5 }}
+        />
+        {/* A nested <svg>: lucide's own art, positioned and scaled by its
+            viewport rather than re-drawn here, so it can't drift from the
+            rotate-ccw used everywhere else in the app. */}
+        <RotateCcwIcon
+          x={-ROTATE_GLYPH_PX / 2}
+          y={-ROTATE_GLYPH_PX / 2}
+          size={ROTATE_GLYPH_PX}
+          strokeWidth={ROTATE_GLYPH_STROKE_PX}
+          absoluteStrokeWidth
+          color="var(--ring)"
+          style={{ pointerEvents: "none" }}
+        />
+        {/* Invisible but hit-testable, same trick as the box's fill: widens the
+            grab target past the drawn disc without drawing anything. */}
+        <circle cx={0} cy={0} r={ROTATE_HIT_R} style={{ fill: "rgba(0, 0, 0, 0)" }} />
+      </g>
       {/* The anchor target, LAST in document order on purpose: it sits inside
           the box, which claims its whole footprint for the move drag, and SVG
           hit-tests the topmost painted element — so an earlier reticle would be
