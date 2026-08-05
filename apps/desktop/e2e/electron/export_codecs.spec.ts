@@ -222,11 +222,13 @@ test.describe('multi-codec export smoke (Electron)', () => {
   // -------------------------------------------------------------------------
   // H.264, pinned `encoderEngine:'webcodecs'` — the default codec through the
   // WebCodecs engine (the consent-fallback lane when the native sink fails).
-  // Regression guard for the platform-gated encoder hint (encoderHwHint):
-  // before the gate, Linux hard-errored at VideoEncoder configure() because
-  // the unconditional prefer-hardware hint is mandatory in Chromium and Linux
-  // has no WebCodecs hardware encoder (issue #7 boundary #10). Like the AV1
-  // cell, no color 4-tuple assertion — that's the native sink's contract.
+  // Regression guard for the encoder acceleration hint (encoderHwHint): a
+  // prefer-hardware ask under "auto" is mandatory in Chromium, so it hard-errors
+  // at VideoEncoder configure() on any host with no WebCodecs HW H.264 encoder
+  // (issue #7 boundary #10). This cell is the one that catches it — it failed
+  // first on Linux, then on Windows once the ask was merely OS-allowlisted
+  // instead of dropped. Like the AV1 cell, no color 4-tuple assertion — that's
+  // the native sink's contract.
   // -------------------------------------------------------------------------
   test('pinned-webcodecs H.264 export produces an aligned file (Electron)', async () => {
     test.skip(!existsSync(SOURCE), `source media not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`)

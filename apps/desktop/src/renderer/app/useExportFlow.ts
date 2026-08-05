@@ -38,7 +38,6 @@ import {
   resolveOutputDims,
 } from "../render/exportSettings";
 import { approxFrameDurUs } from "../frames";
-import { rendererOS } from "../platform";
 import {
   exportVideoSinkStart,
   exportVideoSinkFinish,
@@ -651,19 +650,15 @@ export function useExportFlow(deps: {
       }
     }
     // `target`/`nativeSink` are final past this point (the only reassignment
-    // is the fallback retry above) — safe to derive the worker-facing values
-    // that feed the encoder config and bitrate calc below. `workerCodec` is
-    // only meaningful on the webcodecs path (the native-sink path's
-    // encoderConfig below is dead — see the comment on `codec:` there).
-    const workerCodec =
-      target.engine === "webcodecs" ? target.workerCodec : settings.codec;
+    // is the fallback retry above) — safe to read `target` while building the
+    // worker-facing encoder config below.
     const workerBitrate = computeBitrate(settings, dims.width, dims.height, outFps);
     // Encoder-acceleration hint (WebCodecs path only — the worker IS the
-    // final encode there). Chromium treats the hint as MANDATORY, so asking
-    // for prefer-hardware is OS-allowlisted (encoderHwHint): on Linux there
-    // is no WebCodecs hardware VideoEncoder and the ask would hard-error
-    // instead of falling back (issue #7 boundary #10).
-    const hwHint = encoderHwHint(rendererOS, workerCodec, settings.hwAccel);
+    // final encode there). Present only under the user's software pin:
+    // Chromium treats the hint as MANDATORY, so an "auto" prefer-hardware ask
+    // hard-errors at configure() wherever no HW encoder exists rather than
+    // falling back (encoderHwHint, issue #7 boundary #10).
+    const hwHint = encoderHwHint(settings.hwAccel);
     const encoderConfig: VideoEncoderConfig = {
       // codecString only runs on the WebCodecs path, where target.workerCodec
       // is a genuine WebCodecsCodecId. On the native-sink path settings.codec

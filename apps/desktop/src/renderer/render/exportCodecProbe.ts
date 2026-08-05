@@ -78,10 +78,12 @@ export async function smokeEncode(
         bitrate: 2_000_000,
         framerate: fps,
         // No hardwareAcceleration hint. Chromium/Electron treats "prefer-hardware"
-        // as MANDATORY (a documented Chromium-on-Windows quirk) and rejects
-        // codecs with no HW encoder — e.g. AV1, which then fails here even
-        // though the libaom SOFTWARE encoder works. Letting the browser pick
-        // exercises the same path the real export uses (see buildConfig).
+        // as MANDATORY and rejects codecs with no HW encoder — e.g. AV1, which
+        // then fails here even though the libaom SOFTWARE encoder works.
+        // Letting the browser pick keeps this config identical to the real
+        // export's under "auto" (encoderHwHint omits the hint there for exactly
+        // this reason). A user's software pin is NOT mirrored here: this probe
+        // answers "can the codec encode at all", not "under that pin".
       });
       // A blank frame at full size keeps the smoke representative without a
       // real composite; the export re-probes nothing, it just encodes.
