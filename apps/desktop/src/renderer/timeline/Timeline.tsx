@@ -91,7 +91,8 @@ import {
   useSelectedLayerIds,
   useSelectedTransitionId,
 } from "../state/selectionStore";
-import { isEditableTarget, resolveAccelerator } from "../shortcuts/match";
+import { resolveAccelerator } from "../shortcuts/match";
+import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useEffectiveBindings } from "../shortcuts/bindings-context";
 import {
   CUT_CLICK_TOLERANCE_PX,
@@ -704,12 +705,13 @@ export function Timeline({
   // Delete/Backspace removes the selected transition chip. Capture phase +
   // stopImmediatePropagation preempts the app-level delete-selected-layer
   // shortcut (same pattern as the keyframe-diamond Delete in LayerBlock);
-  // armed only while a chip is selected, and never while typing in a field.
+  // armed only while a chip is selected, and never while typing in a field or
+  // while another panel owns the keyboard (`subSelectionDeleteYields`).
   useEffect(() => {
     if (selectedTransitionId === null) return;
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Delete" && ev.key !== "Backspace") return;
-      if (isEditableTarget(ev.target)) return;
+      if (subSelectionDeleteYields(ev.target)) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();
       void (async () => {

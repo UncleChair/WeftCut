@@ -14,6 +14,7 @@ import {
   setLayerSelection,
   useSelectionStore,
 } from "../state/selectionStore";
+import { setActiveRegion } from "../focus/focusRegionStore";
 
 const ipcMocks = vi.hoisted(() => ({
   addTransition: vi.fn().mockResolvedValue("new-transition"),
@@ -122,6 +123,9 @@ function renderTimeline(overrides: {
 
 beforeEach(() => {
   clearLayerSelection();
+  // No region by default: a leaked one would arm the chip's Delete preemptor
+  // for tests that never meant to exercise the keyboard.
+  setActiveRegion(null);
   ipcMocks.addTransition.mockClear();
   ipcMocks.removeTransition.mockClear();
   ipcMocks.logEmit.mockClear();
@@ -169,6 +173,10 @@ describe("transition chip", () => {
   });
 
   it("Delete key removes the selected chip via remove_transition", async () => {
+    // The chip's Delete preemptor stands down unless the timeline region owns
+    // the keyboard (`subSelectionDeleteYields`), and this harness renders
+    // Timeline outside the dock Panel that would BE that region.
+    setActiveRegion("timeline");
     const onMutated = vi.fn().mockResolvedValue(undefined);
     const { container } = renderTimeline({
       tracks: [makeTrack([extendedA, layerB])],

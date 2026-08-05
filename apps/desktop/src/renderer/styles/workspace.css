@@ -136,6 +136,17 @@
   background: var(--weft-dock-panel-surface);
 }
 
+/* The Panel root is a focus REGION (ADR 0041) — a programmatic focus target,
+   not a control. It gets focused on almost every click in the app, so a ring
+   here would flash constantly and read as "this whole panel is selected".
+   Which panel owns the keyboard is already shown by Dockview's active-group
+   tab treatment. Keyboard users are unaffected: `tabindex="-1"` keeps the
+   region out of the Tab order entirely, so this never hides a Tab stop. */
+.weft-dock-panel:focus,
+.weft-dock-panel:focus-visible {
+  outline: none;
+}
+
 .weft-dock-panel > .preview,
 .weft-dock-panel > .timeline,
 .weft-dock-panel > .media-pool,

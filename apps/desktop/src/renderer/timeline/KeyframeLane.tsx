@@ -21,6 +21,7 @@ import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 import { EasingMenu } from "./EasingMenu";
 import { KeyframeNavigator } from "./KeyframeNavigator";
 import { KeyframeValueField } from "./KeyframeValueField";
+import { subSelectionDeleteYields } from "./subSelectionDelete";
 
 export const KF_SUBLANE_H = 24;
 export const KF_SUBLANE_EXPANDED_H = 72;
@@ -137,6 +138,10 @@ export function KeyframeLane({
       if (ev.key !== "Delete" && ev.key !== "Backspace") return;
       const sel = getSelectedKeyframe();
       if (!sel || !layerIds.has(sel.layerId)) return;
+      // Same preemptor family as LayerBlock's diamond and Timeline's transition
+      // chip: it wins Delete by bypassing the dispatcher, so it owes the
+      // dispatcher's stand-down rules.
+      if (subSelectionDeleteYields(ev.target)) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();
       const layer = track.layers.find((l) => l.id === sel.layerId);

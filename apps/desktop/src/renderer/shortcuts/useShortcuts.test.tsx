@@ -8,6 +8,7 @@ import {
 } from "./useShortcuts";
 import { usePickSessionStore } from "../colorpick/pickColor";
 import { parseBinding } from "./match";
+import { setActiveRegion } from "../focus/focusRegionStore";
 
 // useShortcuts only reaches `logEmit` for activity-log breadcrumbs; stub the
 // whole ipc surface so the dispatcher runs without a backend host (and keeps the
@@ -15,6 +16,9 @@ import { parseBinding } from "./match";
 vi.mock("../ipc", () => ({ logEmit: vi.fn(() => Promise.resolve()) }));
 
 afterEach(cleanup);
+// The scope gate reads a module-level store; a region leaking between tests
+// would silently arm or disarm every scoped binding downstream.
+afterEach(() => setActiveRegion(null));
 
 function Harness({
   handlers,
@@ -217,6 +221,9 @@ describe("useShortcuts — NLE-style global accelerators", () => {
 
   it("leaves Delete in the bubble phase so a capture-phase listener can preempt it", () => {
     const deleteSelected = vi.fn();
+    // Delete is timeline-scoped, so the region must own the keyboard for the
+    // preemption to be what's under test rather than the scope gate.
+    setActiveRegion("timeline");
     render(<Harness handlers={{ deleteSelected }} />);
 
     // Mirrors KeyframeLane/LayerBlock: a capture-phase Delete listener that
@@ -238,6 +245,7 @@ describe("useShortcuts — NLE-style global accelerators", () => {
   it("dispatches timeline copy/paste chords but preserves native editing shortcuts", () => {
     const copySelected = vi.fn();
     const pasteAtPlayhead = vi.fn();
+    setActiveRegion("timeline");
     render(<Harness handlers={{ copySelected, pasteAtPlayhead }} />);
 
     expect(dispatchBinding(document.body, "Mod+C").defaultPrevented).toBe(true);
@@ -253,6 +261,56 @@ describe("useShortcuts — NLE-style global accelerators", () => {
     expect(copySelected).toHaveBeenCalledTimes(1);
     expect(pasteAtPlayhead).toHaveBeenCalledTimes(1);
     input.remove();
+  });
+
+  // ── Panel scope (ADR 0041) ────────────────────────────────────────────────
+  //
+  // The gate is strict: a scoped action is dead unless its own panel owns the
+  // keyboard, `null` (chrome, a dialog, the startup screen) included. It must
+  // yield WITHOUT preventDefault, like every other stand-down, so the key stays
+  // available to whatever does own the focused region.
+
+  it("fires a timeline-scoped action only while the timeline region has focus", () => {
+    const deleteSelected = vi.fn();
+    setActiveRegion("timeline");
+    render(<Harness handlers={{ deleteSelected }} />);
+
+    expect(dispatchKey(document.body, "Delete").defaultPrevented).toBe(true);
+    expect(deleteSelected).toHaveBeenCalledTimes(1);
+  });
+
+  it("yields a timeline-scoped action while another region has focus", () => {
+    const deleteSelected = vi.fn();
+    setActiveRegion("preview");
+    render(<Harness handlers={{ deleteSelected }} />);
+
+    const ev = dispatchKey(document.body, "Delete");
+    expect(deleteSelected).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("yields a scoped action when no region owns the keyboard", () => {
+    const groupSelected = vi.fn();
+    render(<Harness handlers={{ groupSelected }} />);
+
+    const ev = dispatchBinding(document.body, "Mod+G");
+    expect(groupSelected).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("keeps unscoped actions alive in every region", () => {
+    const togglePlay = vi.fn();
+    const nudgeAudioMsForward = vi.fn();
+    render(<Harness handlers={{ togglePlay, nudgeAudioMsForward }} />);
+
+    // Transport is global by design. So is the audio slip: nudging sync while
+    // WATCHING the preview is the workflow Alt+Arrow exists for, which is why
+    // it is the one timeline-selection action left unscoped.
+    setActiveRegion("preview");
+    dispatchKey(document.body, " ");
+    dispatchBinding(document.body, "Alt+Shift+ArrowRight");
+    expect(togglePlay).toHaveBeenCalledTimes(1);
+    expect(nudgeAudioMsForward).toHaveBeenCalledTimes(1);
   });
 
   it("dispatches project undo/redo but leaves text-field undo to the platform", () => {

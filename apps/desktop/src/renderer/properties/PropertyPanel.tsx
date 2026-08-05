@@ -1285,12 +1285,25 @@ export function StringPropField({
   value: unknown;
   onCommit: (next: unknown) => void;
 }) {
-  const [text, setText] = useState(
-    typeof value === "string" ? value : spec.default,
-  );
+  const pristine = typeof value === "string" ? value : spec.default;
+  const [text, setText] = useState(pristine);
   useEffect(() => {
     setText(typeof value === "string" ? value : spec.default);
   }, [value, spec.default]);
+  // Escape = discard (ADR 0041). Set BEFORE the release blur so the single
+  // onBlur commit path stands down — the same shape `AppTimecodeField` uses.
+  const cancelling = useRef(false);
+  const cancel = () => {
+    cancelling.current = true;
+    setText(pristine);
+  };
+  const commitOnBlur = () => {
+    if (cancelling.current) {
+      cancelling.current = false;
+      return;
+    }
+    onCommit(text);
+  };
   return (
     <Field label={label}>
       {spec.multiline ? (
@@ -1303,7 +1316,12 @@ export function StringPropField({
           aria-label={label}
           maxLength={spec.max_length}
           onChange={(e) => setText(e.target.value)}
-          onBlur={() => onCommit(text)}
+          onBlur={commitOnBlur}
+          onKeyDown={(e) => {
+            if (e.key !== "Escape") return;
+            e.preventDefault();
+            cancel();
+          }}
         />
       ) : (
         <AppInput
@@ -1311,7 +1329,8 @@ export function StringPropField({
           ariaLabel={label}
           maxLength={spec.max_length}
           onValueChange={setText}
-          onBlur={() => onCommit(text)}
+          onBlur={commitOnBlur}
+          onCancel={cancel}
           // Enter = commit safeguard: blur the field so the single onBlur path
           // commits (no separate commit call → no double undo entry).
           onKeyDown={(e) => {

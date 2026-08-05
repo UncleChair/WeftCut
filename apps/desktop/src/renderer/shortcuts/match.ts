@@ -192,7 +192,13 @@ function canonicaliseKey(k: string, code = ""): string {
 /// Bindings without a non-Shift modifier (and without an explicit
 /// `fireWhenEditing` override) skip these events so the user can type
 /// normally.
-export function isEditableTarget(target: EventTarget | null): boolean {
+///
+/// A type predicate so callers can narrow `document.activeElement` (typed
+/// `Element | null`) and reach `blur()` / `closest()` without a cast — the
+/// focus-region hook and the field widgets both do.
+export function isEditableTarget(
+  target: EventTarget | null,
+): target is HTMLElement {
   if (!(target instanceof HTMLElement)) return false;
   if (
     target instanceof HTMLInputElement ||
@@ -202,4 +208,21 @@ export function isEditableTarget(target: EventTarget | null): boolean {
     return true;
   }
   return target.isContentEditable;
+}
+
+/// Roles of open, transient widgets that own keyboard input while they're up:
+/// a key pressed inside one (Space to activate a menu item, arrows to walk a
+/// listbox, Enter on a dialog button) belongs to the widget, not to a global
+/// transport shortcut. Deliberately excludes `menubar` — a *collapsed* menubar
+/// trigger merely holding focus is exactly what `captureGlobal` must override.
+const TRANSIENT_WIDGET_SELECTOR =
+  '[role="menu"],[role="listbox"],[role="dialog"],[role="alertdialog"],[role="tree"],[role="grid"]';
+
+/// Companion to `isEditableTarget`: the other half of "who owns this event".
+/// Lives here rather than in the dispatcher because the field widgets need it
+/// too — inside a dialog, `Escape` closes the dialog, so a field must not also
+/// consume it to revert.
+export function isInTransientWidget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.closest(TRANSIENT_WIDGET_SELECTOR) !== null;
 }

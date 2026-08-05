@@ -29,6 +29,7 @@ import {
   useSelectionStore,
 } from "../state/selectionStore";
 import { playheadTimeUs, setPlayheadTimeUs } from "../state/playheadStore";
+import { setActiveRegion } from "../focus/focusRegionStore";
 import { registerTransport, releaseTransport } from "../state/playbackStore";
 
 const ipcMocks = vi.hoisted(() => ({
@@ -208,6 +209,9 @@ function renderTimeline(overrides: {
 describe("Timeline seek/selection coupling", () => {
   beforeEach(() => {
     clearLayerSelection();
+    // No region by default: a leaked one would arm every timeline-scoped
+    // binding for tests that never meant to exercise the keyboard.
+    setActiveRegion(null);
     setPlayheadTimeUs(0);
     ipcMocks.addMediaLayer.mockClear();
     ipcMocks.moveLayer.mockClear();
@@ -675,6 +679,11 @@ describe("Timeline seek/selection coupling", () => {
   });
 
   it("groups the complete global selection through the existing shortcut", async () => {
+    // `groupSelected` is timeline-scoped (ADR 0041) and this harness renders
+    // Timeline bare, outside the dock Panel that would BE the region — so the
+    // region is declared directly. Under test here is the group fan-out, not
+    // the scope gate (`useShortcuts.test.tsx` owns that).
+    setActiveRegion("timeline");
     const { getByText } = renderTimeline({
       tracks: [groupedTrack],
       groups: [],

@@ -12,6 +12,21 @@ History: in the Tauri WebView2/Edge webview, pointer lock never engaged, so the 
 
 Implication: drag-to-scrub on numeric fields is unblocked on Electron and can be re-introduced as a feature; the stepper/typing path remains the no-pointer-lock fallback.
 
+## A canceled `pointerdown` cancels the focus move
+
+`preventDefault()` on `pointerdown` suppresses the compatibility `mousedown`, and it is
+`mousedown`'s default action — not `pointerdown`'s — that moves focus. So a handler that
+cancels `pointerdown` to suppress native drag or text selection also, silently, leaves focus
+exactly where it was. Verified in the app rather than the probe harness:
+`e2e/electron/focus-regions.spec.ts` dispatches a cancelable `pointerdown` at a listener
+that cancels it and asserts the focus outcome.
+
+Implication: focus release cannot be left to the browser anywhere a drag gesture lives, and
+it cannot be fixed inside the gesture handlers either — every one of them needs its
+`preventDefault()`. The only phase that runs ahead of all of them is **capture at `window`**;
+React attaches at the root container, a descendant of window, so even React's capture
+handlers are later. That is the premise of ADR 0041's focus regions.
+
 ## Inline foreignObject raster does NOT taint the canvas (WebView2 verdict overturned)
 
 An inline `<foreignObject>` SVG rasterized via `<img>` → canvas reads back cleanly: `getImageData` and `toDataURL` both succeed, no `SecurityError`.

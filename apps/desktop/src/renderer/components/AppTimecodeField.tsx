@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { formatTimecode, parseTimecode } from "../frames";
 import { cn } from "@/lib/utils";
+import { FOCUS_GROUP_ATTR } from "../focus/focusRegion";
 
 export interface AppTimecodeFieldProps {
   /// Microseconds (matches every call site). Split into HH:MM:SS:FF segments.
@@ -120,6 +121,13 @@ export function AppTimecodeField({
     <div
       className={cn("app-input", "app-timecode", disabled && "app-timecode--disabled", className)}
       role="group"
+      // A focus group (ADR 0041): the segments are siblings of one control, so
+      // clicking from hours into minutes must not read as leaving the field.
+      // Without this, `useFocusRegions` would release focus on every
+      // segment-to-segment click and the `onBlur` below — which only checks
+      // `relatedTarget`, null on a programmatic release — would commit the
+      // whole timecode once per click, one undo entry each.
+      {...{ [FOCUS_GROUP_ATTR]: "" }}
       aria-label={ariaLabel}
       onFocusCapture={() => {
         focused.current = true;

@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@/bridge/window";
 import { App } from "./App";
+import { useFocusRegions } from "./focus/useFocusRegions";
 import { StartupScreen } from "./startup/StartupScreen";
 import { SplashScreen } from "./startup/SplashScreen";
 import {
@@ -78,6 +79,12 @@ function Root() {
     useState<StartupProgress | null>(null);
   const [splashVisible, setSplashVisible] = useState(true);
   const [devSplashHeld, setDevSplashHeld] = useState(false);
+
+  // Focus regions (ADR 0041). Mounted here rather than in `App` so it also
+  // covers the startup screen and the splash: its listeners are on `window`
+  // and must exist before the first press of the session, whichever surface
+  // that press lands on.
+  useFocusRegions();
 
   useEffect(() => {
     const initialization = rendererInitialization;

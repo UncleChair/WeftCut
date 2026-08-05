@@ -3,12 +3,15 @@ import { ACTION_DEFS, type ActionId } from "./defs";
 import {
   isChord,
   isEditableTarget,
+  isInTransientWidget,
   matchEvent,
   parseBinding,
   type ParsedBinding,
 } from "./match";
 import { logEmit } from "../ipc";
 import { usePickSessionStore } from "../colorpick/pickColor";
+import { activeRegion } from "../focus/focusRegionStore";
+import type { PanelKind } from "../workspace/panelRegistry";
 
 export type Handler = () => void | Promise<void>;
 export type HandlerMap = Partial<Record<ActionId, Handler>>;
@@ -21,6 +24,8 @@ interface ResolvedEntry {
   repeatable: boolean;
   captureGlobal: boolean;
   suppressInTransientWidget: boolean;
+  /// `null` ⇒ global. See `ActionDef.scope`.
+  scope: readonly PanelKind[] | null;
 }
 
 function resolveEntries(overrides: OverrideMap): ResolvedEntry[] {
@@ -41,6 +46,7 @@ function resolveEntries(overrides: OverrideMap): ResolvedEntry[] {
           repeatable: def.repeatable ?? false,
           captureGlobal: def.captureGlobal ?? false,
           suppressInTransientWidget: def.suppressInTransientWidget ?? false,
+          scope: def.scope ?? null,
         });
       } catch (e) {
         console.warn(
@@ -66,19 +72,6 @@ interface UseShortcutsOptions {
 }
 
 const EMPTY_OVERRIDES: OverrideMap = {};
-
-/// Roles of open, transient widgets that own keyboard input while they're up:
-/// a key pressed inside one (Space to activate a menu item, arrows to walk a
-/// listbox, Enter on a dialog button) belongs to the widget, not to a global
-/// transport shortcut. Deliberately excludes `menubar` — a *collapsed* menubar
-/// trigger merely holding focus is exactly what `captureGlobal` must override.
-const TRANSIENT_WIDGET_SELECTOR =
-  '[role="menu"],[role="listbox"],[role="dialog"],[role="alertdialog"],[role="tree"],[role="grid"]';
-
-function isInTransientWidget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.closest(TRANSIENT_WIDGET_SELECTOR) !== null;
-}
 
 /// True while a modal renderer surface owns the keyboard and EVERY app action
 /// must stay dead — today the color-pick session, whose overlay owns Esc/S.
@@ -157,6 +150,7 @@ export function useShortcuts({
       if (appActionsSuspended()) return;
       const editing = isEditableTarget(e.target);
       const inWidget = isInTransientWidget(e.target);
+      const region = activeRegion();
       for (const entry of candidates) {
         if (!matchEvent(entry.parsed, e)) continue;
         // Yield to the focused context: text editors (unless the action opts
@@ -164,6 +158,13 @@ export function useShortcuts({
         // key. Returning without `preventDefault` lets the widget handle it.
         if (editing && !entry.fireWhenEditing) return;
         if ((entry.captureGlobal || entry.suppressInTransientWidget) && inWidget) return;
+        // Panel scope (ADR 0041). Strict: a scoped action is dead unless its
+        // own panel owns the keyboard. Yields WITHOUT `preventDefault` like
+        // every other stand-down above, so the key stays available to whatever
+        // does own the focused region.
+        if (entry.scope && (region === null || !entry.scope.includes(region))) {
+          return;
+        }
         const fn = handlersRef.current[entry.id];
         if (!fn) return;
         e.preventDefault();

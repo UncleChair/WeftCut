@@ -26,6 +26,7 @@ import { formatSyncOffset } from "./audioSlip";
 import { useAudioSyncOffset } from "./audioSyncOffsetStore";
 import type { AnimTrack, LayerSummary } from "../ipc";
 import { useEditingLayerId, beginRename, endRename } from "./renameStore";
+import { subSelectionDeleteYields } from "./subSelectionDelete";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack, animatableParams } from "../keyframe/descriptors";
 import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
@@ -284,7 +285,9 @@ export function LayerBlock({
       // A diamond is selected → Delete removes the KEYFRAME, not the layer.
       // Capture phase + stopImmediatePropagation run this before, and preempt,
       // the app-level delete-selected-layer shortcut (also a bare-Delete window
-      // listener) so the two can't both fire on one keypress.
+      // listener) so the two can't both fire on one keypress. Preempting means
+      // bypassing the dispatcher, so its stand-down rules are re-applied here.
+      if (subSelectionDeleteYields(ev.target)) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();
       const track = readParamTrack(layer.params, focusedParam);

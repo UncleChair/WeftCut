@@ -20,6 +20,7 @@ export {
   eventToBinding,
   isChord,
   isEditableTarget,
+  isInTransientWidget,
   matchEvent,
   parseBinding,
   resolveAccelerator,

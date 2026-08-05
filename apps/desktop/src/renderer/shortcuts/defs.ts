@@ -6,6 +6,8 @@
 // wiring the handler in `App.tsx`'s `useShortcuts({...})` call.
 // Optional-field semantics live on `ActionDef`'s fields below.
 
+import type { PanelKind } from "../workspace/panelRegistry";
+
 export type ActionId =
   | "save"
   | "saveAs"
@@ -73,7 +75,28 @@ export interface ActionDef {
   /// transient widget. Workspace navigation uses this even though its chord
   /// does not need capture-phase priority.
   suppressInTransientWidget?: boolean;
+  /// Panels this action belongs to (ADR 0041). Absent ⇒ global: transport,
+  /// seeking, mark in/out, tool arming, save/export are app commands wherever
+  /// focus sits.
+  ///
+  /// The gate is STRICT — a scoped action yields whenever the active focus
+  /// region is not in its list, `null` (app chrome, a dialog, the startup
+  /// screen) included. That matches Premiere/Resolve: Delete with the Program
+  /// Monitor focused does nothing. It is only safe because `useFocusRegions`
+  /// lands focus on a real region for every press on panel content, so a user
+  /// who can see a selection has already focused the panel holding it.
+  scope?: readonly PanelKind[];
 }
+
+/// Actions that operate on the TIMELINE's selection. A literal rather than a
+/// `PANEL_KINDS` lookup so this module stays type-only against the panel
+/// registry (which pulls in i18n).
+///
+/// Widening this to `["timeline", "attribute", "effect"]` is the one-line
+/// change if "Delete while the Attribute panel is focused" starts reading as a
+/// bug — the property panels edit the timeline selection, so an argument
+/// exists. Premiere/Resolve are strict, so strict is where this starts.
+const TIMELINE_SELECTION: readonly PanelKind[] = ["timeline"];
 
 export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   save:            { defaultKeys: ["Mod+S"],               labelKey: "actions.save" },
@@ -90,11 +113,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // menubar trigger / toolbar button after a click — a Base UI trigger would
   // otherwise treat Space as "open the menu".
   togglePlay:      { defaultKeys: ["Space"],               labelKey: "actions.toggle_play", captureGlobal: true },
-  deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected" },
+  deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected", scope: TIMELINE_SELECTION },
   // Clipboard actions belong to the timeline, not an active text editor. The
-  // explicit false preserves native copy/paste inside inputs and text fields.
-  copySelected:    { defaultKeys: ["Mod+C"],               labelKey: "actions.copy_selected", fireWhenEditing: false },
-  pasteAtPlayhead: { defaultKeys: ["Mod+V"],               labelKey: "actions.paste_at_playhead", fireWhenEditing: false },
+  // explicit false preserves native copy/paste inside inputs and text fields;
+  // `scope` is the coarser statement of the same idea — with the preview or the
+  // media pool focused, Ctrl+C is not "copy my timeline selection".
+  copySelected:    { defaultKeys: ["Mod+C"],               labelKey: "actions.copy_selected", fireWhenEditing: false, scope: TIMELINE_SELECTION },
+  pasteAtPlayhead: { defaultKeys: ["Mod+V"],               labelKey: "actions.paste_at_playhead", fireWhenEditing: false, scope: TIMELINE_SELECTION },
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },
   // Modal timeline tools, one key per tool (`toolStore.ts`): `V` arms
@@ -152,9 +177,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // the selection. Handler lives in Timeline.tsx, while the complete
   // selection itself is renderer-global. Surfaced here so the Keyboard
   // Shortcuts panel shows them and the user can rebind.
-  groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected" },
-  dissolveSelectedGroup:  { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.dissolve_selected_group" },
-  // Sub-frame audio slip (ADR 0038). Two tiers because ONE SAMPLE is 0.042 px at the
+  groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected", scope: TIMELINE_SELECTION },
+  dissolveSelectedGroup:  { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.dissolve_selected_group", scope: TIMELINE_SELECTION },
+  // Sub-frame audio slip (ADR 0038). Deliberately UNSCOPED, unlike its
+  // structural siblings above: nudging audio sync while watching and listening
+  // to the preview is the workflow these keys exist for, and scoping Alt+Arrow
+  // to the timeline would kill it exactly when it is most useful. Two tiers because ONE SAMPLE is 0.042 px at the
   // 2000 px/s zoom ceiling — sample precision is unreachable by dragging, so keys and
   // numbers are the entry points, and a single-sample step alone would be unusable
   // for a real ~ms sync fix. Alt+Arrow is free (bare arrows are the playhead seek).

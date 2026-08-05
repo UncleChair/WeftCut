@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { NumberField } from "@base-ui/react/number-field";
 import { ChevronUpIcon, ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FOCUS_GROUP_ATTR } from "../focus/focusRegion";
+import { isInTransientWidget } from "../shortcuts/match";
 
 // While typing, auto-commit the value once the user pauses, so the change
 // applies to the canvas without needing to blur. Enter / blur / step-end still
@@ -89,6 +91,24 @@ export function AppNumberField({
     }
   };
 
+  /// `Escape` = discard this edit (ADR 0041). Unlike `AppInput`, this widget
+  /// needs no call-site cooperation: `lastCommitted` — captured on focus, not
+  /// synced from `value` — IS the pre-edit snapshot, and restoring it makes
+  /// the release blur's `onValueCommitted` hit `flushCommit`'s dedup guard, so
+  /// cancelling can never log an undo entry.
+  const cancelEdit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    // Inside a dialog / menu, Escape belongs to the widget that owns it.
+    if (isInTransientWidget(e.currentTarget)) return;
+    e.preventDefault();
+    if (slot.current) {
+      clearTimeout(slot.current);
+      slot.current = null;
+    }
+    const snapshot = lastCommitted.current;
+    if (snapshot !== null) onValueChange(snapshot);
+  };
+
   return (
     <NumberField.Root
       value={value}
@@ -114,7 +134,9 @@ export function AppNumberField({
       }}
       className={cn("app-number-field", className)}
     >
-      <NumberField.Group className="app-number-group">
+      {/* A focus group: the steppers below are satellites of this input, so a
+          press on one must not read as "the user left the field" and commit. */}
+      <NumberField.Group className="app-number-group" {...{ [FOCUS_GROUP_ATTR]: "" }}>
         <NumberField.Input
           aria-label={ariaLabel}
           // Capture the committed baseline at edit-start for the dedup guard,
@@ -124,6 +146,7 @@ export function AppNumberField({
             onFocus?.();
           }}
           onBlur={() => onBlur?.()}
+          onKeyDown={cancelEdit}
           className={cn("app-input", "app-number-input", align === "center" && "app-input--center")}
         />
         {/* Mouse-only affordance: hidden until hover (keyboard users change
