@@ -51,7 +51,8 @@ const H264 = path.resolve(MEDIA_DIR, 'test_1080p_h264.mp4')
 // 10-bit fixtures for the videotoolbox p10 variants (VT lane ticket 03). Both
 // 1080p30, ≥ 1 s, already in the generator matrix. The SSIM leg normalizes
 // BOTH sides through `format=yuv420p`, so a 10-bit source works unmodified as
-// a structural 0.98 gate.
+// a structural gate unmodified.
+// (both smooth-gradient content, hence SSIM_FLOOR_SMOOTH.)
 // - ProRes 422 HQ (yuv422p10le): the codec the lane exists for. ffmpeg's VT
 //   hwaccel REQUIREs the hardware ProRes decoder (release/8.x), which only
 //   ProRes-engine chips carry (M1 Pro/Max, M2+) — on a base M1 the probe
@@ -69,7 +70,36 @@ const HEVC10 = path.resolve(MEDIA_DIR, 'test_1080p_gradient10.mp4')
 const CANVAS = { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
 const SEEK_US = 500_000
 const FRAME_IDX = Math.round((SEEK_US * CANVAS.fpsNum) / (1_000_000 * CANVAS.fpsDen))
-const SSIM_FLOOR = 0.98
+// SSIM floors, per FIXTURE rather than per lane: how high the score can reach
+// is a property of the content being compared, not of the decoder under test.
+//
+// What this gate measures is NOT whether the hardware decoded correctly — H.264
+// and HEVC decoding are bit-exact by specification, so every conformant decoder
+// yields identical YUV. The score is spent entirely downstream of the decode:
+// our own ingest shader upsamples the half-resolution chroma plane through the
+// GPU's texture sampler, while the ffmpeg reference upsamples it through
+// swscale. Two different algorithms, so a correct frame never scores 1.0 — and
+// the GPU sampler's sub-texel precision is implementation-defined, so the exact
+// value carries a machine fingerprint.
+//
+// A single 0.98 floor for both fixtures was therefore set INSIDE the
+// machine-to-machine spread. Measured on the testsrc2 H.264 fixture: 0.97939 on
+// a macos-26-arm64 runner and 0.982 on a physical Apple Silicon Mac — a 0.0026
+// spread straddling the floor, so the same correct decode passed on one box and
+// failed on the other, deterministically (the runner returned the bit-identical
+// triple across consecutive runs). That is a coin flip, not a fidelity gate.
+//
+// The floors below are set from what a CORRECT decode actually scores, with
+// headroom for the next GPU. They keep the property the gate exists for, stated
+// in the neighbor-frame comment below: a garbage decode matches NONE of the
+// three candidate frames. Raise one only with measurements from more than one
+// machine — a floor tuned to a single box is what produced this note.
+/// testsrc2: dense high-frequency synthetic detail, which maximizes the
+/// chroma-upsampling disagreement. Correct decodes measured 0.9794–0.982.
+const SSIM_FLOOR_HIGH_FREQ = 0.96
+/// Smooth gradient content, where the two upsamplers barely disagree at all.
+/// A correct decode measured 0.997468 — this floor still has real headroom.
+const SSIM_FLOOR_SMOOTH = 0.98
 
 // Skip-path audit seam: an OUTER `WEFTCUT_FORCE_HW_LANE` (exported around the
 // runner by an operator) overrides every variant's own pin. Pinning a lane the
@@ -95,16 +125,21 @@ interface HwVariant {
   /// 10-bit ships I420P10 → TenBitIngest ('p10', VT lane ticket 03); the
   /// Windows shared-texture lane binds an ImageBitmap snapshot ('browser').
   frameKind: 'nv12' | 'p10' | 'browser'
+  /// Floor the best-of-three SSIM must clear. Tracks `fixture`, never the lane —
+  /// see the SSIM_FLOOR_* notes. Every lane sharing a fixture shares its floor:
+  /// they all compare the same content through the same shader-vs-swscale
+  /// mismatch, so a lane-specific number would just be per-GPU noise.
+  ssimFloor: number
 }
 const VARIANTS: readonly HwVariant[] = [
-  { lane: 'nvdec', id: 'nvdec-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12' },
-  { lane: 'vaapi', id: 'vaapi-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12' },
-  { lane: 'd3d11va', id: 'd3d11va-h264', codec: 'H.264', fixture: H264, frameKind: 'browser' },
-  { lane: 'videotoolbox', id: 'videotoolbox-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12' },
+  { lane: 'nvdec', id: 'nvdec-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
+  { lane: 'vaapi', id: 'vaapi-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
+  { lane: 'd3d11va', id: 'd3d11va-h264', codec: 'H.264', fixture: H264, frameKind: 'browser', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
+  { lane: 'videotoolbox', id: 'videotoolbox-h264', codec: 'H.264', fixture: H264, frameKind: 'nv12', ssimFloor: SSIM_FLOOR_HIGH_FREQ },
   // VT lane ticket 03 — the I420P10 preview transport variants (see the
   // fixture notes above for which hosts each engages on).
-  { lane: 'videotoolbox', id: 'videotoolbox-prores', codec: 'ProRes', fixture: PRORES, frameKind: 'p10' },
-  { lane: 'videotoolbox', id: 'videotoolbox-hevc10', codec: 'HEVC Main10', fixture: HEVC10, frameKind: 'p10' },
+  { lane: 'videotoolbox', id: 'videotoolbox-prores', codec: 'ProRes', fixture: PRORES, frameKind: 'p10', ssimFloor: SSIM_FLOOR_SMOOTH },
+  { lane: 'videotoolbox', id: 'videotoolbox-hevc10', codec: 'HEVC Main10', fixture: HEVC10, frameKind: 'p10', ssimFloor: SSIM_FLOOR_SMOOTH },
 ]
 
 /// ffmpeg binary: honor an explicit `FFMPEG` override, else rely on PATH.
@@ -122,7 +157,7 @@ function parseSsimAll(stderr: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-for (const { lane, id, codec, fixture, frameKind } of VARIANTS) {
+for (const { lane, id, codec, fixture, frameKind, ssimFloor } of VARIANTS) {
   test(`preview-hw: ffmpeg engine decodes interframe ${codec} on the ${lane} copy-back lane + SSIM (issue #5 Block C3) @serial`, async () => {
     test.skip(!existsSync(fixture), `${codec} fixture not found at ${fixture} (set WEFTCUT_TEST_MEDIA)`)
     test.setTimeout(240_000)
@@ -237,7 +272,7 @@ for (const { lane, id, codec, fixture, frameKind } of VARIANTS) {
       // the I420P10 transport → TenBitIngest, not a silent NV12 quantize.
       expect(probe.boundFrameKind).toBe(frameKind)
 
-      // ── Rendered preview frame matches an ffmpeg reference (SSIM ≥ 0.98) ─────
+      // ── Rendered preview frame matches an ffmpeg reference (SSIM ≥ the floor) ─
       const ffmpeg = ffmpegBin()
       test.skip(ffmpeg === null, 'ffmpeg not available on PATH (set FFMPEG) — SSIM skipped; lane-engaged proof stands')
 
@@ -251,7 +286,7 @@ for (const { lane, id, codec, fixture, frameKind } of VARIANTS) {
       // Compare against the SAME source frame decoded by ffmpeg. Robust to a ±1
       // sub-frame PTS-rounding discrepancy between the native seek and ffmpeg's
       // frame index by taking the best of the target frame and its immediate
-      // neighbors (a garbage decode matches NONE at 0.98).
+      // neighbors (a garbage decode matches NONE of the three at the floor).
       const scores: Array<{ idx: number; ssim: number | null }> = []
       for (const idx of [FRAME_IDX - 1, FRAME_IDX, FRAME_IDX + 1].filter((n) => n >= 0)) {
         const reference = path.join(OUT_DIR, `reference-${id}-${idx}.png`)
@@ -272,8 +307,14 @@ for (const { lane, id, codec, fixture, frameKind } of VARIANTS) {
         { idx: -1, ssim: -1 },
       )
       // eslint-disable-next-line no-console
-      console.log(`[preview-hw:${id}] SSIM scores: ${JSON.stringify(scores)} → best=${JSON.stringify(best)}`)
-      expect(best.ssim, `SSIM below floor; scores=${JSON.stringify(scores)}`).toBeGreaterThanOrEqual(SSIM_FLOOR)
+      console.log(`[preview-hw:${id}] SSIM scores: ${JSON.stringify(scores)} → best=${JSON.stringify(best)} (floor ${ssimFloor})`)
+      // The floor is in the message: a bare "below floor" reads as a decode bug,
+      // when the first thing to check is whether the floor was ever measured on
+      // more than one machine (it was not, before this fixture-keyed split).
+      expect(
+        best.ssim,
+        `SSIM below floor ${ssimFloor}; scores=${JSON.stringify(scores)}`,
+      ).toBeGreaterThanOrEqual(ssimFloor)
 
       // Renderer errors during the run are findings.
       const errs = consoleLines.filter((l) => l.startsWith('[error]') || l.startsWith('[pageerror]'))
